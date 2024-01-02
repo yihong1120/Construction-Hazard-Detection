@@ -33,7 +33,7 @@ This system is designed for real-time detection and alerting of hazards at const
 
 3. **Training YOLOv8**: Use the annotated dataset to train the YOLOv8 model. This can be done using the following command:
    ```
-   python train.py --img 640 --batch 16 --epochs 50 --data dataset.yaml --weights yolov8.pt
+   python train.py --img 640 --batch 16 --epochs 50 --data dataset.yaml --weights yolov8n.pt
    ```
    Adjust the parameters based on your dataset and hardware capabilities.
 
