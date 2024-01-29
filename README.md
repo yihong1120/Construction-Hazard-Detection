@@ -2,6 +2,20 @@
 
 "Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety at construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards like overhead heavy loads and steel pipes. Post-processing is applied to the trained model for improved accuracy. The system is designed for deployment in real-time environments, providing instant analysis and warnings for any detected hazards.
 
+## Dataset Information
+The dataset used for training this model is the [Construction Site Safety Image Dataset Roboflow](https://www.kaggle.com/datasets/snehilsanyal/construction-site-safety-image-dataset-roboflow/data). It includes the following labels:
+
+- 0: 'Hardhat'
+- 1: 'Mask'
+- 2: 'NO-Hardhat'
+- 3: 'NO-Mask'
+- 4: 'NO-Safety Vest'
+- 5: 'Person'
+- 6: 'Safety Cone'
+- 7: 'Safety Vest'
+- 8: 'machinery'
+- 9: 'vehicle'
+
 ## Installation Guide
 To set up this project, follow these steps:
 1. Clone the repository:
@@ -60,7 +74,7 @@ We welcome contributions to this project. Please follow these steps:
 3. Submit a pull request with a clear description of your improvements.
 
 ## Development Roadmap
-- [ ] Data collection and preprocessing.
+- [x] Data collection and preprocessing.
 - [ ] Training YOLOv8 model with construction site data.
 - [ ] Developing post-processing techniques for enhanced accuracy.
 - [ ] Implementing real-time analysis and alert system.
