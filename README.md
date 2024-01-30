@@ -1,3 +1,5 @@
+🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+
 # Construction-Hazard-Detection
 
 "Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety at construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards like overhead heavy loads and steel pipes. Post-processing is applied to the trained model for improved accuracy. The system is designed for deployment in real-time environments, providing instant analysis and warnings for any detected hazards.
