@@ -1,6 +1,7 @@
 import unittest
 
 from site_safety_monitor import detect_danger, is_too_close
+import site_safety_monitor
 
 
 class TestSiteSafetyMonitor(unittest.TestCase):
