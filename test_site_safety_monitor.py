@@ -36,6 +36,7 @@ class TestSiteSafetyMonitor(unittest.TestCase):
         bbox1 = (100, 100, 200, 200)
         bbox2 = (150, 150, 250, 250)
         self.assertTrue(is_too_close(bbox1, bbox2))
+        self.assertTrue(is_too_close(bbox1, bbox2))
 
     def test_is_too_close_distance_greater_than_threshold(self):
         bbox1 = (100, 100, 200, 200)
