@@ -32,18 +32,19 @@ class TestSiteSafetyMonitor(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("There is a person approaching the machinery or vehicle", warnings[0])
 
-    def test_is_too_close_distance_less_than_threshold(self):
+    def test_is_too_close_distance_zero_threshold_case(self):
         bbox1 = (100, 100, 200, 200)
         bbox2 = (150, 150, 250, 250)
         self.assertTrue(is_too_close(bbox1, bbox2))
+        self.assertFalse(is_too_close(bbox1, bbox2))
         self.assertTrue(is_too_close(bbox1, bbox2))
 
-    def test_is_too_close_distance_greater_than_threshold(self):
+    def test_is_too_close_distance_greater_than_threshold_case(self):
         bbox1 = (100, 100, 200, 200)
         bbox2 = (300, 300, 400, 400)
         self.assertFalse(is_too_close(bbox1, bbox2))
 
-    def test_is_too_close_distance_equal_to_threshold(self):
+    def test_is_too_close_distance_equal_to_threshold_case(self):
         bbox1 = (100, 100, 200, 200)
         bbox2 = (250, 250, 350, 350)
         self.assertFalse(is_too_close(bbox1, bbox2))
