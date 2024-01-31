@@ -10,6 +10,16 @@ detections = [
 
 # Define a function to determine whether a person is in a dangerous situation
 def detect_danger(detections: List[Dict]) -> List[str]:
+    """
+    Determine whether a person is in a dangerous situation based on the given detections.
+
+    Args:
+        detections (List[Dict]): List of detection results.
+
+    Returns:
+        List[str]: List of warning messages.
+
+    """
      warnings = [] # Store all warning information
 
      # Traverse all detected targets
