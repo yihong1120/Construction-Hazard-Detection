@@ -62,15 +62,23 @@ class DataAugmentation:
             seq (iaa.Sequential): The sequence of augmentations to apply.
             file_extension (str): The file extension for the augmented images.
         """
+        # Load the image
         image = imageio.imread(image_path)
+        
+        # Get the label file path
         label_path = image_path.replace('images', 'labels').replace('.png', '.txt')
+        
+        # Get the shape of the image
         image_shape = image.shape
+        
+        # Convert the annotations into BoundingBox objects
         bbs = BoundingBoxesOnImage(self.read_label_file(label_path, image_shape), shape=image_shape)
-
+        
+        # Perform augmentations
         for i in range(num_augmentations):
+            # Remove the alpha channel if it exists
             if image.shape[2] == 4:
                 image = image[:, :, :3]
-
             image_aug, bbs_aug = seq(image=image, bounding_boxes=bbs)
 
             base_filename = os.path.splitext(os.path.basename(image_path))[0]
