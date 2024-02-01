@@ -7,6 +7,7 @@ from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 import imgaug.augmenters as iaa
 import argparse
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class DataAugmentation:
@@ -21,84 +22,101 @@ class DataAugmentation:
     
     def __init__(self, train_path: str, num_augmentations: int = 1):
         """
-        The constructor for DataAugmentation class.
+        Initialize the DataAugmentation class.
 
-        Parameters:
+        Args:
             train_path (str): The path to the training data.
             num_augmentations (int): The number of augmentations to perform per image.
         """
         self.train_path = train_path
         self.num_augmentations = num_augmentations
-        # Define a sequence of augmentations
-        self.seq = iaa.Sequential([
-            iaa.Flipud(0.5), 
-            iaa.Fliplr(0.5),  
-            iaa.Affine(rotate=(-15, 15)),  # Adjust the range of rotation angles to -15 degrees to 15 degrees
-            iaa.Multiply((0.8, 1.2)),  # Adjust the range of brightness variation
-            iaa.LinearContrast((0.8, 1.2)),  # Adjust the range of contrast variation
-            iaa.GaussianBlur(sigma=(0, 0.5)),  # Adjust the strength of Gaussian blur
-            iaa.Resize((0.7, 1.3)),  # Adjust the range of random scaling
-            iaa.Crop(px=(0, 16)),  # Adjust the range of random cropping
-            iaa.SaltAndPepper(0.02),  # Adjust the strength of salt and pepper noise
-            iaa.ElasticTransformation(alpha=50, sigma=5),  # Adjust the strength of elastic transformation
-            iaa.ShearX((-20, 20)),  # Adjust the range of shear transformation for the x-axis
-            iaa.ShearY((-20, 20)),  # Adjust the range of shear transformation for the y-axis
-            iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2)),  # Adjust the strength of sharpening
-            iaa.PiecewiseAffine(scale=(0.01, 0.03)),  # Adjust the strength of piecewise affine transformation
-            iaa.Grayscale(alpha=(0.0, 1.0))  # Add random grayscale processing
+        self.seq = self._get_augmentation_sequence()
+
+    def _get_augmentation_sequence(self) -> iaa.Sequential:
+        """Define a sequence of augmentations."""
+        return iaa.Sequential([
+            iaa.Flipud(0.5),
+            iaa.Fliplr(0.5),
+            iaa.Affine(rotate=(-15, 15)),
+            iaa.Multiply((0.8, 1.2)),
+            iaa.LinearContrast((0.8, 1.2)),
+            iaa.GaussianBlur(sigma=(0, 0.5)),
+            iaa.Resize((0.7, 1.3)),
+            iaa.Crop(px=(0, 16)),
+            iaa.SaltAndPepper(0.02),
+            iaa.ElasticTransformation(alpha=50, sigma=5),
+            iaa.ShearX((-20, 20)),
+            iaa.ShearY((-20, 20)),
+            iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2)),
+            iaa.PiecewiseAffine(scale=(0.01, 0.03)),
+            iaa.Grayscale(alpha=(0.0, 1.0))
         ], random_order=True)
 
+    def augment_image(self, image_path: str, num_augmentations: int, seq: iaa.Sequential, file_extension: str):
+        """
+        Process and augment a single image.
+
+        Args:
+            image_path (str): The path to the input image.
+            num_augmentations (int): The number of augmentations to perform.
+            seq (iaa.Sequential): The sequence of augmentations to apply.
+            file_extension (str): The file extension for the augmented images.
+        """
+        image = imageio.imread(image_path)
+        label_path = image_path.replace('images', 'labels').replace('.png', '.txt')
+        image_shape = image.shape
+        bbs = BoundingBoxesOnImage(self.read_label_file(label_path, image_shape), shape=image_shape)
+
+        for i in range(num_augmentations):
+            if image.shape[2] == 4:
+                image = image[:, :, :3]
+
+            image_aug, bbs_aug = seq(image=image, bounding_boxes=bbs)
+
+            base_filename = os.path.splitext(os.path.basename(image_path))[0]
+            aug_image_filename = f"{base_filename}_aug_{i}{file_extension}"
+            aug_label_filename = f"{base_filename}_aug_{i}.txt"
+            
+            image_aug_path = os.path.join(self.train_path, 'images', aug_image_filename)
+            label_aug_path = os.path.join(self.train_path, 'labels', aug_label_filename)
+
+            imageio.imwrite(image_aug_path, image_aug)
+            self.write_label_file(bbs_aug.remove_out_of_image().clip_out_of_image(), label_aug_path, image_shape[1], image_shape[0])
+
     def augment_data(self):
-        """ Performs the augmentation on the dataset. """
-        image_paths = glob.glob(os.path.join(self.train_path, 'images', '*.png'))
+        """
+        Perform data augmentation on all images in the dataset.
+        """
+        # Support file types
+        file_types = ['*.png', '*.jpg', '*.jpeg']
+        
+        # Fetch all the file paths of matching files
+        image_paths = []
+        for file_type in file_types:
+            image_paths.extend(glob.glob(os.path.join(self.train_path, 'images', file_type)))
 
-        # Encapsulate the image_paths loop to display a progress bar
-        for image_path in tqdm(image_paths, desc="Augmenting Images"):
-            image = imageio.imread(image_path)
-            # Replace 'images' with 'labels' in the path and change file extension to read labels
-            label_path = image_path.replace('images', 'labels').replace('.png', '.txt')
-            image_shape = image.shape
-            # Read bounding box information and initialise them on the image
-            bbs = BoundingBoxesOnImage(self.read_label_file(label_path, image_shape), shape=image_shape)
-
-            for i in range(self.num_augmentations):
-                # If the image has an alpha channel, remove it
-                if image.shape[2] == 4:
-                    image = image[:, :, :3]
-
-                # Perform augmentation
-                image_aug, bbs_aug = self.seq(image=image, bounding_boxes=bbs)
-
-                # Prepare filenames for augmented images and labels
-                base_filename = os.path.splitext(os.path.basename(image_path))[0]
-                aug_image_filename = f"{base_filename}_aug_{i}.png"
-                aug_label_filename = f"{base_filename}_aug_{i}.txt"
-                
-                # Define paths for saving the augmented images and labels
-                image_aug_path = os.path.join(self.train_path, 'images', aug_image_filename)
-                label_aug_path = os.path.join(self.train_path, 'labels', aug_label_filename)
-
-                # Save the augmented image and label
-                imageio.imwrite(image_aug_path, image_aug)
-                self.write_label_file(bbs_aug.remove_out_of_image().clip_out_of_image(), label_aug_path, image_shape[1], image_shape[0])
+        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+            # Conduct correct parameters to augment_image
+            futures = [executor.submit(self.augment_image, image_path, self.num_augmentations, self.seq, os.path.splitext(image_path)[1]) for image_path in image_paths]
+            for future in tqdm(as_completed(futures), total=len(futures)):
+                future.result()
 
     @staticmethod
     def read_label_file(label_path: str, image_shape: Tuple[int, int, int]) -> List[BoundingBox]:
         """
-        Reads a label file and converts annotations into BoundingBox objects.
+        Read a label file and convert annotations into BoundingBox objects.
 
-        Parameters:
+        Args:
             label_path (str): The path to the label file.
             image_shape (Tuple[int, int, int]): The shape of the image.
 
         Returns:
-            List[BoundingBox]: A list of BoundingBox objects.
+            List[BoundingBox]: A list of BoundingBox objects representing the annotations.
         """
         bounding_boxes = []
         if os.path.exists(label_path):
             with open(label_path, 'r') as file:
                 for line in file:
-                    # Parsing label information for bounding box creation
                     class_id, x_center, y_center, width, height = map(float, line.split())
                     x1 = (x_center - width / 2) * image_shape[1]
                     y1 = (y_center - height / 2) * image_shape[0]
@@ -110,48 +128,29 @@ class DataAugmentation:
     @staticmethod
     def write_label_file(bounding_boxes: List[BoundingBox], label_path: str, image_width: int, image_height: int):
         """
-        Writes the augmented bounding box information back to a label file.
+        Write the augmented bounding box information back to a label file.
 
-        Parameters:
-            bounding_boxes (List[BoundingBox]): A list of augmented BoundingBox objects.
+        Args:
+            bounding_boxes (List[BoundingBox]): The list of augmented BoundingBox objects.
             label_path (str): The path where the label file is to be saved.
             image_width (int): The width of the image.
             image_height (int): The height of the image.
         """
-        # Open the label file for writing
         with open(label_path, 'w') as f:
-            # Iterate over the augmented bounding boxes and write them to the file
             for bb in bounding_boxes:
-                # Calculate the center, width, and height for the YOLO format
                 x_center = ((bb.x1 + bb.x2) / 2) / image_width
                 y_center = ((bb.y1 + bb.y2) / 2) / image_height
                 width = (bb.x2 - bb.x1) / image_width
                 height = (bb.y2 - bb.y1) / image_height
-
-                # Ensure all values are within [0, 1]
                 x_center, y_center, width, height = [max(0, min(1, val)) for val in [x_center, y_center, width, height]]
-
                 class_index = bb.label
-                # Write the bounding box information in the YOLO format
                 f.write(f"{class_index} {x_center} {y_center} {width} {height}\n")
 
 
 if __name__ == '__main__':
-    # Create a parser
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
-    # Add train_path argument with a default value
-    parser.add_argument('--train_path', type=str, default='dataset/train', help='Path to the training data')
-    # Add num_augmentations argument with a default value
-    parser.add_argument('--num_augmentations', type=int, default=5, help='Number of augmentations per image')
-
-    # Parse the command line arguments
+    parser.add_argument('--train_path', type=str, default='dataset_aug/train', help='Path to the training data')
+    parser.add_argument('--num_augmentations', type=int, default=40, help='Number of augmentations per image')
     args = parser.parse_args()
-
-    # Use the parsed arguments
-    train_path = args.train_path
-    num_augmentations = args.num_augmentations
-
-    # Initialise the DataAugmentation class
-    augmenter = DataAugmentation(train_path, num_augmentations)
-    # Perform the data augmentation
+    augmenter = DataAugmentation(args.train_path, args.num_augmentations)
     augmenter.augment_data()
