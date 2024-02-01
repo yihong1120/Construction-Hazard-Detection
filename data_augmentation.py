@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class DataAugmentation:
     """ 
-    A class to perform data augmentation for image datasets, especially useful for training machine learning models.
+    A class to perform data augmentation for image datasets, especially useful for training machine learning models, with an augmented_image function that enhances images for machine learning.
     
     Attributes:
         train_path (str): The path to the training data.
