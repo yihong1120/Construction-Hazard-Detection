@@ -30,7 +30,7 @@ class DataAugmentation:
         """
         self.train_path = train_path
         self.num_augmentations = num_augmentations
-        self.seq = self._get_augmentation_sequence()
+        self.seq = self.get_augmentation_sequence()
 
     def _get_augmentation_sequence(self) -> iaa.Sequential:
         """Define a sequence of augmentations."""
