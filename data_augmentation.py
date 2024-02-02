@@ -62,15 +62,23 @@ class DataAugmentation:
             seq (iaa.Sequential): The sequence of augmentations to apply.
             file_extension (str): The file extension for the augmented images.
         """
+        # Load the image
         image = imageio.imread(image_path)
+        
+        # Get the label file path
         label_path = image_path.replace('images', 'labels').replace('.png', '.txt')
+        
+        # Get the shape of the image
         image_shape = image.shape
+        
+        # Convert the annotations into BoundingBox objects
         bbs = BoundingBoxesOnImage(self.read_label_file(label_path, image_shape), shape=image_shape)
-
+        
+        # Perform augmentations
         for i in range(num_augmentations):
+            # Remove the alpha channel if it exists
             if image.shape[2] == 4:
                 image = image[:, :, :3]
-
             image_aug, bbs_aug = seq(image=image, bounding_boxes=bbs)
 
             base_filename = os.path.splitext(os.path.basename(image_path))[0]
@@ -113,6 +121,16 @@ class DataAugmentation:
         Returns:
             List[BoundingBox]: A list of BoundingBox objects representing the annotations.
         """
+        """
+        Read a label file and convert annotations into BoundingBox objects.
+
+        Args:
+            label_path (str): The path to the label file.
+            image_shape (Tuple[int, int, int]): The shape of the image.
+
+        Returns:
+            List[BoundingBox]: A list of BoundingBox objects representing the annotations.
+        """
         bounding_boxes = []
         if os.path.exists(label_path):
             with open(label_path, 'r') as file:
@@ -127,6 +145,15 @@ class DataAugmentation:
 
     @staticmethod
     def write_label_file(bounding_boxes: List[BoundingBox], label_path: str, image_width: int, image_height: int):
+        """
+        Write the augmented bounding box information back to a label file.
+
+        Args:
+            bounding_boxes (List[BoundingBox]): The list of augmented BoundingBox objects.
+            label_path (str): The path where the label file is to be saved.
+            image_width (int): The width of the image.
+            image_height (int): The height of the image.
+        """
         """
         Write the augmented bounding box information back to a label file.
 
