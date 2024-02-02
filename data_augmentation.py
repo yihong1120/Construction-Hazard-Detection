@@ -22,7 +22,7 @@ class DataAugmentation:
     
     def __init__(self, train_path: str, num_augmentations: int = 1):
         """
-        Initialize the DataAugmentation class.
+        Initialise the DataAugmentation class.
 
         Args:
             train_path (str): The path to the training data.
@@ -121,16 +121,6 @@ class DataAugmentation:
         Returns:
             List[BoundingBox]: A list of BoundingBox objects representing the annotations.
         """
-        """
-        Read a label file and convert annotations into BoundingBox objects.
-
-        Args:
-            label_path (str): The path to the label file.
-            image_shape (Tuple[int, int, int]): The shape of the image.
-
-        Returns:
-            List[BoundingBox]: A list of BoundingBox objects representing the annotations.
-        """
         bounding_boxes = []
         if os.path.exists(label_path):
             with open(label_path, 'r') as file:
@@ -145,15 +135,6 @@ class DataAugmentation:
 
     @staticmethod
     def write_label_file(bounding_boxes: List[BoundingBox], label_path: str, image_width: int, image_height: int):
-        """
-        Write the augmented bounding box information back to a label file.
-
-        Args:
-            bounding_boxes (List[BoundingBox]): The list of augmented BoundingBox objects.
-            label_path (str): The path where the label file is to be saved.
-            image_width (int): The width of the image.
-            image_height (int): The height of the image.
-        """
         """
         Write the augmented bounding box information back to a label file.
 
