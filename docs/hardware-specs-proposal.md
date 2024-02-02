@@ -1,5 +1,42 @@
 # 硬體配置與專案需求關聯提案
 
+## 硬體配置
+
+### 顯卡
+- **NVIDIA GeForce RTX 4090**：可以選擇不同品牌的RTX 4090，例如：
+  - 華碩 ASUS ROG Strix GeForce RTX 4090 OC Edition
+  - 技嘉 GIGABYTE AORUS GeForce RTX 4090 XTREME WATERFORCE
+
+### 固態硬碟 (SSD)
+- **1TB NVMe SSD**：可以選擇以下品牌型號：
+  - 三星 Samsung 980 PRO 1TB PCIe NVMe Gen4
+  - 西部數據 WD Black SN850 1TB NVMe
+
+### 記憶體 (RAM)
+- **64GB DDR4 RAM**：可以選擇以下品牌型號：
+  - 科賽爾 Corsair Vengeance LPX 64GB (2 x 32GB) DDR4 3200
+  - 金士頓 Kingston HyperX Fury 64GB (2 x 32GB) DDR4 3200
+
+### 處理器 (CPU)
+- **AMD Ryzen 9**：可以選擇以下品牌型號：
+  - AMD Ryzen 9 5950X
+  - AMD Ryzen 9 5900X
+
+### 電源供應器 (PSU)
+- **850W 以上**：可以選擇以下品牌型號：
+  - 海盜船 Corsair RM850x
+  - 海韻 Seasonic FOCUS PX-850
+
+### 機殼 (PC Case)
+- **支持雙顯卡的大型機殼**：可以選擇以下品牌型號：
+  - Fractal Design Meshify 2
+  - NZXT H710i
+
+### 散熱系統 (CPU Cooler)
+- **水冷或高階空冷散熱器**：可以選擇以下品牌型號：
+  - 科賽爾 Corsair iCUE H150i Elite Capellix
+  - 諾克圖亞 Noctua NH-D15
+
 ## 專案需求與硬體配置的關聯
 
 ### NVIDIA GeForce RTX 4090 顯卡
