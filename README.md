@@ -5,18 +5,20 @@
 "Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety at construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards like overhead heavy loads and steel pipes. Post-processing is applied to the trained model for improved accuracy. The system is designed for deployment in real-time environments, providing instant analysis and warnings for any detected hazards.
 
 ## Dataset Information
-The dataset used for training this model is the [Construction Site Safety Image Dataset Roboflow](https://www.kaggle.com/datasets/snehilsanyal/construction-site-safety-image-dataset-roboflow/data). It includes the following labels:
+The primary dataset for training this model is the [Construction Site Safety Image Dataset from Roboflow](https://www.kaggle.com/datasets/snehilsanyal/construction-site-safety-image-dataset-roboflow/data). We have enriched this dataset with additional annotations and made it openly accessible on Roboflow. The enhanced dataset can be found here: [Construction Hazard Detection on Roboflow](https://universe.roboflow.com/side-projects/construction-hazard-detection). This dataset includes the following labels:
 
-- 0: 'Hardhat'
-- 1: 'Mask'
-- 2: 'NO-Hardhat'
-- 3: 'NO-Mask'
-- 4: 'NO-Safety Vest'
-- 5: 'Person'
-- 6: 'Safety Cone'
-- 7: 'Safety Vest'
-- 8: 'machinery'
-- 9: 'vehicle'
+- `0: 'Hardhat'`
+- `1: 'Mask'`
+- `2: 'NO-Hardhat'`
+- `3: 'NO-Mask'`
+- `4: 'NO-Safety Vest'`
+- `5: 'Person'`
+- `6: 'Safety Cone'`
+- `7: 'Safety Vest'`
+- `8: 'Machinery'`
+- `9: 'Vehicle'`
+
+Our comprehensive dataset ensures that the model is well-equipped to identify a wide range of potential hazards commonly found in construction environments.
 
 ## Installation Guide
 To set up this project, follow these steps:

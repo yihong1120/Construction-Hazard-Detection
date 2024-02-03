@@ -5,18 +5,20 @@
 "工地危險檢測" 是一款旨在提高工地安全性的 AI 驅動工具。利用 YOLOv8 模型進行物體檢測，此系統能夠識別潛在的危險，如懸掛的重物和鋼管。對訓練好的模型進行後處理以提高準確性。該系統設計用於即時環境部署，為檢測到的任何危險提供即時分析和警告。
 
 ## 數據集資訊
-用於訓練此模型的數據集是 [Roboflow 工地安全圖像數據集](https://www.kaggle.com/datasets/snehilsanyal/construction-site-safety-image-dataset-roboflow/data)。它包括以下標籤：
+本模型的主要訓練數據集是來自Roboflow的[建築工地安全影像數據集](https://www.kaggle.com/datasets/snehilsanyal/construction-site-safety-image-dataset-roboflow/data)。我們對這個數據集進行了額外的標註，並已在Roboflow上公開。增強後的數據集可在此處找到：[建築工地危險檢測於Roboflow](https://universe.roboflow.com/side-projects/construction-hazard-detection)。此數據集包含以下標籤：
 
-- 0: '安全帽'
-- 1: '口罩'
-- 2: '無安全帽'
-- 3: '無口罩'
-- 4: '無安全背心'
-- 5: '人員'
-- 6: '安全錐'
-- 7: '安全背心'
-- 8: '機械'
-- 9: '車輛'
+- `0: '安全帽'`
+- `1: '口罩'`
+- `2: '無安全帽'`
+- `3: '無口罩'`
+- `4: '無安全背心'`
+- `5: '人員'`
+- `6: '安全錐'`
+- `7: '安全背心'`
+- `8: '機械設備'`
+- `9: '車輛'`
+
+我們全面的數據集確保模型能夠有效識別建築環境中常見的各種潛在危險。
 
 ## 安裝指南
 按照以下步驟設置此項目：
