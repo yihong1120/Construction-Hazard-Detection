@@ -7,6 +7,20 @@ Dataset used in the project
 
 ## Dataset Information
 '''
+
+def augment_data(data):
+    '''
+    Augments the given data by applying various transformations.
+    
+    Args:
+        data (list): The input data to be augmented.
+        
+    Returns:
+        list: The augmented data.
+    '''
+    # Code for data augmentation
+    
+    return augmented_data
 '''Dataset used in the project
 
 "Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety at construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards like overhead heavy loads and steel pipes. Post-processing is applied to the trained model for improved accuracy. The system is designed for deployment in real-time environments, providing instant analysis and warnings for any detected hazards.
@@ -34,6 +48,20 @@ Our comprehensive dataset ensures that the model is well-equipped to identify a 
 
 ## Installation Guide
 To set up this project, follow these steps:
+
+def augment_image(image):
+    '''
+    Augments the given image by applying various transformations.
+    
+    Args:
+        image (ndarray): The input image to be augmented.
+        
+    Returns:
+        ndarray: The augmented image.
+    '''
+    # Code for image augmentation
+    
+    return augmented_image
 1. Clone the repository:
    ```
    git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
