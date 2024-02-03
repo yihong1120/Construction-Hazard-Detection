@@ -22,7 +22,7 @@ class DataAugmentation:
     
     def __init__(self, train_path: str, num_augmentations: int = 1):
         """
-        Initialize the DataAugmentation class.
+        Initialise the DataAugmentation class.
 
         Args:
             train_path (str): The path to the training data.
