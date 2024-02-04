@@ -155,6 +155,15 @@ class DataAugmentation:
             image_width (int): The width of the image.
             image_height (int): The height of the image.
         """
+        """
+        Write the augmented bounding box information back to a label file.
+
+        Args:
+            bounding_boxes (List[BoundingBox]): The list of augmented BoundingBox objects.
+            label_path (str): The path where the label file is to be saved.
+            image_width (int): The width of the image.
+            image_height (int): The height of the image.
+        """
         with open(label_path, 'w') as f:
             for bb in bounding_boxes:
                 x_center = ((bb.x1 + bb.x2) / 2) / image_width
