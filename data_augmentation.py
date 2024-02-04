@@ -48,6 +48,13 @@ class DataAugmentation:
             iaa.ShearX((-20, 20)),
             iaa.ShearY((-20, 20)),
             iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2)),
+                """
+                Sharpen the image with variable alpha and lightness.
+
+                Args:
+                    alpha (Tuple[float, float]): Range of alpha values for sharpening.
+                    lightness (Tuple[float, float]): Range of lightness values for sharpening.
+                """,
             iaa.PiecewiseAffine(scale=(0.01, 0.03)),
             iaa.Grayscale(alpha=(0.0, 1.0)),
             # Colour transformation augmenters
