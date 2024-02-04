@@ -49,7 +49,11 @@ class DataAugmentation:
             iaa.ShearY((-20, 20)),
             iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2)),
             iaa.PiecewiseAffine(scale=(0.01, 0.03)),
-            iaa.Grayscale(alpha=(0.0, 1.0))
+            iaa.Grayscale(alpha=(0.0, 1.0)),
+            # Colour transformation augmenters
+            iaa.AddToHueAndSaturation((-30, 30)),
+            iaa.GammaContrast((0.5, 1.5)),
+            iaa.AddToHueAndSaturation((-20, 20)),
         ], random_order=True)
 
     def augment_image(self, image_path: str, num_augmentations: int, seq: iaa.Sequential, file_extension: str):
@@ -158,7 +162,7 @@ class DataAugmentation:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
     parser.add_argument('--train_path', type=str, default='dataset_aug/train', help='Path to the training data')
-    parser.add_argument('--num_augmentations', type=int, default=40, help='Number of augmentations per image')
+    parser.add_argument('--num_augmentations', type=int, default=150, help='Number of augmentations per image')
     args = parser.parse_args()
     augmenter = DataAugmentation(args.train_path, args.num_augmentations)
     augmenter.augment_data()
