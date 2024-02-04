@@ -53,7 +53,30 @@
 
 總價為：97739台幣，資料來源：原價屋。
 
-![原價屋估價表](../assets/sinya-1706871806.png)
+![原價屋估價表](../assets/sinya-1706871806.png)  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+```md
+A visual representation of the estimated pricing from the original store."}
 
 ## 數據集需求
 為了確保「工地危險檢測」專案的準確性和有效性，建議數據集應遵循以下標準：
