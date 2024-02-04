@@ -3,3 +3,7 @@
 *.jpg
 *.png
 *.jpeg
+*.yaml
+*.pt
+!assets/images (6).jpeg
+!assets/sinya-1706871806.png
