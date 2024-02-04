@@ -103,7 +103,11 @@ A visual representation of the estimated pricing from the original store."}
 
 ## AI影像辨識範例如下
 
-![圖一](../assets/images(6).png)
+![圸具](../assets/images(6).png)  
+---  
+  
+```md
+A visual representation of the hardware specifications for the proposed configuration.
 
 ## 總結
 精心挑選的硬體配置、適量高質量的數據集以及全面的資料擴增策略，將大幅提升「工地危險檢測」專案的計算能力和效率。這套方案考慮到了專案的多面性需求，包括硬體配置、數據集規範及資料處理策略，以確保系統在各方面都能達到最優性能。
