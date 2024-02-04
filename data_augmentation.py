@@ -176,6 +176,14 @@ class DataAugmentation:
 
 
 if __name__ == '__main__':
+    '''
+    Perform data augmentation on image datasets.
+
+    This script allows for performing data augmentation on image datasets using the DataAugmentation class. It takes in the path to the training data and the number of augmentations per image as input arguments. The augmented images are saved in the specified directory.
+
+    Example Usage:
+    python data_augmentation.py --train_path dataset_aug/train --num_augmentations 150
+    '''
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
     parser.add_argument('--train_path', type=str, default='dataset_aug/train', help='Path to the training data')
     parser.add_argument('--num_augmentations', type=int, default=150, help='Number of augmentations per image')
