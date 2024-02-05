@@ -1,7 +1,11 @@
 # hardware-specs-proposal_test.md
 
 import unittest
-from hardware_specs_proposal import detect_hazards
+from hardware_specs_proposal import Algorithm
+class TestAlgorithm(unittest.TestCase):
+	def test_algorithm_functionality(self):
+		# Test method for testing the functionality of the algorithm
+		# Add test setup and assertion here
 
 class HardwareSpecsProposalTest(unittest.TestCase):
     def test_detect_hazards_safety_helmet(self):
