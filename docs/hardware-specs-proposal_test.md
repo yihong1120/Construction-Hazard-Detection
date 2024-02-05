@@ -5,6 +5,24 @@ from hardware_specs_proposal import Algorithm
 class TestAlgorithm(unittest.TestCase):
 	def test_algorithm_functionality(self):
 		# Test method for testing the functionality of the algorithm
+    
+    def test_algorithm_with_no_hazards(self):
+        # Test algorithm with no hazards
+        algorithm = Algorithm()
+        result = algorithm.detect_hazards([])
+        self.assertEqual(result, [])
+
+    def test_algorithm_with_one_hazard(self):
+        # Test algorithm with one hazard
+        algorithm = Algorithm()
+        result = algorithm.detect_hazards(['heavy_load'])
+        self.assertEqual(result, ['heavy_load'])
+
+    def test_algorithm_with_multiple_hazards(self):
+        # Test algorithm with multiple hazards
+        algorithm = Algorithm()
+        result = algorithm.detect_hazards(['heavy_load', 'steel_pipe'])
+        self.assertEqual(result, ['heavy_load', 'steel_pipe'])
 		# Add test setup and assertion here
 
 class HardwareSpecsProposalTest(unittest.TestCase):
