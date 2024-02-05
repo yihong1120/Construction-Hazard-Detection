@@ -1,4 +1,5 @@
 # 硬體配置與專案需求關聯提案
+"工地危險檢測" 是一款旨在提高工地安全性的 AI 驅動工具。利用 YOLOv8 模型進行物體檢測，此系統能夠識別潛在的危險，如懸掛的重物和鋼管。對訓練好的模型進行後處理以提高準確性。該系統設計用於即時環境部署，為檢測到的任何危險提供即時分析和警告。
 
 ## 作者介紹
 我是 __翁逸宏__，畢業於交通大學土木系碩士的AI應用工程師，目前於聯發科技工作。在我的職業生涯中，我一直致力於利用人工智慧技術解決實際問題，並已在多個領域成功實施了AI解決方案。我的作品包括使用大語言模型製作的[Line聊天機器人](https://github.com/yihong1120/Azure-Line-Chatbot)、使用影像辨識進行都市淹水分析的[專案](https://github.com/yihong1120/CCTV-Inundation-Detection)、以及開發的[交通違規上傳系統前端](https://github.com/yihong1120/traffic_report_front_flutter)和[後端](https://github.com/yihong1120/Traffic-Violation-Report-System)。這些經歷讓我深刻理解在面對複雜專案時，強大的硬體支持對於成功實施AI解決方案的重要性。
