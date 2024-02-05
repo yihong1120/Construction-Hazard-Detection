@@ -92,7 +92,7 @@ AI 驅動工具，旨在提高工地安全性。利用 YOLOv8 模型進行物體
 
 # 電腦配置價格
 
-![電腦配置價格截圖](../assets/price-screenshot.png)
+![電腦配置價格截圖](../assets/sinya-1706871806.png)
 
 ---
 
