@@ -4,15 +4,15 @@ Class for initializing the presentation file.
 '''
 Presentation file for Construction Hazard Detection AI system.
 
-Docstring describing the function augment_image. 
+Docstring describing the function augment_data. 
 
 *Inputs*: 
-- image: the input image to be augmented. 
+- data: the input data to be augmented. 
 
 *Outputs*: 
-- augmented_image: the augmented image. 
+- augmented_data: the augmented data. 
 
-*Functionality*: Applies data augmentation techniques to the input image and returns the augmented image.
+*Functionality*: Applies data augmentation techniques to the input data and returns the augmented data.
 '''
 """
 """Presentation file for Construction Hazard Detection AI system."""
