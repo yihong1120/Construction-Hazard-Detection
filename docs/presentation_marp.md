@@ -4,7 +4,15 @@ Class for initializing the presentation file.
 '''
 Presentation file for Construction Hazard Detection AI system.
 
-Docstring describing the function augment_data. 
+Docstring describing the function read_label_file.
+
+*Inputs*: 
+- file_path: the path to the label file.
+
+*Outputs*: 
+- labels: the extracted labels from the file.
+
+*Functionality*: Reads and extracts labels from the specified label file.
 
 *Inputs*: 
 - data: the input data to be augmented. 
