@@ -1,12 +1,13 @@
----
+"""Presentation file for Construction Hazard Detection AI system."""
 """Presentation file for Construction Hazard Detection AI system."""
 marp: true
 theme: default
 class:
+  - DataAugmentation
   - lead
   - invert
 paginate: true
----
+"""Presentation file for Construction Hazard Detection AI system."""
 
 # 工地危險檢測
 
@@ -126,7 +127,13 @@ AI 驅動工具，旨在提高工地安全性。利用 YOLOv8 模型進行物體
 - **顏色調整**：亮度、對比度、飽和度、色調變化。
 - **模糊和噪聲**：高斯模糊、椒鹽噪聲。
 - **隨機裁剪與填充**：隨機選擇影像區域並放大。
-- **透視變換**：模擬不同角度的攝影條件。
+- **透視變換
+
+'''DataAugmentation
+
+Class for performing data augmentation on the dataset.'''
+
+# 算法簡介**：模擬不同角度的攝影條件。
 
 ---
 
