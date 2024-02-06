@@ -1,4 +1,5 @@
 ---
+"""Presentation file for Construction Hazard Detection AI system."""
 marp: true
 theme: default
 class:
