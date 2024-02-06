@@ -4,7 +4,16 @@ Class for initializing the presentation file.
 '''
 Presentation file for Construction Hazard Detection AI system.
 
-Docstring describing the function read_label_file.
+Docstring describing the function write_label_file.
+
+*Inputs*: 
+- labels: the labels to be written.
+- file_path: the path to write the label file.
+
+*Outputs*: 
+- written_file_path: the path to the written label file.
+
+*Functionality*: Writes the provided labels to the specified label file.
 
 *Inputs*: 
 - file_path: the path to the label file.
@@ -15,10 +24,11 @@ Docstring describing the function read_label_file.
 *Functionality*: Reads and extracts labels from the specified label file.
 
 *Inputs*: 
-- data: the input data to be augmented. 
+- labels: the labels to be written.
+- file_path: the path to write the label file.
 
 *Outputs*: 
-- augmented_data: the augmented data. 
+- written_file_path: the path to the written label file.
 
 *Functionality*: Applies data augmentation techniques to the input data and returns the augmented data.
 '''
