@@ -17,7 +17,7 @@ AI 驅動工具，旨在提高工地安全性。利用 YOLOv8 模型進行物體
 
 ### 翁逸宏
 
-畢業於交通大學土木系碩士的AI應用工程師，目前於聯發科技工作，致力於利用人工智慧技術解決實際問題。
+畢業於交通大學土木系碩士的AI應用工程師，目前於聯發科技工作，致力於利用人工智慧技術解決實際問題。我的作品包括使用大語言模型製作的[Line聊天機器人](https://github.com/yihong1120/Azure-Line-Chatbot)、使用影像辨識進行都市淹水分析的[專案](https://github.com/yihong1120/CCTV-Inundation-Detection)、以及開發的[交通違規上傳系統前端](https://github.com/yihong1120/traffic_report_front_flutter)和[後端](https://github.com/yihong1120/Traffic-Violation-Report-System)。這些經歷讓我深刻理解在面對複雜專案時，強大的硬體支持對於成功實施AI解決方案的重要性。
 
 ---
 
