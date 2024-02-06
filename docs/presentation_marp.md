@@ -1,6 +1,11 @@
 """Presentation file for Construction Hazard Detection AI system.
 
 Class for initializing the presentation file.
+'''
+Presentation file for Construction Hazard Detection AI system.
+
+Docstring describing the purpose of the _get_augmentation_sequence method.
+'''
 """
 """Presentation file for Construction Hazard Detection AI system."""
 marp: true
