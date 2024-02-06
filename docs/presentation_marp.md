@@ -1,4 +1,7 @@
-"""Presentation file for Construction Hazard Detection AI system."""
+"""Presentation file for Construction Hazard Detection AI system.
+
+Class for initializing the presentation file.
+"""
 """Presentation file for Construction Hazard Detection AI system."""
 marp: true
 theme: default
