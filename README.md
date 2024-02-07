@@ -71,6 +71,34 @@ This system is designed for real-time detection and alerting of hazards at const
 
 2. **Alerting**: When the system detects a human under a hazardous condition, it will trigger an alert. Ensure to have a mechanism (like a connected alarm or notification system) to notify the site personnel immediately.
 
+## Deployment Guide
+
+To deploy the "Construction-Hazard-Detection" system using Docker, follow these steps:
+
+### Building the Docker Image
+1. Ensure Docker Desktop is installed and running on your machine.
+2. Open a terminal and navigate to the root directory of the cloned repository.
+3. Build the Docker image with the following command:
+   ```
+   docker build -t construction-hazard-detection .
+   ```
+
+### Running the Docker Container
+1. Once the image is built, you can run the container using the following command:
+   ```
+   docker run -p 8080:8080 -e LINE_TOKEN=your_actual_token construction-hazard-detection
+   ```
+   Replace `your_actual_token` with your actual LINE Notify token.
+
+   This command will start the container and expose port 8080 for the application, allowing you to access it from your host machine at `http://localhost:8080`.
+
+### Notes
+- Ensure that the `Dockerfile` is present in the root directory of the project and is properly configured as per your application's requirements.
+- The `-e LINE_TOKEN=your_actual_token` flag sets the `LINE_TOKEN` environment variable inside the container, which is necessary for the application to send notifications. If you have other environment variables, you can add them in a similar manner.
+- The `-p 8080:8080` flag maps port 8080 of the container to port 8080 on your host machine, allowing you to access the application via the host's IP address and port number.
+
+For more information on Docker usage and commands, refer to the [Docker documentation](https://docs.docker.com/).
+
 ## Contributing
 We welcome contributions to this project. Please follow these steps:
 1. Fork the repository.
