@@ -128,7 +128,7 @@ AI 驅動工具，旨在提高工地安全性。利用 YOLOv8 模型進行物體
 
 # 電腦配置價格
 
-![電腦配置價格截圖](../assets/sinya-1706871806.png)
+![電腦配置價格截圖](../assets/images/sinya-1706871806.png)
 
 ---
 
@@ -199,7 +199,7 @@ Class for performing data augmentation on the dataset.'''
 
 # AI影像辨識範例
 
-![圖一](../assets/images(6).png)
+![圖一](../assets/images/images(6).png)
 
 ---
 
