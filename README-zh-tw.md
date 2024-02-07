@@ -71,6 +71,34 @@
 
 2. **警報**：當系統檢測到人員處於危險條件下時，將觸發警報。確保有機制（如連接的警報或通知系統）立即通知現場人員。
 
+## 部署指南
+
+要使用 Docker 部署「建築工地危險偵測」系統，請遵循以下步驟：
+
+### 建立 Docker 映像檔
+1. 確保您的機器已安裝並正在運行 Docker Desktop。
+2. 打開終端機，並導航至克隆儲存庫的根目錄。
+3. 使用以下命令建立 Docker 映像檔：
+   ```
+   docker build -t construction-hazard-detection .
+   ```
+
+### 運行 Docker 容器
+1. 映像檔建立完成後，您可以使用以下命令來運行容器：
+   ```
+   docker run -p 8080:8080 -e LINE_TOKEN=your_actual_token construction-hazard-detection
+   ```
+   將 `your_actual_token` 替換為您實際的 LINE Notify 令牌。
+
+   此命令將啟動容器並對外開放 8080 端口，讓您可以透過主機在 `http://localhost:8080` 訪問應用程式。
+
+### 注意事項
+- 確保 `Dockerfile` 存在於專案的根目錄中，並根據您的應用程式需求正確配置。
+- `-e LINE_TOKEN=your_actual_token` 旗標在容器內設定了 `LINE_TOKEN` 環境變數，這對於應用程式發送通知是必要的。如果您有其他環境變數，也可以以類似的方式添加。
+- `-p 8080:8080` 旗標將容器的 8080 端口映射到主機的 8080 端口，允許您透過主機的 IP 地址和端口號訪問應用程式。
+
+有關 Docker 使用和命令的更多資訊，請參閱 [Docker 文件](https://docs.docker.com/)。
+
 ## 貢獻
 我們歡迎對此項目的貢獻。請按照以下步驟操作：
 1. Fork 存儲庫。
