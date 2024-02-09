@@ -47,44 +47,39 @@ def detect_danger(detections: List[Dict]) -> List[str]:
 
         # Machinery and Vehicle Rule: Check if persons are near machinery or vehicles
         if label == "Person":
-            if any(d["label"] in ["machinery", "vehicle"] and is_too_close(d["bbox"], bbox) for d in detections):
-                warnings.append(f"Warning: There is a person approaching the machinery or vehicle! Location: {bbox}")
-
-        # Other rules can be added as needed
-        # ...
+            for d in detections:
+                if d["label"] in ["machinery", "vehicle"]:
+                    if is_dangerously_close(bbox, d["bbox"]):
+                        warnings.append(f"Warning: There is a person dangerously close to the machinery or vehicle! Location: {bbox}")
+                        break  # Once a person is found close to one machinery/vehicle, no need to check for others
 
     return warnings
 
-def is_too_close(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> bool:
+def is_dangerously_close(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> bool:
     """
-    Determine whether two bounding boxes are too close to each other.
+    Determine whether a person is dangerously close to machinery or vehicles.
 
-    This function calculates the Euclidean distance between the centres of two bounding boxes
-    and compares it to a predefined threshold to determine if they are too close.
+    This checks if the person's bounding box is within a distance of five times its width
+    from the bounding box of machinery or vehicles.
 
     Args:
-        bbox1 (Tuple[int, int, int, int]): The bounding box of the first object.
-        bbox2 (Tuple[int, int, int, int]): The bounding box of the second object.
+        bbox1 (Tuple[int, int, int, int]): The bounding box of the person.
+        bbox2 (Tuple[int, int, int, int]): The bounding box of the machinery or vehicle.
 
     Returns:
-        bool: True if the objects are too close, False otherwise.
-
-    Example:
-        >>> bbox1 = (100, 100, 200, 200)
-        >>> bbox2 = (150, 150, 250, 250)
-        >>> is_too_close(bbox1, bbox2)
-        True
+        bool: True if the person is dangerously close, False otherwise.
     """
-    # Calculate the centre points of the two bounding boxes
-    centre1 = ((bbox1[0] + bbox1[2]) / 2, (bbox1[1] + bbox1[3]) / 2)
-    centre2 = ((bbox2[0] + bbox2[2]) / 2, (bbox2[1] + bbox2[3]) / 2)
-    
-    # Calculate the distance between the centre points
-    distance = ((centre1[0] - centre2[0]) ** 2 + (centre1[1] - centre2[1]) ** 2) ** 0.5
-    
-    # Define a threshold for being 'too close'
-    threshold = 50  # This threshold needs to be set according to the actual situation
-    return distance < threshold
+    # Calculate the width of the person's bounding box
+    person_width = bbox1[2] - bbox1[0]
+    danger_distance = 5 * person_width
+
+    # Check if the person is within the danger distance of the machinery/vehicle
+    # This includes checking all sides: left, right, top, and bottom
+    is_close = (
+        abs((bbox1[0] + bbox1[2]) / 2 - (bbox2[0] + bbox2[2]) / 2) < danger_distance and
+        abs((bbox1[1] + bbox1[3]) / 2 - (bbox2[1] + bbox2[3]) / 2) < danger_distance
+    )
+    return is_close
 
 # Main execution block
 if __name__ == '__main__':
