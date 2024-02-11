@@ -102,7 +102,6 @@ class DataAugmentation:
                     x2 = (x_center + width / 2) * image_shape[1]
                     y2 = (y_center + height / 2) * image_shape[0]
                     bounding_boxes.append(BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2, label=int(class_id)))
-            print(f"Read {len(bounding_boxes)} bounding boxes from {label_path}")
         else:
             print(f"Label file {label_path} does not exist")
         return bounding_boxes
