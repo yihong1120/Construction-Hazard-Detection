@@ -1,14 +1,15 @@
-import glob
 import os
 from typing import List, Tuple
-import imageio.v2 as imageio
+import imageio.v3 as imageio
 import imgaug as ia
 from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 import imgaug.augmenters as iaa
 import argparse
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
+import shutil
+import random
+from pathlib import Path
+import glob
 
 class DataAugmentation:
     """ 
@@ -56,75 +57,45 @@ class DataAugmentation:
             iaa.AddToHueAndSaturation((-20, 20)),
         ], random_order=True)
 
-    def augment_image(self, image_path: str, num_augmentations: int, seq: iaa.Sequential, file_extension: str):
+    def augment_image(self, image_path: str):
         """
         Process and augment a single image.
-
-        Args:
-            image_path (str): The path to the input image.
-            num_augmentations (int): The number of augmentations to perform.
-            seq (iaa.Sequential): The sequence of augmentations to apply.
-            file_extension (str): The file extension for the augmented images.
         """
-        # Load the image
         image = imageio.imread(image_path)
-        
-        # Get the label file path
-        label_path = image_path.replace('images', 'labels').replace('.png', '.txt')
-        
-        # Get the shape of the image
+        label_path = image_path.replace('images', 'labels').replace('.png', '.txt').replace('.jpg', '.txt').replace('.jpeg', '.txt')
         image_shape = image.shape
-        
-        # Convert the annotations into BoundingBox objects
         bbs = BoundingBoxesOnImage(self.read_label_file(label_path, image_shape), shape=image_shape)
-        
-        # Perform augmentations
-        for i in range(num_augmentations):
-            # Remove the alpha channel if it exists
+
+        for i in range(self.num_augmentations):
             if image.shape[2] == 4:
                 image = image[:, :, :3]
-            image_aug, bbs_aug = seq(image=image, bounding_boxes=bbs)
+            image_aug, bbs_aug = self.seq(image=image, bounding_boxes=bbs)
 
             base_filename = os.path.splitext(os.path.basename(image_path))[0]
+            file_extension = os.path.splitext(image_path)[1]
             aug_image_filename = f"{base_filename}_aug_{i}{file_extension}"
             aug_label_filename = f"{base_filename}_aug_{i}.txt"
-            
+
             image_aug_path = os.path.join(self.train_path, 'images', aug_image_filename)
             label_aug_path = os.path.join(self.train_path, 'labels', aug_label_filename)
 
             imageio.imwrite(image_aug_path, image_aug)
-            self.write_label_file(bbs_aug.remove_out_of_image().clip_out_of_image(), label_aug_path, image_shape[1], image_shape[0])
+            self.write_label_file(bbs_aug, label_aug_path, image_aug.shape[1], image_aug.shape[0])
 
     def augment_data(self):
         """
         Perform data augmentation on all images in the dataset.
         """
-        # Support file types
         file_types = ['*.png', '*.jpg', '*.jpeg']
-        
-        # Fetch all the file paths of matching files
         image_paths = []
         for file_type in file_types:
             image_paths.extend(glob.glob(os.path.join(self.train_path, 'images', file_type)))
 
-        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-            # Conduct correct parameters to augment_image
-            futures = [executor.submit(self.augment_image, image_path, self.num_augmentations, self.seq, os.path.splitext(image_path)[1]) for image_path in image_paths]
-            for future in tqdm(as_completed(futures), total=len(futures)):
-                future.result()
+        for image_path in tqdm(image_paths):
+            self.augment_image(image_path)
 
     @staticmethod
     def read_label_file(label_path: str, image_shape: Tuple[int, int, int]) -> List[BoundingBox]:
-        """
-        Read a label file and convert annotations into BoundingBox objects.
-
-        Args:
-            label_path (str): The path to the label file.
-            image_shape (Tuple[int, int, int]): The shape of the image.
-
-        Returns:
-            List[BoundingBox]: A list of BoundingBox objects representing the annotations.
-        """
         bounding_boxes = []
         if os.path.exists(label_path):
             with open(label_path, 'r') as file:
@@ -138,16 +109,7 @@ class DataAugmentation:
         return bounding_boxes
 
     @staticmethod
-    def write_label_file(bounding_boxes: List[BoundingBox], label_path: str, image_width: int, image_height: int):
-        """
-        Write the augmented bounding box information back to a label file.
-
-        Args:
-            bounding_boxes (List[BoundingBox]): The list of augmented BoundingBox objects.
-            label_path (str): The path where the label file is to be saved.
-            image_width (int): The width of the image.
-            image_height (int): The height of the image.
-        """
+    def write_label_file(bounding_boxes: BoundingBoxesOnImage, label_path: str, image_width: int, image_height: int):
         with open(label_path, 'w') as f:
             for bb in bounding_boxes:
                 x_center = ((bb.x1 + bb.x2) / 2) / image_width
@@ -158,11 +120,61 @@ class DataAugmentation:
                 class_index = bb.label
                 f.write(f"{class_index} {x_center} {y_center} {width} {height}\n")
 
+    def shuffle_data(self) -> None:
+        """
+        Shuffles the augmented dataset to ensure randomness.
+
+        This method pairs each image file with its corresponding label file, shuffles these pairs,
+        and then saves them into temporary directories. After shuffling, it renames the temporary
+        directories to the original ones, effectively replacing them with the shuffled files.
+
+        Raises:
+            AssertionError: If the number of image files and label files do not match.
+        """
+        image_dir = os.path.join(self.train_path, 'images')
+        label_dir = os.path.join(self.train_path, 'labels')
+
+        # Retrieve paths for all image and label files
+        image_paths: List[str] = glob.glob(os.path.join(image_dir, '*'))
+        label_paths: List[str] = glob.glob(os.path.join(label_dir, '*'))
+
+        # Ensure the count of images and labels matches
+        assert len(image_paths) == len(label_paths), "The counts of image and label files do not match!"
+
+        # Shuffle the paths of images and labels together to maintain correspondence
+        combined: List[Tuple[str, str]] = list(zip(image_paths, label_paths))
+        random.shuffle(combined)
+        image_paths, label_paths = zip(*combined)
+
+        # Create temporary directories for shuffled files
+        temp_image_dir: str = os.path.join(self.train_path, 'temp_images')
+        temp_label_dir: str = os.path.join(self.train_path, 'temp_labels')
+        os.makedirs(temp_image_dir, exist_ok=True)
+        os.makedirs(temp_label_dir, exist_ok=True)
+
+        # Move shuffled files to the temporary directories
+        for i, (image_path, label_path) in enumerate(zip(image_paths, label_paths)):
+            new_image_path: str = os.path.join(temp_image_dir, f"{i:06d}" + os.path.splitext(image_path)[1])
+            new_label_path: str = os.path.join(temp_label_dir, f"{i:06d}.txt")
+            shutil.move(image_path, new_image_path)
+            shutil.move(label_path, new_label_path)
+
+        # Remove the original directories
+        shutil.rmtree(image_dir)
+        shutil.rmtree(label_dir)
+
+        # Rename temporary directories to the original names
+        os.rename(temp_image_dir, image_dir)
+        os.rename(temp_label_dir, label_dir)
+
+        print("Dataset shuffled successfully.")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
-    parser.add_argument('--train_path', type=str, default='dataset_aug/train', help='Path to the training data')
-    parser.add_argument('--num_augmentations', type=int, default=150, help='Number of augmentations per image')
+    parser.add_argument('--train_path', type=str, default='../dataset_aug/train', help='Path to the training data')
+    parser.add_argument('--num_augmentations', type=int, default=1, help='Number of augmentations per image')
     args = parser.parse_args()
+    
     augmenter = DataAugmentation(args.train_path, args.num_augmentations)
     augmenter.augment_data()
+    augmenter.shuffle_data()
