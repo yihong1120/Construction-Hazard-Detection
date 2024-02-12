@@ -1,10 +1,9 @@
 from typing import List, Tuple
 import imageio.v3 as imageio
-import imgaug as ia
 from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 import imgaug.augmenters as iaa
 import argparse
-from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
 import shutil
 import random
 from pathlib import Path
@@ -32,8 +31,13 @@ class DataAugmentation:
         self.seq = self._get_augmentation_sequence()
 
     def _get_augmentation_sequence(self) -> iaa.Sequential:
-        """Define a sequence of augmentations."""
-        return iaa.Sequential([
+        """
+        Define a sequence of augmentations.
+
+        Returns:
+            iaa.Sequential: The sequence of augmentations to apply.
+        """
+        all_augmentations = [
             iaa.Flipud(0.5),
             iaa.Fliplr(0.5),
             iaa.Affine(rotate=(-15, 15)),
@@ -43,21 +47,29 @@ class DataAugmentation:
             iaa.Resize((0.7, 1.3)),
             iaa.Crop(px=(0, 16)),
             iaa.SaltAndPepper(0.02),
-            iaa.ElasticTransformation(alpha=50, sigma=5),
+            iaa.ElasticTransformation(alpha=(0, 50), sigma=5),
             iaa.ShearX((-20, 20)),
             iaa.ShearY((-20, 20)),
             iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2)),
-            iaa.PiecewiseAffine(scale=(0.01, 0.03)),
+            iaa.PiecewiseAffine(scale=(0.01, 0.03)), 
             iaa.Grayscale(alpha=(0.0, 1.0)),
-            # Colour transformation augmenters
             iaa.AddToHueAndSaturation((-30, 30)),
             iaa.GammaContrast((0.5, 1.5)),
-            iaa.AddToHueAndSaturation((-20, 20)),
-        ], random_order=True)
+            iaa.ChangeColorTemperature((3300, 6500)),
+            iaa.PerspectiveTransform(scale=(0.01, 0.1)),
+            iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25)),
+            iaa.Invert(0.3),
+        ]
+        num_augmentations = random.randint(1, len(all_augmentations))  # Randomly choose the number of augmentations
+        chosen_augmentations = random.sample(all_augmentations, num_augmentations)
+        return iaa.Sequential(chosen_augmentations, random_order=True)
 
     def augment_image(self, image_path: Path):
         """
         Process and augment a single image.
+
+        Args:
+            image_path (Path): The path to the image to augment.
         """
         image = imageio.imread(image_path)
         label_path = image_path.with_suffix('.txt').parent.parent / 'labels' / image_path.with_suffix('.txt').name
@@ -85,13 +97,23 @@ class DataAugmentation:
         """
         Perform data augmentation on all images in the dataset.
         """
-        image_paths = list(self.train_path.glob('images/*'))
+        image_paths = (path for path in self.train_path.glob('images/*'))
 
-        for image_path in tqdm(image_paths):
-            self.augment_image(image_path)
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            executor.map(self.augment_image, image_paths)
 
     @staticmethod
     def read_label_file(label_path: Path, image_shape: Tuple[int, int, int]) -> List[BoundingBox]:
+        """
+        Read a label file and convert it to bounding boxes.
+
+        Args:
+            label_path (Path): The path to the label file.
+            image_shape (Tuple[int, int, int]): The shape of the image.
+
+        Returns:
+            List[BoundingBox]: A list of bounding boxes.
+        """
         bounding_boxes = []
         if label_path.exists():
             with open(label_path, 'r') as file:
@@ -108,6 +130,15 @@ class DataAugmentation:
 
     @staticmethod
     def write_label_file(bounding_boxes: BoundingBoxesOnImage, label_path: Path, image_width: int, image_height: int):
+        """
+        Write bounding boxes to a label file.
+
+        Args:
+            bounding_boxes (BoundingBoxesOnImage): The bounding boxes to write.
+            label_path (Path): The path to the label file.
+            image_width (int): The width of the image.
+            image_height (int): The height of the image.
+        """
         with open(label_path, 'w') as f:
             for bb in bounding_boxes:
                 x_center = ((bb.x1 + bb.x2) / 2) / image_width
@@ -170,9 +201,9 @@ class DataAugmentation:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
     parser.add_argument('--train_path', type=str, default='../dataset_aug/train', help='Path to the training data')
-    parser.add_argument('--num_augmentations', type=int, default=1, help='Number of augmentations per image')
+    parser.add_argument('--num_augmentations', type=int, default=20, help='Number of augmentations per image')
     args = parser.parse_args()
     
     augmenter = DataAugmentation(args.train_path, args.num_augmentations)
     augmenter.augment_data()
-    augmenter.shuffle_data()
+    # augmenter.shuffle_data()
