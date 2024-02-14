@@ -10,20 +10,26 @@ declare -A models=(
 )
 
 # Ensure the models directory exists
-mkdir -p models
+mkdir -p ../models
 
-# Check and download models
+# Check and use pre-trained models if they exist
 for model in "${!models[@]}"; do
-    if [ ! -f "models/$model" ]; then
-        echo "Model $model does not exist, downloading..."
-        wget -O "models/$model" "${models[$model]}"
+    trained_model_path="../models/trained_$model"
+    if [ -f "$trained_model_path" ]; then
+        echo "Pre-trained model $trained_model_path exists, will be used for training."
+        model_path="$trained_model_path"  # Use the pre-trained model for training
+    else
+        echo "Model $model does not exist or hasn't been trained, checking for base model..."
+        if [ ! -f "../models/$model" ]; then
+            echo "Base model $model does not exist, downloading..."
+            wget -O "../models/$model" "${models[$model]}"
+        fi
+        model_path="../models/$model"
     fi
-done
 
-# Train each model in turn
-for model in "${!models[@]}"; do
-    echo "Starting training $model ..."
-    python ../src/train.py --model_name "../models/$model" --epochs 100 --pt_path "../models/trained_$model"
+    # Start training
+    echo "Starting training $model with $model_path ..."
+    python ../src/train.py --model_name "$model_path" --epochs 100 --pt_path "$trained_model_path"
     echo "$model training completed."
 done
 
