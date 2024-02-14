@@ -37,21 +37,23 @@ class DataAugmentation:
         Returns:
             iaa.Sequential: The sequence of augmentations to apply.
         """
-        all_augmentations = [
+        mandatory_augmentations = [
             iaa.Flipud(0.5),
             iaa.Fliplr(0.5),
             iaa.Affine(rotate=(-15, 15)),
+            iaa.Resize((0.5, 1.3)),
+        ]
+        optional_augmentations = [
             iaa.Multiply((0.8, 1.2)),
             iaa.LinearContrast((0.8, 1.2)),
             iaa.GaussianBlur(sigma=(0, 0.5)),
-            iaa.Resize((0.7, 1.3)),
             iaa.Crop(px=(0, 16)),
             iaa.SaltAndPepper(0.02),
-            iaa.ElasticTransformation(alpha=(0, 50), sigma=5),
+            iaa.ElasticTransformation(alpha=(0, 30), sigma=10),
             iaa.ShearX((-20, 20)),
             iaa.ShearY((-20, 20)),
             iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2)),
-            iaa.PiecewiseAffine(scale=(0.01, 0.03)), 
+            iaa.PiecewiseAffine(scale=(0.01, 0.03)),
             iaa.Grayscale(alpha=(0.0, 1.0)),
             iaa.AddToHueAndSaturation((-30, 30)),
             iaa.GammaContrast((0.5, 1.5)),
@@ -60,9 +62,10 @@ class DataAugmentation:
             iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25)),
             iaa.Invert(0.3),
         ]
-        num_augmentations = random.randint(1, len(all_augmentations))  # Randomly choose the number of augmentations
-        chosen_augmentations = random.sample(all_augmentations, num_augmentations)
-        return iaa.Sequential(chosen_augmentations, random_order=True)
+        num_augmentations = random.randint(1, len(optional_augmentations))  # Randomly choose the number of augmentations
+        chosen_augmentations = random.sample(optional_augmentations, num_augmentations)
+        final_augmentations_sequence = mandatory_augmentations + chosen_augmentations
+        return iaa.Sequential(final_augmentations_sequence, random_order=True)
 
     def augment_image(self, image_path: Path):
         """
@@ -164,27 +167,33 @@ class DataAugmentation:
         label_dir = self.train_path / 'labels'
 
         # Retrieve paths for all image and label files
-        image_paths: List[Path] = list(image_dir.glob('*'))
-        label_paths: List[Path] = list(label_dir.glob('*'))
+        image_paths = list(image_dir.glob('*'))
+        label_paths = list(label_dir.glob('*'))
 
-        # Ensure the count of images and labels matches
+        # Ensure the count of images and labels matches and that they correspond to each other
         assert len(image_paths) == len(label_paths), "The counts of image and label files do not match!"
+        image_paths.sort()
+        label_paths.sort()
+        assert all(image_path.stem == label_path.stem for image_path, label_path in zip(image_paths, label_paths)), "Image and label files do not correspond to each other!"
 
         # Shuffle the paths of images and labels together to maintain correspondence
-        combined: List[Tuple[Path, Path]] = list(zip(image_paths, label_paths))
+        combined = list(zip(image_paths, label_paths))
         random.shuffle(combined)
-        image_paths, label_paths = zip(*combined)
 
         # Create temporary directories for shuffled files
-        temp_image_dir: Path = self.train_path / 'temp_images'
-        temp_label_dir: Path = self.train_path / 'temp_labels'
+        temp_image_dir = self.train_path / 'temp_images'
+        temp_label_dir = self.train_path / 'temp_labels'
         temp_image_dir.mkdir(exist_ok=True)
         temp_label_dir.mkdir(exist_ok=True)
 
         # Move shuffled files to the temporary directories
-        for i, (image_path, label_path) in enumerate(zip(image_paths, label_paths)):
-            new_image_path: Path = temp_image_dir / (f"{i:06d}" + image_path.suffix)
-            new_label_path: Path = temp_label_dir / (f"{i:06d}.txt")
+        for i, (image_path, label_path) in enumerate(combined):
+            # Maintain the original file name but prepend with a sortable index
+            new_image_name = f"{i:06d}_{image_path.name}"
+            new_label_name = f"{i:06d}_{label_path.name}"
+            new_image_path = temp_image_dir / new_image_name
+            new_label_path = temp_label_dir / new_label_name
+
             image_path.rename(new_image_path)
             label_path.rename(new_label_path)
 
@@ -201,9 +210,9 @@ class DataAugmentation:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
     parser.add_argument('--train_path', type=str, default='../dataset_aug/train', help='Path to the training data')
-    parser.add_argument('--num_augmentations', type=int, default=20, help='Number of augmentations per image')
+    parser.add_argument('--num_augmentations', type=int, default=30, help='Number of augmentations per image')
     args = parser.parse_args()
     
     augmenter = DataAugmentation(args.train_path, args.num_augmentations)
     augmenter.augment_data()
-    # augmenter.shuffle_data()
+    augmenter.shuffle_data()
