@@ -1,4 +1,4 @@
-🇬🇧 [English](docs/en/line_notify_guide_en.md) | 🇹🇼 [繁體中文](docs/zh/line_notify_guide_zh.md)
+🇬🇧 [English](../en/line_notify_guide_en.md) | 🇹🇼 [繁體中文](../zh/line_notify_guide_zh.md)
 
 # 如何使用 LINE Notify
 
