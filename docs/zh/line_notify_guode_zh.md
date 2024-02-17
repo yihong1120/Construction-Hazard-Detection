@@ -1,3 +1,5 @@
+🇬🇧 [English](docs/en/line_notify_guide_en.md) | 🇹🇼 [繁體中文](docs/en/line_notify_guide_zh.md)
+
 # 如何使用 LINE Notify
 
 本指南提供了一個簡單的說明，闡述如何使用 LINE Notify 從各種應用程式發送訊息到您的 LINE 帳戶。LINE Notify 允許您在配置後直接在 LINE 上接收來自網絡服務和應用程式的通知。在開始之前，請確保您已生成個人 LINE Notify 令牌。

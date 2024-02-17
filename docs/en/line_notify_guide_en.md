@@ -1,3 +1,5 @@
+🇬🇧 [English](docs/en/line_notify_guide_en.md) | 🇹🇼 [繁體中文](docs/en/line_notify_guide_zh.md)
+
 # How to Use LINE Notify
 
 This guide provides a straightforward explanation on how to use LINE Notify to send messages from various applications to your LINE account. LINE Notify allows you to receive notifications from web services and applications directly on LINE upon configuration. Before proceeding, ensure you have generated your personal LINE Notify token.
