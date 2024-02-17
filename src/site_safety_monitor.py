@@ -73,30 +73,40 @@ def overlap_percentage(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, 
 
     return overlap_percentage
 
-def is_dangerously_close(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> bool:
+def is_dangerously_close(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int], label2: str) -> bool:
     """
-    Determine whether a person is dangerously close to machinery or vehicles.
-
-    This checks if the person's bounding box is within a distance of five times its width
-    from the bounding box of machinery or vehicles.
+    Determine whether a person is dangerously close to machinery or vehicles, 
+    considering both the horizontal distance, vertical distance, and the area ratio conditions.
 
     Args:
         bbox1 (Tuple[int, int, int, int]): The bounding box of the person.
         bbox2 (Tuple[int, int, int, int]): The bounding box of the machinery or vehicle.
+        label2 (str): The label of the second bounding box (either 'machinery' or 'vehicle').
 
     Returns:
         bool: True if the person is dangerously close, False otherwise.
     """
-    # Calculate the width of the person's bounding box
     person_width = bbox1[2] - bbox1[0]
-    danger_distance = 5 * person_width
+    person_height = bbox1[3] - bbox1[1]
+    person_area = (person_width + 1) * (person_height + 1)
+    
+    machinery_vehicle_area = (bbox2[2] - bbox2[0] + 1) * (bbox2[3] - bbox2[1] + 1)
+    acceptable_ratio = 1/10 if label2 == 'vehicle' else 1/20
+    
+    if person_area / machinery_vehicle_area > acceptable_ratio:
+        return False
 
-    # Check if the person is within the danger distance of the machinery/vehicle
-    # This includes checking all sides: left, right, top, and bottom
-    is_close = (
-        abs((bbox1[0] + bbox1[2]) / 2 - (bbox2[0] + bbox2[2]) / 2) < danger_distance and
-        abs((bbox1[1] + bbox1[3]) / 2 - (bbox2[1] + bbox2[3]) / 2) < danger_distance
-    )
+    # Danger distance horizontally and vertically
+    danger_distance_horizontal = 5 * person_width
+    danger_distance_vertical = 1.5 * person_height
+
+    # Calculate horizontal and vertical distance from person to machinery/vehicle
+    horizontal_distance = min(abs(bbox1[2] - bbox2[0]), abs(bbox1[0] - bbox2[2]))
+    vertical_distance = min(abs(bbox1[3] - bbox2[1]), abs(bbox1[1] - bbox2[3]))
+
+    # Determine if the person is within the danger distance of the machinery/vehicle
+    is_close = horizontal_distance <= danger_distance_horizontal and vertical_distance <= danger_distance_vertical
+    
     return is_close
 
 # Main execution block
