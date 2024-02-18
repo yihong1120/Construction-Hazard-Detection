@@ -1,8 +1,9 @@
-opencv_python==4.8.1.78
-opencv_python_headless==4.8.1.78
+opencv_python==4.9.0.80
+opencv_python_headless==4.9.0.80
 Pillow==10.2.0
 torch==2.2.0
-ultralytics==8.1.14
+ultralytics==8.1.15
 imageio==2.34.0
 imgaug==0.4.0
 numpy==1.26.4
+python-dotenv==1.0.1
