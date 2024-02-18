@@ -1,5 +1,7 @@
 import requests
 from datetime import datetime
+from dotenv import load_dotenv
+import os
 
 def send_line_notification(token: str, message: str) -> int:
     """
@@ -44,11 +46,18 @@ def send_line_notification(token: str, message: str) -> int:
 
 # This block is executed when the script is run directly, not when imported
 if __name__ == '__main__':
-    # Example usage of the send_line_notification function:
-    
-    # Replace 'YOUR_LINE_NOTIFY_TOKEN' with your actual LINE Notify token
-    line_token = 'YOUR_LINE_NOTIFY_TOKEN'
-    
+    # Attempt to load the .env file
+    load_dotenv()
+
+    # Attempt to fetch the LINE Notify token from the .env file; if not found, then fetch from the system environment variables
+    line_token = os.getenv('LINE_NOTIFY_TOKEN') or os.environ.get('LINE_NOTIFY_TOKEN')
+
+    if line_token is None:
+        print("Please ensure the LINE_NOTIFY_TOKEN environment variable has been set.")
+    else:
+        # Code to send LINE notifications goes here
+        print("Successfully retrieved the LINE_NOTIFY_TOKEN.")
+
     # Get the current time and format it as a string
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
