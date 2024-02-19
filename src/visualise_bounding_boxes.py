@@ -70,3 +70,12 @@ if __name__ == '__main__':
     visualiser = BoundingBoxVisualiser(args.image, args.label)
     visualiser.draw_bounding_boxes()
     visualiser.save_or_display_image(args.output, args.save)
+
+"""
+useage:
+
+cd src
+
+python visualize_bounding_boxes.py --image '../dataset_aug/train/images/9e36a476d14b2da360817b7d6724f074_jpg.rf.0467ca3c155d09a019303adae6eb8265_aug_12.jpg' --label '../dataset_aug/train/labels/9e36a476d14b2da360817b7d6724f074_jpg.rf.0467ca3c155d09a019303adae6eb8265_aug_12.txt'
+
+"""
