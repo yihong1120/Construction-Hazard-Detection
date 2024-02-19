@@ -3,69 +3,47 @@ from datetime import datetime
 from dotenv import load_dotenv
 import os
 
-def send_line_notification(token: str, message: str) -> int:
+class LineNotifier:
     """
-    Send a notification message to a LINE user using LINE Notify API.
-
-    Args:
-        token (str): The authorisation token for LINE Notify.
-        message (str): The message to be sent to the user.
-
-    Returns:
-        int: The HTTP status code returned by the LINE Notify API.
-
-    Note:
-        You must obtain a valid LINE Notify token by registering a LINE Notify service.
-        The token must be kept confidential and not hardcoded in production code.
-
-    Example:
-        >>> line_token = 'your_line_notify_token'
-        >>> message = 'Hello, this is a test message.'
-        >>> status = send_line_notification(line_token, message)
-        >>> print(status)
-        200
+    A class to handle notifications sent via LINE Notify API.
     """
-    # Define the headers for the HTTP request to LINE Notify API
-    headers = {
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    
-    # Define the payload for the POST request, including the message
-    payload = {'message': message}
-    
-    # Send the POST request to the LINE Notify API and capture the response
-    response = requests.post(
-        'https://notify-api.line.me/api/notify',
-        headers=headers,
-        data=payload
-    )
-    
-    # Return the HTTP status code from the response
-    return response.status_code
 
-# This block is executed when the script is run directly, not when imported
+    def __init__(self):
+        """
+        Initialises the LineNotifier instance by loading environment variables and setting the LINE Notify token.
+        """
+        load_dotenv()
+        self.line_token = os.getenv('LINE_NOTIFY_TOKEN')
+
+        if self.line_token is None:
+            raise ValueError("LINE_NOTIFY_TOKEN is not set in the environment variables.")
+
+    def send_notification(self, message: str) -> int:
+        """
+        Sends a notification message through LINE Notify.
+
+        Args:
+            message (str): The message to be sent.
+
+        Returns:
+            int: The HTTP status code returned by the LINE Notify API.
+        """
+        headers = {
+            'Authorization': f'Bearer {self.line_token}',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        payload = {'message': message}
+        response = requests.post(
+            'https://notify-api.line.me/api/notify',
+            headers=headers,
+            data=payload
+        )
+        return response.status_code
+
+# If you want to use this script directly
 if __name__ == '__main__':
-    # Attempt to load the .env file
-    load_dotenv()
-
-    # Attempt to fetch the LINE Notify token from the .env file; if not found, then fetch from the system environment variables
-    line_token = os.getenv('LINE_NOTIFY_TOKEN') or os.environ.get('LINE_NOTIFY_TOKEN')
-
-    if line_token is None:
-        print("Please ensure the LINE_NOTIFY_TOKEN environment variable has been set.")
-    else:
-        # Code to send LINE notifications goes here
-        print("Successfully retrieved the LINE_NOTIFY_TOKEN.")
-
-    # Get the current time and format it as a string
+    notifier = LineNotifier()  # Create an instance of LineNotifier
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Create a message string with the current time and a warning message
-    message = f'[{current_time}] Warning: Someone is not wearing a helmet!'
-    
-    # Send the notification message using the LINE Notify API
-    status = send_line_notification(line_token, message)
-    
-    # Print the status code to the console to confirm the message was sent
+    message = f'[{current_time}] Warning: Safety protocol breached!'
+    status = notifier.send_notification(message)
     print(f'Notification sent, status code: {status}')
