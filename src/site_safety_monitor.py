@@ -5,49 +5,47 @@ detections = [
     {"label": "NO-Hardhat", "bbox": [100, 100, 200, 200]},
     {"label": "Person", "bbox": [150, 150, 250, 250]},
     {"label": "machinery", "bbox": [300, 300, 400, 400]},
-    {"label": "Driver Seat", "bbox": [100, 100, 200, 200]},
     # ...Other detection results
 ]
 
 def detect_danger(detections: List[Dict]) -> List[str]:
-    """
-    Detects potential dangers based on the provided detections.
-
-    This function works by classifying the detections into different categories (persons, hardhat violations, safety vest violations, machinery/vehicles, and driver seats). 
-    It then checks for hardhat and safety vest violations by seeing if there is any person detection that overlaps significantly with the violation detection. 
-    If there is, a warning is added to the list of warnings.
-    It also checks for persons that are dangerously close to machinery or vehicles by seeing if there is any person detection that is dangerously close to a machinery/vehicle detection and not significantly overlapping with a driver seat detection. 
-    If there is, a warning is added to the list of warnings.
-
-    Args:
-        detections (List[Dict]): A list of detections. Each detection is a dictionary with a 'label' and 'bbox'.
-
-    Returns:
-        List[str]: A list of warnings.
-    """
     warnings = []  # Store all warning information
 
     # Classify detections into different categories
-    persons = [d for d in detections if d["label"] == "Person"]  # All person detections
-    hardhat_violations = [d for d in detections if d["label"] == "NO-Hardhat"]  # All hardhat violation detections
-    safety_vest_violations = [d for d in detections if d["label"] == "NO-Safety Vest"]  # All safety vest violation detections
-    machinery_vehicles = [d for d in detections if d["label"] in ["machinery", "vehicle"]]  # All machinery and vehicle detections
-    driver_seats = [d for d in detections if d["label"] == "Driver Seat"]  # All driver seat detections
+    persons = [d for d in detections if d["label"] == "Person"]
+    hardhat_violations = [d for d in detections if d["label"] == "NO-Hardhat"]
+    safety_vest_violations = [d for d in detections if d["label"] == "NO-Safety Vest"]
+    machinery_vehicles = [d for d in detections if d["label"] in ["machinery", "vehicle"]]
 
     # Check for hardhat and safety vest violations
     for violation in hardhat_violations + safety_vest_violations:
-        # If there is no person detection that overlaps significantly with the violation detection, add a warning
         if not any(overlap_percentage(violation["bbox"], p["bbox"]) > 0.7 for p in persons):
             warnings.append(f"Warning: Someone is not wearing a {violation['label'][3:]}. Location: {violation['bbox']}")
 
+    # Check for persons that are drivers
+    drivers = []
+    for person in persons:
+        for mv in machinery_vehicles:
+            if overlap_percentage(person["bbox"], mv["bbox"]) > 0.7 and is_driver(person["bbox"], mv["bbox"]):
+                drivers.append(person)
+                break
+
     # Check for persons dangerously close to machinery or vehicles
     for person in persons:
-        # If there is no driver seat detection that overlaps significantly with the person detection and there is a machinery/vehicle detection that the person detection is dangerously close to, add a warning
-        if not any(overlap_percentage(person["bbox"], ds["bbox"]) > 0.7 for ds in driver_seats):
-            if any(is_dangerously_close(person["bbox"], mv["bbox"]) for mv in machinery_vehicles):
-                warnings.append(f"Warning: There is a person dangerously close to the machinery or vehicle! Location: {person['bbox']}")
+        if person not in drivers:
+            for mv in machinery_vehicles:
+                if is_dangerously_close(person["bbox"], mv["bbox"], mv["label"]):
+                    warnings.append(f"Warning: There is a person dangerously close to the machinery or vehicle! Location: {person['bbox']}")
+                    break
 
     return warnings
+
+def is_driver(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> bool:
+    person_center_y = (bbox1[1] + bbox1[3]) / 2
+    vehicle_bottom_y = bbox2[3]
+    person_height = bbox1[3] - bbox1[1]
+
+    return person_center_y > vehicle_bottom_y and abs(person_center_y - vehicle_bottom_y) >= person_height
 
 def overlap_percentage(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> float:
     """
