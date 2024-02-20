@@ -90,3 +90,7 @@ if __name__ == '__main__':
 
     # Release resources after detection is complete
     detector.release_resources()
+
+"""example
+python live_stream_tracker.py --url https://cctv6.kctmc.nat.gov.tw/ea05668e/
+"""
