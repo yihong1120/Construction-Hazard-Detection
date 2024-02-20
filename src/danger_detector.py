@@ -28,6 +28,10 @@ class DangerDetector:
         warnings = []  # Store all warning messages
         current_time = timestamp  # Current timestamp
 
+        # If there are no detections, return an empty warnings list
+        if not ids or not data:
+            return warnings
+
         # Update the last movement time for each detected vehicle or machinery
         for idx, detection in enumerate(data):
             obj_id = ids[idx]  # Use the tracking ID from the ids list (as a float)
