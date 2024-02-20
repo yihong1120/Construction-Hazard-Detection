@@ -108,8 +108,8 @@ We welcome contributions to this project. Please follow these steps:
 ## Development Roadmap
 - [x] Data collection and preprocessing.
 - [ ] Training YOLOv8 model with construction site data.
-- [ ] Developing post-processing techniques for enhanced accuracy.
-- [ ] Implementing real-time analysis and alert system.
+- [x] Developing post-processing techniques for enhanced accuracy.
+- [x] Implementing real-time analysis and alert system.
 - [ ] Testing and validation in simulated environments.
 - [ ] Deployment in actual construction sites for field testing.
 - [ ] Ongoing maintenance and updates based on user feedback.
