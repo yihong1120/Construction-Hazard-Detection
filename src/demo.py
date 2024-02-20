@@ -18,23 +18,23 @@ def main(logger, youtube_url: str, model_path: str):
         model_path (str): The file path of the YOLOv8 model to use for detection.
     """
     # Initialise the live stream detector
-    detector = LiveStreamDetector(youtube_url, model_path)
+    live_stream_detector = LiveStreamDetector(youtube_url, model_path)
 
     # Initialise the LINE notifier
     line_notifier = LineNotifier()
 
     # Initialise the DangerDetector
-    danger_detector = DangerDetector()  # Create an instance of DangerDetector once and use it properly
+    danger_detector = DangerDetector()
 
     # Use the generator function to process detections
-    for ids, datas, frame, timestamp in detector.generate_detections():
+    for ids, datas, frame, timestamp in live_stream_detector.generate_detections():
         print("Timestamp:", timestamp)
         print("IDs:", ids)
         print("Data (xyxy format):")
         for data in datas:
             print(data)
 
-        # Utilize the detection method from the DangerDetector instance
+        # Utilise the detection method from the DangerDetector instance
         warnings = danger_detector.detect_danger(timestamp, ids, datas)  # Use it here
 
         # If there are any warnings, send them via LINE Chatbot and log them
@@ -49,7 +49,7 @@ def main(logger, youtube_url: str, model_path: str):
                     logger.error(f"Failed to send notification: {message}")
     
     # Release resources after processing
-    detector.release_resources()
+    live_stream_detector.release_resources()
 
 if __name__ == '__main__':
     # Load environment variables from the specified .env file
