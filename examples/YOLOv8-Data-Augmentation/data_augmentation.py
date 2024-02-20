@@ -60,7 +60,7 @@ class DataAugmentation:
             iaa.ChangeColorTemperature((3300, 6500)),
             iaa.PerspectiveTransform(scale=(0.01, 0.1)),
             iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25)),
-            iaa.Invert(0.3),
+            # iaa.Invert(0.3),
         ]
         num_augmentations = random.randint(1, len(optional_augmentations))  # Randomly choose the number of augmentations
         chosen_augmentations = random.sample(optional_augmentations, num_augmentations)
@@ -215,4 +215,4 @@ if __name__ == '__main__':
     
     augmenter = DataAugmentation(args.train_path, args.num_augmentations)
     augmenter.augment_data()
-    augmenter.shuffle_data()
+    # augmenter.shuffle_data()
