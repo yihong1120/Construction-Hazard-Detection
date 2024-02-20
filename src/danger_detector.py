@@ -8,7 +8,7 @@ class DangerDetector:
 
     def __init__(self):
         """
-        Initializes the danger detector.
+        Initialises the danger detector.
         """
         # Dictionary to track the last movement time of each vehicle or machinery
         self.last_movement_time: Dict[float, int] = {}  # Key as float since IDs are floats
@@ -73,11 +73,11 @@ class DangerDetector:
         Returns:
             bool: True if the person is likely to be the driver, False otherwise.
         """
-        person_center_y = (bbox1[1] + bbox1[3]) / 2
+        person_centre_y = (bbox1[1] + bbox1[3]) / 2
         vehicle_bottom_y = bbox2[3]
         person_height = bbox1[3] - bbox1[1]
 
-        return person_center_y > vehicle_bottom_y and abs(person_center_y - vehicle_bottom_y) >= person_height
+        return person_centre_y > vehicle_bottom_y and abs(person_centre_y - vehicle_bottom_y) >= person_height
 
     @staticmethod
     def overlap_percentage(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> float:
