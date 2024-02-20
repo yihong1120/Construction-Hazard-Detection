@@ -1,32 +1,36 @@
 from typing import List, Dict, Tuple
+import time
 
-# Example data structure, this needs to be replaced with actual detection results
-detections = [
-    {"label": "NO-Hardhat", "bbox": [100, 100, 200, 200]},
-    {"label": "Person", "bbox": [150, 150, 250, 250]},
-    {"label": "machinery", "bbox": [300, 300, 400, 400]},
-    # ...Other detection results
-]
+# Dictionary to track the last movement time of each vehicle or machinery
+last_movement_time = {}
 
-def detect_danger(detections: List[Dict]) -> List[str]:
+def detect_danger(timestamp: int, ids: List[int], data: List[Tuple], last_movement_time: Dict[int, int]) -> List[str]:
     warnings = []  # Store all warning information
+    current_time = timestamp  # Current timestamp
+
+    # Update last movement time for each detected vehicle or machinery
+    for i, detection in enumerate(data):
+        id = ids[i]
+        if detection[-1] in [0, 7]:  # Assuming 0 and 7 are the labels for vehicle and machinery
+            if id not in last_movement_time or current_time - last_movement_time[id] > 1800:
+                last_movement_time[id] = current_time  # Update last movement time
 
     # Classify detections into different categories
-    persons = [d for d in detections if d["label"] == "Person"]
-    hardhat_violations = [d for d in detections if d["label"] == "NO-Hardhat"]
-    safety_vest_violations = [d for d in detections if d["label"] == "NO-Safety Vest"]
-    machinery_vehicles = [d for d in detections if d["label"] in ["machinery", "vehicle"]]
+    persons = [d for d in data if d[-2] == 1]  # Assuming 1 is the label for Person
+    hardhat_violations = [d for d in data if d[-2] == 2]  # Assuming 2 is the label for NO-Hardhat
+    safety_vest_violations = [d for d in data if d[-2] == 3]  # Assuming 3 is the label for NO-Safety Vest
+    machinery_vehicles = [d for d in data if d[-2] in [0, 7]]  # Assuming 0 and 7 are the labels for vehicle and machinery
 
     # Check for hardhat and safety vest violations
     for violation in hardhat_violations + safety_vest_violations:
-        if not any(overlap_percentage(violation["bbox"], p["bbox"]) > 0.7 for p in persons):
-            warnings.append(f"Warning: Someone is not wearing a {violation['label'][3:]}. Location: {violation['bbox']}")
+        if not any(overlap_percentage(violation[:4], p[:4]) > 0.7 for p in persons):
+            warnings.append(f"Warning: Someone is not wearing a {violation[-2]}. Location: {violation[:4]}")
 
     # Check for persons that are drivers
     drivers = []
     for person in persons:
         for mv in machinery_vehicles:
-            if overlap_percentage(person["bbox"], mv["bbox"]) > 0.7 and is_driver(person["bbox"], mv["bbox"]):
+            if overlap_percentage(person[:4], mv[:4]) > 0.7 and is_driver(person[:4], mv[:4]):
                 drivers.append(person)
                 break
 
@@ -34,9 +38,11 @@ def detect_danger(detections: List[Dict]) -> List[str]:
     for person in persons:
         if person not in drivers:
             for mv in machinery_vehicles:
-                if is_dangerously_close(person["bbox"], mv["bbox"], mv["label"]):
-                    warnings.append(f"Warning: There is a person dangerously close to the machinery or vehicle! Location: {person['bbox']}")
-                    break
+                id = ids[data.index(mv)]
+                if current_time - last_movement_time[id] <= 1800:  # Check if the vehicle/machinery has moved in the last 30 minutes
+                    if is_dangerously_close(person[:4], mv[:4], mv[-2]):
+                        warnings.append(f"Warning: There is a person dangerously close to the machinery or vehicle! Location: {person[:4]}")
+                        break
 
     return warnings
 
@@ -109,8 +115,17 @@ def is_dangerously_close(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int
 
 # Main execution block
 if __name__ == '__main__':
+    # Example usage with timestamp, ids, and data
+    timestamp = 1582123456
+    ids = [3, 12, 18]
+    data = [
+        (706.87, 445.07, 976.32, 1073.6, 3, 0.91, 0),
+        (0.45513, 471.77, 662.03, 1071.4, 12, 0.75853, 7),
+        (1042.7, 638.5, 1077.5, 731.98, 18, 0.56060, 0)
+    ]
+    
     # Use the detection function to check for dangers
-    warnings = detect_danger(detections)
+    warnings = detect_danger(timestamp, ids, data, last_movement_time)
     
     # Print out any warnings
     for warning in warnings:
