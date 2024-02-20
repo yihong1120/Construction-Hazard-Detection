@@ -1,5 +1,5 @@
 import unittest
-from src.site_safety_monitor import detect_danger, is_too_close
+from danger_detector import detect_danger, is_too_close
 
 class TestSiteSafetyMonitor(unittest.TestCase):
     """
