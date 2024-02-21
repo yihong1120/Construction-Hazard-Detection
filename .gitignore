@@ -10,4 +10,7 @@
 !assets/sweep.yaml
 !assets/flowcharts/site_safety_monitor_en.png
 !assets/flowcharts/site_safety_monitor_zh.png
+!examples/YOLOv8-Fine-Tune/dataset/**
+!models/yolov8n.pt
+!models/best_yolov8n.pt
 test.py
