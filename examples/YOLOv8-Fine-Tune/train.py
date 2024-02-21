@@ -1,12 +1,7 @@
 import argparse
 import torch
-from sahi.utils.yolov8 import download_yolov8s_model
 from sahi import AutoDetectionModel
-from sahi.utils.cv import read_image
-from sahi.utils.file import download_from_url
-from sahi.predict import get_prediction, get_sliced_prediction, predict
-from pathlib import Path
-from IPython.display import Image
+from sahi.predict import get_sliced_prediction
 from typing import Any, Optional
 from ultralytics import YOLO
 
@@ -128,18 +123,27 @@ class YOLOModelHandler:
             model_type='yolov8',
             model_path=yolov8_model_path,
             confidence_threshold=0.3,
-            # device="cpu",  # or 'cuda:0'
+            # device="cpu", or 'cuda:0'
         )
         
-        # With an image path
-        result = get_prediction("demo_data/small-vehicles1.jpeg", sahi_model)
+        # With an image path, get the sliced prediction
+        result = get_sliced_prediction(
+            image_path,
+            sahi_model,
+            slice_height=640,
+            slice_width=640,
+            overlap_height_ratio=0.2,
+            overlap_width_ratio=0.2
+        )
 
         # Visualise the prediction results
-        result.export_visuals(export_dir="demo_data/")
-        Image("demo_data/prediction_visual.png")
+        result.export_visuals(export_dir="./")
+
+        # Access the object prediction list
+        object_prediction_list = result.object_prediction_list
 
         # Return the SAHI formatted results
-        return result
+        return object_prediction_list
 
     def export_model(self, export_format: str = "onnx") -> str:
         """
@@ -189,8 +193,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_name",
         type=str,
-        default="yolov8n.pt",
-        help="Name of the YOLO model file",
+        default="../../models/best_yolov8n.pt",
+        help="Name or path of the YOLO model file",
     )
     parser.add_argument(
         "--export_format",
@@ -209,6 +213,12 @@ if __name__ == "__main__":
         type=str,
         default="model.pt",
         help="Path to save the trained model in .pt format",
+    )
+    parser.add_argument(
+        "--sahi_image_path",
+        type=str,
+        default="../../assets/IMG_1091.PNG",
+        help="Path to the image file for SAHI prediction",
     )
 
     args = parser.parse_args()
@@ -232,3 +242,7 @@ if __name__ == "__main__":
     print("Prediction results:", results)
     print(f"{args.export_format.upper()} model exported to:", export_path)
     print(f"Model saved to: {args.pt_path}")
+
+    # SAHI Prediction
+    sahi_result = handler.predict_image_sahi(args.model_name, args.sahi_image_path)
+    print("SAHI Prediction Results:", sahi_result)
