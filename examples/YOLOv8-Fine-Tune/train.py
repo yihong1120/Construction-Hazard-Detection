@@ -1,5 +1,12 @@
 import argparse
 import torch
+from sahi.utils.yolov8 import download_yolov8s_model
+from sahi import AutoDetectionModel
+from sahi.utils.cv import read_image
+from sahi.utils.file import download_from_url
+from sahi.predict import get_prediction, get_sliced_prediction, predict
+from pathlib import Path
+from IPython.display import Image
 from typing import Any, Optional
 from ultralytics import YOLO
 
@@ -98,6 +105,41 @@ class YOLOModelHandler:
             raise RuntimeError("The model is not loaded properly.")
         # Predict on an image
         return self.model(image_path)
+
+    @staticmethod
+    def predict_image_sahi(yolov8_model_path: str, image_path: str) -> Any:
+        """
+        Makes a prediction using the YOLO model on the specified image with SAHI post-processing.
+
+        Args:
+            image_path (str): The path to the image file for prediction.
+
+        Returns:
+            The prediction results with SAHI post-processing.
+
+        Raises:
+            RuntimeError: If the model is not loaded properly before prediction.
+        """
+        if yolov8_model_path is None:
+            raise RuntimeError("The model is not loaded properly.")
+
+        # Convert YOLO model to SAHI model format, adjust according to your actual YOLO version
+        sahi_model = AutoDetectionModel.from_pretrained(
+            model_type='yolov8',
+            model_path=yolov8_model_path,
+            confidence_threshold=0.3,
+            # device="cpu",  # or 'cuda:0'
+        )
+        
+        # With an image path
+        result = get_prediction("demo_data/small-vehicles1.jpeg", sahi_model)
+
+        # Visualise the prediction results
+        result.export_visuals(export_dir="demo_data/")
+        Image("demo_data/prediction_visual.png")
+
+        # Return the SAHI formatted results
+        return result
 
     def export_model(self, export_format: str = "onnx") -> str:
         """
