@@ -45,26 +45,33 @@ This system is designed for real-time detection and alerting of hazards at const
 2. **Camera Installation**: Position the camera strategically to cover high-risk areas where heavy loads and steel pipes are handled.
 
 ### Training the Model
-1. **Gathering Data**: Collect images or videos of construction sites, focusing on various types of hazards such as heavy loads, steel pipes, and human presence.
 
-2. **Data Annotation**: Annotate the collected data to identify and label the hazards and human figures accurately.
+#### Gathering Data
+Collect images or videos of construction sites, focusing on various hazards such as heavy loads, steel pipes, and human presence. For examples of data augmentation techniques, visit [YOLOv8 Data Augmentation Examples](examples/YOLOv8-Data-Augmentation).
 
-3. **Training YOLOv8**: Use the annotated dataset to train the YOLOv8 model. This can be done using the following command:
-   ```
-   python train.py --img 640 --batch 16 --epochs 50 --data dataset.yaml --weights yolov8n.pt
-   ```
-   Adjust the parameters based on your dataset and hardware capabilities.
+#### Data Annotation
+Annotate your data to accurately identify and label hazards and human figures. Detailed annotation guidelines are available in the dataset documentation.
+
+#### Training YOLOv8
+Use the annotated dataset to train the YOLOv8 model. Execute the following command, adjusting parameters based on your dataset and hardware capabilities:
+```
+python train.py --model_name 'yolov8n.pt' --epochs 100 --data_config 'dataset/data.yaml'
+```
+For fine-tuning guidelines and advanced training options, refer to [YOLOv8 Fine-Tune Examples](examples/YOLOv8-Fine-Tune).
 
 ### Post-processing and Deployment
-1. **Applying Post-processing**: After training, apply post-processing techniques to enhance the model's accuracy in differentiating between hazardous and non-hazardous conditions.
 
-2. **Model Integration**: Integrate the trained model with a software that can process the live feed from the camera.
+#### Applying Post-processing
+After training, enhance the model's accuracy with post-processing techniques. For post-processing methods and evaluation strategies, see our detailed guide in [YOLOv8 Evaluation Examples](examples/YOLOv8-Evaluation).
 
-3. **Running the System**: Start the system using the following command:
-   ```
-   python detect.py --source 0 --weights best.pt --conf-thres 0.4
-   ```
-   This command will initiate the detection process using your camera feed (`--source 0` refers to the default camera; change it if necessary). The `--weights` option should point to your trained model, and `--conf-thres` sets the confidence threshold for detection.
+#### Evaluate YOLOv8
+Evaluating the performance of your YOLOv8 model is crucial for ensuring its effectiveness in real-world scenarios. We provide two main evaluation strategies: direct YOLOv8 model evaluation and combined SAHI+YOLOv8 evaluation for improved detection in complex scenes. To understand how to apply these methods and interpret the results, visit [YOLOv8 Evaluation Examples](examples/YOLOv8-Evaluation).
+
+#### Model Integration and System Running
+Integrate the trained model with software that can process the live feed from the camera. Start the system with the following command, which initiates the detection process using your camera feed:
+```
+python src/demo.py
+```
 
 ### Real-time Monitoring and Alerting
 1. **Monitoring**: The system will continuously analyse the live feed from the construction site, detecting any potential hazards.
@@ -107,10 +114,10 @@ We welcome contributions to this project. Please follow these steps:
 
 ## Development Roadmap
 - [x] Data collection and preprocessing.
-- [ ] Training YOLOv8 model with construction site data.
+- [x] Training YOLOv8 model with construction site data.
 - [x] Developing post-processing techniques for enhanced accuracy.
 - [x] Implementing real-time analysis and alert system.
-- [ ] Testing and validation in simulated environments.
+- [x] Testing and validation in simulated environments.
 - [ ] Deployment in actual construction sites for field testing.
 - [ ] Ongoing maintenance and updates based on user feedback.
 
