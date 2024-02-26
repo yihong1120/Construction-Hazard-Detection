@@ -39,7 +39,7 @@ class LiveStreamDetector:
             timestamp = now.timestamp()  # Convert the datetime to a Unix timestamp
 
             # Run YOLOv8 tracking on the frame, maintaining tracks between frames
-            results = self.model.track(frame, persist=True)
+            results = self.model.track(source = frame, persist=True)
 
             # Check if there are any detections and if so, extract their IDs and data
             if results[0].boxes is not None and len(results[0].boxes) > 0:
