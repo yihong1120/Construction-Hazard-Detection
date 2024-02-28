@@ -13,55 +13,45 @@ class DangerDetector:
         # Dictionary to track the last movement time of each vehicle or machinery
         self.last_movement_time: Dict[float, int] = {}  # Key as float since IDs are floats
 
-    def detect_danger(self, timestamp: int, ids: List[float], data: List[List[float]]) -> List[str]:
+    def detect_danger(self, timestamp: int, datas: List[List[float]]) -> List[str]:
         """
-        Detect potential safety hazards based on the given detection data and timestamps.
+        Detects potential safety violations in a construction site.
+
+        This function checks for two types of safety violations:
+        1. Workers not wearing hardhats or safety vests.
+        2. Workers dangerously close to machinery or vehicles.
 
         Args:
-            timestamp (int): The current timestamp for when the detection was made.
-            ids (List[float]): A list of unique identifiers for each detected object, in floating-point format.
-            data (List[List[float]]): A list of detection data, where each detection is represented as a list containing bounding box coordinates, object ID, confidence score, and class label.
+            timestamp (int): The current timestamp.
+            datas (List[List[float]]): A list of detections. Each detection is a list that includes
+                the bounding box coordinates, confidence score, and class label.
 
         Returns:
-            List[str]: A list of warning messages for any detected safety violations.
+            List[str]: A list of warning messages for detected safety violations.
         """
         warnings = []  # Store all warning messages
-        current_time = timestamp  # Current timestamp
-
-        # If there are no detections, return an empty warnings list
-        if not ids or not data:
-            return warnings
-
-        # Update the last movement time for each detected vehicle or machinery
-        for idx, detection in enumerate(data):
-            obj_id = ids[idx]  # Use the tracking ID from the ids list (as a float)
-            class_label = detection[6]  # Class label is at the end of each detection list
-            # Assume class labels 8.0 and 9.0 correspond to machinery and vehicles, respectively
-            if class_label in [8.0, 9.0]:
-                if obj_id not in self.last_movement_time or current_time - self.last_movement_time[obj_id] > 1800:
-                    self.last_movement_time[obj_id] = current_time  # Update the last movement time
 
         # Classify detected objects
-        persons = [d for d in data if d[6] == 5.0]  # Persons
-        hardhat_violations = [d for d in data if d[6] == 2.0]  # No hardhat
-        safety_vest_violations = [d for d in data if d[6] == 4.0]  # No safety vest
-        machinery_vehicles = [d for d in data if d[6] in [8.0, 9.0]]  # Machinery and vehicles
+        persons = [d for d in datas if d[5] == 5.0]  # Persons
+        hardhat_violations = [d for d in datas if d[5] == 2.0]  # No hardhat
+        safety_vest_violations = [d for d in datas if d[5] == 4.0]  # No safety vest
+        machinery_vehicles = [d for d in datas if d[5] in [8.0, 9.0]]  # Machinery and vehicles
 
         # Check for hardhat and safety vest violations
         for violation in hardhat_violations + safety_vest_violations:
-            label = 'NO-Hardhat' if violation[6] == 2.0 else 'NO-Safety Vest'
-            if not any(self.overlap_percentage(violation[:4], p[:4]) > 0.7 for p in persons):
+            label = 'NO-Hardhat' if violation[5] == 2.0 else 'NO-Safety Vest'
+            if not any(self.overlap_percentage(violation[:4], p[:4]) > 0.5 for p in persons):  # Assuming a reasonable overlap threshold
                 warnings.append(f"Warning: Someone is not wearing a {label}. Location: {violation[:4]}")
 
         # Check if anyone is dangerously close to machinery or vehicles
         for person in persons:
             for mv in machinery_vehicles:
-                obj_id = ids[data.index(mv)]  # Obtain the machinery or vehicle ID from data (as a float)
-                if current_time - self.last_movement_time.get(obj_id, 0) <= 1800:
-                    label = 'machinery' if mv[6] == 8.0 else 'vehicle'
-                    if self.is_dangerously_close(person[:4], mv[:4], label):
-                        warnings.append(f"Warning: There is a person dangerously close to the {label}! Location: {person[:4]}")
-                        break
+                # Determine the label based on the class_label
+                label = 'machinery' if mv[5] == 8.0 else 'vehicle'  # mv[5] contains the class label
+                
+                if self.is_dangerously_close(person[:4], mv[:4], label):  # Pass label as the third argument
+                    warnings.append(f"Warning: There is a person dangerously close to the {label}! Location: {person[:4]}")
+                    break  # Stop checking if one warning is already added for this person
 
         return warnings
 
@@ -141,12 +131,11 @@ class DangerDetector:
 if __name__ == "__main__":
     detector = DangerDetector()
     timestamp = 1582123456
-    ids = [3.0, 12.0, 18.0]
     data = [
         [706.87, 445.07, 976.32, 1073.6, 3, 0.91, 0],
         [0.45513, 471.77, 662.03, 1071.4, 12, 0.75853, 7],
         [1042.7, 638.5, 1077.5, 731.98, 18, 0.56060, 0]
     ]
-    warnings = detector.detect_danger(timestamp, ids, data)
+    warnings = detector.detect_danger(timestamp, data)
     for warning in warnings:
         print(warning)
