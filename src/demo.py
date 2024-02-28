@@ -28,7 +28,6 @@ def main(logger, youtube_url: str, model_path: str):
     danger_detector = DangerDetector()
 
     # Initialise the last_notification_time variable (set to 300 seconds ago, without microseconds)
-    # Assuming timestamp is given in seconds (UNIX timestamp)
     last_notification_time = int(time.time()) - 300
 
     # Use the generator function to process detections
