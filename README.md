@@ -57,7 +57,7 @@ Use the annotated dataset to train the YOLOv8 model. Execute the following comma
 ```
 python train.py --model_name 'yolov8n.pt' --epochs 100 --data_config 'dataset/data.yaml'
 ```
-For fine-tuning guidelines and advanced training options, refer to [YOLOv8 Fine-Tune Examples](examples/YOLOv8-Fine-Tune).
+For training guidelines and advanced training options, refer to [YOLOv8 Train Examples](examples/YOLOv8-Train).
 
 ### Post-processing and Deployment
 

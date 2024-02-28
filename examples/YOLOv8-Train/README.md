@@ -1,8 +1,8 @@
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
-# YOLOv8 Fine-Tuning Example
+# YOLOv8 Train Example
 
-This repository contains examples and scripts for fine-tuning YOLOv8 object detection models. It is particularly aimed at enhancing the model's performance for specific datasets or applications.
+This repository contains examples and scripts for training YOLOv8 object detection models. It is particularly aimed at enhancing the model's performance for specific datasets or applications.
 
 ## Usage
 
@@ -42,7 +42,7 @@ python train.py --model_name 'yolov8n.pt' --predict_image 'path/to/image.jpg'
 
 ## Features
 
-- **Fine-Tuning**: Improve your model's performance on specific datasets.
+- **Training**: Improve your model's performance on specific datasets.
 - **Model Training**: Train YOLO models from scratch or using pre-trained weights.
 - **Model Exporting**: Export your trained models to different formats for deployment.
 - **Model Prediction**: Easily predict using your trained models on new images.

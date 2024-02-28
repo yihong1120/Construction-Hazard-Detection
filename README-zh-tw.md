@@ -59,7 +59,7 @@
 ```
 python train.py --model_name 'yolov8n.pt' --epochs 100 --data_config 'dataset/data.yaml'
 ```
-有關細微調整指南和進階訓練選項，請參考 [YOLOv8 細微調整範例](examples/YOLOv8-Fine-Tune)。
+有訓練指南和進階訓練選項，請參考 [YOLOv8 訓練範例](examples/YOLOv8-Train)。
 
 ### 後處理和部署
 
