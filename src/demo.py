@@ -4,9 +4,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from line_notifier import LineNotifier
 from monitor_logger import setup_logging
-from live_stream_detection_SAHI_YOLOv8 import LiveStreamDetector
+from live_stream_detection import LiveStreamDetector
 from danger_detector import DangerDetector
 from datetime import datetime, timedelta
+import time
 
 def main(logger, youtube_url: str, model_path: str):
     """
@@ -26,31 +27,29 @@ def main(logger, youtube_url: str, model_path: str):
     # Initialise the DangerDetector
     danger_detector = DangerDetector()
 
-    # Initialise the last_notification_time variable
-    last_notification_time = datetime.now() - timedelta(seconds=60)  # Set to 60 seconds ago
+    # Initialise the last_notification_time variable (set to 300 seconds ago, without microseconds)
+    # Assuming timestamp is given in seconds (UNIX timestamp)
+    last_notification_time = int(time.time()) - 300
 
     # Use the generator function to process detections
     for datas, frame, timestamp in live_stream_detector.generate_detections():
-        print("Timestamp:", timestamp)
-        print("Data (xyxy format):")
-        print(datas)
+        # Convert UNIX timestamp to datetime object and format it as string
+        detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        warnings = danger_detector.detect_danger(timestamp, datas)
 
-        # Utilise the detection method from the DangerDetector instance
-        warnings = danger_detector.detect_danger(timestamp, datas)  # Use it here
-
-        # If there are any warnings, check if a minute has passed since the last notification
-        if warnings and (datetime.now() - last_notification_time).total_seconds() >= 60:
-            for warning in warnings:
-                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                message = f'[{current_time}] {warning}'
+        # If there are any new warnings and sufficient time has passed since the last notification
+        if warnings and (timestamp - last_notification_time) > 300:
+            unique_warnings = set(warnings)  # Remove duplicates
+            for warning in unique_warnings:
+                message = f'[{detection_time}] {warning}'
                 status = line_notifier.send_notification(message)
                 if status == 200:
                     logger.warning(f"Notification sent successfully: {message}")
                 else:
                     logger.error(f"Failed to send notification: {message}")
-            
-            # Update the last notification time
-            last_notification_time = datetime.now()
+
+            # Update the last_notification_time to the current time
+            last_notification_time = timestamp #int(time.time())
 
     # Release resources after processing
     live_stream_detector.release_resources()
