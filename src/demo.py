@@ -4,9 +4,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from line_notifier import LineNotifier
 from monitor_logger import setup_logging
-from live_stream_tracker import LiveStreamDetector
+from live_stream_detection_SAHI_YOLOv8 import LiveStreamDetector
 from danger_detector import DangerDetector
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def main(logger, youtube_url: str, model_path: str):
     """
@@ -26,19 +26,20 @@ def main(logger, youtube_url: str, model_path: str):
     # Initialise the DangerDetector
     danger_detector = DangerDetector()
 
+    # Initialise the last_notification_time variable
+    last_notification_time = datetime.now() - timedelta(seconds=60)  # Set to 60 seconds ago
+
     # Use the generator function to process detections
-    for ids, datas, frame, timestamp in live_stream_detector.generate_detections():
+    for datas, frame, timestamp in live_stream_detector.generate_detections():
         print("Timestamp:", timestamp)
-        print("IDs:", ids)
         print("Data (xyxy format):")
-        for data in datas:
-            print(data)
+        print(datas)
 
         # Utilise the detection method from the DangerDetector instance
-        warnings = danger_detector.detect_danger(timestamp, ids, datas)  # Use it here
+        warnings = danger_detector.detect_danger(timestamp, datas)  # Use it here
 
-        # If there are any warnings, send them via LINE Chatbot and log them
-        if warnings:
+        # If there are any warnings, check if a minute has passed since the last notification
+        if warnings and (datetime.now() - last_notification_time).total_seconds() >= 60:
             for warning in warnings:
                 current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 message = f'[{current_time}] {warning}'
@@ -47,7 +48,10 @@ def main(logger, youtube_url: str, model_path: str):
                     logger.warning(f"Notification sent successfully: {message}")
                 else:
                     logger.error(f"Failed to send notification: {message}")
-    
+            
+            # Update the last notification time
+            last_notification_time = datetime.now()
+
     # Release resources after processing
     live_stream_detector.release_resources()
 

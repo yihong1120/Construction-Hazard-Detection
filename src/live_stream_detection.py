@@ -90,5 +90,5 @@ if __name__ == '__main__':
     detector.release_resources()
 
 """example
-python live_stream_detection(SAHI+YOLOv8).py --url https://cctv6.kctmc.nat.gov.tw/ea05668e/
+python live_stream_detection_SAHI_YOLOv8.py --url https://cctv6.kctmc.nat.gov.tw/ea05668e/
 """

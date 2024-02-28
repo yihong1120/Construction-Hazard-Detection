@@ -5,6 +5,7 @@
 *.jpeg
 *.yaml
 *.pt
+/.env
 !assets/images/images(6).png
 !assets/images/sinya-1706871806.png
 !assets/sweep.yaml
@@ -14,3 +15,4 @@
 !models/yolov8n.pt
 !models/best_yolov8n.pt
 test.py
+__pycache__
