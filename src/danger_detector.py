@@ -39,9 +39,14 @@ class DangerDetector:
 
         # Check for hardhat and safety vest violations
         for violation in hardhat_violations + safety_vest_violations:
+            # Determine the type of violation based on the class label
             label = 'NO-Hardhat' if violation[5] == 2.0 else 'NO-Safety Vest'
-            if not any(self.overlap_percentage(violation[:4], p[:4]) > 0.5 for p in persons):  # Assuming a reasonable overlap threshold
-                warnings.append(f"Warning: Someone is not wearing a {label}. Location: {violation[:4]}")
+            # Check if there is no significant overlap with any person detected
+            if not any(self.overlap_percentage(violation[:4], p[:4]) > 0.5 for p in persons):
+                if label == 'NO-Hardhat':
+                    warnings.append(f"Warning: Someone is not wearing a Hardhat!")
+                else:  # label == 'NO-Safety Vest'
+                    warnings.append(f"Warning: Someone is not wearing a Safety Vest!")
 
         # Check if anyone is dangerously close to machinery or vehicles
         for person in persons:
@@ -50,7 +55,7 @@ class DangerDetector:
                 label = 'machinery' if mv[5] == 8.0 else 'vehicle'  # mv[5] contains the class label
                 
                 if self.is_dangerously_close(person[:4], mv[:4], label):  # Pass label as the third argument
-                    warnings.append(f"Warning: There is a person dangerously close to the {label}! Location: {person[:4]}")
+                    warnings.append(f"Warning: There is a person dangerously close to the {label}!")
                     break  # Stop checking if one warning is already added for this person
 
         return warnings
