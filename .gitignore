@@ -5,6 +5,7 @@
 *.jpeg
 *.yaml
 *.pt
+*.log
 /.env
 !assets/images/images(6).png
 !assets/images/sinya-1706871806.png
@@ -16,3 +17,4 @@
 !models/best_yolov8n.pt
 test.py
 __pycache__
+**/logs
