@@ -5,7 +5,7 @@ from line_notifier import LineNotifier
 from monitor_logger import setup_logging
 from live_stream_detection import LiveStreamDetector
 from danger_detector import DangerDetector
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 
 def main(logger, video_url: str, model_path: str):
