@@ -4,7 +4,7 @@ import datetime
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 from typing import Generator, Tuple, List
-import time  # Import time for sleeping between retries when initializing the stream.
+import time
 
 class LiveStreamDetector:
     """
