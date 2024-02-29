@@ -1,5 +1,4 @@
 import argparse
-import os
 from pathlib import Path
 from dotenv import load_dotenv
 from line_notifier import LineNotifier
@@ -9,17 +8,17 @@ from danger_detector import DangerDetector
 from datetime import datetime, timedelta
 import time
 
-def main(logger, youtube_url: str, model_path: str):
+def main(logger, video_url: str, model_path: str):
     """
     Main execution function that detects hazards, sends notifications, and logs warnings.
 
     Args:
         logger (logging.Logger): A logger instance for logging messages.
-        youtube_url (str): The URL of the YouTube live stream to monitor.
+        video_url (str): The URL of the live stream to monitor.
         model_path (str): The file path of the YOLOv8 model to use for detection.
     """
     # Initialise the live stream detector
-    live_stream_detector = LiveStreamDetector(youtube_url, model_path)
+    live_stream_detector = LiveStreamDetector(video_url, model_path)
 
     # Initialise the LINE notifier
     line_notifier = LineNotifier()
@@ -34,6 +33,8 @@ def main(logger, youtube_url: str, model_path: str):
     for datas, frame, timestamp in live_stream_detector.generate_detections():
         # Convert UNIX timestamp to datetime object and format it as string
         detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        print(detection_time)
+        
         warnings = danger_detector.detect_danger(timestamp, datas)
 
         # If there are any new warnings and sufficient time has passed since the last notification
@@ -48,7 +49,7 @@ def main(logger, youtube_url: str, model_path: str):
                     logger.error(f"Failed to send notification: {message}")
 
             # Update the last_notification_time to the current time
-            last_notification_time = timestamp #int(time.time())
+            last_notification_time = timestamp
 
     # Release resources after processing
     live_stream_detector.release_resources()
@@ -59,7 +60,7 @@ if __name__ == '__main__':
     load_dotenv(dotenv_path=env_path)
 
     parser = argparse.ArgumentParser(description='Monitor a live stream for safety hazards using YOLOv8.')
-    parser.add_argument('--url', type=str, required=True, help='YouTube video URL for monitoring')
+    parser.add_argument('--url', type=str, required=True, help='Video URL for monitoring')
     parser.add_argument('--model', type=str, default='../models/yolov8n.pt', help='Path to the YOLOv8 model')
     args = parser.parse_args()
 
