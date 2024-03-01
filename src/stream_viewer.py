@@ -57,6 +57,6 @@ class StreamViewer:
 
 if __name__ == '__main__':
     # Replace 'vide0_url' with your stream URL.
-    video_url = "rtsp://admin:password@111.70.20.14:554/sub_2"
+    video_url = "https://cctv4.kctmc.nat.gov.tw/50204bfc/"
     viewer = StreamViewer(video_url)
     viewer.display_stream()
