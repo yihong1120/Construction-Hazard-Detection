@@ -47,43 +47,54 @@ class LiveStreamDetector:
 
     def generate_detections(self) -> Generator[Tuple[List, cv2.Mat, float], None, None]:
         """
-        Generates detections from the video stream.
+        Generates detections from the video stream, capturing frames every five seconds.
 
         Yields:
             A tuple containing detection data, the current frame, and the timestamp for each frame.
         """
+        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=5)  # Ensure the first frame is processed.
+
         while True:
             if not self.cap.isOpened():
-                self.initialise_stream()  # Reinitialise if the stream is closed.
+                self.initialise_stream()
             success, frame = self.cap.read()
             if not success:
                 print("Failed to read frame, trying to reinitialise stream.")
-                self.cap.release()  # Make sure to release before reinitializing.
+                self.cap.release()
                 self.initialise_stream()
-                continue  # Skip the current iteration and try again.
+                continue
 
-            now = datetime.datetime.now()
-            timestamp = now.timestamp()
+            # Convert frame to RGB as SAHI expects RGB images
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            # Perform detection using SAHI.
-            result = get_sliced_prediction(
-                frame,
-                self.sahi_model,
-                slice_height=640,
-                slice_width=640,
-                overlap_height_ratio=0.2,
-                overlap_width_ratio=0.2
-            )
+            # Process frames every five seconds
+            current_time = datetime.datetime.now()
+            if (current_time - last_process_time).total_seconds() >= 5:
+                last_process_time = current_time  # 更新最后处理时间
+                timestamp = current_time.timestamp()
 
-            # Process object predictions in YOLOv8 format.
-            datas = []
-            for object_prediction in result.object_prediction_list:
-                label = object_prediction.category.id  # Use category ID for YOLOv8 format.
-                x1, y1, x2, y2 = object_prediction.bbox.to_voc_bbox()  # Convert to xyxy format.
-                confidence = object_prediction.score.value
-                datas.append([x1, y1, x2, y2, confidence, label])  # YOLOv8 format.
+                # Generate predictions for the current frame
+                result = get_sliced_prediction(
+                    frame_rgb,
+                    self.sahi_model,
+                    slice_height=256,
+                    slice_width=256,
+                    overlap_height_ratio=0.2,
+                    overlap_width_ratio=0.2
+                )
 
-            yield datas, frame, timestamp
+                # Export visuals for debugging and interpretation
+                result.export_visuals(export_dir="demo_data/")
+
+                # Compile detection data in YOLOv8 format
+                datas = []
+                for object_prediction in result.object_prediction_list:
+                    label = object_prediction.category.id
+                    x1, y1, x2, y2 = object_prediction.bbox.to_voc_bbox()
+                    confidence = object_prediction.score.value
+                    datas.append([x1, y1, x2, y2, confidence, label])
+
+                yield datas, frame, timestamp
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
