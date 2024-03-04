@@ -59,8 +59,9 @@ class LiveStreamDetector:
                 self.initialise_stream()
             success, frame = self.cap.read()
             if not success:
+                self.release_resources()
                 print("Failed to read frame, trying to reinitialise stream.")
-                self.cap.release()
+                # self.cap.release()
                 self.initialise_stream()
                 continue
 
@@ -77,10 +78,10 @@ class LiveStreamDetector:
                 result = get_sliced_prediction(
                     frame_rgb,
                     self.sahi_model,
-                    slice_height=256,
-                    slice_width=256,
-                    overlap_height_ratio=0.2,
-                    overlap_width_ratio=0.2
+                    slice_height=384,
+                    slice_width=384,
+                    overlap_height_ratio=0.3,
+                    overlap_width_ratio=0.3
                 )
 
                 # Export visuals for debugging and interpretation
