@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import shutil
 import random
 from pathlib import Path
+from tqdm import tqdm
 
 class DataAugmentation:
     """ 
@@ -100,10 +101,12 @@ class DataAugmentation:
         """
         Perform data augmentation on all images in the dataset.
         """
-        image_paths = (path for path in self.train_path.glob('images/*'))
+        image_paths = list(self.train_path.glob('images/*'))
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            executor.map(self.augment_image, image_paths)
+        with tqdm(total=len(image_paths), desc="Augmenting Images") as pbar:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                for _ in executor.map(self.augment_image, image_paths):
+                    pbar.update()
 
     @staticmethod
     def read_label_file(label_path: Path, image_shape: Tuple[int, int, int]) -> List[BoundingBox]:
@@ -209,7 +212,7 @@ class DataAugmentation:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
-    parser.add_argument('--train_path', type=str, default='../dataset_aug/train', help='Path to the training data')
+    parser.add_argument('--train_path', type=str, default='./dataset_aug/train', help='Path to the training data')
     parser.add_argument('--num_augmentations', type=int, default=30, help='Number of augmentations per image')
     args = parser.parse_args()
     
