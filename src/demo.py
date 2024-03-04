@@ -1,4 +1,4 @@
-import argparse
+import os
 from pathlib import Path
 from dotenv import load_dotenv
 from line_notifier import LineNotifier
@@ -61,11 +61,18 @@ if __name__ == '__main__':
     env_path = Path('../.env')  # Adjust if your .env file is located elsewhere
     load_dotenv(dotenv_path=env_path)
 
-    parser = argparse.ArgumentParser(description='Monitor a live stream for safety hazards using YOLOv8.')
-    parser.add_argument('--url', type=str, required=True, help='Video URL for monitoring')
-    parser.add_argument('--model', type=str, default='../models/best_yolov8n.pt', help='Path to the YOLOv8 model')
-    parser.add_argument('--image_path', type=str, default='demo_data/prediction_visual.png', help='Path to the image for notifications, set to None for no image')
-    args = parser.parse_args()
+    # Attempt to get the configuration from the .env file; if not found, check system environment variables
+    video_url = os.getenv('VIDEO_URL') or os.environ.get('VIDEO_URL')
+    if not video_url:  # If video_url is still None or empty
+        video_url = input('Please enter the video URL: ')
+
+    model_path = os.getenv('MODEL_PATH') or os.environ.get('MODEL_PATH')
+    if not model_path:  # If model_path is still None or empty
+        model_path = input('Please enter the path to the YOLOv8 model: ')
+
+    image_path = os.getenv('IMAGE_PATH') or os.environ.get('IMAGE_PATH')
+    if not image_path:  # If image_path is still None or empty
+        image_path = input('Please enter the path to the image for notifications (or press enter to skip): ') or 'demo_data/prediction_visual.png'
 
     logger = setup_logging()  # Set up logging
-    main(logger, args.url, args.model, args.image_path)
+    main(logger, video_url, model_path, image_path)
