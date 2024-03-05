@@ -223,4 +223,4 @@ if __name__ == '__main__':
     
     augmenter = DataAugmentation(args.train_path, args.num_augmentations)
     augmenter.augment_data()
-    # augmenter.shuffle_data()
+    augmenter.shuffle_data()
