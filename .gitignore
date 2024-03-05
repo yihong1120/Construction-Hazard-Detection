@@ -18,3 +18,4 @@
 test.py
 __pycache__
 **/logs
+!assets/images/**
