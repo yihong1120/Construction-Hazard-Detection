@@ -99,10 +99,15 @@ class DataAugmentation:
 
     def augment_data(self):
         """
-        Perform data augmentation on all images in the dataset.
+        Perform data augmentation on all image files in the dataset, ignoring non-image files.
         """
-        image_paths = list(self.train_path.glob('images/*'))
-
+        # Define allowed image extensions
+        allowed_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif']
+        
+        # Filter out files that do not have the allowed image extensions
+        image_paths = [p for p in self.train_path.glob('images/*') if p.suffix.lower() in allowed_extensions]
+        
+        # Perform augmentation on filtered image files
         with tqdm(total=len(image_paths), desc="Augmenting Images") as pbar:
             with ThreadPoolExecutor(max_workers=5) as executor:
                 for _ in executor.map(self.augment_image, image_paths):
@@ -213,7 +218,7 @@ class DataAugmentation:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
     parser.add_argument('--train_path', type=str, default='./dataset_aug/train', help='Path to the training data')
-    parser.add_argument('--num_augmentations', type=int, default=30, help='Number of augmentations per image')
+    parser.add_argument('--num_augmentations', type=int, default=5, help='Number of augmentations per image')
     args = parser.parse_args()
     
     augmenter = DataAugmentation(args.train_path, args.num_augmentations)
