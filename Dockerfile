@@ -1,25 +1,23 @@
-# Use the official Python runtime as a parent image
-FROM python:3.11-slim
+# Use an official PyTorch image with CUDA 11.8 as the base image
+FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
-# Set the working directory in the container to /app
+# Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements.txt file into the container at /app
-COPY requirements.txt ./
+# Copy the current directory contents into the container at /app
+COPY . /app
 
-# Install any dependencies specified in requirements.txt
+# Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application's code into the container at /app
-COPY . .
+# Make port 80 available to the world outside this container
+EXPOSE 80
 
-# Set environment variables
-# Replace 'your_line_notify_token' with the actual token or pass it via
-# the `docker run` command using the `-e` option.
-ENV LINE_TOKEN=your_line_notify_token
+# Define environment variable
+ENV MODEL_PATH=models/best_yolov8n.pt
+ENV IMAGE_PATH=demo_data/prediction_visual.png
+ENV LINE_NOTIFY_TOKEN=Your/Line/Notify/Token
+ENV VIDEO_URL=Your/Video/URL
 
-# Expose the port the app runs on
-EXPOSE 8080
-
-# Define the command to run the application when the container starts
-CMD ["python", "./src/demo.py"]
+# Run demo.py when the container launches
+CMD ["python", "src/demo.py"]
