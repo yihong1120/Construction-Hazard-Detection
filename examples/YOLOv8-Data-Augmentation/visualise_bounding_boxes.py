@@ -7,16 +7,18 @@ from typing import Union
 class BoundingBoxVisualiser:
     """Class for visualising bounding boxes on images."""
 
-    def __init__(self, image_path: Union[str, Path], label_path: Union[str, Path]):
+    def __init__(self, image_path: Union[str, Path], label_path: Union[str, Path], class_names: list):
         """
-        Initialises the BoundingBoxVisualiser with the specified image and label paths.
+        Initialises the BoundingBoxVisualiser with the specified image, label paths, and class names.
 
         Args:
             image_path: The path to the image file.
             label_path: The path to the label file.
+            class_names: A list of class names.
         """
         self.image_path = Path(image_path)
         self.label_path = Path(label_path)
+        self.class_names = class_names
         self.image = cv2.imread(str(self.image_path))
         if self.image is None:
             raise ValueError("Image could not be loaded. Please check the image path.")
@@ -39,8 +41,11 @@ class BoundingBoxVisualiser:
             x1, y1 = int(x_centre - bbox_width / 2), int(y_centre - bbox_height / 2)
             x2, y2 = int(x_centre + bbox_width / 2), int(y_centre + bbox_height / 2)
 
-            # Draw the rectangle
-            cv2.rectangle(self.image, (x1, y1), (x2, y2), (255, 0, 0), 2)  # Blue rectangle with thickness 2
+            # Draw the rectangle and label
+            cv2.rectangle(self.image, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            label = self.class_names[int(class_id)]
+            cv2.putText(self.image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255,0,0), 2)
+
 
     def save_or_display_image(self, output_path: Union[str, Path], save: bool) -> None:
         """
@@ -67,15 +72,14 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    visualiser = BoundingBoxVisualiser(args.image, args.label)
+    # List of class names as specified in your data.yaml file
+    class_names = ['Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest', 'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle']
+    
+    visualiser = BoundingBoxVisualiser(args.image, args.label, class_names)
     visualiser.draw_bounding_boxes()
     visualiser.save_or_display_image(args.output, args.save)
 
-"""
-useage:
 
-cd src
-
-python visualize_bounding_boxes.py --image '../dataset_aug/train/images/9e36a476d14b2da360817b7d6724f074_jpg.rf.0467ca3c155d09a019303adae6eb8265_aug_12.jpg' --label '../dataset_aug/train/labels/9e36a476d14b2da360817b7d6724f074_jpg.rf.0467ca3c155d09a019303adae6eb8265_aug_12.txt'
-
+"""example
+python visualise_bounding_boxes.py --image './dataset_aug/train/images/000008_jpg.rf.3c8d0c1c4b22ed9959609699c41d1011_aug_4.jpg' --label './dataset_aug/train/labels/000008_jpg.rf.3c8d0c1c4b22ed9959609699c41d1011_aug_4.txt'
 """
