@@ -33,40 +33,41 @@ class DataAugmentation:
 
     def _get_augmentation_sequence(self) -> iaa.Sequential:
         """
-        Define a sequence of augmentations.
-
+        Define a sequence of augmentations with different probabilities for each augmentation.
+    
         Returns:
             iaa.Sequential: The sequence of augmentations to apply.
         """
-        mandatory_augmentations = [
-            iaa.Flipud(0.5),
-            iaa.Fliplr(0.5),
-            iaa.Affine(rotate=(-15, 15)),
-            iaa.Resize((0.5, 1.3)),
+        augmentations = [
+            iaa.Sometimes(0.5, iaa.Flipud()),  # 50% probability to flip upside down
+            iaa.Sometimes(0.5, iaa.Fliplr()),  # 50% probability to flip left to right
+            iaa.Sometimes(0.5, iaa.Affine(rotate=(-15, 15))),  # 50% probability to rotate
+            iaa.Sometimes(0.5, iaa.Resize((0.5, 1.3))),  # 50% probability to resize
+            iaa.Sometimes(0.3, iaa.Multiply((0.8, 1.2))),  # 30% probability to change brightness
+            iaa.Sometimes(0.3, iaa.LinearContrast((0.8, 1.2))),  # 30% probability to change contrast
+            iaa.Sometimes(0.2, iaa.GaussianBlur(sigma=(0, 0.5))),  # 20% probability to blur
+            iaa.Sometimes(0.3, iaa.Crop(px=(0, 16))),  # 30% probability to crop
+            iaa.Sometimes(0.1, iaa.SaltAndPepper(0.02)),  # 10% probability for salt and pepper noise
+            iaa.Sometimes(0.02, iaa.ElasticTransformation(alpha=(0, 30), sigma=10)),  # 20% probability for elastic transformation
+            iaa.Sometimes(0.02, iaa.MotionBlur(k=15, angle=[-45, 45])),  # 10% probability to add motion blur to simulate water flow
+            iaa.Sometimes(0.2, iaa.ShearX((-20, 20))),  # 20% probability to shear on X axis
+            iaa.Sometimes(0.2, iaa.ShearY((-20, 20))),  # 20% probability to shear on Y axis
+            iaa.Sometimes(0.2, iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2))),  # 20% probability to sharpen
+            iaa.Sometimes(0.1, iaa.PiecewiseAffine(scale=(0.01, 0.03))),  # 10% probability for piecewise affine
+            iaa.Sometimes(0.1, iaa.Grayscale(alpha=(0.0, 1.0))),  # 10% probability to grayscale
+            iaa.Sometimes(0.2, iaa.AddToHueAndSaturation((-30, 30))),  # 20% probability to change hue and saturation
+            iaa.Sometimes(0.2, iaa.GammaContrast((0.5, 1.5))),  # 20% probability to change gamma contrast
+            iaa.Sometimes(0.2, iaa.ChangeColorTemperature((3300, 6500))),  # 20% probability to change color temperature
+            iaa.Sometimes(0.1, iaa.PerspectiveTransform(scale=(0.01, 0.1))),  # 10% probability for perspective transform
+            iaa.Sometimes(0.1, iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25))),  # 10% probability for coarse dropout
+            iaa.Sometimes(0.1, iaa.Invert(0.3)),  # 10% probability to invert colors
+            iaa.Sometimes(0.1, iaa.Fog()),  # 10% probability to add fog
+            iaa.Sometimes(0.1, iaa.Rain(speed=(0.1, 0.3))),  # 10% probability to add rain
+            iaa.Sometimes(0.1, iaa.Clouds()),  # 10% probability to add clouds
+            iaa.Sometimes(0.1, iaa.Snowflakes(flake_size=(0.2, 0.4))),  # 10% probability to add snowflakes
+            iaa.Sometimes(0.1, iaa.imgcorruptlike.Spatter(severity=1)),  # 10% probability to add watermarks
         ]
-        optional_augmentations = [
-            iaa.Multiply((0.8, 1.2)),
-            iaa.LinearContrast((0.8, 1.2)),
-            iaa.GaussianBlur(sigma=(0, 0.5)),
-            iaa.Crop(px=(0, 16)),
-            iaa.SaltAndPepper(0.02),
-            iaa.ElasticTransformation(alpha=(0, 30), sigma=10),
-            iaa.ShearX((-20, 20)),
-            iaa.ShearY((-20, 20)),
-            iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2)),
-            iaa.PiecewiseAffine(scale=(0.01, 0.03)),
-            iaa.Grayscale(alpha=(0.0, 1.0)),
-            iaa.AddToHueAndSaturation((-30, 30)),
-            iaa.GammaContrast((0.5, 1.5)),
-            iaa.ChangeColorTemperature((3300, 6500)),
-            iaa.PerspectiveTransform(scale=(0.01, 0.1)),
-            iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25)),
-            # iaa.Invert(0.3),
-        ]
-        num_augmentations = random.randint(1, len(optional_augmentations))  # Randomly choose the number of augmentations
-        chosen_augmentations = random.sample(optional_augmentations, num_augmentations)
-        final_augmentations_sequence = mandatory_augmentations + chosen_augmentations
-        return iaa.Sequential(final_augmentations_sequence, random_order=True)
+        return iaa.Sequential(augmentations, random_order=True)
 
     def augment_image(self, image_path: Path):
         """
