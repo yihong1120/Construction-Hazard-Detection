@@ -61,7 +61,6 @@ class LiveStreamDetector:
             if not success:
                 self.release_resources()
                 print("Failed to read frame, trying to reinitialise stream.")
-                # self.cap.release()
                 self.initialise_stream()
                 continue
 
