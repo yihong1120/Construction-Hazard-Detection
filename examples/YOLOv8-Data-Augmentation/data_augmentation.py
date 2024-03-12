@@ -3,11 +3,12 @@ import imageio.v3 as imageio
 from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 import imgaug.augmenters as iaa
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import shutil
 import random
 from pathlib import Path
 from tqdm import tqdm
+import time
+import gc
 
 class DataAugmentation:
     """ 
@@ -41,109 +42,122 @@ class DataAugmentation:
         augmentations = [
             iaa.Sometimes(0.5, iaa.Flipud()),  # 50% probability to flip upside down
             iaa.Sometimes(0.5, iaa.Fliplr()),  # 50% probability to flip left to right
-            iaa.Sometimes(0.5, iaa.Affine(rotate=(-15, 15))),  # 50% probability to rotate
-            iaa.Sometimes(0.5, iaa.Resize((0.5, 1.3))),  # 50% probability to resize
-            iaa.Sometimes(0.3, iaa.Multiply((0.8, 1.2))),  # 30% probability to change brightness
-            iaa.Sometimes(0.3, iaa.LinearContrast((0.8, 1.2))),  # 30% probability to change contrast
+            iaa.Sometimes(0.6, iaa.Affine(rotate=(-45, 45))),  # 50% probability to rotate
+            iaa.Sometimes(0.6, iaa.Resize((0.5, 1.3))),  # 50% probability to resize
+            iaa.Sometimes(0.4, iaa.Multiply((0.8, 1.2))),  # 30% probability to change brightness
+            iaa.Sometimes(0.4, iaa.LinearContrast((0.8, 1.2))),  # 30% probability to change contrast
             iaa.Sometimes(0.2, iaa.GaussianBlur(sigma=(0, 0.5))),  # 20% probability to blur
-            iaa.Sometimes(0.3, iaa.Crop(px=(0, 16))),  # 30% probability to crop
-            iaa.Sometimes(0.1, iaa.SaltAndPepper(0.02)),  # 10% probability for salt and pepper noise
-            iaa.Sometimes(0.02, iaa.ElasticTransformation(alpha=(0, 30), sigma=10)),  # 20% probability for elastic transformation
-            iaa.Sometimes(0.02, iaa.MotionBlur(k=15, angle=[-45, 45])),  # 10% probability to add motion blur to simulate water flow
-            iaa.Sometimes(0.2, iaa.ShearX((-20, 20))),  # 20% probability to shear on X axis
-            iaa.Sometimes(0.2, iaa.ShearY((-20, 20))),  # 20% probability to shear on Y axis
-            iaa.Sometimes(0.2, iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2))),  # 20% probability to sharpen
-            iaa.Sometimes(0.1, iaa.PiecewiseAffine(scale=(0.01, 0.03))),  # 10% probability for piecewise affine
-            iaa.Sometimes(0.1, iaa.Grayscale(alpha=(0.0, 1.0))),  # 10% probability to grayscale
-            iaa.Sometimes(0.2, iaa.AddToHueAndSaturation((-30, 30))),  # 20% probability to change hue and saturation
-            iaa.Sometimes(0.2, iaa.GammaContrast((0.5, 1.5))),  # 20% probability to change gamma contrast
-            iaa.Sometimes(0.2, iaa.ChangeColorTemperature((3300, 6500))),  # 20% probability to change color temperature
-            iaa.Sometimes(0.1, iaa.PerspectiveTransform(scale=(0.01, 0.1))),  # 10% probability for perspective transform
-            iaa.Sometimes(0.1, iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25))),  # 10% probability for coarse dropout
+            iaa.Sometimes(0.4, iaa.Crop(px=(0, 16))),  # 30% probability to crop
+            iaa.Sometimes(0.2, iaa.SaltAndPepper(0.02)),  # 10% probability for salt and pepper noise
+            iaa.Sometimes(0.2, iaa.ElasticTransformation(alpha=(0, 30), sigma=10)),  # 20% probability for elastic transformation
+            iaa.Sometimes(0.1, iaa.MotionBlur(k=15, angle=[-45, 45])),  # 10% probability to add motion blur to simulate water flow
+            iaa.Sometimes(0.6, iaa.ShearX((-40, 40))),  # 20% probability to shear on X axis
+            iaa.Sometimes(0.6, iaa.ShearY((-40, 40))),  # 20% probability to shear on Y axis
+            iaa.Sometimes(0.4, iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2))),  # 20% probability to sharpen
+            iaa.Sometimes(0.2, iaa.PiecewiseAffine(scale=(0.01, 0.03))),  # 10% probability for piecewise affine
+            iaa.Sometimes(0.3, iaa.Grayscale(alpha=(0.0, 1.0))),  # 10% probability to grayscale
+            iaa.Sometimes(0.3, iaa.AddToHueAndSaturation((-30, 30))),  # 20% probability to change hue and saturation
+            iaa.Sometimes(0.3, iaa.GammaContrast((0.5, 1.5))),  # 20% probability to change gamma contrast
+            iaa.Sometimes(0.3, iaa.ChangeColorTemperature((3300, 6500))),  # 20% probability to change color temperature
+            iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.01, 0.1))),  # 10% probability for perspective transform
+            iaa.Sometimes(0.3, iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25))),  # 10% probability for coarse dropout
             iaa.Sometimes(0.1, iaa.Invert(0.3)),  # 10% probability to invert colors
-            iaa.Sometimes(0.1, iaa.Fog()),  # 10% probability to add fog
-            iaa.Sometimes(0.1, iaa.Rain(speed=(0.1, 0.3))),  # 10% probability to add rain
-            iaa.Sometimes(0.1, iaa.Clouds()),  # 10% probability to add clouds
-            iaa.Sometimes(0.1, iaa.Snowflakes(flake_size=(0.2, 0.4))),  # 10% probability to add snowflakes
-            iaa.Sometimes(0.1, iaa.imgcorruptlike.Spatter(severity=1)),  # 10% probability to add watermarks
+            # iaa.Sometimes(0.1, iaa.Fog()),  # 10% probability to add fog
+            # iaa.Sometimes(0.1, iaa.Rain(speed=(0.1, 0.3))),  # 10% probability to add rain
+            # iaa.Sometimes(0.1, iaa.Clouds()),  # 10% probability to add clouds
+            # iaa.Sometimes(0.1, iaa.Snowflakes(flake_size=(0.2, 0.4))),  # 10% probability to add snowflakes
+            # iaa.Sometimes(0.1, iaa.imgcorruptlike.Spatter(severity=1)),  # 10% probability to add watermarks
         ]
         return iaa.Sequential(augmentations, random_order=True)
 
     def augment_image(self, image_path: Path):
         """
-        Process and augment a single image.
+        Processes and augments a single image.
 
         Args:
-            image_path (Path): The path to the image to augment.
+            image_path (Path): The path to the image file.
         """
-        image = imageio.imread(image_path)
-        label_path = image_path.with_suffix('.txt').parent.parent / 'labels' / image_path.with_suffix('.txt').name
-        image_shape = image.shape
-        bbs = BoundingBoxesOnImage(self.read_label_file(label_path, image_shape), shape=image_shape)
-
-        for i in range(self.num_augmentations):
-            if image.shape[2] == 4:
+        try:
+            image = imageio.imread(image_path)
+            if image.shape[2] == 4:  # Remove alpha channel if present
                 image = image[:, :, :3]
-            image_aug, bbs_aug = self.seq(image=image, bounding_boxes=bbs)
 
-            # Clip bounding boxes that fall out of the image
-            bbs_aug = bbs_aug.clip_out_of_image()
+            label_path = self.train_path / 'labels' / image_path.with_suffix('.txt').name
+            image_shape = image.shape
+            bbs = BoundingBoxesOnImage(self.read_label_file(label_path, image_shape), shape=image_shape)
 
-            aug_image_filename = image_path.stem + f"_aug_{i}" + image_path.suffix
-            aug_label_filename = image_path.stem + f"_aug_{i}.txt"
+            for i in range(self.num_augmentations):
+                image_aug, bbs_aug = self.seq(image=image, bounding_boxes=bbs)
+                bbs_aug = bbs_aug.clip_out_of_image()
 
-            image_aug_path = self.train_path / 'images' / aug_image_filename
-            label_aug_path = self.train_path / 'labels' / aug_label_filename
+                aug_image_filename = image_path.stem + f"_aug_{i}" + image_path.suffix
+                aug_label_filename = image_path.stem + f"_aug_{i}.txt"
 
-            imageio.imwrite(image_aug_path, image_aug)
-            self.write_label_file(bbs_aug, label_aug_path, image_aug.shape[1], image_aug.shape[0])
+                image_aug_path = self.train_path / 'images' / aug_image_filename
+                label_aug_path = self.train_path / 'labels' / aug_label_filename
 
-    def augment_data(self):
+                imageio.imwrite(image_aug_path, image_aug)
+                self.write_label_file(bbs_aug, label_aug_path, image_aug.shape[1], image_aug.shape[0])
+
+                # 显式释放大对象以释放内存
+                del image_aug, bbs_aug
+                gc.collect()
+        except Exception as e:
+            print(f"Error augmenting image: {image_path}")
+            print(e)
+        finally:
+            # Delete the original image to free up memory
+            del image  # Always delete 'image' since it's defined at the beginning
+            # Conditionally delete other variables if they've been defined
+            if 'image_aug' in locals():
+                del image_aug
+            if 'bbs' in locals():
+                del bbs
+            if 'bbs_aug' in locals():
+                del bbs_aug
+            gc.collect()  # Force garbage collection
+
+    def augment_data(self, batch_size=10):
         """
-        Perform data augmentation on all image files in the dataset, ignoring non-image files.
+        Processes images in batches to save memory.
         """
-        # Define allowed image extensions
-        allowed_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif']
-        
-        # Filter out files that do not have the allowed image extensions
-        image_paths = [p for p in self.train_path.glob('images/*') if p.suffix.lower() in allowed_extensions]
-        
-        # Perform augmentation on filtered image files
-        with tqdm(total=len(image_paths), desc="Augmenting Images") as pbar:
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                for _ in executor.map(self.augment_image, image_paths):
-                    pbar.update()
+        image_paths = list(self.train_path.glob('images/*.jpg'))
+        total_batches = (len(image_paths) + batch_size - 1) // batch_size  # Calculate total number of batches
+
+        with tqdm(total=len(image_paths)) as progress:
+            for batch_index in range(total_batches):
+                start_index = batch_index * batch_size
+                end_index = min((batch_index + 1) * batch_size, len(image_paths))
+                batch_paths = image_paths[start_index:end_index]
+
+                for image_path in batch_paths:
+                    self.augment_image(image_path)
+                    progress.update(1)
+                
+                # After processing a batch, force garbage collection
+                gc.collect()
 
     @staticmethod
     def read_label_file(label_path: Path, image_shape: Tuple[int, int, int]) -> List[BoundingBox]:
-        """
-        Read a label file and convert it to bounding boxes.
-
-        Args:
-            label_path (Path): The path to the label file.
-            image_shape (Tuple[int, int, int]): The shape of the image.
-
-        Returns:
-            List[BoundingBox]: A list of bounding boxes.
-        """
+        """Reads a label file and converts it into a list of bounding boxes."""
         bounding_boxes = []
         if label_path.exists():
-            with open(label_path, 'r') as file:
+            with label_path.open('r') as file:
                 for line in file:
-                    class_id, x_center, y_center, width, height = map(float, line.split())
-                    x1 = (x_center - width / 2) * image_shape[1]
-                    y1 = (y_center - height / 2) * image_shape[0]
-                    x2 = (x_center + width / 2) * image_shape[1]
-                    y2 = (y_center + height / 2) * image_shape[0]
-                    bounding_boxes.append(BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2, label=int(class_id)))
-        else:
-            print(f"Label file {label_path} does not exist")
+                    values = list(map(float, line.split()))
+                    if len(values) == 5:
+                        class_id, x_center, y_center, width, height = values
+                        x1 = (x_center - width / 2) * image_shape[1]
+                        y1 = (y_center - height / 2) * image_shape[0]
+                        x2 = (x_center + width / 2) * image_shape[1]
+                        y2 = (y_center + height / 2) * image_shape[0]
+                        bounding_boxes.append(BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2, label=int(class_id)))
         return bounding_boxes
 
     @staticmethod
     def write_label_file(bounding_boxes: BoundingBoxesOnImage, label_path: Path, image_width: int, image_height: int):
         """
-        Write bounding boxes to a label file.
+        Writes bounding boxes to a label file.
 
         Args:
             bounding_boxes (BoundingBoxesOnImage): The bounding boxes to write.
@@ -151,15 +165,13 @@ class DataAugmentation:
             image_width (int): The width of the image.
             image_height (int): The height of the image.
         """
-        with open(label_path, 'w') as f:
-            for bb in bounding_boxes:
-                x_center = ((bb.x1 + bb.x2) / 2) / image_width
-                y_center = ((bb.y1 + bb.y2) / 2) / image_height
+        with label_path.open('w') as f:
+            for bb in bounding_boxes.bounding_boxes:  # Iterate through actual bounding boxes
+                x_center = (bb.x1 + bb.x2) / 2 / image_width
+                y_center = (bb.y1 + bb.y2) / 2 / image_height
                 width = (bb.x2 - bb.x1) / image_width
                 height = (bb.y2 - bb.y1) / image_height
-                x_center, y_center, width, height = [max(0, min(1, val)) for val in [x_center, y_center, width, height]]
-                class_index = bb.label
-                f.write(f"{class_index} {x_center} {y_center} {width} {height}\n")
+                f.write(f"{bb.label} {x_center} {y_center} {width} {height}\n")
 
     def shuffle_data(self) -> None:
         """
@@ -214,14 +226,19 @@ class DataAugmentation:
         temp_image_dir.rename(image_dir)
         temp_label_dir.rename(label_dir)
 
-        print("Dataset shuffled successfully.")
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
-    parser.add_argument('--train_path', type=str, default='./dataset_aug/train', help='Path to the training data')
-    parser.add_argument('--num_augmentations', type=int, default=5, help='Number of augmentations per image')
+    parser.add_argument('--train_path', type=str, default='./dataset_aug/train', help='Path to the training data directory.')
+    parser.add_argument('--num_augmentations', type=int, default=40, help='Number of augmentations per image.')
+    parser.add_argument('--batch_size', type=int, default=10, help='Number of images to process in each batch.')
     args = parser.parse_args()
-    
-    augmenter = DataAugmentation(args.train_path, args.num_augmentations)
+
+    augmenter = DataAugmentation(args.train_path, args.num_augmentations, args.batch_size)
     augmenter.augment_data()
+
+    # Pause for 5 seconds before shuffling to allow for user inspection.
+    print("Pausing for 5 seconds before shuffling data...")
+    time.sleep(5)
+    
     augmenter.shuffle_data()
+    print("Data augmentation and shuffling complete.")
