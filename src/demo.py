@@ -7,8 +7,10 @@ from live_stream_detection import LiveStreamDetector
 from danger_detector import DangerDetector
 from datetime import datetime
 import time
+import json
+from typing import NoReturn
 
-def main(logger, video_url: str, model_path: str, image_path: str = 'demo_data/prediction_visual.png'):
+def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_visual.png', line_token: str = None) -> NoReturn:
     """
     Main execution function that detects hazards, sends notifications, and logs warnings.
 
@@ -19,10 +21,10 @@ def main(logger, video_url: str, model_path: str, image_path: str = 'demo_data/p
         image_path (str, optional): The file path of the image to send with notifications. Defaults to 'demo_data/prediction_visual.png'.
     """
     # Initialise the live stream detector
-    live_stream_detector = LiveStreamDetector(video_url, model_path)
+    live_stream_detector = LiveStreamDetector(video_url, model_path, image_path)
 
     # Initialise the LINE notifier
-    line_notifier = LineNotifier()
+    line_notifier = LineNotifier(line_token)
 
     # Initialise the DangerDetector
     danger_detector = DangerDetector()
@@ -35,7 +37,11 @@ def main(logger, video_url: str, model_path: str, image_path: str = 'demo_data/p
         # Convert UNIX timestamp to datetime object and format it as string
         detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
         print(detection_time)
+
+        # Draw the detections on the frame
+        live_stream_detector.draw_detections_on_frame(frame, datas)
         
+        # Check for warnings and send notifications if necessary
         warnings = danger_detector.detect_danger(timestamp, datas)
 
         # If there are any new warnings and sufficient time has passed since the last notification
@@ -56,6 +62,23 @@ def main(logger, video_url: str, model_path: str, image_path: str = 'demo_data/p
     # Release resources after processing
     live_stream_detector.release_resources()
 
+def run_multiple_streams() -> NoReturn:
+    """
+    Executes hazard detection on multiple video streams simultaneously.
+    """
+    # Open the configuration file and load settings for multiple video streams.
+    with open('../config/configurations.json', 'r') as f:
+        configurations = json.load(f)
+    
+    # Iterate over each configuration, setting up and running detection on each video stream.
+    for config in configurations:
+        # Initialise logging for current video stream configuration.
+        logger = setup_logging()
+
+        # Unpack configuration settings and pass them to the main function.
+        # The **config unpacks the dictionary into keyword arguments.
+        main(logger, **config)
+
 if __name__ == '__main__':
     # Load environment variables from the specified .env file
     env_path = Path('../.env')  # Adjust if your .env file is located elsewhere
@@ -72,7 +95,14 @@ if __name__ == '__main__':
 
     image_path = os.getenv('IMAGE_PATH') or os.environ.get('IMAGE_PATH')
     if not image_path:  # If image_path is still None or empty
-        image_path = input('Please enter the path to the image for notifications (or press enter to skip): ') or 'demo_data/prediction_visual.png'
+        image_path = input('Please enter the path to the image for notifications (or press enter to skip): ') or 'prediction_visual.png'
+
+    line_token = os.getenv('LINE_NOTIFY_TOKEN') or os.environ.get('LINE_NOTIFY_TOKEN')
+    if not line_token:  # If line_token is still None or empty
+        line_token = input('Please enter the path to the LINE NOTIFY_ OKEN: ')
 
     logger = setup_logging()  # Set up logging
-    main(logger, video_url, model_path, image_path)
+    main(logger, video_url, model_path, image_path, line_token)
+
+    # To run hazard detection on multiple video streams, uncomment the line below
+    # run_multiple_streams()
