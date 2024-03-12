@@ -1,0 +1,15 @@
+[
+    {
+      "video_url": "rtsp://example1.com/stream",
+      "model_path": "models/model1.pt",
+      "image_path": "images/image1.png",
+      "line_token": "token1"
+    },
+    {
+      "video_url": "rtsp://example2.com/stream",
+      "model_path": "models/model2.pt",
+      "image_path": "images/image2.png",
+      "line_token": "token2"
+    }
+  ]
+  
