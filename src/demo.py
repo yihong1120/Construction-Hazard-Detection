@@ -9,6 +9,8 @@ from datetime import datetime
 import time
 import json
 from typing import NoReturn
+import multiprocessing
+from typing import Dict
 
 def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_visual.png', line_token: str = None) -> NoReturn:
     """
@@ -62,22 +64,31 @@ def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_
     # Release resources after processing
     live_stream_detector.release_resources()
 
-def run_multiple_streams() -> NoReturn:
-    """
-    Executes hazard detection on multiple video streams simultaneously.
-    """
-    # Open the configuration file and load settings for multiple video streams.
-    with open('../config/configurations.json', 'r') as f:
+def process_stream(config: Dict[str, str]) -> NoReturn:
+    '''
+    Process a single video stream with the given configuration.
+    '''
+    logger = setup_logging()
+    main(logger, **config)
+
+def run_multiple_streams():
+    '''
+    Run hazard detection on multiple video streams.
+    '''
+    # Load configurations from the configuration file
+    with open('./../config/configuration.json', 'r') as f:
         configurations = json.load(f)
     
-    # Iterate over each configuration, setting up and running detection on each video stream.
+    # Start a process for each configuration
+    processes = []
     for config in configurations:
-        # Initialise logging for current video stream configuration.
-        logger = setup_logging()
-
-        # Unpack configuration settings and pass them to the main function.
-        # The **config unpacks the dictionary into keyword arguments.
-        main(logger, **config)
+        p = multiprocessing.Process(target=process_stream, args=(config,))
+        p.start()
+        processes.append(p)
+    
+    # Wait for all processes to finish
+    for p in processes:
+        p.join()
 
 if __name__ == '__main__':
     # Load environment variables from the specified .env file
