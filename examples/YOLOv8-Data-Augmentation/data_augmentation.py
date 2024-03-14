@@ -3,11 +3,11 @@ import imageio.v3 as imageio
 from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 import imgaug.augmenters as iaa
 import argparse
-import shutil
 import random
 from pathlib import Path
 from tqdm import tqdm
 import time
+import uuid
 import gc
 
 class DataAugmentation:
@@ -177,12 +177,8 @@ class DataAugmentation:
         """
         Shuffles the augmented dataset to ensure randomness.
 
-        This method pairs each image file with its corresponding label file, shuffles these pairs,
-        and then saves them into temporary directories. After shuffling, it renames the temporary
-        directories to the original ones, effectively replacing them with the shuffled files.
-
-        Raises:
-            AssertionError: If the number of image files and label files do not match.
+        This method pairs each image file with its corresponding label file, assigns a unique
+        UUID to each pair, and then saves them with the new names into the original directories.
         """
         image_dir = self.train_path / 'images'
         label_dir = self.train_path / 'labels'
@@ -191,40 +187,29 @@ class DataAugmentation:
         image_paths = list(image_dir.glob('*'))
         label_paths = list(label_dir.glob('*'))
 
-        # Ensure the count of images and labels matches and that they correspond to each other
+        # Ensure the count of images and labels matches
         assert len(image_paths) == len(label_paths), "The counts of image and label files do not match!"
+
+        # Sort paths to ensure matching between images and labels
         image_paths.sort()
         label_paths.sort()
-        assert all(image_path.stem == label_path.stem for image_path, label_path in zip(image_paths, label_paths)), "Image and label files do not correspond to each other!"
 
         # Shuffle the paths of images and labels together to maintain correspondence
         combined = list(zip(image_paths, label_paths))
         random.shuffle(combined)
 
-        # Create temporary directories for shuffled files
-        temp_image_dir = self.train_path / 'temp_images'
-        temp_label_dir = self.train_path / 'temp_labels'
-        temp_image_dir.mkdir(exist_ok=True)
-        temp_label_dir.mkdir(exist_ok=True)
+        # Rename files with a new UUID
+        for image_path, label_path in combined:
+            # Generate a unique identifier
+            unique_id = str(uuid.uuid4())
+            new_image_name = unique_id + image_path.suffix
+            new_label_name = unique_id + label_path.suffix
 
-        # Move shuffled files to the temporary directories
-        for i, (image_path, label_path) in enumerate(combined):
-            # Maintain the original file name but prepend with a sortable index
-            new_image_name = f"{i:06d}_{image_path.name}"
-            new_label_name = f"{i:06d}_{label_path.name}"
-            new_image_path = temp_image_dir / new_image_name
-            new_label_path = temp_label_dir / new_label_name
+            new_image_path = image_dir / new_image_name
+            new_label_path = label_dir / new_label_name
 
             image_path.rename(new_image_path)
             label_path.rename(new_label_path)
-
-        # Remove the original directories
-        shutil.rmtree(image_dir)
-        shutil.rmtree(label_dir)
-
-        # Rename temporary directories to the original names
-        temp_image_dir.rename(image_dir)
-        temp_label_dir.rename(label_dir)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
@@ -233,8 +218,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=10, help='Number of images to process in each batch.')
     args = parser.parse_args()
 
-    augmenter = DataAugmentation(args.train_path, args.num_augmentations, args.batch_size)
-    augmenter.augment_data()
+    augmenter = DataAugmentation(args.train_path, args.num_augmentations)
+    augmenter.augment_data(batch_size=args.batch_size)  # 這裡傳遞 batch_size
 
     # Pause for 5 seconds before shuffling to allow for user inspection.
     print("Pausing for 5 seconds before shuffling data...")
