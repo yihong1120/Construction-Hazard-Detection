@@ -44,9 +44,9 @@ class DangerDetector:
             # Check if there is no significant overlap with any person detected
             if not any(self.overlap_percentage(violation[:4], p[:4]) > 0.5 for p in persons):
                 if label == 'NO-Hardhat':
-                    warnings.append(f"Warning: Someone is not wearing a Hardhat!")
+                    warnings.append(f"警告: 有人無配戴安全帽!")
                 else:  # label == 'NO-Safety Vest'
-                    warnings.append(f"Warning: Someone is not wearing a Safety Vest!")
+                    warnings.append(f"警告: 有人無穿著安全背心!")
 
         # Check if anyone is dangerously close to machinery or vehicles
         for person in persons:
@@ -54,8 +54,9 @@ class DangerDetector:
                 # Determine the label based on the class_label
                 label = 'machinery' if mv[5] == 8.0 else 'vehicle'  # mv[5] contains the class label
                 
+                # Check if the person is dangerously close to the machinery or vehicle
                 if self.is_dangerously_close(person[:4], mv[:4], label):  # Pass label as the third argument
-                    warnings.append(f"Warning: There is a person dangerously close to the {label}!")
+                    warnings.append(f"警告: 有人過於靠近{label}!")
                     break  # Stop checking if one warning is already added for this person
 
         return warnings
