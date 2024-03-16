@@ -6,6 +6,9 @@ from sahi.predict import get_sliced_prediction
 from typing import Generator, Tuple, List
 import time
 from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+import platform
 
 class LiveStreamDetector:
     """
@@ -40,16 +43,16 @@ class LiveStreamDetector:
 
         # Add a category ID to name mapping based on your model's training labels
         self.category_id_to_name = {
-            0: 'Hardhat',
-            1: 'Mask',
-            2: 'NO-Hardhat',
-            3: 'NO-Mask',
-            4: 'NO-Safety Vest',
-            5: 'Person',
-            6: 'Safety Cone',
-            7: 'Safety Vest',
-            8: 'machinery',
-            9: 'vehicle'
+            0: '安全帽', # Hardhat
+            1: '口罩', # Mask
+            2: '無安全帽', # No-Hardhat
+            3: '無口罩', # No-Mask
+            4: '無安全背心', # No-Safety Vest
+            5: '人員', # Person
+            6: '安全錐', # Safety Cone
+            7: '安全背心', # Safety Vest
+            8: '機具', # machinery
+            9: '車輛' # vehicle
         }
 
     def initialise_stream(self) -> None:
@@ -72,24 +75,39 @@ class LiveStreamDetector:
             datas (List): The list of detection data.
             output_filename (str): The name of the output image file.
         """
+        # Determine system type for font path
+        system_name = platform.system()
+        if system_name == "Windows": # Windows
+            font_path = "C:\\Windows\\Fonts\\msyh.ttc" 
+        elif system_name == "Darwin":  # macOS
+            font_path = "/System/Library/Fonts/STHeiti Medium.ttc"
+        else:  # Linux
+            font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+        # Convert cv2 image to PIL image
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(frame_rgb)
+
+        draw = ImageDraw.Draw(pil_image)
+        font = ImageFont.truetype(font_path, 20)  # Define font size and font
+
         # Define colors for different labels
         colors = {
-            'Hardhat': (0, 255, 0),  # Green
-            'Safety Vest': (0, 255, 0),  # Green
-            'machinery': (0, 225, 255),  # Yellow
-            'vehicle': (0, 255, 255),  # Yellow
-            'NO-Hardhat': (0, 0, 255),  # Red
-            'NO-Safety Vest': (0, 0, 255),  # Red
-            'Person': (255, 165, 0),  # Orange
-            # Add more colors if necessary
+            '安全帽': (0, 255, 0),  # Hardhat: Green
+            '安全背心': (0, 255, 0),  # Safety Vest: Green
+            '機具': (255, 225, 0),  # machinery: Yellow
+            '車輛': (255, 255, 0),  # vehicle: Yellow
+            '無安全帽': (255, 0, 0),  # No-Hardhat: Red
+            '無安全背心': (255, 0, 0),  # No-Safety Vest: Red
+            '人員': (255, 165, 0),  # Person: Orange
         }
 
         # List of labels to exclude from drawing
-        exclude_labels = ['Safety Cone', 'Mask', 'NO-Mask']
+        exclude_labels = ['安全錐', '口罩', '無口罩'] # Safety Cone, Mask, No-Mask
 
         # Draw detections on the frame
         for data in datas:
-            x1, y1, x2, y2, confidence, label_id = data
+            x1, y1, x2, y2, _, label_id = data
 
             # Check if label_id exists in category_id_to_name
             if label_id in self.category_id_to_name:
@@ -102,28 +120,31 @@ class LiveStreamDetector:
             x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
 
             if label not in exclude_labels:
-                color = colors.get(label, (255, 255, 255))
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                # Get color for the label
+                color = colors.get(label, (255, 255, 255))  # Default to white
+                # Draw rectangle around the object
+                draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
 
-                # Text settings
-                font_scale = 0.5  # Smaller font size
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                text = f'{label}: {confidence:.2f}'
-                text_size = cv2.getTextSize(text, font, font_scale, 1)[0]
+                # Draw label text
+                text = f'{label}'
+                text_bbox = draw.textbbox((x1, y1), text, font=font)
+                text_width, text_height = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
+                text_background = (x1, y1 - text_height - 5, x1 + text_width, y1)
 
-                # Background rectangle for text
-                rect_start = (x1, y1 - 5 - text_size[1])
-                rect_end = (x1 + text_size[0], y1)
-                cv2.rectangle(frame, rect_start, rect_end, color, -1)  # Solid fill
+                # Draw background rectangle for text
+                draw.rectangle(text_background, fill=color)
 
-                # White text
-                cv2.putText(frame, text, (x1, y1 - 5), font, font_scale, (255, 255, 255), 1)
+                # Draw text
+                draw.text((x1, y1 - text_height - 5), text, fill=(255, 255, 255), font=font)
+
+        # Convert PIL image back to cv2
+        frame_with_detections = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
         # Save the frame to the output directory
         output_dir = Path('demo_data')
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / self.output_filename
-        cv2.imwrite(str(output_path), frame)
+        cv2.imwrite(str(output_path), frame_with_detections)
 
     def generate_detections(self) -> Generator[Tuple[List, cv2.Mat, float], None, None]:
         """
