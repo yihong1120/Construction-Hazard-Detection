@@ -82,7 +82,7 @@ class LiveStreamDetector:
         elif system_name == "Darwin":  # macOS
             font_path = "/System/Library/Fonts/STHeiti Medium.ttc"
         else:  # Linux
-            font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 
         # Convert cv2 image to PIL image
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
