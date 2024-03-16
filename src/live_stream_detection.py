@@ -48,8 +48,8 @@ class LiveStreamDetector:
             5: 'Person',
             6: 'Safety Cone',
             7: 'Safety Vest',
-            8: 'Machinery',
-            9: 'Vehicle'
+            8: 'machinery',
+            9: 'vehicle'
         }
 
     def initialise_stream(self) -> None:
@@ -76,7 +76,7 @@ class LiveStreamDetector:
         colors = {
             'Hardhat': (0, 255, 0),  # Green
             'Safety Vest': (0, 255, 0),  # Green
-            'machinery': (0, 255, 255),  # Yellow
+            'machinery': (0, 225, 255),  # Yellow
             'vehicle': (0, 255, 255),  # Yellow
             'NO-Hardhat': (0, 0, 255),  # Red
             'NO-Safety Vest': (0, 0, 255),  # Red
