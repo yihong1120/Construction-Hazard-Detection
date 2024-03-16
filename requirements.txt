@@ -3,11 +3,11 @@ opencv_python_headless==4.7.0.72
 Pillow==10.2.0
 torch==2.2.1
 torchvision==0.17.1
-ultralytics==8.1.27
+ultralytics==8.1.29
 imageio==2.34.0
 imgaug==0.4.0
 numpy==1.26.4
 python-dotenv==1.0.1
 sahi==0.11.5
 pycocotools==2.0.7
-roboflow==0.1.12
+roboflow==1.1.24
