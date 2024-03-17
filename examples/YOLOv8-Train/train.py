@@ -228,7 +228,8 @@ if __name__ == "__main__":
     try:
         handler.train_model(data_config=args.data_config, epochs=args.epochs)
         metrics = handler.validate_model()
-        results = handler.predict_image("https://ultralytics.com/images/bus.jpg")
+        print("Validation metrics:", metrics)
+        
         export_path = (
             handler.export_model(export_format=args.export_format)
             if args.onnx_path is None
@@ -239,10 +240,12 @@ if __name__ == "__main__":
         print(f"Error occurred: {e}")
         exit(1)
 
-    print("Prediction results:", results)
     print(f"{args.export_format.upper()} model exported to:", export_path)
     print(f"Model saved to: {args.pt_path}")
 
+    # Predict on an image
+    # results = handler.predict_image("https://ultralytics.com/images/bus.jpg")
+
     # SAHI Prediction
-    sahi_result = handler.predict_image_sahi(args.model_name, args.sahi_image_path)
-    print("SAHI Prediction Results:", sahi_result)
+    # sahi_result = handler.predict_image_sahi(args.model_name, args.sahi_image_path)
+    # print("SAHI Prediction Results:", sahi_result)
