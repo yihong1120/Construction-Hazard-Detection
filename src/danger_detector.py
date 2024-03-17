@@ -52,7 +52,7 @@ class DangerDetector:
         for person in persons:
             for mv in machinery_vehicles:
                 # Determine the label based on the class_label
-                label = 'machinery' if mv[5] == 8.0 else 'vehicle'  # mv[5] contains the class label
+                label = '機具' if mv[5] == 8.0 else '車輛'  # mv[5] contains the class label
                 
                 # Check if the person is dangerously close to the machinery or vehicle
                 if self.is_dangerously_close(person[:4], mv[:4], label):  # Pass label as the third argument
