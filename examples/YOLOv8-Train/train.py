@@ -193,7 +193,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_name",
         type=str,
-        default="../../models/best_yolov8n.pt",
+        default="./../../models/best_yolov8x.pt",
         help="Name or path of the YOLO model file",
     )
     parser.add_argument(
