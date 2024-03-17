@@ -120,7 +120,7 @@ class DangerDetector:
         person_area = (person_width + 1) * (person_height + 1)
 
         machinery_vehicle_area = (bbox2[2] - bbox2[0] + 1) * (bbox2[3] - bbox2[1] + 1)
-        acceptable_ratio = 1/10 if label2 == 'vehicle' else 1/20
+        acceptable_ratio = 1/10 if label2 == '車輛' else 1/20
 
         if person_area / machinery_vehicle_area > acceptable_ratio:
             return False
