@@ -43,7 +43,7 @@ class DataAugmentation:
             iaa.Sometimes(0.5, iaa.Flipud()),  # 50% probability to flip upside down
             iaa.Sometimes(0.5, iaa.Fliplr()),  # 50% probability to flip left to right
             iaa.Sometimes(0.6, iaa.Affine(rotate=(-45, 45))),  # 50% probability to rotate
-            iaa.Sometimes(0.6, iaa.Resize((0.5, 1.3))),  # 50% probability to resize
+            iaa.Sometimes(0.6, iaa.Resize((0.5, 1.5))),  # 50% probability to resize
             iaa.Sometimes(0.4, iaa.Multiply((0.8, 1.2))),  # 30% probability to change brightness
             iaa.Sometimes(0.4, iaa.LinearContrast((0.8, 1.2))),  # 30% probability to change contrast
             iaa.Sometimes(0.2, iaa.GaussianBlur(sigma=(0, 0.5))),  # 20% probability to blur
@@ -68,7 +68,9 @@ class DataAugmentation:
             # iaa.Sometimes(0.1, iaa.Snowflakes(flake_size=(0.2, 0.4))),  # 10% probability to add snowflakes
             # iaa.Sometimes(0.1, iaa.imgcorruptlike.Spatter(severity=1)),  # 10% probability to add watermarks
         ]
-        return iaa.Sequential(augmentations, random_order=True)
+        return iaa.Sequential([
+            iaa.SomeOf((1, None), augmentations, random_order=True)
+        ])
 
     def augment_image(self, image_path: Path):
         """
