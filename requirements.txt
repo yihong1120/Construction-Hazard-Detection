@@ -3,7 +3,7 @@ opencv_python_headless==4.7.0.72
 Pillow==10.2.0
 torch==2.2.1
 torchvision==0.17.1
-ultralytics==8.1.29
+ultralytics==8.1.42
 imageio==2.34.0
 imgaug==0.4.0
 numpy==1.26.4
