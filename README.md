@@ -118,8 +118,8 @@ We welcome contributions to this project. Please follow these steps:
 - [x] Developing post-processing techniques for enhanced accuracy.
 - [x] Implementing real-time analysis and alert system.
 - [x] Testing and validation in simulated environments.
-- [ ] Deployment in actual construction sites for field testing.
-- [ ] Ongoing maintenance and updates based on user feedback.
+- [x] Deployment in actual construction sites for field testing.
+- [x] Ongoing maintenance and updates based on user feedback.
 
 ## License
 This project is licensed under the [AGPL-3.0 License](LICENSE.md).
