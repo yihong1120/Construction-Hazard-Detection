@@ -1,59 +1,69 @@
 import logging
 from logging.handlers import RotatingFileHandler
-import os
+from pathlib import Path
 
-def setup_logging(log_file='monitor.log', level=logging.INFO):
+class LoggerConfig:
     """
-    Set up a logger for the application with both console and file handlers.
-
-    This function creates a logger with a rotating file handler, which ensures that the log
+    A class to set up a logger for the application with both console and file handlers.
+    
+    This class creates a logger with a rotating file handler, which ensures that the log
     files do not grow indefinitely. The log files rotate when they reach a specified size.
-
-    Args:
-        log_file (str): The name of the log file. Defaults to 'monitor.log'.
-        level (logging.Level): The logging level. Defaults to logging.INFO.
-
-    Returns:
-        logging.Logger: A configured logger instance.
-
-    Example:
-        >>> logger = setup_logging()
-        >>> logger.info('Logging is configured.')
     """
-    # Create a logger with the specified name
-    logger = logging.getLogger('SiteSafetyMonitor')
-    logger.setLevel(level)
 
-    # Check if the logs directory exists, create it if necessary
-    if not os.path.exists('logs'):
-        os.makedirs('logs')
+    def __init__(self, log_file='monitor.log', level=logging.INFO):
+        """
+        Initialises the logger configuration with a log file name and logging level.
+        
+        Args:
+            log_file (str): The name of the log file. Defaults to 'monitor.log'.
+            level (logging.Level): The logging level. Defaults to logging.INFO.
+        """
+        self.log_file = log_file
+        self.level = level
+        self.logger = logging.getLogger('SiteSafetyMonitor')
+        self.setup_logger()
 
-    # Create a rotating file handler that logs to a file and rotates when it reaches a certain size
-    handler = RotatingFileHandler(f'logs/{log_file}', maxBytes=1000000, backupCount=5)
-    handler.setLevel(level)
+    def setup_logger(self):
+        """
+        Configures the logger with rotating file handler and console handler.
+        """
+        # Check if the logs directory exists, create it if necessary
+        Path('logs').mkdir(parents=True, exist_ok=True)
 
-    # Create a console handler that logs to the standard output (console)
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(level)
+        # Create a rotating file handler that logs to a file and rotates when it reaches a certain size
+        file_handler = RotatingFileHandler(f'logs/{self.log_file}', maxBytes=1_000_000, backupCount=5)
+        file_handler.setLevel(self.level)
 
-    # Create a formatter that specifies the log message format
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
+        # Create a console handler that logs to the standard output (console)
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(self.level)
 
-    # Add the file and console handlers to the logger
-    logger.addHandler(handler)
-    logger.addHandler(console_handler)
+        # Create a formatter that specifies the log message format
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
 
-    # Return the configured logger
-    return logger
+        # Add the file and console handlers to the logger
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
+        self.logger.setLevel(self.level)
+
+    def get_logger(self):
+        """
+        Returns the configured logger instance.
+        
+        Returns:
+            logging.Logger: A configured logger instance.
+        """
+        return self.logger
 
 # This block is executed when the script is run directly, not when imported
 if __name__ == '__main__':
-    # Example usage of the setup_logging function:
+    # Example usage of the LoggerConfig class:
     
-    # Set up the logger
-    logger = setup_logging()
+    # Initialise the logger configuration
+    logger_config = LoggerConfig()
+    logger = logger_config.get_logger()
     
     # Log a message indicating that the logging setup is complete
     logger.info('Logging setup complete.')

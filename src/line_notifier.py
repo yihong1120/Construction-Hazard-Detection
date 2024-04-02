@@ -1,8 +1,10 @@
-import requests
-from datetime import datetime
-from dotenv import load_dotenv
 import os
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
+
+import requests
+from dotenv import load_dotenv
 
 class LineNotifier:
     """
@@ -39,7 +41,7 @@ class LineNotifier:
             'Authorization': f'Bearer {self.line_token}'
         }
         payload = {'message': message}
-        image_path = f'demo_data/{image_name}' if image_name else None
+        image_path = Path('detected_frames') / image_name if image_name else None
         files = {'imageFile': open(image_path, 'rb')} if image_path else None
         
         # Send the notification

@@ -1,14 +1,14 @@
 import argparse
 import cv2
 import datetime
-from sahi import AutoDetectionModel
-from sahi.predict import get_sliced_prediction
+from pathlib import Path
 from typing import Generator, Tuple, List
 import time
-from pathlib import Path
+import platform
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
-import platform
+from sahi import AutoDetectionModel
+from sahi.predict import get_sliced_prediction
 
 class LiveStreamDetector:
     """
@@ -55,6 +55,37 @@ class LiveStreamDetector:
             9: '車輛' # vehicle
         }
 
+        # 字体路径和字体对象
+        self.font_path, self.font = self.load_font()
+        
+        # Define colours for different labels
+        self.colors = {
+            '安全帽': (0, 255, 0),
+            '安全背心': (0, 255, 0),
+            '機具': (255, 225, 0),
+            '車輛': (255, 255, 0),
+            '無安全帽': (255, 0, 0),
+            '無安全背心': (255, 0, 0),
+            '人員': (255, 165, 0),
+        }
+        
+        # List of labels to exclude from drawing
+        self.exclude_labels = ['安全錐', '口罩', '無口罩'] # Safety Cone, Mask, No-Mask
+
+    def load_font(self):
+        '''
+        Load font for text drawing
+        '''
+        system_name = platform.system()
+        if system_name == "Windows": # Windows
+            font_path = "C:\\Windows\\Fonts\\msyh.ttc"
+        elif system_name == "Darwin": # macOS
+            font_path = "/System/Library/Fonts/STHeiti Medium.ttc"
+        else: # Linux
+            font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+        font = ImageFont.truetype(font_path, 20)  # Define font size and font
+        return font_path, font
+
     def initialise_stream(self) -> None:
         """
         Initialises the video stream from the provided URL.
@@ -67,43 +98,19 @@ class LiveStreamDetector:
 
     def draw_detections_on_frame(self, frame: cv2.Mat, datas: List) -> None:
         """
-        Draws detection boxes on the frame with specific colors based on the label,
-        and saves the frame to 'demo_data/' directory with the provided filename.
+        Draws detection boxes on the frame with specific colours based on the label,
+        and saves the frame to '../detected_frames/' directory with the provided filename.
 
         Args:
             frame (cv2.Mat): The original video frame.
             datas (List): The list of detection data.
-            output_filename (str): The name of the output image file.
         """
-        # Determine system type for font path
-        system_name = platform.system()
-        if system_name == "Windows": # Windows
-            font_path = "C:\\Windows\\Fonts\\msyh.ttc" 
-        elif system_name == "Darwin":  # macOS
-            font_path = "/System/Library/Fonts/STHeiti Medium.ttc"
-        else:  # Linux
-            font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
-
         # Convert cv2 image to PIL image
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(frame_rgb)
 
+        # Create a draw object
         draw = ImageDraw.Draw(pil_image)
-        font = ImageFont.truetype(font_path, 20)  # Define font size and font
-
-        # Define colors for different labels
-        colors = {
-            '安全帽': (0, 255, 0),  # Hardhat: Green
-            '安全背心': (0, 255, 0),  # Safety Vest: Green
-            '機具': (255, 225, 0),  # machinery: Yellow
-            '車輛': (255, 255, 0),  # vehicle: Yellow
-            '無安全帽': (255, 0, 0),  # No-Hardhat: Red
-            '無安全背心': (255, 0, 0),  # No-Safety Vest: Red
-            '人員': (255, 165, 0),  # Person: Orange
-        }
-
-        # List of labels to exclude from drawing
-        exclude_labels = ['安全錐', '口罩', '無口罩'] # Safety Cone, Mask, No-Mask
 
         # Draw detections on the frame
         for data in datas:
@@ -119,15 +126,15 @@ class LiveStreamDetector:
             # Convert coordinates to integers
             x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
 
-            if label not in exclude_labels:
-                # Get color for the label
-                color = colors.get(label, (255, 255, 255))  # Default to white
+            if label not in self.exclude_labels:
+                # Get colour for the label
+                color = self.colors.get(label, (255, 255, 255))  # Default to white
                 # Draw rectangle around the object
                 draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
 
                 # Draw label text
                 text = f'{label}'
-                text_bbox = draw.textbbox((x1, y1), text, font=font)
+                text_bbox = draw.textbbox((x1, y1), text, font = self.font)
                 text_width, text_height = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
                 text_background = (x1, y1 - text_height - 5, x1 + text_width, y1)
 
@@ -135,16 +142,25 @@ class LiveStreamDetector:
                 draw.rectangle(text_background, fill=color)
 
                 # Draw text
-                draw.text((x1, y1 - text_height - 5), text, fill=(255, 255, 255), font=font)
+                draw.text((x1, y1 - text_height - 5), text, fill=(255, 255, 255), font = self.font)
 
         # Convert PIL image back to cv2
         frame_with_detections = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
         # Save the frame to the output directory
-        output_dir = Path('demo_data')
+        self.save_frame(frame_with_detections)
+
+    def save_frame(self, frame: cv2.Mat) -> None:
+        """
+        Saves the frame to the 'detected_frames/' directory with the provided filename.
+
+        Args:
+            frame (cv2.Mat): The frame to be saved.
+        """
+        output_dir = Path('detected_frames')
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / self.output_filename
-        cv2.imwrite(str(output_path), frame_with_detections)
+        cv2.imwrite(str(output_path), frame)
 
     def generate_detections(self) -> Generator[Tuple[List, cv2.Mat, float], None, None]:
         """
