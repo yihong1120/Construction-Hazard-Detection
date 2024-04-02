@@ -1,0 +1,15 @@
+# Docker build context ignore patterns
+
+**/__pycache__
+**/.DS_Store
+**/*.pyc
+.dockerignore
+Dockerfile
+README.md
+*.git
+*.gitignore
+venv/
+examples/
+tests/
+__pycache__/
+*.log
