@@ -1,26 +1,25 @@
-import os
-from pathlib import Path
-from dotenv import load_dotenv
+import argparse
 from datetime import datetime
-import time
 import json
-from typing import NoReturn, Dict
 import multiprocessing
+import time
+from typing import NoReturn, Dict
 
 from src.line_notifier import LineNotifier
 from src.monitor_logger import LoggerConfig
 from src.live_stream_detection import LiveStreamDetector
 from src.danger_detector import DangerDetector
 
-def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_visual.png', line_token: str = None) -> NoReturn:
+def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_visual.png', line_token: str = None, output_path: str = None) -> NoReturn:
     """
-    Main execution function that detects hazards, sends notifications, and logs warnings.
+    Main execution function that detects hazards, sends notifications, logs warnings, and optionally saves output images.
 
     Args:
         logger (logging.Logger): A logger instance for logging messages.
         video_url (str): The URL of the live stream to monitor.
         model_path (str): The file path of the YOLOv8 model to use for detection.
         image_path (str, optional): The file path of the image to send with notifications. Defaults to 'demo_data/prediction_visual.png'.
+        output_path (str, optional): The file path where output images should be saved. If not specified, images are not saved.
     """
     # Initialise the live stream detector
     live_stream_detector = LiveStreamDetector(video_url, model_path, image_path)
@@ -43,6 +42,12 @@ def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_
         # Draw the detections on the frame
         live_stream_detector.draw_detections_on_frame(frame, datas)
         
+        # Optionally save the frame with detections to the specified output path
+        if output_path:
+            # Here you could modify or extend the output filename based on timestamp or other criteria
+            output_file = output_path.format(timestamp=timestamp)
+            live_stream_detector.save_frame(frame, output_file)
+
         # Check for warnings and send notifications if necessary
         warnings = danger_detector.detect_danger(timestamp, datas)
 
@@ -64,57 +69,39 @@ def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_
     # Release resources after processing
     live_stream_detector.release_resources()
 
-def process_stream(config: Dict[str, str]) -> NoReturn:
+def process_stream(config: Dict[str, str], output_path: str = None) -> NoReturn:
     '''
     Process a single video stream with the given configuration.
     '''
     logger_config = LoggerConfig()
     logger = logger_config.get_logger()
-    main(logger, **config)
+    main(logger, **config, output_path=output_path)
 
-def run_multiple_streams():
+
+def run_multiple_streams(config_file: str, output_path: str = None):
     '''
-    Run hazard detection on multiple video streams.
+    Run hazard detection on multiple video streams with the given configuration file.
+
+    Args:
+        config_file (str): Path to the configuration file.
+        output_path (str): Path to save output images. Use {timestamp} to include the detection timestamp in the filename.
     '''
-    # Load configurations from the configuration file
-    with open('config/configuration.json', 'r') as f:
+    with open(config_file, 'r') as f:
         configurations = json.load(f)
-    
-    # Start a process for each configuration
+
     processes = []
     for config in configurations:
-        p = multiprocessing.Process(target=process_stream, args=(config,))
+        p = multiprocessing.Process(target=process_stream, args=(config, output_path))
         p.start()
         processes.append(p)
-    
-    # Wait for all processes to finish
+
     for p in processes:
         p.join()
 
 if __name__ == '__main__':
-    # # Load environment variables from the specified .env file
-    # env_path = Path('../.env')  # Adjust if your .env file is located elsewhere
-    # load_dotenv(dotenv_path=env_path)
-
-    # # Attempt to get the configuration from the .env file; if not found, check system environment variables
-    # video_url = os.getenv('VIDEO_URL') or os.environ.get('VIDEO_URL')
-    # if not video_url:  # If video_url is still None or empty
-    #     video_url = input('Please enter the video URL: ')
-
-    # model_path = os.getenv('MODEL_PATH') or os.environ.get('MODEL_PATH')
-    # if not model_path:  # If model_path is still None or empty
-    #     model_path = input('Please enter the path to the YOLOv8 model: ')
-
-    # image_path = os.getenv('IMAGE_PATH') or os.environ.get('IMAGE_PATH')
-    # if not image_path:  # If image_path is still None or empty
-    #     image_path = input('Please enter the path to the image for notifications (or press enter to skip): ') or 'prediction_visual.png'
-
-    # line_token = os.getenv('LINE_NOTIFY_TOKEN') or os.environ.get('LINE_NOTIFY_TOKEN')
-    # if not line_token:  # If line_token is still None or empty
-    #     line_token = input('Please enter the path to the LINE NOTIFY_ OKEN: ')
-
-    # logger = setup_logging()  # Set up logging
-    # main(logger, video_url, model_path, image_path, line_token)
-
-    # To run hazard detection on multiple video streams, uncomment the line below
-    run_multiple_streams()
+    parser = argparse.ArgumentParser(description='Run hazard detection on multiple video streams.')
+    parser.add_argument('--config', type=str, default='config/configuration.json', help='Path to the configuration file')
+    parser.add_argument('--output', type=str, help='Path to save output images. Use {timestamp} to include the detection timestamp in the filename.', required=False)
+    args = parser.parse_args()
+    
+    run_multiple_streams(args.config, args.output)
