@@ -4,11 +4,12 @@ import datetime
 from pathlib import Path
 from typing import Generator, Tuple, List
 import time
-import platform
+import gc
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
+# import objgraph
 
 class LiveStreamDetector:
     """
@@ -76,13 +77,7 @@ class LiveStreamDetector:
         '''
         Load font for text drawing
         '''
-        system_name = platform.system()
-        if system_name == "Windows": # Windows
-            font_path = "C:\\Windows\\Fonts\\msyh.ttc"
-        elif system_name == "Darwin": # macOS
-            font_path = "/System/Library/Fonts/STHeiti Medium.ttc"
-        else: # Linux
-            font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+        font_path = "assets/fonts/NotoSansTC-VariableFont_wght.ttf"
         font = ImageFont.truetype(font_path, 20)  # Define font size and font
         return font_path, font
 
@@ -134,15 +129,24 @@ class LiveStreamDetector:
 
                 # Draw label text
                 text = f'{label}'
-                text_bbox = draw.textbbox((x1, y1), text, font = self.font)
+                text_bbox = draw.textbbox((x1, y1), text, font=self.font)
                 text_width, text_height = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
+                
+                # Calculate the background rectangle for the text
                 text_background = (x1, y1 - text_height - 5, x1 + text_width, y1)
-
-                # Draw background rectangle for text
+                # Draw the background rectangle
                 draw.rectangle(text_background, fill=color)
 
-                # Draw text
-                draw.text((x1, y1 - text_height - 5), text, fill=(255, 255, 255), font = self.font)
+                # Adjust text position
+                # By default, the text is drawn at the top left corner of the bounding box
+                text_y = y1 - text_height - 5 / 2 - text_height / 2  # Center the text vertically
+
+                # Draw shadow for the text
+                for dx, dy in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:  # Draw shadow
+                    draw.text((x1 + dx, text_y + dy), text, fill=(0, 0, 0), font=self.font)
+
+                # Draw text on the frame
+                draw.text((x1, text_y), text, fill=(255, 255, 255), font=self.font)
 
         # Convert PIL image back to cv2
         frame_with_detections = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
@@ -169,7 +173,7 @@ class LiveStreamDetector:
         Yields:
             A tuple containing detection data, the current frame, and the timestamp for each frame.
         """
-        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=5)  # Ensure the first frame is processed.
+        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=300)  # Ensure the first frame is processed.
 
         while True:
             if not self.cap.isOpened():
@@ -184,9 +188,9 @@ class LiveStreamDetector:
             # Convert frame to RGB as SAHI expects RGB images
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            # Process frames every five seconds
+            # Process frames every 300 seconds
             current_time = datetime.datetime.now()
-            if (current_time - last_process_time).total_seconds() >= 5:
+            if (current_time - last_process_time).total_seconds() >= 300:
                 last_process_time = current_time  # 更新最后处理时间
                 timestamp = current_time.timestamp()
 
@@ -210,8 +214,13 @@ class LiveStreamDetector:
 
                 yield datas, frame, timestamp
 
+                del datas, frame, timestamp
+                gc.collect()
+
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
+
+            gc.collect()
 
     def release_resources(self) -> None:
         """
