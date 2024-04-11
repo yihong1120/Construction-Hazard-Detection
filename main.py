@@ -6,7 +6,6 @@ from multiprocessing import Pool
 import gc
 import time
 from typing import NoReturn, Dict
-import objgraph
 from src.line_notifier import LineNotifier
 from src.monitor_logger import LoggerConfig
 from src.live_stream_detection import LiveStreamDetector
@@ -37,7 +36,6 @@ def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_
 
     # Use the generator function to process detections
     for datas, frame, timestamp in live_stream_detector.generate_detections():
-        objgraph.show_most_common_types(limit=10)
         # Convert UNIX timestamp to datetime object and format it as string
         detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
         print(detection_time)
@@ -52,7 +50,7 @@ def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_
             live_stream_detector.save_frame(frame, output_file)
 
         # Check for warnings and send notifications if necessary
-        warnings = danger_detector.detect_danger(timestamp, datas)
+        warnings = danger_detector.detect_danger(datas)
 
         # If there are any new warnings and sufficient time has passed since the last notification
         if warnings and (timestamp - last_notification_time) > 300:
@@ -68,7 +66,13 @@ def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_
 
             # Update the last_notification_time to the current time
             last_notification_time = timestamp
-        objgraph.show_growth(limit=10)
+
+            del unique_warnings, message, status, warning
+
+        # Clear variables to free up memory
+        del datas, frame, timestamp, detection_time
+        gc.collect()
+
     # Release resources after processing
     live_stream_detector.release_resources()
 

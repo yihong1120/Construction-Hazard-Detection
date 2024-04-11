@@ -1,5 +1,4 @@
-from typing import List, Dict, Tuple
-import time
+from typing import List, Tuple
 
 class DangerDetector:
     """
@@ -10,10 +9,9 @@ class DangerDetector:
         """
         Initialises the danger detector.
         """
-        # Dictionary to track the last movement time of each vehicle or machinery
-        self.last_movement_time: Dict[float, int] = {}  # Key as float since IDs are floats
+        pass  # Removed unused last_movement_time dictionary
 
-    def detect_danger(self, timestamp: int, datas: List[List[float]]) -> List[str]:
+    def detect_danger(self, datas: List[List[float]]) -> List[str]:
         """
         Detects potential safety violations in a construction site.
 
@@ -37,27 +35,24 @@ class DangerDetector:
         safety_vest_violations = [d for d in datas if d[5] == 4.0]  # No safety vest
         machinery_vehicles = [d for d in datas if d[5] in [8.0, 9.0]]  # Machinery and vehicles
 
+        # Filter out persons who are likely drivers
+        if machinery_vehicles:
+            non_drivers = [p for p in persons if not any(self.is_driver(p[:4], mv[:4]) for mv in machinery_vehicles)]
+            persons = non_drivers
+
         # Check for hardhat and safety vest violations
         for violation in hardhat_violations + safety_vest_violations:
-            # Determine the type of violation based on the class label
             label = 'NO-Hardhat' if violation[5] == 2.0 else 'NO-Safety Vest'
-            # Check if there is no significant overlap with any person detected
             if not any(self.overlap_percentage(violation[:4], p[:4]) > 0.5 for p in persons):
-                if label == 'NO-Hardhat':
-                    warnings.append(f"警告: 有人無配戴安全帽!")
-                else:  # label == 'NO-Safety Vest'
-                    warnings.append(f"警告: 有人無穿著安全背心!")
+                warnings.append(f"警告: 有人無配戴安全帽!" if label == 'NO-Hardhat' else f"警告: 有人無穿著安全背心!")
 
         # Check if anyone is dangerously close to machinery or vehicles
         for person in persons:
             for mv in machinery_vehicles:
-                # Determine the label based on the class_label
-                label = '機具' if mv[5] == 8.0 else '車輛'  # mv[5] contains the class label
-                
-                # Check if the person is dangerously close to the machinery or vehicle
-                if self.is_dangerously_close(person[:4], mv[:4], label):  # Pass label as the third argument
+                label = '機具' if mv[5] == 8.0 else '車輛'
+                if self.is_dangerously_close(person[:4], mv[:4], label):
                     warnings.append(f"警告: 有人過於靠近{label}!")
-                    break  # Stop checking if one warning is already added for this person
+                    break
 
         return warnings
 
@@ -125,8 +120,8 @@ class DangerDetector:
         if person_area / machinery_vehicle_area > acceptable_ratio:
             return False
 
-        danger_distance_horizontal = 5 * person_width
-        danger_distance_vertical = 1.5 * person_height
+        danger_distance_horizontal = 2 * person_width
+        danger_distance_vertical = 1 * person_height
 
         horizontal_distance = min(abs(bbox1[2] - bbox2[0]), abs(bbox1[0] - bbox2[2]))
         vertical_distance = min(abs(bbox1[3] - bbox2[1]), abs(bbox1[1] - bbox2[3]))

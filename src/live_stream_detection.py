@@ -154,6 +154,10 @@ class LiveStreamDetector:
         # Save the frame to the output directory
         self.save_frame(frame_with_detections)
 
+        # Clear memory by deleting variables
+        del frame_rgb, pil_image, draw, frame_with_detections
+        gc.collect()
+
     def save_frame(self, frame: cv2.Mat) -> None:
         """
         Saves the frame to the 'detected_frames/' directory with the provided filename.
@@ -166,6 +170,9 @@ class LiveStreamDetector:
         output_path = output_dir / self.output_filename
         cv2.imwrite(str(output_path), frame)
 
+        del output_dir, output_path
+        gc.collect()
+
     def generate_detections(self) -> Generator[Tuple[List, cv2.Mat, float], None, None]:
         """
         Generates detections from the video stream, capturing frames every five seconds.
@@ -173,7 +180,7 @@ class LiveStreamDetector:
         Yields:
             A tuple containing detection data, the current frame, and the timestamp for each frame.
         """
-        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=300)  # Ensure the first frame is processed.
+        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=60)  # Ensure the first frame is processed.
 
         while True:
             if not self.cap.isOpened():
@@ -212,9 +219,13 @@ class LiveStreamDetector:
                     confidence = object_prediction.score.value
                     datas.append([x1, y1, x2, y2, confidence, label])
 
+                # Remove overlapping labels for Hardhat and Safety Vest categories
+                datas = self.remove_overlapping_labels(datas)
+
                 yield datas, frame, timestamp
 
-                del datas, frame, timestamp
+                # Clear memory by running garbage collection
+                del datas, frame, timestamp, result
                 gc.collect()
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -222,12 +233,76 @@ class LiveStreamDetector:
 
             gc.collect()
 
+    def remove_overlapping_labels(self, datas: List[List[float]]) -> List[List[float]]:
+        """
+        Removes overlapping labels for Hardhat and Safety Vest categories.
+
+        Args:
+            datas (List[List[float]]): List of detection data.
+
+        Returns:
+            List[List[float]]: Updated list of detection data with overlapping labels removed.
+        """
+        hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 0.0]  # Indices of Hardhat detections
+        no_hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 2.0]  # Indices of NO-Hardhat detections
+        safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 7.0]  # Indices of Safety Vest detections
+        no_safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 4.0]  # Indices of NO-Safety Vest detections
+
+        for hardhat_index in hardhat_indices:
+            for no_hardhat_index in no_hardhat_indices:
+                if self.overlap_percentage(datas[hardhat_index][:4], datas[no_hardhat_index][:4]) > 0.8:
+                    datas.pop(no_hardhat_index)  # Remove NO-Hardhat detection
+                    no_hardhat_indices.remove(no_hardhat_index)  # Update indices list
+                    break
+
+        for safety_vest_index in safety_vest_indices:
+            for no_safety_vest_index in no_safety_vest_indices:
+                if self.overlap_percentage(datas[safety_vest_index][:4], datas[no_safety_vest_index][:4]) > 0.8:
+                    datas.pop(no_safety_vest_index)  # Remove NO-Safety Vest detection
+                    no_safety_vest_indices.remove(no_safety_vest_index)  # Update indices list
+                    break
+
+        # Clear memory by running garbage collection
+        del hardhat_indices, no_hardhat_indices, safety_vest_indices, no_safety_vest_indices
+        gc.collect()
+
+        return datas
+
+    def overlap_percentage(self, bbox1: List[float], bbox2: List[float]) -> float:
+        """
+        Calculates the percentage of overlap between two bounding boxes.
+
+        Args:
+            bbox1 (List[float]): The coordinates of the first bounding box in the format [x1, y1, x2, y2].
+            bbox2 (List[float]): The coordinates of the second bounding box in the format [x1, y1, x2, y2].
+
+        Returns:
+            float: The percentage of overlap between the two bounding boxes.
+        """
+        x1 = max(bbox1[0], bbox2[0])
+        y1 = max(bbox1[1], bbox2[1])
+        x2 = min(bbox1[2], bbox2[2])
+        y2 = min(bbox1[3], bbox2[3])
+
+        intersection_area = max(0, x2 - x1 + 1) * max(0, y2 - y1 + 1)
+        bbox1_area = (bbox1[2] - bbox1[0] + 1) * (bbox1[3] - bbox1[1] + 1)
+        bbox2_area = (bbox2[2] - bbox2[0] + 1) * (bbox2[3] - bbox2[1] + 1)
+
+        overlap_percentage = intersection_area / float(bbox1_area + bbox2_area - intersection_area)
+
+        # Clear memory by running garbage collection
+        del x1, y1, x2, y2, intersection_area, bbox1_area, bbox2_area
+        gc.collect()
+
+        return overlap_percentage
+
     def release_resources(self) -> None:
         """
         Releases resources after detection is complete.
         """
         self.cap.release()
         cv2.destroyAllWindows()
+        gc.collect()
 
     def run_detection(self) -> None:
         """

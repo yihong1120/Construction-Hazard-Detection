@@ -28,32 +28,17 @@ class LineNotifier:
     def send_notification(self, message: str, image_name: Optional[str] = None) -> int:
         """
         Sends a notification message through LINE Notify, with the option to include an image.
-
-        Args:
-            message (str): The message to be sent.
-            image_name (Optional[str]): The name of the image to be sent. The image should be located in the 'demo_data' directory. Defaults to None.
-
-        Returns:
-            int: The HTTP status code returned by the LINE Notify API.
         """
-        # Prepare the request
-        headers = {
-            'Authorization': f'Bearer {self.line_token}'
-        }
+        headers = {'Authorization': f'Bearer {self.line_token}'}
         payload = {'message': message}
-        image_path = Path('detected_frames') / image_name if image_name else None
-        files = {'imageFile': open(image_path, 'rb')} if image_path else None
-        
-        # Send the notification
-        response = requests.post(
-            'https://notify-api.line.me/api/notify',
-            headers=headers,
-            data=payload,
-            files=files
-        )
-        # Close the file after sending if it was opened
-        if files:
-            files['imageFile'].close()
+        files = None
+        if image_name:
+            image_path = Path('detected_frames') / image_name  # Assuming the images are stored in 'demo_data' directory.
+            with open(image_path, 'rb') as image_file:
+                files = {'imageFile': image_file}
+                response = requests.post('https://notify-api.line.me/api/notify', headers=headers, data=payload, files=files)
+        else:
+            response = requests.post('https://notify-api.line.me/api/notify', headers=headers, data=payload)
         return response.status_code
 
 # Example usage
