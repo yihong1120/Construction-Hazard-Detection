@@ -11,19 +11,18 @@ from src.monitor_logger import LoggerConfig
 from src.live_stream_detection import LiveStreamDetector
 from src.danger_detector import DangerDetector
 
-def main(logger, video_url: str, model_path: str, image_path: str = 'prediction_visual.png', line_token: str = None, output_path: str = None) -> NoReturn:
+def main(logger, video_url: str, image_path: str = 'prediction_visual.png', line_token: str = None, output_path: str = None) -> NoReturn:
     """
     Main execution function that detects hazards, sends notifications, logs warnings, and optionally saves output images.
 
     Args:
         logger (logging.Logger): A logger instance for logging messages.
         video_url (str): The URL of the live stream to monitor.
-        model_path (str): The file path of the YOLOv8 model to use for detection.
         image_path (str, optional): The file path of the image to send with notifications. Defaults to 'demo_data/prediction_visual.png'.
         output_path (str, optional): The file path where output images should be saved. If not specified, images are not saved.
     """
     # Initialise the live stream detector
-    live_stream_detector = LiveStreamDetector(video_url, model_path, image_path)
+    live_stream_detector = LiveStreamDetector(stream_url = video_url, output_filename = image_path)
 
     # Initialise the LINE notifier
     line_notifier = LineNotifier(line_token)
@@ -85,7 +84,6 @@ def process_stream(config: Dict[str, str], output_path: str = None) -> NoReturn:
     Args:
         config (Dict[str, str]): Configuration dictionary containing the following keys:
             - video_url (str): The URL of the live stream to monitor.
-            - model_path (str): The file path of the YOLOv8 model to use for detection.
             - image_path (str, optional): The file path of the image to send with notifications. Defaults to 'demo_data/prediction_visual.png'.
             - line_token (str, optional): The LINE notification token. If not provided, notifications are not sent.
         output_path (str, optional): The file path where output images should be saved. If not specified, images are not saved.

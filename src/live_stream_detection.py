@@ -7,9 +7,8 @@ import time
 import gc
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
-from sahi import AutoDetectionModel
-from sahi.predict import get_sliced_prediction
-# import objgraph
+import requests
+import datetime
 
 class LiveStreamDetector:
     """
@@ -19,28 +18,27 @@ class LiveStreamDetector:
         stream_url (str): The URL of the live video stream.
         model_path (str): The file path to the YOLOv8 model.
         cap (cv2.VideoCapture): Video capture object for the stream.
-        sahi_model (AutoDetectionModel): The SAHI model for object detection.
     """
 
-    def __init__(self, stream_url: str, model_path: str = '../models/best_yolov8n.pt', output_filename: str = 'detected_frame.jpg'):
-        """
-        Initialises the live stream detector with a video stream URL, a path to a YOLO model, and an output filename.
+    def __init__(self, stream_url: str, api_url: str = 'http://localhost:5000/detect', model_key: str = 'yolov8n', output_filename: str = 'detected_frame.jpg'):
+        '''
+        Initialise the LiveStreamDetector object with the provided stream URL, model path, and output filename.
 
         Args:
-            stream_url (str): The full URL to the live video stream.
-            model_path (str): The path to the YOLOv8 model file.
-            output_filename (str): The name of the output image file.
-        """
+            stream_url (str): The URL of the live video stream.
+            api_url (str): The URL of the SAHI API for object detection.
+            model_key (str): The key of the model to use for detection.
+            output_filename (str): The filename to save the detected frames.
+        '''
         self.stream_url = stream_url
-        self.model_path = model_path
+        self.api_url = api_url
+        self.model_key = model_key
         self.output_filename = output_filename
         self.initialise_stream()
-        self.sahi_model = AutoDetectionModel.from_pretrained(
-            model_type='yolov8',
-            model_path=model_path,
-            confidence_threshold=0.3,
-            # Set device to "cpu" or "cuda:0" based on your setup.
-        )
+        self.cap = cv2.VideoCapture(self.stream_url)
+        
+        # Load the font for text drawing
+        self.font = ImageFont.truetype("assets/fonts/NotoSansTC-VariableFont_wght.ttf", 20)
 
         # Add a category ID to name mapping based on your model's training labels
         self.category_id_to_name = {
@@ -170,6 +168,7 @@ class LiveStreamDetector:
         output_path = output_dir / self.output_filename
         cv2.imwrite(str(output_path), frame)
 
+        # Clear memory by deleting variables
         del output_dir, output_path
         gc.collect()
 
@@ -180,7 +179,7 @@ class LiveStreamDetector:
         Yields:
             A tuple containing detection data, the current frame, and the timestamp for each frame.
         """
-        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=60)  # Ensure the first frame is processed.
+        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=300)  # Ensure the first frame is processed.
 
         while True:
             if not self.cap.isOpened():
@@ -201,31 +200,29 @@ class LiveStreamDetector:
                 last_process_time = current_time  # 更新最后处理时间
                 timestamp = current_time.timestamp()
 
-                # Generate predictions for the current frame
-                result = get_sliced_prediction(
-                    frame_rgb,
-                    self.sahi_model,
-                    slice_height=384,
-                    slice_width=384,
-                    overlap_height_ratio=0.3,
-                    overlap_width_ratio=0.3
-                )
+                # Compile detection data in YOLOv8 format
+                frame_encoded = cv2.imencode('.jpg', frame_rgb)[1].tobytes()
 
                 # Compile detection data in YOLOv8 format
-                datas = []
-                for object_prediction in result.object_prediction_list:
-                    label = object_prediction.category.id
-                    x1, y1, x2, y2 = object_prediction.bbox.to_voc_bbox()
-                    confidence = object_prediction.score.value
-                    datas.append([x1, y1, x2, y2, confidence, label])
+                _, frame_encoded = cv2.imencode('.jpg', frame_rgb)
+                frame_encoded = frame_encoded.tobytes()
+
+                filename = f"frame_{datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')}.jpg"
+                response = requests.post(
+                    self.api_url,
+                    files={'image': (filename, frame_encoded, 'image/jpeg')},
+                    params={'model': self.model_key}
+                )
+
+                detections = response.json()
 
                 # Remove overlapping labels for Hardhat and Safety Vest categories
-                datas = self.remove_overlapping_labels(datas)
+                detections = self.remove_overlapping_labels(detections)
 
-                yield datas, frame, timestamp
+                yield detections, frame, timestamp
 
                 # Clear memory by running garbage collection
-                del datas, frame, timestamp, result
+                del frame_encoded, filename, response, detections
                 gc.collect()
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -325,12 +322,13 @@ class LiveStreamDetector:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform live stream detection and tracking using YOLOv8.')
     parser.add_argument('--url', type=str, help='Live stream URL', required=True)
-    parser.add_argument('--sahi_model', type=str, default='../models/best_yolov8x.pt', help='Path to the YOLOv8 model')
+    parser.add_argument('--api_url', type=str, default='http://localhost:5000/detect', help='API URL for detection')
+    parser.add_argument('--model_key', type=str, default='yolov8n', help='Model key for detection')
     parser.add_argument('--output', type=str, default='detected_frame.jpg', help='Output image file name')
     args = parser.parse_args()
 
-    # Initialise the live stream detector with the provided stream URL, model path, and output filename.
-    detector = LiveStreamDetector(args.url, args.sahi_model, args.output)
+    # Initialise the live stream detector with the provided stream URL, API URL, model key, and output filename.
+    detector = LiveStreamDetector(args.url, args.api_url, args.model_key, args.output)
 
     # Run the detection process and continuously output images
     detector.run_detection()
