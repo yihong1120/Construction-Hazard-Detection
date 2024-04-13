@@ -57,22 +57,54 @@ class DangerDetector:
         return warnings
 
     @staticmethod
-    def is_driver(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> bool:
+    def is_driver(person_bbox: Tuple[int, int, int, int], vehicle_bbox: Tuple[int, int, int, int]) -> bool:
         """
         Check if a detected person is likely to be a driver based on their position relative to a vehicle.
 
         Args:
-            bbox1 (Tuple[int, int, int, int]): Bounding box of the person.
-            bbox2 (Tuple[int, int, int, int]): Bounding box of the vehicle.
+            person_bbox (Tuple[int, int, int, int]): Bounding box of the person.
+            vehicle_bbox (Tuple[int, int, int, int]): Bounding box of the vehicle.
 
         Returns:
             bool: True if the person is likely to be the driver, False otherwise.
-        """
-        person_centre_y = (bbox1[1] + bbox1[3]) / 2
-        vehicle_bottom_y = bbox2[3]
-        person_height = bbox1[3] - bbox1[1]
 
-        return person_centre_y > vehicle_bottom_y and abs(person_centre_y - vehicle_bottom_y) >= person_height
+        This method checks if:
+        1. The vertical bottom of the person is above the bottom of the vehicle by at least half the height of the person.
+        2. The person's left or right edge does not extend beyond half the width of the person from the vehicle's edges.
+        3. The person's top is below the top of the vehicle.
+        4. The height of the person is less than or equal to half the height of the vehicle.
+        """
+        # Calculate necessary dimensions and centres
+        person_bottom_y = person_bbox[3]
+        person_top_y = person_bbox[1]
+        person_left_x = person_bbox[0]
+        person_right_x = person_bbox[2]
+        person_width = person_bbox[2] - person_bbox[0]
+        person_height = person_bbox[3] - person_bbox[1]
+
+        vehicle_top_y = vehicle_bbox[1]
+        vehicle_bottom_y = vehicle_bbox[3]
+        vehicle_left_x = vehicle_bbox[0]
+        vehicle_right_x = vehicle_bbox[2]
+        vehicle_height = vehicle_bbox[3] - vehicle_bbox[1]
+
+        # 1. Check vertical bottom position: person's bottom should be above the vehicle's bottom by at least half the person's height
+        if not (person_bottom_y < vehicle_bottom_y and vehicle_bottom_y - person_bottom_y >= person_height / 2):
+            return False
+
+        # 2. Check horizontal position: person's edges should not extend beyond half the width of the person from the vehicle's edges
+        if not (person_left_x >= vehicle_left_x - person_width / 2 and person_right_x <= vehicle_right_x + person_width / 2):
+            return False
+
+        # 3. The person's top must be below the vehicle's top
+        if not (person_top_y < vehicle_top_y):
+            return False
+
+        # 4. The height of the person is less than or equal to half the height of the vehicle
+        if not (person_height <= vehicle_height / 2):
+            return False
+
+        return True
 
     @staticmethod
     def overlap_percentage(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> float:
@@ -98,34 +130,38 @@ class DangerDetector:
         return overlap_area / float(area1 + area2 - overlap_area)
 
     @staticmethod
-    def is_dangerously_close(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int], label2: str) -> bool:
+    def is_dangerously_close(person_bbox: Tuple[int, int, int, int], vehicle_bbox: Tuple[int, int, int, int], label: str) -> bool:
         """
         Determine whether a person is dangerously close to machinery or vehicles.
 
         Args:
-            bbox1 (Tuple[int, int, int, int]): Bounding box of the person.
-            bbox2 (Tuple[int, int, int, int]): Bounding box of the machinery or vehicle.
-            label2 (str): Type of the second object ('machinery' or 'vehicle').
+            person_bbox (Tuple[int, int, int, int]): Bounding box of the person.
+            vehicle_bbox (Tuple[int, int, int, int]): Bounding box of the machinery or vehicle.
+            label (str): Type of the second object ('machinery' or 'vehicle').
 
         Returns:
             bool: True if the person is dangerously close, False otherwise.
         """
-        person_width = bbox1[2] - bbox1[0]
-        person_height = bbox1[3] - bbox1[1]
-        person_area = (person_width + 1) * (person_height + 1)
+        person_width = person_bbox[2] - person_bbox[0]
+        person_height = person_bbox[3] - person_bbox[1]
+        person_area = person_width * person_height
 
-        machinery_vehicle_area = (bbox2[2] - bbox2[0] + 1) * (bbox2[3] - bbox2[1] + 1)
-        acceptable_ratio = 1/10 if label2 == '車輛' else 1/20
+        vehicle_area = (vehicle_bbox[2] - vehicle_bbox[0]) * (vehicle_bbox[3] - vehicle_bbox[1])
+        acceptable_ratio = 0.1 if label == 'vehicle' else 0.05
 
-        if person_area / machinery_vehicle_area > acceptable_ratio:
+        # Quickly check the area ratio to see if further checks are unnecessary
+        if person_area / vehicle_area > acceptable_ratio:
             return False
 
-        danger_distance_horizontal = 2 * person_width
-        danger_distance_vertical = 1 * person_height
+        # Calculate safe distances based on object types
+        danger_distance_horizontal = 5 * person_width
+        danger_distance_vertical = 1.5 * person_height
 
-        horizontal_distance = min(abs(bbox1[2] - bbox2[0]), abs(bbox1[0] - bbox2[2]))
-        vertical_distance = min(abs(bbox1[3] - bbox2[1]), abs(bbox1[1] - bbox2[3]))
+        # Compute minimum horizontal and vertical distances between person and vehicle
+        horizontal_distance = min(abs(person_bbox[2] - vehicle_bbox[0]), abs(person_bbox[0] - vehicle_bbox[2]))
+        vertical_distance = min(abs(person_bbox[3] - vehicle_bbox[1]), abs(person_bbox[1] - vehicle_bbox[3]))
 
+        # Determine if the distances are within dangerous proximity
         return horizontal_distance <= danger_distance_horizontal and vertical_distance <= danger_distance_vertical
 
 # Example usage
