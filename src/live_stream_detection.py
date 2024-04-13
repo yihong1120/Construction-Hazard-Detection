@@ -248,22 +248,25 @@ class LiveStreamDetector:
         safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 7.0]  # Indices of Safety Vest detections
         no_safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 4.0]  # Indices of NO-Safety Vest detections
 
+        # Find all no_hardhat and no_safety_vest indices to remove
+        to_remove = set()
         for hardhat_index in hardhat_indices:
             for no_hardhat_index in no_hardhat_indices:
                 if self.overlap_percentage(datas[hardhat_index][:4], datas[no_hardhat_index][:4]) > 0.8:
-                    datas.pop(no_hardhat_index)  # Remove NO-Hardhat detection
-                    no_hardhat_indices.remove(no_hardhat_index)  # Update indices list
-                    break
+                    to_remove.add(no_hardhat_index)
 
         for safety_vest_index in safety_vest_indices:
             for no_safety_vest_index in no_safety_vest_indices:
                 if self.overlap_percentage(datas[safety_vest_index][:4], datas[no_safety_vest_index][:4]) > 0.8:
-                    datas.pop(no_safety_vest_index)  # Remove NO-Safety Vest detection
-                    no_safety_vest_indices.remove(no_safety_vest_index)  # Update indices list
-                    break
+                    to_remove.add(no_safety_vest_index)
+
+        # Remove the detected overlapping labels
+        # Sort the indices in descending order to avoid index shifting during removal
+        for index in sorted(to_remove, reverse=True):
+            datas.pop(index)
 
         # Clear memory by running garbage collection
-        del hardhat_indices, no_hardhat_indices, safety_vest_indices, no_safety_vest_indices
+        del hardhat_indices, no_hardhat_indices, safety_vest_indices, no_safety_vest_indices, to_remove
         gc.collect()
 
         return datas
