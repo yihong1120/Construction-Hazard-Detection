@@ -20,7 +20,7 @@ class LiveStreamDetector:
         cap (cv2.VideoCapture): Video capture object for the stream.
     """
 
-    def __init__(self, stream_url: str, api_url: str = 'http://localhost:5000/detect', model_key: str = 'yolov8n', output_filename: str = 'detected_frame.jpg'):
+    def __init__(self, stream_url: str, api_url: str = 'http://localhost:5000/detect', model_key: str = 'yolov8l', output_filename: str = 'detected_frame.jpg'):
         '''
         Initialise the LiveStreamDetector object with the provided stream URL, model path, and output filename.
 
@@ -201,16 +201,13 @@ class LiveStreamDetector:
                 timestamp = current_time.timestamp()
 
                 # Compile detection data in YOLOv8 format
-                frame_encoded = cv2.imencode('.jpg', frame_rgb)[1].tobytes()
-
-                # Compile detection data in YOLOv8 format
-                _, frame_encoded = cv2.imencode('.jpg', frame_rgb)
+                _, frame_encoded = cv2.imencode('.png', frame_rgb)
                 frame_encoded = frame_encoded.tobytes()
 
-                filename = f"frame_{datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')}.jpg"
+                filename = f"frame_{datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')}.png"
                 response = requests.post(
                     self.api_url,
-                    files={'image': (filename, frame_encoded, 'image/jpeg')},
+                    files={'image': (filename, frame_encoded, 'image/png')},
                     params={'model': self.model_key}
                 )
 
