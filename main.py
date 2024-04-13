@@ -101,16 +101,16 @@ def run_multiple_streams(config_file: str, output_path: str = None):
         config_file (str): Path to the configuration file.
         output_path (str): Path to save output images. Use {timestamp} to include the detection timestamp in the filename.
     '''
+    # Load configurations from the JSON file
     with open(config_file, 'r') as f:
         configurations = json.load(f)
 
-    # For example, use the number of CPU cores available but leave some for other tasks if necessary
-    num_processes = min(len(configurations), multiprocessing.cpu_count() - 1)
+    # Get the number of CPU cores available
+    cpu_count = multiprocessing.cpu_count()
 
-    # Create a multiprocessing pool
-    with Pool(processes=num_processes) as pool:
-        # Map each configuration to the process_stream function
-        # This will automatically distribute the configurations across the pool of processes
+    # Process each stream configuration in parallel using a Pool of workers
+    with Pool(processes=cpu_count) as pool:
+        # Use starmap to pass multiple arguments to the process_stream function
         pool.starmap(process_stream, [(config, output_path) for config in configurations])
 
 if __name__ == '__main__':
