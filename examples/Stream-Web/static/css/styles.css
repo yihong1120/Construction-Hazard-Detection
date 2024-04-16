@@ -1,0 +1,71 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 10px;
+    background-color: #f4f4f4;
+    color: #333;
+}
+
+h1 {
+    text-align: center;
+}
+
+.camera-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 10px;
+    padding: 10px;
+}
+
+.camera img {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    transition: transform 0.2s; /* Smooth zoom on hover */
+}
+
+.camera img:hover {
+    transform: scale(1.03); /* Slight zoom on hover */
+}
+
+.camera {
+    background: white;
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+/* Responsive design adjustments */
+@media (max-width: 600px) {
+    .camera-grid {
+        grid-template-columns: 1fr; /* Stack cameras on top of each other on small screens */
+    }
+
+    .camera {
+        margin-bottom: 20px;
+    }
+
+    h1 {
+        font-size: 24px;
+    }
+}
+
+@media (min-width: 601px) and (max-width: 999px) {
+    .camera-grid {
+        grid-template-columns: repeat(2, 1fr); /* Two columns on medium screens */
+    }
+
+    h1 {
+        font-size: 28px;
+    }
+}
+
+@media (min-width: 1000px) {
+    .camera-grid {
+        grid-template-columns: repeat(3, 1fr); /* Three columns on large screens */
+    }
+
+    h1 {
+        font-size: 32px;
+    }
+}

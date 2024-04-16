@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Camera Streams</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script src="{{ url_for('static', filename='js/index.js') }}"></script>
+</head>
+<body>
+<h1>Camera Streams</h1>
+<div class="camera-grid">
+    {% for camera_id in camera_ids %}
+    <div class="camera">
+        <h2>{{ camera_id }}</h2>
+        <a href="/camera/{{ camera_id }}">
+            <img src="/image/{{ camera_id }}" alt="{{ camera_id }}">
+        </a>
+    </div>
+    {% endfor %}
+</div>
+</body>
+</html>
