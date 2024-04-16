@@ -11,3 +11,4 @@ python-dotenv==1.0.1
 sahi==0.11.5
 pycocotools==2.0.7
 onnx==1.16.0
+gunicorn-21.2.0
