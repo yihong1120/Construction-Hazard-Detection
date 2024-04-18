@@ -54,4 +54,8 @@ def camera(camera_id: str) -> str:
 
 if __name__ == '__main__':
     # Run the Flask application on localhost at port 8000.
-    app.run(host='127.0.0.1', port=8000)
+    app.run(thread=True,host='127.0.0.1', port=8000)
+
+""" example usage
+gunicorn -w 4 -b 127.0.0.1:8000 "examples.Stream-Web.app:app"
+"""
