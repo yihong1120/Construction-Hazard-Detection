@@ -3,12 +3,16 @@
       "video_url": "rtsp://example1.com/stream",
       "model_path": "models/model1.pt",
       "image_path": "images/image1.png",
+      "api_url": "http://localhost:5000/detect",
+      "model_key":"yolov8l",
       "line_token": "token1"
     },
     {
       "video_url": "rtsp://example2.com/stream",
       "model_path": "models/model2.pt",
       "image_path": "images/image2.png",
+      "api_url": "http://localhost:5000/detect",
+      "model_key":"yolov8l",
       "line_token": "token2"
     }
 ]
