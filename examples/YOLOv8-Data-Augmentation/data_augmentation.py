@@ -62,11 +62,11 @@ class DataAugmentation:
             iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.01, 0.1))),  # 10% probability for perspective transform
             iaa.Sometimes(0.3, iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25))),  # 10% probability for coarse dropout
             iaa.Sometimes(0.1, iaa.Invert(0.3)),  # 10% probability to invert colors
+            iaa.Sometimes(0.4, iaa.imgcorruptlike.Spatter(severity=1)),  # 40% probability to add watermarks
             # iaa.Sometimes(0.1, iaa.Fog()),  # 10% probability to add fog
             # iaa.Sometimes(0.1, iaa.Rain(speed=(0.1, 0.3))),  # 10% probability to add rain
             # iaa.Sometimes(0.1, iaa.Clouds()),  # 10% probability to add clouds
             # iaa.Sometimes(0.1, iaa.Snowflakes(flake_size=(0.2, 0.4))),  # 10% probability to add snowflakes
-            # iaa.Sometimes(0.1, iaa.imgcorruptlike.Spatter(severity=1)),  # 10% probability to add watermarks
         ]
         return iaa.Sequential([
             iaa.SomeOf((1, None), augmentations, random_order=True)
