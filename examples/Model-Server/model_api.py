@@ -12,9 +12,9 @@ app = Flask(__name__)
 MODELS = {
     # 'yolov8n': AutoDetectionModel.from_pretrained("yolov8", model_path='models/best_yolov8n.pt'),
     # 'yolov8s': AutoDetectionModel.from_pretrained("yolov8", model_path='models/best_yolov8s.pt'),
-    # 'yolov8m': AutoDetectionModel.from_pretrained("yolov8", model_path='models/pt/best_yolov8m.pt'),
-    'yolov8l': AutoDetectionModel.from_pretrained("yolov8", model_path='models/pt/best_yolov8l.pt'),
-    # 'yolov8x': AutoDetectionModel.from_pretrained("yolov8", model_path='models/pt/best_yolov8x.pt')
+    # 'yolov8m': AutoDetectionModel.from_pretrained("yolov8", model_path='models/pt/best_yolov8m.pt', device="cuda:0"),
+    # 'yolov8l': AutoDetectionModel.from_pretrained("yolov8", model_path='models/pt/best_yolov8l.pt', device="cuda:0"),
+    'yolov8x': AutoDetectionModel.from_pretrained("yolov8", model_path='models/pt/best_yolov8x.pt', device="cuda:0")
 }
 
 @app.route('/detect', methods=['POST'])
@@ -47,6 +47,9 @@ def detect():
 
     # Remove overlapping labels for Hardhat and Safety Vest categories
     datas = remove_overlapping_labels(datas)
+
+    # Remove completely contained labels for Hardhat and Safety Vest categories
+    datas = remove_completely_contained_labels(datas)
 
     return jsonify(datas)
 
@@ -99,6 +102,57 @@ def overlap_percentage(bbox1, bbox2):
     gc.collect()
 
     return overlap_percentage
+
+def is_contained(inner_bbox, outer_bbox):
+    """
+    Determines if one bounding box is completely contained within another.
+    
+    Args:
+        inner_bbox (list): The inner bounding box [x1, y1, x2, y2].
+        outer_bbox (list): The outer bounding box [x1, y1, x2, y2].
+        
+    Returns:
+        bool: True if the inner bounding box is completely contained within the outer bounding box, False otherwise.
+    """
+    return (inner_bbox[0] >= outer_bbox[0] and inner_bbox[2] <= outer_bbox[2] and
+            inner_bbox[1] >= outer_bbox[1] and inner_bbox[3] <= outer_bbox[3])
+
+def remove_completely_contained_labels(datas):
+    """
+    Removes completely contained labels for Hardhat and Safety Vest categories.
+
+    Args:
+        datas (list): A list of detection data in YOLOv8 format.
+
+    Returns:
+        list: A list of detection data with completely contained labels removed.
+    """
+    hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 0]  # Indices of Hardhat detections
+    no_hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 2]  # Indices of NO-Hardhat detections
+    safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 7]  # Indices of Safety Vest detections
+    no_safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 4]  # Indices of NO-Safety Vest detections
+
+    to_remove = set()
+    # Check hardhats
+    for hardhat_index in hardhat_indices:
+        for no_hardhat_index in no_hardhat_indices:
+            if is_contained(datas[no_hardhat_index][:4], datas[hardhat_index][:4]):
+                to_remove.add(no_hardhat_index)
+            elif is_contained(datas[hardhat_index][:4], datas[no_hardhat_index][:4]):
+                to_remove.add(hardhat_index)
+
+    # Check safety vests
+    for safety_vest_index in safety_vest_indices:
+        for no_safety_vest_index in no_safety_vest_indices:
+            if is_contained(datas[no_safety_vest_index][:4], datas[safety_vest_index][:4]):
+                to_remove.add(no_safety_vest_index)
+            elif is_contained(datas[safety_vest_index][:4], datas[no_safety_vest_index][:4]):
+                to_remove.add(safety_vest_index)
+
+    for index in sorted(to_remove, reverse=True):
+        datas.pop(index)
+
+    return datas
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

@@ -19,3 +19,5 @@ test.py
 __pycache__
 **/logs
 !assets/images/**
+examples
+configuration.json

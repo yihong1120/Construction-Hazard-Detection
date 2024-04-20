@@ -188,12 +188,12 @@ if __name__ == "__main__":
         help="Path to the data configuration file",
     )
     parser.add_argument(
-        "--epochs", type=int, default=100, help="Number of training epochs"
+        "--epochs", type=int, default=200, help="Number of training epochs"
     )
     parser.add_argument(
         "--model_name",
         type=str,
-        default="./../../models/best_yolov8x.pt",
+        default="./../../models/pt/best_yolov8x.pt",
         help="Name or path of the YOLO model file",
     )
     parser.add_argument(
