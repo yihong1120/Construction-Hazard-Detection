@@ -183,11 +183,11 @@ class LiveStreamDetector:
 
     def requests_retry_session(
         self,
-        retries=5,  # 增加重试次数
-        backoff_factor=0.5,  # 调整退避因子
-        status_forcelist=(500, 502, 504, 104),  # 增加了104错误代码
+        retries=5,
+        backoff_factor=0.5,
+        status_forcelist=(500, 502, 504, 104),
         session=None,
-        method_whitelist=frozenset(['HEAD', 'GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'TRACE'])  # 确保所有方法都被重试
+        allowed_methods=frozenset(['HEAD', 'GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'TRACE'])
     ):
         session = session or requests.Session()
         retry = Retry(
