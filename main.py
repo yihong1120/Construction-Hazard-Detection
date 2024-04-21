@@ -14,7 +14,7 @@ from src.monitor_logger import LoggerConfig
 from src.live_stream_detection import LiveStreamDetector
 from src.danger_detector import DangerDetector
 
-def main(logger, video_url: str, api_url: str = 'http://localhost:5000/detect', model_key: str = 'yolov8x',image_path: str = 'prediction_visual.png', line_token: str = None, output_path: str = None) -> NoReturn:
+def main(logger, video_url: str, api_url: str = 'http://localhost:5000', model_key: str = 'yolov8x',image_path: str = 'prediction_visual.png', line_token: str = None, output_path: str = None) -> NoReturn:
     """
     Main execution function that detects hazards, sends notifications, logs warnings, and optionally saves output images.
 
@@ -124,8 +124,7 @@ def run_multiple_streams(config_file: str, output_path: str = None):
         configurations = json.load(file)
 
     # Process streams in parallel
-    cpu_count = multiprocessing.cpu_count()
-    num_processes = max(len(configurations), cpu_count)
+    num_processes = len(configurations)
 
     # Process streams in parallel
     with Pool(processes=num_processes) as pool:
