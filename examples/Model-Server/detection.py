@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from .model_loader import MODELS
+from .models import DetectionModelManager
 import numpy as np
 import cv2
 import gc
@@ -10,6 +10,7 @@ from sahi.predict import get_sliced_prediction
 
 detection_blueprint = Blueprint('detection', __name__)
 limiter = Limiter(key_func=get_remote_address)
+model_loader = DetectionModelManager()  # 创建 DetectionModelManager 实例
 
 @detection_blueprint.route('/detect', methods=['POST'])
 @jwt_required()
@@ -17,8 +18,8 @@ limiter = Limiter(key_func=get_remote_address)
 def detect():
     data = request.files['image'].read()
     model_key = request.args.get('model', default='yolov8n', type=str)
-    model = MODELS[model_key]
-    
+    model = model_loader.get_model(model_key)  # 从 DetectionModelManager 获取模型
+
     # Convert string data to numpy array
     npimg = np.frombuffer(data, np.uint8)
     # Convert numpy array to image
@@ -27,8 +28,8 @@ def detect():
     result = get_sliced_prediction(
         img,
         model,
-        slice_height=384,
-        slice_width=384,
+        slice_height=320,
+        slice_width=320,
         overlap_height_ratio=0.3,
         overlap_width_ratio=0.3
     )
@@ -46,6 +47,9 @@ def detect():
 
     # Remove completely contained labels for Hardhat and Safety Vest categories
     datas = remove_completely_contained_labels(datas)
+
+    # Remove overlapping labels for Hardhat and Safety Vest categories
+    datas = remove_overlapping_labels(datas)
 
     return jsonify(datas)
 
