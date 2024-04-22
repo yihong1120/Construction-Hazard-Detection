@@ -47,7 +47,7 @@ class DataAugmentation:
             iaa.Sometimes(0.4, iaa.Multiply((0.8, 1.2))),  # 30% probability to change brightness
             iaa.Sometimes(0.4, iaa.LinearContrast((0.8, 1.2))),  # 30% probability to change contrast
             iaa.Sometimes(0.2, iaa.GaussianBlur(sigma=(0, 0.5))),  # 20% probability to blur
-            iaa.Sometimes(0.4, iaa.Crop(px=(0, 16))),  # 30% probability to crop
+            iaa.Sometimes(0.4, iaa.Crop(percent=(0, 0.5))),  # 40% probability to crop
             iaa.Sometimes(0.2, iaa.SaltAndPepper(0.02)),  # 10% probability for salt and pepper noise
             iaa.Sometimes(0.2, iaa.ElasticTransformation(alpha=(0, 30), sigma=10)),  # 20% probability for elastic transformation
             iaa.Sometimes(0.1, iaa.MotionBlur(k=15, angle=[-45, 45])),  # 10% probability to add motion blur to simulate water flow
