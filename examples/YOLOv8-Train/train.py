@@ -14,15 +14,20 @@ class YOLOModelHandler:
         model (YOLO, Optional): The loaded YOLO model object.
     """
 
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, batch_size: int = -1):
         """
         Initialises the YOLOModelHandler with a specified model.
 
         Args:
             model_name (str): The name of the model file (either .yaml or .pt).
+            batch_size (int): The batch size for training and validation.
+
+        Raises:
+            ValueError: If the model format is not supported.
         """
         self.model_name: str = model_name
         self.model: Optional[YOLO] = None
+        self.batch_size: int = batch_size
         self.load_model()
 
     def load_model(self) -> None:
@@ -59,6 +64,7 @@ class YOLOModelHandler:
         Args:
             data_config (str): The path to the data configuration file.
             epochs (int): The number of training epochs.
+            batch_size (int): The batch size for training and validation.
 
         Raises:
             RuntimeError: If the model is not loaded properly before training.
@@ -66,11 +72,14 @@ class YOLOModelHandler:
         if self.model is None:
             raise RuntimeError("The model is not loaded properly.")
         # Train the model
-        self.model.train(data=data_config, epochs=epochs)
+        self.model.train(data=data_config, epochs=epochs, batch=self.batch_size)
 
     def validate_model(self) -> Any:
         """
         Validates the YOLO model on the validation dataset.
+
+        Args:
+            batch_size (int): The batch size for training and validation.
 
         Returns:
             The validation results.
@@ -81,7 +90,7 @@ class YOLOModelHandler:
         if self.model is None:
             raise RuntimeError("The model is not loaded properly.")
         # Evaluate model performance on the validation set
-        return self.model.val()
+        return self.model.val(batch=self.batch_size)
 
     def predict_image(self, image_path: str) -> Any:
         """
@@ -188,7 +197,7 @@ if __name__ == "__main__":
         help="Path to the data configuration file",
     )
     parser.add_argument(
-        "--epochs", type=int, default=200, help="Number of training epochs"
+        "--epochs", type=int, default=100, help="Number of training epochs"
     )
     parser.add_argument(
         "--model_name",
@@ -221,9 +230,16 @@ if __name__ == "__main__":
         help="Path to the image file for SAHI prediction",
     )
 
+    parser.add_argument(
+        "--batch_size", 
+        type=int, 
+        default=-1, 
+        help="Batch size for training and validation"
+    )
+
     args = parser.parse_args()
 
-    handler = YOLOModelHandler(args.model_name)
+    handler = YOLOModelHandler(args.model_name, args.batch_size)
 
     try:
         handler.train_model(data_config=args.data_config, epochs=args.epochs)
