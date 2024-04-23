@@ -88,6 +88,13 @@ def remove_overlapping_labels(datas):
 def overlap_percentage(bbox1, bbox2):
     """
     Calculates the percentage of overlap between two bounding boxes.
+
+    Args:
+        bbox1 (list): The first bounding box [x1, y1, x2, y2].
+        bbox2 (list): The second bounding box [x1, y1, x2, y2].
+
+    Returns:
+        float: The percentage of overlap between the two bounding boxes.
     """
     x1 = max(bbox1[0], bbox2[0])
     y1 = max(bbox1[1], bbox2[1])
