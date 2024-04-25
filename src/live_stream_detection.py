@@ -196,7 +196,7 @@ class LiveStreamDetector:
             connect=retries,
             backoff_factor=backoff_factor,
             status_forcelist=status_forcelist,
-            method_whitelist=method_whitelist
+            allowed_methods=allowed_methods
         )
         adapter = HTTPAdapter(max_retries=retry)
         session.mount('http://', adapter)
