@@ -223,7 +223,7 @@ class LiveStreamDetector:
         Yields:
             A tuple containing detection data, the current frame, and the timestamp for each frame.
         """
-        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=5)  # 确保第一帧被处理
+        self.authenticate()
         while True:
             if not self.cap.isOpened():
                 self.initialise_stream()
