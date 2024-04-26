@@ -25,7 +25,7 @@ class LiveStreamDetector:
         cap (cv2.VideoCapture): Video capture object for the stream.
     """
 
-    def __init__(self, stream_url: str, api_url: str = 'http://localhost:5000', model_key: str = 'yolov8l', output_filename: str = 'detected_frame.jpg'):
+    def __init__(self, stream_url: str, api_url: str = 'http://localhost:5000', model_key: str = 'yolov8l', output_folder: str = None, output_filename: str = 'detected_frame.jpg'):
         '''
         Initialise the LiveStreamDetector object with the provided stream URL, model path, and output filename.
 
@@ -33,11 +33,13 @@ class LiveStreamDetector:
             stream_url (str): The URL of the live video stream.
             api_url (str): The URL of the SAHI API for object detection.
             model_key (str): The key of the model to use for detection.
+            output_folder (str): The folder to save the detected frames.
             output_filename (str): The filename to save the detected frames.
         '''
         self.stream_url = stream_url
         self.api_url = api_url
         self.model_key = model_key
+        self.output_folder = output_folder
         self.output_filename = output_filename
         self.initialise_stream()
         self.session = self.requests_retry_session()
@@ -167,15 +169,31 @@ class LiveStreamDetector:
 
     def save_frame(self, frame: cv2.Mat) -> None:
         """
-        Saves the frame to the 'detected_frames/' directory with the provided filename.
+        Saves the frame to the specified directory and filename.
 
         Args:
             frame (cv2.Mat): The frame to be saved.
         """
-        output_dir = Path('detected_frames')
+        # Define the base directory for detected frames
+        base_output_dir = Path('detected_frames')
+        
+        # Include additional subdirectory if specified
+        if self.output_folder:
+            output_dir = base_output_dir / self.output_folder
+        else:
+            output_dir = base_output_dir
+        
+        # Ensure the directory exists
         output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Define the complete output path including the filename
         output_path = output_dir / self.output_filename
+        
+        # Save the image to the specified path
         cv2.imwrite(str(output_path), frame)
+
+        # Optional: Print the path where the frame was saved (can be removed in production)
+        # print(f"Frame saved to: {output_path}")
 
         # Clear memory by deleting variables
         del output_dir, output_path

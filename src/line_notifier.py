@@ -25,15 +25,23 @@ class LineNotifier:
             if not self.line_token:
                 raise ValueError("LINE_NOTIFY_TOKEN is not provided and is absent from the environment variables.")
 
-    def send_notification(self, message: str, image_name: Optional[str] = None) -> int:
+    def send_notification(self, message: str, label:str = None, image_name: Optional[str] = None) -> int:
         """
         Sends a notification message through LINE Notify, with the option to include an image.
+
+        Args:
+            message (str): The message to send.
+            label (str): The label of the image_name.
+            image_name (Optional[str]): The name of the image file to send with the notification. Defaults to None.
+
+        Returns:
+            int: The status code of the HTTP request.
         """
         headers = {'Authorization': f'Bearer {self.line_token}'}
         payload = {'message': message}
         files = None
         if image_name:
-            image_path = Path('detected_frames') / image_name  # Assuming the images are stored in 'demo_data' directory.
+            image_path = Path('detected_frames') / label /image_name  # Assuming the images are stored in 'demo_data' directory.
             with open(image_path, 'rb') as image_file:
                 files = {'imageFile': image_file}
                 response = requests.post('https://notify-api.line.me/api/notify', headers=headers, data=payload, files=files)

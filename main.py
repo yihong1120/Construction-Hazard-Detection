@@ -14,18 +14,19 @@ from src.monitor_logger import LoggerConfig
 from src.live_stream_detection import LiveStreamDetector
 from src.danger_detector import DangerDetector
 
-def main(logger, video_url: str, api_url: str = 'http://localhost:5000', model_key: str = 'yolov8x',image_path: str = 'prediction_visual.png', line_token: str = None, output_path: str = None) -> NoReturn:
+def main(logger, video_url: str, api_url: str = 'http://localhost:5000', model_key: str = 'yolov8x', label: str = None, image_name: str = 'prediction_visual.png', line_token: str = None, output_path: str = None) -> NoReturn:
     """
     Main execution function that detects hazards, sends notifications, logs warnings, and optionally saves output images.
 
     Args:
         logger (logging.Logger): A logger instance for logging messages.
         video_url (str): The URL of the live stream to monitor.
-        image_path (str, optional): The file path of the image to send with notifications. Defaults to 'demo_data/prediction_visual.png'.
+        label (str): The label of image_name.
+        image_name (str, optional): The file name of the image to send with notifications. Defaults to 'demo_data/{label}/prediction_visual.png'.
         output_path (str, optional): The file path where output images should be saved. If not specified, images are not saved.
     """
     # Initialise the live stream detector
-    live_stream_detector = LiveStreamDetector(stream_url = video_url, api_url=api_url, model_key=model_key, output_filename = image_path)
+    live_stream_detector = LiveStreamDetector(stream_url = video_url, api_url=api_url, model_key=model_key, output_folder = label, output_filename = image_name)
 
     # Initialise the LINE notifier
     line_notifier = LineNotifier(line_token)
@@ -67,8 +68,8 @@ def main(logger, video_url: str, api_url: str = 'http://localhost:5000', model_k
             # Combine all warnings into one message
             message = '\n'.join([f'[{detection_time}] {warning}' for warning in unique_warnings])
 
-            # Send notification with or without image based on image_path value
-            status = line_notifier.send_notification(message, image_path if image_path != 'None' else None)
+            # Send notification with or without image based on image_name value
+            status = line_notifier.send_notification(message, label, image_name if image_name != 'None' else None)
             if status == 200:
                 logger.warning(f"Notification sent successfully: {message}")
             else:
