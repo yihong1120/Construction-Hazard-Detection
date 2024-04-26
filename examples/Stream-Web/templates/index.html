@@ -5,14 +5,24 @@
 <title>Camera Streams</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<style>
+    .camera a {
+        display: block;
+        text-decoration: none;
+        color: inherit; /* 保持鏈接顏色與普通文字一致 */
+        height: 100%; /* 讓鏈接填滿整個容器 */
+    }
+</style>
 </head>
 <body>
 <h1>Camera Labels</h1>
 <div class="camera-grid">
     {% for label in labels %}
     <div class="camera">
-        <h2>{{ label }}</h2>
-        <a href="/label/{{ label }}">View {{ label }}</a>
+        <a href="/label/{{ label }}">
+            <h2>{{ label }}</h2>
+            <p>View {{ label }}</p>
+        </a>
     </div>
     {% endfor %}
 </div>
