@@ -3,7 +3,6 @@ import cv2
 import datetime
 from pathlib import Path
 from typing import Generator, Tuple, List
-import time
 import gc
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
@@ -18,32 +17,22 @@ load_dotenv()
 class LiveStreamDetector:
     """
     A class to perform live stream detection and tracking using YOLOv8 with SAHI.
-    
-    Attributes:
-        stream_url (str): The URL of the live video stream.
-        model_path (str): The file path to the YOLOv8 model.
-        cap (cv2.VideoCapture): Video capture object for the stream.
     """
-
-    def __init__(self, stream_url: str, api_url: str = 'http://localhost:5000', model_key: str = 'yolov8l', output_folder: str = None, output_filename: str = 'detected_frame.jpg'):
+    def __init__(self, api_url: str = 'http://localhost:5000', model_key: str = 'yolov8l', output_folder: str = None, output_filename: str = 'detected_frame.jpg'):
         '''
         Initialise the LiveStreamDetector object with the provided stream URL, model path, and output filename.
 
         Args:
-            stream_url (str): The URL of the live video stream.
             api_url (str): The URL of the SAHI API for object detection.
             model_key (str): The key of the model to use for detection.
             output_folder (str): The folder to save the detected frames.
             output_filename (str): The filename to save the detected frames.
         '''
-        self.stream_url = stream_url
         self.api_url = api_url
         self.model_key = model_key
         self.output_folder = output_folder
         self.output_filename = output_filename
-        self.initialise_stream()
         self.session = self.requests_retry_session()
-        self.cap = cv2.VideoCapture(self.stream_url)
         
         # Load the font for text drawing
         self.font = ImageFont.truetype("assets/fonts/NotoSansTC-VariableFont_wght.ttf", 20)
@@ -62,7 +51,7 @@ class LiveStreamDetector:
             9: '車輛' # vehicle
         }
 
-        # 字体路径和字体对象
+        # Load the font for text drawing
         self.font_path, self.font = self.load_font()
         
         # Define colours for different labels
@@ -80,7 +69,7 @@ class LiveStreamDetector:
         self.exclude_labels = ['安全錐', '口罩', '無口罩'] # Safety Cone, Mask, No-Mask
 
         self.access_token = None
-        self.authenticate()  # 在初始化时进行认证
+        self.authenticate()  # Authenticate with the API server to obtain JWT
 
     def load_font(self):
         '''
@@ -89,16 +78,6 @@ class LiveStreamDetector:
         font_path = "assets/fonts/NotoSansTC-VariableFont_wght.ttf"
         font = ImageFont.truetype(font_path, 20)  # Define font size and font
         return font_path, font
-
-    def initialise_stream(self) -> None:
-        """
-        Initialises the video stream from the provided URL.
-        """
-        self.cap = cv2.VideoCapture(self.stream_url)
-        # Check if the stream is opened correctly.
-        if not self.cap.isOpened():
-            time.sleep(5)  # Wait for 5 seconds before retrying.
-            self.cap.open(self.stream_url)
 
     def draw_detections_on_frame(self, frame: cv2.Mat, datas: List) -> None:
         """
@@ -207,6 +186,19 @@ class LiveStreamDetector:
         session=None,
         allowed_methods=frozenset(['HEAD', 'GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'TRACE'])
     ):
+        '''
+        Create a new requests session with retry mechanism.
+
+        Args:
+            retries (int): The number of retries for the request.
+            backoff_factor (float): The backoff factor for the retry mechanism.
+            status_forcelist (tuple): The status codes for which to force a retry.
+            session (requests.Session): The existing session to use.
+            allowed_methods (frozenset): The allowed HTTP methods for the session.
+
+        Returns:
+            requests.Session: The session with the retry mechanism.
+        '''
         session = session or requests.Session()
         retry = Retry(
             total=retries,
@@ -228,13 +220,13 @@ class LiveStreamDetector:
                 f"{self.api_url}/token",
                 json={"username": os.getenv('API_USERNAME'), "password": os.getenv('API_PASSWORD')}
             )
-            response.raise_for_status()  # 将抛出异常，如果响应码不是 200
+            response.raise_for_status()  # Raise an exception for 4xx/5xx status codes
             self.access_token = response.json()['access_token']
         except (ConnectionError, requests.RequestException) as e:
             print(f"网络连接异常或请求错误: {e}")
             raise
 
-    def generate_detections(self) -> Generator[Tuple[List, cv2.Mat, float], None, None]:
+    def generate_detections(self, frame) -> Generator[Tuple[List, cv2.Mat, float], None, None]:
         """
         Generates detections from the video stream, capturing frames every five seconds.
 
@@ -242,87 +234,58 @@ class LiveStreamDetector:
             A tuple containing detection data, the current frame, and the timestamp for each frame.
         """
         self.authenticate()
-        while True:
-            if not self.cap.isOpened():
-                self.initialise_stream()
-            success, frame = self.cap.read()
-            if not success:
-                self.release_resources()
-                print("Failed to read frame, trying to reinitialise stream.")
-                self.initialise_stream()
-                continue
 
-            current_time = datetime.datetime.now()
-            if (current_time - last_process_time).total_seconds() >= 5:
-                last_process_time = current_time
-                timestamp = current_time.timestamp()
+        _, frame_encoded = cv2.imencode('.png', frame)
+        frame_encoded = frame_encoded.tobytes()
+        filename = f"frame_{datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')}.png"
 
-                _, frame_encoded = cv2.imencode('.png', frame)
-                frame_encoded = frame_encoded.tobytes()
-                filename = f"frame_{datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')}.png"
-
-                try:
-                    headers = {'Authorization': f'Bearer {self.access_token}'}
-                    response = requests.post(
-                        f'{self.api_url}/detect',
-                        files={'image': (filename, frame_encoded, 'image/png')},
-                        params={'model': self.model_key},
-                        headers=headers
-                    )
-                    response.raise_for_status()
-                    detections = response.json()
-                    yield detections, frame, timestamp
-                except requests.exceptions.RequestException as e:
-                    print(f"Request failed: {e}, re-authenticating and retrying...")
-                    self.authenticate()
-                    try:
-                        response = requests.post(
-                            f'{self.api_url}/detect',
-                            files={'image': (filename, frame_encoded, 'image/png')},
-                            params={'model': self.model_key},
-                            headers=headers
-                        )
-                        response.raise_for_status()
-                        detections = response.json()
-                        yield detections, frame, timestamp
-                    except requests.exceptions.RequestException as e:
-                        print(f"Failed after retry: {e}")
-                        continue
-
-                del frame_encoded, filename, response, detections
-                gc.collect()
-
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
-            gc.collect()
-
-    def release_resources(self) -> None:
-        """
-        Releases resources after detection is complete.
-        """
-        self.cap.release()
-        cv2.destroyAllWindows()
+        try:
+            headers = {'Authorization': f'Bearer {self.access_token}'}
+            response = requests.post(
+                f'{self.api_url}/detect',
+                files={'image': (filename, frame_encoded, 'image/png')},
+                params={'model': self.model_key},
+                headers=headers
+            )
+            response.raise_for_status()
+            detections = response.json()
+            return detections, frame
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed: {e}, re-authenticating and retrying...")
+            self.authenticate()
+            try:
+                response = requests.post(
+                    f'{self.api_url}/detect',
+                    files={'image': (filename, frame_encoded, 'image/png')},
+                    params={'model': self.model_key},
+                    headers=headers
+                )
+                response.raise_for_status()
+                detections = response.json()
+                return detections, frame
+            except requests.exceptions.RequestException as e:
+                print(f"Failed after retry: {e}")
+    
+        del frame_encoded, filename, response, detections
         gc.collect()
 
-    def run_detection(self) -> None:
+    def run_detection(self, stream_url: str) -> None:
         """
         Runs the detection process and draws the results on each frame continuously.
         """
-        try:
-            for datas, frame, timestamp in self.generate_detections():
-                print("Timestamp:", datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'))
-                print("Datas:", datas)
+        cap = cv2.VideoCapture(stream_url)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        while True:
+            ret, frame = cap.read()
+            if ret:
+                datas, _ = self.generate_detections(frame)
                 self.draw_detections_on_frame(frame, datas)
-                cv2.imshow('Frame', frame)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-        except requests.RequestException as e:
-            print(f"处理请求时发生错误: {e}")
-        except Exception as e:
-            print(f"发生未预期的错误: {e}")
-        finally:
-            self.release_resources()
+            else:
+                break
+
+            del frame, ret, datas
+            gc.collect()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform live stream detection and tracking using YOLOv8.')
@@ -333,11 +296,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Initialise the live stream detector with the provided stream URL, API URL, model key, and output filename.
-    detector = LiveStreamDetector(args.url, args.api_url, args.model_key, args.output)
+    detector = LiveStreamDetector(args.api_url, args.model_key, args.output)
 
     # Run the detection process and continuously output images
     detector.authenticate()
-    detector.run_detection()
+    detector.run_detection(args.url)
 
 """example
 python live_stream_detection.py --url https://cctv6.kctmc.nat.gov.tw/ea05668e/

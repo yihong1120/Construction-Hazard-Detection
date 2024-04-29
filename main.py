@@ -1,14 +1,13 @@
 import argparse
 from logging import Logger
-import numpy
 import json
-import multiprocessing
 from datetime import datetime
 from multiprocessing import Pool
 import time
 import gc
-from typing import List, NoReturn, Dict
+from typing import NoReturn, Dict
 
+from src.stream_capture import StreamCapture
 from src.line_notifier import LineNotifier
 from src.monitor_logger import LoggerConfig
 from src.live_stream_detection import LiveStreamDetector
@@ -25,8 +24,11 @@ def main(logger, video_url: str, api_url: str = 'http://localhost:5000', model_k
         image_name (str, optional): The file name of the image to send with notifications. Defaults to 'demo_data/{label}/prediction_visual.png'.
         output_path (str, optional): The file path where output images should be saved. If not specified, images are not saved.
     """
+
+    steaming_capture = StreamCapture(stream_url = video_url)
+
     # Initialise the live stream detector
-    live_stream_detector = LiveStreamDetector(stream_url = video_url, api_url=api_url, model_key=model_key, output_folder = label, output_filename = image_name)
+    live_stream_detector = LiveStreamDetector(api_url=api_url, model_key=model_key, output_folder = label, output_filename = image_name)
 
     # Initialise the LINE notifier
     line_notifier = LineNotifier(line_token)
@@ -38,10 +40,13 @@ def main(logger, video_url: str, api_url: str = 'http://localhost:5000', model_k
     last_notification_time = int(time.time()) - 300
 
     # Use the generator function to process detections
-    for datas, frame, timestamp in live_stream_detector.generate_detections():
+    for frame, timestamp in steaming_capture.execute_capture():
         # Convert UNIX timestamp to datetime object and format it as string
         detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
         print(detection_time)
+
+        # Detect hazards in the frame
+        datas, _ = live_stream_detector.generate_detections(frame)
 
         # Draw the detections on the frame
         live_stream_detector.draw_detections_on_frame(frame, datas)
