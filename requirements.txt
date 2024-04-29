@@ -3,18 +3,19 @@ opencv_python_headless==4.7.0.72
 Pillow==10.3.0
 torch==2.2.2
 torchvision==0.17.2
-ultralytics==8.2.2
-imageio==2.34.0
+ultralytics==8.2.5
+imageio==2.34.1
 imgaug==0.4.0
 numpy==1.26.4
 python-dotenv==1.0.1
 sahi==0.11.5
 pycocotools==2.0.7
 onnx==1.16.0
-gunicorn==21.2.0
+gunicorn==22.0.0
 imagecorruptions==1.1.2
 Flask-JWT-Extended ==4.6.0
 Flask-Limiter==3.5.1
 Flask-SQLAlchemy==3.1.1
-redis==5.0.3
+redis==5.0.4
 apscheduler==3.10.4
+speedtest-cli==2.1.3
