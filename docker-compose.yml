@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:5.7
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: modeldb
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 20s
+      retries: 5
+
+  model-server:
+    build: .
+    command: gunicorn -w 1 -b 0.0.0.0:8000 "examples.Model-Server.app:app"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  stream-web:
+    build: .
+    command: gunicorn -w 1 -b 0.0.0.0:8001 "examples.Stream-Web.app:app"
+    volumes:
+      - .:/app
+    ports:
+      - "8001:8001"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  main-application:
+    build: .
+    command: python main.py --config config/configuration.json
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      model-server:
+        condition: service_started
+      stream-web:
+        condition: service_started
+
+volumes:
+  db_data:
+
+# docker-compose up --build

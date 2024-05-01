@@ -7,6 +7,12 @@ RUN useradd -ms /bin/bash appuser
 # Set the working directory in the container
 WORKDIR /app
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install any needed packages specified in requirements.txt
 # Note: Copy only requirements.txt first to leverage Docker cache
 COPY requirements.txt ./
@@ -19,11 +25,9 @@ COPY --chown=appuser:appuser . /app
 # Switch to non-root user for better security
 USER appuser
 
-# Make port 80 available to the world outside this container
-EXPOSE 80
+# Expose the ports used by the Gunicorn servers
+EXPOSE 8000 8001
 
-# No need to define MODEL_PATH, IMAGE_PATH, LINE_NOTIFY_TOKEN, and VIDEO_URL as environment variables here
-# as they will be dynamically read from configuration.json by the application
-
-# Run main.py when the container launches
-CMD ["python", "main.py"]
+# The CMD directive is used to run the script.
+# Since we are using docker-compose to override this command, it can be left blank or set as a placeholder.
+CMD ["echo", "Please use docker-compose to run this container."]
