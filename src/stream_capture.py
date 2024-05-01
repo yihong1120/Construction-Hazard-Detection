@@ -1,5 +1,5 @@
 import argparse
-from typing import Any, Generator
+from typing import Any, Generator, Tuple
 import cv2
 import streamlink
 import gc
@@ -30,6 +30,8 @@ class StreamCapture:
             Exception: If the stream is not opened correctly.
         '''
         self.cap = cv2.VideoCapture(self.stream_url)
+        # Set buffer size to 1 to reduce latency
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         # Check if the stream is opened correctly.
         if not self.cap.isOpened():
             time.sleep(5)  # Wait for 5 seconds before retrying.
@@ -50,7 +52,7 @@ class StreamCapture:
         cv2.destroyAllWindows()
         gc.collect()
 
-    def capture_frames(self) -> None:
+    def capture_frames(self) -> Generator[Tuple[cv2.Mat, float], None, None]:
         '''
         Capture frames using a generic or a RTSP link. 
         
@@ -60,7 +62,7 @@ class StreamCapture:
         Raises:
             Exception: If an error occurs while reading frames.
         '''
-        self.cap = cv2.VideoCapture(self.stream_url)
+        self.initialise_stream()
         last_process_time = datetime.datetime.now()
         while True:
             ret, frame = self.cap.read()
@@ -76,6 +78,10 @@ class StreamCapture:
                 timestamp = current_time.timestamp()
                 
                 yield frame, timestamp
+
+            # Skip frames if necessary
+            for _ in range(5):  # Skip 5 frames
+                self.cap.grab()
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -131,7 +137,7 @@ class StreamCapture:
             print(f"Error selecting quality based on speed: {e}")
             return None
 
-    def capture_youtube_frames(self) -> Generator[cv2.VideoCapture, int, None]:
+    def capture_youtube_frames(self) -> Generator[Tuple[cv2.Mat, float], None, None]:
         '''
         Capture frames from a YouTube stream.
 
@@ -148,6 +154,8 @@ class StreamCapture:
 
         try:
             self.cap = cv2.VideoCapture(stream_url)
+            # Set buffer size to 1 to reduce latency
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             last_process_time = datetime.datetime.now()
             while True:
                 ret, frame = self.cap.read()
@@ -160,6 +168,10 @@ class StreamCapture:
                     last_process_time = current_time
                     timestamp = current_time.timestamp()
                     yield frame, timestamp
+
+                # Skip frames if necessary to manage frame rate
+                for _ in range(5):  # Skip 5 frames
+                    self.cap.grab()
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
