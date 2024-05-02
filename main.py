@@ -40,7 +40,7 @@ def main(logger, video_url: str, api_url: str = 'http://localhost:5000', model_k
     last_notification_time = int(time.time()) - 300
 
     # Use the generator function to process detections
-    for frame, timestamp in steaming_capture.execute_capture():
+    for frame, timestamp in steaming_capture.capture_frames():
         # Convert UNIX timestamp to datetime object and format it as string
         detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
         print(detection_time)

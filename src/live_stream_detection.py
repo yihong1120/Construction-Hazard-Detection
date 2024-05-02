@@ -6,10 +6,11 @@ from typing import Generator, Tuple, List
 import gc
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
-import datetime
+import time
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -74,6 +75,9 @@ class LiveStreamDetector:
     def load_font(self):
         '''
         Load font for text drawing
+
+        Returns:
+            font_path (str): The path to the font file.
         '''
         font_path = "assets/fonts/NotoSansTC-VariableFont_wght.ttf"
         font = ImageFont.truetype(font_path, 20)  # Define font size and font
@@ -87,6 +91,12 @@ class LiveStreamDetector:
         Args:
             frame (cv2.Mat): The original video frame.
             datas (List): The list of detection data.
+
+        Returns:
+            None
+
+        Raises:
+            Exception: If the file cannot be saved.
         """
         # Convert cv2 image to PIL image
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -152,6 +162,12 @@ class LiveStreamDetector:
 
         Args:
             frame (cv2.Mat): The frame to be saved.
+
+        Returns:
+            None
+
+        Raises:
+            Exception: If the file cannot be saved.
         """
         # Define the base directory for detected frames
         base_output_dir = Path('detected_frames')
@@ -168,6 +184,10 @@ class LiveStreamDetector:
         # Define the complete output path including the filename
         output_path = output_dir / self.output_filename
         
+        # Check if the file exists and remove it if it does
+        if output_path.exists():
+            output_path.unlink() 
+
         # Save the image to the specified path
         cv2.imwrite(str(output_path), frame)
 
@@ -180,25 +200,28 @@ class LiveStreamDetector:
 
     def requests_retry_session(
         self,
-        retries=5,
-        backoff_factor=0.5,
-        status_forcelist=(500, 502, 504, 104),
+        retries=7,  # Number of retries
+        backoff_factor=1,  # Exponential backoff factor
+        status_forcelist=(500, 502, 504, 401, 104),
         session=None,
         allowed_methods=frozenset(['HEAD', 'GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'TRACE'])
     ):
-        '''
-        Create a new requests session with retry mechanism.
+        """
+        Retry session for handling network errors and retries.
 
         Args:
-            retries (int): The number of retries for the request.
-            backoff_factor (float): The backoff factor for the retry mechanism.
-            status_forcelist (tuple): The status codes for which to force a retry.
-            session (requests.Session): The existing session to use.
-            allowed_methods (frozenset): The allowed HTTP methods for the session.
+            retries (int): The number of retries for the session.
+            backoff_factor (int): The backoff factor for retries.
+            status_forcelist (tuple): The status codes to force a retry.
+            session (requests.Session): The session to use for retries.
+            allowed_methods (frozenset): The allowed methods for the session.
 
         Returns:
-            requests.Session: The session with the retry mechanism.
-        '''
+            requests.Session: The session with retries enabled.
+
+        Raises:
+            requests.exceptions.RequestException: If an error occurs during the request.
+        """
         session = session or requests.Session()
         retry = Retry(
             total=retries,
@@ -206,68 +229,103 @@ class LiveStreamDetector:
             connect=retries,
             backoff_factor=backoff_factor,
             status_forcelist=status_forcelist,
-            allowed_methods=allowed_methods
+            allowed_methods=allowed_methods,
+            raise_on_status=False
         )
         adapter = HTTPAdapter(max_retries=retry)
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         return session
 
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), retry=retry_if_exception_type(requests.RequestException))
     def authenticate(self):
-        """Authenticate with the API server to obtain JWT."""
-        try:
-            response = self.session.post(
-                f"{self.api_url}/token",
-                json={"username": os.getenv('API_USERNAME'), "password": os.getenv('API_PASSWORD')}
-            )
-            response.raise_for_status()  # Raise an exception for 4xx/5xx status codes
-            self.access_token = response.json()['access_token']
-        except (ConnectionError, requests.RequestException) as e:
-            print(f"网络连接异常或请求错误: {e}")
-            raise
+        """
+        Authenticate with the API server to obtain JWT.
 
+        Returns:
+            str: The access token for authentication.
+
+        Raises:
+            Exception: If the authentication fails.
+        """
+        response = self.session.post(
+            f"{self.api_url}/token",
+            json={"username": os.getenv('API_USERNAME'), "password": os.getenv('API_PASSWORD')}
+        )
+        response.raise_for_status()  # Raise an exception for 4xx/5xx status codes
+        token_data = response.json()
+        if 'msg' in token_data:
+            raise Exception(token_data['msg'])
+        elif 'access_token' in token_data:
+            self.access_token = token_data['access_token']
+        else:
+            raise Exception("Token data does not contain 'msg' or 'access_token'")
+
+        # Assume the token expires in 15 minutes (900 seconds)
+        self.token_expiry = time.time() + 890
+
+    def token_expired(self):
+        """
+        Check if the current access token has expired.
+        
+        Args:
+            token_expiry (float): The timestamp when the token expires.
+
+        Returns:
+            bool: True if the token has expired, False otherwise.
+
+        Raises:
+            Exception: If the token expiry time is not set.
+        """
+        return time.time() >= self.token_expiry
+
+    def ensure_authenticated(self):
+        """
+        Ensure that the detector is authenticated and the token is valid.
+        
+        Args:
+            api_url (str): The URL of the SAHI API for object detection.
+            model_key (str): The key of the model to use for detection.
+
+        Returns:
+            str: The access token for authentication.
+
+        Raises:
+            Exception: If the authentication fails.
+        """
+        if self.access_token is None or self.token_expired():
+            self.authenticate()
+
+    @retry(stop=stop_after_attempt(2), wait=wait_fixed(3), retry=retry_if_exception_type(requests.RequestException))
     def generate_detections(self, frame) -> Generator[Tuple[List, cv2.Mat, float], None, None]:
         """
         Generates detections from the video stream, capturing frames every five seconds.
 
-        Yields:
-            A tuple containing detection data, the current frame, and the timestamp for each frame.
+        Args:
+            frame (cv2.Mat): The frame to generate detections from.
+
+        Returns:
+            Generator: A generator yielding a tuple of detections, frame, and timestamp.
+
+        Raises:
+            Exception: If an error occurs during the request.
         """
-        self.authenticate()
+        self.ensure_authenticated()
 
         _, frame_encoded = cv2.imencode('.png', frame)
         frame_encoded = frame_encoded.tobytes()
         filename = f"frame_{datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')}.png"
 
-        try:
-            headers = {'Authorization': f'Bearer {self.access_token}'}
-            response = requests.post(
-                f'{self.api_url}/detect',
-                files={'image': (filename, frame_encoded, 'image/png')},
-                params={'model': self.model_key},
-                headers=headers
-            )
-            response.raise_for_status()
-            detections = response.json()
-            return detections, frame
-        except requests.exceptions.RequestException as e:
-            print(f"Request failed: {e}, re-authenticating and retrying...")
-            self.authenticate()
-            try:
-                response = requests.post(
-                    f'{self.api_url}/detect',
-                    files={'image': (filename, frame_encoded, 'image/png')},
-                    params={'model': self.model_key},
-                    headers=headers
-                )
-                response.raise_for_status()
-                detections = response.json()
-                return detections, frame
-            except requests.exceptions.RequestException as e:
-                print(f"Failed after retry: {e}")
-    
-        del frame_encoded, filename, response, detections
-        gc.collect()
+        headers = {'Authorization': f'Bearer {self.access_token}'}
+        response = requests.post(
+            f'{self.api_url}/detect',
+            files={'image': (filename, frame_encoded, 'image/png')},
+            params={'model': self.model_key},
+            headers=headers
+        )
+        response.raise_for_status()
+        detections = response.json()
+        return detections, frame
 
     def run_detection(self, stream_url: str) -> None:
         """
