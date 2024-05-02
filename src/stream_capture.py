@@ -1,5 +1,5 @@
 import argparse
-from typing import Any, Generator, Tuple
+from typing import Generator, Tuple
 import cv2
 import streamlink
 import gc
@@ -9,11 +9,11 @@ import speedtest
 
 class StreamCapture:
     '''
-    Class to capture frames from a video stream.
+    Class designed to capture frames from a video stream.
     '''
     def __init__(self, stream_url: str):
         '''
-        Constructor to initialize the stream URL.
+        Constructor to initialise the stream URL.
 
         Args:
             stream_url (str): The URL of the video stream.
@@ -22,24 +22,27 @@ class StreamCapture:
         self.stream_url = stream_url
         self.cap = None
 
-    def initialise_stream(self) -> None:
+    def initialise_stream(self, stream_url: str) -> None:
         '''
         Initialises the video stream from the provided URL.
 
+        Args:
+            stream_url (str): The URL of the video stream.
+
         Raises:
-            Exception: If the stream is not opened correctly.
+            Exception: If an error occurs while initialising the stream.
         '''
-        self.cap = cv2.VideoCapture(self.stream_url)
+        self.cap = cv2.VideoCapture(stream_url)
         # Set buffer size to 1 to reduce latency
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        # Check if the stream is opened correctly.
+        # Check if the stream has opened correctly.
         if not self.cap.isOpened():
             time.sleep(5)  # Wait for 5 seconds before retrying.
-            self.cap.open(self.stream_url)
+            self.cap.open(stream_url)
 
     def release_resources(self) -> None:
         '''
-        Release resources like capture object and destroy any OpenCV windows. 
+        Release resources such as the capture object and destroy any OpenCV windows.
         
         Args:
             cap (cv2.VideoCapture): The OpenCV VideoCapture object.
@@ -54,34 +57,41 @@ class StreamCapture:
 
     def capture_frames(self) -> Generator[Tuple[cv2.Mat, float], None, None]:
         '''
-        Capture frames using a generic or a RTSP link. 
-        
+        Captures frames from a video stream, accommodating both generic and YouTube streams.
+
         Args:
             stream_url (str): The URL of the video stream.
 
+        Yields:
+            Tuple: A tuple containing the frame and timestamp.
+
         Raises:
-            Exception: If an error occurs while reading frames.
+            Exception: If an error occurs while capturing frames.
         '''
-        self.initialise_stream()
+        # If the stream originates from YouTube, select the quality based on internet speed.
+        if "youtube.com" in self.stream_url.lower() or "youtu.be" in self.stream_url.lower():
+            stream_url = self.select_quality_based_on_speed()
+            if not stream_url:
+                print("Unable to obtain a suitable stream quality based on internet speed.")
+                return
+        else:
+            stream_url = self.stream_url
+
+        self.initialise_stream(stream_url)
         last_process_time = datetime.datetime.now()
         while True:
             ret, frame = self.cap.read()
             if not ret:
-                print("Failed to read frame, trying to reinitialise stream.")
+                print("Failed to read frame, attempting to reinitialise stream.")
                 self.release_resources()
-                self.initialise_stream()
+                self.initialise_stream(stream_url)
                 continue
 
             current_time = datetime.datetime.now()
             if (current_time - last_process_time).total_seconds() >= 5:
                 last_process_time = current_time
                 timestamp = current_time.timestamp()
-                
                 yield frame, timestamp
-
-            # Skip frames if necessary
-            for _ in range(5):  # Skip 5 frames
-                self.cap.grab()
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -90,10 +100,13 @@ class StreamCapture:
 
     def check_internet_speed(self) -> tuple:
         '''
-        Check the internet speed using the Speedtest library.
+        Checks the internet speed using the Speedtest library.
 
         Returns:
             Tuple: A tuple containing the download and upload speeds in Mbps.
+
+        Raises:
+            Exception: If an error occurs while checking the internet speed.
         '''
         st = speedtest.Speedtest()
         st.get_best_server()
@@ -103,7 +116,7 @@ class StreamCapture:
 
     def select_quality_based_on_speed(self) -> str:
         '''
-        Select the stream quality based on the internet speed.
+        Selects the stream quality based on the internet speed.
 
         Returns:
             str: The URL of the selected stream quality.
@@ -137,67 +150,12 @@ class StreamCapture:
             print(f"Error selecting quality based on speed: {e}")
             return None
 
-    def capture_youtube_frames(self) -> Generator[Tuple[cv2.Mat, float], None, None]:
-        '''
-        Capture frames from a YouTube stream.
-
-        Returns:
-            Generator: A generator yielding frames and timestamps.
-
-        Raises:
-            Exception: If an error occurs while reading frames.
-        '''
-        stream_url = self.select_quality_based_on_speed()
-        if not stream_url:
-            print("Unable to obtain a suitable stream quality based on internet speed.")
-            return
-
-        try:
-            self.cap = cv2.VideoCapture(stream_url)
-            # Set buffer size to 1 to reduce latency
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            last_process_time = datetime.datetime.now()
-            while True:
-                ret, frame = self.cap.read()
-                if not ret:
-                    print("Failed to read frame from YouTube stream.")
-                    continue
-
-                current_time = datetime.datetime.now()
-                if (current_time - last_process_time).total_seconds() >= 5:
-                    last_process_time = current_time
-                    timestamp = current_time.timestamp()
-                    yield frame, timestamp
-
-                # Skip frames if necessary to manage frame rate
-                for _ in range(5):  # Skip 5 frames
-                    self.cap.grab()
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-        except Exception as e:
-            print(f"Error: {e}")
-        finally:
-            self.release_resources()
-        
-    def execute_capture(self) -> None:
-        '''
-        Determine the stream type and return the appropriate capture generator. 
-
-        Returns:
-            Generator: A generator yielding frames and timestamps.
-        '''
-        if "youtube.com" in self.stream_url.lower() or "youtu.be" in self.stream_url.lower():
-            return self.capture_youtube_frames()
-        else:
-            return self.capture_frames()
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Capture video stream frames.')
     parser.add_argument('--url', type=str, help='Live stream URL', required=True)
     args = parser.parse_args()
 
     stream_capture = StreamCapture(args.url)
-    for frame, timestamp in stream_capture.execute_capture():
+    for frame, timestamp in stream_capture.capture_frames():
         # Process the frame here
         print(f"Frame at {timestamp} displayed")

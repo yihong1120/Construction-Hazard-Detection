@@ -1,3 +1,5 @@
+![AI-Driven Construction Safety Banner](./assets/images/project_graphics/banner.jpg)
+
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
 # 建築工地危險偵測
