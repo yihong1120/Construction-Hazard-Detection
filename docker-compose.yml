@@ -2,12 +2,12 @@ version: '3.8'
 
 services:
   db:
-    image: mysql:5.7
+    image: mysql:latest
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: modeldb
+      MYSQL_DATABASE: construction_hazard_detection
       MYSQL_USER: user
-      MYSQL_PASSWORD: password
+      MYSQL_PASSWORD: passcode
     ports:
       - "3306:3306"
     volumes:
