@@ -1,6 +1,7 @@
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
+from .models import User
 from .config import Config
 from .auth import auth_blueprint
 from .detection import detection_blueprint
@@ -45,6 +46,16 @@ atexit.register(lambda: scheduler.shutdown())
 @app.before_first_request
 def create_tables():
     db.create_all()
+
+    # Create a new user
+    user = User(username='user')
+    user.set_password('passcode')
+
+    # Add the new user to the database session
+    db.session.add(user)
+
+    # Commit the session to write the new user to the database
+    db.session.commit()
 
 if __name__ == '__main__':
     # Run the Flask application on all available IPs at port 5000

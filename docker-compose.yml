@@ -42,9 +42,10 @@ services:
 
   main-application:
     build: .
-    command: python main.py --config config/configuration.json
+    command: python main.py --config ${CONFIG_PATH}
     volumes:
       - .:/app
+      - ${CONFIG_PATH}:/app/config/configuration.json
     depends_on:
       db:
         condition: service_healthy
@@ -57,3 +58,4 @@ volumes:
   db_data:
 
 # docker-compose up --build
+#docker-compose run main-application python main.py --config /path/in/container/configuration.json
