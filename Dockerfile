@@ -1,5 +1,5 @@
 # Use an official PyTorch image with CUDA 11.8 as the base image
-FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
+FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
 
 # Create a user to run the app (for better security)
 RUN useradd -ms /bin/bash appuser
