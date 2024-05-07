@@ -28,10 +28,10 @@ def detect():
     result = get_sliced_prediction(
         img,
         model,
-        slice_height=320,
-        slice_width=320,
+        slice_height=376,
+        slice_width=376,
         overlap_height_ratio=0.3,
-        overlap_width_ratio=0.3
+        overlap_width_ratio=0.3,
     )
 
     # Compile detection data in YOLOv8 format
