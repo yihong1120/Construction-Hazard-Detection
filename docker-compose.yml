@@ -42,7 +42,7 @@ services:
 
   main-application:
     build: .
-    command: python main.py --config ${CONFIG_PATH}
+    command: /bin/bash -c "python src/model_fetcher.py && python main.py --config ${CONFIG_PATH}"
     volumes:
       - .:/app
       - ${CONFIG_PATH}:/app/config/configuration.json
