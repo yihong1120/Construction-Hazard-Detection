@@ -1,3 +1,11 @@
+🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+
+![AI-Driven Construction Safety Banner](./assets/images/project_graphics/banner.jpg)
+
+<div align="center">
+    <a href="examples/Model-Server">模型伺服器</a> | <a href="examples/Stream-Web">串流網頁</a> | <a href="examples/User-Management">用戶管理</a> | <a href="examples/YOLOv8-Data-Augmentation">YOLOv8 數據增強</a> | <a href="examples/YOLOv8-Evaluation">YOLOv8 評估</a> | <a href="examples/YOLOv8-Train">YOLOv8 訓練</a>
+</div>
+
 # 建築工地危險檢測系統
 
 "建築工地危險檢測系統" 是一個以人工智能驅動的工具，旨在提高建築工地的安全性。利用 YOLOv8 模型進行物體檢測，此系統能夠識別潛在的危險，如高空重物和鋼管。對訓練好的模型進行後處理以提高準確性。該系統設計用於實時環境中，提供對檢測到的危險的即時分析和警告。
