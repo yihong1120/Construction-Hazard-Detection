@@ -1,3 +1,5 @@
+🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+
 # User Management System
 
 This User Management System is a Flask-based web application that provides endpoints for managing user accounts. It allows for the addition, deletion, and updating of user credentials within a database using SQLAlchemy ORM.
