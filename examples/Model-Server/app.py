@@ -5,6 +5,7 @@ from .models import User
 from .config import Config
 from .auth import auth_blueprint
 from .detection import detection_blueprint
+from .models import models_blueprint
 from .security import update_secret_key
 from apscheduler.schedulers.background import BackgroundScheduler
 import secrets
@@ -29,6 +30,9 @@ app.register_blueprint(auth_blueprint)
 
 # Register object detection-related routes
 app.register_blueprint(detection_blueprint)
+
+# Register object models-related routes
+app.register_blueprint(models_blueprint)
 
 # Set up a background scheduler
 scheduler = BackgroundScheduler()
