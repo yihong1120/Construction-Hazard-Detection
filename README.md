@@ -4,7 +4,12 @@
 
 <div align="center">
     <a href="examples
-/Model-Server">Model-Server</a> | <a href="./README-zh-tw.md">Stream-Web</a> | <a href="./README-zh-tw.md">User-Management</a> | <a href="./README-zh-tw.md">YOLOv8-Data-Augmentation</a> | <a href="./README-zh-tw.md">YOLOv8-Evaluation</a> | <a href="./README-zh-tw.md">YOLOv8-Train</a>
+/Model-Server">Model-Server</a> | <a href="examples
+/Stream-Web">Stream-Web</a> | <a href="examples
+/User-Management">User-Management</a> | <a href="examples
+/YOLOv8-Data-Augmentation">YOLOv8-Data-Augmentation</a> | <a href="examples
+/YOLOv8-Evaluation">YOLOv8-Evaluation</a> | <a href="examples
+/YOLOv8-Train">YOLOv8-Train</a>
 </div>
 
 # Construction-Hazard-Detection
