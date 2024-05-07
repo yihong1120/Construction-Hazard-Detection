@@ -1,6 +1,8 @@
 ![AI-Driven Construction Safety Banner](./assets/images/project_graphics/banner.jpg)
 
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+<div align="center">
+    🇬🇧 <a href="./README.md">English</a> | 🇹🇼 <a href="./README-zh-tw.md">繁體中文</a>
+</div>
 
 # Construction-Hazard-Detection
 
