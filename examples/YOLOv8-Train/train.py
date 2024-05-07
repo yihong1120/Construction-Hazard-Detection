@@ -57,7 +57,7 @@ class YOLOModelHandler:
         else:
             raise ValueError("Unsupported model format. Use '.yaml' or '.pt'")
 
-    def train_model(self, data_config: str, epochs: int) -> None:
+    def train_model(self, data_config: str, epochs: int, optimizer: str) -> None:
         """
         Trains the YOLO model using the specified data configuration and for a number of epochs.
 
@@ -65,6 +65,7 @@ class YOLOModelHandler:
             data_config (str): The path to the data configuration file.
             epochs (int): The number of training epochs.
             batch_size (int): The batch size for training and validation.
+            optimizer (str): The type of optimizer to use.
 
         Raises:
             RuntimeError: If the model is not loaded properly before training.
@@ -72,7 +73,7 @@ class YOLOModelHandler:
         if self.model is None:
             raise RuntimeError("The model is not loaded properly.")
         # Train the model
-        self.model.train(data=data_config, epochs=epochs, batch=self.batch_size)
+        self.model.train(data=data_config, epochs=epochs, batch=self.batch_size, optimizer=optimizer)
 
     def validate_model(self) -> Any:
         """
@@ -237,12 +238,19 @@ if __name__ == "__main__":
         help="Batch size for training and validation"
     )
 
+    parser.add_argument(
+        "--optimizer", 
+        type=str, 
+        default="Auto", 
+        help="Type of optimizer to use"
+    )
+
     args = parser.parse_args()
 
     handler = YOLOModelHandler(args.model_name, args.batch_size)
 
     try:
-        handler.train_model(data_config=args.data_config, epochs=args.epochs)
+        handler.train_model(data_config=args.data_config, epochs=args.epochs, optimizer=args.optimizer)
         metrics = handler.validate_model()
         print("Validation metrics:", metrics)
         
