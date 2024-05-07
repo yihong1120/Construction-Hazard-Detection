@@ -32,20 +32,6 @@ The primary dataset for training this model is the [Construction Site Safety Ima
 
 Our comprehensive dataset ensures that the model is well-equipped to identify a wide range of potential hazards commonly found in construction environments.
 
-## Installation Guide
-To set up this project, follow these steps:
-1. Clone the repository:
-   ```
-   git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
-   ```
-2. Navigate to the project directory:
-   ```
-   cd Construction-Hazard-Detection
-   ```
-3. Install the required dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
 ## Usage
 
 To run the hazard detection system, you need to have Docker and Docker Compose installed on your machine. Follow these steps to get the system up and running:
