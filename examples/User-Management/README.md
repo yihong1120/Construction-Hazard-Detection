@@ -77,6 +77,3 @@ The User model is defined in `models.py` and includes methods for setting and ve
 The `user_management.py` file contains the logic for interacting with the User model and performing operations such as adding, deleting, and updating users.
 
 For any further assistance or queries, please refer to the Flask and SQLAlchemy documentation.
-```
-
-Remember to replace the placeholder database URI with the actual URI that corresponds to your database setup. The usage examples provided are based on `curl` commands for simplicity, but in a production environment, you would likely interact with these endpoints through a front-end interface or a more secure API client.
