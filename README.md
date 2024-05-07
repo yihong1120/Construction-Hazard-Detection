@@ -46,74 +46,46 @@ To set up this project, follow these steps:
    ```
    pip install -r requirements.txt
    ```
-
 ## Usage
 
-This system is designed for real-time detection and alerting of hazards at construction sites. Follow these detailed steps to utilise the system effectively:
+To run the hazard detection system, you need to have Docker and Docker Compose installed on your machine. Follow these steps to get the system up and running:
 
-### Preparing the Environment
-1. **Setting Up the Hardware**: Ensure you have a computer with sufficient processing power and a high-quality camera for capturing live footage at the construction site.
-
-2. **Camera Installation**: Position the camera strategically to cover high-risk areas where heavy loads and steel pipes are handled.
-
-### Training the Model
-
-#### Gathering Data
-Collect images or videos of construction sites, focusing on various hazards such as heavy loads, steel pipes, and human presence. For examples of data augmentation techniques, visit [YOLOv8 Data Augmentation Examples](examples/YOLOv8-Data-Augmentation).
-
-#### Data Annotation
-Annotate your data to accurately identify and label hazards and human figures. Detailed annotation guidelines are available in the dataset documentation.
-
-#### Training YOLOv8
-Use the annotated dataset to train the YOLOv8 model. Execute the following command, adjusting parameters based on your dataset and hardware capabilities:
+1. Clone the repository to your local machine.
 ```
-python train.py --model_name 'yolov8n.pt' --epochs 100 --data_config 'dataset/data.yaml'
+git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
 ```
-For training guidelines and advanced training options, refer to [YOLOv8 Train Examples](examples/YOLOv8-Train).
-
-### Post-processing and Deployment
-
-#### Applying Post-processing
-After training, enhance the model's accuracy with post-processing techniques. For post-processing methods and evaluation strategies, see our detailed guide in [YOLOv8 Evaluation Examples](examples/YOLOv8-Evaluation).
-
-#### Evaluate YOLOv8
-Evaluating the performance of your YOLOv8 model is crucial for ensuring its effectiveness in real-world scenarios. We provide two main evaluation strategies: direct YOLOv8 model evaluation and combined SAHI+YOLOv8 evaluation for improved detection in complex scenes. To understand how to apply these methods and interpret the results, visit [YOLOv8 Evaluation Examples](examples/YOLOv8-Evaluation).
-
-#### Model Integration and System Running
-Integrate the trained model with software that can process the live feed from the camera. Start the system with the following command, which initiates the detection process using your camera feed:
+2. Navigate to the cloned directory.
 ```
-python src/demo.py
+cd Construction-Hazard-Detection
+```
+3. Build and run the services using Docker Compose:
+
+```bash
+docker-compose up --build
 ```
 
-### Real-time Monitoring and Alerting
-1. **Monitoring**: The system will continuously analyse the live feed from the construction site, detecting any potential hazards.
+4. To run the main application with a specific configuration file, use the following command:
 
-2. **Alerting**: When the system detects a human under a hazardous condition, it will trigger an alert. Ensure to have a mechanism (like a connected alarm or notification system) to notify the site personnel immediately.
+```bash
+docker-compose run main-application python main.py --config /path/in/container/configuration.json
+```
 
-## Deployment Guide
+Replace `/path/in/container/configuration.json` with the actual path to your configuration file inside the container.
 
-To deploy the "Construction-Hazard-Detection" system using Docker, follow these steps:
+5. To stop the services, use the following command:
 
-### Building the Docker Image
-1. Ensure Docker Desktop is installed and running on your machine.
-2. Open a terminal and navigate to the root directory of the cloned repository.
-3. Build the Docker image with the following command:
-   ```
-   docker build -t construction-hazard-detection .
-   ```
+```bash
+docker-compose down
+```
 
-### Running the Docker Container
-1. Once the image is built, you can run the container using the following command:
-   ```
-   docker run -p 8080:8080 -e LINE_TOKEN=your_actual_token construction-hazard-detection
-   ```
-   Replace `your_actual_token` with your actual LINE Notify token.
+## Additional Information
 
-   This command will start the container and expose port 8080 for the application, allowing you to access it from your host machine at `http://localhost:8080`.
+- The system logs are available within the Docker container and can be accessed for debugging purposes.
+- The output images with detections (if enabled) will be saved to the specified output path.
+- Notifications will be sent through LINE messaging API during the specified hours if hazards are detected.
 
 ### Notes
 - Ensure that the `Dockerfile` is present in the root directory of the project and is properly configured as per your application's requirements.
-- The `-e LINE_TOKEN=your_actual_token` flag sets the `LINE_TOKEN` environment variable inside the container, which is necessary for the application to send notifications. If you have other environment variables, you can add them in a similar manner.
 - The `-p 8080:8080` flag maps port 8080 of the container to port 8080 on your host machine, allowing you to access the application via the host's IP address and port number.
 
 For more information on Docker usage and commands, refer to the [Docker documentation](https://docs.docker.com/).
