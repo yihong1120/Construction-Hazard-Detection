@@ -1,6 +1,6 @@
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
-![AI-Driven Construction Safety Banner](./assets/images/project_graphics/banner.jpg)
+<img src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner" style="width: 100%;">
 
 <div align="center">
     <a href="examples
@@ -11,8 +11,6 @@
 /YOLOv8-Evaluation">YOLOv8-Evaluation</a> | <a href="examples
 /YOLOv8-Train">YOLOv8-Train</a>
 </div>
-
-# Construction-Hazard-Detection
 
 "Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety at construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards like overhead heavy loads and steel pipes. Post-processing is applied to the trained model for improved accuracy. The system is designed for deployment in real-time environments, providing instant analysis and warnings for any detected hazards.
 
