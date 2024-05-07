@@ -1,6 +1,11 @@
+🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+
 ![AI-Driven Construction Safety Banner](./assets/images/project_graphics/banner.jpg)
 
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+<div align="center">
+    <a href="examples
+/Model-Server">Model-Server</a> | <a href="./README-zh-tw.md">Stream-Web</a> | <a href="./README-zh-tw.md">User-Management</a> | <a href="./README-zh-tw.md">YOLOv8-Data-Augmentation</a> | <a href="./README-zh-tw.md">YOLOv8-Evaluation</a> | <a href="./README-zh-tw.md">YOLOv8-Train</a>
+</div>
 
 # Construction-Hazard-Detection
 
