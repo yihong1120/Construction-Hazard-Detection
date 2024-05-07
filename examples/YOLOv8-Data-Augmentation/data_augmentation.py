@@ -43,7 +43,7 @@ class DataAugmentation:
             iaa.Sometimes(0.5, iaa.Flipud()),  # 50% probability to flip upside down
             iaa.Sometimes(0.5, iaa.Fliplr()),  # 50% probability to flip left to right
             iaa.Sometimes(0.6, iaa.Affine(rotate=(-45, 45))),  # 50% probability to rotate
-            iaa.Sometimes(0.6, iaa.Resize((0.7, 1.3))),  # 50% probability to resize
+            iaa.Sometimes(0.5, iaa.Resize((0.7, 1.3))),  # 50% probability to resize
             iaa.Sometimes(0.4, iaa.Multiply((0.8, 1.2))),  # 30% probability to change brightness
             iaa.Sometimes(0.4, iaa.LinearContrast((0.8, 1.2))),  # 30% probability to change contrast
             iaa.Sometimes(0.2, iaa.GaussianBlur(sigma=(0, 0.5))),  # 20% probability to blur
@@ -214,7 +214,7 @@ class DataAugmentation:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
     parser.add_argument('--train_path', type=str, default='./dataset_aug/train', help='Path to the training data directory.')
-    parser.add_argument('--num_augmentations', type=int, default=35, help='Number of augmentations per image.')
+    parser.add_argument('--num_augmentations', type=int, default=50, help='Number of augmentations per image.')
     parser.add_argument('--batch_size', type=int, default=10, help='Number of images to process in each batch.')
     args = parser.parse_args()
 
