@@ -73,15 +73,15 @@ class StreamCapture:
                 continue
 
             current_time = datetime.datetime.now()
-            if (current_time - last_process_time).total_seconds() >= 5:
+            if (current_time - last_process_time).total_seconds() >= 15:
                 last_process_time = current_time
                 timestamp = current_time.timestamp()
                 
                 yield frame, timestamp
 
-            # Skip frames if necessary
-            for _ in range(5):  # Skip 5 frames
-                self.cap.grab()
+            # # Skip frames if necessary
+            # for _ in range(5):  # Skip 5 frames
+            #     self.cap.grab()
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -169,9 +169,9 @@ class StreamCapture:
                     timestamp = current_time.timestamp()
                     yield frame, timestamp
 
-                # Skip frames if necessary to manage frame rate
-                for _ in range(5):  # Skip 5 frames
-                    self.cap.grab()
+                # # Skip frames if necessary to manage frame rate
+                # for _ in range(5):  # Skip 5 frames
+                #     self.cap.grab()
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break

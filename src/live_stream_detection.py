@@ -184,9 +184,9 @@ class LiveStreamDetector:
         # Define the complete output path including the filename
         output_path = output_dir / self.output_filename
         
-        # Check if the file exists and remove it if it does
-        if output_path.exists():
-            output_path.unlink() 
+        # # Check if the file exists and remove it if it does
+        # if output_path.exists():
+        #     output_path.unlink() 
 
         # Save the image to the specified path
         cv2.imwrite(str(output_path), frame)

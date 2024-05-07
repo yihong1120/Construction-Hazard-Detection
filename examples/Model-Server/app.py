@@ -63,4 +63,4 @@ def create_tables():
 
 if __name__ == '__main__':
     # Run the Flask application on all available IPs at port 5000
-    app.run(host='0.0.0.0', port=5000)
+    app.run(Thread = True, host='0.0.0.0', port=5000)
