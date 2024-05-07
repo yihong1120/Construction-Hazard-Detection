@@ -1,3 +1,5 @@
+🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+
 # 用戶管理系統
 
 這個用戶管理系統是一個基於Flask的網絡應用程式，提供了管理用戶帳戶的端點。它允許在資料庫中使用SQLAlchemy ORM添加、刪除和更新用戶憑證。
