@@ -22,13 +22,11 @@ Before running the application, you need to configure the system by specifying t
 [
     {
         "video_url": "rtsp://example1.com/stream",
-        "api_url": "http://localhost:5000/detect",
         "model_key": "yolov8l",
         "line_token": "token1"
     },
     {
         "video_url": "rtsp://example2.com/stream",
-        "api_url": "http://localhost:5000/detect",
         "model_key": "yolov8l",
         "line_token": "token2"
     }
