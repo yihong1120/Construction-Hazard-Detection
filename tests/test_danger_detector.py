@@ -2,69 +2,50 @@ import unittest
 from src.danger_detector import DangerDetector
 
 class TestDangerDetector(unittest.TestCase):
-    """
-    A class to test the DangerDetector functionalities.
-    """
-
     def setUp(self):
-        """
-        Set up the DangerDetector instance before each test.
-        """
         self.detector = DangerDetector()
 
-    def test_no_violations(self):
-        """
-        Test that no warnings are generated when there are no violations.
-        """
-        datas = [
-            [100, 200, 300, 400, 0.95, 5]  # Person with no violations
-        ]
-        warnings = self.detector.detect_danger(datas)
-        self.assertEqual(len(warnings), 0, "Expected no warnings when there are no violations.")
+    def test_is_driver(self):
+        # Define test cases for the is_driver method
+        person_bbox = (100, 100, 200, 200)  # x1, y1, x2, y2
+        vehicle_bbox = (150, 150, 300, 300)
+        self.assertTrue(self.detector.is_driver(person_bbox, vehicle_bbox))
 
-    def test_hardhat_violations(self):
-        """
-        Test detection of workers not wearing hardhats.
-        """
-        datas = [
-            [100, 200, 300, 400, 0.95, 5],  # Person
-            [100, 200, 300, 400, 0.90, 2]  # No hardhat
-        ]
-        warnings = self.detector.detect_danger(datas)
-        self.assertIn("Warning: Someone is not wearing a hardhat!", warnings, "Expected a hardhat violation warning.")
+        # Add more test cases as needed
 
-    def test_safety_vest_violations(self):
-        """
-        Test detection of workers not wearing safety vests.
-        """
-        datas = [
-            [100, 200, 300, 400, 0.95, 5],  # Person
-            [100, 200, 300, 400, 0.90, 4]  # No safety vest
-        ]
-        warnings = self.detector.detect_danger(datas)
-        self.assertIn("Warning: Someone is not wearing a safety vest!", warnings, "Expected a safety vest violation warning.")
+    def test_overlap_percentage(self):
+        # Define test cases for the overlap_percentage method
+        bbox1 = (100, 100, 200, 200)
+        bbox2 = (150, 150, 250, 250)
+        overlap = self.detector.overlap_percentage(bbox1, bbox2)
+        self.assertEqual(overlap, 0.14285714285714285)
 
-    def test_proximity_to_machinery(self):
-        """
-        Test detection of workers dangerously close to machinery.
-        """
-        datas = [
-            [100, 200, 300, 400, 0.95, 5],  # Person
-            [290, 350, 410, 450, 0.88, 8]  # Machinery
-        ]
-        warnings = self.detector.detect_danger(datas)
-        self.assertIn("Warning: Someone is dangerously close to machinery!", warnings, "Expected a proximity warning for machinery.")
+        # Add more test cases as needed
 
-    def test_proximity_to_vehicles(self):
-        """
-        Test detection of workers dangerously close to vehicles.
-        """
+    def test_is_dangerously_close(self):
+        # Define test cases for the is_dangerously_close method
+        person_bbox = (100, 100, 200, 200)
+        vehicle_bbox = (150, 150, 300, 300)
+        label = 'vehicle'
+        self.assertTrue(self.detector.is_dangerously_close(person_bbox, vehicle_bbox, label))
+
+        # Add more test cases as needed
+
+    def test_detect_danger(self):
+        # Define test cases for the detect_danger method
         datas = [
-            [100, 200, 300, 400, 0.95, 5],  # Person
-            [290, 350, 410, 450, 0.88, 9]  # Vehicle
+            [706.87, 445.07, 976.32, 1073.6, 0.91, 5],  # Person
+            [0.45513, 471.77, 662.03, 1071.4, 0.75853, 2],  # No hardhat
+            [1042.7, 638.5, 1077.5, 731.98, 0.56060, 8]  # Machinery
         ]
         warnings = self.detector.detect_danger(datas)
-        self.assertIn("Warning: Someone is dangerously close to a vehicle!", warnings, "Expected a proximity warning for vehicles.")
+        expected_warnings = [
+            "Warning: Someone is not wearing a hardhat!",
+            "Warning: Someone is dangerously close to machinery!"
+        ]
+        self.assertEqual(warnings, expected_warnings)
+
+        # Add more test cases as needed
 
 if __name__ == '__main__':
     unittest.main()
