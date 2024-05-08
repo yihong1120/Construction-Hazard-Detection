@@ -36,7 +36,6 @@ Before running the application, you need to configure the system by specifying t
 Each object in the array represents a video stream configuration with the following fields:
 
 - `video_url`: The URL of the live video stream.
-- `api_url`: The URL of the API endpoint for the machine learning model server.
 - `model_key`: The key identifier for the machine learning model to use.
 - `line_token`: The LINE messaging API token for sending notifications.
 
