@@ -63,7 +63,7 @@ class StreamCapture:
             Exception: If an error occurs while reading frames.
         '''
         self.initialise_stream()
-        last_process_time = datetime.datetime.now()
+        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=15)
         while True:
             ret, frame = self.cap.read()
             if not ret:
