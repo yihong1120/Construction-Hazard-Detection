@@ -1,6 +1,6 @@
 import argparse
 from logging import Logger
-import json
+import yaml
 from datetime import datetime
 from multiprocessing import Pool
 import time
@@ -132,7 +132,7 @@ def run_multiple_streams(config_file: str, output_path: str = None):
     """
     # Load configurations from file
     with open(config_file, 'r') as file:
-        configurations = json.load(file)
+        configurations = yaml.safe_load(file)
 
     # Process streams in parallel
     num_processes = len(configurations)
@@ -143,7 +143,7 @@ def run_multiple_streams(config_file: str, output_path: str = None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run hazard detection on multiple video streams.')
-    parser.add_argument('--config', type=str, default='config/configuration.json', help='Configuration file path')
+    parser.add_argument('--config', type=str, default='config/configuration.yaml', help='Configuration file path')
     parser.add_argument('--output', type=str, help='Path to save output images with timestamp in filename', required=False)
     args = parser.parse_args()
 
