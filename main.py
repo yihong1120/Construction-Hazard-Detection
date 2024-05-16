@@ -15,7 +15,7 @@ from src.monitor_logger import LoggerConfig
 from src.live_stream_detection import LiveStreamDetector
 from src.danger_detector import DangerDetector
 
-def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, image_name: str = 'prediction_visual.png', line_token: str = None, output_path: str = None) -> NoReturn:
+def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, image_name: str = 'prediction_visual.png', line_token: str = None) -> NoReturn:
     """
     Main execution function that detects hazards, sends notifications, logs warnings, and optionally saves output images.
 
@@ -24,7 +24,6 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
         video_url (str): The URL of the live stream to monitor.
         label (str): The label of image_name.
         image_name (str, optional): The file name of the image to send with notifications. Defaults to 'demo_data/{label}/prediction_visual.png'.
-        output_path (str, optional): The file path where output images should be saved. If not specified, images are not saved.
     """
     # Load environment variables
     load_dotenv()
@@ -96,7 +95,7 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
     live_stream_detector.release_resources()
     gc.collect()
 
-def process_stream(config: Dict[str, str], output_path: str = None) -> NoReturn:
+def process_stream(config: Dict[str, str]) -> NoReturn:
     """
     Process a single video stream with configuration.
 
@@ -114,7 +113,7 @@ def process_stream(config: Dict[str, str], output_path: str = None) -> NoReturn:
     logger = logger_config.get_logger()
 
     # Run hazard detection on a single video stream
-    main(logger, **config, output_path=output_path)
+    main(logger, **config)
 
 def run_multiple_streams(config_file: str):
     """
