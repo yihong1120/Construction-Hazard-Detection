@@ -1,6 +1,9 @@
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from sahi import AutoDetectionModel
+import threading
+import time
+from pathlib import Path
 from typing import Dict, Optional
 
 db = SQLAlchemy()
@@ -45,25 +48,33 @@ class DetectionModelManager:
 
     Attributes:
         models (Dict[str, AutoDetectionModel]): Dictionary of loaded models.
+        last_modified_times (Dict[str, float]): Dictionary of last modified times of model files.
     """
     def __init__(self):
-        self.models: Dict[str, AutoDetectionModel] = self.load_models()
+        self.base_model_path = Path('models/pt/')
+        self.model_names = ['yolov8x', 'yolov8l', 'yolov8m', 'yolov8s', 'yolov8n']
+        self.models: Dict[str, AutoDetectionModel] = self.load_all_models()
+        self.last_modified_times = self.get_last_modified_times()
+        self.model_reload_thread = threading.Thread(target=self.reload_models_every_hour)
+        self.model_reload_thread.start()
 
-    def load_models(self) -> Dict[str, AutoDetectionModel]:
+    def load_single_model(self, model_name: str) -> AutoDetectionModel:
+        """
+        Loads and returns a SAHI's AutoDetectionModel.
+
+        Returns:
+            A AutoDetectionModel instance.
+        """
+        return AutoDetectionModel.from_pretrained("yolov8", model_path=str(self.base_model_path / f'best_{model_name}.pt'), device="cuda:0")
+
+    def load_all_models(self) -> Dict[str, AutoDetectionModel]:
         """
         Loads and returns a dictionary of SAHI's AutoDetectionModels.
 
         Returns:
             A dictionary of model names associated with their respective AutoDetectionModel instances.
         """
-        models = {
-            # Uncomment below lines to enable more models as needed.
-            # 'yolov8n': AutoDetectionModel.from_pretrained("yolov8", model_path='models/best_yolov8n.pt'),
-            # 'yolov8s': AutoDetectionModel.from_pretrained("yolov8", model_path='models/best_yolov8s.pt'),
-            # 'yolov8m': AutoDetectionModel.from_pretrained("yolov8", model_path='models/pt/best_yolov8m.pt', device="cuda:0"),
-            'yolov8l': AutoDetectionModel.from_pretrained("yolov8", model_path='models/pt/best_yolov8l.pt', device="cuda:0"),
-            'yolov8x': AutoDetectionModel.from_pretrained("yolov8", model_path='models/pt/best_yolov8x.pt', device="cuda:0")
-        }
+        models = {name: self.load_single_model(name) for name in self.model_names}
         return models
 
     def get_model(self, model_key: str) -> Optional[AutoDetectionModel]:
@@ -77,3 +88,31 @@ class DetectionModelManager:
             The AutoDetectionModel if found, otherwise None.
         """
         return self.models.get(model_key)
+
+    def get_last_modified_time(self, model_name: str) -> float:
+        """
+        Retrieves the last modified time of the model file.
+
+        Returns:
+            The last modified time of the model file.
+        """
+        return (self.base_model_path / f'best_{model_name}.pt').stat().st_mtime
+
+    def get_last_modified_times(self) -> Dict[str, float]:
+        """
+        Retrieves the last modified times of the model files.
+
+        Returns:
+            A dictionary of model names associated with their respective last modified times.
+        """
+        last_modified_times = {name: self.get_last_modified_time(name) for name in self.model_names}
+        return last_modified_times
+
+    def reload_models_every_hour(self):
+        while True:
+            time.sleep(3600)  # Wait for one hour
+            current_last_modified_times = self.get_last_modified_times()
+            for model_name in self.model_names:
+                if current_last_modified_times[model_name] != self.last_modified_times.get(model_name):
+                    self.models[model_name] = self.load_single_model(model_name)
+                    self.last_modified_times[model_name] = current_last_modified_times[model_name]
