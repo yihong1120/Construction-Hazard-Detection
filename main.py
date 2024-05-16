@@ -101,7 +101,6 @@ def process_stream(config: Dict[str, str]) -> NoReturn:
 
     Args:
         config (dict): The configuration dictionary.
-        output_path (str): The path to save the output images with timestamp in the filename.
 
     Returns:
         None
