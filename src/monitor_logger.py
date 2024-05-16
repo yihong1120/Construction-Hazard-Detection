@@ -5,21 +5,23 @@ from pathlib import Path
 class LoggerConfig:
     """
     A class to set up a logger for the application with both console and file handlers.
-
-    This class creates a logger with a rotating file handler, which ensures that the log
-    files do not grow indefinitely. The log files rotate when they reach a specified size.
     """
 
-    def __init__(self, log_file='monitor.log', level=logging.INFO):
+    def __init__(self, log_file='monitor.log', log_dir='logs', level=logging.INFO, formatter=None):
         """
-        Initialises the logger configuration with a log file name and logging level.
+        Initialises the logger configuration with a log file name, logging level, and formatter.
 
         Args:
             log_file (str): The name of the log file. Defaults to 'monitor.log'.
+            log_dir (str): The directory where log files will be stored. Defaults to 'logs'.
             level (logging.Level): The logging level. Defaults to logging.INFO.
+            formatter (logging.Formatter): Custom formatter for the log messages. Defaults to a standard format.
         """
         self.log_file = log_file
+        self.log_dir = log_dir
         self.level = level
+        self.formatter = formatter or logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        
         # Ensure that we get a unique logger instance by using a unique name
         self.logger = logging.getLogger(f'SiteSafetyMonitor_{log_file}')
         self.setup_logger()
@@ -28,28 +30,50 @@ class LoggerConfig:
         """
         Configures the logger with rotating file handler and console handler.
         """
-        # Check if the logger already has handlers configured
-        if not self.logger.handlers:
-            # Check if the logs directory exists, create it if necessary
-            Path('logs').mkdir(parents=True, exist_ok=True)
+        # Prevent adding handlers multiple times
+        if self.logger.hasHandlers():
+            return
 
-            # Create a rotating file handler that logs to a file and rotates when it reaches a certain size
-            file_handler = RotatingFileHandler(f'logs/{self.log_file}', maxBytes=1_000_000, backupCount=5)
-            file_handler.setLevel(self.level)
+        # Create log directory if it doesn't exist
+        Path(self.log_dir).mkdir(parents=True, exist_ok=True)
 
-            # Create a console handler that logs to the standard output (console)
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(self.level)
+        # Configure the file handler
+        file_handler = self.get_file_handler()
+        # Configure the console handler
+        console_handler = self.get_console_handler()
 
-            # Create a formatter that specifies the log message format
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            file_handler.setFormatter(formatter)
-            console_handler.setFormatter(formatter)
+        # Add the handlers to the logger
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
+        self.logger.setLevel(self.level)
 
-            # Add the file and console handlers to the logger
-            self.logger.addHandler(file_handler)
-            self.logger.addHandler(console_handler)
-            self.logger.setLevel(self.level)
+    def get_file_handler(self):
+        """
+        Creates and returns a rotating file handler.
+
+        Returns:
+            logging.Handler: A configured rotating file handler.
+        """
+        file_handler = RotatingFileHandler(
+            filename=Path(self.log_dir) / self.log_file,
+            maxBytes=1_000_000,
+            backupCount=5
+        )
+        file_handler.setLevel(self.level)
+        file_handler.setFormatter(self.formatter)
+        return file_handler
+
+    def get_console_handler(self):
+        """
+        Creates and returns a console handler.
+
+        Returns:
+            logging.Handler: A configured console handler.
+        """
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(self.level)
+        console_handler.setFormatter(self.formatter)
+        return console_handler
 
     def get_logger(self):
         """

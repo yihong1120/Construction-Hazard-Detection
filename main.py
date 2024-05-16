@@ -30,7 +30,7 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
     load_dotenv()
     api_url = os.getenv('API_URL', 'http://localhost:5000') 
 
-    steaming_capture = StreamCapture(stream_url = video_url)
+    streaming_capture = StreamCapture(stream_url = video_url)
 
     # Initialise the live stream detector
     live_stream_detector = LiveStreamDetector(api_url=api_url, model_key=model_key, output_folder = label, output_filename = image_name)
@@ -45,7 +45,7 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
     last_notification_time = int(time.time()) - 300
 
     # Use the generator function to process detections
-    for frame, timestamp in steaming_capture.execute_capture():
+    for frame, timestamp in streaming_capture.execute_capture():
         # Convert UNIX timestamp to datetime object and format it as string
         detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
         print(detection_time)
@@ -88,15 +88,12 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
             # Update the last_notification_time to the current time
             last_notification_time = timestamp
 
-            del unique_warnings, message, status, warnings
-
         # Clear variables to free up memory
         del datas, frame, timestamp, detection_time
         gc.collect()
 
     # Release resources after processing
     live_stream_detector.release_resources()
-
     gc.collect()
 
 def process_stream(config: Dict[str, str], output_path: str = None) -> NoReturn:

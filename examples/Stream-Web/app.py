@@ -1,12 +1,22 @@
-from flask import Flask, render_template, send_from_directory, make_response, Response
+from flask import Flask, redirect, render_template, send_from_directory, make_response, Response, request, jsonify, url_for
+import subprocess
+import threading
+import os
+import signal
+from threading import Timer
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from pathlib import Path
+import json
+import uuid
+import time
 
 app = Flask(__name__)
 limiter = Limiter(key_func=get_remote_address)
 
 DETECTED_FRAMES_DIR = Path.cwd() / 'detected_frames'
+CACHE_DURATION = 60  # Cache duration in seconds
+cache = {}
 
 @app.route('/')
 @limiter.limit("60 per minute")  # Apply rate limiting to this endpoint
@@ -33,8 +43,15 @@ def label_page(label: str) -> str:
     Returns:
         str: The rendered 'label.html' page for the specific label.
     """
-    image_files = [f.name for f in (DETECTED_FRAMES_DIR / label).iterdir() if f.suffix == '.png']
-    image_files.sort()
+    current_time = time.time()
+    # Check if the label is in the cache and the cache duration has not expired
+    if label in cache and current_time - cache[label]['timestamp'] < CACHE_DURATION:
+        image_files = cache[label]['files']
+    else:
+        image_files = [f.name for f in (DETECTED_FRAMES_DIR / label).iterdir() if f.suffix == '.png']
+        image_files.sort()
+        cache[label] = {'files': image_files, 'timestamp': current_time}
+
     return render_template('label.html', label=label, images=image_files, path=f'/image/{label}/')
 
 @app.route('/image/<label>/<filename>.png')

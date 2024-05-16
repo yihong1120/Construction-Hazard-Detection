@@ -2,14 +2,14 @@ from typing import List, Tuple
 
 class DangerDetector:
     """
-    A class to detect potential safety hazards based on the detection data and timestamps.
+    A class to detect potential safety hazards based on the detection data.
     """
 
     def __init__(self):
         """
         Initialises the danger detector.
         """
-        pass  # Removed unused last_movement_time dictionary
+        pass
 
     def detect_danger(self, datas: List[List[float]]) -> List[str]:
         """
@@ -20,16 +20,15 @@ class DangerDetector:
         2. Workers dangerously close to machinery or vehicles.
 
         Args:
-            timestamp (int): The current timestamp.
             datas (List[List[float]]): A list of detections. Each detection is a list that includes
                 the bounding box coordinates, confidence score, and class label.
 
         Returns:
             List[str]: A list of warning messages for detected safety violations.
         """
-        warnings = []  # Store all warning messages
+        warnings = []  # Initialise the list to store warning messages
 
-        # Classify detected objects
+        # Classify detected objects into different categories
         persons = [d for d in datas if d[5] == 5.0]  # Persons
         hardhat_violations = [d for d in datas if d[5] == 2.0]  # No hardhat
         safety_vest_violations = [d for d in datas if d[5] == 4.0]  # No safety vest
@@ -67,14 +66,8 @@ class DangerDetector:
 
         Returns:
             bool: True if the person is likely to be the driver, False otherwise.
-
-        This method checks if:
-        1. The vertical bottom of the person is above the bottom of the vehicle by at least half the height of the person.
-        2. The person's left or right edge does not extend beyond half the width of the person from the vehicle's edges.
-        3. The person's top is below the top of the vehicle.
-        4. The height of the person is less than or equal to half the height of the vehicle.
         """
-        # Calculate necessary dimensions and centres
+        # Extract coordinates and dimensions of the person and vehicle bounding boxes
         person_bottom_y = person_bbox[3]
         person_top_y = person_bbox[1]
         person_left_x = person_bbox[0]
@@ -118,15 +111,20 @@ class DangerDetector:
         Returns:
             float: The overlap percentage.
         """
+        # Calculate the coordinates of the intersection rectangle
         x1 = max(bbox1[0], bbox2[0])
         y1 = max(bbox1[1], bbox2[1])
         x2 = min(bbox1[2], bbox2[2])
         y2 = min(bbox1[3], bbox2[3])
 
-        overlap_area = max(0, x2 - x1 + 1) * max(0, y2 - y1 + 1)
-        area1 = (bbox1[2] - bbox1[0] + 1) * (bbox1[3] - bbox1[1] + 1)
-        area2 = (bbox2[2] - bbox2[0] + 1) * (bbox2[3] - bbox2[1] + 1)
+        # Calculate the area of the intersection rectangle
+        overlap_area = max(0, x2 - x1) * max(0, y2 - y1)
 
+        # Calculate the area of both bounding boxes
+        area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+        area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
+
+        # Calculate the overlap percentage
         return overlap_area / float(area1 + area2 - overlap_area)
 
     @staticmethod
@@ -142,37 +140,38 @@ class DangerDetector:
         Returns:
             bool: True if the person is dangerously close, False otherwise.
         """
+        # Calculate dimensions of the person bounding box
         person_width = person_bbox[2] - person_bbox[0]
         person_height = person_bbox[3] - person_bbox[1]
         person_area = person_width * person_height
 
+        # Calculate the area of the vehicle bounding box
         vehicle_area = (vehicle_bbox[2] - vehicle_bbox[0]) * (vehicle_bbox[3] - vehicle_bbox[1])
-        acceptable_ratio = 0.1 if label == 'vehicle' else 0.05
+        acceptable_ratio = 0.1 if label == '車輛' else 0.05
 
-        # Quickly check the area ratio to see if further checks are unnecessary
+        # Check if the person area is within an acceptable ratio compared to the vehicle area
         if person_area / vehicle_area > acceptable_ratio:
             return False
 
-        # Calculate safe distances based on object types
+        # Define danger distances
         danger_distance_horizontal = 5 * person_width
         danger_distance_vertical = 1.5 * person_height
 
-        # Compute minimum horizontal and vertical distances between person and vehicle
+        # Calculate minimum horizontal and vertical distances between person and vehicle
         horizontal_distance = min(abs(person_bbox[2] - vehicle_bbox[0]), abs(person_bbox[0] - vehicle_bbox[2]))
         vertical_distance = min(abs(person_bbox[3] - vehicle_bbox[1]), abs(person_bbox[1] - vehicle_bbox[3]))
 
-        # Determine if the distances are within dangerous proximity
+        # Determine if the person is dangerously close
         return horizontal_distance <= danger_distance_horizontal and vertical_distance <= danger_distance_vertical
 
 # Example usage
 if __name__ == "__main__":
     detector = DangerDetector()
-    timestamp = 1582123456
     data = [
         [706.87, 445.07, 976.32, 1073.6, 3, 0.91, 0],
         [0.45513, 471.77, 662.03, 1071.4, 12, 0.75853, 7],
         [1042.7, 638.5, 1077.5, 731.98, 18, 0.56060, 0]
     ]
-    warnings = detector.detect_danger(timestamp, data)
+    warnings = detector.detect_danger(data)
     for warning in warnings:
         print(warning)
