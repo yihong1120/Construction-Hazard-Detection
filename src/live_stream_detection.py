@@ -79,6 +79,9 @@ class LiveStreamDetector:
         Args:
             frame (cv2.Mat): The frame on which to draw detections.
             datas (List[List[float]]): The detection data.
+
+        Returns:
+            frame_with_detections(cv2.Mat): The frame with detections drawn on it.
         """
         # Convert the frame to RGB and create a PIL image
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -110,12 +113,7 @@ class LiveStreamDetector:
         # Convert the PIL image back to OpenCV format
         frame_with_detections = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
         
-        # Save the frame with detections
-        self.save_frame(frame_with_detections)
-
-        # Clean up
-        del frame_rgb, pil_image, draw, frame_with_detections
-        gc.collect()
+        return frame_with_detections
 
     def save_frame(self, frame: cv2.Mat) -> None:
         """

@@ -2,18 +2,25 @@ import argparse
 from logging import Logger
 import yaml
 from datetime import datetime
-from multiprocessing import Pool
+from multiprocessing import Pool, Process, current_process
 import time
 import gc
 from typing import NoReturn, Dict
 import os
 from dotenv import load_dotenv
+import threading
+import redis
+import pickle
+import cv2
 
 from src.stream_capture import StreamCapture
 from src.line_notifier import LineNotifier
 from src.monitor_logger import LoggerConfig
 from src.live_stream_detection import LiveStreamDetector
 from src.danger_detector import DangerDetector
+
+# Connect to Redis
+r = redis.Redis(host='localhost', port=6379, db=0)
 
 def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, image_name: str = 'prediction_visual.png', line_token: str = None) -> NoReturn:
     """
@@ -53,13 +60,7 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
         datas, _ = live_stream_detector.generate_detections(frame)
 
         # Draw the detections on the frame
-        live_stream_detector.draw_detections_on_frame(frame, datas)
-        
-        # Optionally save the frame with detections to the specified output path
-        if output_path:
-            # Here you could modify or extend the output filename based on timestamp or other criteria
-            output_file = output_path.format(timestamp=timestamp)
-            live_stream_detector.save_frame(frame)
+        frame_with_detections = live_stream_detector.draw_detections_on_frame(frame, datas)
 
         # Check for warnings and send notifications if necessary
         warnings = danger_detector.detect_danger(datas)
@@ -70,6 +71,9 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
         if (warnings and # Check if there are warnings
             (timestamp - last_notification_time) > 300 and # Check if the last notification was more than 5 minutes ago
             (7 <= current_hour < 18)): # Check if the current hour is between 7 AM and 6 PM
+
+            # Save the frame with detections
+            live_stream_detector.save_frame(frame_with_detections)
 
             # Remove duplicates
             unique_warnings = set(warnings)  # Remove duplicates
@@ -86,6 +90,14 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
 
             # Update the last_notification_time to the current time
             last_notification_time = timestamp
+
+        # Convert the frame to a byte array
+        _, buffer = cv2.imencode('.png', frame_with_detections)
+        frame_bytes = buffer.tobytes()
+        # Use a unique key for each thread or process
+        key = f'{label}_{image_name}'
+        # Store the frame in Redis
+        r.set(key, pickle.dumps(frame_bytes))
 
         # Clear variables to free up memory
         del datas, frame, timestamp, detection_time
