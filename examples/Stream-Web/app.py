@@ -1,3 +1,5 @@
+import base64
+from tkinter import image_names
 from flask import Flask, redirect, render_template, send_from_directory, make_response, Response, request, jsonify, url_for
 import subprocess
 import threading
@@ -10,6 +12,13 @@ from pathlib import Path
 import json
 import uuid
 import time
+import redis
+import pickle
+import cv2
+import numpy as np
+
+# Connect to Redis
+r = redis.Redis(host='localhost', port=6379, db=0)
 
 app = Flask(__name__)
 limiter = Limiter(key_func=get_remote_address)
@@ -43,16 +52,24 @@ def label_page(label: str) -> str:
     Returns:
         str: The rendered 'label.html' page for the specific label.
     """
-    current_time = time.time()
-    # Check if the label is in the cache and the cache duration has not expired
-    if label in cache and current_time - cache[label]['timestamp'] < CACHE_DURATION:
-        image_files = cache[label]['files']
-    else:
-        image_files = [f.name for f in (DETECTED_FRAMES_DIR / label).iterdir() if f.suffix == '.png']
-        image_files.sort()
-        cache[label] = {'files': image_files, 'timestamp': current_time}
+    # Get all keys from Redis
+    keys = r.keys()
+    # Filter keys for this label
+    label_keys = [key for key in keys if key.decode('utf-8').startswith(label)]
+    images = []
 
-    return render_template('label.html', label=label, images=image_files, path=f'/image/{label}/')
+    for key in label_keys:
+        # Get the frame from Redis
+        frame_bytes = pickle.loads(r.get(key))
+        # Convert the byte array back to a frame
+        nparr = np.fromstring(frame_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # Convert the frame to base64
+        _, buffer = cv2.imencode('.png', frame)
+        png_as_text = base64.b64encode(buffer).decode('utf-8')
+        images.append(png_as_text)
+
+    return render_template('label.html', label=label, images=images)
 
 @app.route('/image/<label>/<filename>.png')
 @limiter.limit("60 per minute")  # Apply rate limiting to this endpoint
