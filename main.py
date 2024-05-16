@@ -116,32 +116,53 @@ def process_stream(config: Dict[str, str], output_path: str = None) -> NoReturn:
     # Run hazard detection on a single video stream
     main(logger, **config, output_path=output_path)
 
-def run_multiple_streams(config_file: str, output_path: str = None):
+def run_multiple_streams(config_file: str):
     """
     Run hazard detection on multiple video streams from a configuration file.
 
     Args:
         config_file (str): The path to the configuration file.
-        output_path (str): The path to save the output images with timestamp in the filename.
 
     Returns:
         None
     """
-    # Load configurations from file
-    with open(config_file, 'r') as file:
-        configurations = yaml.safe_load(file)
+    running_processes = {}
+    lock = threading.Lock()
+    
+    def start_process(config):
+        p = Process(target=process_stream, args=(config,))
+        p.start()
+        return p
 
-    # Process streams in parallel
-    num_processes = len(configurations)
+    def stop_process(process):
+        process.terminate()
+        process.join()
 
-    # Process streams in parallel
-    with Pool(processes=num_processes) as pool:
-        pool.starmap(process_stream, [(config, output_path) for config in configurations])
+    while True:
+        with open(config_file, 'r') as file:
+            configurations = yaml.safe_load(file)
+
+        current_configs = {config['video_url']: config for config in configurations}
+
+        with lock:
+            # Stop processes for removed configurations
+            for video_url in list(running_processes.keys()):
+                if video_url not in current_configs:
+                    print(f"Stop workflow: {video_url}")
+                    stop_process(running_processes[video_url])
+                    del running_processes[video_url]
+
+            # Start processes for new configurations
+            for video_url, config in current_configs.items():
+                if video_url not in running_processes:
+                    print(f"Launch new workflow: {video_url}")
+                    running_processes[video_url] = start_process(config)
+
+        time.sleep(3600)  # Check every hour for configuration changes
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run hazard detection on multiple video streams.')
     parser.add_argument('--config', type=str, default='config/configuration.yaml', help='Configuration file path')
-    parser.add_argument('--output', type=str, help='Path to save output images with timestamp in filename', required=False)
     args = parser.parse_args()
 
-    run_multiple_streams(args.config, args.output)
+    run_multiple_streams(args.config)
