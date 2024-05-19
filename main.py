@@ -1,8 +1,7 @@
 import argparse
-from logging import Logger
 import yaml
 from datetime import datetime
-from multiprocessing import Pool, Process, current_process
+from multiprocessing import Process
 import time
 import gc
 from typing import NoReturn, Dict
@@ -10,7 +9,6 @@ import os
 from dotenv import load_dotenv
 import threading
 import redis
-import pickle
 import cv2
 
 from src.stream_capture import StreamCapture
@@ -22,7 +20,7 @@ from src.danger_detector import DangerDetector
 # Connect to Redis
 r = redis.Redis(host='localhost', port=6379, db=0)
 
-def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, image_name: str = 'prediction_visual.png', line_token: str = None) -> NoReturn:
+def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, image_name: str = 'prediction_visual', line_token: str = None) -> NoReturn:
     """
     Main execution function that detects hazards, sends notifications, logs warnings, and optionally saves output images.
 
@@ -39,7 +37,7 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
     streaming_capture = StreamCapture(stream_url = video_url)
 
     # Initialise the live stream detector
-    live_stream_detector = LiveStreamDetector(api_url=api_url, model_key=model_key, output_folder = label, output_filename = image_name)
+    live_stream_detector = LiveStreamDetector(api_url=api_url, model_key=model_key, output_folder = label)
 
     # Initialise the LINE notifier
     line_notifier = LineNotifier(line_token)
@@ -52,6 +50,7 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
 
     # Use the generator function to process detections
     for frame, timestamp in streaming_capture.execute_capture():
+        start_time = time.time()
         # Convert UNIX timestamp to datetime object and format it as string
         detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
         print(detection_time)
@@ -61,6 +60,14 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
 
         # Draw the detections on the frame
         frame_with_detections = live_stream_detector.draw_detections_on_frame(frame, datas)
+
+        # Convert the frame to a byte array
+        _, buffer = cv2.imencode('.png', frame_with_detections)
+        frame_bytes = buffer.tobytes()
+
+        # Save the frame with detections
+        # save_file_name = f'{label}_{image_name}_{detection_time}'
+        # live_stream_detector.save_frame(frame_with_detections, save_file_name)        
 
         # Check for warnings and send notifications if necessary
         warnings = danger_detector.detect_danger(datas)
@@ -72,9 +79,6 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
             (timestamp - last_notification_time) > 300 and # Check if the last notification was more than 5 minutes ago
             (7 <= current_hour < 18)): # Check if the current hour is between 7 AM and 6 PM
 
-            # Save the frame with detections
-            live_stream_detector.save_frame(frame_with_detections)
-
             # Remove duplicates
             unique_warnings = set(warnings)  # Remove duplicates
 
@@ -82,7 +86,7 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
             message = '\n'.join([f'[{detection_time}] {warning}' for warning in unique_warnings])
 
             # Send notification with or without image based on image_name value
-            status = line_notifier.send_notification(message, label, image_name if image_name != 'None' else None)
+            status = line_notifier.send_notification(message, label, image=frame_bytes if frame_bytes is not None else None)
             if status == 200:
                 logger.warning(f"Notification sent successfully: {message}")
             else:
@@ -91,17 +95,18 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
             # Update the last_notification_time to the current time
             last_notification_time = timestamp
 
-        # Convert the frame to a byte array
-        _, buffer = cv2.imencode('.png', frame_with_detections)
-        frame_bytes = buffer.tobytes()
         # Use a unique key for each thread or process
         key = f'{label}_{image_name}'
+        
         # Store the frame in Redis
-        r.set(key, pickle.dumps(frame_bytes))
+        r.set(key, frame_bytes)
 
         # Clear variables to free up memory
         del datas, frame, timestamp, detection_time
         gc.collect()
+
+        end_time = time.time()
+        print(f"Processing time: {end_time - start_time:.2f} seconds")
 
     # Release resources after processing
     live_stream_detector.release_resources()

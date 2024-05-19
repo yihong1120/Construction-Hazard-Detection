@@ -2,7 +2,7 @@ import argparse
 import cv2
 import datetime
 from pathlib import Path
-from typing import Generator, Tuple, List, Optional
+from typing import Tuple, List, Optional
 import gc
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
@@ -21,7 +21,7 @@ class LiveStreamDetector:
     """
 
     def __init__(self, api_url: str = 'http://localhost:5000', model_key: str = 'yolov8l',
-                 output_folder: Optional[str] = None, output_filename: str = 'detected_frame.png'):
+                 output_folder: Optional[str] = None):
         """
         Initialises the LiveStreamDetector.
 
@@ -34,7 +34,6 @@ class LiveStreamDetector:
         self.api_url = api_url
         self.model_key = model_key
         self.output_folder = output_folder
-        self.output_filename = output_filename
         self.session = self.requests_retry_session()
         
         # Load the font used for drawing labels on the image
@@ -115,12 +114,13 @@ class LiveStreamDetector:
         
         return frame_with_detections
 
-    def save_frame(self, frame: cv2.Mat) -> None:
+    def save_frame(self, frame_bytes: bytes, output_filename: str) -> None:
         """
         Saves the frame with detections to the specified output folder and filename.
 
         Args:
-            frame (cv2.Mat): The frame to save.
+            frame_bytes (bytes): The byte stream of the frame.
+            output_filename (str): The output filename.
         """
         # Create the output directory if it does not exist
         base_output_dir = Path('detected_frames')
@@ -128,13 +128,14 @@ class LiveStreamDetector:
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Define the output path
-        output_path = output_dir / self.output_filename
+        output_path = output_dir / f"{output_filename}.png"
         
-        # Save the frame to the output path
-        cv2.imwrite(str(output_path), frame)
+        # Save the byte stream to the output path
+        with open(output_path, 'wb') as f:
+            f.write(frame_bytes.tobytes())
 
         # Clean up
-        del output_dir, output_path
+        del output_dir, output_path, frame_bytes
         gc.collect()
 
     def requests_retry_session(self, retries: int = 7, backoff_factor: int = 1, 
@@ -267,8 +268,7 @@ if __name__ == '__main__':
     parser.add_argument('--api_url', type=str, default='http://localhost:5000', help='API URL for detection')
     parser.add_argument('--model_key', type=str, default='yolov8n', help='Model key for detection')
     parser.add_argument('--output_folder', type=str, help='Output folder for detected frames')
-    parser.add_argument('--output_filename', type=str, default='detected_frame.png', help='Output image file name')
     args = parser.parse_args()
 
-    detector = LiveStreamDetector(api_url=args.api_url, model_key=args.model_key, output_folder=args.output_folder, output_filename=args.output_filename)
+    detector = LiveStreamDetector(api_url=args.api_url, model_key=args.model_key, output_folder=args.output_folder)
     detector.run_detection(args.url)

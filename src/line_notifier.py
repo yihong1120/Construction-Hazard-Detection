@@ -2,6 +2,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+import cv2
+import numpy as np
 import requests
 from dotenv import load_dotenv
 
@@ -22,47 +24,36 @@ class LineNotifier:
         if not self.line_token:
             raise ValueError("LINE_NOTIFY_TOKEN is not provided and is absent from the environment variables.")
 
-    def send_notification(self, message: str, label: Optional[str] = None, image_name: Optional[str] = None) -> int:
+    def send_notification(self, message: str, label: Optional[str] = None, image: Optional[np.ndarray] = None) -> int:
         """
         Sends a notification message through LINE Notify, with the option to include an image.
 
         Args:
             message (str): The message to send.
             label (Optional[str]): The label of the image_name.
-            image_name (Optional[str]): The name of the image file to send with the notification. Defaults to None.
+            image (Optional[np.ndarray]): The image to send with the message. Defaults to None.
 
         Returns:
-            int: The status code of the HTTP request.
+            response.status_code (int): The status code of the response.
         """
         headers = {'Authorization': f'Bearer {self.line_token}'}
         payload = {'message': message}
-        files = None
+        files = {}
 
-        if image_name and label:
-            image_path = Path('detected_frames') / label / image_name
-            if not image_path.exists():
-                print(f"Image not found: {image_path}")
-                return 404  # Not Found
-
-            with image_path.open('rb') as image_file:
-                files = {'imageFile': image_file}
-                response = requests.post('https://notify-api.line.me/api/notify', headers=headers, data=payload, files=files)
+        if image is not None:
+            files = {'imageFile': ('image.png', image, 'image/png')}
+            response = requests.post('https://notify-api.line.me/api/notify', headers=headers, params=payload, files=files)
         else:
-            response = requests.post('https://notify-api.line.me/api/notify', headers=headers, data=payload)
-        
+            response = requests.post('https://notify-api.line.me/api/notify', headers=headers, params=payload)
+
         return response.status_code
 
 # Example usage
 def main():
-    notifier = LineNotifier()  # Instantiate LineNotifier using an environment variable or .env file
-    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    message = f'[{current_time}] Alert! Check the detection result.'
-
-    # Send a notification along with an image
-    label = 'some_label'  # Specify the label if needed
-    image_name = 'detected_frame.jpg'  # Specify the image name, assuming it's in 'detected_frames' directory
-    status = notifier.send_notification(message, label, image_name)
-    print(f'Notification dispatched, status code: {status}')
+    notifier = LineNotifier(line_token='your_line_notify_token_here')
+    message = "Hello, LINE Notify!"
+    response_code = notifier.send_notification(message)
+    print(f"Response code: {response_code}")
 
 if __name__ == '__main__':
     main()
