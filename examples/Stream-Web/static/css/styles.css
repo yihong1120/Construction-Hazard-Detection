@@ -35,6 +35,25 @@ h1 {
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);
 }
 
+/* Forced Colors Mode adjustments */
+@media (forced-colors: active) {
+    body {
+        forced-color-adjust: auto;
+        background-color: Canvas;
+        color: CanvasText;
+    }
+
+    .camera {
+        background: Canvas;
+        color: CanvasText;
+        box-shadow: none; /* Simplify styles in high contrast mode */
+    }
+
+    .camera img {
+        border-radius: 0; /* Disable rounded corners in high contrast mode */
+    }
+}
+
 /* Responsive design adjustments */
 @media (max-width: 600px) {
     .camera-grid {
