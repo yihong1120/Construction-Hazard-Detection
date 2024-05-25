@@ -1,4 +1,5 @@
 from typing import List, Tuple
+import uuid
 import imageio.v3 as imageio
 from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 import imgaug.augmenters as iaa
@@ -7,8 +8,8 @@ import random
 from pathlib import Path
 from tqdm import tqdm
 import time
-import uuid
 import gc
+from multiprocessing import Pool, cpu_count
 
 class DataAugmentation:
     """ 
@@ -47,7 +48,7 @@ class DataAugmentation:
             iaa.Sometimes(0.4, iaa.Multiply((0.8, 1.2))),  # 30% probability to change brightness
             iaa.Sometimes(0.4, iaa.LinearContrast((0.8, 1.2))),  # 30% probability to change contrast
             iaa.Sometimes(0.2, iaa.GaussianBlur(sigma=(0, 0.5))),  # 20% probability to blur
-            iaa.Sometimes(0.4, iaa.Crop(percent=(0, 0.5))),  # 40% probability to crop
+            iaa.Sometimes(0.4, iaa.Crop(percent=(0, 0.3))),  # 40% probability to crop
             iaa.Sometimes(0.2, iaa.SaltAndPepper(0.02)),  # 10% probability for salt and pepper noise
             iaa.Sometimes(0.2, iaa.ElasticTransformation(alpha=(0, 30), sigma=10)),  # 20% probability for elastic transformation
             iaa.Sometimes(0.1, iaa.MotionBlur(k=15, angle=[-45, 45])),  # 10% probability to add motion blur to simulate water flow
@@ -62,7 +63,7 @@ class DataAugmentation:
             iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.01, 0.1))),  # 10% probability for perspective transform
             iaa.Sometimes(0.3, iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25))),  # 10% probability for coarse dropout
             iaa.Sometimes(0.1, iaa.Invert(0.3)),  # 10% probability to invert colors
-            iaa.Sometimes(0.4, iaa.imgcorruptlike.Spatter(severity=1)),  # 40% probability to add watermarks
+            iaa.Sometimes(0.4, iaa.imgcorruptlike.Spatter()),  # 40% probability to add watermarks
             # iaa.Sometimes(0.1, iaa.Fog()),  # 10% probability to add fog
             # iaa.Sometimes(0.1, iaa.Rain(speed=(0.1, 0.3))),  # 10% probability to add rain
             # iaa.Sometimes(0.1, iaa.Clouds()),  # 10% probability to add clouds
@@ -79,8 +80,20 @@ class DataAugmentation:
         """
         try:
             image = imageio.imread(image_path)
-            if image.shape[2] == 4:  # Remove alpha channel if present
+
+            # Remove alpha channel if present
+            if image.shape[2] == 4:
                 image = image[:, :, :3]
+
+            # Check and resize large images
+            if image.shape[0] <= 32 or image.shape[1] <= 32:
+                print(f"Resizing image {image_path} due to excessive dimensions: {image.shape}")
+                image = iaa.Resize({"longer-side": 64, "shorter-side": "keep-aspect-ratio"})(image=image)
+
+            # Check and resize large images
+            if image.shape[0] > 2000 or image.shape[1] > 2000:
+                print(f"Resizing image {image_path} due to excessive dimensions: {image.shape}")
+                image = iaa.Resize({"longer-side": 720, "shorter-side": "keep-aspect-ratio"})(image=image)
 
             label_path = self.train_path / 'labels' / image_path.with_suffix('.txt').name
             image_shape = image.shape
@@ -96,45 +109,34 @@ class DataAugmentation:
                 image_aug_path = self.train_path / 'images' / aug_image_filename
                 label_aug_path = self.train_path / 'labels' / aug_label_filename
 
-                imageio.imwrite(image_aug_path, image_aug)
+                # Use pilmode='RGB' to ensure the image is saved in RGB mode
+                imageio.imwrite(image_aug_path, image_aug, pilmode='RGB')
                 self.write_label_file(bbs_aug, label_aug_path, image_aug.shape[1], image_aug.shape[0])
 
-                # 显式释放大对象以释放内存
                 del image_aug, bbs_aug
                 gc.collect()
         except Exception as e:
             print(f"Error augmenting image: {image_path}")
             print(e)
         finally:
-            # Delete the original image to free up memory
-            del image  # Always delete 'image' since it's defined at the beginning
-            # Conditionally delete other variables if they've been defined
-            if 'image_aug' in locals():
-                del image_aug
+            del image
             if 'bbs' in locals():
                 del bbs
-            if 'bbs_aug' in locals():
-                del bbs_aug
-            gc.collect()  # Force garbage collection
+            gc.collect()
 
     def augment_data(self, batch_size=10):
         """
         Processes images in batches to save memory.
         """
         image_paths = list(self.train_path.glob('images/*.jpg'))
-        total_batches = (len(image_paths) + batch_size - 1) // batch_size  # Calculate total number of batches
+        total_images = len(image_paths)
 
-        with tqdm(total=len(image_paths)) as progress:
-            for batch_index in range(total_batches):
-                start_index = batch_index * batch_size
-                end_index = min((batch_index + 1) * batch_size, len(image_paths))
-                batch_paths = image_paths[start_index:end_index]
-
-                for image_path in batch_paths:
-                    self.augment_image(image_path)
-                    progress.update(1)
-                
-                # After processing a batch, force garbage collection
+        for i in tqdm(range(0, total_images, batch_size), total=(total_images + batch_size - 1) // batch_size):
+            batch_paths = image_paths[i:i + batch_size]
+            with Pool(processes=cpu_count()) as pool:
+                pool.imap_unordered(self.augment_image, batch_paths)
+                pool.close()
+                pool.join()
                 gc.collect()
 
     @staticmethod
@@ -214,16 +216,16 @@ class DataAugmentation:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
     parser.add_argument('--train_path', type=str, default='./dataset_aug/train', help='Path to the training data directory.')
-    parser.add_argument('--num_augmentations', type=int, default=50, help='Number of augmentations per image.')
+    parser.add_argument('--num_augmentations', type=int, default=2, help='Number of augmentations per image.')
     parser.add_argument('--batch_size', type=int, default=10, help='Number of images to process in each batch.')
     args = parser.parse_args()
 
     augmenter = DataAugmentation(args.train_path, args.num_augmentations)
-    # augmenter.augment_data(batch_size=args.batch_size)  # 這裡傳遞 batch_size
+    augmenter.augment_data(batch_size=args.batch_size)
 
     # Pause for 5 seconds before shuffling to allow for user inspection.
-    # print("Pausing for 5 seconds before shuffling data...")
-    # time.sleep(5)
+    print("Pausing for 5 seconds before shuffling data...")
+    time.sleep(5)
     
     augmenter.shuffle_data()
     print("Data augmentation and shuffling complete.")
