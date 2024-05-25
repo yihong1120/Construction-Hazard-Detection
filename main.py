@@ -128,10 +128,45 @@ def process_stream(config: Dict[str, str]) -> NoReturn:
     # Get logger
     logger = logger_config.get_logger()
 
-    # Run hazard detection on a single video stream
-    main(logger, **config)
+    try:
+        # Run hazard detection on a single video stream
+        main(logger, **config)
+    finally:
+        # Clean up Redis keys when the process ends
+        label = config.get('label')
+        image_name = config.get('image_name', 'prediction_visual')
+        key = f'{label}_{image_name}'
+        r.delete(key)
+        logger.info(f"Deleted Redis key: {key}")
 
-def run_multiple_streams(config_file: str):
+def start_process(config: Dict[str, str]) -> Process:
+    """
+    Start a process for a single video stream with configuration.
+
+    Args:
+        config (dict): The configuration dictionary.
+
+    Returns:
+        Process: The started process.
+    """
+    p = Process(target=process_stream, args=(config,))
+    p.start()
+    return p
+
+def stop_process(process: Process) -> None:
+    """
+    Stop a running process.
+
+    Args:
+        process (Process): The process to stop.
+
+    Returns:
+        None
+    """
+    process.terminate()
+    process.join()
+
+def run_multiple_streams(config_file: str) -> NoReturn:
     """
     Run hazard detection on multiple video streams from a configuration file.
 
@@ -143,15 +178,6 @@ def run_multiple_streams(config_file: str):
     """
     running_processes = {}
     lock = threading.Lock()
-    
-    def start_process(config):
-        p = Process(target=process_stream, args=(config,))
-        p.start()
-        return p
-
-    def stop_process(process):
-        process.terminate()
-        process.join()
 
     while True:
         with open(config_file, 'r') as file:
