@@ -9,7 +9,6 @@ from pathlib import Path
 from tqdm import tqdm
 import time
 import gc
-from multiprocessing import Pool, cpu_count
 
 class DataAugmentation:
     """ 
@@ -43,27 +42,33 @@ class DataAugmentation:
         augmentations = [
             iaa.Sometimes(0.5, iaa.Flipud()),  # 50% probability to flip upside down
             iaa.Sometimes(0.5, iaa.Fliplr()),  # 50% probability to flip left to right
-            iaa.Sometimes(0.6, iaa.Affine(rotate=(-45, 45))),  # 50% probability to rotate
+            iaa.Sometimes(0.5, iaa.Affine(rotate=(-45, 45))),  # 50% probability to rotate
             iaa.Sometimes(0.5, iaa.Resize((0.7, 1.3))),  # 50% probability to resize
-            iaa.Sometimes(0.4, iaa.Multiply((0.8, 1.2))),  # 30% probability to change brightness
-            iaa.Sometimes(0.4, iaa.LinearContrast((0.8, 1.2))),  # 30% probability to change contrast
-            iaa.Sometimes(0.2, iaa.GaussianBlur(sigma=(0, 0.5))),  # 20% probability to blur
+            iaa.Sometimes(0.4, iaa.Multiply((0.8, 1.2))),  # 40% probability to change brightness
+            iaa.Sometimes(0.4, iaa.LinearContrast((0.8, 1.2))),  # 40% probability to change contrast
+            iaa.Sometimes(0.3, iaa.GaussianBlur(sigma=(0, 0.5))),  # 30% probability to blur
             iaa.Sometimes(0.4, iaa.Crop(percent=(0, 0.3))),  # 40% probability to crop
-            iaa.Sometimes(0.2, iaa.SaltAndPepper(0.02)),  # 10% probability for salt and pepper noise
-            iaa.Sometimes(0.2, iaa.ElasticTransformation(alpha=(0, 30), sigma=10)),  # 20% probability for elastic transformation
-            iaa.Sometimes(0.1, iaa.MotionBlur(k=15, angle=[-45, 45])),  # 10% probability to add motion blur to simulate water flow
-            iaa.Sometimes(0.6, iaa.ShearX((-40, 40))),  # 20% probability to shear on X axis
-            iaa.Sometimes(0.6, iaa.ShearY((-40, 40))),  # 20% probability to shear on Y axis
-            iaa.Sometimes(0.4, iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2))),  # 20% probability to sharpen
-            iaa.Sometimes(0.2, iaa.PiecewiseAffine(scale=(0.01, 0.03))),  # 10% probability for piecewise affine
-            iaa.Sometimes(0.3, iaa.Grayscale(alpha=(0.0, 1.0))),  # 10% probability to grayscale
-            iaa.Sometimes(0.3, iaa.AddToHueAndSaturation((-30, 30))),  # 20% probability to change hue and saturation
-            iaa.Sometimes(0.3, iaa.GammaContrast((0.5, 1.5))),  # 20% probability to change gamma contrast
-            iaa.Sometimes(0.3, iaa.ChangeColorTemperature((3300, 6500))),  # 20% probability to change color temperature
-            iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.01, 0.1))),  # 10% probability for perspective transform
-            iaa.Sometimes(0.3, iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25))),  # 10% probability for coarse dropout
-            iaa.Sometimes(0.1, iaa.Invert(0.3)),  # 10% probability to invert colors
-            iaa.Sometimes(0.4, iaa.imgcorruptlike.Spatter()),  # 40% probability to add watermarks
+            iaa.Sometimes(0.3, iaa.SaltAndPepper(0.02)),  # 30% probability for salt and pepper noise
+            iaa.Sometimes(0.3, iaa.ElasticTransformation(alpha=(0, 30), sigma=10)),  # 30% probability for elastic transformation
+            iaa.Sometimes(0.2, iaa.MotionBlur(k=15, angle=[-45, 45])),  # 20% probability to add motion blur to simulate water flow
+            iaa.Sometimes(0.4, iaa.ShearX((-40, 40))),  # 40% probability to shear on X axis
+            iaa.Sometimes(0.4, iaa.ShearY((-40, 40))),  # 40% probability to shear on Y axis
+            iaa.Sometimes(0.3, iaa.Sharpen(alpha=(0, 0.5), lightness=(0.8, 1.2))),  # 30% probability to sharpen
+            iaa.Sometimes(0.2, iaa.PiecewiseAffine(scale=(0.01, 0.03))),  # 20% probability for piecewise affine
+            iaa.Sometimes(0.3, iaa.Grayscale(alpha=(0.0, 1.0))),  # 30% probability to grayscale
+            iaa.Sometimes(0.3, iaa.AddToHueAndSaturation((-30, 30))),  # 30% probability to change hue and saturation
+            iaa.Sometimes(0.3, iaa.GammaContrast((0.5, 1.5))),  # 30% probability to change gamma contrast
+            iaa.Sometimes(0.3, iaa.ChangeColorTemperature((3300, 6500))),  # 30% probability to change color temperature
+            iaa.Sometimes(0.2, iaa.PerspectiveTransform(scale=(0.01, 0.1))),  # 20% probability for perspective transform
+            iaa.Sometimes(0.2, iaa.CoarseDropout((0.0, 0.05), size_percent=(0.02, 0.25))),  # 20% probability for coarse dropout
+            iaa.Sometimes(0.2, iaa.Invert(0.3)),  # 20% probability to invert colors
+            iaa.Sometimes(0.2, iaa.AdditiveGaussianNoise(scale=(0, 0.05*255))),  # 20% probability for Gaussian noise
+            iaa.Sometimes(0.2, iaa.AdditivePoissonNoise(lam=(0, 30))),  # 20% probability for Poisson noise
+            iaa.Sometimes(0.3, iaa.Dropout2d(p=(0.1, 0.3))),  # 30% probability for Dropout2d
+            iaa.Sometimes(0.2, iaa.EdgeDetect(alpha=(0.2, 0.5))),  # 20% probability for edge detection
+            iaa.Sometimes(0.2, iaa.WithColorspace(to_colorspace="HSV", from_colorspace="RGB", children=iaa.WithChannels(0, iaa.Add((10, 50))))),  # 20% probability to change HSV
+            iaa.Sometimes(0.4, iaa.AddToBrightness((-30, 30))),  # 40% probability to change brightness
+            iaa.Sometimes(0.4, iaa.imgcorruptlike.Spatter(severity=1)),  # 40% probability to add watermarks
             # iaa.Sometimes(0.1, iaa.Fog()),  # 10% probability to add fog
             # iaa.Sometimes(0.1, iaa.Rain(speed=(0.1, 0.3))),  # 10% probability to add rain
             # iaa.Sometimes(0.1, iaa.Clouds()),  # 10% probability to add clouds
@@ -85,19 +90,23 @@ class DataAugmentation:
             if image.shape[2] == 4:
                 image = image[:, :, :3]
 
-            # Check and resize large images
-            if image.shape[0] <= 32 or image.shape[1] <= 32:
-                print(f"Resizing image {image_path} due to excessive dimensions: {image.shape}")
-                image = iaa.Resize({"longer-side": 64, "shorter-side": "keep-aspect-ratio"})(image=image)
-
-            # Check and resize large images
-            if image.shape[0] > 2000 or image.shape[1] > 2000:
-                print(f"Resizing image {image_path} due to excessive dimensions: {image.shape}")
-                image = iaa.Resize({"longer-side": 720, "shorter-side": "keep-aspect-ratio"})(image=image)
-
             label_path = self.train_path / 'labels' / image_path.with_suffix('.txt').name
-            image_shape = image.shape
-            bbs = BoundingBoxesOnImage(self.read_label_file(label_path, image_shape), shape=image_shape)
+            original_shape = image.shape
+            bbs = BoundingBoxesOnImage(self.read_label_file(label_path, original_shape), shape=original_shape)
+
+            # Check and resize small images
+            if image.shape[0] < 32 or image.shape[1] < 32:
+                print(f"Resizing image {image_path} due to small dimensions: {image.shape}")
+                # image = iaa.Resize({"longer-side": 64, "shorter-side": "keep-aspect-ratio"})(image=image)
+                image = iaa.Resize({"shorter-side": 32, "longer-side": "keep-aspect-ratio"})(image=image)
+
+            # Check and resize large images
+            if image.shape[0] > 1920 or image.shape[1] > 1920:
+                print(f"Resizing image {image_path} due to large dimensions: {image.shape}")
+                image = iaa.Resize({"longer-side": 1920, "shorter-side": "keep-aspect-ratio"})(image=image)
+
+            resized_shape = image.shape
+            bbs = bbs.on(resized_shape)  # Adjust bounding boxes to the new image shape
 
             for i in range(self.num_augmentations):
                 image_aug, bbs_aug = self.seq(image=image, bounding_boxes=bbs)
@@ -113,31 +122,25 @@ class DataAugmentation:
                 imageio.imwrite(image_aug_path, image_aug, pilmode='RGB')
                 self.write_label_file(bbs_aug, label_aug_path, image_aug.shape[1], image_aug.shape[0])
 
-                del image_aug, bbs_aug
-                gc.collect()
+                del image_aug, bbs_aug  # Explicitly delete to free memory
         except Exception as e:
-            print(f"Error augmenting image: {image_path}")
+            print(f"Error processing image: {image_path}")
             print(e)
         finally:
-            del image
-            if 'bbs' in locals():
-                del bbs
-            gc.collect()
+            del image, bbs  # Ensure these are deleted from memory
+            gc.collect()  # Force garbage collection
 
     def augment_data(self, batch_size=10):
         """
         Processes images in batches to save memory.
         """
         image_paths = list(self.train_path.glob('images/*.jpg'))
-        total_images = len(image_paths)
+        batches = [image_paths[i:i + batch_size] for i in range(0, len(image_paths), batch_size)]
 
-        for i in tqdm(range(0, total_images, batch_size), total=(total_images + batch_size - 1) // batch_size):
-            batch_paths = image_paths[i:i + batch_size]
-            with Pool(processes=cpu_count()) as pool:
-                pool.imap_unordered(self.augment_image, batch_paths)
-                pool.close()
-                pool.join()
-                gc.collect()
+        for batch in tqdm(batches):
+            for image_path in batch:
+                self.augment_image(image_path)
+            gc.collect()  # Collect garbage after each batch
 
     @staticmethod
     def read_label_file(label_path: Path, image_shape: Tuple[int, int, int]) -> List[BoundingBox]:
@@ -216,8 +219,8 @@ class DataAugmentation:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Perform data augmentation on image datasets.')
     parser.add_argument('--train_path', type=str, default='./dataset_aug/train', help='Path to the training data directory.')
-    parser.add_argument('--num_augmentations', type=int, default=2, help='Number of augmentations per image.')
-    parser.add_argument('--batch_size', type=int, default=10, help='Number of images to process in each batch.')
+    parser.add_argument('--num_augmentations', type=int, default=40, help='Number of augmentations per image.')
+    parser.add_argument('--batch_size', type=int, default=5, help='Number of images to process in each batch.')
     args = parser.parse_args()
 
     augmenter = DataAugmentation(args.train_path, args.num_augmentations)
