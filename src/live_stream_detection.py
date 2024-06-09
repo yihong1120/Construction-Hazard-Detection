@@ -64,8 +64,10 @@ class LiveStreamDetector:
             '人員': (255, 165, 0),
         }
 
-        # Labels to exclude from drawing
-        self.exclude_labels = ['安全錐', '口罩', '無口罩']
+        # Generate exclude_labels automatically
+        self.exclude_labels = [
+            label for label in self.category_id_to_name.values() if label not in self.colors
+        ]
         
         # Authenticate and get access token
         self.access_token = None
