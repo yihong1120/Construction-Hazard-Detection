@@ -10,23 +10,20 @@
 
 ## 配置
 
-在運行應用程序之前，您需要通過在 JSON 配置文件中指定視頻流和其他參數的詳細信息來配置系統。一個示例配置文件 `configuration.json` 應該如下所示：
+在運行應用程序之前，您需要通過在 YAML 配置文件中指定視頻流和其他參數的詳細信息來配置系統。一個示例配置文件 `configuration.yaml` 應該如下所示：
 
-```json
-[
-    {
-        "video_url": "rtsp://example1.com/stream",
-        "api_url": "http://localhost:5000/detect",
-        "model_key": "yolov8l",
-        "line_token": "token1"
-    },
-    {
-        "video_url": "rtsp://example2.com/stream",
-        "api_url": "http://localhost:5000/detect",
-        "model_key": "yolov8l",
-        "line_token": "token2"
-    }
-]
+```yaml
+# This is a list of video configurations
+- video_url: "rtsp://example1.com/stream"  # URL of the video
+  image_name: "cam1"  # Name of the image
+  label: "label1"  # Label of the video
+  model_key: "yolov8x"  # Model key for the video
+  line_token: "token1"  # Line token for notification
+- video_url: "rtsp://example2.com/stream"
+  image_name: "cam2"
+  label: "label2"
+  model_key: "yolov8x"
+  line_token: "token2"
 ```
 
 數組中的每個對象代表一個視頻流配置，包含以下字段：
@@ -57,10 +54,10 @@ docker-compose up --build
 4. 要使用特定配置文件運行主應用程序，請使用以下命令：
 
 ```bash
-docker-compose run main-application python main.py --config /path/in/container/configuration.json
+docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
 ```
 
-將 `/path/in/container/configuration.json` 替換為容器內配置文件的實際路徑。
+將 `/path/in/container/configuration.yaml` 替換為容器內配置文件的實際路徑。
 
 5. 要停止服務，請使用以下命令：
 

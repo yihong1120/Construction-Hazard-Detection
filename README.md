@@ -16,21 +16,20 @@
 
 ## Configuration
 
-Before running the application, you need to configure the system by specifying the details of the video streams and other parameters in a JSON configuration file. An example configuration file `configuration.json` should look like this:
+Before running the application, you need to configure the system by specifying the details of the video streams and other parameters in a YAML configuration file. An example configuration file `configuration.yaml` should look like this:
 
-```json
-[
-    {
-        "video_url": "rtsp://example1.com/stream",
-        "model_key": "yolov8l",
-        "line_token": "token1"
-    },
-    {
-        "video_url": "rtsp://example2.com/stream",
-        "model_key": "yolov8l",
-        "line_token": "token2"
-    }
-]
+```yaml
+# This is a list of video configurations
+- video_url: "rtsp://example1.com/stream"  # URL of the video
+  image_name: "cam1"  # Name of the image
+  label: "label1"  # Label of the video
+  model_key: "yolov8x"  # Model key for the video
+  line_token: "token1"  # Line token for notification
+- video_url: "rtsp://example2.com/stream"
+  image_name: "cam2"
+  label: "label2"
+  model_key: "yolov8x"
+  line_token: "token2"
 ```
 
 Each object in the array represents a video stream configuration with the following fields:
@@ -60,10 +59,10 @@ docker-compose up --build
 4. To run the main application with a specific configuration file, use the following command:
 
 ```bash
-docker-compose run main-application python main.py --config /path/in/container/configuration.json
+docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
 ```
 
-Replace `/path/in/container/configuration.json` with the actual path to your configuration file inside the container.
+Replace `/path/in/container/configuration.yaml` with the actual path to your configuration file inside the container.
 
 5. To stop the services, use the following command:
 
