@@ -25,8 +25,9 @@ class DangerDetector:
 
         Returns:
             List[str]: A list of warning messages for detected safety violations.
+            List[List[float]]: The filtered detection data.
         """
-        warnings = []  # Initialise the list to store warning messages
+        warnings = set()  # Initialise the list to store warning messages
 
         # Classify detected objects into different categories
         persons = [d for d in datas if d[5] == 5.0]  # Persons
@@ -43,14 +44,14 @@ class DangerDetector:
         for violation in hardhat_violations + safety_vest_violations:
             label = 'NO-Hardhat' if violation[5] == 2.0 else 'NO-Safety Vest'
             if not any(self.overlap_percentage(violation[:4], p[:4]) > 0.5 for p in persons):
-                warnings.append(f"警告: 有人無配戴安全帽!" if label == 'NO-Hardhat' else f"警告: 有人無穿著安全背心!")
+                warnings.add(f"警告: 有人無配戴安全帽!" if label == 'NO-Hardhat' else f"警告: 有人無穿著安全背心!")
 
         # Check if anyone is dangerously close to machinery or vehicles
         for person in persons:
             for mv in machinery_vehicles:
                 label = '機具' if mv[5] == 8.0 else '車輛'
                 if self.is_dangerously_close(person[:4], mv[:4], label):
-                    warnings.append(f"警告: 有人過於靠近{label}!")
+                    warnings.add(f"警告: 有人過於靠近{label}!")
                     break
 
         return warnings
