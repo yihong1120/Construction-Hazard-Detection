@@ -1,11 +1,11 @@
 # This is a list of video configurations
 - video_url: "rtsp://example1.com/stream"  # URL of the video
-  image_name: "cam1.png"  # Name of the image
+  image_name: "cam1"  # Name of the image
   label: "label1"  # Label of the video
   model_key: "yolov8x"  # Model key for the video
   line_token: "token1"  # Line token for notification
 - video_url: "rtsp://example2.com/stream"
-  image_name: "cam2.png"
+  image_name: "cam2"
   label: "label2"
   model_key: "yolov8x"
   line_token: "token2"
