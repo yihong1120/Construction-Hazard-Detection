@@ -53,7 +53,6 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
         start_time = time.time()
         # Convert UNIX timestamp to datetime object and format it as string
         detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
-        print(detection_time)
 
         # Detect hazards in the frame
         datas, _ = live_stream_detector.generate_detections(frame)
@@ -72,6 +71,10 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
         # Check for warnings and send notifications if necessary
         warnings = danger_detector.detect_danger(datas)
 
+        # Log the detection results
+        logger.info(f"{label} - {image_name}")
+        logger.info(f"Detection time: {detection_time}")
+
         # Get the current hour
         current_hour = datetime.now().hour
         
@@ -79,15 +82,13 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
             (timestamp - last_notification_time) > 300 and # Check if the last notification was more than 5 minutes ago
             (7 <= current_hour < 18)): # Check if the current hour is between 7 AM and 6 PM
 
-            # Remove duplicates
-            unique_warnings = set(warnings)  # Remove duplicates
-
             # Combine all warnings into one message
-            message = '\n'.join([f'[{detection_time}] {warning}' for warning in unique_warnings])
+            # message = '\n'.join([f'[{detection_time}] {warning}' for warning in warnings])
+            message = f'{image_name}\n[{detection_time}]\n' + '\n'.join([f'{warning}' for warning in warnings])
 
             # Send notification with or without image based on image_name value
-            status = line_notifier.send_notification(message, label, image=frame_bytes if frame_bytes is not None else None)
-            if status == 200:
+            notification_status = line_notifier.send_notification(message, label, image=frame_bytes if frame_bytes is not None else None)
+            if notification_status == 200:
                 logger.warning(f"Notification sent successfully: {message}")
             else:
                 logger.error(f"Failed to send notification: {message}")
@@ -95,18 +96,23 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
             # Update the last_notification_time to the current time
             last_notification_time = timestamp
 
+        else:
+            logger.info("No warnings detected or not within the notification time range")
+
         # Use a unique key for each thread or process
         key = f'{label}_{image_name}'
         
         # Store the frame in Redis
         r.set(key, frame_bytes)
 
+        end_time = time.time()
+
+        # Log the detection results
+        logger.info(f"Processing time: {end_time - start_time:.2f} seconds")
+
         # Clear variables to free up memory
         del datas, frame, timestamp, detection_time
         gc.collect()
-
-        end_time = time.time()
-        print(f"Processing time: {end_time - start_time:.2f} seconds")
 
     # Release resources after processing
     live_stream_detector.release_resources()
