@@ -4,6 +4,9 @@ from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 from typing import Any, Optional
 from ultralytics import YOLO
+from sklearn.model_selection import KFold
+import os
+import shutil
 
 
 class YOLOModelHandler:
@@ -185,6 +188,82 @@ class YOLOModelHandler:
         # Save the model to the specified path
         torch.save(self.model.state_dict(), save_path)
 
+    def cross_validate_model(self, data_config: str, epochs: int, optimizer: str, n_splits: int = 5) -> None:
+        """
+        Performs k-fold cross-validation on the YOLO model.
+
+        Args:
+            data_config (str): The path to the data configuration file.
+            epochs (int): The number of training epochs.
+            optimizer (str): The type of optimizer to use.
+            n_splits (int): Number of folds for cross-validation.
+
+        Raises:
+            RuntimeError: If the model is not loaded properly before training.
+        """
+        if self.model is None:
+            raise RuntimeError("The model is not loaded properly.")
+
+        # Load the data
+        dataset_path = os.path.join(os.path.dirname(data_config))
+        images_path = os.path.join(dataset_path, "images")
+        labels_path = os.path.join(dataset_path, "labels")
+
+        # List all image files
+        image_files = [f for f in os.listdir(images_path) if os.path.isfile(os.path.join(images_path, f))]
+        kf = KFold(n_splits=n_splits)
+
+        fold = 1
+        for train_index, val_index in kf.split(image_files):
+            train_images = [image_files[i] for i in train_index]
+            val_images = [image_files[i] for i in val_index]
+
+            # Create temporary directories for training and validation sets
+            temp_train_dir = os.path.join(dataset_path, "train")
+            temp_val_dir = os.path.join(dataset_path, "val")
+
+            os.makedirs(temp_train_dir, exist_ok=True)
+            os.makedirs(temp_val_dir, exist_ok=True)
+
+            os.makedirs(os.path.join(temp_train_dir, "images"), exist_ok=True)
+            os.makedirs(os.path.join(temp_train_dir, "labels"), exist_ok=True)
+            os.makedirs(os.path.join(temp_val_dir, "images"), exist_ok=True)
+            os.makedirs(os.path.join(temp_val_dir, "labels"), exist_ok=True)
+
+            # Copy files to the temporary directories
+            for image in train_images:
+                shutil.copy(os.path.join(images_path, image), os.path.join(temp_train_dir, "images", image))
+                shutil.copy(os.path.join(labels_path, image.replace(".jpg", ".txt").replace(".png", ".txt")), 
+                            os.path.join(temp_train_dir, "labels", image.replace(".jpg", ".txt").replace(".png", ".txt")))
+
+            for image in val_images:
+                shutil.copy(os.path.join(images_path, image), os.path.join(temp_val_dir, "images", image))
+                shutil.copy(os.path.join(labels_path, image.replace(".jpg", ".txt").replace(".png", ".txt")), 
+                            os.path.join(temp_val_dir, "labels", image.replace(".jpg", ".txt").replace(".png", ".txt")))
+
+            # Update data_config file for this fold
+            with open(data_config, 'r') as file:
+                data_yaml = file.read()
+
+            data_yaml = data_yaml.replace('dataset/train/images', temp_train_dir + '/images')
+            data_yaml = data_yaml.replace('dataset/valid/images', temp_val_dir + '/images')
+
+            temp_data_config = os.path.join(dataset_path, f'data_fold{fold}.yaml')
+            with open(temp_data_config, 'w') as file:
+                file.write(data_yaml)
+
+            print(f"Training fold {fold}/{n_splits}")
+            self.train_model(data_config=temp_data_config, epochs=epochs, optimizer=optimizer)
+            metrics = self.validate_model()
+            print(f"Validation metrics for fold {fold}:", metrics)
+
+            # Clean up temporary directories
+            shutil.rmtree(temp_train_dir)
+            shutil.rmtree(temp_val_dir)
+            os.remove(temp_data_config)
+
+            fold += 1
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -241,8 +320,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--optimizer", 
         type=str, 
-        default="Auto", 
+        default="auto", 
         help="Type of optimizer to use"
+    )
+
+    parser.add_argument(
+        "--cross_validate", 
+        action='store_true', 
+        help="Perform cross-validation"
+    )
+
+    parser.add_argument(
+        "--n_splits", 
+        type=int, 
+        default=5, 
+        help="Number of folds for cross-validation"
     )
 
     args = parser.parse_args()
@@ -250,9 +342,12 @@ if __name__ == "__main__":
     handler = YOLOModelHandler(args.model_name, args.batch_size)
 
     try:
-        handler.train_model(data_config=args.data_config, epochs=args.epochs, optimizer=args.optimizer)
-        metrics = handler.validate_model()
-        print("Validation metrics:", metrics)
+        if args.cross_validate:
+            handler.cross_validate_model(data_config=args.data_config, epochs=args.epochs, optimizer=args.optimizer, n_splits=args.n_splits)
+        else:
+            handler.train_model(data_config=args.data_config, epochs=args.epochs, optimizer=args.optimizer)
+            metrics = handler.validate_model()
+            print("Validation metrics:", metrics)
         
         export_path = (
             handler.export_model(export_format=args.export_format)
@@ -273,3 +368,8 @@ if __name__ == "__main__":
     # SAHI Prediction
     # sahi_result = handler.predict_image_sahi(args.model_name, args.sahi_image_path)
     # print("SAHI Prediction Results:", sahi_result)
+
+    # Example command to run the script
+    '''
+    python train.py --data_config=dataset/data.yaml --epochs=100 --model_name=../../models/pt/best_yolov8x.pt --batch_size=16 --optimizer=auto --cross_validate --n_splits=5
+    '''
