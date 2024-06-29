@@ -27,8 +27,9 @@ class ModelEvaluator:
         Returns:
             Dict[str, Any]: The results from the model evaluation.
         """
+        print(f"Evaluating model with data path: {self.data_path}")
         # The 'val' method is used for evaluation, 'test' could also be used as per the requirement.
-        return self.model.val()
+        return self.model.val(data=self.data_path)
 
 def parse_arguments() -> argparse.Namespace:
     """
