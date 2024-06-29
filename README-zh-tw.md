@@ -33,37 +33,80 @@
 - `model_key`: 要使用的機器學習模型的鍵標識符。
 - `line_token`: 用於發送通知的 LINE 消息 API 令牌。
 
-## 使用方法
+## 使用 Docker
 
-要運行危險檢測系統，您需要在機器上安裝 Docker 和 Docker Compose。按照以下步驟啟動系統：
+要運行危險檢測系統，您需要在機器上安裝 Docker 和 Docker Compose。按照以下步驟來啟動系統：
 
-1. 克隆存儲庫到您的本地機器。
-```
-git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
-```
-2. 導航到克隆的目錄。
-```
-cd Construction-Hazard-Detection
-```
+1. 將存儲庫克隆到本地機器。
+   ```bash
+   git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+   ```
+2. 進入克隆的目錄。
+   ```bash
+   cd Construction-Hazard-Detection
+   ```
 3. 使用 Docker Compose 構建並運行服務：
+   ```bash
+   docker-compose up --build
+   ```
 
-```bash
-docker-compose up --build
-```
+4. 使用特定的配置文件運行主應用程序，使用以下命令：
+   ```bash
+   docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
+   ```
+   將 `/path/in/container/configuration.yaml` 替換為容器內配置文件的實際路徑。
 
-4. 要使用特定配置文件運行主應用程序，請使用以下命令：
+5. 停止服務，使用以下命令：
+   ```bash
+   docker-compose down
+   ```
 
-```bash
-docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
-```
+## 使用 Python
 
-將 `/path/in/container/configuration.yaml` 替換為容器內配置文件的實際路徑。
+要在終端運行危險檢測系統，您需要在機器上安裝 Python。按照以下步驟來啟動系統：
 
-5. 要停止服務，請使用以下命令：
+1. 將存儲庫克隆到本地機器。
+   ```bash
+   git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+   ```
 
-```bash
-docker-compose down
-```
+2. 進入克隆的目錄。
+   ```bash
+   cd Construction-Hazard-Detection
+   ```
+
+3. 安裝所需的軟體包：
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. 安裝並啟動 MySQL 服務：
+   ```bash
+   sudo apt install mysql-server
+   sudo systemctl start mysql.service
+   ```
+
+5. 設置用戶帳戶和密碼。使用以下命令啟動用戶管理 API：
+   ```bash
+   gunicorn -w 1 -b 0.0.0.0:8000 "examples.User-Management.app:user-managements-app"
+   ```
+   建議使用 Postman 應用程式與 API 進行互動。
+
+6. 要運行物體檢測 API，使用以下命令：
+   ```bash
+   gunicorn -w 1 -b 0.0.0.0:8001 "examples.Model-Server.app:app"
+   ```
+
+7. 使用特定的配置文件運行主應用程序，使用以下命令：
+   ```bash
+   python3 main.py --config /path/to/your/configuration.yaml
+   ```
+   將 `/path/to/your/configuration.yaml` 替換為您的配置文件的實際路徑。
+
+8. 要啟動串流 Web 服務，執行以下命令：
+   ```bash
+   gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.Stream-Web.app:streaming-web-app"
+   ```
 
 ## 數據集信息
 訓練此模型的主要數據集是 [Roboflow 的建築工地安全圖像數據集](https://www.kaggle.com/datasets/snehilsanyal/construction-site-safety-image-dataset-roboflow/data)。我們已經用額外的註釋豐富了這個數據集，並在 Roboflow 上公開訪問。增強的數據集可以在這裡找到：[Roboflow 上的建築危險檢測](https://universe.roboflow.com/side-projects/construction-hazard-detection)。此數據集包括以下標籤：

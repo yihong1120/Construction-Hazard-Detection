@@ -38,37 +38,84 @@ Each object in the array represents a video stream configuration with the follow
 - `model_key`: The key identifier for the machine learning model to use.
 - `line_token`: The LINE messaging API token for sending notifications.
 
-## Usage
+## Usage for Docker
 
 To run the hazard detection system, you need to have Docker and Docker Compose installed on your machine. Follow these steps to get the system up and running:
 
 1. Clone the repository to your local machine.
-```
-git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
-```
+   ```
+   git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+   ```
 2. Navigate to the cloned directory.
-```
-cd Construction-Hazard-Detection
-```
+   ```
+   cd Construction-Hazard-Detection
+   ```
 3. Build and run the services using Docker Compose:
 
-```bash
-docker-compose up --build
-```
+   ```bash
+   docker-compose up --build
+   ```
 
 4. To run the main application with a specific configuration file, use the following command:
 
-```bash
-docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
-```
+   ```bash
+   docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
+   ```
 
-Replace `/path/in/container/configuration.yaml` with the actual path to your configuration file inside the container.
+   Replace `/path/in/container/configuration.yaml` with the actual path to your configuration file inside the container.
 
 5. To stop the services, use the following command:
 
-```bash
-docker-compose down
-```
+   ```bash
+   docker-compose down
+   ```
+
+## Usage for Python
+
+To run the hazard detection system with terminal, you need to have Python installed on your machine. Follow these steps to get the system up and running:
+
+1. Clone the repository to your local machine.
+   ```bash
+   git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+   ```
+
+2. Navigate to the cloned directory.
+   ```bash
+   cd Construction-Hazard-Detection
+   ```
+
+3. Install required packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Install and launch MySQL service:
+   ```bash
+   sudo apt install mysql-server
+   sudo systemctl start mysql.service
+   ```
+
+5. Set up user accounts and passcodes. Use the following command to start the user management API:
+   ```bash
+   gunicorn -w 1 -b 0.0.0.0:8000 "examples.User-Management.app:user-managements-app"
+   ```
+   It is suggested to use Postman app to interact with the app.
+
+6. To run the object-detection API, use the following command:
+   ```bash
+   gunicorn -w 1 -b 0.0.0.0:8001 "examples.Model-Server.app:app"
+   ```
+
+7. To run the main application with a specific configuration file, use the following command:
+   ```bash
+   python3 main.py --config /path/to/your/configuration.yaml
+   ```
+   Replace `/path/to/your/configuration.yaml` with the actual path to your configuration file.
+
+8. To start the streaming web service, execute the following command:
+   ```bash
+   gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.Stream-Web.app:streaming-web-app"
+   ```
 
 ## Dataset Information
 The primary dataset for training this model is the [Construction Site Safety Image Dataset from Roboflow](https://www.kaggle.com/datasets/snehilsanyal/construction-site-safety-image-dataset-roboflow/data). We have enriched this dataset with additional annotations and made it openly accessible on Roboflow. The enhanced dataset can be found here: [Construction Hazard Detection on Roboflow](https://universe.roboflow.com/side-projects/construction-hazard-detection). This dataset includes the following labels:
