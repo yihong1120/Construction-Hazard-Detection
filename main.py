@@ -34,6 +34,7 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
     load_dotenv()
     api_url = os.getenv('API_URL', 'http://localhost:5000') 
 
+    # Initialise the stream capture object
     streaming_capture = StreamCapture(stream_url = video_url)
 
     # Initialise the live stream detector
@@ -68,9 +69,6 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
         # save_file_name = f'{label}_{image_name}_{detection_time}'
         # live_stream_detector.save_frame(frame_with_detections, save_file_name)        
 
-        # Check for warnings and send notifications if necessary
-        warnings = danger_detector.detect_danger(datas)
-
         # Log the detection results
         logger.info(f"{label} - {image_name}")
         logger.info(f"Detection time: {detection_time}")
@@ -78,23 +76,26 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
         # Get the current hour
         current_hour = datetime.now().hour
         
-        if (warnings and # Check if there are warnings
-            (timestamp - last_notification_time) > 300 and # Check if the last notification was more than 5 minutes ago
+        if ((timestamp - last_notification_time) > 300 and # Check if the last notification was more than 5 minutes ago
             (7 <= current_hour < 18)): # Check if the current hour is between 7 AM and 6 PM
 
-            # Combine all warnings into one message
-            # message = '\n'.join([f'[{detection_time}] {warning}' for warning in warnings])
-            message = f'{image_name}\n[{detection_time}]\n' + '\n'.join([f'{warning}' for warning in warnings])
+            # Check for warnings and send notifications if necessary
+            warnings = danger_detector.detect_danger(datas)
 
-            # Send notification with or without image based on image_name value
-            notification_status = line_notifier.send_notification(message, label, image=frame_bytes if frame_bytes is not None else None)
-            if notification_status == 200:
-                logger.warning(f"Notification sent successfully: {message}")
-            else:
-                logger.error(f"Failed to send notification: {message}")
+            # Check if there are any warnings
+            if warnings:
+                # Combine all warnings into one message
+                message = f'{image_name}\n[{detection_time}]\n' + '\n'.join([f'{warning}' for warning in warnings])
 
-            # Update the last_notification_time to the current time
-            last_notification_time = timestamp
+                # Send notification with or without image based on image_name value
+                notification_status = line_notifier.send_notification(message, label, image=frame_bytes if frame_bytes is not None else None)
+                if notification_status == 200:
+                    logger.warning(f"Notification sent successfully: {message}")
+                else:
+                    logger.error(f"Failed to send notification: {message}")
+
+                # Update the last_notification_time to the current time
+                last_notification_time = timestamp
 
         else:
             logger.info("No warnings detected or not within the notification time range")
@@ -107,8 +108,15 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
 
         end_time = time.time()
 
-        # Log the detection results
-        logger.info(f"Processing time: {end_time - start_time:.2f} seconds")
+        # Calculate the processing time
+        processing_time = end_time - start_time
+
+        # Update the capture interval based on the processing time
+        new_interval = int(processing_time) + 5
+        streaming_capture.update_capture_interval(new_interval)
+
+        # Log the processing time
+        logger.info(f"Processing time: {processing_time:.2f} seconds")
 
         # Clear variables to free up memory
         del datas, frame, timestamp, detection_time
