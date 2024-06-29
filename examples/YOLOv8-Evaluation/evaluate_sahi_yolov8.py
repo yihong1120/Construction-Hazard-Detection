@@ -50,6 +50,7 @@ class COCOEvaluator:
         Returns:
             Dict[str, float]: A dictionary containing computed metrics.
         """
+        print(f"Evaluating model with data path: {self.coco_json}")
         coco = Coco.from_coco_dict_or_path(self.coco_json)
         pycoco = COCO(self.coco_json)
         predictions = []
@@ -57,6 +58,7 @@ class COCOEvaluator:
 
         for image_info in coco.images:
             image_path = os.path.join(self.image_dir, image_info.file_name)
+            print(f"Processing image: {image_path}")
             prediction_result = get_sliced_prediction(
                 image_path, self.model, slice_height=self.slice_height, slice_width=self.slice_width,
                 overlap_height_ratio=self.overlap_height_ratio, overlap_width_ratio=self.overlap_width_ratio,
