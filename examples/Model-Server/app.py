@@ -1,11 +1,10 @@
 from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
-from .models import User
+from .models import db
 from .config import Config
 from .auth import auth_blueprint
 from .detection import detection_blueprint
-from .models import models_blueprint
+from .model_downloader import models_blueprint
 from .security import update_secret_key
 from apscheduler.schedulers.background import BackgroundScheduler
 import secrets
@@ -22,8 +21,8 @@ app.config.from_object(Config)
 # Initialise JWTManager with the Flask app
 jwt = JWTManager(app)
 
-# Initialise SQLAlchemy
-db = SQLAlchemy(app)
+# Initialise the database with the Flask app
+db.init_app(app)
 
 # Register authentication-related routes
 app.register_blueprint(auth_blueprint)
@@ -45,21 +44,6 @@ scheduler.start()
 
 # Ensure the scheduler is shut down gracefully upon exiting the application
 atexit.register(lambda: scheduler.shutdown())
-
-# Ensure the database tables are created when receiving the first request
-@app.before_first_request
-def create_tables():
-    db.create_all()
-
-    # Create a new user
-    user = User(username='user')
-    user.set_password('passcode')
-
-    # Add the new user to the database session
-    db.session.add(user)
-
-    # Commit the session to write the new user to the database
-    db.session.commit()
 
 if __name__ == '__main__':
     # Run the Flask application on all available IPs at port 5000
