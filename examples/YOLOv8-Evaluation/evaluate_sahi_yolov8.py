@@ -81,8 +81,8 @@ class COCOEvaluator:
         coco_eval.summarize()
 
         metrics = {
-            "Average Precision": np.mean(coco_eval.eval['precision'][:, :, :, 0, -1], axis=(0, 1, 2)),
-            "Average Recall": np.mean(coco_eval.eval['recall'][:, :, 0, -1], axis=(0, 1)),
+            "Average Precision": np.mean(coco_eval.eval['precision'][:, :, :, 0, -1]),
+            "Average Recall": np.mean(coco_eval.eval['recall'][:, :, 0, -1]),
             "mAP at IoU=50": np.mean(coco_eval.eval['precision'][0, :, :, 0, 2]),
             "mAP at IoU=50-95": np.mean(coco_eval.eval['precision'][0, :, :, 0, :])
         }
