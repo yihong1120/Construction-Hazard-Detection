@@ -49,5 +49,5 @@ if __name__ == "__main__":
     print("Evaluation results:", results)
 
 """example usage
-python evaluate_yolov8.py --model_path "../../models/best_yolov8n.pt" --data_path "dataset/data.yaml"
+python evaluate_yolov8.py --model_path "../../models/pt/best_yolov8x.pt" --data_path "dataset/data.yaml"
 """
