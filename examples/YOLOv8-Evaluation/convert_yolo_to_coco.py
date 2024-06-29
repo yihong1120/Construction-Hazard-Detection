@@ -2,7 +2,7 @@ import json
 import os
 import argparse
 from PIL import Image
-from typing import List, Dict
+from typing import List
 
 class COCOConverter:
     """Converts YOLO format annotations to COCO format."""
@@ -20,6 +20,8 @@ class COCOConverter:
             "categories": []
         }
         self.initialise_categories(categories)
+        self.image_id = 1  # Unique ID for each image
+        self.annotation_id = 1  # Unique ID for each annotation
 
     def initialise_categories(self, categories: List[str]):
         """Initialises categories for COCO format.
@@ -41,16 +43,20 @@ class COCOConverter:
             labels_dir (str): Directory containing YOLO labels.
             images_dir (str): Directory containing image files.
         """
-        annotation_id = 1  # Unique ID for each annotation
         for filename in os.listdir(labels_dir):
             if filename.endswith('.txt'):
                 image_name = filename.replace('.txt', '.jpg')
                 image_path = os.path.join(images_dir, image_name)
+                
+                if not os.path.exists(image_path):
+                    print(f"Warning: {image_path} does not exist.")
+                    continue
+                
                 image = Image.open(image_path)
                 width, height = image.size
 
                 self.coco_format["images"].append({
-                    "id": annotation_id,
+                    "id": self.image_id,
                     "width": width,
                     "height": height,
                     "file_name": image_name
@@ -69,15 +75,16 @@ class COCOConverter:
                         bbox_height *= height
 
                         self.coco_format["annotations"].append({
-                            "id": annotation_id,
-                            "image_id": annotation_id,
-                            "category_id": class_id + 1,
+                            "id": self.annotation_id,
+                            "image_id": self.image_id,
+                            "category_id": int(class_id) + 1,
                             "bbox": [x_min, y_min, bbox_width, bbox_height],
                             "area": bbox_width * bbox_height,
                             "segmentation": [],
                             "iscrowd": 0
                         })
-                        annotation_id += 1
+                        self.annotation_id += 1
+                self.image_id += 1
 
     def save_to_json(self, output_path: str):
         """Saves the COCO formatted data to a JSON file.
