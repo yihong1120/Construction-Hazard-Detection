@@ -15,8 +15,8 @@ class COCOEvaluator:
     """
 
     def __init__(self, model_path: str, coco_json: str, image_dir: str, confidence_threshold: float = 0.3,
-                 slice_height: int = 640, slice_width: int = 640, overlap_height_ratio: float = 0.2,
-                 overlap_width_ratio: float = 0.2):
+                 slice_height: int = 370, slice_width: int = 370, overlap_height_ratio: float = 0.3,
+                 overlap_width_ratio: float = 0.3):
         """
         Initialises the evaluator with model and dataset parameters.
 
