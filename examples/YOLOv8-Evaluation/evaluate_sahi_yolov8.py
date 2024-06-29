@@ -107,5 +107,5 @@ if __name__ == "__main__":
     print("Evaluation metrics:", metrics)
 
 """example usage
-python evaluate_model.py --model_path "../../models/best_yolov8n.pt" --coco_json "/Users/YiHung/Documents/Side_Projects/Construction-Hazard-Detection/examples/YOLOv8-Evaluation/dataset/coco_annotations.json" --image_dir "/Users/YiHung/Documents/Side_Projects/Construction-Hazard-Detection/examples/YOLOv8-Evaluation/dataset/valid/images"
+python evaluate_sahi_yolov8.py --model_path "../../models/pt/best_yolov8x.pt" --coco_json "dataset/coco_annotations.json" --image_dir "dataset/valid/images"
 """
