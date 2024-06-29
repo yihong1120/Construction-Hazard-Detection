@@ -12,7 +12,7 @@ class StreamCapture:
     A class to capture frames from a video stream.
     """
 
-    def __init__(self, stream_url: str):
+    def __init__(self, stream_url: str, capture_interval: int = 15):
         """
         Initialises the StreamCapture with the given stream URL.
 
@@ -21,6 +21,7 @@ class StreamCapture:
         """
         self.stream_url = stream_url
         self.cap = None
+        self.capture_interval = capture_interval
 
     def initialise_stream(self) -> None:
         """
@@ -51,7 +52,7 @@ class StreamCapture:
             Tuple[cv2.Mat, float]: The captured frame and the timestamp.
         """
         self.initialise_stream()
-        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=15)
+        last_process_time = datetime.datetime.now() - datetime.timedelta(seconds=self.capture_interval)
         while True:
             ret, frame = self.cap.read()
             if not ret:
@@ -61,12 +62,11 @@ class StreamCapture:
                 continue
 
             current_time = datetime.datetime.now()
-            if (current_time - last_process_time).total_seconds() >= 10:
+            if (current_time - last_process_time).total_seconds() >= self.capture_interval:
                 last_process_time = current_time
                 timestamp = current_time.timestamp()
                 yield frame, timestamp
 
-            # Removed cv2.waitKey() and added a sleep to control the loop frequency
             time.sleep(0.01)  # Adjust the sleep time as needed
 
         self.release_resources()
@@ -142,12 +142,11 @@ class StreamCapture:
                     continue
 
                 current_time = datetime.datetime.now()
-                if (current_time - last_process_time).total_seconds() >= 5:
+                if (current_time - last_process_time).total_seconds() >= self.capture_interval:
                     last_process_time = current_time
                     timestamp = current_time.timestamp()
                     yield frame, timestamp
 
-                # Removed cv2.waitKey() and added a sleep to control the loop frequency
                 time.sleep(0.01)  # Adjust the sleep time as needed
         except Exception as e:
             print(f"Error: {e}")
@@ -165,6 +164,15 @@ class StreamCapture:
             return self.capture_youtube_frames()
         else:
             return self.capture_frames()
+        
+    def update_capture_interval(self, new_interval: int) -> None:
+        """
+        Updates the capture interval.
+
+        Args:
+            new_interval (int): The new interval for capturing frames in seconds.
+        """
+        self.capture_interval = new_interval
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Capture video stream frames.')
