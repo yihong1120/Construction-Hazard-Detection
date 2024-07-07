@@ -118,7 +118,7 @@ class DangerDetector:
             return False
 
         # 3. The person's top must be below the vehicle's top
-        if not (person_top_y < vehicle_top_y):
+        if not (person_top_y > vehicle_top_y):
             return False
 
         # 4. Person's height is less than or equal to half the vehicle's height
@@ -219,9 +219,9 @@ class DangerDetector:
 if __name__ == '__main__':
     detector = DangerDetector()
     data = [
-        [706.87, 445.07, 976.32, 1073.6, 3, 0.91, 0],
-        [0.45513, 471.77, 662.03, 1071.4, 12, 0.75853, 7],
-        [1042.7, 638.5, 1077.5, 731.98, 18, 0.56060, 0],
+        [706.87, 445.07, 976.32, 1073.6, 3, 0.91],
+        [0.45513, 471.77, 662.03, 1071.4, 12, 0.75853],
+        [1042.7, 638.5, 1077.5, 731.98, 18, 0.56060],
     ]
     warnings = detector.detect_danger(data)
     for warning in warnings:
