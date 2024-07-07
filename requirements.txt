@@ -15,7 +15,9 @@ onnx==1.16.1
 opencv_python==4.7.0.72
 opencv_python_headless==4.7.0.72
 Pillow==10.3.0
+pre-commit==3.7.1
 pycocotools==2.0.8
+pytest==8.2.2
 python-dotenv==1.0.1
 redis==5.0.7
 sahi==0.11.16
