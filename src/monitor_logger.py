@@ -1,29 +1,40 @@
+from __future__ import annotations
+
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+
 class LoggerConfig:
     """
-    A class to set up a logger for the application with both console and file handlers.
+    Sets up app logger with console and file handlers.
     """
 
-    def __init__(self, log_file='monitor.log', log_dir='logs', level=logging.INFO, formatter=None):
+    def __init__(
+        self,
+        log_file='monitor.log',
+        log_dir='logs',
+        level=logging.INFO,
+        formatter=None,
+    ):
         """
-        Initialises the logger configuration with a log file name, logging level, and formatter.
+        Initializes logger with file name, level, and formatter.
 
         Args:
-            log_file (str): The name of the log file. Defaults to 'monitor.log'.
-            log_dir (str): The directory where log files will be stored. Defaults to 'logs'.
+            log_file (str): Log file name, defaults to 'monitor.log'.
+            log_dir (str): Log storage directory, defaults to 'logs'.
             level (logging.Level): The logging level. Defaults to logging.INFO.
-            formatter (logging.Formatter): Custom formatter for the log messages. Defaults to a standard format.
+            formatter (logging.Formatter): Log formatter, defaults to standard.
         """
         self.log_file = log_file
         self.log_dir = log_dir
         self.level = level
-        self.formatter = formatter or logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        
+        self.formatter = formatter or logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        )
+
         # Ensure that we get a unique logger instance by using a unique name
-        self.logger = logging.getLogger(f'SiteSafetyMonitor_{log_file}')
+        self.logger = logging.getLogger(f"SiteSafetyMonitor_{log_file}")
         self.setup_logger()
 
     def setup_logger(self):
@@ -47,6 +58,9 @@ class LoggerConfig:
         self.logger.addHandler(console_handler)
         self.logger.setLevel(self.level)
 
+        # Debug: Log to verify the handlers have been added
+        self.logger.debug('Logger handlers set up complete.')
+
     def get_file_handler(self):
         """
         Creates and returns a rotating file handler.
@@ -57,7 +71,7 @@ class LoggerConfig:
         file_handler = RotatingFileHandler(
             filename=Path(self.log_dir) / self.log_file,
             maxBytes=1_000_000,
-            backupCount=5
+            backupCount=5,
         )
         file_handler.setLevel(self.level)
         file_handler.setFormatter(self.formatter)
@@ -84,13 +98,14 @@ class LoggerConfig:
         """
         return self.logger
 
+
 # This block is executed when the script is run directly, not when imported
 if __name__ == '__main__':
     # Example usage of the LoggerConfig class:
-    
+
     # Initialise the logger configuration
     logger_config = LoggerConfig()
     logger = logger_config.get_logger()
-    
+
     # Log a message indicating that the logging setup is complete
     logger.info('Logging setup complete.')

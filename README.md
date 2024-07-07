@@ -1,16 +1,27 @@
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
-<img src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner" style="width: 100%;">
+<img width="100%"  src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
+
+<br>
 
 <div align="center">
     <a href="examples
-/Model-Server">Model-Server</a> | <a href="examples
-/Stream-Web">Stream-Web</a> | <a href="examples
-/User-Management">User-Management</a> | <a href="examples
-/YOLOv8-Data-Augmentation">YOLOv8-Data-Augmentation</a> | <a href="examples
-/YOLOv8-Evaluation">YOLOv8-Evaluation</a> | <a href="examples
-/YOLOv8-Train">YOLOv8-Train</a>
+/YOLOv8_server_api">YOLOv8-Server-API</a> | <a href="examples
+/streaming_web">Streaming-Web</a> | <a href="examples
+/user_management">User-Management</a> | <a href="examples
+/YOLOv8_data_augmentation">YOLOv8-Data-Augmentation</a> | <a href="examples
+/YOLOv8_evaluation">YOLOv8-Evaluation</a> | <a href="examples
+/YOLOv8_train">YOLOv8-Train</a>
 </div>
+
+<div align="center">
+    <a href="https://github.com/pre-commit/pre-commit"><img src="https://img.shields.io/badge/pre--commit-3.7.1-blue?logo=pre-commit" alt="Pre-commit 3.7.1"></a>
+    <a href="https://www.python.org/downloads/release/python-3124/"><img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4"></a>
+    <a href="https://github.com/ultralytics/yolov8"><img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8"></a>
+    <a href="https://flask.palletsprojects.com/en/3.0.x/"><img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3"></a>
+</div>
+
+<br>
 
 "Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety at construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards like overhead heavy loads and steel pipes. Post-processing is applied to the trained model for improved accuracy. The system is designed for deployment in real-time environments, providing instant analysis and warnings for any detected hazards.
 

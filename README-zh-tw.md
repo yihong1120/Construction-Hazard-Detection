@@ -2,9 +2,20 @@
 
 <img src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner" style="width: 100%;">
 
+<br>
+
 <div align="center">
-    <a href="examples/Model-Server">模型伺服器</a> | <a href="examples/Stream-Web">串流網頁</a> | <a href="examples/User-Management">用戶管理</a> | <a href="examples/YOLOv8-Data-Augmentation">YOLOv8 數據增強</a> | <a href="examples/YOLOv8-Evaluation">YOLOv8 評估</a> | <a href="examples/YOLOv8-Train">YOLOv8 訓練</a>
+    <a href="examples/YOLOv8_server_api">模型伺服器</a> | <a href="examples/streaming_web">串流網頁</a> | <a href="examples/user_management">用戶管理</a> | <a href="examples/YOLOv8_data_augmentation">YOLOv8 數據增強</a> | <a href="examples/YOLOv8_evaluation">YOLOv8 評估</a> | <a href="examples/YOLOv8_train">YOLOv8 訓練</a>
 </div>
+
+<div align="center">
+    <a href="https://github.com/pre-commit/pre-commit"><img src="https://img.shields.io/badge/pre--commit-3.7.1-blue?logo=pre-commit" alt="Pre-commit 3.7.1"></a>
+    <a href="https://www.python.org/downloads/release/python-3124/"><img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4"></a>
+    <a href="https://github.com/ultralytics/yolov8"><img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8"></a>
+    <a href="https://flask.palletsprojects.com/en/3.0.x/"><img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3"></a>
+</div>
+
+<br>
 
 "建築工地危險檢測系統" 是一個以人工智能驅動的工具，旨在提高建築工地的安全性。利用 YOLOv8 模型進行物體檢測，此系統能夠識別潛在的危險，如高空重物和鋼管。對訓練好的模型進行後處理以提高準確性。該系統設計用於實時環境中，提供對檢測到的危險的即時分析和警告。
 

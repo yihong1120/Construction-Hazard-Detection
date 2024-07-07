@@ -1,17 +1,25 @@
+from __future__ import annotations
+
 import argparse
-import cv2
 import datetime
+from collections.abc import Generator
+
+import cv2
 from ultralytics import YOLO
-from typing import Generator, Tuple
+
 
 class LiveStreamDetector:
     """
     A class to perform live stream detection and tracking using YOLOv8.
     """
 
-    def __init__(self, stream_url: str, model_path: str = '../models/yolov8n.pt'):
+    def __init__(
+        self,
+        stream_url: str,
+        model_path: str = '../models/yolov8n.pt',
+    ):
         """
-        Initialises the live stream detector with a video stream URL and a path to a YOLO model.
+        Initialise live stream detector with video URL, YOLO model path.
 
         Args:
             stream_url (str): The full URL to the live video stream.
@@ -22,12 +30,13 @@ class LiveStreamDetector:
         self.model = YOLO(self.model_path)
         self.cap = cv2.VideoCapture(self.stream_url)
 
-    def generate_detections(self) -> Generator[Tuple, None, None]:
+    def generate_detections(self) -> Generator[tuple, None, None]:
         """
-        Yields detection results and the current timestamp from a video capture object frame by frame.
+        Yields detection results, timestamp per frame from video capture.
 
         Yields:
-            Generator[Tuple]: Tuple of detection ids, detection data, the frame, and the current timestamp for each video frame.
+            Generator[Tuple]: Tuple of detection ids, detection data, frame,
+            and the current timestamp for each video frame.
         """
         while self.cap.isOpened():
             success, frame = self.cap.read()
@@ -36,19 +45,28 @@ class LiveStreamDetector:
 
             # Get the current timestamp
             now = datetime.datetime.now()
-            timestamp = now.timestamp()  # Convert the datetime to a Unix timestamp
+            timestamp = now.timestamp()  # Unix timestamp
 
-            # Run YOLOv8 tracking on the frame, maintaining tracks between frames
-            results = self.model.track(source = frame, persist=True)
+            # Run YOLOv8 tracking, maintain tracks across frames
+            results = self.model.track(source=frame, persist=True)
 
-            # Check if there are any detections and if so, extract their IDs and data
+            # If detections exist, extract IDs and data
             if results[0].boxes is not None and len(results[0].boxes) > 0:
-                ids = results[0].boxes.id  # No longer converting to list here, check for emptiness instead
+                # Check emptiness, not converting to list
+                ids = results[0].boxes.id
                 datas = results[0].boxes.data  # Same as above
 
                 # Convert ids and datas to lists if they are not empty
-                ids_list = ids.numpy().tolist() if ids is not None and len(ids) > 0 else []
-                datas_list = datas.numpy().tolist() if datas is not None and len(datas) > 0 else []
+                ids_list = (
+                    ids.numpy().tolist()
+                    if ids is not None and len(ids) > 0
+                    else []
+                )
+                datas_list = (
+                    datas.numpy().tolist()
+                    if datas is not None and len(datas) > 0
+                    else []
+                )
 
                 # Yield the results
                 yield ids_list, datas_list, frame, timestamp
@@ -71,18 +89,35 @@ class LiveStreamDetector:
         Runs the live stream detection and prints out detection results.
         """
         for ids, datas, frame, timestamp in self.generate_detections():
-            print("Timestamp:", datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'))
-            print("IDs:", ids)
-            print("Data (xyxy format):")
+            print(
+                'Timestamp:', datetime.datetime.fromtimestamp(
+                    timestamp,
+                ).strftime('%Y-%m-%d %H:%M:%S'),
+            )
+            print('IDs:', ids)
+            print('Data (xyxy format):')
             print(datas)
 
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Perform live stream detection and tracking using YOLOv8.')
-    parser.add_argument('--url', type=str, help='Live stream URL', required=True)
-    parser.add_argument('--model', type=str, default='../models/yolov8n.pt', help='Path to the YOLOv8 model')
+    parser = argparse.ArgumentParser(
+        description='Perform live stream detection and tracking using YOLOv8.',
+    )
+    parser.add_argument(
+        '--url',
+        type=str,
+        help='Live stream URL',
+        required=True,
+    )
+    parser.add_argument(
+        '--model',
+        type=str,
+        default='../models/yolov8n.pt',
+        help='Path to the YOLOv8 model',
+    )
     args = parser.parse_args()
 
-    # Initialise the live stream detector with the provided stream URL and model path
+    # Initialize the detector with the stream URL and model path
     detector = LiveStreamDetector(args.url, args.model)
 
     # Run the detection and print the results

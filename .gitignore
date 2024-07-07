@@ -3,21 +3,27 @@
 *.jpg
 *.png
 *.jpeg
-*.yaml
 *.pt
 *.log
-/.env
+*.onnx
+*.out
+*.yaml
+*.json
+*.ipynb
+.env
 !assets/images/images(6).png
 !assets/images/sinya-1706871806.png
 !assets/sweep.yaml
 !assets/flowcharts/site_safety_monitor_en.png
 !assets/flowcharts/site_safety_monitor_zh.png
+# examples
 !examples/YOLOv8-Fine-Tune/dataset/**
+!examples/Stream-Web/
 !models/yolov8n.pt
 !models/best_yolov8n.pt
 test.py
 __pycache__
 **/logs
 !assets/images/**
-examples
 configuration.json
+app copy.py

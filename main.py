@@ -1,44 +1,79 @@
+from __future__ import annotations
+
 import argparse
-import yaml
+import gc
+import logging
+import os
+import threading
+import time
 from datetime import datetime
 from multiprocessing import Process
-import time
-import gc
-from typing import NoReturn, Dict
-import os
-from dotenv import load_dotenv
-import threading
-import redis
+from typing import TypedDict
+
 import cv2
+import yaml
+from dotenv import load_dotenv
 
-from src.stream_capture import StreamCapture
-from src.line_notifier import LineNotifier
-from src.monitor_logger import LoggerConfig
-from src.live_stream_detection import LiveStreamDetector
 from src.danger_detector import DangerDetector
+from src.line_notifier import LineNotifier
+from src.live_stream_detection import LiveStreamDetector
+from src.monitor_logger import LoggerConfig
+from src.stream_capture import StreamCapture
 
-# Connect to Redis
-r = redis.Redis(host='localhost', port=6379, db=0)
+is_windows = os.name == 'nt'
 
-def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, image_name: str = 'prediction_visual', line_token: str = None) -> NoReturn:
+if not is_windows:
+    import redis
+
+    r = redis.Redis(host='localhost', port=6379, db=0)
+
+
+class StreamConfig(TypedDict):
+    video_url: str
+    model_key: str
+    label: str
+    image_name: str
+    line_token: str
+    run_local: bool
+
+
+def main(
+    logger: logging.Logger,
+    video_url: str,
+    model_key: str = 'yolov8x',
+    label: str | None = None,
+    image_name: str = 'prediction_visual',
+    line_token: str | None = None,
+    run_local: bool = True,
+) -> None:
     """
-    Main execution function that detects hazards, sends notifications, logs warnings, and optionally saves output images.
+    Main function to detect hazards, notify, log, save images (optional).
 
     Args:
         logger (logging.Logger): A logger instance for logging messages.
         video_url (str): The URL of the live stream to monitor.
-        label (str): The label of image_name.
-        image_name (str, optional): The file name of the image to send with notifications. Defaults to 'demo_data/{label}/prediction_visual.png'.
+        label (Optional[str]): The label of image_name.
+        image_name (str, optional): Image file name for notifications.
+            Defaults to 'demo_data/{label}/prediction_visual.png'.
+        line_token (Optional[str]): The LINE token for sending notifications.
+            Defaults to None.
+        run_local (bool): Whether to run detection using a local model.
+            Defaults to True.
     """
     # Load environment variables
     load_dotenv()
-    api_url = os.getenv('API_URL', 'http://localhost:5000') 
+    api_url = os.getenv('API_URL', 'http://localhost:5000')
 
     # Initialise the stream capture object
-    streaming_capture = StreamCapture(stream_url = video_url)
+    streaming_capture = StreamCapture(stream_url=video_url)
 
     # Initialise the live stream detector
-    live_stream_detector = LiveStreamDetector(api_url=api_url, model_key=model_key, output_folder = label)
+    live_stream_detector = LiveStreamDetector(
+        api_url=api_url,
+        model_key=model_key,
+        output_folder=label,
+        run_local=run_local,
+    )
 
     # Initialise the LINE notifier
     line_notifier = LineNotifier(line_token)
@@ -46,20 +81,24 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
     # Initialise the DangerDetector
     danger_detector = DangerDetector()
 
-    # Initialise the last_notification_time variable (set to 300 seconds ago, without microseconds)
+    # Init last_notification_time to 300s ago, no microseconds
     last_notification_time = int(time.time()) - 300
 
     # Use the generator function to process detections
     for frame, timestamp in streaming_capture.execute_capture():
         start_time = time.time()
         # Convert UNIX timestamp to datetime object and format it as string
-        detection_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        detection_time = datetime.fromtimestamp(
+            timestamp,
+        ).strftime('%Y-%m-%d %H:%M:%S')
 
         # Detect hazards in the frame
         datas, _ = live_stream_detector.generate_detections(frame)
 
         # Draw the detections on the frame
-        frame_with_detections = live_stream_detector.draw_detections_on_frame(frame, datas)
+        frame_with_detections = live_stream_detector.draw_detections_on_frame(
+            frame, datas,
+        )
 
         # Convert the frame to a byte array
         _, buffer = cv2.imencode('.png', frame_with_detections)
@@ -67,7 +106,10 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
 
         # Save the frame with detections
         # save_file_name = f'{label}_{image_name}_{detection_time}'
-        # live_stream_detector.save_frame(frame_with_detections, save_file_name)        
+        # live_stream_detector.save_frame(
+        #   frame_with_detections,
+        #   save_file_name
+        # )
 
         # Log the detection results
         logger.info(f"{label} - {image_name}")
@@ -75,36 +117,49 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
 
         # Get the current hour
         current_hour = datetime.now().hour
-        
-        if ((timestamp - last_notification_time) > 300 and # Check if the last notification was more than 5 minutes ago
-            (7 <= current_hour < 18)): # Check if the current hour is between 7 AM and 6 PM
 
+        if (
+            # >5 mins since last notification
+            (timestamp - last_notification_time) > 300 and
+            # Between 7 AM and 6 PM
+            (7 <= current_hour < 18)
+        ):
             # Check for warnings and send notifications if necessary
             warnings = danger_detector.detect_danger(datas)
 
             # Check if there are any warnings
             if warnings:
                 # Combine all warnings into one message
-                message = f'{image_name}\n[{detection_time}]\n' + '\n'.join([f'{warning}' for warning in warnings])
+                message = f"{image_name}\n[{detection_time}]\n" + '\n'.join(
+                    [f"{warning}" for warning in warnings],
+                )
 
-                # Send notification with or without image based on image_name value
-                notification_status = line_notifier.send_notification(message, label, image=frame_bytes if frame_bytes is not None else None)
+                # Send notification, with image if image_name set
+                notification_status = line_notifier.send_notification(
+                    message,
+                    image=frame_bytes if frame_bytes is not None else None,
+                )
                 if notification_status == 200:
-                    logger.warning(f"Notification sent successfully: {message}")
+                    logger.warning(
+                        f"Notification sent successfully: {message}",
+                    )
                 else:
                     logger.error(f"Failed to send notification: {message}")
 
                 # Update the last_notification_time to the current time
-                last_notification_time = timestamp
+                last_notification_time = int(timestamp)
 
         else:
-            logger.info("No warnings detected or not within the notification time range")
+            logger.info(
+                'No warnings or outside notification time.',
+            )
 
-        # Use a unique key for each thread or process
-        key = f'{label}_{image_name}'
-        
-        # Store the frame in Redis
-        r.set(key, frame_bytes)
+        if not is_windows:
+            # Use a unique key for each thread or process
+            key = f"{label}_{image_name}"
+
+            # Store the frame in Redis
+            r.set(key, frame_bytes)
 
         end_time = time.time()
 
@@ -120,59 +175,63 @@ def main(logger, video_url: str, model_key: str = 'yolov8x', label: str = None, 
 
         # Clear variables to free up memory
         del datas, frame, timestamp, detection_time
+        del frame_with_detections, buffer, frame_bytes
         gc.collect()
 
     # Release resources after processing
-    live_stream_detector.release_resources()
+    streaming_capture.release_resources()
     gc.collect()
 
-def process_stream(config: Dict[str, str]) -> NoReturn:
+
+def process_stream(config: StreamConfig) -> None:
     """
-    Process a single video stream with configuration.
+    Process a video stream based on the given configuration.
 
     Args:
-        config (dict): The configuration dictionary.
+        config (StreamConfig): The configuration for the stream processing.
 
     Returns:
         None
     """
-    # Load configurations
+    # Load the logger configuration
     logger_config = LoggerConfig()
 
-    # Get logger
+    # Initialise the logger
     logger = logger_config.get_logger()
 
     try:
         # Run hazard detection on a single video stream
         main(logger, **config)
     finally:
-        # Clean up Redis keys when the process ends
-        label = config.get('label')
-        image_name = config.get('image_name', 'prediction_visual')
-        key = f'{label}_{image_name}'
-        r.delete(key)
-        logger.info(f"Deleted Redis key: {key}")
+        if not is_windows:
+            label = config.get('label')
+            image_name = config.get('image_name', 'prediction_visual')
+            key = f"{label}_{image_name}"
+            r.delete(key)
+            logger.info(f"Deleted Redis key: {key}")
 
-def start_process(config: Dict[str, str]) -> Process:
+
+def start_process(config: StreamConfig) -> Process:
     """
-    Start a process for a single video stream with configuration.
+    Start a new process for processing a video stream.
 
     Args:
-        config (dict): The configuration dictionary.
+        config (StreamConfig): The configuration for the stream processing.
 
     Returns:
-        Process: The started process.
+        Process: The newly started process.
     """
     p = Process(target=process_stream, args=(config,))
     p.start()
     return p
+
 
 def stop_process(process: Process) -> None:
     """
     Stop a running process.
 
     Args:
-        process (Process): The process to stop.
+        process (Process): The process to be terminated.
 
     Returns:
         None
@@ -180,24 +239,28 @@ def stop_process(process: Process) -> None:
     process.terminate()
     process.join()
 
-def run_multiple_streams(config_file: str) -> NoReturn:
+
+def run_multiple_streams(config_file: str) -> None:
     """
-    Run hazard detection on multiple video streams from a configuration file.
+    Manage multiple video streams based on a config file.
+
 
     Args:
-        config_file (str): The path to the configuration file.
+        config_file (str): The path to the YAML configuration file.
 
     Returns:
         None
     """
-    running_processes = {}
+    running_processes: dict[str, Process] = {}
     lock = threading.Lock()
 
     while True:
-        with open(config_file, 'r') as file:
+        with open(config_file, encoding='utf-8') as file:
             configurations = yaml.safe_load(file)
 
-        current_configs = {config['video_url']: config for config in configurations}
+        current_configs = {
+            config['video_url']: config for config in configurations
+        }
 
         with lock:
             # Stop processes for removed configurations
@@ -213,11 +276,19 @@ def run_multiple_streams(config_file: str) -> NoReturn:
                     print(f"Launch new workflow: {video_url}")
                     running_processes[video_url] = start_process(config)
 
-        time.sleep(3600)  # Check every hour for configuration changes
+        time.sleep(3600)
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Run hazard detection on multiple video streams.')
-    parser.add_argument('--config', type=str, default='config/configuration.yaml', help='Configuration file path')
+    parser = argparse.ArgumentParser(
+        description='Run hazard detection on multiple video streams.',
+    )
+    parser.add_argument(
+        '--config',
+        type=str,
+        default='config/configuration.yaml',
+        help='Configuration file path',
+    )
     args = parser.parse_args()
 
     run_multiple_streams(args.config)

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import cv2
+
 
 class StreamViewer:
     """
@@ -6,16 +9,19 @@ class StreamViewer:
 
     Attributes:
         stream_url (str): The URL of the video stream.
-        window_name (str): The name of the window where the stream will be displayed.
+        window_name (str): The name of the window where the stream will
+                           be displayed.
     """
 
-    def __init__(self, stream_url: str, window_name: str = "Stream Viewer"):
+    def __init__(self, stream_url: str, window_name: str = 'Stream Viewer'):
         """
-        Initialises the StreamViewer instance with a stream URL and a window name.
+        Initialises the StreamViewer instance with a stream URL
+        and a window name.
 
         Args:
             stream_url (str): The URL of the video stream.
-            window_name (str): The name of the window where the stream will be displayed.
+            window_name (str): The name of the window where the stream
+                               will be displayed.
         """
         self.stream_url = stream_url
         self.window_name = window_name
@@ -26,7 +32,8 @@ class StreamViewer:
         Displays the video stream in a window.
 
         Continuously captures frames from the video stream and displays them.
-        The loop breaks when 'q' is pressed or if the stream cannot be retrieved.
+        The loop breaks when 'q' is pressed or if the stream cannot be
+        retrieved.
         """
         while True:
             # Capture the next frame from the stream.
@@ -41,7 +48,7 @@ class StreamViewer:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
             else:
-                print("Failed to retrieve frame.")
+                print('Failed to retrieve frame.')
                 break
 
         # Release the video capture object and close all OpenCV windows.
@@ -57,6 +64,8 @@ class StreamViewer:
 
 if __name__ == '__main__':
     # Replace 'vide0_url' with your stream URL.
-    video_url = "https://cctv4.kctmc.nat.gov.tw/50204bfc/"
+    video_url = (
+        'https://cctv4.kctmc.nat.gov.tw/50204bfc/'
+    )
     viewer = StreamViewer(video_url)
     viewer.display_stream()
