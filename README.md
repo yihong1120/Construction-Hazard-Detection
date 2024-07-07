@@ -36,11 +36,13 @@ Before running the application, you need to configure the system by specifying t
   label: "label1"  # Label of the video
   model_key: "yolov8x"  # Model key for the video
   line_token: "token1"  # Line token for notification
+  run_local: True  # Run objection detection locally
 - video_url: "rtsp://example2.com/stream"
   image_name: "cam2"
   label: "label2"
   model_key: "yolov8x"
   line_token: "token2"
+  run_local: True
 ```
 
 Each object in the array represents a video stream configuration with the following fields:

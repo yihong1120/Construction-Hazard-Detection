@@ -30,11 +30,13 @@
   label: "label1"  # Label of the video
   model_key: "yolov8x"  # Model key for the video
   line_token: "token1"  # Line token for notification
+  run_local: True  # Run objection detection locally
 - video_url: "rtsp://example2.com/stream"
   image_name: "cam2"
   label: "label2"
   model_key: "yolov8x"
   line_token: "token2"
+  run_local: True
 ```
 
 數組中的每個對象代表一個視頻流配置，包含以下字段：
