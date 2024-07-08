@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from io import BytesIO
-from typing import Optional
+from typing import TypedDict, Optional
 
 import numpy as np
 import requests
