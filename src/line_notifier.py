@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import os
 from io import BytesIO
+from typing import Optional
 
 import numpy as np
 import requests
 from dotenv import load_dotenv
 from PIL import Image
+from typing import TypedDict
+
+
+class NotificationData(TypedDict):
+    message: str
+    image: Optional[np.ndarray]
 
 
 class LineNotifier:
@@ -30,31 +37,27 @@ class LineNotifier:
                 'LINE_NOTIFY_TOKEN not provided or in environment variables.',
             )
 
-    def send_notification(
-        self,
-        message: str,
-        image: np.ndarray | None = None,
-    ) -> int:
+    def send_notification(self, data: NotificationData) -> int:
         """
         Sends a notification via LINE Notify, optionally including an image.
 
         Args:
-            message (str): The message to send.
-            label (Optional[str]): The label of the image_name.
-            image (Optional[np.ndarray]): The image to send with the message.
-                Defaults to None.
+            data (NotificationData): The notification data including message
+                and optional image.
 
         Returns:
             response.status_code (int): The status code of the response.
         """
         headers = {'Authorization': f"Bearer {self.line_token}"}
-        payload = {'message': message}
+        payload = {'message': data['message']}
         files = {}
 
-        if image is not None:
-            if isinstance(image, bytes):
+        if data['image'] is not None:
+            if isinstance(data['image'], bytes):
                 # Convert bytes to NumPy array
-                image = np.array(Image.open(BytesIO(image)))
+                image = np.array(Image.open(BytesIO(data['image'])))
+            else:
+                image = data['image']
             image_pil = Image.fromarray(image)
             buffer = BytesIO()
             image_pil.save(buffer, format='PNG')
@@ -82,7 +85,11 @@ def main():
     message = 'Hello, LINE Notify!'
     # Create a dummy image for testing
     image = np.zeros((100, 100, 3), dtype=np.uint8)
-    response_code = notifier.send_notification(message, image=image)
+    data: NotificationData = {
+        'message': message,
+        'image': image,
+    }
+    response_code = notifier.send_notification(data)
     print(f"Response code: {response_code}")
 
 
