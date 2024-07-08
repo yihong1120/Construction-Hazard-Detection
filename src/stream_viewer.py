@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import cv2
+from typing import TypedDict
 
+class StreamConfig(TypedDict):
+    stream_url: str
+    window_name: str
 
 class StreamViewer:
     """
@@ -9,22 +13,18 @@ class StreamViewer:
 
     Attributes:
         stream_url (str): The URL of the video stream.
-        window_name (str): The name of the window where the stream will
-                           be displayed.
+        window_name (str): The name of the window where the stream will be displayed.
     """
 
-    def __init__(self, stream_url: str, window_name: str = 'Stream Viewer'):
+    def __init__(self, config: StreamConfig):
         """
-        Initialises the StreamViewer instance with a stream URL
-        and a window name.
+        Initialises the StreamViewer instance with a stream URL and a window name.
 
         Args:
-            stream_url (str): The URL of the video stream.
-            window_name (str): The name of the window where the stream
-                               will be displayed.
+            config (StreamConfig): The configuration for the stream viewer.
         """
-        self.stream_url = stream_url
-        self.window_name = window_name
+        self.stream_url = config['stream_url']
+        self.window_name = config['window_name']
         self.cap = cv2.VideoCapture(self.stream_url)
 
     def display_stream(self):
@@ -32,8 +32,7 @@ class StreamViewer:
         Displays the video stream in a window.
 
         Continuously captures frames from the video stream and displays them.
-        The loop breaks when 'q' is pressed or if the stream cannot be
-        retrieved.
+        The loop breaks when 'q' is pressed or if the stream cannot be retrieved.
         """
         while True:
             # Capture the next frame from the stream.
@@ -63,9 +62,11 @@ class StreamViewer:
 
 
 if __name__ == '__main__':
-    # Replace 'vide0_url' with your stream URL.
-    video_url = (
-        'https://cctv4.kctmc.nat.gov.tw/50204bfc/'
-    )
-    viewer = StreamViewer(video_url)
+    # Define the stream configuration
+    config: StreamConfig = {
+        'stream_url': 'https://cctv4.kctmc.nat.gov.tw/50204bfc/',
+        'window_name': 'Stream Viewer'
+    }
+    
+    viewer = StreamViewer(config)
     viewer.display_stream()
