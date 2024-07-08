@@ -5,19 +5,11 @@ import datetime
 import gc
 import time
 from collections.abc import Generator
-from typing import TypedDict, Optional, Tuple
 
 import cv2
 import speedtest
 import streamlink
 
-class FrameData(TypedDict):
-    frame: cv2.Mat
-    timestamp: float
-
-class SpeedData(TypedDict):
-    download_speed: float
-    upload_speed: float
 
 class StreamCapture:
     """
@@ -32,7 +24,7 @@ class StreamCapture:
             stream_url (str): The URL of the video stream.
         """
         self.stream_url = stream_url
-        self.cap: Optional[cv2.VideoCapture] = None
+        self.cap: cv2.VideoCapture | None = None
         self.capture_interval = capture_interval
 
     def initialise_stream(self) -> None:
@@ -55,12 +47,12 @@ class StreamCapture:
             self.cap = None
         gc.collect()
 
-    def capture_frames(self) -> Generator[FrameData, None, None]:
+    def capture_frames(self) -> Generator[tuple[cv2.Mat, float], None, None]:
         """
         Captures frames from the stream and yields them with timestamps.
 
         Yields:
-            FrameData: The captured frame and the timestamp.
+            Tuple[cv2.Mat, float]: The captured frame and the timestamp.
         """
         self.initialise_stream()
         last_process_time = datetime.datetime.now() - datetime.timedelta(
@@ -86,7 +78,7 @@ class StreamCapture:
             if elapsed_time >= self.capture_interval:
                 last_process_time = current_time
                 timestamp = current_time.timestamp()
-                yield {'frame': frame, 'timestamp': timestamp}
+                yield frame, timestamp
 
                 # Clear memory
                 del frame, timestamp
@@ -96,31 +88,30 @@ class StreamCapture:
 
         self.release_resources()
 
-    def check_internet_speed(self) -> SpeedData:
+    def check_internet_speed(self) -> tuple[float, float]:
         """
         Checks internet speed using the Speedtest library.
 
         Returns:
-            SpeedData: The download and upload speeds in Mbps.
+            Tuple[float, float]: Download and upload speeds (Mbps).
         """
         st = speedtest.Speedtest()
         st.get_best_server()
         download_speed = st.download() / 1_000_000
         upload_speed = st.upload() / 1_000_000
-        return {'download_speed': download_speed, 'upload_speed': upload_speed}
+        return download_speed, upload_speed
 
-    def select_quality_based_on_speed(self) -> Optional[str]:
+    def select_quality_based_on_speed(self) -> str | None:
         """
         Selects stream quality based on internet speed.
 
         Returns:
-            Optional[str]: The URL of the selected stream quality.
+            str: The URL of the selected stream quality.
 
         Raises:
-            Exception: If no compatible stream quality is available.
+            Exception: If compatible stream quality is not available.
         """
-        speed_data = self.check_internet_speed()
-        download_speed = speed_data['download_speed']
+        download_speed, _ = self.check_internet_speed()
         try:
             streams = streamlink.streams(self.stream_url)
             available_qualities = list(streams.keys())
@@ -154,12 +145,12 @@ class StreamCapture:
 
     def capture_youtube_frames(
         self,
-    ) -> Generator[FrameData, None, None]:
+    ) -> Generator[tuple[cv2.Mat, float], None, None]:
         """
         Captures frames from a YouTube stream.
 
         Yields:
-            FrameData: The captured frame and the timestamp.
+            Tuple[cv2.Mat, float]: The captured frame and the timestamp.
         """
         stream_url = self.select_quality_based_on_speed()
         if not stream_url:
@@ -183,7 +174,7 @@ class StreamCapture:
                 ).total_seconds() >= self.capture_interval:
                     last_process_time = current_time
                     timestamp = current_time.timestamp()
-                    yield {'frame': frame, 'timestamp': timestamp}
+                    yield frame, timestamp
 
                     # 清理內存
                     del frame, timestamp
@@ -195,12 +186,12 @@ class StreamCapture:
         finally:
             self.release_resources()
 
-    def execute_capture(self) -> Generator[FrameData, None, None]:
+    def execute_capture(self) -> Generator[tuple[cv2.Mat, float], None, None]:
         """
         Returns capture generator for stream type.
 
         Returns:
-            Generator[FrameData]: Yields frames and timestamps.
+            Generator[Tuple[cv2.Mat, float]]: Yields frames and timestamps.
         """
         if (
             'youtube.com' in self.stream_url.lower()
@@ -233,9 +224,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     stream_capture = StreamCapture(args.url)
-    for frame_data in stream_capture.execute_capture():
+    for frame, timestamp in stream_capture.execute_capture():
         # Process the frame here
-        print(f"Frame at {frame_data['timestamp']} displayed")
+        print(f"Frame at {timestamp} displayed")
         # Release the frame resources
-        del frame_data['frame']
+        del frame
         gc.collect()
