@@ -6,12 +6,12 @@
 
 <div align="center">
     <a href="examples
-/YOLOv8_server_api">YOLOv8-Server-API</a> | <a href="examples
+/YOLOv8_server_api">Server-API</a> | <a href="examples
 /streaming_web">Streaming-Web</a> | <a href="examples
 /user_management">User-Management</a> | <a href="examples
-/YOLOv8_data_augmentation">YOLOv8-Data-Augmentation</a> | <a href="examples
-/YOLOv8_evaluation">YOLOv8-Evaluation</a> | <a href="examples
-/YOLOv8_train">YOLOv8-Train</a>
+/YOLOv8_data_augmentation">Data-Augmentation</a> | <a href="examples
+/YOLOv8_evaluation">Evaluation</a> | <a href="examples
+/YOLOv8_train">Train</a>
 </div>
 
 <div align="center">
