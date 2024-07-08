@@ -3,38 +3,35 @@ from __future__ import annotations
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import TypedDict, Optional
 
+class LogConfig(TypedDict):
+    log_file: str
+    log_dir: str
+    level: int
+    formatter: Optional[logging.Formatter]
 
 class LoggerConfig:
     """
     Sets up app logger with console and file handlers.
     """
 
-    def __init__(
-        self,
-        log_file='monitor.log',
-        log_dir='logs',
-        level=logging.INFO,
-        formatter=None,
-    ):
+    def __init__(self, config: LogConfig):
         """
         Initializes logger with file name, level, and formatter.
 
         Args:
-            log_file (str): Log file name, defaults to 'monitor.log'.
-            log_dir (str): Log storage directory, defaults to 'logs'.
-            level (logging.Level): The logging level. Defaults to logging.INFO.
-            formatter (logging.Formatter): Log formatter, defaults to standard.
+            config (LogConfig): The configuration for the logger.
         """
-        self.log_file = log_file
-        self.log_dir = log_dir
-        self.level = level
-        self.formatter = formatter or logging.Formatter(
+        self.log_file = config['log_file']
+        self.log_dir = config['log_dir']
+        self.level = config['level']
+        self.formatter = config['formatter'] or logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         )
 
         # Ensure that we get a unique logger instance by using a unique name
-        self.logger = logging.getLogger(f"SiteSafetyMonitor_{log_file}")
+        self.logger = logging.getLogger(f"SiteSafetyMonitor_{self.log_file}")
         self.setup_logger()
 
     def setup_logger(self):
@@ -103,8 +100,16 @@ class LoggerConfig:
 if __name__ == '__main__':
     # Example usage of the LoggerConfig class:
 
+    # Define the logger configuration
+    log_config: LogConfig = {
+        'log_file': 'monitor.log',
+        'log_dir': 'logs',
+        'level': logging.INFO,
+        'formatter': None
+    }
+
     # Initialise the logger configuration
-    logger_config = LoggerConfig()
+    logger_config = LoggerConfig(log_config)
     logger = logger_config.get_logger()
 
     # Log a message indicating that the logging setup is complete
