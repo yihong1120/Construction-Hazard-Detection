@@ -17,7 +17,7 @@
 <div align="center">
     <a href="https://github.com/pre-commit/pre-commit"><img src="https://img.shields.io/badge/pre--commit-3.7.1-blue?logo=pre-commit" alt="Pre-commit 3.7.1"></a>
     <a href="https://www.python.org/downloads/release/python-3124/"><img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4"></a>
-    <a href="https://github.com/ultralytics/yolov8"><img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8"></a>
+    <a href="https://github.com/ultralytics/ultralytics"><img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8"></a>
     <a href="https://flask.palletsprojects.com/en/3.0.x/"><img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3"></a>
 </div>
 
