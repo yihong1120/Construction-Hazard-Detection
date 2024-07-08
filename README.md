@@ -2,8 +2,6 @@
 
 <img width="100%"  src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
-<br>
-
 <div align="center">
     <a href="examples
 /YOLOv8_server_api">Server-API</a> | <a href="examples
@@ -14,11 +12,24 @@
 /YOLOv8_train">Train</a>
 </div>
 
+<br>
+
 <div align="center">
-    <a href="https://github.com/pre-commit/pre-commit"><img src="https://img.shields.io/badge/pre--commit-3.7.1-blue?logo=pre-commit" alt="Pre-commit 3.7.1"></a>
-    <a href="https://www.python.org/downloads/release/python-3124/"><img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4"></a>
-    <a href="https://github.com/ultralytics/ultralytics"><img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8"></a>
-    <a href="https://flask.palletsprojects.com/en/3.0.x/"><img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3"></a>
+    <a href="https://github.com/pre-commit/pre-commit">
+        <img src="https://img.shields.io/badge/pre--commit-3.7.1-blue?logo=pre-commit" alt="Pre-commit 3.7.1">
+    </a>
+    <a href="https://www.python.org/downloads/release/python-3124/">
+        <img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4">
+    </a>
+    <a href="https://github.com/ultralytics/ultralytics">
+        <img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8">
+    </a>
+    <a href="https://flask.palletsprojects.com/en/3.0.x/">
+        <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
+    </a>
+    <a href="https://docs.pytest.org/en/8.2.x/">
+        <img src="https://img.shields.io/badge/pytest-8.2.2-blue?logo=pytest" alt="pytest 8.2.2">
+    </a>
 </div>
 
 <br>
@@ -34,13 +45,13 @@ Before running the application, you need to configure the system by specifying t
 - video_url: "rtsp://example1.com/stream"  # URL of the video
   image_name: "cam1"  # Name of the image
   label: "label1"  # Label of the video
-  model_key: "yolov8x"  # Model key for the video
+  model_key: "yolov8n"  # Model key for the video
   line_token: "token1"  # Line token for notification
   run_local: True  # Run objection detection locally
 - video_url: "rtsp://example2.com/stream"
   image_name: "cam2"
   label: "label2"
-  model_key: "yolov8x"
+  model_key: "yolov8n"
   line_token: "token2"
   run_local: True
 ```
