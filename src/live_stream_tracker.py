@@ -3,9 +3,17 @@ from __future__ import annotations
 import argparse
 import datetime
 from collections.abc import Generator
+from typing import TypedDict
 
 import cv2
 from ultralytics import YOLO
+
+
+class DetectionResult(TypedDict):
+    ids: list[int]
+    data: list[list[float]]
+    frame: cv2.Mat
+    timestamp: float
 
 
 class LiveStreamDetector:
@@ -30,7 +38,9 @@ class LiveStreamDetector:
         self.model = YOLO(self.model_path)
         self.cap = cv2.VideoCapture(self.stream_url)
 
-    def generate_detections(self) -> Generator[tuple, None, None]:
+    def generate_detections(
+        self,
+    ) -> Generator[tuple[list[int], list[list[float]], cv2.Mat, float]]:
         """
         Yields detection results, timestamp per frame from video capture.
 

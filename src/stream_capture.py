@@ -5,10 +5,21 @@ import datetime
 import gc
 import time
 from collections.abc import Generator
+from typing import TypedDict
 
 import cv2
 import speedtest
 import streamlink
+
+
+class InputData(TypedDict):
+    stream_url:str
+    capture_interval:int
+
+
+class ResultData(TypedDict):
+    frame: cv2.Mat
+    timestamp: float
 
 
 class StreamCapture:

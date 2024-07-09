@@ -6,6 +6,7 @@ import gc
 import os
 import time
 from pathlib import Path
+from typing import TypedDict
 
 import cv2
 import numpy as np
@@ -24,6 +25,21 @@ from tenacity import wait_fixed
 from urllib3.util import Retry
 
 load_dotenv()
+
+
+class InputData(TypedDict):
+    frame: cv2.Mat
+    model_key: str
+    run_local: bool
+
+
+class DetectionData(TypedDict):
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    confidence: float
+    label: int
 
 
 class LiveStreamDetector:

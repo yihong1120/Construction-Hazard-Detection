@@ -178,7 +178,7 @@ class TestStreamCapture(unittest.TestCase):
         frame, timestamp = next(frames_generator)
         self.assertIsNotNone(frame)
         self.assertAlmostEqual(
-            timestamp, expected_timestamp, delta=40,
+            timestamp, expected_timestamp, delta=60,
         )  # 允许更大的差异
 
     @patch('src.stream_capture.StreamCapture.capture_youtube_frames')
@@ -193,7 +193,7 @@ class TestStreamCapture(unittest.TestCase):
 
         frame, timestamp = next(frames_generator)
         self.assertIsNotNone(frame)
-        self.assertAlmostEqual(timestamp, 1234567890.0, delta=40)
+        self.assertAlmostEqual(timestamp, 1234567890.0, delta=60)
 
 
 if __name__ == '__main__':

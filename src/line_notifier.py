@@ -10,9 +10,13 @@ from dotenv import load_dotenv
 from PIL import Image
 
 
-class NotificationData(TypedDict):
+class InputData(TypedDict):
     message: str
     image: np.ndarray | None
+
+
+class ResultData(TypedDict):
+    response_code: int
 
 
 class LineNotifier:

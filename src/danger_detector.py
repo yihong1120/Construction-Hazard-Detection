@@ -3,17 +3,17 @@ from __future__ import annotations
 from typing import TypedDict
 
 
-class BoundingBox(TypedDict):
+class InputData(TypedDict):
     x1: float
     y1: float
     x2: float
     y2: float
-
-
-class DetectionData(TypedDict):
-    bbox: BoundingBox
     confidence: float
     class_label: int
+
+
+class ResultData(TypedDict):
+    warnings: set[str]
 
 
 class DangerDetector:
