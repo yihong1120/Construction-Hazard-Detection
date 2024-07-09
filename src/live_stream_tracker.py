@@ -16,7 +16,7 @@ class LiveStreamDetector:
     def __init__(
         self,
         stream_url: str,
-        model_path: str = '../models/yolov8n.pt',
+        model_path: str = '../models/pt/best_yolov8n.pt',
     ):
         """
         Initialise live stream detector with video URL, YOLO model path.
@@ -58,12 +58,12 @@ class LiveStreamDetector:
 
                 # Convert ids and datas to lists if they are not empty
                 ids_list = (
-                    ids.numpy().tolist()
+                    ids.cpu().numpy().tolist()
                     if ids is not None and len(ids) > 0
                     else []
                 )
                 datas_list = (
-                    datas.numpy().tolist()
+                    datas.cpu().numpy().tolist()
                     if datas is not None and len(datas) > 0
                     else []
                 )

@@ -49,13 +49,16 @@ class TestLiveStreamDetector(unittest.TestCase):
         mock_yolo_instance = MagicMock()
         mock_yolo.return_value = mock_yolo_instance
         mock_results = MagicMock()
-        mock_results[0].boxes = MagicMock()
-        mock_results[0].boxes.id = MagicMock()
-        mock_results[0].boxes.data = MagicMock()
-        mock_results[0].boxes.id.numpy.return_value = [1, 2, 3]
-        mock_results[0].boxes.data.numpy.return_value = [
+        mock_boxes = MagicMock()
+        mock_boxes.id = MagicMock()
+        mock_boxes.data = MagicMock()
+        mock_boxes.id.cpu.return_value = mock_boxes.id
+        mock_boxes.data.cpu.return_value = mock_boxes.data
+        mock_boxes.id.numpy.return_value = [1, 2, 3]
+        mock_boxes.data.numpy.return_value = [
             [0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8],
         ]
+        mock_results[0].boxes = mock_boxes
         mock_yolo_instance.track.return_value = mock_results
 
         mock_now = datetime.datetime(2023, 1, 1, 0, 0, 0)
