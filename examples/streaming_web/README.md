@@ -4,17 +4,18 @@ This section provides an example implementation of a Streaming Web application, 
 
 ## Usage
 
-1. **Install dependencies:**
-    ```sh
-    pip install -r requirements.txt
-    ```
-
-2. **Run the server:**
+1. **Run the server:**
     ```sh
     python app.py
     ```
 
-3. **Open your web browser and navigate to:**
+    or
+
+    ```sh
+    gunicorn -w 1 -k eventlet -b 127.0.0.1:8000 "examples.streaming_web.app:app"
+    ```
+
+2. **Open your web browser and navigate to:**
     ```sh
     http://localhost:8000
     ```

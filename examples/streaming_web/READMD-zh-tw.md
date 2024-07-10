@@ -4,17 +4,18 @@
 
 ## 使用方式
 
-1. **安裝依賴項：**
-    ```sh
-    pip install -r requirements.txt
-    ```
-
-2. **啟動伺服器：**
+1. **啟動伺服器：**
     ```sh
     python app.py
     ```
 
-3. **打開您的網頁瀏覽器並導航至：**
+    或是
+
+    ```sh
+    gunicorn -w 1 -k eventlet -b 127.0.0.1:8000 "examples.streaming_web.app:app"
+    ```
+
+2. **打開您的網頁瀏覽器並導航至：**
     ```sh
     http://localhost:8000
     ```
