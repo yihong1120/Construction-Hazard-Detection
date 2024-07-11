@@ -32,16 +32,16 @@
 
 ## 配置
 
-在運行應用程序之前，您需要通過在 YAML 配置文件中指定視頻流和其他參數的詳細信息來配置系統。一個示例配置文件 `configuration.yaml` 應該如下所示：
+在運行應用程式之前，您需要配置系統，指定視頻流的詳細信息和其他參數，這些信息需要在 YAML 配置文件中進行設置。示例配置文件 `configuration.yaml` 應該看起來像這樣：
 
 ```yaml
-# This is a list of video configurations
-- video_url: "rtsp://example1.com/stream"  # URL of the video
-  image_name: "cam1"  # Name of the image
-  label: "label1"  # Label of the video
-  model_key: "yolov8n"  # Model key for the video
-  line_token: "token1"  # Line token for notification
-  run_local: True  # Run objection detection locally
+# 這是一個視頻配置列表
+- video_url: "rtsp://example1.com/stream"  # 視頻的 URL
+  image_name: "cam1"  # 圖像的名稱
+  label: "label1"  # 視頻的標籤
+  model_key: "yolov8n"  # 視頻使用的模型鍵
+  line_token: "token1"  # 用於通知的 Line Token
+  run_local: True  # 本地運行物件檢測
 - video_url: "rtsp://example2.com/stream"
   image_name: "cam2"
   label: "label2"
@@ -52,10 +52,17 @@
 
 數組中的每個對象代表一個視頻流配置，包含以下字段：
 
-- `video_url`: 直播視頻流的 URL。
-- `api_url`: 機器學習模型服務器 API 端點的 URL。
-- `model_key`: 要使用的機器學習模型的鍵標識符。
-- `line_token`: 用於發送通知的 LINE 消息 API 令牌。
+- `video_url`: 現場視頻流的 URL。這可以包括：
+  - 監控流
+  - RTSP 
+  - 副流
+  - YouTube 視頻或直播
+  - Discord 
+- `image_name`: 分配給圖像或攝影機的名稱。
+- `label`: 分配給視頻流的標籤。
+- `model_key`: 用於機器學習模型的鍵標識符。
+- `line_token`: 用於發送通知的 LINE 訊息 API Token。
+- `run_local`: 布爾值，指示是否在本地運行物件檢測。
 
 ## 使用 Docker
 

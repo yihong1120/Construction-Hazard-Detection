@@ -58,9 +58,17 @@ Before running the application, you need to configure the system by specifying t
 
 Each object in the array represents a video stream configuration with the following fields:
 
-- `video_url`: The URL of the live video stream.
+- `video_url`: The URL of the live video stream. This can include:
+  - Surveillance streams
+  - RTSP streams
+  - Secondary streams
+  - YouTube videos or live streams
+  - Discord streams
+- `image_name`: The name assigned to the image or camera.
+- `label`: The label assigned to the video stream.
 - `model_key`: The key identifier for the machine learning model to use.
 - `line_token`: The LINE messaging API token for sending notifications.
+- `run_local`: Boolean value indicating whether to run object detection locally.
 
 ## Usage for Docker
 
