@@ -3,7 +3,12 @@
 <img width="100%"  src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
 <div align="center">
-    <a href="examples/YOLOv8_server_api">模型伺服器</a> | <a href="examples/streaming_web">串流網頁</a> | <a href="examples/user_management">用戶管理</a> | <a href="examples/YOLOv8_data_augmentation">YOLOv8 數據增強</a> | <a href="examples/YOLOv8_evaluation">YOLOv8 評估</a> | <a href="examples/YOLOv8_train">YOLOv8 訓練</a>
+    <a href="examples/YOLOv8_server_api">模型伺服器</a> | 
+    <a href="examples/streaming_web">串流網頁</a> | 
+    <a href="examples/user_management">用戶管理</a> | 
+    <a href="examples/YOLOv8_data_augmentation">YOLOv8 數據增強</a> | 
+    <a href="examples/YOLOv8_evaluation">YOLOv8 評估</a> | 
+    <a href="examples/YOLOv8_train">YOLOv8 訓練</a>
 </div>
 
 <br>
@@ -30,7 +35,16 @@
 
 "建築工地危險檢測系統" 是一個以人工智能驅動的工具，旨在提高建築工地的安全性。利用 YOLOv8 模型進行物體檢測，此系統能夠識別潛在的危險，如高空重物和鋼管。對訓練好的模型進行後處理以提高準確性。該系統設計用於實時環境中，提供對檢測到的危險的即時分析和警告。
 
-## 配置
+<br>
+<br>
+
+<div style="text-align: center;">
+    <img src="./assets/images/hazard-detection.png" alt="diagram" style="width: 80%;">
+</div>
+
+<br>
+
+## 操作說明
 
 在運行應用程式之前，您需要配置系統，指定視頻流的詳細信息和其他參數，這些信息需要在 YAML 配置文件中進行設置。示例配置文件 `configuration.yaml` 應該看起來像這樣：
 
@@ -64,7 +78,10 @@
 - `line_token`: 用於發送通知的 LINE 訊息 API Token。
 - `run_local`: 布爾值，指示是否在本地運行物件檢測。
 
-## 使用 Docker
+<br>
+
+<details>
+  <summary>使用 Docker</summary>
 
 要運行危險檢測系統，您需要在機器上安裝 Docker 和 Docker Compose。按照以下步驟來啟動系統：
 
@@ -92,7 +109,10 @@
    docker-compose down
    ```
 
-## 使用 Python
+</details>
+
+<details>
+  <summary>使用 Python</summary>
 
 要在終端運行危險檢測系統，您需要在機器上安裝 Python。按照以下步驟來啟動系統：
 
@@ -139,6 +159,20 @@
    gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.Stream-Web.app:streaming-web-app"
    ```
 
+</details>
+
+## 附加信息
+
+- 系統日誌可在 Docker 容器內部訪問，可用於調試目的。
+- 如果啟用，檢測到的輸出圖像將保存到指定的輸出路徑。
+- 如果檢測到危險，將在指定小時通過 LINE 消息 API 發送通知。
+
+### 注意事項
+- 確保 `Dockerfile` 存在於項目的根目錄中，並根據您的應用程序的要求進行了正確配置。
+- `-p 8080:8080` 標誌將容器的 8080 端口映射到主機機器的 8080 端口，允許您通過主機的 IP 地址和端口號訪問應用程序。
+
+有關 Docker 使用和命令的更多信息，請參閱 [Docker 文檔](https://docs.docker.com/)。
+
 ## 數據集信息
 訓練此模型的主要數據集是 [Roboflow 的建築工地安全圖像數據集](https://www.kaggle.com/datasets/snehilsanyal/construction-site-safety-image-dataset-roboflow/data)。我們已經用額外的註釋豐富了這個數據集，並在 Roboflow 上公開訪問。增強的數據集可以在這裡找到：[Roboflow 上的建築危險檢測](https://universe.roboflow.com/side-projects/construction-hazard-detection)。此數據集包括以下標籤：
 
@@ -154,18 +188,6 @@
 - `9: '車輛'`
 
 我們的全面數據集確保模型能夠識別建築環境中常見的各種潛在危險。
-
-## 附加信息
-
-- 系統日誌可在 Docker 容器內部訪問，可用於調試目的。
-- 如果啟用，檢測到的輸出圖像將保存到指定的輸出路徑。
-- 如果檢測到危險，將在指定小時通過 LINE 消息 API 發送通知。
-
-### 注意事項
-- 確保 `Dockerfile` 存在於項目的根目錄中，並根據您的應用程序的要求進行了正確配置。
-- `-p 8080:8080` 標誌將容器的 8080 端口映射到主機機器的 8080 端口，允許您通過主機的 IP 地址和端口號訪問應用程序。
-
-有關 Docker 使用和命令的更多信息，請參閱 [Docker 文檔](https://docs.docker.com/)。
 
 ## 貢獻
 我們歡迎對此項目的貢獻。請按照以下步驟操作：
