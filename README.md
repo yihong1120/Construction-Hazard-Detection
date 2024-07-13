@@ -33,13 +33,13 @@
 
 <br>
 
-"Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety at construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards like overhead heavy loads and steel pipes. Post-processing is applied to the trained model for improved accuracy. The system is designed for deployment in real-time environments, providing instant analysis and warnings for any detected hazards.
+"Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety on construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards such as workers without helmets, workers without safety vests, workers in close proximity to machinery, and workers near vehicles. Post-processing algorithms are employed to enhance the accuracy of the detections. The system is designed for deployment in real-time environments, providing immediate analysis and alerts for detected hazards.
 
 <br>
 <br>
 
-<div style="text-align: center;">
-    <img src="./assets/images/hazard-detection.png" alt="diagram" style="width: 80%;">
+<div align="center">
+    <img src="./assets/images/hazard-detection.png" alt="diagram" style="width: 100%;">
 </div>
 
 <br>
@@ -193,6 +193,21 @@ The primary dataset for training this model is the [Construction Site Safety Ima
 - `7: 'Safety Vest'`
 - `8: 'Machinery'`
 - `9: 'Vehicle'`
+
+<details>
+  <summary>Models for detection</summary>
+  
+  | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
+  | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
+  | YOLOv8n | 640                   | //                 | //                 | 3.2               | 8.7               |
+  | YOLOv8s | 640                   | //                 | //                 | 11.2              | 28.6              |
+  | YOLOv8m | 640                   | //                 | //                 | 25.9              | 78.9              |
+  | YOLOv8l | 640                   | //                 | //                 | 43.7              | 165.2             |
+  | YOLOv8x | 640                   | 82.9               | 60.9               | 68.2              | 257.8             |
+
+</details>
+
+<br>
 
 Our comprehensive dataset ensures that the model is well-equipped to identify a wide range of potential hazards commonly found in construction environments.
 
