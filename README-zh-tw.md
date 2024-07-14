@@ -3,11 +3,11 @@
 <img width="100%"  src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
 <div align="center">
-   <a href="examples/YOLOv8_server_api">模型伺服器</a> | 
-   <a href="examples/streaming_web">串流網頁</a> | 
-   <a href="examples/user_management">用戶管理</a> | 
-   <a href="examples/YOLOv8_data_augmentation">YOLOv8 數據增強</a> | 
-   <a href="examples/YOLOv8_evaluation">YOLOv8 評估</a> | 
+   <a href="examples/YOLOv8_server_api">模型伺服器</a> |
+   <a href="examples/streaming_web">串流網頁</a> |
+   <a href="examples/user_management">用戶管理</a> |
+   <a href="examples/YOLOv8_data_augmentation">YOLOv8 數據增強</a> |
+   <a href="examples/YOLOv8_evaluation">YOLOv8 評估</a> |
    <a href="examples/YOLOv8_train">YOLOv8 訓練</a>
 </div>
 
@@ -68,10 +68,10 @@
 
 - `video_url`: 現場視頻流的 URL。這可以包括：
    - 監控流
-   - RTSP 
+   - RTSP
    - 副流
    - YouTube 視頻或直播
-   - Discord 
+   - Discord
 - `image_name`: 分配給圖像或攝影機的名稱。
 - `label`: 分配給視頻流的標籤。
 - `model_key`: 用於機器學習模型的鍵標識符。
@@ -193,7 +193,7 @@
 
 <details>
    <summary>檢測模型</summary>
-  
+
    | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
    | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
    | YOLOv8n | 640                   | //                 | //                 | 3.2               | 8.7               |

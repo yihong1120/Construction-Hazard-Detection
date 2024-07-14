@@ -15,7 +15,7 @@
 
     ```sh
     gunicorn -w 1 -b 0.0.0.0:8000 "examples.YOLOv8_server_api.app:app"
-    ```  
+    ```
 
 2. **向 API 發送請求：**
     - 可以使用 `curl`、Postman 或瀏覽器來向伺服器發送請求。

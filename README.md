@@ -3,11 +3,11 @@
 <img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
 <div align="center">
-   <a href="examples/YOLOv8_server_api">Server-API</a> | 
-   <a href="examples/streaming_web">Streaming-Web</a> | 
-   <a href="examples/user_management">User-Management</a> | 
-   <a href="examples/YOLOv8_data_augmentation">Data-Augmentation</a> | 
-   <a href="examples/YOLOv8_evaluation">Evaluation</a> | 
+   <a href="examples/YOLOv8_server_api">Server-API</a> |
+   <a href="examples/streaming_web">Streaming-Web</a> |
+   <a href="examples/user_management">User-Management</a> |
+   <a href="examples/YOLOv8_data_augmentation">Data-Augmentation</a> |
+   <a href="examples/YOLOv8_evaluation">Evaluation</a> |
    <a href="examples/YOLOv8_train">Train</a>
 </div>
 
@@ -94,7 +94,7 @@ Now, you could launch the hazard-detection system in Docker or Python env:
       ```
       git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
       ```
-  
+
    2. Navigate to the cloned directory.
       ```
       cd Construction-Hazard-Detection
@@ -104,13 +104,13 @@ Now, you could launch the hazard-detection system in Docker or Python env:
       ```bash
       docker-compose up --build
       ```
-  
+
    4. To run the main application with a specific configuration file, use the following command:
       ```bash
       docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
       ```
       Replace `/path/in/container/configuration.yaml` with the actual path to your configuration file inside the container.
-  
+
    5. To stop the services, use the following command:
       ```bash
       docker-compose down
@@ -129,39 +129,39 @@ Now, you could launch the hazard-detection system in Docker or Python env:
       ```bash
       git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
       ```
-  
+
    2. Navigate to the cloned directory:
       ```bash
       cd Construction-Hazard-Detection
       ```
-  
+
    3. Install required packages:
       ```bash
       pip install -r requirements.txt
       ```
-  
+
    4. Install and launch MySQL service (if required):
       ```bash
       sudo apt install mysql-server
       sudo systemctl start mysql.service
       ```
-  
+
    5. Start user management API:
       ```bash
       gunicorn -w 1 -b 0.0.0.0:8000 "examples.User-Management.app:user-managements-app"
       ```
-  
+
    6. Run object detection API:
       ```bash
       gunicorn -w 1 -b 0.0.0.0:8001 "examples.Model-Server.app:app"
       ```
-  
+
    7. Run the main application with a specific configuration file:
       ```bash
       python3 main.py --config /path/to/your/configuration.yaml
       ```
       Replace `/path/to/your/configuration.yaml` with the actual path to your configuration file.
-  
+
    8. Start the streaming web service:
       ```bash
       gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.Stream-Web.app:streaming-web-app"
@@ -199,7 +199,7 @@ The primary dataset for training this model is the [Construction Site Safety Ima
 
 <details>
    <summary>Models for detection</summary>
-  
+
    | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
    | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
    | YOLOv8n | 640                   | //                 | //                 | 3.2               | 8.7               |

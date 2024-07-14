@@ -15,7 +15,7 @@ This section an example implementation of a YOLOv8 Server API, designed to facil
 
     ```sh
     gunicorn -w 1 -b 0.0.0.0:8000 "examples.YOLOv8_server_api.app:app"
-    ```  
+    ```
 
 4. **Send a request to the API:**
     - Use tools like `curl`, Postman, or your web browser to send a request to the server.
@@ -64,4 +64,4 @@ The API can be configured through the `config.py` file. Below are some of the ke
 - **models.py**: Defines data models and schemas.
 - **security.py**: Implements security features.
 
-Ensure to review and adjust the configuration settings in `config.py` to suit your specific requirements. 
+Ensure to review and adjust the configuration settings in `config.py` to suit your specific requirements.
