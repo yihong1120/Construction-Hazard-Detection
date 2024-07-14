@@ -3,32 +3,32 @@
 <img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
 <div align="center">
-    <a href="examples/YOLOv8_server_api">Server-API</a> | 
-    <a href="examples/streaming_web">Streaming-Web</a> | 
-    <a href="examples/user_management">User-Management</a> | 
-    <a href="examples/YOLOv8_data_augmentation">Data-Augmentation</a> | 
-    <a href="examples/YOLOv8_evaluation">Evaluation</a> | 
-    <a href="examples/YOLOv8_train">Train</a>
+   <a href="examples/YOLOv8_server_api">Server-API</a> | 
+   <a href="examples/streaming_web">Streaming-Web</a> | 
+   <a href="examples/user_management">User-Management</a> | 
+   <a href="examples/YOLOv8_data_augmentation">Data-Augmentation</a> | 
+   <a href="examples/YOLOv8_evaluation">Evaluation</a> | 
+   <a href="examples/YOLOv8_train">Train</a>
 </div>
 
 <br>
 
 <div align="center">
-    <a href="https://github.com/pre-commit/pre-commit">
-        <img src="https://img.shields.io/badge/pre--commit-3.7.1-blue?logo=pre-commit" alt="Pre-commit 3.7.1">
-    </a>
-    <a href="https://www.python.org/downloads/release/python-3124/">
-        <img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4">
-    </a>
-    <a href="https://github.com/ultralytics/ultralytics">
-        <img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8">
-    </a>
-    <a href="https://flask.palletsprojects.com/en/3.0.x/">
-        <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
-    </a>
-    <a href="https://docs.pytest.org/en/8.2.x/">
-        <img src="https://img.shields.io/badge/pytest-8.2.2-blue?logo=pytest" alt="pytest 8.2.2">
-    </a>
+   <a href="https://github.com/pre-commit/pre-commit">
+      <img src="https://img.shields.io/badge/pre--commit-3.7.1-blue?logo=pre-commit" alt="Pre-commit 3.7.1">
+   </a>
+   <a href="https://www.python.org/downloads/release/python-3124/">
+      <img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4">
+   </a>
+   <a href="https://github.com/ultralytics/ultralytics">
+      <img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8">
+   </a>
+   <a href="https://flask.palletsprojects.com/en/3.0.x/">
+      <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
+   </a>
+   <a href="https://docs.pytest.org/en/8.2.x/">
+      <img src="https://img.shields.io/badge/pytest-8.2.2-blue?logo=pytest" alt="pytest 8.2.2">
+   </a>
 </div>
 
 <br>
@@ -39,7 +39,7 @@
 <br>
 
 <div align="center">
-    <img src="./assets/images/hazard-detection.png" alt="diagram" style="width: 100%;">
+   <img src="./assets/images/hazard-detection.png" alt="diagram" style="width: 100%;">
 </div>
 
 <br>
@@ -84,85 +84,88 @@ Each object in the array represents a video stream configuration with the follow
 Now, you could launch the hazard-detection system in Docker or Python env:
 
 <details>
-  <summary>Usage for Docker</summary>
+   <summary>Docker</summary>
 
-  To run the hazard detection system, you need to have Docker and Docker Compose installed on your machine. Follow these steps to get the system up and running:
+   ### Usage for Docker
 
-  1. Clone the repository to your local machine.
-     ```
-     git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
-     ```
+   To run the hazard detection system, you need to have Docker and Docker Compose installed on your machine. Follow these steps to get the system up and running:
+
+   1. Clone the repository to your local machine.
+      ```
+      git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+      ```
   
-  2. Navigate to the cloned directory.
-     ```
-     cd Construction-Hazard-Detection
-     ```
+   2. Navigate to the cloned directory.
+      ```
+      cd Construction-Hazard-Detection
+      ```
 
-  3. Build and run the services using Docker Compose:
-
-     ```bash
-     docker-compose up --build
-     ```
+   3. Build and run the services using Docker Compose:
+      ```bash
+      docker-compose up --build
+      ```
   
-  4. To run the main application with a specific configuration file, use the following command:
-     ```bash
-     docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
-     ```
-     Replace `/path/in/container/configuration.yaml` with the actual path to your configuration file inside the container.
+   4. To run the main application with a specific configuration file, use the following command:
+      ```bash
+      docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
+      ```
+      Replace `/path/in/container/configuration.yaml` with the actual path to your configuration file inside the container.
   
-  5. To stop the services, use the following command:
-     ```bash
-     docker-compose down
-     ```
+   5. To stop the services, use the following command:
+      ```bash
+      docker-compose down
+      ```
 
 </details>
 
 <details>
-  <summary>Usage for Python</summary>
+   <summary>Python</summary>
 
-  To run the hazard detection system with Python, follow these steps:
+   ### Usage for Python
 
-  1. Clone the repository to your local machine:
-     ```bash
-     git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
-     ```
+   To run the hazard detection system with Python, follow these steps:
+
+   1. Clone the repository to your local machine:
+      ```bash
+      git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+      ```
   
-  2. Navigate to the cloned directory:
-     ```bash
-     cd Construction-Hazard-Detection
-     ```
+   2. Navigate to the cloned directory:
+      ```bash
+      cd Construction-Hazard-Detection
+      ```
   
-  3. Install required packages:
-     ```bash
-     pip install -r requirements.txt
-     ```
+   3. Install required packages:
+      ```bash
+      pip install -r requirements.txt
+      ```
   
-  4. Install and launch MySQL service (if required):
-     ```bash
-     sudo apt install mysql-server
-     sudo systemctl start mysql.service
-     ```
+   4. Install and launch MySQL service (if required):
+      ```bash
+      sudo apt install mysql-server
+      sudo systemctl start mysql.service
+      ```
   
-  5. Start user management API:
-     ```bash
-     gunicorn -w 1 -b 0.0.0.0:8000 "examples.User-Management.app:user-managements-app"
-     ```
+   5. Start user management API:
+      ```bash
+      gunicorn -w 1 -b 0.0.0.0:8000 "examples.User-Management.app:user-managements-app"
+      ```
   
-  6. Run object detection API:
-     ```bash
-     gunicorn -w 1 -b 0.0.0.0:8001 "examples.Model-Server.app:app"
-     ```
+   6. Run object detection API:
+      ```bash
+      gunicorn -w 1 -b 0.0.0.0:8001 "examples.Model-Server.app:app"
+      ```
   
-  7. Run the main application with a specific configuration file:
-     ```bash
-     python3 main.py --config /path/to/your/configuration.yaml
-     ```
-     Replace `/path/to/your/configuration.yaml` with the actual path to your configuration file.
+   7. Run the main application with a specific configuration file:
+      ```bash
+      python3 main.py --config /path/to/your/configuration.yaml
+      ```
+      Replace `/path/to/your/configuration.yaml` with the actual path to your configuration file.
   
-  8. Start the streaming web service:
-     ```bash
-     gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.Stream-Web.app:streaming-web-app"
-     ```
+   8. Start the streaming web service:
+      ```bash
+      gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.Stream-Web.app:streaming-web-app"
+      ```
 
 </details>
 
@@ -195,15 +198,15 @@ The primary dataset for training this model is the [Construction Site Safety Ima
 - `9: 'Vehicle'`
 
 <details>
-  <summary>Models for detection</summary>
+   <summary>Models for detection</summary>
   
-  | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
-  | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
-  | YOLOv8n | 640                   | //                 | //                 | 3.2               | 8.7               |
-  | YOLOv8s | 640                   | //                 | //                 | 11.2              | 28.6              |
-  | YOLOv8m | 640                   | //                 | //                 | 25.9              | 78.9              |
-  | YOLOv8l | 640                   | //                 | //                 | 43.7              | 165.2             |
-  | YOLOv8x | 640                   | 82.9               | 60.9               | 68.2              | 257.8             |
+   | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
+   | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
+   | YOLOv8n | 640                   | //                 | //                 | 3.2               | 8.7               |
+   | YOLOv8s | 640                   | //                 | //                 | 11.2              | 28.6              |
+   | YOLOv8m | 640                   | //                 | //                 | 25.9              | 78.9              |
+   | YOLOv8l | 640                   | //                 | //                 | 43.7              | 165.2             |
+   | YOLOv8x | 640                   | 82.9               | 60.9               | 68.2              | 257.8             |
 
 </details>
 

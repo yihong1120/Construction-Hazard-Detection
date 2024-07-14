@@ -3,32 +3,32 @@
 <img width="100%"  src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
 <div align="center">
-    <a href="examples/YOLOv8_server_api">模型伺服器</a> | 
-    <a href="examples/streaming_web">串流網頁</a> | 
-    <a href="examples/user_management">用戶管理</a> | 
-    <a href="examples/YOLOv8_data_augmentation">YOLOv8 數據增強</a> | 
-    <a href="examples/YOLOv8_evaluation">YOLOv8 評估</a> | 
-    <a href="examples/YOLOv8_train">YOLOv8 訓練</a>
+   <a href="examples/YOLOv8_server_api">模型伺服器</a> | 
+   <a href="examples/streaming_web">串流網頁</a> | 
+   <a href="examples/user_management">用戶管理</a> | 
+   <a href="examples/YOLOv8_data_augmentation">YOLOv8 數據增強</a> | 
+   <a href="examples/YOLOv8_evaluation">YOLOv8 評估</a> | 
+   <a href="examples/YOLOv8_train">YOLOv8 訓練</a>
 </div>
 
 <br>
 
 <div align="center">
-    <a href="https://github.com/pre-commit/pre-commit">
-        <img src="https://img.shields.io/badge/pre--commit-3.7.1-blue?logo=pre-commit" alt="Pre-commit 3.7.1">
-    </a>
-    <a href="https://www.python.org/downloads/release/python-3124/">
-        <img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4">
-    </a>
-    <a href="https://github.com/ultralytics/ultralytics">
-        <img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8">
-    </a>
-    <a href="https://flask.palletsprojects.com/en/3.0.x/">
-        <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
-    </a>
-    <a href="https://docs.pytest.org/en/8.2.x/">
-        <img src="https://img.shields.io/badge/pytest-8.2.2-blue?logo=pytest" alt="pytest 8.2.2">
-    </a>
+   <a href="https://github.com/pre-commit/pre-commit">
+      <img src="https://img.shields.io/badge/pre--commit-3.7.1-blue?logo=pre-commit" alt="Pre-commit 3.7.1">
+   </a>
+   <a href="https://www.python.org/downloads/release/python-3124/">
+      <img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4">
+   </a>
+   <a href="https://github.com/ultralytics/ultralytics">
+      <img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8">
+   </a>
+   <a href="https://flask.palletsprojects.com/en/3.0.x/">
+      <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
+   </a>
+   <a href="https://docs.pytest.org/en/8.2.x/">
+      <img src="https://img.shields.io/badge/pytest-8.2.2-blue?logo=pytest" alt="pytest 8.2.2">
+   </a>
 </div>
 
 <br>
@@ -39,7 +39,7 @@
 <br>
 
 <div align="center">
-    <img src="./assets/images/hazard-detection.png" alt="diagram" style="width: 100%;">
+   <img src="./assets/images/hazard-detection.png" alt="diagram" style="width: 100%;">
 </div>
 
 <br>
@@ -51,27 +51,27 @@
 ```yaml
 # 這是一個視頻配置列表
 - video_url: "rtsp://example1.com/stream"  # 視頻的 URL
-  image_name: "cam1"  # 圖像的名稱
-  label: "label1"  # 視頻的標籤
-  model_key: "yolov8n"  # 視頻使用的模型鍵
-  line_token: "token1"  # 用於通知的 Line Token
-  run_local: True  # 本地運行物件檢測
+   image_name: "cam1"  # 圖像的名稱
+   label: "label1"  # 視頻的標籤
+   model_key: "yolov8n"  # 視頻使用的模型鍵
+   line_token: "token1"  # 用於通知的 Line Token
+   run_local: True  # 本地運行物件檢測
 - video_url: "rtsp://example2.com/stream"
-  image_name: "cam2"
-  label: "label2"
-  model_key: "yolov8n"
-  line_token: "token2"
-  run_local: True
+   image_name: "cam2"
+   label: "label2"
+   model_key: "yolov8n"
+   line_token: "token2"
+   run_local: True
 ```
 
 數組中的每個對象代表一個視頻流配置，包含以下字段：
 
 - `video_url`: 現場視頻流的 URL。這可以包括：
-  - 監控流
-  - RTSP 
-  - 副流
-  - YouTube 視頻或直播
-  - Discord 
+   - 監控流
+   - RTSP 
+   - 副流
+   - YouTube 視頻或直播
+   - Discord 
 - `image_name`: 分配給圖像或攝影機的名稱。
 - `label`: 分配給視頻流的標籤。
 - `model_key`: 用於機器學習模型的鍵標識符。
@@ -81,83 +81,87 @@
 <br>
 
 <details>
-  <summary>使用 Docker</summary>
+   <summary>Docker</summary>
 
-要運行危險檢測系統，您需要在機器上安裝 Docker 和 Docker Compose。按照以下步驟來啟動系統：
+   ### 使用 Docker
 
-1. 將存儲庫克隆到本地機器。
-   ```bash
-   git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
-   ```
-2. 進入克隆的目錄。
-   ```bash
-   cd Construction-Hazard-Detection
-   ```
-3. 使用 Docker Compose 構建並運行服務：
-   ```bash
-   docker-compose up --build
-   ```
+   要運行危險檢測系統，您需要在機器上安裝 Docker 和 Docker Compose。按照以下步驟來啟動系統：
 
-4. 使用特定的配置文件運行主應用程序，使用以下命令：
-   ```bash
-   docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
-   ```
-   將 `/path/in/container/configuration.yaml` 替換為容器內配置文件的實際路徑。
+   1. 將存儲庫克隆到本地機器。
+      ```bash
+      git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+      ```
+   2. 進入克隆的目錄。
+      ```bash
+      cd Construction-Hazard-Detection
+      ```
+   3. 使用 Docker Compose 構建並運行服務：
+      ```bash
+      docker-compose up --build
+      ```
 
-5. 停止服務，使用以下命令：
-   ```bash
-   docker-compose down
-   ```
+   4. 使用特定的配置文件運行主應用程序，使用以下命令：
+      ```bash
+      docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
+      ```
+      將 `/path/in/container/configuration.yaml` 替換為容器內配置文件的實際路徑。
+
+   5. 停止服務，使用以下命令：
+      ```bash
+      docker-compose down
+      ```
 
 </details>
 
 <details>
-  <summary>使用 Python</summary>
+   <summary>Python</summary>
 
-要在終端運行危險檢測系統，您需要在機器上安裝 Python。按照以下步驟來啟動系統：
+   ### 使用 Python
 
-1. 將存儲庫克隆到本地機器。
-   ```bash
-   git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
-   ```
+   要在終端運行危險檢測系統，您需要在機器上安裝 Python。按照以下步驟來啟動系統：
 
-2. 進入克隆的目錄。
-   ```bash
-   cd Construction-Hazard-Detection
-   ```
+   1. 將存儲庫克隆到本地機器。
+      ```bash
+      git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+      ```
 
-3. 安裝所需的軟體包：
-   ```bash
-   pip install -r requirements.txt
-   ```
+   2. 進入克隆的目錄。
+      ```bash
+      cd Construction-Hazard-Detection
+      ```
 
-4. 安裝並啟動 MySQL 服務：
-   ```bash
-   sudo apt install mysql-server
-   sudo systemctl start mysql.service
-   ```
+   3. 安裝所需的軟體包：
+      ```bash
+      pip install -r requirements.txt
+      ```
 
-5. 設置用戶帳戶和密碼。使用以下命令啟動用戶管理 API：
-   ```bash
-   gunicorn -w 1 -b 0.0.0.0:8000 "examples.User-Management.app:user-managements-app"
-   ```
-   建議使用 Postman 應用程式與 API 進行互動。
+   4. 安裝並啟動 MySQL 服務：
+      ```bash
+      sudo apt install mysql-server
+      sudo systemctl start mysql.service
+      ```
 
-6. 要運行物體檢測 API，使用以下命令：
-   ```bash
-   gunicorn -w 1 -b 0.0.0.0:8001 "examples.Model-Server.app:app"
-   ```
+   5. 設置用戶帳戶和密碼。使用以下命令啟動用戶管理 API：
+      ```bash
+      gunicorn -w 1 -b 0.0.0.0:8000 "examples.user_management.app:user-managements-app"
+      ```
+      建議使用 Postman 應用程式與 API 進行互動。
 
-7. 使用特定的配置文件運行主應用程序，使用以下命令：
-   ```bash
-   python3 main.py --config /path/to/your/configuration.yaml
-   ```
-   將 `/path/to/your/configuration.yaml` 替換為您的配置文件的實際路徑。
+   6. 要運行物體檢測 API，使用以下命令：
+      ```bash
+      gunicorn -w 1 -b 0.0.0.0:8001 "examples.YOLOv8_server_api.app:YOLOv8-server-api-app"
+      ```
 
-8. 要啟動串流 Web 服務，執行以下命令：
-   ```bash
-   gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.Stream-Web.app:streaming-web-app"
-   ```
+   7. 使用特定的配置文件運行主應用程序，使用以下命令：
+      ```bash
+      python3 main.py --config /path/to/your/configuration.yaml
+      ```
+      將 `/path/to/your/configuration.yaml` 替換為您的配置文件的實際路徑。
+
+   8. 要啟動串流 Web 服務，執行以下命令：
+      ```bash
+      gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.streaming_web.app:streaming-web-app"
+      ```
 
 </details>
 
@@ -188,15 +192,15 @@
 - `9: '車輛'`
 
 <details>
-  <summary>檢測模型</summary>
+   <summary>檢測模型</summary>
   
-  | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
-  | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
-  | YOLOv8n | 640                   | //                 | //                 | 3.2               | 8.7               |
-  | YOLOv8s | 640                   | //                 | //                 | 11.2              | 28.6              |
-  | YOLOv8m | 640                   | //                 | //                 | 25.9              | 78.9              |
-  | YOLOv8l | 640                   | //                 | //                 | 43.7              | 165.2             |
-  | YOLOv8x | 640                   | 82.9               | 60.9               | 68.2              | 257.8             |
+   | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
+   | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
+   | YOLOv8n | 640                   | //                 | //                 | 3.2               | 8.7               |
+   | YOLOv8s | 640                   | //                 | //                 | 11.2              | 28.6              |
+   | YOLOv8m | 640                   | //                 | //                 | 25.9              | 78.9              |
+   | YOLOv8l | 640                   | //                 | //                 | 43.7              | 165.2             |
+   | YOLOv8x | 640                   | 82.9               | 60.9               | 68.2              | 257.8             |
 
 </details>
 
