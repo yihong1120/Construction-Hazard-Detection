@@ -7,7 +7,7 @@ from user_operation import delete_user
 from user_operation import update_password
 from user_operation import update_username
 
-from .models import db  # 从models导入的db已定义
+from models import db
 
 app = Flask(__name__)
 
@@ -15,7 +15,7 @@ app = Flask(__name__)
 # with your actual database URI
 app.config['SQLALCHEMY_DATABASE_URI'] = 'your_database_uri_here'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db.init_app(app)  # 使用从models导入的db实例
+db.init_app(app)
 
 # Create all database tables before the first run
 with app.app_context():
