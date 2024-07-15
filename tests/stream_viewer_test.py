@@ -10,8 +10,8 @@ from src.stream_viewer import StreamViewer
 class TestStreamViewer(unittest.TestCase):
 
     @patch('src.stream_viewer.cv2.VideoCapture')
-    def test_initialization(self, mock_video_capture):
-        # Initialize StreamViewer with a test URL
+    def test_initialisation(self, mock_video_capture):
+        # Initialise StreamViewer with a test URL
         stream_url = 'https://example.com/stream'
         viewer = StreamViewer(stream_url)
 
@@ -24,11 +24,16 @@ class TestStreamViewer(unittest.TestCase):
         # Check if VideoCapture was called with the correct URL
         mock_video_capture.assert_called_once_with(stream_url)
 
+    @patch('src.stream_viewer.cv2.destroyAllWindows')
     @patch('src.stream_viewer.cv2.VideoCapture')
-    @patch('src.stream_viewer.cv2.imshow')
     @patch('src.stream_viewer.cv2.waitKey')
+    @patch('src.stream_viewer.cv2.imshow')
     def test_display_stream(
-        self, mock_wait_key, mock_imshow, mock_video_capture,
+        self,
+        mock_imshow,
+        mock_wait_key,
+        mock_video_capture,
+        mock_destroyAllWindows,
     ):
         # Mock VideoCapture instance
         mock_cap_instance = MagicMock()
@@ -42,7 +47,7 @@ class TestStreamViewer(unittest.TestCase):
         # Simulate waitKey() returning 'q' to break the loop
         mock_wait_key.side_effect = [ord('a'), ord('b'), ord('q')]
 
-        # Initialize StreamViewer and call display_stream
+        # Initialise StreamViewer and call display_stream
         viewer = StreamViewer('https://example.com/stream')
         viewer.display_stream()
 
@@ -55,6 +60,9 @@ class TestStreamViewer(unittest.TestCase):
         # Check if read was called at least twice
         self.assertGreaterEqual(mock_cap_instance.read.call_count, 2)
 
+        # Check if destroyAllWindows was called
+        mock_destroyAllWindows.assert_called_once()
+
     @patch('src.stream_viewer.cv2.VideoCapture')
     @patch('src.stream_viewer.cv2.destroyAllWindows')
     def test_release_resources(
@@ -64,7 +72,7 @@ class TestStreamViewer(unittest.TestCase):
         mock_cap_instance = MagicMock()
         mock_video_capture.return_value = mock_cap_instance
 
-        # Initialize StreamViewer and call release_resources
+        # Initialise StreamViewer and call release_resources
         viewer = StreamViewer('https://example.com/stream')
         viewer.release_resources()
 

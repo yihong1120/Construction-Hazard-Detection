@@ -84,8 +84,11 @@ class TestLiveStreamDetector(unittest.TestCase):
             self.assertIsInstance(data[4], float)
             self.assertIsInstance(data[5], int)
 
+    @patch('src.live_stream_detection.cv2.destroyAllWindows')
     @patch('src.live_stream_detection.LiveStreamDetector.generate_detections')
-    def test_run_detection(self, mock_generate_detections):
+    def test_run_detection(
+        self, mock_generate_detections, mock_destroyAllWindows,
+    ):
         mock_generate_detections.return_value = (
             [], np.zeros((480, 640, 3), dtype=np.uint8),
         )
@@ -111,6 +114,7 @@ class TestLiveStreamDetector(unittest.TestCase):
 
         cap_mock.read.assert_called()
         cap_mock.release.assert_called_once()
+        mock_destroyAllWindows.assert_called()
 
     @patch('src.live_stream_detection.requests.Session.post')
     @patch('src.live_stream_detection.LiveStreamDetector.authenticate')
