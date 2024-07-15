@@ -12,7 +12,7 @@ from src.live_stream_tracker import LiveStreamDetector
 
 class TestLiveStreamDetector(unittest.TestCase):
     def setUp(self):
-        self.stream_url = 'https://cctv6.kctmc.nat.gov.tw/ea05668e/'
+        self.stream_url = 'tests/videos/test.mp4'
         self.model_path = 'models/pt/best_yolov8n.pt'
         self.detector = LiveStreamDetector(self.stream_url, self.model_path)
 

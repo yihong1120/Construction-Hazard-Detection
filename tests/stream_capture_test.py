@@ -6,7 +6,7 @@ class TestStreamCapture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Setup
-        url = "https://cctv4.kctmc.nat.gov.tw/50204bfc/"
+        url = "tests/videos/test.mp4"
         capture_interval = 15
         cls.stream_capture = StreamCapture(url, capture_interval)
     

@@ -12,7 +12,7 @@ class TestStreamViewer(unittest.TestCase):
     @patch('src.stream_viewer.cv2.VideoCapture')
     def test_initialisation(self, mock_video_capture):
         # Initialise StreamViewer with a test URL
-        stream_url = 'https://example.com/stream'
+        stream_url = 'tests/videos/test.mp4'
         viewer = StreamViewer(stream_url)
 
         # Check if the URL is set correctly
