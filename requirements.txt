@@ -12,8 +12,8 @@ imageio==2.34.2
 imgaug==0.4.0
 numpy==1.26.4
 onnx==1.16.1
-opencv_python==4.8.1.78
-opencv_python_headless==4.8.1.78
+opencv_python==4.9.0.80
+opencv_python_headless==4.9.0.80
 Pillow==10.3.0
 pre-commit==3.7.1
 pycocotools==2.0.8
