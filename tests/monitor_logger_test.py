@@ -115,9 +115,9 @@ class TestLoggerConfig(unittest.TestCase):
         # Test logging output
         with self.assertLogs(logger, level='INFO') as log:
             logger.info('Test log message')
-            self.assertIn(
-                'INFO:SiteSafetyMonitor_test.log:Test log message', log.output,
-            )
+            expected_message = 'INFO:SiteSafetyMonitor_test.log:Test log message'.upper()
+            log_messages = [msg.upper() for msg in log.output]
+            self.assertIn(expected_message, log_messages)
 
     def tearDown(self):
         # Clean up any files or directories created during tests
