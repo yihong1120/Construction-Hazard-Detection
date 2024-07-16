@@ -101,7 +101,7 @@ class LiveStreamDetector:
         for ids, datas, frame, timestamp in self.generate_detections():
             print(
                 'Timestamp:', datetime.datetime.fromtimestamp(
-                    timestamp,
+                    timestamp, tz=datetime.timezone.utc
                 ).strftime('%Y-%m-%d %H:%M:%S'),
             )
             print('IDs:', ids)
