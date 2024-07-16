@@ -1,13 +1,20 @@
+from __future__ import annotations
+
 import os
+from io import BytesIO
+
+import numpy as np
 import requests
 from dotenv import load_dotenv
-import numpy as np
 from PIL import Image
-from io import BytesIO
 
 
 class WeChatNotifier:
-    def __init__(self, corp_id: str | None = None, corp_secret: str | None = None, agent_id: int | None = None):
+    def __init__(
+        self, corp_id: str | None = None,
+        corp_secret: str | None = None,
+        agent_id: int | None = None,
+    ):
         load_dotenv()
         self.corp_id = corp_id or os.getenv('WECHAT_CORP_ID')
         self.corp_secret = corp_secret or os.getenv('WECHAT_CORP_SECRET')
@@ -19,28 +26,33 @@ class WeChatNotifier:
         response = requests.get(url)
         return response.json().get('access_token')
 
-    def send_notification(self, user_id: str, message: str, image: np.ndarray | None = None) -> str:
+    def send_notification(
+        self,
+        user_id: str,
+        message: str,
+        image: np.ndarray | None = None,
+    ) -> str:
         url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={self.access_token}"
         payload = {
-            "touser": user_id,
-            "msgtype": "text",
-            "agentid": self.agent_id,
-            "text": {
-                "content": message
+            'touser': user_id,
+            'msgtype': 'text',
+            'agentid': self.agent_id,
+            'text': {
+                'content': message,
             },
-            "safe": 0
+            'safe': 0,
         }
 
         if image is not None:
             media_id = self.upload_media(image)
             payload = {
-                "touser": user_id,
-                "msgtype": "image",
-                "agentid": self.agent_id,
-                "image": {
-                    "media_id": media_id
+                'touser': user_id,
+                'msgtype': 'image',
+                'agentid': self.agent_id,
+                'image': {
+                    'media_id': media_id,
                 },
-                "safe": 0
+                'safe': 0,
             }
 
         response = requests.post(url, json=payload)

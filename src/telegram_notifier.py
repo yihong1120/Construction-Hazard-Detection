@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import os
-from dotenv import load_dotenv
-import numpy as np
-from PIL import Image
 from io import BytesIO
+
+import numpy as np
+from dotenv import load_dotenv
+from PIL import Image
 from telegram import Bot
 
 
@@ -12,7 +15,11 @@ class TelegramNotifier:
         self.bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
         self.bot = Bot(token=self.bot_token)
 
-    def send_notification(self, chat_id: str, message: str, image: np.ndarray | None = None) -> str:
+    def send_notification(
+        self, chat_id: str,
+        message: str,
+        image: np.ndarray | None = None,
+    ) -> str:
         if image is not None:
             image_pil = Image.fromarray(image)
             buffer = BytesIO()
@@ -21,7 +28,7 @@ class TelegramNotifier:
             self.bot.send_photo(chat_id=chat_id, photo=buffer, caption=message)
         else:
             self.bot.send_message(chat_id=chat_id, text=message)
-        return "Message sent"
+        return 'Message sent'
 
 
 # Example usage
