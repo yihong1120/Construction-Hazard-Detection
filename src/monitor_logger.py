@@ -41,12 +41,12 @@ class LoggerConfig:
         """
         Configures the logger with rotating file handler and console handler.
         """
-        # Prevent adding handlers multiple times
-        if self.logger.hasHandlers():
-            return
-
         # Create log directory if it doesn't exist
         Path(self.log_dir).mkdir(parents=True, exist_ok=True)
+
+        # Prevent adding handlers multiple times
+        if self.logger.hasHandlers():
+            self.logger.handlers.clear()
 
         # Configure the file handler
         file_handler = self.get_file_handler()

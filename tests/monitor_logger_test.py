@@ -38,6 +38,10 @@ class TestLoggerConfig(unittest.TestCase):
         mock_rotating_file_handler.return_value = mock_file_handler
         mock_stream_handler.return_value = mock_console_handler
 
+        # Set level attribute for the handlers
+        mock_file_handler.level = self.level
+        mock_console_handler.level = self.level
+
         # Run setup_logger
         self.logger_config.setup_logger()
 
@@ -103,6 +107,10 @@ class TestLoggerConfig(unittest.TestCase):
         # Test logger setup
         self.logger_config.setup_logger()
         logger = self.logger_config.get_logger()
+
+        # Set level attribute for the handlers in case they are checked
+        mock_file_handler.level = logging.DEBUG
+        mock_console_handler.level = logging.DEBUG
 
         # Test logging output
         with self.assertLogs(logger, level='INFO') as log:
