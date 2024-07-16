@@ -35,6 +35,10 @@
 
 "Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety on construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards such as workers without helmets, workers without safety vests, workers in close proximity to machinery, and workers near vehicles. Post-processing algorithms are employed to enhance the accuracy of the detections. The system is designed for deployment in real-time environments, providing immediate analysis and alerts for detected hazards.
 
+Additionally, the system can integrate AI recognition results in real-time through a web interface or use LINE notifications to send messages and real-time on-site images for prompt alerts and reminders.
+
+###### TODO: add supports for messenger, wechat, whatsapp, telegram notification.
+
 <br>
 <br>
 
@@ -76,7 +80,7 @@ Each object in the array represents a video stream configuration with the follow
 - `image_name`: The name assigned to the image or camera.
 - `label`: The label assigned to the video stream.
 - `model_key`: The key identifier for the machine learning model to use.
-- `line_token`: The LINE messaging API token for sending notifications.
+- `line_token`: The LINE messaging API token for sending notifications.  For information on how to obtain a LINE token, please refer to [line_notify_guide_en](docs/en/line_notify_guide_en.md).
 - `run_local`: Boolean value indicating whether to run object detection locally.
 
 <br>

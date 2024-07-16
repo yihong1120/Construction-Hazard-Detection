@@ -35,6 +35,10 @@
 
 "建築工地危險檢測系統" 是一款旨在提升建築工地安全的人工智慧工具。利用 YOLOv8 模型進行物體偵測，此系統能夠辨識潛在的危險，例如未戴安全帽的工人、未穿安全背心的工人、靠近機具的工人以及靠近車輛的工人。系統採用後處理演算法來提升偵測的準確性。設計用於實時環境部署，能夠即時分析並發出警報以應對偵測到的危險。
 
+此外，系統可透過網頁界面即時整合AI辨識結果，或使用LINE通知傳送訊息與現場即時影像進行提醒通知。
+
+###### TODO: 支援Messenger、WeChat、WhatsApp、Telegram通知。
+
 <br>
 <br>
 
@@ -75,7 +79,7 @@
 - `image_name`: 分配給圖像或攝影機的名稱。
 - `label`: 分配給視頻流的標籤。
 - `model_key`: 用於機器學習模型的鍵標識符。
-- `line_token`: 用於發送通知的 LINE 訊息 API Token。
+- `line_token`: 用於發送通知的 LINE 訊息 API Token，有關如何取得TOKEN的資訊，請參閱 [Line Notify教學](docs/zh/line_notify_guide_zh.md)。
 - `run_local`: 布爾值，指示是否在本地運行物件檢測。
 
 <br>
