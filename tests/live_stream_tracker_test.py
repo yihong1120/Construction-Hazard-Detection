@@ -61,7 +61,9 @@ class TestLiveStreamDetector(unittest.TestCase):
         mock_results[0].boxes = mock_boxes
         mock_yolo_instance.track.return_value = mock_results
 
-        mock_now = datetime.datetime(2023, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
+        mock_now = datetime.datetime(
+            2023, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc,
+        )
         mock_datetime.datetime.now.side_effect = [mock_now, mock_now]
 
         frame_generator = self.detector.generate_detections()
@@ -98,10 +100,14 @@ class TestLiveStreamDetector(unittest.TestCase):
 
         with patch('builtins.print') as mock_print:
             self.detector.run_detection()
-            expected_datetime = datetime.datetime.fromtimestamp(1234567890.0, tz=datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            expected_datetime = datetime.datetime.fromtimestamp(
+                1234567890.0, tz=datetime.timezone.utc,
+            ).strftime('%Y-%m-%d %H:%M:%S')
             self.assertTrue(
                 any(
-                    'Timestamp:' in str(call) and expected_datetime in str(call)
+                    'Timestamp:' in str(
+                        call,
+                    ) and expected_datetime in str(call)
                     for call in mock_print.call_args_list
                 ),
             )
