@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import asyncio
+import os
 from io import BytesIO
 
 import numpy as np
@@ -26,9 +26,16 @@ class TelegramNotifier:
             buffer = BytesIO()
             image_pil.save(buffer, format='PNG')
             buffer.seek(0)
-            await self.bot.send_photo(chat_id=chat_id, photo=buffer, caption=message)
+            await self.bot.send_photo(
+                chat_id=chat_id,
+                photo=buffer,
+                caption=message,
+            )
         else:
-            await self.bot.send_message(chat_id=chat_id, text=message)
+            await self.bot.send_message(
+                chat_id=chat_id,
+                text=message,
+            )
         return 200
 
 

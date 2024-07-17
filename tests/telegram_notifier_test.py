@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 from io import BytesIO
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock
+from unittest.mock import patch
 
 import numpy as np
 
@@ -25,7 +26,10 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         mock_send_message.return_value = 'Message sent'
         chat_id = 'test_chat_id'
         message = 'Hello, Telegram!'
-        response = await self.telegram_notifier.send_notification(chat_id, message)
+        response = await self.telegram_notifier.send_notification(
+            chat_id,
+            message,
+        )
         self.assertEqual(response, 'Message sent')
         mock_send_message.assert_called_once_with(
             chat_id=chat_id, text=message,
