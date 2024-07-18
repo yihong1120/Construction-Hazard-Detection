@@ -58,6 +58,9 @@ class LoggerConfig:
         self.logger.addHandler(console_handler)
         self.logger.setLevel(self.level)
 
+        # Prevent log messages from propagating to the parent logger
+        self.logger.propagate = False
+
         # Debug: Log to verify the handlers have been added
         self.logger.debug('Logger handlers set up complete.')
 
