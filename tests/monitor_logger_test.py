@@ -115,7 +115,9 @@ class TestLoggerConfig(unittest.TestCase):
         # Test logging output
         with self.assertLogs(logger, level='INFO') as log:
             logger.info('Test log message')
-            expected_message = 'INFO:SiteSafetyMonitor_test.log:Test log message'.upper()
+            expected_message = (
+                'INFO:SiteSafetyMonitor_test.log:Test log message'.upper()
+            )
             log_messages = [msg.upper() for msg in log.output]
             self.assertIn(expected_message, log_messages)
 

@@ -40,7 +40,11 @@ class LiveStreamDetector:
 
     def generate_detections(
         self,
-    ) -> Generator[tuple[list[int], list[list[float]], cv2.Mat, float]]:
+    ) -> Generator[
+        tuple[list[int], list[list[float]], cv2.Mat, float],
+        None,
+        None,
+    ]:
         """
         Yields detection results, timestamp per frame from video capture.
 
@@ -101,7 +105,7 @@ class LiveStreamDetector:
         for ids, datas, frame, timestamp in self.generate_detections():
             print(
                 'Timestamp:', datetime.datetime.fromtimestamp(
-                    timestamp, tz=datetime.timezone.utc
+                    timestamp, tz=datetime.timezone.utc,
                 ).strftime('%Y-%m-%d %H:%M:%S'),
             )
             print('IDs:', ids)
