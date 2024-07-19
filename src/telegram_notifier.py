@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from io import BytesIO
 
@@ -15,7 +16,7 @@ class TelegramNotifier:
         self.bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
         self.bot = Bot(token=self.bot_token)
 
-    def send_notification(
+    async def send_notification(
         self, chat_id: str,
         message: str,
         image: np.ndarray | None = None,
@@ -25,21 +26,28 @@ class TelegramNotifier:
             buffer = BytesIO()
             image_pil.save(buffer, format='PNG')
             buffer.seek(0)
-            self.bot.send_photo(chat_id=chat_id, photo=buffer, caption=message)
+            response = await self.bot.send_photo(
+                chat_id=chat_id,
+                photo=buffer,
+                caption=message,
+            )
         else:
-            self.bot.send_message(chat_id=chat_id, text=message)
-        return 'Message sent'
+            response = await self.bot.send_message(
+                chat_id=chat_id,
+                text=message,
+            )
+        return response
 
 
 # Example usage
-def main():
+async def main():
     notifier = TelegramNotifier()
     chat_id = 'your_chat_id_here'
     message = 'Hello, Telegram!'
     image = np.zeros((100, 100, 3), dtype=np.uint8)
-    response = notifier.send_notification(chat_id, message, image=image)
+    response = await notifier.send_notification(chat_id, message, image=image)
     print(response)
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
