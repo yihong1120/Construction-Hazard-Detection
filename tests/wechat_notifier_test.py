@@ -30,7 +30,8 @@ class TestWeChatNotifier(unittest.TestCase):
         access_token = self.wechat_notifier.get_access_token()
         self.assertEqual(access_token, 'test_access_token')
         mock_get.assert_called_once_with(
-            'https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=test_corp_id&corpsecret=test_corp_secret',
+            'https://qyapi.weixin.qq.com/cgi-bin/gettoken?'
+            'corpid=test_corp_id&corpsecret=test_corp_secret',
         )
 
     @patch('requests.post')
@@ -43,18 +44,21 @@ class TestWeChatNotifier(unittest.TestCase):
         message = 'Hello, WeChat!'
         response = self.wechat_notifier.send_notification(user_id, message)
         self.assertEqual(response, {'errcode': 0, 'errmsg': 'ok'})
-        mock_post.assert_called_once_with(
-            f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={self.wechat_notifier.access_token}",
-            json={
-                'touser': user_id,
-                'msgtype': 'text',
-                'agentid': self.wechat_notifier.agent_id,
-                'text': {
-                    'content': message,
-                },
-                'safe': 0,
-            },
+        url = (
+            f"https://qyapi.weixin.qq.com/cgi-bin/message/send?"
+            f"access_token={self.wechat_notifier.access_token}"
         )
+        payload = {
+            'touser': user_id,
+            'msgtype': 'text',
+            'agentid': self.wechat_notifier.agent_id,
+            'text': {
+                'content': message,
+            },
+            'safe': 0,
+        }
+
+        mock_post.assert_called_once_with(url, json=payload)
 
     @patch('requests.post')
     @patch.object(WeChatNotifier, 'upload_media')
@@ -71,18 +75,21 @@ class TestWeChatNotifier(unittest.TestCase):
             user_id, message, image=image,
         )
         self.assertEqual(response, {'errcode': 0, 'errmsg': 'ok'})
-        mock_post.assert_called_once_with(
-            f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={self.wechat_notifier.access_token}",
-            json={
-                'touser': user_id,
-                'msgtype': 'image',
-                'agentid': self.wechat_notifier.agent_id,
-                'image': {
-                    'media_id': 'test_media_id',
-                },
-                'safe': 0,
-            },
+        url = (
+            f"https://qyapi.weixin.qq.com/cgi-bin/message/send?"
+            f"access_token={self.wechat_notifier.access_token}"
         )
+        payload = {
+            'touser': user_id,
+            'msgtype': 'image',
+            'agentid': self.wechat_notifier.agent_id,
+            'image': {
+                'media_id': 'test_media_id',
+            },
+            'safe': 0,
+        }
+
+        mock_post.assert_called_once_with(url, json=payload)
 
     @patch('requests.post')
     def test_upload_media(self, mock_post):

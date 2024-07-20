@@ -39,7 +39,10 @@ class MessengerNotifier:
             buffer.seek(0)
             files = {'filedata': ('image.png', buffer, 'image/png')}
             response = requests.post(
-                f"https://graph.facebook.com/v11.0/me/messages?access_token={self.page_access_token}",
+                url=(
+                    f"https://graph.facebook.com/v11.0/me/messages"
+                    f"?access_token={self.page_access_token}"
+                ),
                 headers=headers,
                 files=files,
                 data={
@@ -49,7 +52,10 @@ class MessengerNotifier:
             )
         else:
             response = requests.post(
-                f"https://graph.facebook.com/v11.0/me/messages?access_token={self.page_access_token}",
+                url=(
+                    f"https://graph.facebook.com/v11.0/me/messages"
+                    f"?access_token={self.page_access_token}"
+                ),
                 headers=headers,
                 json=payload,
             )

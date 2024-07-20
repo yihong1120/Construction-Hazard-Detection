@@ -18,11 +18,14 @@ class WeChatNotifier:
         load_dotenv()
         self.corp_id = corp_id or os.getenv('WECHAT_CORP_ID')
         self.corp_secret = corp_secret or os.getenv('WECHAT_CORP_SECRET')
-        self.agent_id = agent_id or int(os.getenv('WECHAT_AGENT_ID'))
+        self.agent_id = agent_id or int(os.getenv('WECHAT_AGENT_ID') or 0)
         self.access_token = self.get_access_token()
 
     def get_access_token(self) -> str:
-        url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={self.corp_id}&corpsecret={self.corp_secret}"
+        url = (
+            f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?"
+            f"corpid={self.corp_id}&corpsecret={self.corp_secret}"
+        )
         response = requests.get(url)
         return response.json().get('access_token')
 
@@ -32,7 +35,10 @@ class WeChatNotifier:
         message: str,
         image: np.ndarray | None = None,
     ) -> str:
-        url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={self.access_token}"
+        url = (
+            f"https://qyapi.weixin.qq.com/cgi-bin/message/send?"
+            f"access_token={self.access_token}"
+        )
         payload = {
             'touser': user_id,
             'msgtype': 'text',
@@ -63,7 +69,10 @@ class WeChatNotifier:
         buffer = BytesIO()
         image_pil.save(buffer, format='PNG')
         buffer.seek(0)
-        url = f"https://qyapi.weixin.qq.com/cgi-bin/media/upload?access_token={self.access_token}&type=image"
+        url = (
+            f"https://qyapi.weixin.qq.com/cgi-bin/media/upload?"
+            f"access_token={self.access_token}&type=image"
+        )
         files = {'media': ('image.png', buffer, 'image/png')}
         response = requests.post(url, files=files)
         return response.json().get('media_id')
