@@ -9,12 +9,8 @@ from pathlib import Path
 from typing import TypedDict
 
 import cv2
-import numpy as np
 import requests
 from dotenv import load_dotenv
-from PIL import Image
-from PIL import ImageDraw
-from PIL import ImageFont
 from requests.adapters import HTTPAdapter
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
@@ -71,145 +67,6 @@ class LiveStreamDetector:
         self.model = None
         self.access_token = None
         self.token_expiry = 0.0
-
-        # Load the font used for drawing labels on the image
-        self.font = ImageFont.truetype(
-            'assets/fonts/NotoSansTC-VariableFont_wght.ttf',
-            20,
-        )
-
-        # Mapping of category IDs to their corresponding names
-        self.category_id_to_name = {
-            0: '安全帽',
-            1: '口罩',
-            2: '無安全帽',
-            3: '無口罩',
-            4: '無安全背心',
-            5: '人員',
-            6: '安全錐',
-            7: '安全背心',
-            8: '機具',
-            9: '車輛',
-        }
-
-        # Define colours for each category
-        self.colors = {
-            '安全帽': (0, 255, 0),
-            '安全背心': (0, 255, 0),
-            '機具': (255, 225, 0),
-            '車輛': (255, 255, 0),
-            '無安全帽': (255, 0, 0),
-            '無安全背心': (255, 0, 0),
-            '人員': (255, 165, 0),
-        }
-
-        # Generate exclude_labels automatically
-        self.exclude_labels = [
-            label
-            for label in self.category_id_to_name.values()
-            if label not in self.colors
-        ]
-
-    def draw_detections_on_frame(
-        self,
-        frame: cv2.Mat,
-        datas: list[list[float]],
-    ) -> cv2.Mat:
-        """
-        Draws detections on the given frame.
-
-        Args:
-            frame (cv2.Mat): The frame on which to draw detections.
-            datas (List[List[float]]): The detection data.
-
-        Returns:
-            frame_with_detections(cv2.Mat): The frame with detections drawn.
-        """
-        # Convert the frame to RGB and create a PIL image
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(frame_rgb)
-        draw = ImageDraw.Draw(pil_image)
-
-        for data in datas:
-            x1, y1, x2, y2, _, label_id = data
-            label_id = int(label_id)  # Ensure label_id is an integer
-            if label_id in self.category_id_to_name:
-                label = self.category_id_to_name[label_id]
-            else:
-                continue
-
-            x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
-            if label not in self.exclude_labels:
-                color = self.colors.get(label, (255, 255, 255))
-                draw.rectangle((x1, y1, x2, y2), outline=color, width=2)
-                text = f"{label}"
-                text_bbox = draw.textbbox((x1, y1), text, font=self.font)
-                text_width, text_height = (
-                    text_bbox[2] - text_bbox[0],
-                    text_bbox[3] - text_bbox[1],
-                )
-                text_background = (
-                    x1,
-                    y1 - text_height - 5,
-                    x1 + text_width,
-                    y1,
-                )
-                draw.rectangle(text_background, fill=color)
-
-                text_y = y1 - text_height - 5 / 2 - text_height / 2
-                for dx, dy in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
-                    draw.text(
-                        (x1 + dx, text_y + dy),
-                        text,
-                        fill=(0, 0, 0),
-                        font=self.font,
-                    )
-                draw.text(
-                    (x1, text_y),
-                    text,
-                    fill=(
-                        255,
-                        255,
-                        255,
-                    ),
-                    font=self.font,
-                )
-
-        # Convert the PIL image back to OpenCV format
-        frame_with_detections = cv2.cvtColor(
-            np.array(pil_image),
-            cv2.COLOR_RGB2BGR,
-        )
-
-        return frame_with_detections
-
-    def save_frame(self, frame_bytes: bytearray, output_filename: str) -> None:
-        """
-        Saves detected frame to given output folder and filename.
-
-        Args:
-            frame_bytes (bytearray): The byte stream of the frame.
-            output_filename (str): The output filename.
-        """
-        # Create the output directory if it does not exist
-        base_output_dir = Path('detected_frames')
-        output_dir = (
-            base_output_dir / self.output_folder
-            if self.output_folder
-            else base_output_dir
-        )
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Define the output path
-        output_path = output_dir / f"{output_filename}.png"
-
-        # Save the byte stream to the output path
-        with open(output_path, 'wb') as f:
-            f.write(frame_bytes)
-
-        # Clean up
-        del output_dir, output_path, frame_bytes
-        gc.collect()
 
     def requests_retry_session(
         self,
@@ -568,10 +425,7 @@ class LiveStreamDetector:
 
             try:
                 datas, _ = self.generate_detections(frame)
-                frame_with_detections = self.draw_detections_on_frame(
-                    frame, datas,
-                )
-                cv2.imshow('Live Stream Detection', frame_with_detections)
+                print(f"datas: {datas}")
             except Exception as e:
                 print(f"Detection error: {e}")
 

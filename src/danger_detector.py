@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import TypedDict
 
+from shapely.geometry import MultiPoint
+from shapely.geometry import Point
+from shapely.geometry import Polygon
+
 
 class InputData(TypedDict):
     x1: float
@@ -27,22 +31,67 @@ class DangerDetector:
         """
         pass
 
-    def detect_danger(self, datas: list[list[float]]) -> set[str]:
+    def calculate_people_in_controlled_area(
+        self,
+        datas: list[list[float]],
+        polygon: Polygon | None,
+    ) -> int:
+        """
+        Calculates the number of people within the safety cone area.
+
+        Args:
+            datas (List[List[float]]): The detection data.
+            polygon (Optional[Polygon]): Polygon formed by the safety cones.
+
+        Returns:
+            int: Number of people detected within the controlled area.
+        """
+        # Check if there are any detections
+        if not datas:
+            return 0
+
+        # Check if there is a valid polygon
+        if not polygon or not isinstance(polygon, Polygon):
+            return 0
+
+        # Count the number of people within the controlled area
+        people_count = 0
+        for data in datas:
+            if data[5] == 5:  # Check if it's a person
+                x_center = (data[0] + data[2]) / 2
+                y_center = (data[1] + data[3]) / 2
+                if polygon.contains(Point(x_center, y_center)):
+                    people_count += 1
+
+        return people_count
+
+    def detect_danger(
+        self,
+        datas: list[list[float]],
+        polygon: Polygon | None,
+    ) -> set[str]:
         """
         Detects potential safety violations in a construction site.
 
         This function checks for two types of safety violations:
-        1. Workers not wearing hardhats or safety vests.
-        2. Workers dangerously close to machinery or vehicles.
+        1. Workers entering the controlled area.
+        2. Workers not wearing hardhats or safety vests.
+        3. Workers dangerously close to machinery or vehicles.
 
         Args:
             datas (List[List[float]]): A list of detections which includes
                 bounding box coordinates, confidence score, and class label.
+            polygon (Optional[Polygon]): Polygon formed by the safety cones.
 
         Returns:
-            List[str]: A list of warning messages for safety violations.
+            Set[str]: A set of warning messages for safety violations.
         """
         warnings = set()  # Initialise the list to store warning messages
+
+        # Check if people are entering the controlled area
+        people_count = self.calculate_people_in_controlled_area(datas, polygon)
+        if people_count > 0:
+            warnings.add(f'警告: 有{people_count}個人進入受控區域!')
 
         # Classify detected objects into different categories
         persons = [d for d in datas if d[5] == 5]  # Persons
@@ -238,6 +287,9 @@ if __name__ == '__main__':
         [0.45513, 471.77, 662.03, 1071.4, 12, 0.75853],
         [1042.7, 638.5, 1077.5, 731.98, 18, 0.56060],
     ]
-    warnings = detector.detect_danger(data)
+
+    polygon = MultiPoint([(0, 0), (0, 1000), (1000, 0)])
+
+    warnings = detector.detect_danger(data, polygon)
     for warning in warnings:
         print(warning)

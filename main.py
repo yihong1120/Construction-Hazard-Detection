@@ -15,6 +15,7 @@ import yaml
 from dotenv import load_dotenv
 
 from src.danger_detector import DangerDetector
+from src.drawing_manager import DrawingManager
 from src.line_notifier import LineNotifier
 from src.live_stream_detection import LiveStreamDetector
 from src.monitor_logger import LoggerConfig
@@ -62,10 +63,12 @@ def main(
     """
     # Load environment variables
     load_dotenv()
-    api_url = os.getenv('API_URL', 'http://localhost:5000')
 
     # Initialise the stream capture object
     streaming_capture = StreamCapture(stream_url=video_url)
+
+    # Get the API URL from environment variables
+    api_url = os.getenv('API_URL', 'http://localhost:5000')
 
     # Initialise the live stream detector
     live_stream_detector = LiveStreamDetector(
@@ -74,6 +77,9 @@ def main(
         output_folder=label,
         run_local=run_local,
     )
+
+    # Initialise the drawing manager
+    drawing_manager = DrawingManager()
 
     # Initialise the LINE notifier
     line_notifier = LineNotifier(line_token)
@@ -96,8 +102,8 @@ def main(
         datas, _ = live_stream_detector.generate_detections(frame)
 
         # Draw the detections on the frame
-        frame_with_detections = live_stream_detector.draw_detections_on_frame(
-            frame, datas,
+        frame_with_detections, controlled_zone_polygon = (
+            drawing_manager.draw_detections_on_frame(frame, datas)
         )
 
         # Convert the frame to a byte array
@@ -106,7 +112,7 @@ def main(
 
         # Save the frame with detections
         # save_file_name = f'{label}_{image_name}_{detection_time}'
-        # live_stream_detector.save_frame(
+        # drawing_manager.save_frame(
         #   frame_with_detections,
         #   save_file_name
         # )
@@ -125,7 +131,9 @@ def main(
             (7 <= current_hour < 18)
         ):
             # Check for warnings and send notifications if necessary
-            warnings = danger_detector.detect_danger(datas)
+            warnings = danger_detector.detect_danger(
+                datas, controlled_zone_polygon,
+            )
 
             # Check if there are any warnings
             if warnings:
