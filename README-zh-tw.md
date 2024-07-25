@@ -26,8 +26,8 @@
    <a href="https://flask.palletsprojects.com/en/3.0.x/">
       <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
    </a>
-   <a href="https://docs.pytest.org/en/8.2.x/">
-      <img src="https://img.shields.io/badge/pytest-8.2.2-blue?logo=pytest" alt="pytest 8.2.2">
+   <a href="https://docs.pytest.org/en/latest/">
+      <img src="https://img.shields.io/badge/pytest-8.3.1-blue?logo=pytest" alt="pytest 8.3.1">
    </a>
 </div>
 
@@ -35,9 +35,11 @@
 
 "建築工地危險檢測系統" 是一款旨在提升建築工地安全的人工智慧工具。利用 YOLOv8 模型進行物體偵測，此系統能夠辨識潛在的危險，例如未戴安全帽的工人、未穿安全背心的工人、靠近機具的工人以及靠近車輛的工人。系統採用後處理演算法來提升偵測的準確性。設計用於實時環境部署，能夠即時分析並發出警報以應對偵測到的危險。
 
-此外，系統可透過網頁界面即時整合AI辨識結果，或使用LINE通知傳送訊息與現場即時影像進行提醒通知。
+一個新開發的功能允許系統使用安全錐畫出多邊形，以定義管制區並計算這些區域內的人數。如果有人進入這些管制區域，系統將發送通知。
 
-###### TODO: 支援Messenger、WeChat、WhatsApp、Telegram通知。
+此外，系統可以通過網頁介面即時整合 AI 辨識結果，或使用 LINE、Messenger、微信和 Telegram 推播通知來發送訊息和現場即時影像，以便及時發出警報和提醒。
+
+###### TODO: 支援WhatsApp通知。
 
 <br>
 <br>

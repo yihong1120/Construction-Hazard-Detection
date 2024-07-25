@@ -26,8 +26,8 @@
    <a href="https://flask.palletsprojects.com/en/3.0.x/">
       <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
    </a>
-   <a href="https://docs.pytest.org/en/8.2.x/">
-      <img src="https://img.shields.io/badge/pytest-8.2.2-blue?logo=pytest" alt="pytest 8.2.2">
+   <a href="https://docs.pytest.org/en/latest/">
+      <img src="https://img.shields.io/badge/pytest-8.3.1-blue?logo=pytest" alt="pytest 8.3.1">
    </a>
 </div>
 
@@ -35,9 +35,11 @@
 
 "Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety on construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards such as workers without helmets, workers without safety vests, workers in close proximity to machinery, and workers near vehicles. Post-processing algorithms are employed to enhance the accuracy of the detections. The system is designed for deployment in real-time environments, providing immediate analysis and alerts for detected hazards.
 
-Additionally, the system can integrate AI recognition results in real-time through a web interface or use LINE notifications to send messages and real-time on-site images for prompt alerts and reminders.
+A newly developed feature allows the system to use safety cones to draw polygons, defining controlled zones and calculating the number of people within these zones. Notifications can be sent if people enter these controlled areas.
 
-###### TODO: add supports for messenger, wechat, whatsapp, telegram notification.
+Additionally, the system can integrate AI recognition results in real-time through a web interface or use LINE, Messenger, WeChat, and Telegram notifications to send messages and real-time on-site images for prompt alerts and reminders.
+
+###### TODO: Add supports for WhatsApp notification.
 
 <br>
 <br>
