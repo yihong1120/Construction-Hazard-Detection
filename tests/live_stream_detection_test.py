@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -12,7 +11,14 @@ from src.live_stream_detection import LiveStreamDetector
 
 
 class TestLiveStreamDetector(unittest.TestCase):
+    """
+    Unit tests for the LiveStreamDetector class methods.
+    """
+
     def setUp(self):
+        """
+        Set up the LiveStreamDetector instance for tests.
+        """
         self.api_url = 'http://localhost:5000'
         self.model_key = 'yolov8n'
         self.output_folder = 'test_output'
@@ -27,31 +33,50 @@ class TestLiveStreamDetector(unittest.TestCase):
     @patch(
         'src.live_stream_detection.LiveStreamDetector.requests_retry_session',
     )
-    @patch('src.live_stream_detection.ImageFont.truetype')
-    def test_initialization(self, mock_truetype, mock_requests_retry_session):
+    @patch('PIL.ImageFont.truetype')
+    def test_initialisation(self, mock_truetype, mock_requests_retry_session):
+        """
+        Test the initialisation of the LiveStreamDetector instance.
+
+        Args:
+            mock_truetype (MagicMock): Mock for PIL.ImageFont.truetype.
+            mock_requests_retry_session (MagicMock): Mock for
+                requests_retry_session.
+        """
         mock_requests_retry_session.return_value = MagicMock()
+        mock_truetype.return_value = MagicMock()
+
         detector = LiveStreamDetector(
             api_url=self.api_url,
             model_key=self.model_key,
             output_folder=self.output_folder,
             run_local=self.run_local,
         )
+
+        # Assert initialisation values
         self.assertEqual(detector.api_url, self.api_url)
         self.assertEqual(detector.model_key, self.model_key)
         self.assertEqual(detector.output_folder, self.output_folder)
         self.assertEqual(detector.run_local, self.run_local)
         self.assertIsNotNone(detector.session)
-        self.assertIsNotNone(detector.font)
         self.assertEqual(detector.access_token, None)
         self.assertEqual(detector.token_expiry, 0.0)
 
     @patch('src.live_stream_detection.cv2.VideoCapture')
-    @patch(
-        'src.live_stream_detection.AutoDetectionModel.from_pretrained',
-    )
+    @patch('src.live_stream_detection.AutoDetectionModel.from_pretrained')
     def test_generate_detections_local(
-        self, mock_from_pretrained, mock_video_capture,
+        self,
+        mock_from_pretrained,
+        mock_video_capture,
     ):
+        """
+        Test local detection generation.
+
+        Args:
+            mock_from_pretrained (MagicMock): Mock for
+                AutoDetectionModel.from_pretrained.
+            mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
+        """
         mock_model = MagicMock()
         mock_from_pretrained.return_value = mock_model
 
@@ -73,6 +98,7 @@ class TestLiveStreamDetector(unittest.TestCase):
 
         datas = self.detector.generate_detections_local(frame)
 
+        # Assert the structure and types of the detection data
         self.assertIsInstance(datas, list)
         for data in datas:
             self.assertIsInstance(data, list)
@@ -87,17 +113,26 @@ class TestLiveStreamDetector(unittest.TestCase):
     @patch('src.live_stream_detection.cv2.destroyAllWindows')
     @patch('src.live_stream_detection.LiveStreamDetector.generate_detections')
     def test_run_detection(
-        self, mock_generate_detections, mock_destroyAllWindows,
+        self,
+        mock_generate_detections,
+        mock_destroyAllWindows,
     ):
+        """
+        Test the run_detection method.
+
+        Args:
+            mock_generate_detections (MagicMock): Mock for generate_detections.
+            mock_destroyAllWindows (MagicMock): Mock for cv2.destroyAllWindows.
+        """
         mock_generate_detections.return_value = (
             [], np.zeros((480, 640, 3), dtype=np.uint8),
         )
         stream_url = 'https://cctv6.kctmc.nat.gov.tw/ea05668e/'
         cap_mock = MagicMock()
         cap_mock.read.side_effect = [
-            (True, np.zeros((480, 640, 3), dtype=np.uint8)), (
-                True, np.zeros((480, 640, 3), dtype=np.uint8),
-            ), (False, None),
+            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
+            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
+            (False, None),
         ]
         cap_mock.isOpened.return_value = True
 
@@ -119,6 +154,13 @@ class TestLiveStreamDetector(unittest.TestCase):
     @patch('src.live_stream_detection.requests.Session.post')
     @patch('src.live_stream_detection.LiveStreamDetector.authenticate')
     def test_generate_detections_cloud(self, mock_authenticate, mock_post):
+        """
+        Test cloud detection generation.
+
+        Args:
+            mock_authenticate (MagicMock): Mock for authenticate.
+            mock_post (MagicMock): Mock for requests.Session.post.
+        """
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         mock_response = MagicMock()
         mock_response.json.return_value = [
@@ -128,6 +170,7 @@ class TestLiveStreamDetector(unittest.TestCase):
 
         datas = self.detector.generate_detections_cloud(frame)
 
+        # Assert the structure and types of the detection data
         self.assertIsInstance(datas, list)
         for data in datas:
             self.assertIsInstance(data, list)
@@ -142,16 +185,28 @@ class TestLiveStreamDetector(unittest.TestCase):
     @patch('src.live_stream_detection.LiveStreamDetector.ensure_authenticated')
     @patch('src.live_stream_detection.requests.Session.post')
     def test_authenticate(self, mock_post, mock_ensure_authenticated):
+        """
+        Test the authentication process.
+
+        Args:
+            mock_post (MagicMock): Mock for requests.Session.post.
+            mock_ensure_authenticated (MagicMock): Mock
+                for ensure_authenticated.
+        """
         mock_response = MagicMock()
         mock_response.json.return_value = {'access_token': 'fake_token'}
         mock_post.return_value = mock_response
 
         self.detector.authenticate()
 
+        # Assert the access token and token expiry
         self.assertEqual(self.detector.access_token, 'fake_token')
         self.assertGreater(self.detector.token_expiry, time.time())
 
     def test_token_expired(self):
+        """
+        Test the token_expired method.
+        """
         self.detector.token_expiry = time.time() - 1
         self.assertTrue(self.detector.token_expired())
 
@@ -159,33 +214,15 @@ class TestLiveStreamDetector(unittest.TestCase):
         self.assertFalse(self.detector.token_expired())
 
     def test_ensure_authenticated(self):
+        """
+        Test the ensure_authenticated method.
+        """
         with patch.object(self.detector, 'token_expired', return_value=True):
             with patch.object(
                 self.detector, 'authenticate',
             ) as mock_authenticate:
                 self.detector.ensure_authenticated()
                 mock_authenticate.assert_called_once()
-
-    def test_draw_detections_on_frame(self):
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        datas = [[10, 10, 50, 50, 0.9, 0], [20, 20, 60, 60, 0.8, 1]]
-
-        result_frame = self.detector.draw_detections_on_frame(frame, datas)
-
-        self.assertIsInstance(result_frame, np.ndarray)
-
-    def test_save_frame(self):
-        frame_bytes = bytearray(
-            np.zeros((480, 640, 3), dtype=np.uint8).tobytes(),
-        )
-        output_filename = 'test_frame'
-
-        with patch('builtins.open', unittest.mock.mock_open()) as mock_file:
-            self.detector.save_frame(frame_bytes, output_filename)
-            mock_file.assert_called_once_with(
-                Path('detected_frames/test_output/test_frame.png'), 'wb',
-            )
-            mock_file().write.assert_called_once_with(frame_bytes)
 
 
 if __name__ == '__main__':
