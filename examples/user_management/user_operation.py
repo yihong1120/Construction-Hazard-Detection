@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from models import db
-from models import User
+from .models import db
+from .models import User
 
 
 def add_user(username: str, password: str) -> str:

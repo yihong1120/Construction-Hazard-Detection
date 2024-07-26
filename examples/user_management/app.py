@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from flask import Flask
 from flask import request
-from user_operation import add_user
-from user_operation import delete_user
-from user_operation import update_password
-from user_operation import update_username
 
-from models import db
+from .models import db
+from .user_operation import add_user
+from .user_operation import delete_user
+from .user_operation import update_password
+from .user_operation import update_username
 
 app = Flask(__name__)
 

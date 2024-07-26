@@ -6,11 +6,6 @@ import cv2
 class StreamViewer:
     """
     A class to handle the viewing of video streams (RTSP, HTTP, etc.).
-
-    Attributes:
-        stream_url (str): The URL of the video stream.
-        window_name (str): The name of the window where the stream will
-                           be displayed.
     """
 
     def __init__(self, stream_url: str, window_name: str = 'Stream Viewer'):
