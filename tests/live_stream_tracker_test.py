@@ -11,18 +11,36 @@ from src.live_stream_tracker import LiveStreamDetector
 
 
 class TestLiveStreamDetector(unittest.TestCase):
-    def setUp(self):
-        self.stream_url = 'tests/videos/test.mp4'
-        self.model_path = 'models/pt/best_yolov8n.pt'
-        self.detector = LiveStreamDetector(self.stream_url, self.model_path)
+    """
+    Unit tests for the LiveStreamDetector class methods.
+    """
+
+    def setUp(self) -> None:
+        """
+        Initialise test variables and LiveStreamDetector.
+        """
+        self.stream_url: str = 'tests/videos/test.mp4'
+        self.model_path: str = 'models/pt/best_yolov8n.pt'
+        self.detector: LiveStreamDetector = LiveStreamDetector(
+            self.stream_url, self.model_path,
+        )
 
     @patch('src.live_stream_tracker.YOLO')
     @patch('src.live_stream_tracker.cv2.VideoCapture')
-    def test_initialisation(self, mock_video_capture, mock_yolo):
+    def test_initialisation(
+        self,
+        mock_video_capture: MagicMock,
+        mock_yolo: MagicMock,
+    ) -> None:
+        """
+        Test case for initialising LiveStreamDetector.
+        """
         mock_cap_instance = MagicMock()
         mock_video_capture.return_value = mock_cap_instance
 
-        detector = LiveStreamDetector(self.stream_url, self.model_path)
+        detector: LiveStreamDetector = LiveStreamDetector(
+            self.stream_url, self.model_path,
+        )
 
         self.assertEqual(detector.stream_url, self.stream_url)
         self.assertEqual(detector.model_path, self.model_path)
@@ -33,8 +51,14 @@ class TestLiveStreamDetector(unittest.TestCase):
     @patch('src.live_stream_tracker.cv2.VideoCapture')
     @patch('src.live_stream_tracker.datetime')
     def test_generate_detections(
-        self, mock_datetime, mock_video_capture, mock_yolo,
-    ):
+        self,
+        mock_datetime: MagicMock,
+        mock_video_capture: MagicMock,
+        mock_yolo: MagicMock,
+    ) -> None:
+        """
+        Test case for generating detections from a video stream.
+        """
         mock_cap_instance = MagicMock()
         mock_video_capture.return_value = mock_cap_instance
         mock_cap_instance.isOpened.side_effect = [True, True, False]
@@ -77,8 +101,13 @@ class TestLiveStreamDetector(unittest.TestCase):
     @patch('src.live_stream_tracker.cv2.VideoCapture')
     @patch('src.live_stream_tracker.cv2.destroyAllWindows')
     def test_release_resources(
-        self, mock_destroy_all_windows, mock_video_capture,
-    ):
+        self,
+        mock_destroy_all_windows: MagicMock,
+        mock_video_capture: MagicMock,
+    ) -> None:
+        """
+        Test case for releasing video capture and window resources.
+        """
         mock_cap_instance = MagicMock()
         mock_video_capture.return_value = mock_cap_instance
         self.detector.cap = mock_cap_instance
@@ -89,7 +118,10 @@ class TestLiveStreamDetector(unittest.TestCase):
         mock_destroy_all_windows.assert_called_once()
 
     @patch('src.live_stream_tracker.LiveStreamDetector.generate_detections')
-    def test_run_detection(self, mock_generate_detections):
+    def test_run_detection(self, mock_generate_detections: MagicMock) -> None:
+        """
+        Test case for running detection on a video stream.
+        """
         mock_generate_detections.return_value = iter(
             [(
                 [1, 2, 3], [[0.1, 0.2, 0.3, 0.4]], np.zeros(

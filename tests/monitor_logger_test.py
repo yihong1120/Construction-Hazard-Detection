@@ -10,16 +10,23 @@ from src.monitor_logger import LoggerConfig  # Adjust the import path as needed
 
 
 class TestLoggerConfig(unittest.TestCase):
-    def setUp(self):
-        self.log_file = 'test.log'
-        self.log_dir = 'test_logs'
-        self.level = logging.DEBUG
-        self.formatter = logging.Formatter('%(message)s')
+    """
+    Unit tests for the LoggerConfig class methods.
+    """
+
+    def setUp(self) -> None:
+        """
+        Initialise test variables and ensure the log directory exists.
+        """
+        self.log_file: str = 'test.log'
+        self.log_dir: str = 'test_logs'
+        self.level: int = logging.DEBUG
+        self.formatter: logging.Formatter = logging.Formatter('%(message)s')
 
         # Ensure log directory exists
         Path(self.log_dir).mkdir(parents=True, exist_ok=True)
 
-        self.logger_config = LoggerConfig(
+        self.logger_config: LoggerConfig = LoggerConfig(
             log_file=self.log_file,
             log_dir=self.log_dir,
             level=self.level,
@@ -30,8 +37,14 @@ class TestLoggerConfig(unittest.TestCase):
     @patch('src.monitor_logger.RotatingFileHandler')
     @patch('src.monitor_logger.logging.StreamHandler')
     def test_setup_logger(
-        self, mock_stream_handler, mock_rotating_file_handler, mock_mkdir,
-    ):
+        self,
+        mock_stream_handler: MagicMock,
+        mock_rotating_file_handler: MagicMock,
+        mock_mkdir: MagicMock,
+    ) -> None:
+        """
+        Test setting up the logger with file and console handlers.
+        """
         # Create mock handlers
         mock_file_handler = MagicMock()
         mock_console_handler = MagicMock()
@@ -48,8 +61,6 @@ class TestLoggerConfig(unittest.TestCase):
         # Verify handlers were added to the logger
         logger = self.logger_config.get_logger()
         handlers = logger.handlers
-
-        print(f"Handlers: {handlers}")  # Debug information to see the handlers
 
         self.assertIn(mock_file_handler, handlers)
         self.assertIn(mock_console_handler, handlers)
@@ -72,13 +83,19 @@ class TestLoggerConfig(unittest.TestCase):
             self.formatter,
         )
 
-    def test_get_file_handler(self):
+    def test_get_file_handler(self) -> None:
+        """
+        Test retrieving the file handler from LoggerConfig.
+        """
         file_handler = self.logger_config.get_file_handler()
         self.assertIsInstance(file_handler, logging.Handler)
         self.assertEqual(file_handler.level, self.level)
         self.assertEqual(file_handler.formatter, self.formatter)
 
-    def test_get_console_handler(self):
+    def test_get_console_handler(self) -> None:
+        """
+        Test retrieving the console handler from LoggerConfig.
+        """
         console_handler = self.logger_config.get_console_handler()
         self.assertIsInstance(console_handler, logging.Handler)
         self.assertEqual(console_handler.level, self.level)
@@ -88,14 +105,20 @@ class TestLoggerConfig(unittest.TestCase):
     @patch('src.monitor_logger.RotatingFileHandler')
     @patch('src.monitor_logger.logging.StreamHandler')
     def test_logger_output(
-        self, mock_stream_handler, mock_rotating_file_handler, mock_mkdir,
-    ):
+        self,
+        mock_stream_handler: MagicMock,
+        mock_rotating_file_handler: MagicMock,
+        mock_mkdir: MagicMock,
+    ) -> None:
+        """
+        Test the logger output to ensure it logs messages correctly.
+        """
         mock_file_handler = MagicMock()
         mock_console_handler = MagicMock()
         mock_rotating_file_handler.return_value = mock_file_handler
         mock_stream_handler.return_value = mock_console_handler
 
-        # Initialize logger configuration
+        # Initialise logger configuration
         from src.monitor_logger import LoggerConfig
         self.logger_config = LoggerConfig(
             log_file='test.log', log_dir='logs_test',
@@ -121,8 +144,10 @@ class TestLoggerConfig(unittest.TestCase):
             log_messages = [msg.upper() for msg in log.output]
             self.assertIn(expected_message, log_messages)
 
-    def tearDown(self):
-        # Clean up any files or directories created during tests
+    def tearDown(self) -> None:
+        """
+        Clean up any files or directories created during tests.
+        """
         if Path(self.log_dir).exists():
             for file in Path(self.log_dir).glob('*'):
                 file.unlink()

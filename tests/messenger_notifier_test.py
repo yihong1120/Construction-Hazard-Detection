@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -9,27 +10,42 @@ from src.messenger_notifier import MessengerNotifier
 
 
 class TestMessengerNotifier(unittest.TestCase):
+    """
+    Unit tests for the MessengerNotifier class methods.
+    """
+
+    messenger_notifier: MessengerNotifier
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
+        """
+        Set up class method to initialise the MessengerNotifier instance.
+        """
         cls.messenger_notifier = MessengerNotifier(
             page_access_token='test_page_access_token',
         )
 
-    def test_init(self):
-        """Test if the MessengerNotifier instance is initialised correctly."""
+    def test_init(self) -> None:
+        """
+        Test if the MessengerNotifier instance is initialised correctly.
+        """
         self.assertEqual(
             self.messenger_notifier.page_access_token,
             'test_page_access_token',
         )
 
     @patch('requests.post')
-    def test_send_notification_no_image(self, mock_post):
-        """Test sending a notification without an image."""
+    def test_send_notification_no_image(self, mock_post: Any) -> None:
+        """
+        Test sending a notification without an image.
+
+        Args:
+            mock_post (Any): Mock object for the requests.post method.
+        """
         mock_post.return_value.status_code = 200
-        recipient_id = 'test_recipient_id'
-        message = 'Hello, Messenger!'
-        response_code = self.messenger_notifier.send_notification(
+        recipient_id: str = 'test_recipient_id'
+        message: str = 'Hello, Messenger!'
+        response_code: int = self.messenger_notifier.send_notification(
             recipient_id, message,
         )
         self.assertEqual(response_code, 200)
@@ -44,13 +60,18 @@ class TestMessengerNotifier(unittest.TestCase):
         )
 
     @patch('requests.post')
-    def test_send_notification_with_image(self, mock_post):
-        """Test sending a notification with an image."""
+    def test_send_notification_with_image(self, mock_post: Any) -> None:
+        """
+        Test sending a notification with an image.
+
+        Args:
+            mock_post (Any): Mock object for the requests.post method.
+        """
         mock_post.return_value.status_code = 200
-        recipient_id = 'test_recipient_id'
-        message = 'Hello, Messenger!'
-        image = np.zeros((100, 100, 3), dtype=np.uint8)
-        response_code = self.messenger_notifier.send_notification(
+        recipient_id: str = 'test_recipient_id'
+        message: str = 'Hello, Messenger!'
+        image: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
+        response_code: int = self.messenger_notifier.send_notification(
             recipient_id, message, image=image,
         )
         self.assertEqual(response_code, 200)
@@ -61,8 +82,10 @@ class TestMessengerNotifier(unittest.TestCase):
         self.assertEqual(files['filedata'][0], 'image.png')
         self.assertEqual(files['filedata'][2], 'image/png')
 
-    def test_missing_page_access_token(self):
-        """Test initialisation without a page access token."""
+    def test_missing_page_access_token(self) -> None:
+        """
+        Test initialisation without a page access token.
+        """
         with self.assertRaises(
             ValueError,
             msg='FACEBOOK_PAGE_ACCESS_TOKEN missing.',

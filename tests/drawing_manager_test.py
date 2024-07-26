@@ -20,20 +20,17 @@ class TestDrawingManager(unittest.TestCase):
         """
         Set up the initial state needed for tests.
         """
-        self.drawer = DrawingManager()
-        self.frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.datas = [
-            # Example objects (安全帽, 人員, 車輛)
-            [50, 50, 150, 150, 0.95, 0],   # 安全帽
+        self.drawer: DrawingManager = DrawingManager()
+        self.frame: np.ndarray = np.zeros((480, 640, 3), dtype=np.uint8)
+        self.datas: list[list[float]] = [
+            [50, 50, 150, 150, 0.95, 0],    # 安全帽
             [200, 200, 300, 300, 0.85, 5],  # 人員
             [400, 400, 500, 500, 0.75, 9],  # 車輛
-
-            # Example safety cones (安全錐)
-            [100, 100, 120, 120, 0.9, 6],
-            [250, 250, 270, 270, 0.8, 6],
-            [450, 450, 470, 470, 0.7, 6],
-            [500, 200, 520, 220, 0.7, 6],
-            [150, 400, 170, 420, 0.7, 6],
+            [100, 100, 120, 120, 0.9, 6],   # 安全錐
+            [250, 250, 270, 270, 0.8, 6],   # 安全錐
+            [450, 450, 470, 470, 0.7, 6],   # 安全錐
+            [500, 200, 520, 220, 0.7, 6],   # 安全錐
+            [150, 400, 170, 420, 0.7, 6],   # 安全錐
         ]
 
     def tearDown(self) -> None:
@@ -45,11 +42,11 @@ class TestDrawingManager(unittest.TestCase):
         del self.datas
 
         # Remove the output directory
-        output_dir = Path('detected_frames/test_output')
+        output_dir: Path = Path('detected_frames/test_output')
         if output_dir.exists() and output_dir.is_dir():
             shutil.rmtree(output_dir)
 
-        root_dir = Path('detected_frames')
+        root_dir: Path = Path('detected_frames')
         if root_dir.exists() and root_dir.is_dir():
             shutil.rmtree(root_dir)
 
@@ -70,11 +67,11 @@ class TestDrawingManager(unittest.TestCase):
         # Check if objects are drawn correctly
         for data in self.datas:
             x1, y1, x2, y2, _, label_id = data
-            label = self.drawer.category_id_to_name.get(label_id)
+            label: str = self.drawer.category_id_to_name.get(label_id, '')
             if label in self.drawer.colors:
-                color = self.drawer.colors[label]
+                color: tuple[int, int, int] = self.drawer.colors[label]
                 # Convert colour to BGR
-                color_bgr = color[::-1]
+                color_bgr: tuple[int, int, int] = color[::-1]
 
                 # Ensure x1, y1, x2, y2 are integers
                 x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
@@ -84,8 +81,12 @@ class TestDrawingManager(unittest.TestCase):
                     max(y1, 0),
                     min(y2, frame_with_detections.shape[0]),
                 ):
-                    actual_color_left = frame_with_detections[y, x1]
-                    actual_color_right = frame_with_detections[y, x2 - 1]
+                    actual_color_left: np.ndarray = (
+                        frame_with_detections[y, x1]
+                    )
+                    actual_color_right: np.ndarray = (
+                        frame_with_detections[y, x2 - 1]
+                    )
                     self.assertTrue(
                         np.allclose(actual_color_left, color_bgr, atol=10),
                         (f"Expected colour {color_bgr}, "
@@ -94,7 +95,7 @@ class TestDrawingManager(unittest.TestCase):
                     self.assertTrue(
                         np.allclose(actual_color_right, color_bgr, atol=10),
                         (f"Expected colour {color_bgr}, "
-                         f"but {actual_color_left}"),
+                         f"but {actual_color_right}"),
                     )
 
     def test_draw_detections_on_frame_with_no_detections(self) -> None:
@@ -152,34 +153,24 @@ class TestDrawingManager(unittest.TestCase):
         self.assertEqual(frame_with_polygon.shape, self.frame.shape)
 
         # Check if safety cones are drawn correctly
-        found_safety_cone = False
-        expected_color = [255, 0, 255]  # Colour of the polygon border (pink)
+        found_safety_cone: bool = False
+        # Colour of the polygon border (pink)
+        expected_color: tuple[int, int, int] = (255, 0, 255)
 
-        cone_centers = [
-            (
-                (int(data[0]) + int(data[2])) // 2,
-                (int(data[1]) + int(data[3])) // 2,
+        if isinstance(polygon, Polygon):
+            polygon_points: np.ndarray = np.array(
+                polygon.exterior.coords, dtype=np.int32,
             )
-            for data in self.datas
-            if int(data[5]) == 6
-        ]
-
-        if len(cone_centers) >= 3:
-            polygon = Polygon(cone_centers)
-            if isinstance(polygon, Polygon):
-                polygon_points = np.array(
-                    polygon.exterior.coords, dtype=np.int32,
-                )
-                for point in polygon_points:
-                    x, y = point
-                    if (
-                        0 <= y < frame_with_polygon.shape[0] and
-                        0 <= x < frame_with_polygon.shape[1]
-                    ):
-                        pixel = frame_with_polygon[y, x]
-                        if np.allclose(pixel, expected_color, atol=10):
-                            found_safety_cone = True
-                            break
+            for point in polygon_points:
+                x, y = point
+                if (
+                    0 <= y < frame_with_polygon.shape[0] and
+                    0 <= x < frame_with_polygon.shape[1]
+                ):
+                    pixel: np.ndarray = frame_with_polygon[y, x]
+                    if np.allclose(pixel, expected_color, atol=10):
+                        found_safety_cone = True
+                        break
 
         self.assertTrue(
             found_safety_cone,
@@ -191,7 +182,7 @@ class TestDrawingManager(unittest.TestCase):
         """
         Test drawing a safety cones polygon with less than three cones.
         """
-        datas = [
+        datas: list[list[float]] = [
             [300, 50, 400, 150, 0.75, 6],    # Only one safety cone detection
         ]
         frame_with_polygon, _ = self.drawer.draw_safety_cones_polygon(
@@ -215,8 +206,8 @@ class TestDrawingManager(unittest.TestCase):
         Test drawing a safety cones polygon with many cones.
         """
         # Generate a large number of safety cones
-        num_cones = 100
-        datas = [[
+        num_cones: int = 100
+        datas: list[list[float]] = [[
             np.random.randint(0, 640), np.random.randint(0, 480),
             np.random.randint(0, 640), np.random.randint(0, 480),
             0.75, 6,
@@ -242,17 +233,16 @@ class TestDrawingManager(unittest.TestCase):
         """
         Test saving a frame to disk.
         """
-        frame_bytes = bytearray(
+        frame_bytes: bytearray = bytearray(
             np.zeros((480, 640, 3), dtype=np.uint8).tobytes(),
         )
-        output_filename = 'test_frame'
+        output_filename: str = 'test_frame'
 
         with patch('builtins.open', unittest.mock.mock_open()) as mock_file:
-
             self.drawer.save_frame(frame_bytes, output_filename)
 
             # Construct the expected file path
-            expected_file = Path('detected_frames/test_frame.png')
+            expected_file: Path = Path('detected_frames/test_frame.png')
 
             # Assert calls to open and write
             mock_file.assert_called_once_with(expected_file, 'wb')

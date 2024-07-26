@@ -8,12 +8,18 @@ from src.stream_viewer import StreamViewer
 
 
 class TestStreamViewer(unittest.TestCase):
+    """
+    Unit tests for the StreamViewer class methods.
+    """
 
     @patch('src.stream_viewer.cv2.VideoCapture')
-    def test_initialisation(self, mock_video_capture):
+    def test_initialisation(self, mock_video_capture: MagicMock) -> None:
+        """
+        Test the initialisation of the StreamViewer instance.
+        """
         # Initialise StreamViewer with a test URL
-        stream_url = 'tests/videos/test.mp4'
-        viewer = StreamViewer(stream_url)
+        stream_url: str = 'tests/videos/test.mp4'
+        viewer: StreamViewer = StreamViewer(stream_url)
 
         # Check if the URL is set correctly
         self.assertEqual(viewer.stream_url, stream_url)
@@ -30,11 +36,14 @@ class TestStreamViewer(unittest.TestCase):
     @patch('src.stream_viewer.cv2.imshow')
     def test_display_stream(
         self,
-        mock_imshow,
-        mock_wait_key,
-        mock_video_capture,
-        mock_destroyAllWindows,
-    ):
+        mock_imshow: MagicMock,
+        mock_wait_key: MagicMock,
+        mock_video_capture: MagicMock,
+        mock_destroyAllWindows: MagicMock,
+    ) -> None:
+        """
+        Test the display_stream method for streaming video.
+        """
         # Mock VideoCapture instance
         mock_cap_instance = MagicMock()
         mock_video_capture.return_value = mock_cap_instance
@@ -48,7 +57,7 @@ class TestStreamViewer(unittest.TestCase):
         mock_wait_key.side_effect = [ord('a'), ord('b'), ord('q')]
 
         # Initialise StreamViewer and call display_stream
-        viewer = StreamViewer('https://example.com/stream')
+        viewer: StreamViewer = StreamViewer('https://example.com/stream')
         viewer.display_stream()
 
         # Check if imshow was called correctly
@@ -66,14 +75,19 @@ class TestStreamViewer(unittest.TestCase):
     @patch('src.stream_viewer.cv2.VideoCapture')
     @patch('src.stream_viewer.cv2.destroyAllWindows')
     def test_release_resources(
-        self, mock_destroy_all_windows, mock_video_capture,
-    ):
+        self,
+        mock_destroy_all_windows: MagicMock,
+        mock_video_capture: MagicMock,
+    ) -> None:
+        """
+        Test the release_resources method.
+        """
         # Mock VideoCapture instance
         mock_cap_instance = MagicMock()
         mock_video_capture.return_value = mock_cap_instance
 
         # Initialise StreamViewer and call release_resources
-        viewer = StreamViewer('https://example.com/stream')
+        viewer: StreamViewer = StreamViewer('https://example.com/stream')
         viewer.release_resources()
 
         # Check if release was called on VideoCapture instance

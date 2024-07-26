@@ -11,22 +11,39 @@ from src.telegram_notifier import TelegramNotifier
 
 
 class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
+    """
+    Unit tests for the TelegramNotifier class methods.
+    """
+
+    telegram_notifier: TelegramNotifier
 
     @classmethod
-    def setUpClass(cls):
-        cls.telegram_notifier = TelegramNotifier(bot_token='test_bot_token')
+    def setUpClass(cls) -> None:
+        """
+        Set up the TelegramNotifier instance for tests.
+        """
+        cls.telegram_notifier = TelegramNotifier(
+            bot_token='test_bot_token',
+        )
 
-    def test_init(self):
-        """Test if the TelegramNotifier instance is initialised correctly."""
+    def test_init(self) -> None:
+        """
+        Test if the TelegramNotifier instance is initialised correctly.
+        """
         self.assertEqual(self.telegram_notifier.bot_token, 'test_bot_token')
 
     @patch('telegram.Bot.send_message', new_callable=AsyncMock)
-    async def test_send_notification_no_image(self, mock_send_message):
-        """Test sending a notification without an image."""
+    async def test_send_notification_no_image(
+        self,
+        mock_send_message: AsyncMock,
+    ) -> None:
+        """
+        Test sending a notification without an image.
+        """
         mock_send_message.return_value = 'Message sent'
-        chat_id = 'test_chat_id'
-        message = 'Hello, Telegram!'
-        response = await self.telegram_notifier.send_notification(
+        chat_id: str = 'test_chat_id'
+        message: str = 'Hello, Telegram!'
+        response: str = await self.telegram_notifier.send_notification(
             chat_id,
             message,
         )
@@ -36,13 +53,18 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch('telegram.Bot.send_photo', new_callable=AsyncMock)
-    async def test_send_notification_with_image(self, mock_send_photo):
-        """Test sending a notification with an image."""
+    async def test_send_notification_with_image(
+        self,
+        mock_send_photo: AsyncMock,
+    ) -> None:
+        """
+        Test sending a notification with an image.
+        """
         mock_send_photo.return_value = 'Message sent'
-        chat_id = 'test_chat_id'
-        message = 'Hello, Telegram!'
-        image = np.zeros((100, 100, 3), dtype=np.uint8)
-        response = await self.telegram_notifier.send_notification(
+        chat_id: str = 'test_chat_id'
+        message: str = 'Hello, Telegram!'
+        image: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
+        response: str = await self.telegram_notifier.send_notification(
             chat_id, message, image=image,
         )
         self.assertEqual(response, 'Message sent')

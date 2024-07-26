@@ -12,14 +12,24 @@ from src.model_fetcher import main
 
 
 class TestModelFetcher(unittest.TestCase):
+    """
+    Unit tests for the model fetching functions.
+    """
 
     @patch('src.model_fetcher.requests.get')
     @patch('src.model_fetcher.Path.exists')
     @patch('src.model_fetcher.Path.mkdir')
     @patch('builtins.open', new_callable=mock_open)
     def test_download_model_exists(
-        self, mock_open, mock_mkdir, mock_exists, mock_get,
-    ):
+        self,
+        mock_open: unittest.mock.Mock,
+        mock_mkdir: unittest.mock.Mock,
+        mock_exists: unittest.mock.Mock,
+        mock_get: unittest.mock.Mock,
+    ) -> None:
+        """
+        Test downloading a model when the model file already exists.
+        """
         # Mock the Path.exists() to return True
         mock_exists.return_value = True
 
@@ -37,8 +47,12 @@ class TestModelFetcher(unittest.TestCase):
     @patch('src.model_fetcher.Path.mkdir')
     @patch('builtins.open', new_callable=mock_open)
     def test_download_model_new(
-        self, mock_open, mock_mkdir, mock_exists, mock_get,
-    ):
+        self, mock_open: unittest.mock.Mock, mock_mkdir: unittest.mock.Mock,
+        mock_exists: unittest.mock.Mock, mock_get: unittest.mock.Mock,
+    ) -> None:
+        """
+        Test downloading a model when the model file does not exist.
+        """
         # Mock the Path.exists() to return False
         mock_exists.return_value = False
 
@@ -70,8 +84,14 @@ class TestModelFetcher(unittest.TestCase):
     @patch('src.model_fetcher.Path.mkdir')
     @patch('builtins.open', new_callable=mock_open)
     def test_download_model_error(
-        self, mock_open, mock_mkdir, mock_exists, mock_get,
-    ):
+        self, mock_open: unittest.mock.Mock,
+        mock_mkdir: unittest.mock.Mock,
+        mock_exists: unittest.mock.Mock,
+        mock_get: unittest.mock.Mock,
+    ) -> None:
+        """
+        Test downloading a model when the request returns an error.
+        """
         # Mock the Path.exists() to return False
         mock_exists.return_value = False
 
@@ -95,7 +115,10 @@ class TestModelFetcher(unittest.TestCase):
         mock_open.assert_not_called()
 
     @patch('src.model_fetcher.download_model')
-    def test_main(self, mock_download_model):
+    def test_main(self, mock_download_model: unittest.mock.Mock) -> None:
+        """
+        Test the main function to ensure models are downloaded correctly.
+        """
         main()
         calls = [
             call(
