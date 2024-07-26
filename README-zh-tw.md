@@ -27,7 +27,7 @@
       <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
    </a>
    <a href="https://docs.pytest.org/en/latest/">
-      <img src="https://img.shields.io/badge/pytest-8.3.1-blue?logo=pytest" alt="pytest 8.3.1">
+      <img src="https://img.shields.io/badge/pytest-8.3.2-blue?logo=pytest" alt="pytest 8.3.2">
    </a>
 </div>
 
