@@ -17,7 +17,7 @@ opencv_python_headless==4.9.0.80
 Pillow==10.3.0
 pre-commit==3.7.1
 pycocotools==2.0.8
-pytest==8.3.1
+pytest==8.3.2
 python-dotenv==1.0.1
 python-telegram-bot==21.4
 redis==5.0.7
@@ -28,4 +28,4 @@ tenacity==8.5.0
 torch==2.4.0
 torchvision==0.19.0
 twilio==9.2.3
-ultralytics==8.2.64
+ultralytics==8.2.66
