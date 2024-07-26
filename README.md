@@ -29,6 +29,9 @@
    <a href="https://docs.pytest.org/en/latest/">
       <img src="https://img.shields.io/badge/pytest-8.3.2-blue?logo=pytest" alt="pytest 8.3.2">
    </a>
+   <a href="https://mutable.ai">
+      <img src="https://img.shields.io/badge/Auto_Wiki-mutable.ai-blue" alt="Auto Wiki by mutable.ai">
+   </a>
 </div>
 
 <br>
