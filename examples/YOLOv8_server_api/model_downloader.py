@@ -5,6 +5,7 @@ from pathlib import Path
 
 import requests
 from flask import Blueprint
+from flask import current_app
 from flask import jsonify
 from flask import send_from_directory
 from flask_limiter import Limiter
@@ -44,13 +45,21 @@ def download_model(model_name):
                 response.headers['Last-Modified'],
                 '%a, %d %b %Y %H:%M:%S GMT',
             )
-            local_file_path = f"{MODELS_DIRECTORY}{model_name}"
+            local_file_path = Path(MODELS_DIRECTORY) / model_name
+
             # Check local file's last modified time
-            local_last_modified = datetime.datetime.fromtimestamp(
-                Path(local_file_path).stat().st_mtime,
-            )
-            if local_last_modified >= server_last_modified:
-                return jsonify({'message': 'Local model is up-to-date.'}), 304
+            if local_file_path.exists():
+                local_last_modified = datetime.datetime.fromtimestamp(
+                    local_file_path.stat().st_mtime,
+                )
+
+                # If local file is up-to-date, return 304 Not Modified
+                if local_last_modified >= server_last_modified:
+                    return jsonify(
+                        {
+                            'message': 'Local model is up-to-date.',
+                        },
+                    ), 304
 
         # If not up-to-date, fetch the file and return it
         return send_from_directory(
@@ -60,12 +69,6 @@ def download_model(model_name):
     except FileNotFoundError:
         return jsonify({'error': 'Model not found.'}), 404
     except requests.RequestException as e:
-        return (
-            jsonify(
-                {
-                    'error': 'Failed to fetch model information.',
-                    'details': str(e),
-                },
-            ),
-            500,
-        )
+        # Log the detailed error internally
+        current_app.logger.error(f'Error fetching model information: {e}')
+        return jsonify({'error': 'Failed to fetch model information.'}), 500

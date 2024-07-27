@@ -126,7 +126,14 @@ def main():
     message = 'Hello, WeChat!'
     image = np.zeros((100, 100, 3), dtype=np.uint8)  # Example image (black)
     response = notifier.send_notification(user_id, message, image=image)
-    print(response)
+
+    # Remove sensitive data from response before logging
+    sanitised_response = {
+        k: v for k, v in response.items() if k not in [
+            'access_token', 'corp_secret',
+        ]
+    }
+    print(sanitised_response)
 
 
 if __name__ == '__main__':
