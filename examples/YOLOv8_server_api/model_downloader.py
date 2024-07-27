@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime
-from pathlib import Path
+import os
 
 import requests
 from flask import Blueprint
@@ -45,12 +45,21 @@ def download_model(model_name):
                 response.headers['Last-Modified'],
                 '%a, %d %b %Y %H:%M:%S GMT',
             )
-            local_file_path = Path(MODELS_DIRECTORY) / model_name
+
+            # Use os.path.join to safely construct the file path
+            local_file_path = os.path.join(MODELS_DIRECTORY, model_name)
+
+            # Ensure the constructed path is within the expected directory
+            common_path = os.path.commonpath(
+                [local_file_path, MODELS_DIRECTORY],
+            )
+            if common_path != MODELS_DIRECTORY:
+                return jsonify({'error': 'Invalid model name.'}), 400
 
             # Check local file's last modified time
-            if local_file_path.exists():
+            if os.path.exists(local_file_path):
                 local_last_modified = datetime.datetime.fromtimestamp(
-                    local_file_path.stat().st_mtime,
+                    os.path.getmtime(local_file_path),
                 )
 
                 # If local file is up-to-date, return 304 Not Modified
