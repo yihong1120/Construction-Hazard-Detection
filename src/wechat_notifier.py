@@ -128,12 +128,12 @@ def main():
     response = notifier.send_notification(user_id, message, image=image)
 
     # Remove sensitive data from response before logging
-    sanitised_response = {
+    sanitized_response = {
         k: v for k, v in response.items() if k not in [
             'access_token', 'corp_secret',
         ]
     }
-    print(sanitised_response)
+    print(sanitized_response)
 
 
 if __name__ == '__main__':
