@@ -21,12 +21,26 @@ from src.live_stream_detection import LiveStreamDetector
 from src.monitor_logger import LoggerConfig
 from src.stream_capture import StreamCapture
 
+# Load environment variables
+load_dotenv()
+
 is_windows = os.name == 'nt'
 
 if not is_windows:
     import redis
 
-    r = redis.Redis(host='localhost', port=6379, db=0)
+    # Redis configuration
+    redis_host: str = os.getenv('redis_host', 'localhost')
+    redis_port: int = int(os.getenv('redis_port', '6379'))
+    redis_password: str | None = os.getenv('redis_password', None)
+
+    # Connect to Redis
+    r = redis.StrictRedis(
+        host=redis_host,
+        port=redis_port,
+        password=redis_password,
+        decode_responses=True,
+    )
 
 
 class StreamConfig(TypedDict):
@@ -61,9 +75,6 @@ def main(
         run_local (bool): Whether to run detection using a local model.
             Defaults to True.
     """
-    # Load environment variables
-    load_dotenv()
-
     # Initialise the stream capture object
     streaming_capture = StreamCapture(stream_url=video_url)
 
@@ -164,7 +175,7 @@ def main(
 
         if not is_windows:
             # Use a unique key for each thread or process
-            key = f"{label}_{image_name}"
+            key = f"{label}_{image_name}".encode('utf-8')
 
             # Store the frame in Redis
             r.set(key, frame_bytes)
