@@ -34,9 +34,14 @@ class StreamCapture:
         Args:
             stream_url (str): The URL of the video stream.
         """
+        # Video stream URL
         self.stream_url = stream_url
+        # Video capture object
         self.cap: cv2.VideoCapture | None = None
+        # Frame capture interval in seconds
         self.capture_interval = capture_interval
+        # Flag to indicate successful capture
+        self.successfully_captured = False
 
     def initialise_stream(self, stream_url: str) -> None:
         """
@@ -90,14 +95,18 @@ class StreamCapture:
                 )
                 self.release_resources()
                 self.initialise_stream(self.stream_url)
-                # After 5 consecutive failures, switch to generic capture
-                if fail_count >= 5:
+                # Switch to generic frame capture after 5 consecutive failures
+                if fail_count >= 5 and not self.successfully_captured:
                     print('Switching to generic frame capture method.')
                     yield from self.capture_generic_frames()
                     return
                 continue
             else:
-                fail_count = 0  # Reset fail count on successful read
+                # Reset fail count on successful read
+                fail_count = 0
+
+                # Mark as successfully captured
+                self.successfully_captured = True  #
 
             # Process the frame if the capture interval has elapsed
             current_time = datetime.datetime.now()
@@ -181,40 +190,54 @@ class StreamCapture:
         Yields:
             Tuple[cv2.Mat, float]: The captured frame and the timestamp.
         """
+        # Select the stream quality based on internet speed
         stream_url = self.select_quality_based_on_speed()
         if not stream_url:
             print('Failed to get suitable stream quality.')
             return
 
+        # Initialise the stream with the selected URL
         self.initialise_stream(stream_url)
 
         last_process_time = datetime.datetime.now()
         fail_count = 0  # Counter for consecutive failures
 
         while True:
+            # Read the frame from the stream
             ret, frame = (
                 self.cap.read() if self.cap is not None else (False, None)
             )
+
+            # Handle failed frame reads
             if not ret:
                 fail_count += 1
                 print(
                     'Failed to read frame from generic stream. '
                     f"Fail count: {fail_count}",
                 )
-                # After 5 consecutive failures, reinitialise the stream
-                if fail_count >= 5:
+
+                # Reinitialise the stream after 5 consecutive failures
+                if fail_count >= 5 and not self.successfully_captured:
                     print('Reinitialising the generic stream.')
                     self.release_resources()
                     time.sleep(5)
                     stream_url = self.select_quality_based_on_speed()
+
+                    # Exit if no suitable stream quality is available
                     if not stream_url:
                         print('Failed to get suitable stream quality.')
                         continue
+
+                    # Reinitialise the stream with the new URL
                     self.initialise_stream(stream_url)
                     fail_count = 0
                 continue
             else:
-                fail_count = 0  # Reset fail count on successful read
+                # Reset fail count on successful read
+                fail_count = 0
+
+                # Mark as successfully captured
+                self.successfully_captured = True
 
             current_time = datetime.datetime.now()
             elapsed_time = (current_time - last_process_time).total_seconds()
