@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+
 import redis
+from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS
 from flask_limiter import Limiter
@@ -10,7 +13,20 @@ from flask_socketio import SocketIO
 from .routes import register_routes
 from .sockets import register_sockets
 
-r = redis.Redis(host='localhost', port=6379, db=0)
+load_dotenv()
+
+# Redis configuration
+redis_host: str = os.getenv('redis_host', 'localhost')
+redis_port: int = int(os.getenv('redis_port', '6379'))
+redis_password: str | None = os.getenv('redis_password', None)
+
+# Connect to Redis
+r = redis.StrictRedis(
+    host=redis_host,
+    port=redis_port,
+    password=redis_password,
+    decode_responses=False,
+)
 
 app = Flask(__name__)
 CORS(app)  # Allow cross-origin requests from any domain
