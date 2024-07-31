@@ -175,7 +175,7 @@ def main(
 
         if not is_windows:
             # Use a unique key for each thread or process
-            key = f"{label}_{image_name}".encode('utf-8')
+            key = f"{label}_{image_name}".encode()
 
             # Store the frame in Redis
             r.set(key, frame_bytes)
