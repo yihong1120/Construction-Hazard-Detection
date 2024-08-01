@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import unittest
 
-from shapely.geometry import MultiPoint
-from shapely.geometry import Polygon
-
 from src.danger_detector import DangerDetector
 
 
@@ -73,26 +70,28 @@ class TestDangerDetector(unittest.TestCase):
             [200, 200, 300, 300, 0.85, 5],  # 人員
             [400, 400, 500, 500, 0.75, 9],  # 車輛
         ]
-        polygon: Polygon = MultiPoint(
-            [(100, 100), (250, 250), (450, 450), (500, 200), (150, 400)],
-        ).convex_hull
-        people_count: int = self.detector.calculate_people_in_controlled_area(
-            datas, polygon,
+        people_count, polygons = (
+            self.detector.calculate_people_in_controlled_area(
+                datas,
+            )
         )
-        self.assertEqual(people_count, 1)
+        self.assertEqual(people_count, 0)
 
         datas = [
             [100, 100, 120, 120, 0.9, 6],  # Safety cone
             [150, 150, 170, 170, 0.85, 6],  # Safety cone
             [130, 130, 140, 140, 0.95, 5],  # Person inside the area
             [300, 300, 320, 320, 0.85, 5],  # Person outside the area
+            [50, 50, 70, 70, 0.89, 6],
+            [250, 250, 270, 270, 0.85, 6],
+            [450, 450, 470, 470, 0.92, 6],
         ]
-        # Not enough cones to form a polygon
-        polygon = MultiPoint([(100, 100), (150, 150)]).convex_hull
-        people_count = self.detector.calculate_people_in_controlled_area(
-            datas, None,
-        )  # should pass None
-        self.assertEqual(people_count, 0)
+        people_count, polygons = (
+            self.detector.calculate_people_in_controlled_area(
+                datas,
+            )
+        )
+        self.assertEqual(people_count, 1)
 
     def test_detect_danger(self) -> None:
         """
@@ -102,12 +101,11 @@ class TestDangerDetector(unittest.TestCase):
             [50, 50, 150, 150, 0.95, 0],    # 安全帽
             [200, 200, 300, 300, 0.85, 5],  # 人員
             [400, 400, 500, 500, 0.75, 2],  # 無安背心
+            [0, 0, 10, 10, 0.88, 6],
+            [0, 1000, 10, 1010, 0.87, 6],
+            [1000, 0, 1010, 10, 0.89, 6],
         ]
-        polygon: Polygon = MultiPoint(
-            [(100, 100), (250, 250), (450, 450), (500, 200), (150, 400)],
-        ).convex_hull
-        warnings: set[str] = self.detector.detect_danger(data, polygon)
-        print(f"warnings: {warnings}")
+        warnings, polygons = self.detector.detect_danger(data)
         self.assertIn('警告: 有1個人進入受控區域!', warnings)
         self.assertIn('警告: 有人無配戴安全帽!', warnings)
 
@@ -116,19 +114,22 @@ class TestDangerDetector(unittest.TestCase):
             [0.45513, 471.77, 662.03, 1071.4, 0.75853, 5.0],  # Person
             [1042.7, 638.5, 1077.5, 731.98, 0.56060, 4.0],  # No safety vest
             [500, 500, 700, 700, 0.95, 8],  # Machinery
+            [50, 50, 70, 70, 0.89, 6],
+            [250, 250, 270, 270, 0.85, 6],
+            [450, 450, 470, 470, 0.92, 6],
         ]
-        polygon = MultiPoint([(100, 100), (150, 150), (200, 200)]).convex_hull
-        warnings = self.detector.detect_danger(data, polygon)
-        self.assertNotIn('警告: 有人無配戴安全帽!', warnings)
+        warnings, polygons = self.detector.detect_danger(data)
         self.assertIn('警告: 有人無穿著安全背心!', warnings)
 
         data = [
             [706.87, 445.07, 976.32, 1073.6, 0.91, 2.0],  # No hardhat
             [0.45513, 471.77, 662.03, 1071.4, 0.75853, 4.0],  # No safety vest
             [500, 500, 700, 700, 0.95, 8],  # Machinery
+            [50, 50, 70, 70, 0.89, 6],
+            [250, 250, 270, 270, 0.85, 6],
+            [450, 450, 470, 470, 0.92, 6],
         ]
-        polygon = MultiPoint([(100, 100), (150, 150), (200, 200)]).convex_hull
-        warnings = self.detector.detect_danger(data, polygon)
+        warnings, polygons = self.detector.detect_danger(data)
         self.assertIn('警告: 有人無配戴安全帽!', warnings)
         self.assertIn('警告: 有人無穿著安全背心!', warnings)
         self.assertNotIn('警告: 有人過於靠近機具!', warnings)

@@ -8,7 +8,6 @@ import numpy as np
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageFont
-from shapely.geometry import MultiPoint
 from shapely.geometry import Polygon
 
 
@@ -56,49 +55,29 @@ class DrawingManager:
     def draw_safety_cones_polygon(
         self,
         frame: np.ndarray,
-        datas: list[list[float]],
-    ) -> tuple[np.ndarray, Polygon | None]:
+        polygons: list[Polygon],
+    ) -> np.ndarray:
         """
         Draws safety cones on the given frame and forms a polygon from them.
 
         Args:
             frame (np.ndarray): The frame on which to draw safety cones.
-            datas (List[List[float]]): The detection data.
-
+            polygons (List[Polygon]): list of polygons containing safety cones.
         Returns:
-            Tuple[np.ndarray, Optional[Polygon]]: The frame with
-                safety cones drawn, and the polygon formed by the safety cones.
+            np.ndarray: The frame with safety cones drawn.
         """
-        if not datas:
-            return frame, None
+        # Convert frame to PIL image
+        frame_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
-        # Get positions of safety cones
-        cone_positions = np.array([
-            (
-                (float(data[0]) + float(data[2])) / 2,
-                (float(data[1]) + float(data[3])) / 2,
-            )
-            for data in datas if data[5] == 6
-        ])
+        # Create a transparent layer
+        overlay = Image.new('RGBA', frame_pil.size, (255, 0, 0, 0))
+        overlay_draw = ImageDraw.Draw(overlay)
 
-        # Check if there are at least three safety cones to form a polygon
-        if len(cone_positions) < 3:
-            return frame, None
-
-        # Create a polygon from the cone positions
-        polygon = MultiPoint(cone_positions).convex_hull
-
-        if isinstance(polygon, Polygon):
+        # Draw the safety cones
+        for polygon in polygons:
             polygon_points = np.array(
                 polygon.exterior.coords, dtype=np.float32,
             )
-
-            # Convert frame to PIL image
-            frame_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-
-            # Create a transparent layer
-            overlay = Image.new('RGBA', frame_pil.size, (255, 0, 0, 0))
-            overlay_draw = ImageDraw.Draw(overlay)
 
             # Draw the polygon with semi-transparent pink colour
             overlay_draw.polygon(
@@ -106,34 +85,29 @@ class DrawingManager:
                 fill=(255, 105, 180, 128),
             )
 
-            # Composite the overlay with the original image
-            frame_pil = Image.alpha_composite(
-                frame_pil.convert('RGBA'), overlay,
-            )
-
-            # Convert back to OpenCV image
-            frame = cv2.cvtColor(
-                np.array(frame_pil.convert('RGB')), cv2.COLOR_RGB2BGR,
-            )
-
             # Draw the polygon border
-            cv2.polylines(
-                frame, [
-                    polygon_points.astype(
-                        np.int32,
-                    ),
-                ], isClosed=True, color=(255, 0, 255), thickness=2,
+            overlay_draw.line(
+                [tuple(point) for point in polygon_points] +
+                [tuple(polygon_points[0])],
+                fill=(255, 0, 255), width=2,
             )
-        else:
-            print('Warning: Convex hull is not a polygon.')
 
-        return frame, polygon
+        # Composite the overlay with the original image
+        frame_pil = Image.alpha_composite(frame_pil.convert('RGBA'), overlay)
+
+        # Convert back to OpenCV image
+        frame = cv2.cvtColor(
+            np.array(frame_pil.convert('RGB')), cv2.COLOR_RGB2BGR,
+        )
+
+        return frame
 
     def draw_detections_on_frame(
         self,
         frame: np.ndarray,
+        polygons: list[Polygon],
         datas: list[list[float]],
-    ) -> tuple[np.ndarray, Polygon | None]:
+    ) -> np.ndarray:
         """
         Draws detections on the given frame.
 
@@ -142,17 +116,18 @@ class DrawingManager:
             datas (List[List[float]]): The detection data.
 
         Returns:
-            Tuple[np.ndarray, Optional[Polygon]]: The frame with
-                detections drawn, and the polygon formed by the safety cones.
+            np.ndarray: The frame with detections drawn.
         """
         # Draw safety cones first
-        frame, polygon = self.draw_safety_cones_polygon(frame, datas)
+        if polygons:
+            frame = self.draw_safety_cones_polygon(frame, polygons)
 
         # Convert the frame to RGB and create a PIL image
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(frame_rgb)
         draw = ImageDraw.Draw(pil_image)
 
+        # Draw the detections on the frame
         for data in datas:
             x1, y1, x2, y2, _, label_id = data
             label_id = int(label_id)
@@ -161,6 +136,7 @@ class DrawingManager:
             else:
                 continue
 
+            # Draw the bounding box
             x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
             if label not in self.exclude_labels:
                 color = self.colors.get(label, (255, 255, 255))
@@ -183,7 +159,8 @@ class DrawingManager:
         frame_with_detections = cv2.cvtColor(
             np.array(pil_image), cv2.COLOR_RGB2BGR,
         )
-        return frame_with_detections, polygon
+
+        return frame_with_detections
 
     def save_frame(self, frame_bytes: bytearray, output_filename: str) -> None:
         """
@@ -229,12 +206,16 @@ if __name__ == '__main__':
         [150, 400, 170, 420, 0.7, 6],
     ]
 
+    # Define the points directly
+    points = [(100, 100), (250, 250), (450, 450), (500, 200), (150, 400)]
+    polygon = Polygon(points).convex_hull
+
     # Initialise DrawingManager class
     drawer_saver = DrawingManager()
 
     # Draw detections on frame (including safety cones)
-    frame_with_detections, polygon = drawer_saver.draw_detections_on_frame(
-        frame, datas,
+    frame_with_detections = drawer_saver.draw_detections_on_frame(
+        frame, polygon, datas,
     )
 
     # Save the frame with detections

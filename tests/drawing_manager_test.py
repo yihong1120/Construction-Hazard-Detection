@@ -32,6 +32,12 @@ class TestDrawingManager(unittest.TestCase):
             [500, 200, 520, 220, 0.7, 6],   # 安全錐
             [150, 400, 170, 420, 0.7, 6],   # 安全錐
         ]
+        self.polygons: list[Polygon] = [
+            Polygon([
+                (100, 100), (250, 250), (450, 450),
+                (500, 200), (150, 400),
+            ]).convex_hull,
+        ]
 
     def tearDown(self) -> None:
         """
@@ -40,6 +46,7 @@ class TestDrawingManager(unittest.TestCase):
         del self.drawer
         del self.frame
         del self.datas
+        del self.polygons
 
         # Remove the output directory
         output_dir: Path = Path('detected_frames/test_output')
@@ -54,8 +61,8 @@ class TestDrawingManager(unittest.TestCase):
         """
         Test drawing detections on a frame.
         """
-        frame_with_detections, _ = self.drawer.draw_detections_on_frame(
-            self.frame.copy(), self.datas,
+        frame_with_detections = self.drawer.draw_detections_on_frame(
+            self.frame.copy(), self.polygons, self.datas,
         )
 
         # Check if the frame returned is a numpy array
@@ -102,8 +109,8 @@ class TestDrawingManager(unittest.TestCase):
         """
         Test drawing on a frame with no detections.
         """
-        frame_with_detections, _ = self.drawer.draw_detections_on_frame(
-            self.frame.copy(), [],
+        frame_with_detections = self.drawer.draw_detections_on_frame(
+            self.frame.copy(), [], [],
         )
 
         # Check if the frame returned is a numpy array
@@ -122,7 +129,7 @@ class TestDrawingManager(unittest.TestCase):
         """
         Test drawing a safety cones polygon with no cones.
         """
-        frame_with_polygon, _ = self.drawer.draw_safety_cones_polygon(
+        frame_with_polygon = self.drawer.draw_safety_cones_polygon(
             self.frame.copy(), [],
         )
 
@@ -142,8 +149,8 @@ class TestDrawingManager(unittest.TestCase):
         """
         Test drawing a safety cones polygon.
         """
-        frame_with_polygon, polygon = self.drawer.draw_safety_cones_polygon(
-            self.frame.copy(), self.datas,
+        frame_with_polygon = self.drawer.draw_safety_cones_polygon(
+            self.frame.copy(), self.polygons,
         )
 
         # Check if the frame returned is a numpy array
@@ -157,7 +164,7 @@ class TestDrawingManager(unittest.TestCase):
         # Colour of the polygon border (pink)
         expected_color: tuple[int, int, int] = (255, 0, 255)
 
-        if isinstance(polygon, Polygon):
+        for polygon in self.polygons:
             polygon_points: np.ndarray = np.array(
                 polygon.exterior.coords, dtype=np.int32,
             )
@@ -185,8 +192,18 @@ class TestDrawingManager(unittest.TestCase):
         datas: list[list[float]] = [
             [300, 50, 400, 150, 0.75, 6],    # Only one safety cone detection
         ]
-        frame_with_polygon, _ = self.drawer.draw_safety_cones_polygon(
-            self.frame.copy(), datas,
+        # Extract only the coordinates for creating the Polygon
+        coords = [
+            (
+                (float(data[0]) + float(data[2])) / 2,
+                (float(data[1]) + float(data[3])) / 2,
+            )
+            for data in datas
+        ]
+        frame_with_polygon = self.drawer.draw_safety_cones_polygon(
+            self.frame.copy(), [Polygon(coords).convex_hull] if len(
+                coords,
+            ) >= 3 else [],
         )
 
         # Check if the frame returned is a numpy array
@@ -207,13 +224,24 @@ class TestDrawingManager(unittest.TestCase):
         """
         # Generate a large number of safety cones
         num_cones: int = 100
-        datas: list[list[float]] = [[
-            np.random.randint(0, 640), np.random.randint(0, 480),
-            np.random.randint(0, 640), np.random.randint(0, 480),
-            0.75, 6,
-        ] for _ in range(num_cones)]
-        frame_with_polygon, _ = self.drawer.draw_safety_cones_polygon(
-            self.frame.copy(), datas,
+        datas: list[list[float]] = [
+            [
+                np.random.randint(0, 640), np.random.randint(0, 480),
+                np.random.randint(0, 640), np.random.randint(0, 480),
+                0.75, 6,
+            ]
+            for _ in range(num_cones)
+        ]
+        # Extract only the coordinates for creating the Polygon
+        coords = [
+            (
+                (float(data[0]) + float(data[2])) / 2,
+                (float(data[1]) + float(data[3])) / 2,
+            )
+            for data in datas
+        ]
+        frame_with_polygon = self.drawer.draw_safety_cones_polygon(
+            self.frame.copy(), [Polygon(coords).convex_hull],
         )
 
         # Check if the frame returned is a numpy array
