@@ -112,14 +112,17 @@ def main(
         # Detect hazards in the frame
         datas, _ = live_stream_detector.generate_detections(frame)
 
-        # Draw the detections on the frame
-        frame_with_detections, controlled_zone_polygon = (
-            drawing_manager.draw_detections_on_frame(frame, datas)
+        # Check for warnings and send notifications if necessary
+        warnings, controlled_zone_polygon = danger_detector.detect_danger(
+            datas,
         )
 
-        # Convert the frame to a byte array
-        _, buffer = cv2.imencode('.png', frame_with_detections)
-        frame_bytes = buffer.tobytes()
+        # Draw the detections on the frame
+        frame_with_detections = (
+            drawing_manager.draw_detections_on_frame(
+                frame, controlled_zone_polygon, datas,
+            )
+        )
 
         # Save the frame with detections
         # save_file_name = f'{label}_{image_name}_{detection_time}'
@@ -127,6 +130,10 @@ def main(
         #   frame_with_detections,
         #   save_file_name
         # )
+
+        # Convert the frame to a byte array
+        _, buffer = cv2.imencode('.png', frame_with_detections)
+        frame_bytes = buffer.tobytes()
 
         # Log the detection results
         logger.info(f"{label} - {image_name}")
@@ -139,34 +146,29 @@ def main(
             # >5 mins since last notification
             (timestamp - last_notification_time) > 300 and
             # Between 7 AM and 6 PM
-            (7 <= current_hour < 18)
+            (7 <= current_hour < 18) and
+            # Check if there are warning messages
+            warnings
         ):
-            # Check for warnings and send notifications if necessary
-            warnings = danger_detector.detect_danger(
-                datas, controlled_zone_polygon,
+            # Combine all warnings into one message
+            message = f"{image_name}\n[{detection_time}]\n" + '\n'.join(
+                [f"{warning}" for warning in warnings],
             )
 
-            # Check if there are any warnings
-            if warnings:
-                # Combine all warnings into one message
-                message = f"{image_name}\n[{detection_time}]\n" + '\n'.join(
-                    [f"{warning}" for warning in warnings],
+            # Send notification, with image if image_name set
+            notification_status = line_notifier.send_notification(
+                message,
+                image=frame_bytes if frame_bytes is not None else None,
+            )
+            if notification_status == 200:
+                logger.warning(
+                    f"Notification sent successfully: {message}",
                 )
+            else:
+                logger.error(f"Failed to send notification: {message}")
 
-                # Send notification, with image if image_name set
-                notification_status = line_notifier.send_notification(
-                    message,
-                    image=frame_bytes if frame_bytes is not None else None,
-                )
-                if notification_status == 200:
-                    logger.warning(
-                        f"Notification sent successfully: {message}",
-                    )
-                else:
-                    logger.error(f"Failed to send notification: {message}")
-
-                # Update the last_notification_time to the current time
-                last_notification_time = int(timestamp)
+            # Update the last_notification_time to the current time
+            last_notification_time = int(timestamp)
 
         else:
             logger.info(
