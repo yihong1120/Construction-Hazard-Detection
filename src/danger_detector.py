@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-from hdbscan import HDBSCAN
+# from hdbscan import HDBSCAN
+from sklearn.cluster import HDBSCAN
 from shapely.geometry import MultiPoint
 from shapely.geometry import Point
 from shapely.geometry import Polygon
@@ -17,7 +18,7 @@ class DangerDetector:
         Initialises the danger detector.
         """
         # Initialise the HDBSCAN clusterer
-        self.clusterer = HDBSCAN(min_samples=4, min_cluster_size=2)
+        self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
 
     def detect_polygon_from_cones(
         self,
