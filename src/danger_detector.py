@@ -49,16 +49,8 @@ class DangerDetector:
         if len(cone_positions) < 3:
             return []
 
-        cone_positions = np.array([
-            [0, 0], [0, 1000], [1000, 0],
-            [200, 100], [300, 200], [400, 300],
-            [500, 400], [600, 500], [700, 600],
-            [800, 700], [900, 800], [100, 200],
-            [300, 400], [500, 600], [700, 800],
-        ])
-        print(f"cone_positions: {cone_positions}")
+        # Cluster the safety cones
         labels = self.clusterer.fit_predict(cone_positions)
-        print(f"labels: {labels}")
 
         # Extract clusters
         clusters: dict[int, list[np.ndarray]] = {}
@@ -80,27 +72,26 @@ class DangerDetector:
 
     def calculate_people_in_controlled_area(
         self,
+        polygons: list[Polygon],
         datas: list[list[float]],
-    ) -> tuple[int, list[Polygon]]:
+    ) -> int:
         """
         Calculates the number of people within the safety cone area.
 
         Args:
+            polygons (List[Polygon]): The polygons representing controlled areas.
             datas (List[List[float]]): The detection data.
 
         Returns:
-            Tuple[int, List[Polygon]]: People count and polygons list.
+            int: The number of people within the controlled area.
         """
         # Check if there are any detections
         if not datas:
-            return 0, []
-
-        # Detect the polygons from the safety cones
-        polygons = self.detect_polygon_from_cones(datas)
+            return 0
 
         # Check if there are valid polygons
         if not polygons:
-            return 0, []
+            return 0
 
         # Use a set to track unique people
         unique_people = set()
@@ -117,7 +108,7 @@ class DangerDetector:
                         unique_people.add((x_center, y_center))
                         break  # No need to check other polygons
 
-        return len(unique_people), polygons
+        return len(unique_people)
 
     def detect_danger(
         self,
@@ -141,9 +132,8 @@ class DangerDetector:
         warnings = set()  # Initialise the list to store warning messages
 
         # Check if people are entering the controlled area
-        people_count, polygons = self.calculate_people_in_controlled_area(
-            datas,
-        )
+        polygons = self.detect_polygon_from_cones(datas)
+        people_count = self.calculate_people_in_controlled_area(polygons, datas)
         if people_count > 0:
             warnings.add(f'警告: 有{people_count}個人進入受控區域!')
 
@@ -333,13 +323,27 @@ class DangerDetector:
 # Example usage
 if __name__ == '__main__':
     detector = DangerDetector()
+
     data: list[list[float]] = [
-        [50, 50, 150, 150, 0.95, 0],    # 安全帽
-        [200, 200, 300, 300, 0.85, 5],  # 人員
-        [400, 400, 500, 500, 0.75, 2],  # 無安背心
-        [0, 0, 10, 10, 0.88, 6],
-        [0, 1000, 10, 1010, 0.87, 6],
-        [1000, 0, 1010, 10, 0.89, 6],
+        [50, 50, 150, 150, 0.95, 0],    # Hardhat
+        [200, 200, 300, 300, 0.85, 5],  # Person
+        [400, 400, 500, 500, 0.75, 2],  # NO-Hardhat
+        [0, 0, 10, 10, 0.88, 6], # Safety cone
+        [0, 1000, 10, 1010, 0.87, 6], # Safety cone
+        [1000, 0, 1010, 10, 0.89, 6], # Safety cone
+        [100, 100, 120, 120, 0.9, 6],  # Safety cone
+        [150, 150, 170, 170, 0.85, 6],  # Safety cone
+        [200, 200, 220, 220, 0.89, 6],  # Safety cone
+        [250, 250, 270, 270, 0.85, 6],  # Safety cone
+        [450, 450, 470, 470, 0.92, 6],  # Safety cone
+        [500, 500, 520, 520, 0.88, 6],  # Safety cone
+        [550, 550, 570, 570, 0.86, 6],  # Safety cone
+        [600, 600, 620, 620, 0.84, 6],  # Safety cone
+        [650, 650, 670, 670, 0.82, 6],  # Safety cone
+        [700, 700, 720, 720, 0.80, 6],  # Safety cone
+        [750, 750, 770, 770, 0.78, 6],  # Safety cone
+        [800, 800, 820, 820, 0.76, 6],  # Safety cone
+        [850, 850, 870, 870, 0.74, 6],  # Safety cone
     ]
 
     warnings, polygons = detector.detect_danger(data)

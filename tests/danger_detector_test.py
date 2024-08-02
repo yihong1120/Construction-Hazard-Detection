@@ -70,10 +70,9 @@ class TestDangerDetector(unittest.TestCase):
             [200, 200, 300, 300, 0.85, 5],  # 人員
             [400, 400, 500, 500, 0.75, 9],  # 車輛
         ]
-        people_count, polygons = (
-            self.detector.calculate_people_in_controlled_area(
-                datas,
-            )
+        polygons = self.detector.detect_polygon_from_cones(datas)
+        people_count = self.detector.calculate_people_in_controlled_area(
+            polygons, datas
         )
         self.assertEqual(people_count, 0)
 
@@ -82,14 +81,23 @@ class TestDangerDetector(unittest.TestCase):
             [150, 150, 170, 170, 0.85, 6],  # Safety cone
             [130, 130, 140, 140, 0.95, 5],  # Person inside the area
             [300, 300, 320, 320, 0.85, 5],  # Person outside the area
-            [50, 50, 70, 70, 0.89, 6],
-            [250, 250, 270, 270, 0.85, 6],
-            [450, 450, 470, 470, 0.92, 6],
+            [200, 200, 220, 220, 0.89, 6],  # Safety cone
+            [250, 250, 270, 270, 0.85, 6],  # Safety cone
+            [450, 450, 470, 470, 0.92, 6],  # Safety cone
+            [500, 500, 520, 520, 0.88, 6],  # Safety cone
+            [550, 550, 570, 570, 0.86, 6],  # Safety cone
+            [600, 600, 620, 620, 0.84, 6],  # Safety cone
+            [650, 650, 670, 670, 0.82, 6],  # Safety cone
+            [700, 700, 720, 720, 0.80, 6],  # Safety cone
+            [750, 750, 770, 770, 0.78, 6],  # Safety cone
+            [800, 800, 820, 820, 0.76, 6],  # Safety cone
+            [850, 850, 870, 870, 0.74, 6],  # Safety cone
         ]
-        people_count, polygons = (
-            self.detector.calculate_people_in_controlled_area(
-                datas,
-            )
+
+        polygons = self.detector.detect_polygon_from_cones(datas)
+        print(f"polygons: {polygons}")
+        people_count = self.detector.calculate_people_in_controlled_area(
+            polygons, datas
         )
         self.assertEqual(people_count, 1)
 
@@ -104,8 +112,23 @@ class TestDangerDetector(unittest.TestCase):
             [0, 0, 10, 10, 0.88, 6],
             [0, 1000, 10, 1010, 0.87, 6],
             [1000, 0, 1010, 10, 0.89, 6],
+            [100, 100, 120, 120, 0.9, 6],  # Safety cone
+            [150, 150, 170, 170, 0.85, 6],  # Safety cone
+            [200, 200, 220, 220, 0.89, 6],  # Safety cone
+            [250, 250, 270, 270, 0.85, 6],  # Safety cone
+            [450, 450, 470, 470, 0.92, 6],  # Safety cone
+            [500, 500, 520, 520, 0.88, 6],  # Safety cone
+            [550, 550, 570, 570, 0.86, 6],  # Safety cone
+            [600, 600, 620, 620, 0.84, 6],  # Safety cone
+            [650, 650, 670, 670, 0.82, 6],  # Safety cone
+            [700, 700, 720, 720, 0.80, 6],  # Safety cone
+            [750, 750, 770, 770, 0.78, 6],  # Safety cone
+            [800, 800, 820, 820, 0.76, 6],  # Safety cone
+            [850, 850, 870, 870, 0.74, 6],  # Safety cone
         ]
         warnings, polygons = self.detector.detect_danger(data)
+        print(f"warnings: {warnings}")
+        print(f"polygons: {polygons}")
         self.assertIn('警告: 有1個人進入受控區域!', warnings)
         self.assertIn('警告: 有人無配戴安全帽!', warnings)
 
