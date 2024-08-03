@@ -72,7 +72,7 @@ class TestDangerDetector(unittest.TestCase):
         ]
         polygons = self.detector.detect_polygon_from_cones(datas)
         people_count = self.detector.calculate_people_in_controlled_area(
-            polygons, datas
+            polygons, datas,
         )
         self.assertEqual(people_count, 0)
 
@@ -97,7 +97,7 @@ class TestDangerDetector(unittest.TestCase):
         polygons = self.detector.detect_polygon_from_cones(datas)
         print(f"polygons: {polygons}")
         people_count = self.detector.calculate_people_in_controlled_area(
-            polygons, datas
+            polygons, datas,
         )
         self.assertEqual(people_count, 1)
 

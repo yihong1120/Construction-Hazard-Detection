@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import numpy as np
-# from hdbscan import HDBSCAN
-from sklearn.cluster import HDBSCAN
 from shapely.geometry import MultiPoint
 from shapely.geometry import Point
 from shapely.geometry import Polygon
+from sklearn.cluster import HDBSCAN
+# from hdbscan import HDBSCAN
 
 
 class DangerDetector:
@@ -79,7 +79,7 @@ class DangerDetector:
         Calculates the number of people within the safety cone area.
 
         Args:
-            polygons (List[Polygon]): The polygons representing controlled areas.
+            polygons (List[Polygon]): Polygons representing controlled areas.
             datas (List[List[float]]): The detection data.
 
         Returns:
@@ -133,7 +133,9 @@ class DangerDetector:
 
         # Check if people are entering the controlled area
         polygons = self.detect_polygon_from_cones(datas)
-        people_count = self.calculate_people_in_controlled_area(polygons, datas)
+        people_count = self.calculate_people_in_controlled_area(
+            polygons, datas,
+        )
         if people_count > 0:
             warnings.add(f'警告: 有{people_count}個人進入受控區域!')
 
@@ -328,9 +330,9 @@ if __name__ == '__main__':
         [50, 50, 150, 150, 0.95, 0],    # Hardhat
         [200, 200, 300, 300, 0.85, 5],  # Person
         [400, 400, 500, 500, 0.75, 2],  # NO-Hardhat
-        [0, 0, 10, 10, 0.88, 6], # Safety cone
-        [0, 1000, 10, 1010, 0.87, 6], # Safety cone
-        [1000, 0, 1010, 10, 0.89, 6], # Safety cone
+        [0, 0, 10, 10, 0.88, 6],  # Safety cone
+        [0, 1000, 10, 1010, 0.87, 6],  # Safety cone
+        [1000, 0, 1010, 10, 0.89, 6],  # Safety cone
         [100, 100, 120, 120, 0.9, 6],  # Safety cone
         [150, 150, 170, 170, 0.85, 6],  # Safety cone
         [200, 200, 220, 220, 0.89, 6],  # Safety cone

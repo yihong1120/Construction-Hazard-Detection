@@ -66,7 +66,7 @@ class StreamCapture:
             self.cap = None
         gc.collect()
 
-    def execute_capture(self) -> Generator[tuple[cv2.Mat, float], None, None]:
+    def execute_capture(self) -> Generator[tuple[cv2.Mat, float]]:
         """
         Captures frames from the stream and yields them with timestamps.
 
@@ -183,7 +183,7 @@ class StreamCapture:
 
     def capture_generic_frames(
         self,
-    ) -> Generator[tuple[cv2.Mat, float], None, None]:
+    ) -> Generator[tuple[cv2.Mat, float]]:
         """
         Captures frames from a generic stream.
 
