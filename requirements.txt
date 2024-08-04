@@ -1,4 +1,5 @@
 apscheduler==3.10.4
+codecov==2.1.13
 eventlet==0.36.1
 Flask==3.0.3
 Flask-Cors==4.0.1
@@ -7,7 +8,6 @@ Flask-Limiter==3.8.0
 Flask-SocketIO==5.3.6
 Flask-SQLAlchemy==3.1.1
 gunicorn==22.0.0
-HDBSCAN==0.8.37
 imagecorruptions==1.1.2
 imageio==2.34.2
 imgaug==0.4.0
@@ -19,6 +19,7 @@ Pillow==10.3.0
 pre-commit==3.7.1
 pycocotools==2.0.8
 pytest==8.3.2
+pytest-cov==5.0.0
 python-dotenv==1.0.1
 python-telegram-bot==21.4
 redis==5.0.7
@@ -30,4 +31,4 @@ tenacity==8.5.0
 torch==2.4.0
 torchvision==0.19.0
 twilio==9.2.3
-ultralytics==8.2.66
+ultralytics==8.2.72
