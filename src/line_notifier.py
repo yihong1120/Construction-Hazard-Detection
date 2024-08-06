@@ -43,7 +43,7 @@ class LineNotifier:
     def send_notification(
         self,
         message: str,
-        image: np.ndarray | None = None,
+        image: np.ndarray | bytes | None = None,
     ) -> int:
         """
         Sends a notification via LINE Notify, optionally including an image.
@@ -51,7 +51,7 @@ class LineNotifier:
         Args:
             message (str): The message to send.
             label (Optional[str]): The label of the image_name.
-            image (Optional[np.ndarray]): The image to send with the message.
+            image (Optional[np.ndarray | bytes]): Image sent with the message.
                 Defaults to None.
 
         Returns:
