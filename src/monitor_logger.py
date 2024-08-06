@@ -102,13 +102,18 @@ class LoggerConfig:
         return self.logger
 
 
-# This block is executed when the script is run directly, not when imported
-if __name__ == '__main__':
-    # Example usage of the LoggerConfig class:
-
+def main():
+    """
+    Main function to initialise logger and log a message.
+    """
     # Initialise the logger configuration
     logger_config = LoggerConfig()
     logger = logger_config.get_logger()
 
     # Log a message indicating that the logging setup is complete
     logger.info('Logging setup complete.')
+
+
+# This block is executed when the script is run directly, not when imported
+if __name__ == '__main__':
+    main()

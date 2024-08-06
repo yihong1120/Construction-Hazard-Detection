@@ -242,11 +242,9 @@ class LiveStreamDetector:
             list: A list of detection data with overlapping labels removed.
         """
         hardhat_indices = [
-            i
-            for i, d in enumerate(
+            i for i, d in enumerate(
                 datas,
-            )
-            if d[5] == 0
+            ) if d[5] == 0
         ]  # Indices of Hardhat detections
         # Indices of NO-Hardhat detections
         no_hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 2]
@@ -258,28 +256,25 @@ class LiveStreamDetector:
         to_remove = set()
         for hardhat_index in hardhat_indices:
             for no_hardhat_index in no_hardhat_indices:
-                if (
-                    self.overlap_percentage(
-                        datas[hardhat_index][:4],
-                        datas[no_hardhat_index][:4],
-                    )
-                    > 0.8
-                ):
+                overlap = self.overlap_percentage(
+                    datas[hardhat_index][:4], datas[no_hardhat_index][:4],
+                )
+                if overlap > 0.8:
                     to_remove.add(no_hardhat_index)
 
         for safety_vest_index in safety_vest_indices:
             for no_safety_vest_index in no_safety_vest_indices:
-                if (
-                    self.overlap_percentage(
-                        datas[safety_vest_index][:4],
-                        datas[no_safety_vest_index][:4],
-                    )
-                    > 0.8
-                ):
+                overlap = self.overlap_percentage(
+                    datas[safety_vest_index][:4],
+                    datas[no_safety_vest_index][:4],
+                )
+                if overlap > 0.8:
                     to_remove.add(no_safety_vest_index)
 
         for index in sorted(to_remove, reverse=True):
             datas.pop(index)
+
+        return datas
 
         gc.collect()
         return datas
@@ -346,10 +341,13 @@ class LiveStreamDetector:
             )
             if d[5] == 0
         ]  # Indices of Hardhat detections
+
         # Indices of NO-Hardhat detections
         no_hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 2]
+
         # Indices of Safety Vest detections
         safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 7]
+
         # Indices of NO-Safety Vest detections
         no_safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 4]
 
@@ -414,34 +412,26 @@ class LiveStreamDetector:
             stream_url (str): The URL of the live stream.
         """
         cap = cv2.VideoCapture(stream_url)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if not cap.isOpened():
+            raise ValueError('Failed to open stream.')
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print('Failed to read frame from the stream. Retrying...')
-                time.sleep(2)
-                continue
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print('Failed to read frame from the stream. Retrying...')
+                    continue
 
-            try:
-                datas, _ = self.generate_detections(frame)
-                print(f"datas: {datas}")
-            except Exception as e:
-                print(f"Detection error: {e}")
-
-            # Clear variables to free up memory
-            del frame, ret, datas
-            gc.collect()
-
-            # Break loop if 'q' key is pressed
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
-        cap.release()
-        cv2.destroyAllWindows()
+                # Perform detection
+                cv2.imshow('Frame', frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
 
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(
         description='Perform live stream detection and tracking using YOLOv8.',
     )
@@ -482,3 +472,7 @@ if __name__ == '__main__':
         run_local=args.run_local,
     )
     detector.run_detection(args.url)
+
+
+if __name__ == '__main__':
+    main()

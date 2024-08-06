@@ -5,7 +5,6 @@ from shapely.geometry import MultiPoint
 from shapely.geometry import Point
 from shapely.geometry import Polygon
 from sklearn.cluster import HDBSCAN
-# from hdbscan import HDBSCAN
 
 
 class DangerDetector:
@@ -19,6 +18,36 @@ class DangerDetector:
         """
         # Initialise the HDBSCAN clusterer
         self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
+
+    def normalise_bbox(self, bbox):
+        """
+        Normalises the bounding box coordinates.
+
+        Args:
+            bbox (list[float]): The bounding box coordinates.
+
+        Returns:
+            list[float]: Normalised coordinates.
+        """
+        left_x = min(bbox[0], bbox[2])
+        right_x = max(bbox[0], bbox[2])
+        top_y = min(bbox[1], bbox[3])
+        bottom_y = max(bbox[1], bbox[3])
+        if len(bbox) > 4:
+            return [left_x, top_y, right_x, bottom_y, bbox[4], bbox[5]]
+        return [left_x, top_y, right_x, bottom_y]
+
+    def normalise_data(self, datas):
+        """
+        Normalises a list of bounding box data.
+
+        Args:
+            datas (list[list[float]]): List of bounding box data.
+
+        Returns:
+            list[list[float]]: Normalised data.
+        """
+        return [self.normalise_bbox(data[:4] + data[4:]) for data in datas]
 
     def detect_polygon_from_cones(
         self,
@@ -131,6 +160,9 @@ class DangerDetector:
         """
         warnings = set()  # Initialise the list to store warning messages
 
+        # Normalise data
+        datas = self.normalise_data(datas)
+
         # Check if people are entering the controlled area
         polygons = self.detect_polygon_from_cones(datas)
         people_count = self.calculate_people_in_controlled_area(
@@ -184,10 +216,7 @@ class DangerDetector:
         return warnings, polygons
 
     @staticmethod
-    def is_driver(
-        person_bbox: list[float],
-        vehicle_bbox: list[float],
-    ) -> bool:
+    def is_driver(person_bbox: list[float], vehicle_bbox: list[float]) -> bool:
         """
         Check if a person is a driver based on position near a vehicle.
 
@@ -322,8 +351,7 @@ class DangerDetector:
         )
 
 
-# Example usage
-if __name__ == '__main__':
+def main():
     detector = DangerDetector()
 
     data: list[list[float]] = [
@@ -351,3 +379,7 @@ if __name__ == '__main__':
     warnings, polygons = detector.detect_danger(data)
     for warning in warnings:
         print(warning)
+
+
+if __name__ == '__main__':
+    main()

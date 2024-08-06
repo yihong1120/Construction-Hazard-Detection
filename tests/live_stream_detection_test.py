@@ -9,6 +9,7 @@ from unittest.mock import patch
 import numpy as np
 
 from src.live_stream_detection import LiveStreamDetector
+from src.live_stream_detection import main
 
 
 class TestLiveStreamDetector(unittest.TestCase):
@@ -236,6 +237,218 @@ class TestLiveStreamDetector(unittest.TestCase):
             ) as mock_authenticate:
                 self.detector.ensure_authenticated()
                 mock_authenticate.assert_called_once()
+
+    def test_remove_overlapping_labels(self) -> None:
+        """
+        Test the remove_overlapping_labels method.
+        """
+        datas = [
+            [10, 10, 50, 50, 0.9, 0],  # Hardhat
+            [10, 10, 50, 45, 0.8, 2],  # NO-Hardhat (overlap > 0.8)
+            [20, 20, 60, 60, 0.85, 7],  # Safety Vest
+            [20, 20, 60, 55, 0.75, 4],  # NO-Safety Vest (overlap > 0.8)
+        ]
+        expected_datas = [
+            [10, 10, 50, 50, 0.9, 0],  # Hardhat
+            [20, 20, 60, 60, 0.85, 7],  # Safety Vest
+        ]
+        filtered_datas = self.detector.remove_overlapping_labels(datas)
+        self.assertEqual(len(filtered_datas), len(expected_datas))
+        # for fd, ed in zip(filtered_datas, expected_datas):
+        self.assertEqual(filtered_datas, expected_datas)
+
+        # Add more test cases to cover different overlap scenarios
+        datas = [
+            [10, 10, 50, 50, 0.9, 0],  # Hardhat
+            [30, 30, 70, 70, 0.8, 2],  # NO-Hardhat (no overlap)
+            [10, 10, 50, 50, 0.85, 7],  # Safety Vest (same as Hardhat)
+            [60, 60, 100, 100, 0.75, 4],  # NO-Safety Vest (no overlap)
+        ]
+        expected_datas = [
+            [10, 10, 50, 50, 0.9, 0],  # Hardhat
+            [10, 10, 50, 50, 0.85, 7],  # Safety Vest
+            [30, 30, 70, 70, 0.8, 2],  # NO-Hardhat
+            [60, 60, 100, 100, 0.75, 4],  # NO-Safety Vest
+        ]
+        filtered_datas = self.detector.remove_overlapping_labels(datas)
+        self.assertEqual(len(filtered_datas), len(expected_datas))
+
+        # Sorting both lists before comparing
+        filter_datas_sorted = sorted(filtered_datas)
+        expected_datas_sorted = sorted(expected_datas)
+
+        for fd, ed in zip(filter_datas_sorted, expected_datas_sorted):
+            self.assertEqual(fd, ed)
+
+    def test_overlap_percentage(self) -> None:
+        """
+        Test the overlap_percentage method.
+        """
+        bbox1 = [10, 10, 50, 50]
+        bbox2 = [20, 20, 40, 40]
+        overlap = self.detector.overlap_percentage(bbox1, bbox2)
+        self.assertAlmostEqual(overlap, 0.262344, places=6)
+
+    @patch('src.live_stream_detection.requests.Session.post')
+    def test_authenticate_error(self, mock_post: MagicMock) -> None:
+        """
+        Test the authenticate method with error response.
+
+        Args:
+            mock_post (MagicMock): Mock for requests.Session.post.
+        """
+        mock_response: MagicMock = MagicMock()
+        mock_response.json.return_value = {'msg': 'Authentication failed'}
+        mock_post.return_value = mock_response
+
+        with self.assertRaises(Exception) as context:
+            self.detector.authenticate()
+
+        self.assertIn('Authentication failed', str(context.exception))
+
+    def test_generate_detections(self) -> None:
+        """
+        Test the generate_detections method.
+        """
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        self.detector.run_local = True
+        with patch.object(
+            self.detector, 'generate_detections_local',
+            return_value=[[10, 10, 50, 50, 0.9, 0]],
+        ) as mock_local:
+            datas, _ = self.detector.generate_detections(frame)
+            self.assertEqual(len(datas), 1)
+            self.assertEqual(datas[0][5], 0)
+            mock_local.assert_called_once_with(frame)
+
+        self.detector.run_local = False
+        with patch.object(
+            self.detector, 'generate_detections_cloud',
+            return_value=[[20, 20, 60, 60, 0.8, 1]],
+        ) as mock_cloud:
+            datas, _ = self.detector.generate_detections(frame)
+            self.assertEqual(len(datas), 1)
+            self.assertEqual(datas[0][5], 1)
+            mock_cloud.assert_called_once_with(frame)
+
+    def test_run_detection_fail_read_frame(self) -> None:
+        """
+        Test the run_detection method when failing to read a frame.
+        """
+        stream_url: str = 'https://cctv6.kctmc.nat.gov.tw/ea05668e/'
+        cap_mock: MagicMock = MagicMock()
+        # Simulate repeated failure to read frame
+        cap_mock.read.side_effect = [(False, None)] * 10
+        cap_mock.isOpened.return_value = True
+
+        with patch(
+            'src.live_stream_detection.cv2.VideoCapture',
+            return_value=cap_mock,
+        ):
+            with patch(
+                'src.live_stream_detection.cv2.waitKey',
+                side_effect=[-1, -1, ord('q')],
+            ):
+                try:
+                    self.detector.run_detection(stream_url)
+                except StopIteration:
+                    pass
+
+        cap_mock.read.assert_called()
+        cap_mock.release.assert_called_once()
+
+    def test_is_contained(self) -> None:
+        """
+        Test the is_contained method.
+        """
+        outer_bbox = [10, 10, 50, 50]
+        inner_bbox = [20, 20, 40, 40]
+        self.assertTrue(self.detector.is_contained(inner_bbox, outer_bbox))
+
+        inner_bbox = [5, 5, 40, 40]
+        self.assertFalse(self.detector.is_contained(inner_bbox, outer_bbox))
+
+        inner_bbox = [10, 10, 50, 50]
+        self.assertTrue(self.detector.is_contained(inner_bbox, outer_bbox))
+
+        inner_bbox = [0, 0, 60, 60]
+        self.assertFalse(self.detector.is_contained(inner_bbox, outer_bbox))
+
+    def test_remove_completely_contained_labels(self) -> None:
+        """
+        Test the remove_completely_contained_labels method.
+        """
+        datas = [
+            [10, 10, 50, 50, 0.9, 0],   # Hardhat
+            [20, 20, 40, 40, 0.8, 2],   # NO-Hardhat (contained within Hardhat)
+            [20, 20, 60, 60, 0.85, 7],  # Safety Vest
+            # NO-Safety Vest (contained within Safety Vest)
+            [25, 25, 35, 35, 0.75, 4],
+        ]
+        expected_datas = [
+            [10, 10, 50, 50, 0.9, 0],   # Hardhat
+            [20, 20, 60, 60, 0.85, 7],  # Safety Vest
+        ]
+        filtered_datas = self.detector.remove_completely_contained_labels(
+            datas,
+        )
+        self.assertEqual(filtered_datas, expected_datas)
+
+        # Add more test cases to cover different containment scenarios
+        datas = [
+            [10, 10, 50, 50, 0.9, 0],   # Hardhat
+            [30, 30, 70, 70, 0.8, 2],   # NO-Hardhat (not contained)
+            [10, 10, 50, 50, 0.85, 7],  # Safety Vest (same as Hardhat)
+            [60, 60, 100, 100, 0.75, 4],  # NO-Safety Vest (not contained)
+        ]
+        expected_datas = [
+            [10, 10, 50, 50, 0.9, 0],   # Hardhat
+            [30, 30, 70, 70, 0.8, 2],   # NO-Hardhat
+            [10, 10, 50, 50, 0.85, 7],  # Safety Vest
+            [60, 60, 100, 100, 0.75, 4],  # NO-Safety Vest
+        ]
+        filtered_datas = self.detector.remove_completely_contained_labels(
+            datas,
+        )
+        self.assertEqual(filtered_datas, expected_datas)
+
+        # Sorting both lists before comparing
+        filter_datas_sorted = sorted(filtered_datas)
+        expected_datas_sorted = sorted(expected_datas)
+
+        for fd, ed in zip(filter_datas_sorted, expected_datas_sorted):
+            self.assertEqual(fd, ed)
+
+    @patch(
+        'sys.argv', [
+            'main', '--url',
+            'https://cctv6.kctmc.nat.gov.tw/ea05668e/', '--run_local',
+        ],
+    )
+    @patch('src.live_stream_detection.LiveStreamDetector.run_detection')
+    def test_main(self, mock_run_detection: MagicMock) -> None:
+        """
+        Test the main function.
+
+        Args:
+            mock_run_detection (MagicMock): Mock for
+                LiveStreamDetector.run_detection.
+        """
+        with patch(
+            'src.live_stream_detection.LiveStreamDetector.__init__',
+            return_value=None,
+        ) as mock_init:
+            mock_init.return_value = None
+            main()
+            mock_init.assert_called_once_with(
+                api_url='http://localhost:5000',
+                model_key='yolov8n',
+                output_folder=None,
+                run_local=True,
+            )
+            mock_run_detection.assert_called_once_with(
+                'https://cctv6.kctmc.nat.gov.tw/ea05668e/',
+            )
 
 
 if __name__ == '__main__':

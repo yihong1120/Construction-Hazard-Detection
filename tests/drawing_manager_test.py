@@ -9,6 +9,7 @@ import numpy as np
 from shapely.geometry import Polygon
 
 from src.drawing_manager import DrawingManager
+from src.drawing_manager import main
 
 
 class TestDrawingManager(unittest.TestCase):
@@ -104,6 +105,23 @@ class TestDrawingManager(unittest.TestCase):
                         (f"Expected colour {color_bgr}, "
                          f"but {actual_color_right}"),
                     )
+
+    def test_draw_detections_on_frame_with_invalid_label(self) -> None:
+        """
+        Test drawing on a frame with an invalid label.
+        """
+        invalid_data = [
+            [10, 10, 50, 50, 0.99, 999],  # Invalid label ID
+        ]
+        frame_with_detections = self.drawer.draw_detections_on_frame(
+            self.frame.copy(), [], invalid_data,
+        )
+
+        # Check if the frame returned is a numpy array
+        self.assertIsInstance(frame_with_detections, np.ndarray)
+
+        # Check if the frame dimensions are the same
+        self.assertEqual(frame_with_detections.shape, self.frame.shape)
 
     def test_draw_detections_on_frame_with_no_detections(self) -> None:
         """
@@ -275,6 +293,25 @@ class TestDrawingManager(unittest.TestCase):
             # Assert calls to open and write
             mock_file.assert_called_once_with(expected_file, 'wb')
             mock_file().write.assert_called_once_with(frame_bytes)
+
+    def test_main(self) -> None:
+        """
+        Test the main function to ensure the complete process is covered.
+        """
+        with patch('pathlib.Path.mkdir') as mock_mkdir, \
+                patch('builtins.open', unittest.mock.mock_open()) as mock_file:
+
+            main()
+
+            # Assert the directory was created
+            mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
+
+            # Construct the expected file path
+            expected_file: Path = Path('detected_frames/frame_001.png')
+
+            # Assert calls to open and write
+            mock_file.assert_called_once_with(expected_file, 'wb')
+            mock_file().write.assert_called_once()
 
 
 if __name__ == '__main__':

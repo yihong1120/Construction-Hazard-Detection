@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from src.line_notifier import LineNotifier
+from src.line_notifier import main
 
 
 class TestLineNotifier(unittest.TestCase):
@@ -113,7 +114,7 @@ class TestLineNotifier(unittest.TestCase):
         image_bytes: bytes = buffer.read()
 
         status_code: int = self.notifier.send_notification(
-            self.message, np.array(Image.open(BytesIO(image_bytes))),
+            self.message, image_bytes,
         )
         self.assertEqual(status_code, 200)
         mock_post.assert_called_once()
@@ -127,6 +128,19 @@ class TestLineNotifier(unittest.TestCase):
         self.assertEqual(image_file[2], 'image/png')
         image: Image.Image = Image.open(image_file[1])
         self.assertTrue(np.array_equal(np.array(image), self.image))
+
+    @patch('src.line_notifier.requests.post')
+    def test_main(self, mock_post: MagicMock) -> None:
+        """
+        Test the main function to ensure the complete process is covered.
+        """
+        mock_response: MagicMock = MagicMock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        with patch('builtins.print') as mock_print:
+            main()
+            mock_print.assert_called_once_with('Response code: 200')
 
 
 if __name__ == '__main__':

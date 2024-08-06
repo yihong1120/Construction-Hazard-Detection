@@ -186,8 +186,12 @@ class DrawingManager:
         gc.collect()
 
 
-if __name__ == '__main__':
-    # Example usage (replace with actual usage)
+def main():
+    """
+    Main function to process and save the frame with detections.
+    """
+    drawer_saver = DrawingManager()
+
     # Load frame and detection data (example)
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
@@ -210,15 +214,16 @@ if __name__ == '__main__':
     points = [(100, 100), (250, 250), (450, 450), (500, 200), (150, 400)]
     polygon = Polygon(points).convex_hull
 
-    # Initialise DrawingManager class
-    drawer_saver = DrawingManager()
-
     # Draw detections on frame (including safety cones)
     frame_with_detections = drawer_saver.draw_detections_on_frame(
-        frame, polygon, datas,
+        frame, [polygon], datas,
     )
 
     # Save the frame with detections
     output_filename = 'frame_001'
     frame_bytes = cv2.imencode('.png', frame_with_detections)[1].tobytes()
     drawer_saver.save_frame(frame_bytes, output_filename)
+
+
+if __name__ == '__main__':
+    main()

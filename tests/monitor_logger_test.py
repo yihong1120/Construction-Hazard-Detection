@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-from src.monitor_logger import LoggerConfig  # Adjust the import path as needed
+from src.monitor_logger import LoggerConfig
+from src.monitor_logger import main
 
 
 class TestLoggerConfig(unittest.TestCase):
@@ -143,6 +144,28 @@ class TestLoggerConfig(unittest.TestCase):
             )
             log_messages = [msg.upper() for msg in log.output]
             self.assertIn(expected_message, log_messages)
+
+    @patch('src.monitor_logger.LoggerConfig')
+    def test_main_function(self, mock_logger_config: MagicMock) -> None:
+        """
+        Test the main function to ensure the logging setup is complete.
+        """
+        # Create a mock logger instance
+        mock_logger_instance = MagicMock()
+        mock_logger_config.return_value.get_logger.return_value = (
+            mock_logger_instance
+        )
+
+        # Call the main function
+        main()
+
+        # Verify that the LoggerConfig was initialized
+        mock_logger_config.assert_called_once()
+
+        # Verify that the logging setup complete message was logged
+        mock_logger_instance.info.assert_called_once_with(
+            'Logging setup complete.',
+        )
 
     def tearDown(self) -> None:
         """
