@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import unittest
 from io import BytesIO
-from unittest.mock import AsyncMock
-from unittest.mock import patch
-
+from unittest.mock import AsyncMock, patch
 import numpy as np
 
-from src.telegram_notifier import TelegramNotifier
+from src.telegram_notifier import TelegramNotifier, main
 
 
 class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
@@ -73,6 +71,26 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs['chat_id'], chat_id)
         self.assertEqual(kwargs['caption'], message)
         self.assertIsInstance(kwargs['photo'], BytesIO)
+
+    @patch('src.telegram_notifier.TelegramNotifier.send_notification', new_callable=AsyncMock)
+    @patch('src.telegram_notifier.os.getenv')
+    async def test_main(self, mock_getenv: AsyncMock, mock_send_notification: AsyncMock) -> None:
+        """
+        Test the main function.
+        """
+        mock_getenv.side_effect = lambda key: 'test_bot_token' if key == 'TELEGRAM_BOT_TOKEN' else None
+        mock_send_notification.return_value = 'Message sent'
+
+        with patch('builtins.print') as mock_print:
+            await main()
+            mock_send_notification.assert_called_once()
+            args, kwargs = mock_send_notification.call_args
+            self.assertEqual(args[0], 'your_chat_id_here')
+            self.assertEqual(args[1], 'Hello, Telegram!')
+            if len(args) > 2:
+                self.assertIsInstance(args[2], np.ndarray)
+                self.assertEqual(args[2].shape, (100, 100, 3))
+            mock_print.assert_called_once_with('Message sent')
 
 
 if __name__ == '__main__':

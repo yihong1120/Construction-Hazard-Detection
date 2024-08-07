@@ -113,7 +113,10 @@ class LiveStreamDetector:
             print(datas)
 
 
-if __name__ == '__main__':
+def main():
+    """
+    Main function to run the live stream detection.
+    """
     parser = argparse.ArgumentParser(
         description='Perform live stream detection and tracking using YOLOv8.',
     )
@@ -139,6 +142,10 @@ if __name__ == '__main__':
 
     # Release resources after detection is complete
     detector.release_resources()
+
+
+if __name__ == '__main__':
+    main()
 
 """example
 python live_stream_tracker.py --url https://cctv6.kctmc.nat.gov.tw/ea05668e/

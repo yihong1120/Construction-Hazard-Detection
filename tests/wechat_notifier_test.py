@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import unittest
 from io import BytesIO
-from unittest.mock import MagicMock
-from unittest.mock import patch
-
+from unittest.mock import MagicMock, patch
 import numpy as np
 from PIL import Image
 
-from src.wechat_notifier import WeChatNotifier
+from src.wechat_notifier import WeChatNotifier, main
 
 
 class TestWeChatNotifier(unittest.TestCase):
@@ -129,6 +127,33 @@ class TestWeChatNotifier(unittest.TestCase):
         self.assertEqual(kwargs['files']['media'][0], 'image.png')
         self.assertIsInstance(kwargs['files']['media'][1], BytesIO)
         self.assertEqual(kwargs['files']['media'][2], 'image/png')
+
+    @patch('src.wechat_notifier.WeChatNotifier.send_notification', return_value={'errcode': 0, 'errmsg': 'ok'})
+    @patch('src.wechat_notifier.WeChatNotifier.get_access_token', return_value='test_access_token')
+    @patch('src.wechat_notifier.os.getenv')
+    def test_main(self, mock_getenv: MagicMock, mock_get_access_token: MagicMock, mock_send_notification: MagicMock) -> None:
+        """
+        Test the main function.
+        """
+        mock_getenv.side_effect = lambda key: {
+            'WECHAT_CORP_ID': 'test_corp_id',
+            'WECHAT_CORP_SECRET': 'test_corp_secret',
+            'WECHAT_AGENT_ID': '1000002',
+        }.get(key, '')
+
+        with patch('builtins.print') as mock_print:
+            main()
+            mock_send_notification.assert_called_once()
+            args, kwargs = mock_send_notification.call_args
+            self.assertEqual(args[0], 'your_user_id_here')
+            self.assertEqual(args[1], 'Hello, WeChat!')
+            if len(args) > 2:
+                self.assertIsInstance(args[2], np.ndarray)
+                self.assertEqual(args[2].shape, (100, 100, 3))
+            mock_print.assert_called()
+            print_args, print_kwargs = mock_print.call_args
+            self.assertIn('errcode', print_args[0])
+            self.assertIn('errmsg', print_args[0])
 
 
 if __name__ == '__main__':

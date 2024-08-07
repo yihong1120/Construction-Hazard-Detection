@@ -8,6 +8,7 @@ from unittest.mock import patch
 import numpy as np
 
 from src.live_stream_tracker import LiveStreamDetector
+from src.live_stream_tracker import main
 
 
 class TestLiveStreamDetector(unittest.TestCase):
@@ -50,8 +51,10 @@ class TestLiveStreamDetector(unittest.TestCase):
     @patch('src.live_stream_tracker.YOLO')
     @patch('src.live_stream_tracker.cv2.VideoCapture')
     @patch('src.live_stream_tracker.datetime')
+    @patch('src.live_stream_tracker.cv2.waitKey', return_value=0xFF & ord('q'))
     def test_generate_detections(
         self,
+        mock_wait_key: MagicMock,
         mock_datetime: MagicMock,
         mock_video_capture: MagicMock,
         mock_yolo: MagicMock,
@@ -63,11 +66,9 @@ class TestLiveStreamDetector(unittest.TestCase):
         mock_video_capture.return_value = mock_cap_instance
         mock_cap_instance.isOpened.side_effect = [True, True, False]
         mock_cap_instance.read.side_effect = [
-            (
-                True, np.zeros(
-                    (480, 640, 3), dtype=np.uint8,
-                ),
-            ), (True, np.zeros((480, 640, 3), dtype=np.uint8)), (False, None),
+            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
+            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
+            (False, None),
         ]
 
         mock_yolo_instance = MagicMock()
@@ -97,6 +98,16 @@ class TestLiveStreamDetector(unittest.TestCase):
         self.assertIsInstance(datas, list)
         self.assertIsInstance(frame, np.ndarray)
         self.assertIsInstance(timestamp, float)
+
+        try:
+            ids, datas, frame, timestamp = next(frame_generator)
+            self.assertEqual(ids, [])
+            self.assertEqual(datas, [])
+            self.assertIsInstance(frame, np.ndarray)
+            self.assertIsInstance(timestamp, float)
+        except StopIteration:
+            # Allow StopIteration to pass without failing the test
+            pass
 
     @patch('src.live_stream_tracker.cv2.VideoCapture')
     @patch('src.live_stream_tracker.cv2.destroyAllWindows')
@@ -155,6 +166,29 @@ class TestLiveStreamDetector(unittest.TestCase):
                     for call in mock_print.call_args_list
                 ),
             )
+
+    @patch('argparse.ArgumentParser.parse_args')
+    @patch('src.live_stream_tracker.LiveStreamDetector')
+    def test_main(self, mock_live_stream_detector: MagicMock, mock_parse_args: MagicMock) -> None:
+        """
+        Test case for the main function.
+        """
+        mock_args = MagicMock()
+        mock_args.url = 'test_url'
+        mock_args.model = 'test_model'
+        mock_parse_args.return_value = mock_args
+
+        mock_detector_instance = MagicMock()
+        mock_live_stream_detector.return_value = mock_detector_instance
+
+        main()
+
+        mock_parse_args.assert_called_once()
+        mock_live_stream_detector.assert_called_once_with(
+            'test_url', 'test_model',
+        )
+        mock_detector_instance.run_detection.assert_called_once()
+        mock_detector_instance.release_resources.assert_called_once()
 
 
 if __name__ == '__main__':

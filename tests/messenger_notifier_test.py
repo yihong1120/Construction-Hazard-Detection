@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
-from unittest.mock import patch
-
+from unittest.mock import patch, MagicMock
 import numpy as np
 
-from src.messenger_notifier import MessengerNotifier
+from src.messenger_notifier import MessengerNotifier, main
 
 
 class TestMessengerNotifier(unittest.TestCase):
@@ -91,6 +90,17 @@ class TestMessengerNotifier(unittest.TestCase):
             msg='FACEBOOK_PAGE_ACCESS_TOKEN missing.',
         ):
             MessengerNotifier(page_access_token=None)
+
+    @patch('src.messenger_notifier.MessengerNotifier.send_notification', return_value=200)
+    @patch('src.messenger_notifier.os.getenv', return_value='test_page_access_token')
+    def test_main(self, mock_getenv: MagicMock, mock_send_notification: MagicMock) -> None:
+        """
+        Test the main function.
+        """
+        with patch('builtins.print') as mock_print:
+            main()
+            mock_send_notification.assert_called_once()
+            mock_print.assert_called_with('Response code: 200')
 
 
 if __name__ == '__main__':

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from src.stream_viewer import StreamViewer
+from src.stream_viewer import StreamViewer, main
 
 
 class TestStreamViewer(unittest.TestCase):
@@ -39,7 +38,7 @@ class TestStreamViewer(unittest.TestCase):
         mock_imshow: MagicMock,
         mock_wait_key: MagicMock,
         mock_video_capture: MagicMock,
-        mock_destroyAllWindows: MagicMock,
+        mock_destroy_all_windows: MagicMock,
     ) -> None:
         """
         Test the display_stream method for streaming video.
@@ -70,7 +69,7 @@ class TestStreamViewer(unittest.TestCase):
         self.assertGreaterEqual(mock_cap_instance.read.call_count, 2)
 
         # Check if destroyAllWindows was called
-        mock_destroyAllWindows.assert_called_once()
+        mock_destroy_all_windows.assert_called_once()
 
     @patch('src.stream_viewer.cv2.VideoCapture')
     @patch('src.stream_viewer.cv2.destroyAllWindows')
@@ -95,6 +94,20 @@ class TestStreamViewer(unittest.TestCase):
 
         # Check if destroyAllWindows was called
         mock_destroy_all_windows.assert_called_once()
+
+    @patch('src.stream_viewer.StreamViewer.display_stream')
+    @patch('src.stream_viewer.StreamViewer.__init__', return_value=None)
+    def test_main(self, mock_init: MagicMock, mock_display_stream: MagicMock) -> None:
+        """
+        Test the main function.
+        """
+        main()
+
+        # Check if StreamViewer was initialised with the correct URL
+        mock_init.assert_called_once_with('https://cctv4.kctmc.nat.gov.tw/50204bfc/')
+
+        # Check if display_stream was called
+        mock_display_stream.assert_called_once()
 
 
 if __name__ == '__main__':
