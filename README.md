@@ -33,7 +33,10 @@
       <img src="https://img.shields.io/badge/pytest-8.3.2-blue?logo=pytest" alt="pytest 8.3.2">
    </a>
    <a href="https://codecov.io/github/yihong1120/Construction-Hazard-Detection" >
-      <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D"/>
+      <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D" alt="Codecov">
+   </a>
+   <a href="https://codebeat.co/projects/github-com-yihong1120-construction-hazard-detection-main">
+      <img alt="codebeat badge" src="https://codebeat.co/badges/383396a9-e2cb-4604-8990-c1707e5870cf" />
    </a>
 </div>
 
@@ -51,11 +54,19 @@ Additionally, the system can integrate AI recognition results in real-time throu
 <br>
 
 <div align="center">
-   <img src="./assets/images/hazard-detection.png" alt="diagram" style="width: 100%;">
+   <img src="./assets/images/hazard-detection.png" alt="Hazard Detection Diagram" style="width: 100%;">
 </div>
 
 <br>
 
+## Contents
+
+- [Usage](#usage)
+- [Additional Information](#additional-information)
+- [Dataset Information](#dataset-information)
+- [Contributing](#contributing)
+- [Development Roadmap](#development-roadmap)
+- [License](#license)
 
 ## Usage
 
