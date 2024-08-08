@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
 import numpy as np
 
-from src.messenger_notifier import MessengerNotifier, main
+from src.messenger_notifier import main
+from src.messenger_notifier import MessengerNotifier
 
 
 class TestMessengerNotifier(unittest.TestCase):
@@ -91,9 +94,19 @@ class TestMessengerNotifier(unittest.TestCase):
         ):
             MessengerNotifier(page_access_token=None)
 
-    @patch('src.messenger_notifier.MessengerNotifier.send_notification', return_value=200)
-    @patch('src.messenger_notifier.os.getenv', return_value='test_page_access_token')
-    def test_main(self, mock_getenv: MagicMock, mock_send_notification: MagicMock) -> None:
+    @patch(
+        'src.messenger_notifier.MessengerNotifier.send_notification',
+        return_value=200,
+    )
+    @patch(
+        'src.messenger_notifier.os.getenv',
+        return_value='test_page_access_token',
+    )
+    def test_main(
+        self,
+        mock_getenv: MagicMock,
+        mock_send_notification: MagicMock,
+    ) -> None:
         """
         Test the main function.
         """

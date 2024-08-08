@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import unittest
 from io import BytesIO
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
 import numpy as np
 from PIL import Image
 
-from src.wechat_notifier import WeChatNotifier, main
+from src.wechat_notifier import main
+from src.wechat_notifier import WeChatNotifier
 
 
 class TestWeChatNotifier(unittest.TestCase):
@@ -128,10 +131,21 @@ class TestWeChatNotifier(unittest.TestCase):
         self.assertIsInstance(kwargs['files']['media'][1], BytesIO)
         self.assertEqual(kwargs['files']['media'][2], 'image/png')
 
-    @patch('src.wechat_notifier.WeChatNotifier.send_notification', return_value={'errcode': 0, 'errmsg': 'ok'})
-    @patch('src.wechat_notifier.WeChatNotifier.get_access_token', return_value='test_access_token')
+    @patch(
+        'src.wechat_notifier.WeChatNotifier.send_notification',
+        return_value={'errcode': 0, 'errmsg': 'ok'},
+    )
+    @patch(
+        'src.wechat_notifier.WeChatNotifier.get_access_token',
+        return_value='test_access_token',
+    )
     @patch('src.wechat_notifier.os.getenv')
-    def test_main(self, mock_getenv: MagicMock, mock_get_access_token: MagicMock, mock_send_notification: MagicMock) -> None:
+    def test_main(
+        self,
+        mock_getenv: MagicMock,
+        mock_get_access_token: MagicMock,
+        mock_send_notification: MagicMock,
+    ) -> None:
         """
         Test the main function.
         """

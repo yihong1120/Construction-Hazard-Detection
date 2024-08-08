@@ -56,6 +56,7 @@ class StreamViewer:
         self.cap.release()
         cv2.destroyAllWindows()
 
+
 def main():
     """
     Main function to run the StreamViewer.
@@ -66,6 +67,7 @@ def main():
     )
     viewer = StreamViewer(video_url)
     viewer.display_stream()
+
 
 if __name__ == '__main__':
     main()

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import unittest
 from io import BytesIO
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
+from unittest.mock import patch
+
 import numpy as np
 
-from src.telegram_notifier import TelegramNotifier, main
+from src.telegram_notifier import main
+from src.telegram_notifier import TelegramNotifier
 
 
 class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
@@ -72,13 +75,24 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs['caption'], message)
         self.assertIsInstance(kwargs['photo'], BytesIO)
 
-    @patch('src.telegram_notifier.TelegramNotifier.send_notification', new_callable=AsyncMock)
+    @patch(
+        'src.telegram_notifier.TelegramNotifier.send_notification',
+        new_callable=AsyncMock,
+    )
     @patch('src.telegram_notifier.os.getenv')
-    async def test_main(self, mock_getenv: AsyncMock, mock_send_notification: AsyncMock) -> None:
+    async def test_main(
+        self,
+        mock_getenv: AsyncMock,
+        mock_send_notification: AsyncMock,
+    ) -> None:
         """
         Test the main function.
         """
-        mock_getenv.side_effect = lambda key: 'test_bot_token' if key == 'TELEGRAM_BOT_TOKEN' else None
+        mock_getenv.side_effect = (
+            lambda key: 'test_bot_token'
+            if key == 'TELEGRAM_BOT_TOKEN'
+            else None
+        )
         mock_send_notification.return_value = 'Message sent'
 
         with patch('builtins.print') as mock_print:

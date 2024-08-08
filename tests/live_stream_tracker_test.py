@@ -169,7 +169,11 @@ class TestLiveStreamDetector(unittest.TestCase):
 
     @patch('argparse.ArgumentParser.parse_args')
     @patch('src.live_stream_tracker.LiveStreamDetector')
-    def test_main(self, mock_live_stream_detector: MagicMock, mock_parse_args: MagicMock) -> None:
+    def test_main(
+        self,
+        mock_live_stream_detector: MagicMock,
+        mock_parse_args: MagicMock,
+    ) -> None:
         """
         Test case for the main function.
         """

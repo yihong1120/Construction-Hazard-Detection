@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from unittest.mock import patch
 
-from src.stream_viewer import StreamViewer, main
+from src.stream_viewer import main
+from src.stream_viewer import StreamViewer
 
 
 class TestStreamViewer(unittest.TestCase):
@@ -97,14 +99,20 @@ class TestStreamViewer(unittest.TestCase):
 
     @patch('src.stream_viewer.StreamViewer.display_stream')
     @patch('src.stream_viewer.StreamViewer.__init__', return_value=None)
-    def test_main(self, mock_init: MagicMock, mock_display_stream: MagicMock) -> None:
+    def test_main(
+        self,
+        mock_init: MagicMock,
+        mock_display_stream: MagicMock,
+    ) -> None:
         """
         Test the main function.
         """
         main()
 
         # Check if StreamViewer was initialised with the correct URL
-        mock_init.assert_called_once_with('https://cctv4.kctmc.nat.gov.tw/50204bfc/')
+        mock_init.assert_called_once_with(
+            'https://cctv4.kctmc.nat.gov.tw/50204bfc/',
+        )
 
         # Check if display_stream was called
         mock_display_stream.assert_called_once()

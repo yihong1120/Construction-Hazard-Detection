@@ -66,7 +66,7 @@ class StreamCapture:
             self.cap = None
         gc.collect()
 
-    def execute_capture(self) -> Generator[tuple[cv2.Mat, float]]:
+    def execute_capture(self) -> Generator[tuple[cv2.Mat, float], None, None]:
         """
         Captures frames from the stream and yields them with timestamps.
 
@@ -183,7 +183,7 @@ class StreamCapture:
 
     def capture_generic_frames(
         self,
-    ) -> Generator[tuple[cv2.Mat, float]]:
+    ) -> Generator[tuple[cv2.Mat, float], None, None]:
         """
         Captures frames from a generic stream.
 
@@ -262,8 +262,7 @@ class StreamCapture:
         """
         self.capture_interval = new_interval
 
-
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(
         description='Capture video stream frames.',
     )
@@ -282,3 +281,7 @@ if __name__ == '__main__':
         # Release the frame resources
         del frame
         gc.collect()
+
+
+if __name__ == '__main__':
+    main()
