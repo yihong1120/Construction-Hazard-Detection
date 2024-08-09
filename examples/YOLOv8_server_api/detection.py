@@ -161,9 +161,27 @@ def find_overlaps(indices1, indices2, datas, threshold):
     """
     to_remove = set()
     for index1 in indices1:
-        for index2 in indices2:
-            if calculate_overlap(datas[index1][:4], datas[index2][:4]) > threshold:
-                to_remove.add(index2)
+        to_remove.update(find_overlapping_indices(index1, indices2, datas, threshold))
+    return to_remove
+
+
+def find_overlapping_indices(index1, indices2, datas, threshold):
+    """
+    Find overlapping indices for a given index.
+
+    Args:
+        index1 (int): The index to check for overlaps.
+        indices2 (list): The list of indices to check against.
+        datas (list): Detection data.
+        threshold (float): Overlap threshold.
+
+    Returns:
+        set: Indices of overlapping labels to remove.
+    """
+    to_remove = set()
+    for index2 in indices2:
+        if calculate_overlap(datas[index1][:4], datas[index2][:4]) > threshold:
+            to_remove.add(index2)
     return to_remove
 
 
@@ -277,9 +295,26 @@ def find_contained_labels(indices1, indices2, datas):
     """
     to_remove = set()
     for index1 in indices1:
-        for index2 in indices2:
-            if is_contained(datas[index2][:4], datas[index1][:4]):
-                to_remove.add(index2)
-            elif is_contained(datas[index1][:4], datas[index2][:4]):
-                to_remove.add(index1)
+        to_remove.update(find_contained_indices(index1, indices2, datas))
+    return to_remove
+
+
+def find_contained_indices(index1, indices2, datas):
+    """
+    Find contained indices for a given index.
+
+    Args:
+        index1 (int): The index to check for containment.
+        indices2 (list): The list of indices to check against.
+        datas (list): Detection data.
+
+    Returns:
+        set: Indices of completely contained labels to remove.
+    """
+    to_remove = set()
+    for index2 in indices2:
+        if is_contained(datas[index2][:4], datas[index1][:4]):
+            to_remove.add(index2)
+        elif is_contained(datas[index1][:4], datas[index2][:4]):
+            to_remove.add(index1)
     return to_remove

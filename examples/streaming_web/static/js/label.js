@@ -12,15 +12,15 @@ $(document).ready(() => {
     const currentPageLabel = $('h1').text();  // Assuming the <h1> tag contains the current label name
 
     socket.on('connect', () => {
-        console.log('WebSocket connected!');
+        debugLog('WebSocket connected!');
     });
 
     socket.on('connect_error', (error) => {
-        console.error('WebSocket connection error:', error);
+        debugLog('WebSocket connection error:', error);
     });
 
     socket.on('reconnect_attempt', () => {
-        console.log('Attempting to reconnect...');
+        debugLog('Attempting to reconnect...');
     });
 
     socket.on('update', (data) => {
@@ -36,10 +36,10 @@ $(document).ready(() => {
 function handleUpdate(data, currentPageLabel) {
     // Check if the received data is applicable to the current page's label
     if (data.label === currentPageLabel) {
-        console.log('Received update for current label:', data.label);
+        debugLog('Received update for current label:', data.label);
         updateCameraGrid(data);
     } else {
-        console.log('Received update for different label:', data.label);
+        debugLog('Received update for different label:', data.label);
     }
 }
 
@@ -52,7 +52,6 @@ function updateCameraGrid(data) {
     data.images.forEach((image, index) => {
         const cameraData = {
             image: image,
-            index: index,
             imageName: data.image_names[index],
             label: data.label
         };
@@ -66,15 +65,24 @@ function updateCameraGrid(data) {
  * Create a camera div element
  * @param {Object} cameraData - The data for creating the camera div
  * @param {string} cameraData.image - The image data
- * @param {number} cameraData.index - The image index
  * @param {string} cameraData.imageName - The image name
  * @param {string} cameraData.label - The label name
  * @returns {HTMLElement} - The div element containing the image and title
  */
-function createCameraDiv({ image, index, imageName, label }) {
+function createCameraDiv({ image, imageName, label }) {
     const cameraDiv = $('<div>').addClass('camera');
     const title = $('<h2>').text(imageName);
     const img = $('<img>').attr('src', `data:image/png;base64,${image}`).attr('alt', `${label} image`);
     cameraDiv.append(title).append(img);
     return cameraDiv[0];
+}
+
+/**
+ * Log messages for debugging purposes
+ * @param  {...any} messages - The messages to log
+ */
+function debugLog(...messages) {
+    if (process.env.NODE_ENV === 'development') {
+        console.log(...messages);
+    }
 }
