@@ -178,11 +178,7 @@ def find_overlapping_indices(index1, indices2, datas, threshold):
     Returns:
         set: Indices of overlapping labels to remove.
     """
-    to_remove = set()
-    for index2 in indices2:
-        if calculate_overlap(datas[index1][:4], datas[index2][:4]) > threshold:
-            to_remove.add(index2)
-    return to_remove
+    return {index2 for index2 in indices2 if calculate_overlap(datas[index1][:4], datas[index2][:4]) > threshold}
 
 
 def calculate_overlap(bbox1, bbox2):
@@ -313,8 +309,25 @@ def find_contained_indices(index1, indices2, datas):
     """
     to_remove = set()
     for index2 in indices2:
-        if is_contained(datas[index2][:4], datas[index1][:4]):
-            to_remove.add(index2)
-        elif is_contained(datas[index1][:4], datas[index2][:4]):
-            to_remove.add(index1)
+        to_remove.update(check_containment(index1, index2, datas))
+    return to_remove
+
+
+def check_containment(index1, index2, datas):
+    """
+    Check if one bounding box is contained within another.
+
+    Args:
+        index1 (int): The first index.
+        index2 (int): The second index.
+        datas (list): Detection data.
+
+    Returns:
+        set: Indices of contained labels to remove.
+    """
+    to_remove = set()
+    if is_contained(datas[index2][:4], datas[index1][:4]):
+        to_remove.add(index2)
+    elif is_contained(datas[index1][:4], datas[index2][:4]):
+        to_remove.add(index1)
     return to_remove

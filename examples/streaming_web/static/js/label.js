@@ -1,6 +1,11 @@
 $(document).ready(() => {
     // Automatically detect the current page protocol to decide between ws and wss
     const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    // Ensure io is defined
+    if (typeof io === 'undefined') {
+        console.error('Socket.IO is not defined. Please ensure it is included in your HTML.');
+        return;
+    }
     // Create WebSocket connection and configure reconnection strategy
     const socket = io.connect(protocol + document.domain + ':' + location.port, {
         transports: ['websocket'],
@@ -82,7 +87,7 @@ function createCameraDiv({ image, imageName, label }) {
  * @param  {...any} messages - The messages to log
  */
 function debugLog(...messages) {
-    if (process.env.NODE_ENV === 'development') {
+    if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') {
         console.log(...messages);
     }
 }
