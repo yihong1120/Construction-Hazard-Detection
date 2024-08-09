@@ -1,15 +1,15 @@
 $(document).ready(() => {
-    // 自动检测当前页面协议，以决定 ws 还是 wss
+    // Automatically detect the current page protocol to decide between ws and wss
     const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-    // 创建 WebSocket 连接，并配置重连策略
+    // Create WebSocket connection and configure reconnection strategy
     const socket = io.connect(protocol + document.domain + ':' + location.port, {
         transports: ['websocket'],
-        reconnectionAttempts: 5,   // 最多重连尝试 5 次
-        reconnectionDelay: 2000    // 重连间隔为 2000 毫秒
+        reconnectionAttempts: 5,   // Maximum of 5 reconnection attempts
+        reconnectionDelay: 2000    // Reconnection interval of 2000 milliseconds
     });
 
-    // 获取当前页面的标签名
-    const currentPageLabel = $('h1').text();  // 假设页面的 <h1> 标签包含了当前的标签名称
+    // Get the label of the current page
+    const currentPageLabel = $('h1').text();  // Assuming the <h1> tag contains the current label name
 
     socket.on('connect', () => {
         console.log('WebSocket connected!');
@@ -24,20 +24,50 @@ $(document).ready(() => {
     });
 
     socket.on('update', (data) => {
-        // 检查接收到的数据是否适用于当前页面的标签
-        if (data.label === currentPageLabel) {
-            console.log('Received update for current label:', data.label);
-            const fragment = document.createDocumentFragment();
-            data.images.forEach((image, index) => {
-                const cameraDiv = $('<div>').addClass('camera');
-                const title = $('<h2>').text(data.image_names[index]);
-                const img = $('<img>').attr('src', `data:image/png;base64,${image}`).attr('alt', `${data.label} image`);
-                cameraDiv.append(title).append(img);
-                fragment.appendChild(cameraDiv[0]);
-            });
-            $('.camera-grid').empty().append(fragment);
-        } else {
-            console.log('Received update for different label:', data.label);
-        }
+        handleUpdate(data, currentPageLabel);
     });
 });
+
+/**
+ * Handle WebSocket updates
+ * @param {Object} data - The received data
+ * @param {string} currentPageLabel - The label of the current page
+ */
+function handleUpdate(data, currentPageLabel) {
+    // Check if the received data is applicable to the current page's label
+    if (data.label === currentPageLabel) {
+        console.log('Received update for current label:', data.label);
+        updateCameraGrid(data);
+    } else {
+        console.log('Received update for different label:', data.label);
+    }
+}
+
+/**
+ * Update the camera grid
+ * @param {Object} data - The data containing images and names
+ */
+function updateCameraGrid(data) {
+    const fragment = document.createDocumentFragment();
+    data.images.forEach((image, index) => {
+        const cameraDiv = createCameraDiv(image, index, data.image_names, data.label);
+        fragment.appendChild(cameraDiv);
+    });
+    $('.camera-grid').empty().append(fragment);
+}
+
+/**
+ * Create a camera div element
+ * @param {string} image - The image data
+ * @param {number} index - The image index
+ * @param {Array} imageNames - The array of image names
+ * @param {string} label - The label name
+ * @returns {HTMLElement} - The div element containing the image and title
+ */
+function createCameraDiv(image, index, imageNames, label) {
+    const cameraDiv = $('<div>').addClass('camera');
+    const title = $('<h2>').text(imageNames[index]);
+    const img = $('<img>').attr('src', `data:image/png;base64,${image}`).attr('alt', `${label} image`);
+    cameraDiv.append(title).append(img);
+    return cameraDiv[0];
+}
