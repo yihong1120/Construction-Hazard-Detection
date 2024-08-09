@@ -1,21 +1,68 @@
 $(document).ready(() => {
-    // Automatically detect the current page protocol to decide between ws and wss
-    const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-    // Ensure io is defined
+    initializeWebSocket();
+});
+
+/**
+ * Initialize the WebSocket connection and set up event handlers.
+ */
+function initializeWebSocket() {
+    const protocol = getWebSocketProtocol();
+    if (!isSocketIODefined()) return;
+
+    const socket = createWebSocketConnection(protocol);
+
+    const currentPageLabel = getCurrentPageLabel();
+
+    setupSocketEventHandlers(socket, currentPageLabel);
+}
+
+/**
+ * Get the appropriate WebSocket protocol based on the current page protocol.
+ * @returns {string} The WebSocket protocol ('ws://' or 'wss://').
+ */
+function getWebSocketProtocol() {
+    return window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+}
+
+/**
+ * Check if Socket.IO is defined.
+ * @returns {boolean} True if Socket.IO is defined, false otherwise.
+ */
+function isSocketIODefined() {
     if (typeof io === 'undefined') {
         console.error('Socket.IO is not defined. Please ensure it is included in your HTML.');
-        return;
+        return false;
     }
-    // Create WebSocket connection and configure reconnection strategy
-    const socket = io.connect(protocol + document.domain + ':' + location.port, {
+    return true;
+}
+
+/**
+ * Create a WebSocket connection with reconnection strategy.
+ * @param {string} protocol - The WebSocket protocol ('ws://' or 'wss://').
+ * @returns {Object} The WebSocket connection instance.
+ */
+function createWebSocketConnection(protocol) {
+    return io.connect(protocol + document.domain + ':' + location.port, {
         transports: ['websocket'],
         reconnectionAttempts: 5,   // Maximum of 5 reconnection attempts
         reconnectionDelay: 2000    // Reconnection interval of 2000 milliseconds
     });
+}
 
-    // Get the label of the current page
-    const currentPageLabel = $('h1').text();  // Assuming the <h1> tag contains the current label name
+/**
+ * Get the label of the current page.
+ * @returns {string} The label of the current page.
+ */
+function getCurrentPageLabel() {
+    return $('h1').text();  // Assuming the <h1> tag contains the current label name
+}
 
+/**
+ * Set up WebSocket event handlers.
+ * @param {Object} socket - The WebSocket connection instance.
+ * @param {string} currentPageLabel - The label of the current page.
+ */
+function setupSocketEventHandlers(socket, currentPageLabel) {
     socket.on('connect', () => {
         debugLog('WebSocket connected!');
     });
@@ -31,7 +78,7 @@ $(document).ready(() => {
     socket.on('update', (data) => {
         handleUpdate(data, currentPageLabel);
     });
-});
+}
 
 /**
  * Handle WebSocket updates
