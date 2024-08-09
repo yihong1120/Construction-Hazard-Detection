@@ -135,7 +135,7 @@ function createCameraDiv({ image, imageName, label }) {
  */
 function debugLog(...messages) {
     if (isDevelopmentEnvironment()) {
-        console.log(...messages);
+        consoleLog(...messages);
     }
 }
 
@@ -145,6 +145,26 @@ function debugLog(...messages) {
  */
 function showError(message) {
     if (isDevelopmentEnvironment()) {
+        consoleError(message);
+    }
+}
+
+/**
+ * Log messages to the console.
+ * @param  {...any} messages - The messages to log.
+ */
+function consoleLog(...messages) {
+    if (typeof console !== 'undefined') {
+        console.log(...messages);
+    }
+}
+
+/**
+ * Log error messages to the console.
+ * @param {string} message - The error message to log.
+ */
+function consoleError(message) {
+    if (typeof console !== 'undefined') {
         console.error(message);
     }
 }
