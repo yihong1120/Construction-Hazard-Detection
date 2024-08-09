@@ -30,7 +30,7 @@ function getWebSocketProtocol() {
  */
 function isSocketIODefined() {
     if (typeof io === 'undefined') {
-        console.error('Socket.IO is not defined. Please ensure it is included in your HTML.');
+        showError('Socket.IO is not defined. Please ensure it is included in your HTML.');
         return false;
     }
     return true;
@@ -134,7 +134,25 @@ function createCameraDiv({ image, imageName, label }) {
  * @param  {...any} messages - The messages to log
  */
 function debugLog(...messages) {
-    if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') {
+    if (isDevelopmentEnvironment()) {
         console.log(...messages);
     }
+}
+
+/**
+ * Show error messages.
+ * @param {string} message - The error message to display.
+ */
+function showError(message) {
+    if (isDevelopmentEnvironment()) {
+        console.error(message);
+    }
+}
+
+/**
+ * Check if the current environment is development.
+ * @returns {boolean} True if the current environment is development, false otherwise.
+ */
+function isDevelopmentEnvironment() {
+    return typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development';
 }
