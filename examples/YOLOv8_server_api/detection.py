@@ -115,11 +115,11 @@ def remove_overlapping_labels(datas):
     Returns:
         list: A list of detection data with overlapping labels removed.
     """
-    hardhat_indices, no_hardhat_indices, safety_vest_indices, no_safety_vest_indices = get_category_indices(datas)
+    category_indices = get_category_indices(datas)
 
     to_remove = set()
-    to_remove.update(find_overlaps(hardhat_indices, no_hardhat_indices, datas, 0.8))
-    to_remove.update(find_overlaps(safety_vest_indices, no_safety_vest_indices, datas, 0.8))
+    to_remove.update(find_overlaps(category_indices['hardhat'], category_indices['no_hardhat'], datas, 0.8))
+    to_remove.update(find_overlaps(category_indices['safety_vest'], category_indices['no_safety_vest'], datas, 0.8))
 
     for index in sorted(to_remove, reverse=True):
         datas.pop(index)
@@ -136,13 +136,14 @@ def get_category_indices(datas):
         datas (list): A list of detection data in YOLOv8 format.
 
     Returns:
-        tuple: Indices of Hardhat, NO-Hardhat, Safety Vest, and NO-Safety Vest detections.
+        dict: Indices of Hardhat, NO-Hardhat, Safety Vest, and NO-Safety Vest detections.
     """
-    hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 0]
-    no_hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 2]
-    safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 7]
-    no_safety_vest_indices = [i for i, d in enumerate(datas) if d[5] == 4]
-    return hardhat_indices, no_hardhat_indices, safety_vest_indices, no_safety_vest_indices
+    return {
+        'hardhat': [i for i, d in enumerate(datas) if d[5] == 0],
+        'no_hardhat': [i for i, d in enumerate(datas) if d[5] == 2],
+        'safety_vest': [i for i, d in enumerate(datas) if d[5] == 7],
+        'no_safety_vest': [i for i, d in enumerate(datas) if d[5] == 4],
+    }
 
 
 def find_overlaps(indices1, indices2, datas, threshold):
@@ -161,12 +162,12 @@ def find_overlaps(indices1, indices2, datas, threshold):
     to_remove = set()
     for index1 in indices1:
         for index2 in indices2:
-            if overlap_percentage(datas[index1][:4], datas[index2][:4]) > threshold:
+            if calculate_overlap(datas[index1][:4], datas[index2][:4]) > threshold:
                 to_remove.add(index2)
     return to_remove
 
 
-def overlap_percentage(bbox1, bbox2):
+def calculate_overlap(bbox1, bbox2):
     """
     Calculates the percentage of overlap between two bounding boxes.
 
@@ -177,18 +178,48 @@ def overlap_percentage(bbox1, bbox2):
     Returns:
         float: The percentage of overlap between the two bounding boxes.
     """
-    x1 = max(bbox1[0], bbox2[0])
-    y1 = max(bbox1[1], bbox2[1])
-    x2 = min(bbox1[2], bbox2[2])
-    y2 = min(bbox1[3], bbox2[3])
-
-    intersection_area = max(0, x2 - x1 + 1) * max(0, y2 - y1 + 1)
-    bbox1_area = (bbox1[2] - bbox1[0] + 1) * (bbox1[3] - bbox1[1] + 1)
-    bbox2_area = (bbox2[2] - bbox2[0] + 1) * (bbox2[3] - bbox2[1] + 1)
+    x1, y1, x2, y2 = calculate_intersection(bbox1, bbox2)
+    intersection_area = calculate_area(x1, y1, x2, y2)
+    bbox1_area = calculate_area(*bbox1)
+    bbox2_area = calculate_area(*bbox2)
 
     overlap_percentage = intersection_area / float(bbox1_area + bbox2_area - intersection_area)
     gc.collect()
     return overlap_percentage
+
+
+def calculate_intersection(bbox1, bbox2):
+    """
+    Calculate the intersection coordinates of two bounding boxes.
+
+    Args:
+        bbox1 (list): The first bounding box [x1, y1, x2, y2].
+        bbox2 (list): The second bounding box [x1, y1, x2, y2].
+
+    Returns:
+        tuple: Intersection coordinates (x1, y1, x2, y2).
+    """
+    x1 = max(bbox1[0], bbox2[0])
+    y1 = max(bbox1[1], bbox2[1])
+    x2 = min(bbox1[2], bbox2[2])
+    y2 = min(bbox1[3], bbox2[3])
+    return x1, y1, x2, y2
+
+
+def calculate_area(x1, y1, x2, y2):
+    """
+    Calculate the area of a bounding box.
+
+    Args:
+        x1 (int): The x-coordinate of the top-left corner.
+        y1 (int): The y-coordinate of the top-left corner.
+        x2 (int): The x-coordinate of the bottom-right corner.
+        y2 (int): The y-coordinate of the bottom-right corner.
+
+    Returns:
+        int: The area of the bounding box.
+    """
+    return max(0, x2 - x1 + 1) * max(0, y2 - y1 + 1)
 
 
 def is_contained(inner_bbox, outer_bbox):
@@ -220,11 +251,11 @@ def remove_completely_contained_labels(datas):
     Returns:
         list: Detection data with fully contained labels removed.
     """
-    hardhat_indices, no_hardhat_indices, safety_vest_indices, no_safety_vest_indices = get_category_indices(datas)
+    category_indices = get_category_indices(datas)
 
     to_remove = set()
-    to_remove.update(find_contained_labels(hardhat_indices, no_hardhat_indices, datas))
-    to_remove.update(find_contained_labels(safety_vest_indices, no_safety_vest_indices, datas))
+    to_remove.update(find_contained_labels(category_indices['hardhat'], category_indices['no_hardhat'], datas))
+    to_remove.update(find_contained_labels(category_indices['safety_vest'], category_indices['no_safety_vest'], datas))
 
     for index in sorted(to_remove, reverse=True):
         datas.pop(index)

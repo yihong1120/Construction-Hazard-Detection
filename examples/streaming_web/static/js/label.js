@@ -50,7 +50,13 @@ function handleUpdate(data, currentPageLabel) {
 function updateCameraGrid(data) {
     const fragment = document.createDocumentFragment();
     data.images.forEach((image, index) => {
-        const cameraDiv = createCameraDiv(image, index, data.image_names, data.label);
+        const cameraData = {
+            image: image,
+            index: index,
+            imageName: data.image_names[index],
+            label: data.label
+        };
+        const cameraDiv = createCameraDiv(cameraData);
         fragment.appendChild(cameraDiv);
     });
     $('.camera-grid').empty().append(fragment);
@@ -58,15 +64,16 @@ function updateCameraGrid(data) {
 
 /**
  * Create a camera div element
- * @param {string} image - The image data
- * @param {number} index - The image index
- * @param {Array} imageNames - The array of image names
- * @param {string} label - The label name
+ * @param {Object} cameraData - The data for creating the camera div
+ * @param {string} cameraData.image - The image data
+ * @param {number} cameraData.index - The image index
+ * @param {string} cameraData.imageName - The image name
+ * @param {string} cameraData.label - The label name
  * @returns {HTMLElement} - The div element containing the image and title
  */
-function createCameraDiv(image, index, imageNames, label) {
+function createCameraDiv({ image, index, imageName, label }) {
     const cameraDiv = $('<div>').addClass('camera');
-    const title = $('<h2>').text(imageNames[index]);
+    const title = $('<h2>').text(imageName);
     const img = $('<img>').attr('src', `data:image/png;base64,${image}`).attr('alt', `${label} image`);
     cameraDiv.append(title).append(img);
     return cameraDiv[0];
