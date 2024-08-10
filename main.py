@@ -16,9 +16,9 @@ from dotenv import load_dotenv
 
 from src.danger_detector import DangerDetector
 from src.drawing_manager import DrawingManager
-from src.line_notifier import LineNotifier
 from src.live_stream_detection import LiveStreamDetector
 from src.monitor_logger import LoggerConfig
+from src.notifiers.line_notifier import LineNotifier
 from src.stream_capture import StreamCapture
 
 # Load environment variables
@@ -142,38 +142,57 @@ def main(
         # Get the current hour
         current_hour = datetime.now().hour
 
-        if (
-            # >5 mins since last notification
-            (timestamp - last_notification_time) > 300 and
-            # Between 7 AM and 6 PM
-            (7 <= current_hour < 18) and
-            # Check if there are warning messages
-            warnings
-        ):
-            # Combine all warnings into one message
-            message = f"{image_name}\n[{detection_time}]\n" + '\n'.join(
-                [f"{warning}" for warning in warnings],
+        # Check if it is outside the specified time range
+        # and if warnings contain "個人進入受控區域!"
+        if (timestamp - last_notification_time) > 300:
+            # Check if there is a "個人進入受控區域!" warning
+            controlled_zone_warning = next(
+                (warning for warning in warnings if '個人進入受控區域' in warning),
+                None,
             )
 
-            # Send notification, with image if image_name set
-            notification_status = line_notifier.send_notification(
-                message,
-                image=frame_bytes if frame_bytes is not None else None,
-            )
-            if notification_status == 200:
-                logger.warning(
-                    f"Notification sent successfully: {message}",
+            # If it is outside working hours and there is a "個人進入受控區域!" warning
+            if controlled_zone_warning and not (7 <= current_hour < 18):
+                message = (
+                    f"{image_name}\n[{detection_time}]\n"
+                    f"{controlled_zone_warning}"
                 )
+
+            elif warnings and (7 <= current_hour < 18):
+                # During working hours, combine all warnings
+                message = (
+                    f"{image_name}\n[{detection_time}]\n"
+                    + '\n'.join(warnings)
+                )
+
             else:
-                logger.error(f"Failed to send notification: {message}")
+                message = None
 
-            # Update the last_notification_time to the current time
-            last_notification_time = int(timestamp)
+            # If a notification needs to be sent
+            if message:
+                notification_status = line_notifier.send_notification(
+                    message, image=frame_bytes
+                    if frame_bytes is not None
+                    else None,
+                )
 
+                # If you want to connect to the broadcast system, do it here:
+                # broadcast_status = (
+                #   broadcast_notifier.broadcast_message(message)
+                # )
+                # logger.info(f"Broadcast status: {broadcast_status}")
+
+                if notification_status == 200:
+                    logger.info(
+                        f"Notification sent successfully: {message}",
+                    )
+                else:
+                    logger.error(f"Failed to send notification: {message}")
+
+                # Update the last notification time
+                last_notification_time = int(timestamp)
         else:
-            logger.info(
-                'No warnings or outside notification time.',
-            )
+            logger.info('No warnings or outside notification time.')
 
         if not is_windows:
             # Use a unique key for each thread or process
