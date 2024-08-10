@@ -4,7 +4,9 @@ import gc
 
 import cv2
 import numpy as np
-from flask import Blueprint, jsonify, request
+from flask import Blueprint
+from flask import jsonify
+from flask import request
 from flask_jwt_extended import jwt_required
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -118,8 +120,22 @@ def remove_overlapping_labels(datas):
     category_indices = get_category_indices(datas)
 
     to_remove = set()
-    to_remove.update(find_overlaps(category_indices['hardhat'], category_indices['no_hardhat'], datas, 0.8))
-    to_remove.update(find_overlaps(category_indices['safety_vest'], category_indices['no_safety_vest'], datas, 0.8))
+    to_remove.update(
+        find_overlaps(
+            category_indices['hardhat'],
+            category_indices['no_hardhat'],
+            datas,
+            0.8,
+        ),
+    )
+    to_remove.update(
+        find_overlaps(
+            category_indices['safety_vest'],
+            category_indices['no_safety_vest'],
+            datas,
+            0.8,
+        ),
+    )
 
     for index in sorted(to_remove, reverse=True):
         datas.pop(index)
@@ -136,7 +152,8 @@ def get_category_indices(datas):
         datas (list): A list of detection data in YOLOv8 format.
 
     Returns:
-        dict: Indices of Hardhat, NO-Hardhat, Safety Vest, and NO-Safety Vest detections.
+        dict: Indices of Hardhat, NO-Hardhat, Safety Vest,
+            and NO-Safety Vest detections.
     """
     return {
         'hardhat': [i for i, d in enumerate(datas) if d[5] == 0],
@@ -161,7 +178,11 @@ def find_overlaps(indices1, indices2, datas, threshold):
     """
     to_remove = set()
     for index1 in indices1:
-        to_remove.update(find_overlapping_indices(index1, indices2, datas, threshold))
+        to_remove.update(
+            find_overlapping_indices(
+                index1, indices2, datas, threshold,
+            ),
+        )
     return to_remove
 
 
@@ -178,7 +199,10 @@ def find_overlapping_indices(index1, indices2, datas, threshold):
     Returns:
         set: Indices of overlapping labels to remove.
     """
-    return {index2 for index2 in indices2 if calculate_overlap(datas[index1][:4], datas[index2][:4]) > threshold}
+    return {
+        index2 for index2 in indices2
+        if calculate_overlap(datas[index1][:4], datas[index2][:4]) > threshold
+    }
 
 
 def calculate_overlap(bbox1, bbox2):
@@ -197,7 +221,8 @@ def calculate_overlap(bbox1, bbox2):
     bbox1_area = calculate_area(*bbox1)
     bbox2_area = calculate_area(*bbox2)
 
-    overlap_percentage = intersection_area / float(bbox1_area + bbox2_area - intersection_area)
+    overlap_percentage = intersection_area / \
+        float(bbox1_area + bbox2_area - intersection_area)
     gc.collect()
     return overlap_percentage
 
@@ -268,8 +293,20 @@ def remove_completely_contained_labels(datas):
     category_indices = get_category_indices(datas)
 
     to_remove = set()
-    to_remove.update(find_contained_labels(category_indices['hardhat'], category_indices['no_hardhat'], datas))
-    to_remove.update(find_contained_labels(category_indices['safety_vest'], category_indices['no_safety_vest'], datas))
+    to_remove.update(
+        find_contained_labels(
+            category_indices['hardhat'],
+            category_indices['no_hardhat'],
+            datas,
+        ),
+    )
+    to_remove.update(
+        find_contained_labels(
+            category_indices['safety_vest'],
+            category_indices['no_safety_vest'],
+            datas,
+        ),
+    )
 
     for index in sorted(to_remove, reverse=True):
         datas.pop(index)

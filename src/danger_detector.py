@@ -377,8 +377,7 @@ def main():
     ]
 
     warnings, polygons = detector.detect_danger(data)
-    for warning in warnings:
-        print(warning)
+    print(warnings)
 
 
 if __name__ == '__main__':
