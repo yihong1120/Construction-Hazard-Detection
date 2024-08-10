@@ -326,8 +326,7 @@ class TestDangerDetector(unittest.TestCase):
         ) as mock_detect_danger:
             main()
             mock_detect_danger.assert_called_once()
-            mock_print.assert_any_call('警告: 有1個人進入受控區域!')
-            mock_print.assert_any_call('警告: 有人無配戴安全帽!')
+            mock_print.assert_any_call({'警告: 有1個人進入受控區域!', '警告: 有人無配戴安全帽!'})
 
 
 if __name__ == '__main__':

@@ -8,8 +8,8 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 
-from src.line_notifier import LineNotifier
-from src.line_notifier import main
+from src.notifiers.line_notifier import LineNotifier
+from src.notifiers.line_notifier import main
 
 
 class TestLineNotifier(unittest.TestCase):
@@ -49,7 +49,7 @@ class TestLineNotifier(unittest.TestCase):
         with self.assertRaises(ValueError):
             LineNotifier(line_token=None)
 
-    @patch('src.line_notifier.requests.post')
+    @patch('src.notifiers.line_notifier.requests.post')
     def test_send_notification_without_image(
         self,
         mock_post: MagicMock,
@@ -69,7 +69,7 @@ class TestLineNotifier(unittest.TestCase):
             params={'message': self.message},
         )
 
-    @patch('src.line_notifier.requests.post')
+    @patch('src.notifiers.line_notifier.requests.post')
     def test_send_notification_with_image(self, mock_post: MagicMock) -> None:
         """
         Test case for sending notification with an image as a NumPy array.
@@ -95,7 +95,7 @@ class TestLineNotifier(unittest.TestCase):
         image: Image.Image = Image.open(image_file[1])
         self.assertTrue(np.array_equal(np.array(image), self.image))
 
-    @patch('src.line_notifier.requests.post')
+    @patch('src.notifiers.line_notifier.requests.post')
     def test_send_notification_with_bytes_image(
         self,
         mock_post: MagicMock,
@@ -129,7 +129,7 @@ class TestLineNotifier(unittest.TestCase):
         image: Image.Image = Image.open(image_file[1])
         self.assertTrue(np.array_equal(np.array(image), self.image))
 
-    @patch('src.line_notifier.requests.post')
+    @patch('src.notifiers.line_notifier.requests.post')
     def test_main(self, mock_post: MagicMock) -> None:
         """
         Test the main function to ensure the complete process is covered.

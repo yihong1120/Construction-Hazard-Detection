@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-from src.telegram_notifier import main
-from src.telegram_notifier import TelegramNotifier
+from src.notifiers.telegram_notifier import main
+from src.notifiers.telegram_notifier import TelegramNotifier
 
 
 class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
@@ -76,10 +76,10 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(kwargs['photo'], BytesIO)
 
     @patch(
-        'src.telegram_notifier.TelegramNotifier.send_notification',
+        'src.notifiers.telegram_notifier.TelegramNotifier.send_notification',
         new_callable=AsyncMock,
     )
-    @patch('src.telegram_notifier.os.getenv')
+    @patch('src.notifiers.telegram_notifier.os.getenv')
     async def test_main(
         self,
         mock_getenv: AsyncMock,

@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-from src.messenger_notifier import main
-from src.messenger_notifier import MessengerNotifier
+from src.notifiers.messenger_notifier import main
+from src.notifiers.messenger_notifier import MessengerNotifier
 
 
 class TestMessengerNotifier(unittest.TestCase):
@@ -95,11 +95,11 @@ class TestMessengerNotifier(unittest.TestCase):
             MessengerNotifier(page_access_token=None)
 
     @patch(
-        'src.messenger_notifier.MessengerNotifier.send_notification',
+        'src.notifiers.messenger_notifier.MessengerNotifier.send_notification',
         return_value=200,
     )
     @patch(
-        'src.messenger_notifier.os.getenv',
+        'src.notifiers.messenger_notifier.os.getenv',
         return_value='test_page_access_token',
     )
     def test_main(
