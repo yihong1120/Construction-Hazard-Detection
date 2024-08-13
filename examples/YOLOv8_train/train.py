@@ -337,7 +337,6 @@ class YOLOModelHandler:
 
             fold += 1
 
-
 def main():
     parser = argparse.ArgumentParser(
         description='YOLOv8 training, validation, prediction, and export.',
@@ -446,7 +445,6 @@ def main():
 
     print(f"{args.export_format.upper()} model exported to:", export_path)
     print(f"Model saved to: {args.pt_path}")
-
 
 if __name__ == '__main__':
     main()
