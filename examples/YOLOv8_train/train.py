@@ -41,6 +41,8 @@ class YOLOModelHandler:
         if self.model_name.endswith('.yaml'):
             # Build a new model from scratch
             self.model = YOLO(self.model_name)
+            # Set device to CPU by default for YAML models
+            self.device = torch.device('cpu')
         elif self.model_name.endswith('.pt'):
             # Load a pre-trained model (recommended for training)
             self.model = YOLO(self.model_name)
@@ -336,7 +338,7 @@ class YOLOModelHandler:
             fold += 1
 
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(
         description='YOLOv8 training, validation, prediction, and export.',
     )
@@ -445,6 +447,10 @@ if __name__ == '__main__':
     print(f"{args.export_format.upper()} model exported to:", export_path)
     print(f"Model saved to: {args.pt_path}")
 
+
+if __name__ == '__main__':
+    main()
+
     # Predict on an image
     # results = handler.predict_image("https://ultralytics.com/images/bus.jpg")
 
@@ -455,13 +461,11 @@ if __name__ == '__main__':
     # print("SAHI Prediction Results:", sahi_result)
 
     # Example command to run the script
-    """
-python train.py \
-    --data_config=dataset/data.yaml \
-    --epochs=100 \
-    --model_name=../../models/pt/best_yolov8x.pt \
-    --batch_size=16 \
-    --optimizer=auto \
-    --cross_validate \
-    --n_splits=5
-    """
+    # python train.py \
+    #     --data_config=dataset/data.yaml \
+    #     --epochs=100 \
+    #     --model_name=../../models/pt/best_yolov8x.pt \
+    #     --batch_size=16 \
+    #     --optimizer=auto \
+    #     --cross_validate \
+    #     --n_splits=5

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from flask import escape
 from flask import Flask
 from flask import request
+from markupsafe import escape
 
 from .models import db
 from .user_operation import add_user

@@ -112,8 +112,7 @@ class COCOConverter:
             json.dump(self.coco_format, json_file, indent=4)
 
 
-def parse_arguments() -> argparse.Namespace:
-    """Parses command line arguments."""
+def main():
     parser = argparse.ArgumentParser(
         description='Convert YOLO format annotations to COCO format.',
     )
@@ -135,11 +134,9 @@ def parse_arguments() -> argparse.Namespace:
         required=True,
         help='Output JSON file path for COCO formatted annotations.',
     )
-    return parser.parse_args()
 
+    args = parser.parse_args()
 
-if __name__ == '__main__':
-    args = parse_arguments()
     categories = [
         'Hardhat',
         'Mask',
@@ -157,6 +154,10 @@ if __name__ == '__main__':
     converter.convert_annotations(args.labels_dir, args.images_dir)
     converter.save_to_json(args.output)
     print(f"COCO format annotations have been saved to {args.output}")
+
+
+if __name__ == '__main__':
+    main()
 
 """example usage
 python convert_yolo_to_coco.py \

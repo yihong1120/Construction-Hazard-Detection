@@ -93,7 +93,7 @@ class BoundingBoxVisualiser:
             plt.show()
 
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(
         description='Visualise bounding boxes on images.',
     )
@@ -137,6 +137,10 @@ if __name__ == '__main__':
     visualiser = BoundingBoxVisualiser(args.image, args.label, class_names)
     visualiser.draw_bounding_boxes()
     visualiser.save_or_display_image(args.output, args.save)
+
+
+if __name__ == '__main__':
+    main()
 
 
 """example

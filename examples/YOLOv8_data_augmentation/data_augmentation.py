@@ -331,8 +331,7 @@ class DataAugmentation:
             image_path.rename(new_image_path)
             label_path.rename(new_label_path)
 
-
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(
         description='Perform data augmentation on image datasets.',
     )
@@ -365,3 +364,6 @@ if __name__ == '__main__':
 
     augmenter.shuffle_data()
     print('Data augmentation and shuffling complete.')
+
+if __name__ == '__main__':
+    main()
