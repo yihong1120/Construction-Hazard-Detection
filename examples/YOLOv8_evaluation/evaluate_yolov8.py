@@ -34,14 +34,7 @@ class ModelEvaluator:
         # The 'val' method is for evaluation; 'test' can be used if needed.
         return self.model.val(data=self.data_path)
 
-
-def parse_arguments() -> argparse.Namespace:
-    """
-    Parses command line arguments.
-
-    Returns:
-        argparse.Namespace: The namespace containing command line arguments.
-    """
+def main():
     parser = argparse.ArgumentParser(description='Evaluates a YOLOv8 model.')
     parser.add_argument(
         '--model_path',
@@ -55,20 +48,21 @@ def parse_arguments() -> argparse.Namespace:
         required=True,
         help='Path to the dataset configuration file.',
     )
-    return parser.parse_args()
+    
+    args = parser.parse_args()
 
-
-if __name__ == '__main__':
-    args = parse_arguments()
     evaluator = ModelEvaluator(
         model_path=args.model_path,
         data_path=args.data_path,
     )
     results = evaluator.evaluate()
-    print('Evaluation results:', results)
+    print(results)
 
-"""example usage
-python evaluate_yolov8.py \
-    --model_path "../../models/pt/best_yolov8x.pt" \
-    --data_path "dataset/data.yaml"
-"""
+if __name__ == '__main__':
+    main()
+
+    """example usage
+    python evaluate_yolov8.py \
+        --model_path "../../models/pt/best_yolov8x.pt" \
+        --data_path "dataset/data.yaml"
+    """

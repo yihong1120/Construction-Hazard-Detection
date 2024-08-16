@@ -161,7 +161,7 @@ if __name__ == '__main__':
 
 """example usage
 python convert_yolo_to_coco.py \
-    --labels_dir dataset/valid/labels \
-    --images_dir dataset/valid/images \
-    --output dataset/coco_annotations.json
+    --labels_dir tests/dataset/val/labels \
+    --images_dir tests/dataset/val/images \
+    --output tests/dataset/coco_annotations.json
 """

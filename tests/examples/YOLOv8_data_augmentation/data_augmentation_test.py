@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
 from pathlib import Path
+from PIL import Image
+import io
 import sys
+import cv2
 from examples.YOLOv8_data_augmentation.data_augmentation import DataAugmentation, main
 
 class TestDataAugmentation(unittest.TestCase):
@@ -26,10 +31,10 @@ class TestDataAugmentation(unittest.TestCase):
         mock_seq_call.return_value = (MagicMock(shape=(100, 100, 3)), MagicMock())
         
         # Mock the label file reading
-        mock_glob.return_value = [Path('tests/dataset/images/1.jpg')]
+        mock_glob.return_value = [Path('tests/cv_dataset/images/1.jpg')]
         
         # Test augment_image
-        image_path = Path('tests/dataset/images/1.jpg')
+        image_path = Path('tests/cv_dataset/images/1.jpg')
         self.augmenter.augment_image(image_path)
         
         mock_imread.assert_called_once_with(image_path)
@@ -50,18 +55,26 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(mock_augment_image.call_count, 10)
         self.assertEqual(mock_gc_collect.call_count, 5)
 
-    @patch('builtins.open', new_callable=mock_open, read_data='0 0.5 0.5 0.5 0.5\n')
+    @patch('builtins.open', new_callable=mock_open, read_data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01\xe2!\xbc\x33\x00\x00\x00\x00IEND\xaeB`\x82')
     @patch('examples.YOLOv8_data_augmentation.data_augmentation.Path.exists', return_value=True)
     @patch('examples.YOLOv8_data_augmentation.data_augmentation.Path.open', new_callable=mock_open)
     def test_read_label_file(self, mock_open_path, mock_exists, mock_file):
         """
         Test the read_label_file method.
         """
-        label_path = Path('tests/dataset/labels/1.txt')
-        image_shape = (100, 100, 3)
+        label_path = Path('tests/cv_dataset/labels/1.txt')
+        image_path = Path('tests/cv_dataset/images/1.jpg')
+        
+        # Test reading the label file
+        image = cv2.imread(str(image_path))
+        if image is not None:
+            image_shape = image.shape[:2] + (image.shape[2],)
+            print(f"image_shape: {image_shape}")
+        else:
+            print(f"Failed to read image from {image_path}")
         
         bbs = self.augmenter.read_label_file(label_path, image_shape)
-        
+        print(f"bbs: {bbs}")
         self.assertEqual(len(bbs), 1)
         self.assertEqual(bbs[0].label, 0)
         self.assertAlmostEqual(bbs[0].x1, 25.0)
@@ -80,8 +93,20 @@ class TestDataAugmentation(unittest.TestCase):
         bbs = MagicMock()
         bbs.bounding_boxes = [MagicMock(x1=10, y1=10, x2=50, y2=50, label=0)]
         
-        label_path = Path('tests/dataset/labels/1.txt')
-        self.augmenter.write_label_file(bbs, label_path, 100, 100)
+        label_path = Path('tests/cv_dataset/labels/1.txt')
+        image_path = Path('tests/cv_dataset/images/1.jpg')
+        
+        # Test reading the label file
+        image = cv2.imread(str(image_path))
+        if image is not None:
+            image_shape = image.shape[:2] + (image.shape[2],)
+            print(f"image_shape: {image_shape}")
+        else:
+            print(f"Failed to read image from {image_path}")
+
+        print(f"image_shape[0]: {image_shape[0]}")
+
+        self.augmenter.write_label_file(bbs, label_path, image_shape[1], image_shape[0])
         
         mock_file().write.assert_called()
 

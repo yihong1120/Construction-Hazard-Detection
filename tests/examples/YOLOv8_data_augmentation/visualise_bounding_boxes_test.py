@@ -6,8 +6,8 @@ from examples.YOLOv8_data_augmentation.visualise_bounding_boxes import BoundingB
 
 class TestBoundingBoxVisualiser(unittest.TestCase):
     def setUp(self):
-        self.image_path = 'tests/cv_dataset/images/-_jpeg.rf.3e98d2f5b90e0b1459e15f570a433459.jpg'
-        self.label_path = 'tests/cv_dataset/labels/-_jpeg.rf.3e98d2f5b90e0b1459e15f570a433459.txt'
+        self.image_path = 'tests/cv_dataset/images/1.jpg'
+        self.label_path = 'tests/cv_dataset/labels/1.txt'
         self.class_names = [
             'Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest',
             'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle'

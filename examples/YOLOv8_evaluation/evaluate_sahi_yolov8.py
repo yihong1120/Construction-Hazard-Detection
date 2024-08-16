@@ -121,9 +121,7 @@ class COCOEvaluator:
         }
         return metrics
 
-
-def parse_arguments() -> argparse.Namespace:
-    """Parses command line arguments."""
+def main():
     parser = argparse.ArgumentParser(
         description='Evaluates a YOLOv8 model using COCO metrics.',
     )
@@ -145,11 +143,7 @@ def parse_arguments() -> argparse.Namespace:
         required=True,
         help='Directory containing the evaluation image set.',
     )
-    return parser.parse_args()
-
-
-if __name__ == '__main__':
-    args = parse_arguments()
+    args = parser.parse_args()
     evaluator = COCOEvaluator(
         model_path=args.model_path,
         coco_json=args.coco_json,
@@ -157,6 +151,9 @@ if __name__ == '__main__':
     )
     metrics = evaluator.evaluate()
     print('Evaluation metrics:', metrics)
+
+if __name__ == '__main__':
+    main()
 
 """example usage
 python evaluate_sahi_yolov8.py \

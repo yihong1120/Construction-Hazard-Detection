@@ -1,13 +1,16 @@
+from __future__ import annotations
+
+import argparse
 import unittest
 from unittest.mock import patch, MagicMock
-from examples.YOLOv8_evaluation.evaluate_sahi_yolov8 import COCOEvaluator
+from examples.YOLOv8_evaluation.evaluate_sahi_yolov8 import COCOEvaluator, main
 
 
 class TestCOCOEvaluator(unittest.TestCase):
     def setUp(self):
-        self.model_path = 'path/to/model.pt'
-        self.coco_json = 'path/to/coco_annotations.json'
-        self.image_dir = 'path/to/images'
+        self.model_path = 'models/pt/best_yolov8n.pt'
+        self.coco_json = 'tests/dataset/coco_annotations.json'
+        self.image_dir = 'tests/dataset/val/images'
         self.evaluator = COCOEvaluator(
             model_path=self.model_path,
             coco_json=self.coco_json,
@@ -67,6 +70,32 @@ class TestCOCOEvaluator(unittest.TestCase):
         self.assertIn('Average Recall', metrics)
         self.assertIn('mAP at IoU=50', metrics)
         self.assertIn('mAP at IoU=50-95', metrics)
+
+    @patch('examples.YOLOv8_evaluation.evaluate_sahi_yolov8.COCOEvaluator.evaluate')
+    @patch('argparse.ArgumentParser.parse_args', return_value=argparse.Namespace(
+        model_path='models/pt/best_yolov8n.pt',
+        coco_json='tests/dataset/coco_annotations.json',
+        image_dir='tests/dataset/val/images'
+    ))
+    def test_main(self, mock_parse_args, mock_evaluate):
+        """
+        Test the main function.
+        """
+        mock_evaluate.return_value = {
+            'Average Precision': 0.5,
+            'Average Recall': 0.6,
+            'mAP at IoU=50': 0.7,
+            'mAP at IoU=50-95': 0.8,
+        }
+
+        with patch('builtins.print') as mock_print:
+            main()
+            mock_print.assert_any_call('Evaluation metrics:', {
+                'Average Precision': 0.5,
+                'Average Recall': 0.6,
+                'mAP at IoU=50': 0.7,
+                'mAP at IoU=50-95': 0.8,
+            })
 
 if __name__ == '__main__':
     unittest.main()
