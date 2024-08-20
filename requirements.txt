@@ -11,7 +11,7 @@ gunicorn==22.0.0
 imagecorruptions==1.1.2
 imageio==2.34.2
 imgaug==0.4.0
-line-bot-sdk==3.11.0
+line-bot-sdk==3.6.0
 numpy==1.26.4
 onnx==1.16.1
 opencv_python==4.9.0.80
@@ -19,6 +19,7 @@ opencv_python_headless==4.9.0.80
 Pillow==10.3.0
 pre-commit==3.7.1
 pycocotools==2.0.8
+pymysql==1.1.1
 pytest==8.3.2
 pytest-cov==5.0.0
 python-dotenv==1.0.1
