@@ -138,29 +138,29 @@ class TestCOCOConverter(unittest.TestCase):
             mock_parse_args,
             mock_save_to_json,
             mock_convert_annotations,
-        ):
-            """
-            Test the main function.
-            """
-            # Setup the mock arguments
-            mock_parse_args.return_value = argparse.Namespace(
-                labels_dir='dataset/valid/labels',
-                images_dir='dataset/valid/images',
-                output='dataset/coco_annotations.json',
+    ):
+        """
+        Test the main function.
+        """
+        # Setup the mock arguments
+        mock_parse_args.return_value = argparse.Namespace(
+            labels_dir='dataset/valid/labels',
+            images_dir='dataset/valid/images',
+            output='dataset/coco_annotations.json',
+        )
+
+        # Mock open to avoid creating a real file
+        with patch('builtins.open', mock_open()):
+            # Run the main function
+            main()
+
+            # Check that convert_annotations and save_to_json were called
+            mock_convert_annotations.assert_called_once_with(
+                'dataset/valid/labels', 'dataset/valid/images',
             )
-
-            # Mock open to avoid creating a real file
-            with patch('builtins.open', mock_open()):
-                # Run the main function
-                main()
-
-                # Check that convert_annotations and save_to_json were called
-                mock_convert_annotations.assert_called_once_with(
-                    'dataset/valid/labels', 'dataset/valid/images',
-                )
-                mock_save_to_json.assert_called_once_with(
-                    'dataset/coco_annotations.json',
-                )
+            mock_save_to_json.assert_called_once_with(
+                'dataset/coco_annotations.json',
+            )
 
 
 if __name__ == '__main__':
