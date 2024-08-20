@@ -23,6 +23,12 @@ def create_token() -> Response:
     Raises:
         HTTP 401: If the username or password is incorrect.
     """
+    # Ensure the request contains JSON data
+    if not request.json:
+        response = jsonify({'msg': 'Missing JSON in request.'})
+        response.status_code = 400
+        return response
+
     # Extract username and password from JSON body of the request
     username = request.json.get('username', None)
     password = request.json.get('password', None)

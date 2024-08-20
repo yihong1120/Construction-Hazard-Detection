@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import cv2
+import numpy as np
 import requests
 from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
@@ -24,7 +25,7 @@ load_dotenv()
 
 
 class InputData(TypedDict):
-    frame: cv2.Mat
+    frame: np.ndarray
     model_key: str
     run_local: bool
 
@@ -157,7 +158,10 @@ class LiveStreamDetector:
         wait=wait_fixed(3),
         retry=retry_if_exception_type(requests.RequestException),
     )
-    def generate_detections_cloud(self, frame: cv2.Mat) -> list[list[float]]:
+    def generate_detections_cloud(
+        self,
+        frame: np.ndarray,
+    ) -> list[list[float]]:
         """
         Sends the frame to the API for detection and retrieves the detections.
 
@@ -170,14 +174,15 @@ class LiveStreamDetector:
         self.ensure_authenticated()
 
         _, frame_encoded = cv2.imencode('.png', frame)
-        frame_encoded = frame_encoded.tobytes()
+        frame_encoded_bytes = frame_encoded.tobytes()
         timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
         filename = f"frame_{timestamp}.png"
 
         headers = {'Authorization': f"Bearer {self.access_token}"}
+        files = {'image': (filename, frame_encoded_bytes, 'image/png')}
         response = self.session.post(
             f"{self.api_url}/detect",
-            files={'image': (filename, frame_encoded, 'image/png')},
+            files=files,
             params={'model': self.model_key},
             headers=headers,
         )
@@ -185,12 +190,15 @@ class LiveStreamDetector:
         detections = response.json()
         return detections
 
-    def generate_detections_local(self, frame: cv2.Mat) -> list[list[float]]:
+    def generate_detections_local(
+        self,
+        frame: np.ndarray,
+    ) -> list[list[float]]:
         """
         Generates detections locally using YOLOv8.
 
         Args:
-            frame (cv2.Mat): The frame to send for detection.
+            frame (np.ndarray): The frame to send for detection.
 
         Returns:
             List[List[float]]: The detection data.
@@ -273,8 +281,6 @@ class LiveStreamDetector:
 
         for index in sorted(to_remove, reverse=True):
             datas.pop(index)
-
-        return datas
 
         gc.collect()
         return datas
@@ -386,16 +392,17 @@ class LiveStreamDetector:
         return datas
 
     def generate_detections(
-        self, frame: cv2.Mat,
-    ) -> tuple[list[list[float]], cv2.Mat]:
+        self, frame: np.ndarray,
+    ) -> tuple[list[list[float]], np.ndarray]:
         """
         Generates detections with local model or cloud API as configured.
 
         Args:
-            frame (cv2.Mat): The frame to send for detection.
+            frame (np.ndarray): The frame to send for detection.
 
         Returns:
-            Tuple[List[List[float]], cv2.Mat]: Detections and original frame.
+            Tuple[List[List[float]], np.ndarray]:
+                Detections and original frame.
         """
         if self.run_local:
             datas = self.generate_detections_local(frame)

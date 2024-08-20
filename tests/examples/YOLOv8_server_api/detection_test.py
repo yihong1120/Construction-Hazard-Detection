@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import unittest
 from io import BytesIO
+from unittest.mock import MagicMock
 
 import cv2
 import numpy as np
-import pytest
 from flask import Flask
-from flask_jwt_extended import create_access_token, JWTManager
+from flask_jwt_extended import create_access_token
+from flask_jwt_extended import JWTManager
 
+from examples.YOLOv8_server_api.detection import calculate_overlap
+from examples.YOLOv8_server_api.detection import check_containment
+from examples.YOLOv8_server_api.detection import compile_detection_data
 from examples.YOLOv8_server_api.detection import detection_blueprint
 from examples.YOLOv8_server_api.detection import is_contained
-from examples.YOLOv8_server_api.detection import calculate_overlap
-from examples.YOLOv8_server_api.detection import remove_completely_contained_labels
+from examples.YOLOv8_server_api.detection import (
+    remove_completely_contained_labels,
+)
 from examples.YOLOv8_server_api.detection import remove_overlapping_labels
 
 app = Flask(__name__)
@@ -21,69 +27,112 @@ jwt = JWTManager(app)
 app.register_blueprint(detection_blueprint)
 
 
-@pytest.fixture
-def client():
-    with app.test_client() as client:
-        yield client
+class TestDetectionAPI(unittest.TestCase):
+    def setUp(self):
+        self.app = app.test_client()
+        self.app_context = app.app_context()
+        self.app_context.push()
 
+    def tearDown(self):
+        self.app_context.pop()
 
-def test_detection_route(client):
-    # Create JWT token
-    with app.app_context():
+    def test_detection_route(self):
+        # Create JWT token
         access_token = create_access_token(identity='testuser')
 
-    # Load test image
-    img = np.zeros((500, 500, 3), dtype=np.uint8)
-    _, buffer = cv2.imencode('.jpg', img)
-    img_bytes = BytesIO(buffer.tobytes())
+        # Load test image
+        img = np.zeros((500, 500, 3), dtype=np.uint8)
+        _, buffer = cv2.imencode('.jpg', img)
+        img_bytes = BytesIO(buffer.tobytes())
 
-    # Test detection endpoint
-    response = client.post(
-        '/detect',
-        headers={'Authorization': f'Bearer {access_token}'},
-        content_type='multipart/form-data',
-        data={'image': (img_bytes, 'test.jpg')},
-    )
+        # Test detection endpoint
+        response = self.app.post(
+            '/detect',
+            headers={'Authorization': f'Bearer {access_token}'},
+            content_type='multipart/form-data',
+            data={'image': (img_bytes, 'test.jpg')},
+        )
 
-    assert response.status_code == 200
-    assert isinstance(response.json, list)
-
-
-def test_remove_overlapping_labels():
-    datas = [
-        [10, 10, 50, 50, 0.9, 0],  # Hardhat
-        [10, 10, 50, 50, 0.8, 2],  # NO-Hardhat
-        [100, 100, 150, 150, 0.9, 7],  # Safety Vest
-        [100, 100, 150, 150, 0.8, 4],  # NO-Safety Vest
-    ]
-
-    updated_datas = remove_overlapping_labels(datas)
-    assert len(updated_datas) == 2
-    assert all(d[5] in [0, 7] for d in updated_datas)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsInstance(response.json, list)
 
 
-def test_remove_completely_contained_labels():
-    datas = [
-        [10, 10, 50, 50, 0.9, 0],  # Hardhat
-        [15, 15, 45, 45, 0.8, 2],  # NO-Hardhat contained within Hardhat
-        [100, 100, 150, 150, 0.9, 7],  # Safety Vest
-        [105, 105, 145, 145, 0.8, 4],  # NO-Safety Vest contained within Safety Vest
-    ]
+class TestDetectionFunctions(unittest.TestCase):
+    def test_remove_overlapping_labels(self):
+        datas = [
+            [10, 10, 50, 50, 0.9, 0],  # Hardhat
+            [10, 10, 50, 50, 0.8, 2],  # NO-Hardhat
+            [100, 100, 150, 150, 0.9, 7],  # Safety Vest
+            [100, 100, 150, 150, 0.8, 4],  # NO-Safety Vest
+        ]
 
-    updated_datas = remove_completely_contained_labels(datas)
-    assert len(updated_datas) == 2
-    assert all(d[5] in [0, 7] for d in updated_datas)
+        updated_datas = remove_overlapping_labels(datas)
+        self.assertEqual(len(updated_datas), 2)
+        self.assertTrue(all(d[5] in [0, 7] for d in updated_datas))
+
+    def test_remove_completely_contained_labels(self):
+        datas = [
+            [10, 10, 50, 50, 0.9, 0],  # Hardhat
+            [15, 15, 45, 45, 0.8, 2],  # NO-Hardhat contained within Hardhat
+            [100, 100, 150, 150, 0.9, 7],  # Safety Vest
+            # NO-Safety Vest contained within Safety Vest
+            [105, 105, 145, 145, 0.8, 4],
+        ]
+
+        updated_datas = remove_completely_contained_labels(datas)
+        self.assertEqual(len(updated_datas), 2)
+        self.assertTrue(all(d[5] in [0, 7] for d in updated_datas))
+
+    def test_calculate_overlap(self):
+        bbox1 = [10, 10, 50, 50]
+        bbox2 = [30, 30, 70, 70]
+        overlap = calculate_overlap(bbox1, bbox2)
+        self.assertGreater(overlap, 0)
+
+    def test_is_contained(self):
+        outer_bbox = [10, 10, 50, 50]
+        inner_bbox = [20, 20, 30, 30]
+        self.assertTrue(is_contained(inner_bbox, outer_bbox))
+        self.assertFalse(is_contained(outer_bbox, inner_bbox))
+
+    def test_compile_detection_data(self):
+        # Mock the result object
+        mock_result = MagicMock()
+        mock_object_prediction = MagicMock()
+        mock_object_prediction.category.id = 1
+        mock_object_prediction.bbox.to_voc_bbox.return_value = [10, 20, 30, 40]
+        mock_object_prediction.score.value = 0.95
+        mock_result.object_prediction_list = [mock_object_prediction]
+
+        # Call the function
+        datas = compile_detection_data(mock_result)
+
+        # Assertions
+        self.assertEqual(len(datas), 1)
+        self.assertEqual(datas[0], [10, 20, 30, 40, 0.95, 1])
+
+    def test_check_containment(self):
+        datas = [
+            [10, 10, 50, 50, 0.9],  # 第一个检测框
+            [12, 12, 48, 48, 0.8],  # 第二个检测框，完全包含在第一个检测框中
+            [60, 60, 100, 100, 0.7],  # 第三个检测框，不与其他框重叠
+        ]
+
+        # 调用要测试的函数
+        result = check_containment(0, 1, datas)
+
+        # 断言 `result` 应包含 index2，因为 index1 的框包含 index2 的框
+        self.assertIn(1, result)
+
+        # 测试另一个组合，index2 完全包含在 index1 中
+        result = check_containment(1, 0, datas)
+        self.assertIn(1, result)
+
+        # 测试不重叠的情况
+        result = check_containment(0, 2, datas)
+        self.assertNotIn(0, result)
+        self.assertNotIn(2, result)
 
 
-def test_calculate_overlap():
-    bbox1 = [10, 10, 50, 50]
-    bbox2 = [30, 30, 70, 70]
-    overlap = calculate_overlap(bbox1, bbox2)
-    assert overlap > 0
-
-
-def test_is_contained():
-    outer_bbox = [10, 10, 50, 50]
-    inner_bbox = [20, 20, 30, 30]
-    assert is_contained(inner_bbox, outer_bbox)
-    assert not is_contained(outer_bbox, inner_bbox)
+if __name__ == '__main__':
+    unittest.main()

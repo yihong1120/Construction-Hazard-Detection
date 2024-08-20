@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from flask import Flask
 from flask import request
 from markupsafe import escape
@@ -12,9 +14,10 @@ from .user_operation import update_username
 
 app = Flask(__name__)
 
-# Configuration for SQLAlchemy, replace 'your_database_uri_here'
 # with your actual database URI
-app.config['SQLALCHEMY_DATABASE_URI'] = 'your_database_uri_here'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+    'DATABASE_URI', 'sqlite:///:memory:',
+)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 

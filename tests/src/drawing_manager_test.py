@@ -75,6 +75,7 @@ class TestDrawingManager(unittest.TestCase):
         # Check if objects are drawn correctly
         for data in self.datas:
             x1, y1, x2, y2, _, label_id = data
+            label_id = int(label_id)  # Ensure label_id is an int
             label: str = self.drawer.category_id_to_name.get(label_id, '')
             if label in self.drawer.colors:
                 color: tuple[int, int, int] = self.drawer.colors[label]

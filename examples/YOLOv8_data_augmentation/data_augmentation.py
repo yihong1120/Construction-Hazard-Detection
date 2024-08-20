@@ -148,40 +148,44 @@ class DataAugmentation:
         Args:
             image_path (Path): The path to the image file.
         """
+        image = None
+        bbs = None
         try:
+            print(f"Processing image: {image_path}")
             image = imageio.imread(image_path)
+
+            # Check if the image is None or has no shape, and return early
+            if image is None or image.shape is None:
+                print(f"Image is None or has no shape: {image_path}")
+                return
 
             # Remove alpha channel if present
             if image.shape[2] == 4:
                 image = image[:, :, :3]
 
+            # Ensure original_shape is a tuple of three integers
+            original_shape: tuple[int, int, int] = (
+                image.shape[0], image.shape[1], image.shape[2],
+            )
             label_path = (
                 self.train_path / 'labels' /
                 image_path.with_suffix('.txt').name
             )
-            original_shape = image.shape
             bbs = BoundingBoxesOnImage(
-                self.read_label_file(
-                    label_path,
-                    original_shape,
-                ),
+                self.read_label_file(label_path, original_shape),
                 shape=original_shape,
             )
 
             # Check and resize small images
             if image.shape[0] < 32 or image.shape[1] < 32:
-                print(
-                    f"Resize {image_path} due to small size: {image.shape}",
-                )
+                print(f"Resize {image_path} due to small size: {image.shape}")
                 image = iaa.Resize(
                     {'shorter-side': 32, 'longer-side': 'keep-aspect-ratio'},
                 )(image=image)
 
             # Check and resize large images
             if image.shape[0] > 1920 or image.shape[1] > 1920:
-                print(
-                    f"Resize {image_path} due to large size: {image.shape}",
-                )
+                print(f"Resize {image_path} due to large size: {image.shape}")
                 image = iaa.Resize(
                     {'longer-side': 1920, 'shorter-side': 'keep-aspect-ratio'},
                 )(image=image)
@@ -191,12 +195,17 @@ class DataAugmentation:
             bbs = bbs.on(resized_shape)
 
             for i in range(self.num_augmentations):
+                # Apply augmentations to the image and bounding boxes
                 image_aug, bbs_aug = self.seq(image=image, bounding_boxes=bbs)
                 bbs_aug = bbs_aug.clip_out_of_image()
 
-                aug_image_filename = image_path.stem + \
-                    f"_aug_{i}" + image_path.suffix
-                aug_label_filename = image_path.stem + f"_aug_{i}.txt"
+                # Save the augmented image and label file
+                aug_image_filename = (
+                    f"{image_path.stem}_aug_{i}{image_path.suffix}"
+                )
+                aug_label_filename = (
+                    f"{image_path.stem}_aug_{i}.txt"
+                )
 
                 image_aug_path = (
                     self.train_path / 'images' / aug_image_filename
@@ -205,7 +214,7 @@ class DataAugmentation:
                     self.train_path / 'labels' / aug_label_filename
                 )
 
-                # Use pilmode='RGB' to ensure the image is saved in RGB mode
+                print(f"Saving augmented image to {image_aug_path}")
                 imageio.imwrite(image_aug_path, image_aug, pilmode='RGB')
                 self.write_label_file(
                     bbs_aug,
@@ -214,17 +223,23 @@ class DataAugmentation:
                     image_aug.shape[0],
                 )
 
-                del image_aug, bbs_aug  # Explicitly delete to free memory
+                # Explicitly delete to free memory
+                del image_aug, bbs_aug
         except Exception as e:
-            print(f"Error processing image: {image_path}")
+            print(f"Error processing image: {image_path}:")
             print(e)
         finally:
-            del image, bbs  # Ensure these are deleted from memory
-            gc.collect()  # Force garbage collection
+            if image is not None:
+                del image
+            if bbs is not None:
+                del bbs
 
     def augment_data(self, batch_size=10):
         """
         Processes images in batches to save memory.
+
+        Args:
+            batch_size (int): The number of images to process in each batch.
         """
         image_paths = list(self.train_path.glob('images/*.jpg'))
         batches = [
@@ -242,27 +257,40 @@ class DataAugmentation:
         label_path: Path,
         image_shape: tuple[int, int, int],
     ) -> list[BoundingBox]:
-        """Reads a label file and converts it into a list of bounding boxes."""
-        bounding_boxes = []
-        if label_path.exists():
-            with label_path.open('r') as file:
-                for line in file:
-                    values = list(map(float, line.split()))
-                    if len(values) == 5:
-                        class_id, x_center, y_center, width, height = values
-                        x1 = (x_center - width / 2) * image_shape[1]
-                        y1 = (y_center - height / 2) * image_shape[0]
-                        x2 = (x_center + width / 2) * image_shape[1]
-                        y2 = (y_center + height / 2) * image_shape[0]
-                        bounding_boxes.append(
-                            BoundingBox(
-                                x1=x1,
-                                y1=y1,
-                                x2=x2,
-                                y2=y2,
-                                label=int(class_id),
-                            ),
-                        )
+        """
+        Reads a label file and converts it into a list of bounding boxes.
+
+        Args:
+            label_path (Path): The path to the label file.
+            image_shape (tuple): The shape of the image.
+
+        Returns:
+            list[BoundingBox]: The list of bounding boxes.
+        """
+        bounding_boxes: list[BoundingBox] = []
+        if not label_path.exists():
+            return bounding_boxes
+
+        with open(label_path, encoding='utf-8') as file:
+            lines = file.readlines()
+
+        for line in lines:
+            values = list(map(float, line.split()))
+            if len(values) == 5:
+                class_id, x_center, y_center, width, height = values
+                x1 = (x_center - width / 2) * image_shape[1]
+                y1 = (y_center - height / 2) * image_shape[0]
+                x2 = (x_center + width / 2) * image_shape[1]
+                y2 = (y_center + height / 2) * image_shape[0]
+                bounding_boxes.append(
+                    BoundingBox(
+                        x1=x1,
+                        y1=y1,
+                        x2=x2,
+                        y2=y2,
+                        label=int(class_id),
+                    ),
+                )
         return bounding_boxes
 
     @staticmethod
@@ -284,6 +312,7 @@ class DataAugmentation:
         with label_path.open('w') as f:
             # Iterate through actual bounding boxes
             for (bb) in bounding_boxes.bounding_boxes:
+                print(f"Writing bounding box: {bb}")
                 x_center = (bb.x1 + bb.x2) / 2 / image_width
                 y_center = (bb.y1 + bb.y2) / 2 / image_height
                 width = (bb.x2 - bb.x1) / image_width
@@ -331,6 +360,7 @@ class DataAugmentation:
             image_path.rename(new_image_path)
             label_path.rename(new_label_path)
 
+
 def main():
     parser = argparse.ArgumentParser(
         description='Perform data augmentation on image datasets.',
@@ -364,6 +394,7 @@ def main():
 
     augmenter.shuffle_data()
     print('Data augmentation and shuffling complete.')
+
 
 if __name__ == '__main__':
     main()

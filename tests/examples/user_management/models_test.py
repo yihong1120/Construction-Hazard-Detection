@@ -3,8 +3,9 @@ from __future__ import annotations
 import unittest
 
 from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-from examples.user_management.models import User, db
+
+from examples.user_management.models import db
+from examples.user_management.models import User
 
 
 class UserModelTestCase(unittest.TestCase):
@@ -45,11 +46,11 @@ class UserModelTestCase(unittest.TestCase):
         Test that the password is hashed correctly when set.
         """
         with self.app.app_context():
-            user = User(username="testuser")
-            user.set_password("password123")
+            user = User(username='testuser')
+            user.set_password('password123')
 
             # Ensure the password_hash is not equal to the plain text password
-            self.assertNotEqual(user.password_hash, "password123")
+            self.assertNotEqual(user.password_hash, 'password123')
 
             # Ensure the password_hash is not empty
             self.assertTrue(user.password_hash)
@@ -59,14 +60,14 @@ class UserModelTestCase(unittest.TestCase):
         Test that the correct password validates against the hash.
         """
         with self.app.app_context():
-            user = User(username="testuser")
-            user.set_password("password123")
+            user = User(username='testuser')
+            user.set_password('password123')
 
             # Ensure the password check returns True for correct password
-            self.assertTrue(user.check_password("password123"))
+            self.assertTrue(user.check_password('password123'))
 
             # Ensure the password check returns False for incorrect password
-            self.assertFalse(user.check_password("wrongpassword"))
+            self.assertFalse(user.check_password('wrongpassword'))
 
     def test_unique_username(self) -> None:
         """
@@ -74,14 +75,14 @@ class UserModelTestCase(unittest.TestCase):
         """
         with self.app.app_context():
             # Create a user with a unique username
-            user1 = User(username="uniqueuser")
-            user1.set_password("password123")
+            user1 = User(username='uniqueuser')
+            user1.set_password('password123')
             db.session.add(user1)
             db.session.commit()
 
             # Attempt to create another user with the same username
-            user2 = User(username="uniqueuser")
-            user2.set_password("password456")
+            user2 = User(username='uniqueuser')
+            user2.set_password('password456')
             db.session.add(user2)
 
             # Ensure an integrity error is raised due to the unique constraint
@@ -89,5 +90,5 @@ class UserModelTestCase(unittest.TestCase):
                 db.session.commit()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

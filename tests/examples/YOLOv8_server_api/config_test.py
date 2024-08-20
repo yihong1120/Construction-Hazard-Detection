@@ -1,8 +1,12 @@
-import unittest
+from __future__ import annotations
+
 import os
-from unittest.mock import patch
+import unittest
 from importlib import reload
+from unittest.mock import patch
+
 import examples.YOLOv8_server_api.config as config_module
+
 
 class TestConfig(unittest.TestCase):
 
@@ -11,36 +15,62 @@ class TestConfig(unittest.TestCase):
         """
         Test that JWT_SECRET_KEY is fetched from environment variables.
         """
-        reload(config_module)  # Reload the module to pick up the patched environment variable
+        reload(
+            config_module,
+        )  # Reload the module to pick up the patched environment variable
         config = config_module.Config()
         self.assertEqual(config.JWT_SECRET_KEY, 'test_secret_key')
 
     @patch.dict(os.environ, {}, clear=True)
     def test_jwt_secret_key_fallback(self):
         """
-        Test that JWT_SECRET_KEY uses the fallback value when not set in the environment.
+        Test that JWT_SECRET_KEY uses the fallback value
+        when not set in the environment.
         """
-        reload(config_module)  # Reload the module to pick up the patched environment variable
+        reload(
+            config_module,
+        )  # Reload the module to pick up the patched environment variable
         config = config_module.Config()
         self.assertEqual(config.JWT_SECRET_KEY, 'your_fallback_secret_key')
 
-    @patch.dict(os.environ, {'DATABASE_URL': 'mysql://user:passcode@localhost/construction_hazard_detection'}, clear=True)
+    @patch.dict(
+        os.environ,
+        {
+            'DATABASE_URL': (
+                'mysql://user:passcode@localhost/'
+                'construction_hazard_detection'
+            ),
+        },
+        clear=True,
+    )
     def test_database_url_from_env(self):
         """
-        Test that SQLALCHEMY_DATABASE_URI is fetched from environment variables.
+        Test that SQLALCHEMY_DATABASE_URI
+        is fetched from environment variables.
         """
-        reload(config_module)  # Reload the module to pick up the patched environment variable
+        reload(
+            config_module,
+        )  # Reload the module to pick up the patched environment variable
         config = config_module.Config()
-        self.assertEqual(config.SQLALCHEMY_DATABASE_URI, 'mysql://user:passcode@localhost/construction_hazard_detection')
+        self.assertEqual(
+            config.SQLALCHEMY_DATABASE_URI,
+            'mysql://user:passcode@localhost/construction_hazard_detection',
+        )
 
     @patch.dict(os.environ, {}, clear=True)
     def test_database_url_fallback(self):
         """
-        Test that SQLALCHEMY_DATABASE_URI uses the fallback value when not set in the environment.
+        Test that SQLALCHEMY_DATABASE_URI uses the
+        fallback value when not set in the environment.
         """
-        reload(config_module)  # Reload the module to pick up the patched environment variable
+        reload(
+            config_module,
+        )  # Reload the module to pick up the patched environment variable
         config = config_module.Config()
-        self.assertEqual(config.SQLALCHEMY_DATABASE_URI, 'mysql://user:passcode@localhost/construction_hazard_detection')
+        self.assertEqual(
+            config.SQLALCHEMY_DATABASE_URI,
+            'mysql://user:passcode@localhost/construction_hazard_detection',
+        )
 
     def test_sqlalchemy_track_modifications(self):
         """

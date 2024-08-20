@@ -6,13 +6,14 @@ from collections.abc import Generator
 from typing import TypedDict
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 
 class DetectionResult(TypedDict):
     ids: list[int]
     data: list[list[float]]
-    frame: cv2.Mat
+    frame: cv2.Mat | np.ndarray
     timestamp: float
 
 
@@ -41,9 +42,7 @@ class LiveStreamDetector:
     def generate_detections(
         self,
     ) -> Generator[
-        tuple[list[int], list[list[float]], cv2.Mat, float],
-        None,
-        None,
+        tuple[list[int], list[list[float]], cv2.Mat | np.ndarray, float],
     ]:
         """
         Yields detection results, timestamp per frame from video capture.

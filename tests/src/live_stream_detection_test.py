@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 
 from src.live_stream_detection import LiveStreamDetector
@@ -87,6 +88,7 @@ class TestLiveStreamDetector(unittest.TestCase):
         mock_from_pretrained.return_value = mock_model
 
         frame: np.ndarray = np.zeros((480, 640, 3), dtype=np.uint8)
+        # mat_frame = cv2.Mat(frame)
         mock_result: MagicMock = MagicMock()
         mock_result.object_prediction_list = [
             MagicMock(
@@ -102,7 +104,9 @@ class TestLiveStreamDetector(unittest.TestCase):
         ]
         mock_model.predict.return_value = mock_result
 
-        datas: list[list[Any]] = self.detector.generate_detections_local(frame)
+        datas: list[list[Any]] = self.detector.generate_detections_local(
+            frame,
+        )
 
         # Assert the structure and types of the detection data
         self.assertIsInstance(datas, list)
@@ -172,6 +176,7 @@ class TestLiveStreamDetector(unittest.TestCase):
             mock_post (MagicMock): Mock for requests.Session.post.
         """
         frame: np.ndarray = np.zeros((480, 640, 3), dtype=np.uint8)
+        # mat_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         mock_response: MagicMock = MagicMock()
         mock_response.json.return_value = [
             [10, 10, 50, 50, 0.9, 0], [20, 20, 60, 60, 0.8, 1],
@@ -311,25 +316,26 @@ class TestLiveStreamDetector(unittest.TestCase):
         Test the generate_detections method.
         """
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        mat_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         self.detector.run_local = True
         with patch.object(
             self.detector, 'generate_detections_local',
             return_value=[[10, 10, 50, 50, 0.9, 0]],
         ) as mock_local:
-            datas, _ = self.detector.generate_detections(frame)
+            datas, _ = self.detector.generate_detections(mat_frame)
             self.assertEqual(len(datas), 1)
             self.assertEqual(datas[0][5], 0)
-            mock_local.assert_called_once_with(frame)
+            mock_local.assert_called_once_with(mat_frame)
 
         self.detector.run_local = False
         with patch.object(
             self.detector, 'generate_detections_cloud',
             return_value=[[20, 20, 60, 60, 0.8, 1]],
         ) as mock_cloud:
-            datas, _ = self.detector.generate_detections(frame)
+            datas, _ = self.detector.generate_detections(mat_frame)
             self.assertEqual(len(datas), 1)
             self.assertEqual(datas[0][5], 1)
-            mock_cloud.assert_called_once_with(frame)
+            mock_cloud.assert_called_once_with(mat_frame)
 
     def test_run_detection_fail_read_frame(self) -> None:
         """

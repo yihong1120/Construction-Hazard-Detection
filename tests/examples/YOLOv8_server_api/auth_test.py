@@ -1,20 +1,29 @@
+from __future__ import annotations
+
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
 from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
+from flask.ctx import AppContext
+from flask.testing import FlaskClient
 from flask_jwt_extended import JWTManager
 
 from examples.YOLOv8_server_api.auth import auth_blueprint
-from examples.YOLOv8_server_api.models import User, db  # 確保從 models 中導入 db
+from examples.YOLOv8_server_api.models import db
 
-# 不再需要創建全局的 SQLAlchemy 實例
 jwt = JWTManager()
 
+
 class AuthBlueprintTestCase(unittest.TestCase):
+    app: Flask
+    client: FlaskClient
+    app_context: AppContext  # Use AppContext instead of Flask
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         """
-        Set up the Flask application and register extensions once for all tests.
+        Set up the Flask application and register extensions for all tests.
         """
         cls.app = Flask(__name__)
         cls.app.config['TESTING'] = True
@@ -29,7 +38,7 @@ class AuthBlueprintTestCase(unittest.TestCase):
         # Register the blueprint
         cls.app.register_blueprint(auth_blueprint)
 
-    def setUp(self):
+    def setUp(self) -> None:
         """
         Ensure that each test runs with a fresh application context.
         """
@@ -43,7 +52,7 @@ class AuthBlueprintTestCase(unittest.TestCase):
         with self.app_context:
             db.create_all()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         """
         Pop the application context to clean up.
         """
@@ -53,7 +62,11 @@ class AuthBlueprintTestCase(unittest.TestCase):
 
     @patch('examples.YOLOv8_server_api.auth.user_cache')
     @patch('examples.YOLOv8_server_api.auth.User.query')
-    def test_create_token_success_with_cache(self, mock_user_query, mock_user_cache):
+    def test_create_token_success_with_cache(
+        self,
+        mock_user_query: MagicMock,
+        mock_user_cache: MagicMock,
+    ) -> None:
         """
         Test successful token creation with user data from cache.
         """
@@ -62,20 +75,33 @@ class AuthBlueprintTestCase(unittest.TestCase):
         mock_user.check_password.return_value = True
         mock_user_cache.get.return_value = mock_user
 
-        response = self.client.post('/token', json={
-            'username': 'testuser',
-            'password': 'password123'
-        })
+        response = self.client.post(
+            '/token', json={
+                'username': 'testuser',
+                'password': 'password123',
+            },
+        )
 
-        # Check that the cache was accessed
-        mock_user_cache.get.assert_called_once_with('testuser')
-        # Check that the response contains a token and has a 200 status code
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('access_token', response.json)
+        # Ensure that response.json is not None
+        self.assertIsNotNone(response.json)
+        response_json = response.json
+        if response_json is not None:
+            # Check that the cache was accessed
+            mock_user_cache.get.assert_called_once_with('testuser')
+            # Check that the response contains
+            # a token and has a 200 status code
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('access_token', response_json)
+        else:
+            self.fail('response.json is None')
 
     @patch('examples.YOLOv8_server_api.auth.user_cache')
     @patch('examples.YOLOv8_server_api.auth.User.query')
-    def test_create_token_success_with_db(self, mock_user_query, mock_user_cache):
+    def test_create_token_success_with_db(
+        self,
+        mock_user_query: MagicMock,
+        mock_user_cache: MagicMock,
+    ) -> None:
         """
         Test successful token creation with user data from the database.
         """
@@ -86,21 +112,38 @@ class AuthBlueprintTestCase(unittest.TestCase):
         mock_user.check_password.return_value = True
         mock_user_query.filter_by.return_value.first.return_value = mock_user
 
-        response = self.client.post('/token', json={
-            'username': 'testuser',
-            'password': 'password123'
-        })
+        response = self.client.post(
+            '/token', json={
+                'username': 'testuser',
+                'password': 'password123',
+            },
+        )
 
-        # Check that the DB query was made and the user was cached
-        mock_user_query.filter_by.assert_called_once_with(username='testuser')
-        mock_user_cache.__setitem__.assert_called_once_with('testuser', mock_user)
-        # Check that the response contains a token and has a 200 status code
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('access_token', response.json)
+        # Ensure that response.json is not None
+        self.assertIsNotNone(response.json)
+        response_json = response.json
+        if response_json is not None:
+            # Check that the DB query was made and the user was cached
+            mock_user_query.filter_by.assert_called_once_with(
+                username='testuser',
+            )
+            mock_user_cache.__setitem__.assert_called_once_with(
+                'testuser', mock_user,
+            )
+            # Check that the response contains a token
+            # and has a 200 status code
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('access_token', response_json)
+        else:
+            self.fail('response.json is None')
 
     @patch('examples.YOLOv8_server_api.auth.user_cache')
     @patch('examples.YOLOv8_server_api.auth.User.query')
-    def test_create_token_invalid_credentials(self, mock_user_query, mock_user_cache):
+    def test_create_token_invalid_credentials(
+        self,
+        mock_user_query: MagicMock,
+        mock_user_cache: MagicMock,
+    ) -> None:
         """
         Test token creation failure due to invalid credentials.
         """
@@ -108,21 +151,40 @@ class AuthBlueprintTestCase(unittest.TestCase):
         mock_user_cache.get.return_value = None
         mock_user_query.filter_by.return_value.first.return_value = None
 
-        response = self.client.post('/token', json={
-            'username': 'testuser',
-            'password': 'wrongpassword'
-        })
+        response = self.client.post(
+            '/token', json={
+                'username': 'testuser',
+                'password': 'wrongpassword',
+            },
+        )
 
-        # Check that the cache and DB were accessed but no valid user was found
-        mock_user_cache.get.assert_called_once_with('testuser')
-        mock_user_query.filter_by.assert_called_once_with(username='testuser')
-        # Check that the response indicates failure and has a 401 status code
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json['msg'], 'Wrong user name or passcode.')
+        # Ensure that response.json is not None
+        self.assertIsNotNone(response.json)
+        response_json = response.json
+        if response_json is not None:
+            # Check that the cache and DB were accessed
+            # but no valid user was found
+            mock_user_cache.get.assert_called_once_with('testuser')
+            mock_user_query.filter_by.assert_called_once_with(
+                username='testuser',
+            )
+            # Check that the response indicates failure
+            # and has a 401 status code
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(
+                response_json['msg'],
+                'Wrong user name or passcode.',
+            )
+        else:
+            self.fail('response.json is None')
 
     @patch('examples.YOLOv8_server_api.auth.User.query')
     @patch('examples.YOLOv8_server_api.auth.user_cache')
-    def test_create_token_user_not_in_db_or_cache(self, mock_user_cache, mock_user_query):
+    def test_create_token_user_not_in_db_or_cache(
+        self,
+        mock_user_cache: MagicMock,
+        mock_user_query: MagicMock,
+    ) -> None:
         """
         Test token creation failure when user is not found in cache or DB.
         """
@@ -131,17 +193,32 @@ class AuthBlueprintTestCase(unittest.TestCase):
         # Setup mock database query to return None
         mock_user_query.filter_by.return_value.first.return_value = None
 
-        response = self.client.post('/token', json={
-            'username': 'nonexistentuser',
-            'password': 'password123'
-        })
+        response = self.client.post(
+            '/token', json={
+                'username': 'nonexistentuser',
+                'password': 'password123',
+            },
+        )
 
-        # Check that the cache was accessed but no user was found
-        mock_user_cache.get.assert_called_once_with('nonexistentuser')
-        mock_user_query.filter_by.assert_called_once_with(username='nonexistentuser')
-        # Check that the response indicates failure and has a 401 status code
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json['msg'], 'Wrong user name or passcode.')
+        # Ensure that response.json is not None
+        self.assertIsNotNone(response.json)
+        response_json = response.json
+        if response_json is not None:
+            # Check that the cache was accessed but no user was found
+            mock_user_cache.get.assert_called_once_with('nonexistentuser')
+            mock_user_query.filter_by.assert_called_once_with(
+                username='nonexistentuser',
+            )
+            # Check that the response indicates failure
+            # and has a 401 status code
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(
+                response_json['msg'],
+                'Wrong user name or passcode.',
+            )
+        else:
+            self.fail('response.json is None')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -12,17 +12,17 @@ from shapely.geometry import Polygon
 
 
 class DrawingManager:
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Initialise the DrawingManager class.
         """
         # Load the font used for drawing labels on the image
-        self.font = ImageFont.truetype(
+        self.font: ImageFont.FreeTypeFont = ImageFont.truetype(
             'assets/fonts/NotoSansTC-VariableFont_wght.ttf', 20,
         )
 
         # Mapping of category IDs to their corresponding names
-        self.category_id_to_name = {
+        self.category_id_to_name: dict[int, str] = {
             0: '安全帽',
             1: '口罩',
             2: '無安全帽',
@@ -36,7 +36,7 @@ class DrawingManager:
         }
 
         # Define colours for each category
-        self.colors = {
+        self.colors: dict[str, tuple[int, int, int]] = {
             '安全帽': (0, 255, 0),
             '安全背心': (0, 255, 0),
             '機具': (255, 225, 0),
@@ -47,7 +47,7 @@ class DrawingManager:
         }
 
         # Generate exclude_labels automatically
-        self.exclude_labels = [
+        self.exclude_labels: list[str] = [
             label for label in self.category_id_to_name.values()
             if label not in self.colors
         ]
@@ -186,7 +186,7 @@ class DrawingManager:
         gc.collect()
 
 
-def main():
+def main() -> None:
     """
     Main function to process and save the frame with detections.
     """
@@ -222,7 +222,7 @@ def main():
     # Save the frame with detections
     output_filename = 'frame_001'
     frame_bytes = cv2.imencode('.png', frame_with_detections)[1].tobytes()
-    drawer_saver.save_frame(frame_bytes, output_filename)
+    drawer_saver.save_frame(bytearray(frame_bytes), output_filename)
 
 
 if __name__ == '__main__':

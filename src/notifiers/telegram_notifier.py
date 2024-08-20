@@ -9,6 +9,7 @@ import numpy as np
 from dotenv import load_dotenv
 from PIL import Image
 from telegram import Bot
+from telegram import Message
 
 
 class InputData(TypedDict):
@@ -45,13 +46,15 @@ class TelegramNotifier:
         """
         load_dotenv()
         self.bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
+        if not self.bot_token:
+            raise ValueError('Telegram bot token must be provided')
         self.bot = Bot(token=self.bot_token)
 
     async def send_notification(
         self, chat_id: str,
         message: str,
         image: np.ndarray | None = None,
-    ) -> str:
+    ) -> Message:
         """
         Sends a notification to a specified Telegram chat.
 
@@ -61,10 +64,7 @@ class TelegramNotifier:
             image (np.ndarray): An optional image in NumPy array (RGB format).
 
         Returns:
-            str: The response from Telegram API.
-
-        Raises:
-            TelegramAPIError: If there is an issue sending the notification.
+            Message: The response object from Telegram API.
         """
         if image is not None:
             # Convert NumPy array to PIL Image

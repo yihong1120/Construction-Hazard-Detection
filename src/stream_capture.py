@@ -8,6 +8,7 @@ from collections.abc import Generator
 from typing import TypedDict
 
 import cv2
+import numpy as np
 import speedtest
 import streamlink
 
@@ -18,7 +19,7 @@ class InputData(TypedDict):
 
 
 class ResultData(TypedDict):
-    frame: cv2.Mat
+    frame: np.ndarray
     timestamp: float
 
 
@@ -45,14 +46,15 @@ class StreamCapture:
 
     def initialise_stream(self, stream_url: str) -> None:
         """
-        Initialises the video stream and sets up the H264 codec.
+        Initialises the video stream.
 
         Args:
             stream_url (str): The URL of the stream to initialise.
         """
         self.cap = cv2.VideoCapture(stream_url)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
+        # self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
+
         if not self.cap.isOpened():
             time.sleep(5)
             self.cap.open(stream_url)
@@ -66,12 +68,12 @@ class StreamCapture:
             self.cap = None
         gc.collect()
 
-    def execute_capture(self) -> Generator[tuple[cv2.Mat, float], None, None]:
+    def execute_capture(self) -> Generator[tuple[np.ndarray, float]]:
         """
         Captures frames from the stream and yields them with timestamps.
 
         Yields:
-            Tuple[cv2.Mat, float]: The captured frame and the timestamp.
+            Tuple[np.ndarray, float]: The captured frame and the timestamp.
         """
         self.initialise_stream(self.stream_url)
         last_process_time = datetime.datetime.now() - datetime.timedelta(
@@ -87,7 +89,7 @@ class StreamCapture:
                 self.cap.read() if self.cap is not None else (False, None)
             )
 
-            if not ret:
+            if not ret or frame is None:
                 fail_count += 1
                 print(
                     'Failed to read frame, trying to reinitialise stream. '
@@ -183,12 +185,12 @@ class StreamCapture:
 
     def capture_generic_frames(
         self,
-    ) -> Generator[tuple[cv2.Mat, float], None, None]:
+    ) -> Generator[tuple[np.ndarray, float]]:
         """
         Captures frames from a generic stream.
 
         Yields:
-            Tuple[cv2.Mat, float]: The captured frame and the timestamp.
+            Tuple[np.ndarray, float]: The captured frame and the timestamp.
         """
         # Select the stream quality based on internet speed
         stream_url = self.select_quality_based_on_speed()
@@ -209,7 +211,7 @@ class StreamCapture:
             )
 
             # Handle failed frame reads
-            if not ret:
+            if not ret or frame is None:
                 fail_count += 1
                 print(
                     'Failed to read frame from generic stream. '
@@ -261,6 +263,7 @@ class StreamCapture:
             new_interval (int): Frame capture interval in seconds.
         """
         self.capture_interval = new_interval
+
 
 def main():
     parser = argparse.ArgumentParser(

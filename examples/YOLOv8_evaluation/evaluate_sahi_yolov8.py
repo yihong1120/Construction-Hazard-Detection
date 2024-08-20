@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 
 import numpy as np
@@ -42,7 +43,7 @@ class COCOEvaluator:
                 Defaults to 370.
             overlap_height_ratio (float, optional): Height slice overlap ratio.
                 Defaults to 0.3.
-            overlap_height_ratio (float, optional): Width slice overlap ratio.
+            overlap_width_ratio (float, optional): Width slice overlap ratio.
                 Defaults to 0.3.
         """
         self.model = AutoDetectionModel.from_pretrained(
@@ -99,7 +100,13 @@ class COCOEvaluator:
                     },
                 )
 
-        pycoco_pred = pycoco.loadRes(predictions)
+        # Save the predictions to a JSON file
+        predictions_path = 'predictions.json'
+        with open(predictions_path, 'w') as f:
+            json.dump(predictions, f)
+
+        # Load the predictions and evaluate
+        pycoco_pred = pycoco.loadRes(predictions_path)
         coco_eval = COCOeval(pycoco, pycoco_pred, 'bbox')
         coco_eval.evaluate()
         coco_eval.accumulate()
@@ -120,6 +127,7 @@ class COCOEvaluator:
             ),
         }
         return metrics
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -151,6 +159,7 @@ def main():
     )
     metrics = evaluator.evaluate()
     print('Evaluation metrics:', metrics)
+
 
 if __name__ == '__main__':
     main()
