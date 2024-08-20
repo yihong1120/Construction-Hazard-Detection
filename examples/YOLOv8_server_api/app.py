@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import secrets
 
+import pymysql
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
 from flask_jwt_extended import JWTManager
@@ -13,6 +14,9 @@ from .detection import detection_blueprint
 from .model_downloader import models_blueprint
 from .models import db
 from .security import update_secret_key
+
+# Use pymysql as MySQLdb for compatibility with SQLAlchemy
+pymysql.install_as_MySQLdb()
 
 app = Flask(__name__)  # Initialise the Flask application
 
