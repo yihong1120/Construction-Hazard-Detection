@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import unittest
-from unittest.mock import MagicMock, patch
-from flask import Flask, Response
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
+from flask import Flask
 from flask_limiter import Limiter
+
 from examples.streaming_web.routes import register_routes
+
 
 class TestRoutes(unittest.TestCase):
     def setUp(self):
@@ -26,7 +32,7 @@ class TestRoutes(unittest.TestCase):
 
         mock_get_labels.assert_called_once_with(self.r)
         mock_render_template.assert_called_once_with(
-            'index.html', labels=['label1', 'label2']
+            'index.html', labels=['label1', 'label2'],
         )
         self.assertEqual(response.data.decode(), 'rendered_template')
 
@@ -44,7 +50,7 @@ class TestRoutes(unittest.TestCase):
 
         mock_get_image_data.assert_called_once_with(self.r, 'test_label')
         mock_render_template.assert_called_once_with(
-            'label.html', label='test_label', image_data=['image1', 'image2']
+            'label.html', label='test_label', image_data=['image1', 'image2'],
         )
         self.assertEqual(response.data.decode(), 'rendered_template')
 
@@ -76,15 +82,15 @@ class TestRoutes(unittest.TestCase):
     @patch('examples.streaming_web.routes.render_template')
     def test_camera_page(self, mock_render_template):
         """
-        Test the camera page route to ensure it renders the camera.html template
-        with the correct camera ID and label.
+        Test the camera page route to ensure it renders
+        the camera.html template with the correct camera ID and label.
         """
         mock_render_template.return_value = 'rendered_template'
 
         response = self.client.get('/camera/test_label/test_camera')
 
         mock_render_template.assert_called_once_with(
-            'camera.html', label='test_label', camera_id='test_camera'
+            'camera.html', label='test_label', camera_id='test_camera',
         )
         self.assertEqual(response.data.decode(), 'rendered_template')
 
