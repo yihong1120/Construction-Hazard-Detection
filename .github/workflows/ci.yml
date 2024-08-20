@@ -15,7 +15,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run tests and collect coverage
-        run: pytest --cov=src --cov=examples/user_management --cov=examples/YOLOv8_data_augmentation --cov=examples/YOLOv8_evaluation --cov=examples/YOLOv8_server_api --cov=examples/YOLOv8_train tests/
+        run: pytest --cov=src --cov=examples tests/
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
