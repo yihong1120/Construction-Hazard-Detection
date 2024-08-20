@@ -34,6 +34,7 @@ class ModelEvaluator:
         # The 'val' method is for evaluation; 'test' can be used if needed.
         return self.model.val(data=self.data_path)
 
+
 def main():
     parser = argparse.ArgumentParser(description='Evaluates a YOLOv8 model.')
     parser.add_argument(
@@ -48,7 +49,7 @@ def main():
         required=True,
         help='Path to the dataset configuration file.',
     )
-    
+
     args = parser.parse_args()
 
     evaluator = ModelEvaluator(
@@ -58,11 +59,12 @@ def main():
     results = evaluator.evaluate()
     print(results)
 
+
 if __name__ == '__main__':
     main()
 
-    """example usage
-    python evaluate_yolov8.py \
-        --model_path "../../models/pt/best_yolov8x.pt" \
-        --data_path "dataset/data.yaml"
-    """
+"""example usage
+python evaluate_yolov8.py \
+    --model_path "../../models/pt/best_yolov8x.pt" \
+    --data_path "dataset/data.yaml"
+"""

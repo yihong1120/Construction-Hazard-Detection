@@ -132,6 +132,7 @@ class YOLOModelHandler:
         with SAHI post-processing.
 
         Args:
+            yolov8_model_path (str): The path to the YOLOv8 model file.
             image_path (str): The path to the image file for prediction.
 
         Returns:
@@ -140,8 +141,8 @@ class YOLOModelHandler:
         Raises:
             RuntimeError: If model is not loaded properly before prediction.
         """
-        if yolov8_model_path is None:
-            raise RuntimeError('The model is not loaded properly.')
+        if not yolov8_model_path:
+            raise RuntimeError('The model path is not provided.')
 
         # Convert YOLO model to SAHI format; adjust for your YOLO version
         sahi_model = AutoDetectionModel.from_pretrained(
@@ -337,6 +338,7 @@ class YOLOModelHandler:
 
             fold += 1
 
+
 def main():
     parser = argparse.ArgumentParser(
         description='YOLOv8 training, validation, prediction, and export.',
@@ -445,6 +447,7 @@ def main():
 
     print(f"{args.export_format.upper()} model exported to:", export_path)
     print(f"Model saved to: {args.pt_path}")
+
 
 if __name__ == '__main__':
     main()

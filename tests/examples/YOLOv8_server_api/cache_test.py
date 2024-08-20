@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import unittest
+
 from examples.YOLOv8_server_api.cache import user_cache
+
 
 class CacheTestCase(unittest.TestCase):
     def setUp(self):
@@ -41,6 +45,7 @@ class CacheTestCase(unittest.TestCase):
         user_cache['user2'] = 'data2'
         user_cache.clear()
         self.assertEqual(len(user_cache), 0)
+
 
 if __name__ == '__main__':
     unittest.main()

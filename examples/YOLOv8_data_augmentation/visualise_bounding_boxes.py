@@ -37,10 +37,13 @@ class BoundingBoxVisualiser:
             )
 
     def draw_bounding_boxes(self) -> None:
-        """Draws bounding boxes on the image based on the label file."""
+        """
+        Draws bounding boxes on the image based on the label file.
+        """
         height, width, _ = self.image.shape
 
-        with open(self.label_path) as f:
+        # Explicitly specify the mode 'r' when opening the file
+        with self.label_path.open('r') as f:
             lines = f.readlines()
 
         for line in lines:
