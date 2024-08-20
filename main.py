@@ -28,6 +28,7 @@ is_windows = os.name == 'nt'
 
 if not is_windows:
     import redis
+    from redis import Redis
 
     # Redis configuration
     redis_host: str = os.getenv('redis_host', 'localhost')
@@ -35,7 +36,7 @@ if not is_windows:
     redis_password: str | None = os.getenv('redis_password', None)
 
     # Connect to Redis
-    r = redis.StrictRedis(
+    r: Redis = redis.StrictRedis(
         host=redis_host,
         port=redis_port,
         password=redis_password,
