@@ -13,7 +13,7 @@ imageio==2.35.1
 imgaug==0.4.0
 line-bot-sdk==3.11.1
 numpy==1.26.4
-onnx==2.1.0
+onnx==1.16.2
 opencv_python==4.9.0.80
 opencv_python_headless==4.9.0.80
 Pillow==10.4.0
