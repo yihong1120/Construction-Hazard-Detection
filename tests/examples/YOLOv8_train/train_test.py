@@ -17,6 +17,14 @@ class TestYOLOModelHandler(unittest.TestCase):
         self.model_name: str = 'models/pt/best_yolov8x.pt'
         self.handler: YOLOModelHandler = YOLOModelHandler(self.model_name)
 
+    def tearDown(self) -> None:
+        """
+        Clean up after each test.
+        """
+        # Delete the handler object
+        if hasattr(self, 'handler'):
+            del self.handler
+
     @patch('examples.YOLOv8_train.train.YOLO')
     def test_load_model_with_yaml(
         self,

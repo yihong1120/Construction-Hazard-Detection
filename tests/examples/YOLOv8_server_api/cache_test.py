@@ -13,6 +13,13 @@ class CacheTestCase(unittest.TestCase):
         # Clear the cache before each test to ensure a clean slate
         user_cache.clear()
 
+    def tearDown(self):
+        """
+        Clean up after each test.
+        """
+        # Clear the cache after each test to ensure no residue data
+        user_cache.clear()
+
     def test_add_to_cache(self):
         """
         Test adding a user to the cache.

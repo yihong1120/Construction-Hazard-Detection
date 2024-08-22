@@ -10,6 +10,18 @@ import examples.YOLOv8_server_api.config as config_module
 
 class TestConfig(unittest.TestCase):
 
+    def tearDown(self):
+        """
+        Clean up after each test.
+        """
+        # Ensure any changes to environment variables are reset
+        if 'JWT_SECRET_KEY' in os.environ:
+            del os.environ['JWT_SECRET_KEY']
+        if 'DATABASE_URL' in os.environ:
+            del os.environ['DATABASE_URL']
+        # Reload the config module to ensure a clean state
+        reload(config_module)
+
     @patch.dict(os.environ, {'JWT_SECRET_KEY': 'test_secret_key'}, clear=True)
     def test_jwt_secret_key_from_env(self):
         """

@@ -19,6 +19,13 @@ class TestCOCOConverter(unittest.TestCase):
         ]
         self.converter = COCOConverter(self.categories)
 
+    def tearDown(self):
+        """
+        Clean up after each test.
+        """
+        # Clear the COCO format data to avoid state leakage between tests
+        self.converter.coco_format.clear()
+
     @patch('examples.YOLOv8_evaluation.convert_yolo_to_coco.os.listdir')
     @patch('examples.YOLOv8_evaluation.convert_yolo_to_coco.os.path.exists')
     @patch('examples.YOLOv8_evaluation.convert_yolo_to_coco.Image.open')

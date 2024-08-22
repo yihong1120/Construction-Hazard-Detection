@@ -19,6 +19,14 @@ class ModelDownloaderTestCase(unittest.TestCase):
         self.app.register_blueprint(models_blueprint)
         self.client = self.app.test_client()
 
+    def tearDown(self):
+        """
+        Clean up after each test.
+        """
+        # Delete the Flask app and test client instances
+        del self.client
+        del self.app
+
     @patch('examples.YOLOv8_server_api.model_downloader.requests.head')
     @patch('examples.YOLOv8_server_api.model_downloader.send_from_directory')
     def test_download_model_up_to_date(
@@ -55,8 +63,6 @@ class ModelDownloaderTestCase(unittest.TestCase):
                 response = self.client.get('/models/best_yolov8l.pt')
 
                 self.assertEqual(response.status_code, 304)
-                # 修改：不再檢查消息體
-                # self.assertIn(b'Local model is up-to-date.', response.data)
 
     @patch('examples.YOLOv8_server_api.model_downloader.requests.head')
     @patch('examples.YOLOv8_server_api.model_downloader.send_from_directory')

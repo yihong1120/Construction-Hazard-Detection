@@ -9,32 +9,56 @@ import numpy as np
 from flask import Flask
 from flask_jwt_extended import create_access_token
 from flask_jwt_extended import JWTManager
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from examples.YOLOv8_server_api.detection import calculate_overlap
 from examples.YOLOv8_server_api.detection import check_containment
 from examples.YOLOv8_server_api.detection import compile_detection_data
 from examples.YOLOv8_server_api.detection import detection_blueprint
+from examples.YOLOv8_server_api.detection import DetectionModelManager
 from examples.YOLOv8_server_api.detection import is_contained
 from examples.YOLOv8_server_api.detection import (
     remove_completely_contained_labels,
 )
 from examples.YOLOv8_server_api.detection import remove_overlapping_labels
 
-app = Flask(__name__)
-# Change this in your real application
-app.config['JWT_SECRET_KEY'] = 'super-secret'
-jwt = JWTManager(app)
-app.register_blueprint(detection_blueprint)
-
 
 class TestDetectionAPI(unittest.TestCase):
     def setUp(self):
-        self.app = app.test_client()
-        self.app_context = app.app_context()
+        """
+        Set up a Flask app and JWT for testing.
+        """
+        self.app = Flask(__name__)
+        self.app.config['JWT_SECRET_KEY'] = 'super-secret'
+        self.jwt = JWTManager(self.app)
+
+        # Initialize blueprint, limiter, and model loader
+        self.detection_blueprint = detection_blueprint
+        self.limiter = Limiter(key_func=get_remote_address)
+        self.model_loader = DetectionModelManager()
+
+        self.app.register_blueprint(self.detection_blueprint)
+        self.client = self.app.test_client()
+        self.app_context = self.app.app_context()
         self.app_context.push()
 
     def tearDown(self):
+        """
+        Clean up after each test.
+        """
+        # Ensure to pop the app context to clean up
         self.app_context.pop()
+        # Explicitly close the app (although usually not necessary)
+        self.client = None
+        # Clean up limiter and model loader
+        self.limiter = None
+        self.model_loader = None
+        # Collect garbage to ensure all resources are released
+        import gc
+        gc.collect()
+        # Close the Flask app
+        self.app = None
 
     def test_detection_route(self):
         # Create JWT token
@@ -46,7 +70,7 @@ class TestDetectionAPI(unittest.TestCase):
         img_bytes = BytesIO(buffer.tobytes())
 
         # Test detection endpoint
-        response = self.app.post(
+        response = self.client.post(
             '/detect',
             headers={'Authorization': f'Bearer {access_token}'},
             content_type='multipart/form-data',
@@ -58,6 +82,13 @@ class TestDetectionAPI(unittest.TestCase):
 
 
 class TestDetectionFunctions(unittest.TestCase):
+    def tearDown(self):
+        """
+        Clean up after each test.
+        """
+        import gc
+        gc.collect()
+
     def test_remove_overlapping_labels(self):
         datas = [
             [10, 10, 50, 50, 0.9, 0],  # Hardhat

@@ -16,6 +16,17 @@ class TestCOCOEvaluator(unittest.TestCase):
         self.model_path: str = 'models/pt/best_yolov8n.pt'
         self.coco_json: str = 'tests/dataset/coco_annotations.json'
         self.image_dir: str = 'tests/dataset/val/images'
+        self.evaluator = COCOEvaluator(
+            model_path=self.model_path,
+            coco_json=self.coco_json,
+            image_dir=self.image_dir,
+        )
+
+    def tearDown(self) -> None:
+        """
+        Clean up after each test.
+        """
+        del self.evaluator
 
     @patch(
         'examples.YOLOv8_evaluation.evaluate_sahi_yolov8.'
@@ -70,15 +81,8 @@ class TestCOCOEvaluator(unittest.TestCase):
             ),
         ]
 
-        # Ensure that the evaluator is correctly initialised
-        evaluator: COCOEvaluator = COCOEvaluator(
-            model_path=self.model_path,
-            coco_json=self.coco_json,
-            image_dir=self.image_dir,
-        )
-
         # Run the evaluation
-        metrics: dict[str, float] = evaluator.evaluate()
+        metrics: dict[str, float] = self.evaluator.evaluate()
 
         # Verify that the metrics returned
         # by the evaluate method are as expected

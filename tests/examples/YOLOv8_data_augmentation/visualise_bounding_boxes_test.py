@@ -27,6 +27,16 @@ class TestBoundingBoxVisualiser(unittest.TestCase):
             'Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest',
             'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle',
         ]
+        self.visualiser: BoundingBoxVisualiser | None = None
+
+    def tearDown(self) -> None:
+        """
+        Clean up resources after each test case.
+        """
+        if self.visualiser is not None:
+            del self.visualiser
+        # Reset the visualiser to None
+        self.visualiser = None
 
     @patch(
         'examples.YOLOv8_data_augmentation.'
@@ -75,6 +85,7 @@ class TestBoundingBoxVisualiser(unittest.TestCase):
 
         # Assert that rectangle was called correctly
         mock_imread.assert_called_once_with(self.image_path)
+
         # Ensure 'r' mode is passed correctly
         mock_file.assert_called_once_with('r')
 

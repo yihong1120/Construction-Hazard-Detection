@@ -14,6 +14,13 @@ class TestModelEvaluator(unittest.TestCase):
     def setUp(self) -> None:
         self.model_path: str = 'models/pt/best_yolov8n.pt'
         self.data_path: str = 'tests/dataset/data.yaml'
+        self.evaluator: ModelEvaluator | None = None
+
+    def tearDown(self) -> None:
+        """
+        Clean up after each test.
+        """
+        self.evaluator = None
 
     @patch('examples.YOLOv8_evaluation.evaluate_yolov8.YOLO')
     def test_evaluate(self, mock_yolo: MagicMock) -> None:
@@ -29,13 +36,13 @@ class TestModelEvaluator(unittest.TestCase):
         mock_model.val.return_value = expected_results
 
         # Initialise the ModelEvaluator after mocking YOLO
-        evaluator: ModelEvaluator = ModelEvaluator(
+        self.evaluator = ModelEvaluator(
             model_path=self.model_path,
             data_path=self.data_path,
         )
 
         # Call the evaluate method
-        results: dict[str, str] = evaluator.evaluate()
+        results: dict[str, str] = self.evaluator.evaluate()
 
         # Verify that the YOLO class was instantiated
         # with the correct model path
@@ -49,6 +56,9 @@ class TestModelEvaluator(unittest.TestCase):
         mock_parse_args: MagicMock,
         mock_model_evaluator: MagicMock,
     ) -> None:
+        """
+        Test the main function.
+        """
         # Mock the command line arguments
         mock_parse_args.return_value = MagicMock(
             model_path=self.model_path,
@@ -71,6 +81,9 @@ class TestModelEvaluator(unittest.TestCase):
 
         # Verify the output
         self.assertIn('some_evaluation_results', captured_output.getvalue())
+
+        # Reset stdout
+        sys.stdout = sys.__stdout__
 
 
 if __name__ == '__main__':
