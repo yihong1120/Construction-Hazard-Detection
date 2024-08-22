@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
+from unittest.mock import mock_open
 from unittest.mock import patch
 
 from examples.YOLOv8_server_api.models import DetectionModelManager
@@ -17,8 +18,8 @@ class TestUserModel(unittest.TestCase):
         """
         Set up a User instance for testing.
         """
-        self.user: User = User(username='testuser')
-        self.password: str = 'securepassword'
+        self.user = User(username='testuser')
+        self.password = 'securepassword'
         self.user.set_password(self.password)
 
     def test_set_password(self) -> None:
@@ -43,16 +44,28 @@ class TestDetectionModelManager(unittest.TestCase):
         'examples.YOLOv8_server_api.models.'
         'AutoDetectionModel.from_pretrained',
     )
-    def setUp(self, mock_from_pretrained: MagicMock) -> None:
+    @patch('builtins.open', new_callable=mock_open, read_data='dummy data')
+    def setUp(
+        self,
+        mock_open_file: MagicMock,
+        mock_from_pretrained: MagicMock,
+    ) -> None:
         """
-        Set up the DetectionModelManager and mock model loading.
+        Set up the DetectionModelManager
+        and mock model loading and file access.
+
+        Args:
+            mock_open_file (MagicMock): Mocked file open function.
+            mock_from_pretrained (MagicMock): Mocked function to
+                load pretrained models.
         """
-        mock_model: MagicMock = MagicMock()
+        mock_model = MagicMock()
         mock_from_pretrained.return_value = mock_model
 
-        self.model_manager: DetectionModelManager = DetectionModelManager()
+        # Initialize the model manager with mocks
+        self.model_manager = DetectionModelManager()
 
-        # Ensure that models were loaded
+        # Ensure that models were loaded correctly
         self.assertEqual(
             len(self.model_manager.models),
             len(self.model_manager.model_names),
@@ -65,16 +78,21 @@ class TestDetectionModelManager(unittest.TestCase):
         'AutoDetectionModel.from_pretrained',
     )
     def test_load_single_model(
-        self, mock_from_pretrained: MagicMock,
+        self,
+        mock_from_pretrained: MagicMock,
     ) -> None:
         """
-        Test loading a single model.
+        Test loading a single model with mocked file access.
+
+        Args:
+            mock_from_pretrained (MagicMock): Mocked function to
+                load pretrained models.
         """
-        mock_model: MagicMock = MagicMock()
+        mock_model = MagicMock()
         mock_from_pretrained.return_value = mock_model
 
         model_name: str = 'yolov8x'
-        model: MagicMock = self.model_manager.load_single_model(model_name)
+        model = self.model_manager.load_single_model(model_name)
         mock_from_pretrained.assert_called_once_with(
             'yolov8',
             model_path=str(Path('models/pt/') / f"best_{model_name}.pt"),
@@ -83,9 +101,17 @@ class TestDetectionModelManager(unittest.TestCase):
         self.assertEqual(model, mock_model)
 
     @patch('examples.YOLOv8_server_api.models.Path.stat')
-    def test_get_last_modified_time(self, mock_stat: MagicMock) -> None:
+    def test_get_last_modified_time(
+        self,
+        mock_stat: MagicMock,
+    ) -> None:
         """
-        Test retrieving the last modified time of a model file.
+        Test retrieving the last modified time of
+        a model file with mocked stat.
+
+        Args:
+            mock_stat (MagicMock): Mocked function to
+                retrieve file statistics.
         """
         mock_time: float = 1650000000.0
         mock_stat.return_value.st_mtime = mock_time
@@ -98,12 +124,12 @@ class TestDetectionModelManager(unittest.TestCase):
         mock_stat.assert_called_once_with()
 
     @patch(
-        'examples.YOLOv8_server_api.models.'
-        'DetectionModelManager.get_last_modified_times',
+        'examples.YOLOv8_server_api.models.DetectionModelManager.'
+        'get_last_modified_times',
     )
     @patch(
-        'examples.YOLOv8_server_api.models.'
-        'DetectionModelManager.load_single_model',
+        'examples.YOLOv8_server_api.models.DetectionModelManager.'
+        'load_single_model',
     )
     @patch('time.sleep', return_value=None)
     def test_reload_models_every_hour(
@@ -113,7 +139,16 @@ class TestDetectionModelManager(unittest.TestCase):
         mock_get_last_modified_times: MagicMock,
     ) -> None:
         """
-        Test the reloading of models every hour.
+        Test the reloading of models every hour
+        with mocked file access and timing.
+
+        Args:
+            mock_sleep (MagicMock): Mocked sleep function to
+                simulate time delays.
+            mock_load_single_model (MagicMock): Mocked function to
+                load a single model.
+            mock_get_last_modified_times (MagicMock): Mocked function to
+                retrieve last modified times.
         """
         initial_times: dict[str, float] = {
             name: 1650000000.0 for name in self.model_manager.model_names
@@ -131,8 +166,7 @@ class TestDetectionModelManager(unittest.TestCase):
                 self.model_manager.get_last_modified_times()
             )
             for name in self.model_manager.model_names:
-                if (
-                    current_times[name] !=
+                if current_times[name] != (
                     self.model_manager.last_modified_times.get(name)
                 ):
                     self.model_manager.models[name] = (
@@ -141,7 +175,9 @@ class TestDetectionModelManager(unittest.TestCase):
                     self.model_manager.last_modified_times[name] = (
                         current_times[name]
                     )
-            raise StopIteration  # Stop after one loop for testing
+
+            # Stop after one loop for testing
+            raise StopIteration
 
         with patch.object(
             self.model_manager,
@@ -157,21 +193,28 @@ class TestDetectionModelManager(unittest.TestCase):
         )
 
     @patch(
-        'examples.YOLOv8_server_api.models.'
-        'DetectionModelManager.get_last_modified_time',
+        'examples.YOLOv8_server_api.models.DetectionModelManager.'
+        'get_last_modified_time',
     )
     def test_get_last_modified_times(
-        self, mock_get_last_modified_time: MagicMock,
+        self,
+        mock_get_last_modified_time: MagicMock,
     ) -> None:
         """
-        Test retrieving last modified times for all models.
+        Test retrieving last modified times
+        for all models with mocked file access.
+
+        Args:
+            mock_get_last_modified_time (MagicMock): Mocked function to
+                retrieve last modified time.
         """
         mock_time: float = 1650000000.0
         mock_get_last_modified_time.return_value = mock_time
 
-        last_modified_times: dict[str, float] = (
-            self.model_manager.get_last_modified_times()
-        )
+        last_modified_times: dict[
+            str,
+            float,
+        ] = self.model_manager.get_last_modified_times()
         self.assertEqual(
             len(last_modified_times),
             len(self.model_manager.model_names),
