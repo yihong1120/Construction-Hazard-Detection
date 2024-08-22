@@ -16,7 +16,7 @@ from .models import DetectionModelManager
 
 detection_blueprint = Blueprint('detection', __name__)
 limiter = Limiter(key_func=get_remote_address)
-model_loader = DetectionModelManager()  # 创建 DetectionModelManager 实例
+model_loader = DetectionModelManager()
 
 
 @detection_blueprint.route('/detect', methods=['POST'])
@@ -25,7 +25,7 @@ model_loader = DetectionModelManager()  # 创建 DetectionModelManager 实例
 def detect():
     data = request.files['image'].read()
     model_key = request.args.get('model', default='yolov8n', type=str)
-    model = model_loader.get_model(model_key)  # 从 DetectionModelManager 获取模型
+    model = model_loader.get_model(model_key)
 
     img = convert_to_image(data)
     result = get_prediction_result(img, model)

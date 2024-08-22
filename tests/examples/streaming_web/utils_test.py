@@ -12,12 +12,26 @@ from examples.streaming_web.utils import get_labels
 
 
 class TestUtils(unittest.TestCase):
+    """
+    Test suite for utility functions in the streaming_web module.
+    """
 
-    def setUp(self):
-        # Set up a mock Redis instance
+    def setUp(self) -> None:
+        """
+        Set up the test environment before each test.
+        """
         self.redis_mock = MagicMock(spec=redis.Redis)
 
-    def test_get_labels(self):
+    def tearDown(self) -> None:
+        """
+        Clean up after each test.
+        """
+        self.redis_mock.reset_mock()
+
+    def test_get_labels(self) -> None:
+        """
+        Test the get_labels function to ensure it returns expected labels.
+        """
         # Mock the Redis scan method to return some keys
         self.redis_mock.scan.return_value = (
             0, [
@@ -38,7 +52,11 @@ class TestUtils(unittest.TestCase):
         expected_result = ['label1', 'label2', 'label3']
         self.assertEqual(result, expected_result)
 
-    def test_get_image_data(self):
+    def test_get_image_data(self) -> None:
+        """
+        Test the get_image_data function
+        to ensure it returns correct image data.
+        """
         # Mock the Redis scan method to return keys matching the label
         label = 'label1'
         self.redis_mock.scan.return_value = (
@@ -65,7 +83,13 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(result, expected_result)
 
     @patch('examples.streaming_web.utils.encode_image', wraps=encode_image)
-    def test_get_image_data_no_image(self, mock_encode_image):
+    def test_get_image_data_no_image(
+        self,
+        mock_encode_image: MagicMock,
+    ) -> None:
+        """
+        Test get_image_data function when some images are missing.
+        """
         # Mock the Redis scan method to return keys matching the label
         label = 'label1'
         self.redis_mock.scan.return_value = (
