@@ -1,6 +1,6 @@
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
-<img width="100%"  src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
+<img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
 <div align="center">
    <a href="examples/YOLOv8_server_api">模型伺服器</a> |
@@ -55,6 +55,15 @@
 </div>
 
 <br>
+
+## 內容
+
+- [操作說明](#操作說明)
+- [附加信息](#附加信息)
+- [數據集信息](#數據集信息)
+- [貢獻](#貢獻)
+- [開發路線圖](#開發路線圖)
+- [授權](#授權)
 
 ## 操作說明
 
