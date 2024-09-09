@@ -12,11 +12,17 @@ services:
       - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
+      - .scripts/init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 20s
       retries: 5
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
 
   model-server:
     build: .
@@ -45,13 +51,15 @@ services:
     command: /bin/bash -c "python src/model_fetcher.py && python main.py --config ${CONFIG_PATH}"
     volumes:
       - .:/app
-      - ${CONFIG_PATH}:/app/config/configuration.json
+      - ${CONFIG_PATH}:/app/config/configuration.yaml
     depends_on:
       db:
         condition: service_healthy
       model-server:
         condition: service_started
       stream-web:
+        condition: service_started
+      redis:
         condition: service_started
 
 volumes:

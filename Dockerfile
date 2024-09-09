@@ -11,6 +11,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    redis \
     && rm -rf /var/lib/apt/lists/*
 
 # Install any needed packages specified in requirements.txt
@@ -21,6 +22,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the current directory contents into the container at /app
 # Use --chown to change the ownership of the copied files to the non-root user
 COPY --chown=appuser:appuser . /app
+
+# Copy the init script into the container
+COPY scripts/init_db.sh /docker-entrypoint-initdb.d/
 
 # Switch to non-root user for better security
 USER appuser
