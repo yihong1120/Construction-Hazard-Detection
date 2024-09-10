@@ -12,7 +12,13 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     redis \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# Set the timezone to Asia/Taipei
+ENV TZ=Asia/Taipei
 
 # Install any needed packages specified in requirements.txt
 # Note: Copy only requirements.txt first to leverage Docker cache

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: mysql:latest
@@ -12,7 +10,7 @@ services:
       - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
-      - .scripts/init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
+      - ./scripts/init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
@@ -26,7 +24,7 @@ services:
 
   model-server:
     build: .
-    command: gunicorn -w 1 -b 0.0.0.0:8000 "examples.Model-Server.app:app"
+    command: gunicorn -w 1 -b 0.0.0.0:8000 "examples.YOLOv8_server_api.app:app"
     volumes:
       - .:/app
     ports:
@@ -37,7 +35,7 @@ services:
 
   stream-web:
     build: .
-    command: gunicorn -w 1 -b 0.0.0.0:8001 "examples.Stream-Web.app:app"
+    command: gunicorn -w 1 -b 0.0.0.0:8001 "examples.streaming_web.app:app"
     volumes:
       - .:/app
     ports:
@@ -48,10 +46,10 @@ services:
 
   main-application:
     build: .
-    command: /bin/bash -c "python src/model_fetcher.py && python main.py --config ${CONFIG_PATH}"
+    command: /bin/bash -c "python src/model_fetcher.py && python main.py --config /app/config/configuration.yaml"
     volumes:
       - .:/app
-      - ${CONFIG_PATH}:/app/config/configuration.yaml
+      - ./config/configuration.yaml:/app/config/configuration.yaml
     depends_on:
       db:
         condition: service_healthy
