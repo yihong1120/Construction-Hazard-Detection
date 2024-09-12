@@ -32,6 +32,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    container_name: model-server
 
   stream-web:
     build: .
