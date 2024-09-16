@@ -196,11 +196,15 @@ def main(
             logger.info('No warnings or outside notification time.')
 
         if not is_windows:
-            # Use a unique key for each thread or process
-            key = f"{label}_{image_name}".encode()
+            try:
+                # Use a unique key for each thread or process
+                key = f"{label}_{image_name}".encode()
 
-            # Store the frame in Redis
-            r.set(key, frame_bytes)
+                # Store the frame in Redis
+                r.set(key, frame_bytes)
+
+            except Exception as e:
+                logger.error(f"Failed to store frame in Redis: {e}")
 
         end_time = time.time()
 
