@@ -6,18 +6,36 @@ from shapely.geometry import Point
 from shapely.geometry import Polygon
 from sklearn.cluster import HDBSCAN
 
+from .lang_config import LANGUAGES
+
 
 class DangerDetector:
     """
     A class to detect potential safety hazards based on the detection data.
     """
 
-    def __init__(self):
+    def __init__(self, language: str = 'en'):
         """
         Initialises the danger detector.
         """
+        # Set the language for warning messages
+        self.language: str = language
+
         # Initialise the HDBSCAN clusterer
         self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
+
+    def get_text(self, key, **kwargs):
+        """
+        Retrieves the text for the specified key based on the current language.
+
+        Args:
+            key (str): The key for the text to retrieve.
+            kwargs (dict): Additional formatting arguments.
+
+        Returns:
+            str: The localised text.
+        """
+        return LANGUAGES[self.language].get(key, '').format(**kwargs)
 
     def normalise_bbox(self, bbox):
         """
@@ -169,7 +187,11 @@ class DangerDetector:
             polygons, datas,
         )
         if people_count > 0:
-            warnings.add(f'警告: 有{people_count}個人進入受控區域!')
+            warnings.add(
+                self.get_text(
+                    'warning_people_in_controlled_area', count=people_count,
+                ),
+            )
 
         # Classify detected objects into different categories
         persons = [d for d in datas if d[5] == 5]  # Persons
@@ -199,18 +221,24 @@ class DangerDetector:
                     violation[:4], p[:4],
                 ) > 0.5 for p in persons
             ):
-                warning_msg = (
-                    '警告: 有人無配戴安全帽!' if label == 'NO-Hardhat'
-                    else '警告: 有人無穿著安全背心!'
+                warning_msg = self.get_text(
+                    'warning_no_hardhat' if label == 'NO-Hardhat'
+                    else 'warning_no_safety_vest',
                 )
                 warnings.add(warning_msg)
 
         # Check if anyone is dangerously close to machinery or vehicles
         for person in persons:
             for mv in machinery_vehicles:
-                label = '機具' if mv[5] == 8 else '車輛'
-                if self.is_dangerously_close(person[:4], mv[:4], label):
-                    warnings.add(f"警告: 有人過於靠近{label}!")
+                label_key = (
+                    'label_machinery' if mv[5] == 8 else 'label_vehicle'
+                )
+                label_text = self.get_text(label_key)
+                if self.is_dangerously_close(person[:4], mv[:4], label_text):
+                    warning_msg = self.get_text(
+                        'warning_close_to_machinery', label=label_text,
+                    )
+                    warnings.add(warning_msg)
                     break
 
         return warnings, polygons
@@ -352,7 +380,7 @@ class DangerDetector:
 
 
 def main():
-    detector = DangerDetector()
+    detector = DangerDetector(language='en')
 
     data: list[list[float]] = [
         [50, 50, 150, 150, 0.95, 0],    # Hardhat

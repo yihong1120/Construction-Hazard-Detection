@@ -62,7 +62,7 @@ class TestDangerDetector(unittest.TestCase):
             self.detector.is_dangerously_close(
                 self.detector.normalise_bbox(
                     person_bbox,
-                ), self.detector.normalise_bbox(vehicle_bbox), '車輛',
+                ), self.detector.normalise_bbox(vehicle_bbox), 'Vehicle',
             ),
         )
 
@@ -72,7 +72,7 @@ class TestDangerDetector(unittest.TestCase):
             self.detector.is_dangerously_close(
                 self.detector.normalise_bbox(
                     person_bbox,
-                ), self.detector.normalise_bbox(vehicle_bbox), '車輛',
+                ), self.detector.normalise_bbox(vehicle_bbox), 'Vehicle',
             ),
         )
 
@@ -122,9 +122,9 @@ class TestDangerDetector(unittest.TestCase):
         Test case for detecting danger based on a list of data points.
         """
         data: list[list[float]] = [
-            [50, 50, 150, 150, 0.95, 0],    # 安全帽
-            [200, 200, 300, 300, 0.85, 5],  # 人員
-            [400, 400, 500, 500, 0.75, 2],  # 無安背心
+            [50, 50, 150, 150, 0.95, 0],    # Hardhat
+            [200, 200, 300, 300, 0.85, 5],  # Person
+            [400, 400, 500, 500, 0.75, 2],  # No-Safety Vest
             [0, 0, 10, 10, 0.88, 6],
             [0, 1000, 10, 1010, 0.87, 6],
             [1000, 0, 1010, 10, 0.89, 6],
@@ -144,8 +144,10 @@ class TestDangerDetector(unittest.TestCase):
         ]
         data = self.detector.normalise_data(data)
         warnings, polygons = self.detector.detect_danger(data)
-        self.assertIn('警告: 有1個人進入受控區域!', warnings)
-        self.assertIn('警告: 有人無配戴安全帽!', warnings)
+        self.assertIn(
+            'Warning: 1 people have entered the controlled area!', warnings,
+        )
+        self.assertIn('Warning: Someone is not wearing a hardhat!', warnings)
 
         data = [
             [706.87, 445.07, 976.32, 1073.6, 0.91, 5.0],  # Person
@@ -158,7 +160,9 @@ class TestDangerDetector(unittest.TestCase):
         ]
         data = self.detector.normalise_data(data)
         warnings, polygons = self.detector.detect_danger(data)
-        self.assertIn('警告: 有人無穿著安全背心!', warnings)
+        self.assertIn(
+            'Warning: Someone is not wearing a safety vest!', warnings,
+        )
 
         data = [
             [706.87, 445.07, 976.32, 1073.6, 0.91, 2.0],  # No hardhat
@@ -170,9 +174,13 @@ class TestDangerDetector(unittest.TestCase):
         ]
         data = self.detector.normalise_data(data)
         warnings, polygons = self.detector.detect_danger(data)
-        self.assertIn('警告: 有人無配戴安全帽!', warnings)
-        self.assertIn('警告: 有人無穿著安全背心!', warnings)
-        self.assertNotIn('警告: 有人過於靠近機具!', warnings)
+        self.assertIn('Warning: Someone is not wearing a hardhat!', warnings)
+        self.assertIn(
+            'Warning: Someone is not wearing a safety vest!', warnings,
+        )
+        self.assertNotIn(
+            'Warning: Someone is too close to machinery!', warnings,
+        )
 
     def test_no_data(self) -> None:
         """
@@ -188,9 +196,9 @@ class TestDangerDetector(unittest.TestCase):
         Test case for checking behavior when no cones are detected.
         """
         data: list[list[float]] = [
-            [50, 50, 150, 150, 0.95, 0],  # 安全帽
-            [200, 200, 300, 300, 0.85, 5],  # 人員
-            [400, 400, 500, 500, 0.75, 2],  # 無安背心
+            [50, 50, 150, 150, 0.95, 0],  # Hardhat
+            [200, 200, 300, 300, 0.85, 5],  # Person
+            [400, 400, 500, 500, 0.75, 2],  # No-Safety Vest
         ]
         normalised_data = self.detector.normalise_data(data)
         polygons = self.detector.detect_polygon_from_cones(normalised_data)
@@ -224,7 +232,7 @@ class TestDangerDetector(unittest.TestCase):
         normalised_data = self.detector.normalise_data(data)
         print(f"Normalized data: {normalised_data}")
         warnings, polygons = self.detector.detect_danger(normalised_data)
-        self.assertIn('警告: 有人過於靠近機具!', warnings)
+        self.assertIn('Warning: Someone is too close to machinery!', warnings)
 
     def test_driver_detection_coverage(self) -> None:
         """
@@ -320,13 +328,21 @@ class TestDangerDetector(unittest.TestCase):
         """
         with patch.object(
             DangerDetector, 'detect_danger', return_value=(
-                {'警告: 有1個人進入受控區域!', '警告: 有人無配戴安全帽!'},
+                {
+                    'Warning: Someone is not wearing a hardhat!',
+                    'Warning: 1 people have entered the controlled area!',
+                },
                 [Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])],
             ),
         ) as mock_detect_danger:
             main()
             mock_detect_danger.assert_called_once()
-            mock_print.assert_any_call({'警告: 有1個人進入受控區域!', '警告: 有人無配戴安全帽!'})
+            mock_print.assert_any_call(
+                {
+                    'Warning: Someone is not wearing a hardhat!',
+                    'Warning: 1 people have entered the controlled area!',
+                },
+            )
 
 
 if __name__ == '__main__':
