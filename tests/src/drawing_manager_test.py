@@ -24,14 +24,14 @@ class TestDrawingManager(unittest.TestCase):
         self.drawer: DrawingManager = DrawingManager()
         self.frame: np.ndarray = np.zeros((480, 640, 3), dtype=np.uint8)
         self.datas: list[list[float]] = [
-            [50, 50, 150, 150, 0.95, 0],    # 安全帽
-            [200, 200, 300, 300, 0.85, 5],  # 人員
-            [400, 400, 500, 500, 0.75, 9],  # 車輛
-            [100, 100, 120, 120, 0.9, 6],   # 安全錐
-            [250, 250, 270, 270, 0.8, 6],   # 安全錐
-            [450, 450, 470, 470, 0.7, 6],   # 安全錐
-            [500, 200, 520, 220, 0.7, 6],   # 安全錐
-            [150, 400, 170, 420, 0.7, 6],   # 安全錐
+            [50, 50, 150, 150, 0.95, 0],    # Hardhat
+            [200, 200, 300, 300, 0.85, 5],  # Person
+            [400, 400, 500, 500, 0.75, 9],  # Vehicle
+            [100, 100, 120, 120, 0.9, 6],   # Safety Cone
+            [250, 250, 270, 270, 0.8, 6],   # Safety Cone
+            [450, 450, 470, 470, 0.7, 6],   # Safety Cone
+            [500, 200, 520, 220, 0.7, 6],   # Safety Cone
+            [150, 400, 170, 420, 0.7, 6],   # Safety Cone
         ]
         self.polygons: list[Polygon] = [
             Polygon([
@@ -57,6 +57,38 @@ class TestDrawingManager(unittest.TestCase):
         root_dir: Path = Path('detected_frames')
         if root_dir.exists() and root_dir.is_dir():
             shutil.rmtree(root_dir)
+
+    def test_draw_detections_on_frame_with_thai_language(self) -> None:
+        """
+        Test drawing detections on a frame with Thai language labels.
+        """
+        # Create a DrawingManager with Thai language
+        drawer_thai = DrawingManager(language='th')
+
+        # Example detection data
+        datas = [
+            [50, 50, 150, 150, 0.95, 0],  # Hardhat
+            [200, 200, 300, 300, 0.85, 5],  # Person
+            [400, 400, 500, 500, 0.75, 9],  # Vehicle
+        ]
+
+        # Example polygon for safety cones
+        polygons = [
+            Polygon(
+                [(100, 100), (250, 250), (450, 450), (500, 200), (150, 400)],
+            ).convex_hull,
+        ]
+
+        # Draw detections on frame
+        frame_with_detections = drawer_thai.draw_detections_on_frame(
+            self.frame.copy(), polygons, datas,
+        )
+
+        # Check if the frame returned is a numpy array
+        self.assertIsInstance(frame_with_detections, np.ndarray)
+
+        # Check if the frame dimensions are the same
+        self.assertEqual(frame_with_detections.shape, self.frame.shape)
 
     def test_draw_detections_on_frame(self) -> None:
         """

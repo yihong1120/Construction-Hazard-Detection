@@ -13,8 +13,8 @@ class TestLangConfig(unittest.TestCase):
             'warning_no_hardhat',
             'warning_no_safety_vest',
             'warning_close_to_machinery',
-            'label_machinery',
-            'label_vehicle',
+            'machinery',
+            'vehicle',
         }
 
         # Define all supported languages

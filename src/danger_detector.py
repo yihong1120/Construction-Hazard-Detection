@@ -231,7 +231,7 @@ class DangerDetector:
         for person in persons:
             for mv in machinery_vehicles:
                 label_key = (
-                    'label_machinery' if mv[5] == 8 else 'label_vehicle'
+                    'machinery' if mv[5] == 8 else 'vehicle'
                 )
                 label_text = self.get_text(label_key)
                 if self.is_dangerously_close(person[:4], mv[:4], label_text):

@@ -4,6 +4,7 @@ import argparse
 import gc
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -61,6 +62,7 @@ def main(
     image_name: str = 'prediction_visual',
     line_token: str | None = None,
     run_local: bool = True,
+    language: str = 'en',
 ) -> None:
     """
     Main function to detect hazards, notify, log, save images (optional).
@@ -75,6 +77,7 @@ def main(
             Defaults to None.
         run_local (bool): Whether to run detection using a local model.
             Defaults to True.
+        language (str): The language for the notifications.
     """
     # Initialise the stream capture object
     streaming_capture = StreamCapture(stream_url=video_url)
@@ -91,13 +94,13 @@ def main(
     )
 
     # Initialise the drawing manager
-    drawing_manager = DrawingManager()
+    drawing_manager = DrawingManager(language=language)
 
     # Initialise the LINE notifier
-    line_notifier = LineNotifier(line_token)
+    line_notifier = LineNotifier(line_token=line_token)
 
     # Initialise the DangerDetector
-    danger_detector = DangerDetector()
+    danger_detector = DangerDetector(language=language)
 
     # Init last_notification_time to 300s ago, no microseconds
     last_notification_time = int(time.time()) - 300
@@ -144,15 +147,28 @@ def main(
         current_hour = datetime.now().hour
 
         # Check if it is outside the specified time range
-        # and if warnings contain "個人進入受控區域!"
+        # and if warnings contaim a warning for people in the controlled zone
         if (timestamp - last_notification_time) > 300:
-            # Check if there is a "個人進入受控區域!" warning
+            # Check if there is a warning for people in the controlled zone
+            controlled_zone_warning_template = danger_detector.get_text(
+                'warning_people_in_controlled_area', count='',
+            )
+
+            # Create a regex pattern to match the warning
+            pattern = re.escape(controlled_zone_warning_template).replace(
+                re.escape('{count}'), r'\d+',
+            )
+
             controlled_zone_warning = next(
-                (warning for warning in warnings if '個人進入受控區域' in warning),
+                (
+                    warning for warning in warnings
+                    if re.match(pattern, warning)
+                ),
                 None,
             )
 
-            # If it is outside working hours and there is a "個人進入受控區域!" warning
+            # If it is outside working hours and there is
+            # a warning for people in the controlled zone
             if controlled_zone_warning and not (7 <= current_hour < 18):
                 message = (
                     f"{image_name}\n[{detection_time}]\n"

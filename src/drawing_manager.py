@@ -10,40 +10,53 @@ from PIL import ImageDraw
 from PIL import ImageFont
 from shapely.geometry import Polygon
 
+from .lang_config import LANGUAGES
+
 
 class DrawingManager:
-    def __init__(self) -> None:
+    def __init__(self, language: str = 'en') -> None:
         """
         Initialise the DrawingManager class.
+
+        Args:
+            language (str): The language to use for labels. Default is 'en'.
         """
+        self.language = language
+        self.lang_config = LANGUAGES.get(language, LANGUAGES['en'])
+
         # Load the font used for drawing labels on the image
-        self.font: ImageFont.FreeTypeFont = ImageFont.truetype(
-            'assets/fonts/NotoSansTC-VariableFont_wght.ttf', 20,
-        )
+        if language == 'th':
+            self.font: ImageFont.FreeTypeFont = ImageFont.truetype(
+                'assets/fonts/NotoSansThai-VariableFont_wdth.ttf', 20,
+            )
+        else:
+            self.font: ImageFont.FreeTypeFont = ImageFont.truetype(
+                'assets/fonts/NotoSansTC-VariableFont_wght.ttf', 20,
+            )
 
         # Mapping of category IDs to their corresponding names
         self.category_id_to_name: dict[int, str] = {
-            0: '安全帽',
-            1: '口罩',
-            2: '無安全帽',
-            3: '無口罩',
-            4: '無安全背心',
-            5: '人員',
-            6: '安全錐',
-            7: '安全背心',
-            8: '機具',
-            9: '車輛',
+            0: self.lang_config['helmet'],
+            1: self.lang_config['mask'],
+            2: self.lang_config['no_helmet'],
+            3: self.lang_config['no_mask'],
+            4: self.lang_config['no_vest'],
+            5: self.lang_config['person'],
+            6: self.lang_config['cone'],
+            7: self.lang_config['vest'],
+            8: self.lang_config['machinery'],
+            9: self.lang_config['vehicle'],
         }
 
         # Define colours for each category
         self.colors: dict[str, tuple[int, int, int]] = {
-            '安全帽': (0, 255, 0),
-            '安全背心': (0, 255, 0),
-            '機具': (255, 225, 0),
-            '車輛': (255, 255, 0),
-            '無安全帽': (255, 0, 0),
-            '無安全背心': (255, 0, 0),
-            '人員': (255, 165, 0),
+            self.lang_config['helmet']: (0, 255, 0),
+            self.lang_config['vest']: (0, 255, 0),
+            self.lang_config['machinery']: (255, 225, 0),
+            self.lang_config['vehicle']: (255, 255, 0),
+            self.lang_config['no_helmet']: (255, 0, 0),
+            self.lang_config['no_vest']: (255, 0, 0),
+            self.lang_config['person']: (255, 165, 0),
         }
 
         # Generate exclude_labels automatically
@@ -190,19 +203,19 @@ def main() -> None:
     """
     Main function to process and save the frame with detections.
     """
-    drawer_saver = DrawingManager()
+    drawer_saver = DrawingManager(language='zh-TW')
 
     # Load frame and detection data (example)
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
     # Example data including objects and safety cones
     datas = [
-        # Example objects (安全帽, 人員, 車輛)
-        [50, 50, 150, 150, 0.95, 0],   # 安全帽
-        [200, 200, 300, 300, 0.85, 5],  # 人員
-        [400, 400, 500, 500, 0.75, 9],  # 車輛
+        # Example objects (Hardhat, Person, Vehicle)
+        [50, 50, 150, 150, 0.95, 0],   # Hardhat
+        [200, 200, 300, 300, 0.85, 5],  # Person
+        [400, 400, 500, 500, 0.75, 9],  # Vehicle
 
-        # Example safety cones (安全錐)
+        # Example safety cones (Safety Cone)
         [100, 100, 120, 120, 0.9, 6],
         [250, 250, 270, 270, 0.8, 6],
         [450, 450, 470, 470, 0.7, 6],
