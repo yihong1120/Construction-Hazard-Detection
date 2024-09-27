@@ -129,15 +129,25 @@ class DataAugmentation:
             # 40% probability to change brightness
             iaa.Sometimes(0.4, iaa.AddToBrightness((-30, 30))),
             # 40% probability to add watermarks
-            iaa.Sometimes(0.4, iaa.imgcorruptlike.Spatter(severity=1)),
-            # 10% probability to add fog
-            # iaa.Sometimes(0.1, iaa.Fog()),
-            # 10% probability to add rain
-            # iaa.Sometimes(0.1, iaa.Rain(speed=(0.1, 0.3))),
-            # 10% probability to add clouds
-            # iaa.Sometimes(0.1, iaa.Clouds()),
-            # 10% probability to add snowflakes
-            # iaa.Sometimes(0.1, iaa.Snowflakes(flake_size=(0.2, 0.4))),
+            iaa.Sometimes(0.3, iaa.imgcorruptlike.Spatter(severity=1)),
+            # 10% probability to add Snow
+            iaa.Sometimes(0.1, iaa.imgcorruptlike.Snow(severity=2)),
+            # 10% probability to add Frost
+            iaa.Sometimes(0.1, iaa.imgcorruptlike.Frost(severity=2)),
+            # 20% probability for speckle noise
+            iaa.Sometimes(0.3, iaa.ImpulseNoise(0.02)),
+            # 20% probability for superpixels
+            iaa.Sometimes(0.2, iaa.Superpixels(p_replace=(0.1, 0.5))),
+            # 30% probability for Fog
+            iaa.Sometimes(0.3, iaa.imgcorruptlike.Fog(severity=2)),
+            # 30% probability for brightness augmentation
+            iaa.Sometimes(0.5, iaa.MultiplyBrightness((0.5, 1.5))),
+            # 20% probability for cutout
+            iaa.Sometimes(
+                0.2, iaa.Cutout(
+                    nb_iterations=2, size=0.2, squared=False,
+                ),
+            ),
         ]
         return iaa.Sequential(augmentations, random_order=True)
 
