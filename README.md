@@ -14,8 +14,8 @@
 <br>
 
 <div align="center">
-   <a href="https://www.python.org/downloads/release/python-3124/">
-      <img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4">
+   <a href="https://www.python.org/downloads/release/python-3127/">
+      <img src="https://img.shields.io/badge/python-3.12.7-blue?logo=python" alt="Python 3.12.7">
    </a>
    <a href="https://github.com/ultralytics/ultralytics">
       <img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8">
@@ -30,7 +30,7 @@
       <img src="https://img.shields.io/badge/pre--commit-3.8.0-blue?logo=pre-commit" alt="Pre-commit 3.8.0">
    </a>
    <a href="https://docs.pytest.org/en/latest/">
-      <img src="https://img.shields.io/badge/pytest-8.3.2-blue?logo=pytest" alt="pytest 8.3.2">
+      <img src="https://img.shields.io/badge/pytest-8.3.3-blue?logo=pytest" alt="pytest 8.3.3">
    </a>
    <a href="https://codecov.io/github/yihong1120/Construction-Hazard-Detection" >
       <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D" alt="Codecov">
@@ -42,13 +42,28 @@
 
 <br>
 
-"Construction-Hazard-Detection" is an AI-driven tool aimed at enhancing safety on construction sites. Utilising the YOLOv8 model for object detection, this system identifies potential hazards such as workers without helmets, workers without safety vests, workers in close proximity to machinery, and workers near vehicles. Post-processing algorithms are employed to enhance the accuracy of the detections. The system is designed for deployment in real-time environments, providing immediate analysis and alerts for detected hazards.
+"Construction-Hazard-Detection" is an AI-powered tool designed to enhance safety on construction sites. By leveraging the YOLOv8 model for object detection, it identifies potential hazards such as:
 
-A newly developed feature allows the system to use safety cones to draw polygons, defining controlled zones and calculating the number of people within these zones. Notifications can be sent if people enter these controlled areas.
+- Workers without helmets
+- Workers without safety vests
+- Workers near machinery or vehicles
+- Workers in restricted areas
 
-Additionally, the system can integrate AI recognition results in real-time through a web interface or use LINE, Messenger, WeChat, and Telegram notifications to send messages and real-time on-site images for prompt alerts and reminders.
+Post-processing algorithms further improve detection accuracy. The system is built for real-time deployment, offering instant analysis and alerts for identified hazards.
 
-###### TODO: Add supports for WhatsApp notification.
+Additionally, the system integrates AI recognition results in real-time via a web interface. It can send notifications and real-time on-site images through messaging apps like LINE, Messenger, WeChat, and Telegram for prompt alerts and reminders. The system also supports multiple languages, enabling users to receive notifications and interact with the interface in their preferred language. Supported languages include:
+
+- 🇹🇼 Traditional Chinese (Taiwan)
+- 🇨🇳 Simplified Chinese (Mainland China)
+- 🇫🇷 French
+- 🇬🇧 English
+- 🇹🇭 Thai
+- 🇻🇳 Vietnamese
+- 🇮🇩 Indonesian
+
+This multi-language support makes the system accessible to a global audience, improving usability across different regions.
+
+> **TODO**: Add support for WhatsApp notifications, and switch from YOLOv8 to YOLO11
 
 <br>
 <br>
@@ -61,12 +76,37 @@ Additionally, the system can integrate AI recognition results in real-time throu
 
 ## Contents
 
+- [Hazard Detection Examples](#hazard-detection-examples)
 - [Usage](#usage)
 - [Additional Information](#additional-information)
 - [Dataset Information](#dataset-information)
 - [Contributing](#contributing)
 - [Development Roadmap](#development-roadmap)
 - [License](#license)
+
+## Hazard Detection Examples
+
+Below are examples of real-time hazard detection by the system:
+
+<div style="display: flex; justify-content: space-between; flex-wrap: wrap;">
+  <!-- Example 1: Workers without Helmets or Safety Vests -->
+  <div style="text-align: center; flex-basis: 33%;">
+    <img src="./assets/images/demo/person_did_not_wear_safety_vest.png" alt="Workers without helmets or safety vests" style="width: 300px; height: 200px; object-fit: cover;">
+    <p>Workers without Helmets or Safety Vests</p>
+  </div>
+
+  <!-- Example 2: Workers near Machinery or Vehicles -->
+  <div style="text-align: center; flex-basis: 33%;">
+    <img src="./assets/images/demo/person_near_machinery.jpg" alt="Workers near machinery or vehicles" style="width: 300px; height: 200px; object-fit: cover;">
+    <p>Workers near Machinery or Vehicles</p>
+  </div>
+
+  <!-- Example 3: Workers in Restricted Areas -->
+  <div style="text-align: center; flex-basis: 33%;">
+    <img src="./assets/images/demo/persons_in_restricted_zones.jpg" alt="Workers in restricted areas" style="width: 300px; height: 200px; object-fit: cover;">
+    <p>Workers in Restricted Areas</p>
+  </div>
+</div>
 
 ## Usage
 
@@ -75,17 +115,19 @@ Before running the application, you need to configure the system by specifying t
 ```yaml
 # This is a list of video configurations
 - video_url: "rtsp://example1.com/stream"  # URL of the video
-   image_name: "cam1"  # Name of the image
-   label: "label1"  # Label of the video
-   model_key: "yolov8n"  # Model key for the video
-   line_token: "token1"  # Line token for notification
-   run_local: True  # Run object detection locally
+  image_name: "cam1"  # Name of the image
+  label: "label1"  # Label of the video
+  model_key: "yolov8n"  # Model key for the video
+  line_token: "token1"  # Line token for notification
+  run_local: True  # Run object detection locally
+  language: "en" # Set language to English
 - video_url: "rtsp://example2.com/stream"
-   image_name: "cam2"
-   label: "label2"
-   model_key: "yolov8n"
-   line_token: "token2"
-   run_local: True
+  image_name: "cam2"
+  label: "label2"
+  model_key: "yolov8n"
+  line_token: "token2"
+  run_local: True
+  language: "zh-TW"
 ```
 
 Each object in the array represents a video stream configuration with the following fields:
@@ -101,6 +143,7 @@ Each object in the array represents a video stream configuration with the follow
 - `model_key`: The key identifier for the machine learning model to use.
 - `line_token`: The LINE messaging API token for sending notifications.  For information on how to obtain a LINE token, please refer to [line_notify_guide_en](docs/en/line_notify_guide_en.md).
 - `run_local`: Boolean value indicating whether to run object detection locally.
+- `language`: The language for notifications and system messages.
 
 <br>
 

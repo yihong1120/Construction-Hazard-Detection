@@ -14,8 +14,8 @@
 <br>
 
 <div align="center">
-   <a href="https://www.python.org/downloads/release/python-3124/">
-      <img src="https://img.shields.io/badge/python-3.12.4-blue?logo=python" alt="Python 3.12.4">
+   <a href="https://www.python.org/downloads/release/python-3127/">
+      <img src="https://img.shields.io/badge/python-3.12.7-blue?logo=python" alt="Python 3.12.7">
    </a>
    <a href="https://github.com/ultralytics/ultralytics">
       <img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8">
@@ -30,7 +30,7 @@
       <img src="https://img.shields.io/badge/pre--commit-3.8.0-blue?logo=pre-commit" alt="Pre-commit 3.8.0">
    </a>
    <a href="https://docs.pytest.org/en/latest/">
-      <img src="https://img.shields.io/badge/pytest-8.3.2-blue?logo=pytest" alt="pytest 8.3.2">
+      <img src="https://img.shields.io/badge/pytest-8.3.3-blue?logo=pytest" alt="pytest 8.3.3">
    </a>
    <a href="https://codecov.io/github/yihong1120/Construction-Hazard-Detection" >
       <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D"/>
@@ -39,13 +39,28 @@
 
 <br>
 
-"建築工地危險檢測系統" 是一款旨在提升建築工地安全的人工智慧工具。利用 YOLOv8 模型進行物體偵測，此系統能夠辨識潛在的危險，例如未戴安全帽的工人、未穿安全背心的工人、靠近機具的工人以及靠近車輛的工人。系統採用後處理演算法來提升偵測的準確性。設計用於實時環境部署，能夠即時分析並發出警報以應對偵測到的危險。
+"建築工地危險檢測系統" 是一款以人工智慧驅動的工具，旨在提升工地的安全性。該系統利用 YOLOv8 模型進行物件偵測，能夠識別以下潛在危險：
 
-一個新開發的功能允許系統使用安全錐畫出多邊形，以定義管制區並計算這些區域內的人數。如果有人進入這些管制區域，系統將發送通知。
+- 未佩戴安全帽的工人
+- 未穿著安全背心的工人
+- 靠近機械或車輛的工人
+- 進入限制區域的工人
 
-此外，系統可以通過網頁介面即時整合 AI 辨識結果，或使用 LINE、Messenger、微信和 Telegram 推播通知來發送訊息和現場即時影像，以便及時發出警報和提醒。
+後處理算法進一步提高了偵測的準確性。該系統專為即時部署而設計，能夠對檢測到的危險進行即時分析並發出警報。
 
-###### TODO: 支援WhatsApp通知。
+此外，該系統可通過網頁介面即時整合 AI 辨識結果，並通過 LINE、Messenger、微信和 Telegram 等即時通訊應用程式發送通知及現場實時影像，及時提醒和通知相關人員。系統還支援多種語言，允許用戶接收通知並以其首選語言與介面互動。支援的語言包括：
+
+- 🇹🇼 繁體中文（台灣）
+- 🇨🇳 簡體中文（中國大陸）
+- 🇫🇷 法文
+- 🇬🇧 英文
+- 🇹🇭 泰文
+- 🇻🇳 越南文
+- 🇮🇩 印尼文
+
+多語言支援使該系統在全球範圍內的使用者都能方便使用，提升了不同地區的可用性。
+
+> **待辦事項**：新增對 WhatsApp 通知的支援。
 
 <br>
 <br>
@@ -58,12 +73,37 @@
 
 ## 內容
 
+- [危險偵測範例](#hazard-detection-examples)
 - [操作說明](#操作說明)
 - [附加信息](#附加信息)
 - [數據集信息](#數據集信息)
 - [貢獻](#貢獻)
 - [開發路線圖](#開發路線圖)
 - [授權](#授權)
+
+## 危險偵測範例
+
+以下是系統實時危險偵測的範例：
+
+<div style="display: flex; justify-content: space-between; flex-wrap: wrap;">
+  <!-- 範例 1: 未佩戴安全帽或安全背心的工人 -->
+  <div style="text-align: center; flex-basis: 33%;">
+    <img src="./assets/images/demo/person_did_not_wear_safety_vest.png" alt="未佩戴安全帽或安全背心的工人" style="width: 300px; height: 200px; object-fit: cover;">
+    <p>未佩戴安全帽或安全背心的工人</p>
+  </div>
+
+  <!-- 範例 2: 工人接近機具或車輛 -->
+  <div style="text-align: center; flex-basis: 33%;">
+    <img src="./assets/images/demo/person_near_machinery.jpg" alt="工人接近機具或車輛" style="width: 300px; height: 200px; object-fit: cover;">
+    <p>工人接近機具或車輛</p>
+  </div>
+
+  <!-- 範例 3: 工人在限制區域內 -->
+  <div style="text-align: center; flex-basis: 33%;">
+    <img src="./assets/images/demo/persons_in_restricted_zones.jpg" alt="工人在限制區域內" style="width: 300px; height: 200px; object-fit: cover;">
+    <p>工人在限制區域內</p>
+  </div>
+</div>
 
 ## 操作說明
 
@@ -72,17 +112,19 @@
 ```yaml
 # 這是一個視頻配置列表
 - video_url: "rtsp://example1.com/stream"  # 視頻的 URL
-   image_name: "cam1"  # 圖像的名稱
-   label: "label1"  # 視頻的標籤
-   model_key: "yolov8n"  # 視頻使用的模型鍵
-   line_token: "token1"  # 用於通知的 Line Token
-   run_local: True  # 本地運行物件檢測
+  image_name: "cam1"  # 圖像的名稱
+  label: "label1"  # 視頻的標籤
+  model_key: "yolov8n"  # 視頻使用的模型鍵
+  line_token: "token1"  # 用於通知的 Line Token
+  run_local: True  # 本地運行物件檢測
+  language: "en" # 將語言設置成英文
 - video_url: "rtsp://example2.com/stream"
-   image_name: "cam2"
-   label: "label2"
-   model_key: "yolov8n"
-   line_token: "token2"
-   run_local: True
+  image_name: "cam2"
+  label: "label2"
+  model_key: "yolov8n"
+  line_token: "token2"
+  run_local: True
+  language: "zh-TW"
 ```
 
 數組中的每個對象代表一個視頻流配置，包含以下字段：
@@ -98,6 +140,7 @@
 - `model_key`: 用於機器學習模型的鍵標識符。
 - `line_token`: 用於發送通知的 LINE 訊息 API Token，有關如何取得TOKEN的資訊，請參閱 [Line Notify教學](docs/zh/line_notify_guide_zh.md)。
 - `run_local`: 布爾值，指示是否在本地運行物件檢測。
+- `language`: 通知和系統訊息的語言。
 
 <br>
 
