@@ -54,7 +54,7 @@ class StreamConfig(TypedDict):
     run_local: bool
 
 
-def main(
+def process_single_stream(
     logger: logging.Logger,
     video_url: str,
     model_key: str = 'yolov8x',
@@ -65,7 +65,7 @@ def main(
     language: str = 'en',
 ) -> None:
     """
-    Main function to detect hazards, notify, log, save images (optional).
+    Function to detect hazards, notify, log, save images (optional).
 
     Args:
         logger (logging.Logger): A logger instance for logging messages.
@@ -244,7 +244,7 @@ def main(
     gc.collect()
 
 
-def process_stream(config: StreamConfig) -> None:
+def process_streams(config: StreamConfig) -> None:
     """
     Process a video stream based on the given configuration.
 
@@ -262,7 +262,7 @@ def process_stream(config: StreamConfig) -> None:
 
     try:
         # Run hazard detection on a single video stream
-        main(logger, **config)
+        process_single_stream(logger, **config)
     finally:
         if not is_windows:
             label = config.get('label')
@@ -282,7 +282,7 @@ def start_process(config: StreamConfig) -> Process:
     Returns:
         Process: The newly started process.
     """
-    p = Process(target=process_stream, args=(config,))
+    p = Process(target=process_streams, args=(config,))
     p.start()
     return p
 
@@ -340,16 +340,109 @@ def run_multiple_streams(config_file: str) -> None:
         time.sleep(3600)
 
 
+def process_single_image(
+    image_path: str,
+    model_key: str = 'yolov8x',
+    output_folder: str = 'output_images',
+    image_name: str = None,
+    language: str = 'en',
+) -> None:
+    """
+    Process a single image for hazard detection and save the result.
+    """
+    try:
+        # Check if the image path exists
+        if not os.path.exists(image_path):
+            print(f"Error: Image path {image_path} does not exist.")
+            return
+
+        # Load the image using OpenCV
+        image = cv2.imread(image_path)
+
+        if image is None:
+            print(f"Error: Failed to load image {image_path}")
+            return
+
+        # Initialise the live stream detector (but here used for a single image)
+        api_url = os.getenv('API_URL', 'http://localhost:5000')
+        live_stream_detector = LiveStreamDetector(
+            api_url=api_url, model_key=model_key, output_folder=output_folder,
+        )
+
+        # Initialise the drawing manager
+        drawing_manager = DrawingManager(language=language)
+
+        # Detect hazards in the image
+        detections, _ = live_stream_detector.generate_detections(image)
+
+        # For this example, no polygons are needed, so pass an empty list
+        frame_with_detections = drawing_manager.draw_detections_on_frame(
+            image, [], detections,
+        )
+
+        # Ensure the output folder exists
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+
+        # Generate the output file name if not provided
+        if not image_name:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            image_name = f"detection_{timestamp}.png"
+        output_path = os.path.join(output_folder, image_name)
+
+        # Save the image with detections
+        cv2.imwrite(output_path, frame_with_detections)
+        print(f"Processed image saved to {output_path}")
+
+    except Exception as e:
+        print(f"Error processing the image: {str(e)}")
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Run hazard detection on multiple video streams.',
+        description=(
+            'Run hazard detection on multiple video streams or a single image.'
+        ),
     )
     parser.add_argument(
         '--config',
         type=str,
         default='config/configuration.yaml',
-        help='Configuration file path',
+        help='Configuration file path for stream processing',
+    )
+    parser.add_argument(
+        '--image',
+        type=str,
+        help='Path to a single image for detection',
+    )
+    parser.add_argument(
+        '--model_key',
+        type=str,
+        default='yolov8x',
+        help='Model key to use for detection',
+    )
+    parser.add_argument(
+        '--output_folder',
+        type=str,
+        default='output_images',
+        help='Folder to save the output image',
+    )
+    parser.add_argument(
+        '--language',
+        type=str,
+        default='en',
+        help='Language for labels on the output image',
     )
     args = parser.parse_args()
 
-    run_multiple_streams(args.config)
+    # If an image path is provided, process the single image
+    if args.image:
+        process_single_image(
+            image_path=args.image,
+            model_key=args.model_key,
+            output_folder=args.output_folder,
+            language=args.language,
+        )
+    else:
+        # Otherwise, run hazard detection on multiple video streams
+        run_multiple_streams(args.config)
