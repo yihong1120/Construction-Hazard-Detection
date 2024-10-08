@@ -3,12 +3,12 @@
 <img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
 <div align="center">
-   <a href="examples/YOLOv8_server_api">Server-API</a> |
+   <a href="examples/YOLO_server_api">Server-API</a> |
    <a href="examples/streaming_web">Streaming-Web</a> |
    <a href="examples/user_management">User-Management</a> |
-   <a href="examples/YOLOv8_data_augmentation">Data-Augmentation</a> |
-   <a href="examples/YOLOv8_evaluation">Evaluation</a> |
-   <a href="examples/YOLOv8_train">Train</a>
+   <a href="examples/YOLO_data_augmentation">Data-Augmentation</a> |
+   <a href="examples/YOLO_evaluation">Evaluation</a> |
+   <a href="examples/YOLO_train">Train</a>
 </div>
 
 <br>
@@ -18,7 +18,7 @@
       <img src="https://img.shields.io/badge/python-3.12.7-blue?logo=python" alt="Python 3.12.7">
    </a>
    <a href="https://github.com/ultralytics/ultralytics">
-      <img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8">
+      <img src="https://img.shields.io/badge/YOLO11-ultralytics-blue?logo=yolo" alt="YOLO11">
    </a>
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
@@ -42,7 +42,7 @@
 
 <br>
 
-"Construction-Hazard-Detection" is an AI-powered tool designed to enhance safety on construction sites. By leveraging the YOLOv8 model for object detection, it identifies potential hazards such as:
+"Construction-Hazard-Detection" is an AI-powered tool designed to enhance safety on construction sites. By leveraging the YOLO model for object detection, it identifies potential hazards such as:
 
 - Workers without helmets
 - Workers without safety vests
@@ -117,14 +117,14 @@ Before running the application, you need to configure the system by specifying t
 - video_url: "rtsp://example1.com/stream"  # URL of the video
   image_name: "cam1"  # Name of the image
   label: "label1"  # Label of the video
-  model_key: "yolov8n"  # Model key for the video
+  model_key: "yolo11n"  # Model key for the video
   line_token: "token1"  # Line token for notification
   run_local: True  # Run object detection locally
   language: "en" # Set language to English
 - video_url: "rtsp://example2.com/stream"
   image_name: "cam2"
   label: "label2"
-  model_key: "yolov8n"
+  model_key: "yolo11n"
   line_token: "token2"
   run_local: True
   language: "zh-TW"
@@ -268,11 +268,11 @@ The primary dataset for training this model is the [Construction Site Safety Ima
 
    | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
    | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
-   | YOLOv8n | 640                   | 59.3               | 35.0               | 3.2               | 8.7               |
-   | YOLOv8s | 640                   | 73.1               | 47.6               | 11.2              | 28.6              |
-   | YOLOv8m | 640                   | 76.8               | 53.9               | 25.9              | 78.9              |
-   | YOLOv8l | 640                   | //                 | //                 | 43.7              | 165.2             |
-   | YOLOv8x | 640                   | 82.9               | 60.9               | 68.2              | 257.8             |
+   | YOLO11n | 640                   | 54.1               | 31.0               | 2.6               | 6.5               |
+   | YOLO11s | 640                   | //                 | //                 | 9.4               | 21.6              |
+   | YOLO11m | 640                   | //                 | //                 | 20.1              | 68.0              |
+   | YOLO11l | 640                   | //                 | //                 | 25.3              | 86.9              |
+   | YOLO11x | 640                   | 76.8               | 52.5               | 56.9              | 194.9             |
 
 </details>
 
@@ -290,7 +290,7 @@ We welcome contributions to this project. Please follow these steps:
 ## Development Roadmap
 
 - [x] Data collection and preprocessing.
-- [x] Training YOLOv8 model with construction site data.
+- [x] Training YOLO model with construction site data.
 - [x] Developing post-processing techniques for enhanced accuracy.
 - [x] Implementing real-time analysis and alert system.
 - [x] Testing and validation in simulated environments.

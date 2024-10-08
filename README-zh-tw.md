@@ -3,12 +3,12 @@
 <img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
 <div align="center">
-   <a href="examples/YOLOv8_server_api">模型伺服器</a> |
+   <a href="examples/YOLO_server_api">模型伺服器</a> |
    <a href="examples/streaming_web">串流網頁</a> |
    <a href="examples/user_management">用戶管理</a> |
-   <a href="examples/YOLOv8_data_augmentation">YOLOv8 數據增強</a> |
-   <a href="examples/YOLOv8_evaluation">YOLOv8 評估</a> |
-   <a href="examples/YOLOv8_train">YOLOv8 訓練</a>
+   <a href="examples/YOLO_data_augmentation">YOLO 數據增強</a> |
+   <a href="examples/YOLO_evaluation">YOLO 評估</a> |
+   <a href="examples/YOLO_train">YOLO 訓練</a>
 </div>
 
 <br>
@@ -18,7 +18,7 @@
       <img src="https://img.shields.io/badge/python-3.12.7-blue?logo=python" alt="Python 3.12.7">
    </a>
    <a href="https://github.com/ultralytics/ultralytics">
-      <img src="https://img.shields.io/badge/YOLOv8-ultralytics-blue?logo=yolo" alt="YOLOv8">
+      <img src="https://img.shields.io/badge/YOLO11-ultralytics-blue?logo=yolo" alt="YOLO11">
    </a>
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
@@ -39,7 +39,7 @@
 
 <br>
 
-"建築工地危險檢測系統" 是一款以人工智慧驅動的工具，旨在提升工地的安全性。該系統利用 YOLOv8 模型進行物件偵測，能夠識別以下潛在危險：
+"建築工地危險檢測系統" 是一款以人工智慧驅動的工具，旨在提升工地的安全性。該系統利用 YOLO 模型進行物件偵測，能夠識別以下潛在危險：
 
 - 未佩戴安全帽的工人
 - 未穿著安全背心的工人
@@ -60,7 +60,7 @@
 
 多語言支援使該系統在全球範圍內的使用者都能方便使用，提升了不同地區的可用性。
 
-> **待辦事項**：新增對 WhatsApp 通知的支援。
+> **待辦事項**：新增對 WhatsApp 通知的支援，從YOLOv8轉換至YOLO11
 
 <br>
 <br>
@@ -114,14 +114,14 @@
 - video_url: "rtsp://example1.com/stream"  # 視頻的 URL
   image_name: "cam1"  # 圖像的名稱
   label: "label1"  # 視頻的標籤
-  model_key: "yolov8n"  # 視頻使用的模型鍵
+  model_key: "yolo11n"  # 視頻使用的模型鍵
   line_token: "token1"  # 用於通知的 Line Token
   run_local: True  # 本地運行物件檢測
   language: "en" # 將語言設置成英文
 - video_url: "rtsp://example2.com/stream"
   image_name: "cam2"
   label: "label2"
-  model_key: "yolov8n"
+  model_key: "yolo11n"
   line_token: "token2"
   run_local: True
   language: "zh-TW"
@@ -213,7 +213,7 @@
 
    6. 要運行物體檢測 API，使用以下命令：
       ```bash
-      gunicorn -w 1 -b 0.0.0.0:8001 "examples.YOLOv8_server_api.app:YOLOv8-server-api-app"
+      gunicorn -w 1 -b 0.0.0.0:8001 "examples.YOLO_server_api.app:YOLO-server-api-app"
       ```
 
    7. 使用特定的配置文件運行主應用程序，使用以下命令：
@@ -260,11 +260,11 @@
 
    | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
    | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
-   | YOLOv8n | 640                   | 59.3               | 35.0               | 3.2               | 8.7               |
-   | YOLOv8s | 640                   | 73.1               | 47.6               | 11.2              | 28.6              |
-   | YOLOv8m | 640                   | 76.8               | 53.9               | 25.9              | 78.9              |
-   | YOLOv8l | 640                   | //                 | //                 | 43.7              | 165.2             |
-   | YOLOv8x | 640                   | 82.9               | 60.9               | 68.2              | 257.8             |
+   | YOLO11n | 640                   | 54.1               | 31.0               | 2.6               | 6.5               |
+   | YOLO11s | 640                   | //                 | //                 | 9.4               | 21.6              |
+   | YOLO11m | 640                   | //                 | //                 | 20.1              | 68.0              |
+   | YOLO11l | 640                   | //                 | //                 | 25.3              | 86.9              |
+   | YOLO11x | 640                   | 76.8               | 52.5               | 56.9              | 194.9             |
 
 </details>
 
@@ -280,7 +280,7 @@
 
 ## 開發路線圖
 - [x] 數據收集和預處理。
-- [x] 使用建築工地數據訓練 YOLOv8 模型。
+- [x] 使用建築工地數據訓練 YOLO 模型。
 - [x] 開發後處理技術以提高準確性。
 - [x] 實施實時分析和警報系統。
 - [x] 在模擬環境中進行測試和驗證。
