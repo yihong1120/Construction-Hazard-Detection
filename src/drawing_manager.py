@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageFont
+from shapely import LineString
 from shapely.geometry import Polygon
 
 from .lang_config import LANGUAGES
@@ -26,13 +27,10 @@ class DrawingManager:
 
         # Load the font used for drawing labels on the image
         if language == 'th':
-            self.font: ImageFont.FreeTypeFont = ImageFont.truetype(
-                'assets/fonts/NotoSansThai-VariableFont_wdth.ttf', 20,
-            )
+            font_path = 'assets/fonts/NotoSansThai-VariableFont_wdth.ttf'
         else:
-            self.font: ImageFont.FreeTypeFont = ImageFont.truetype(
-                'assets/fonts/NotoSansTC-VariableFont_wght.ttf', 20,
-            )
+            font_path = 'assets/fonts/NotoSansTC-VariableFont_wght.ttf'
+        self.font: ImageFont.FreeTypeFont = ImageFont.truetype(font_path, 20)
 
         # Mapping of category IDs to their corresponding names
         self.category_id_to_name: dict[int, str] = {
@@ -88,11 +86,18 @@ class DrawingManager:
 
         # Draw the safety cones
         for polygon in polygons:
-            polygon_points = np.array(
-                polygon.exterior.coords, dtype=np.float32,
-            )
+            # Determine the type and get the points accordingly
+            if isinstance(polygon, Polygon):
+                points = polygon.exterior.coords
+            elif isinstance(polygon, LineString):
+                points = polygon.coords
+            else:
+                continue  # Skip if it's not a Polygon or LineString
 
-            # Draw the polygon with semi-transparent pink colour
+            # Convert points to a numpy array for processing
+            polygon_points = np.array(points, dtype=np.float32)
+
+            # Draw the polygon or line
             overlay_draw.polygon(
                 [tuple(point) for point in polygon_points],
                 fill=(255, 105, 180, 128),
