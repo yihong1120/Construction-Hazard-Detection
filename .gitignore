@@ -10,6 +10,10 @@
 *.yaml
 *.json
 *.ipynb
+*.csv
+*.json
+*.zip
+*.yaml
 .env
 !assets/images/images(6).png
 !assets/images/sinya-1706871806.png
@@ -27,3 +31,8 @@ __pycache__
 !assets/images/**
 configuration.json
 app copy.py
+!models/pt/best_yolo11x.pt
+!models/pt/best_yolo11l.pt
+!models/pt/best_yolo11m.pt
+!models/pt/best_yolo11s.pt
+!models/pt/best_yolo11n.pt
