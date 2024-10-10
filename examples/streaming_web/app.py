@@ -5,6 +5,7 @@ import os
 import redis
 from dotenv import load_dotenv
 from flask import Flask
+from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_socketio import SocketIO
@@ -15,9 +16,9 @@ from .sockets import register_sockets
 load_dotenv()
 
 # Redis configuration
-redis_host: str = os.getenv('redis_host', 'localhost')
-redis_port: int = int(os.getenv('redis_port', '6379'))
-redis_password: str | None = os.getenv('redis_password', None)
+redis_host: str = os.getenv('redis_host') or 'localhost'
+redis_port: int = int(os.getenv('redis_port') or 6379)
+redis_password: str | None = os.getenv('redis_password') or None
 
 # Connect to Redis
 r = redis.StrictRedis(
@@ -28,30 +29,10 @@ r = redis.StrictRedis(
 )
 
 app = Flask(__name__)
+CORS(app)  # Allow cross-origin requests from any domain
 # Allow all origins for WebSocket connections
 socketio = SocketIO(app, cors_allowed_origins='*')
 limiter = Limiter(key_func=get_remote_address)
-
-# Custom CORS headers
-
-
-def custom_cors(response):
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = (
-        'GET, POST, PUT, DELETE, OPTIONS'
-    )
-    response.headers['Access-Control-Allow-Headers'] = (
-        'Content-Type, Authorization'
-    )
-    # Allow credentials on WebSocket connections
-    return response
-
-# Apply custom CORS headers to all responses
-
-
-@app.after_request
-def after_request(response):
-    return custom_cors(response)
 
 
 register_routes(app, limiter, r)
