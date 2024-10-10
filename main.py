@@ -77,7 +77,7 @@ def process_single_stream(
             Defaults to None.
         run_local (bool): Whether to run detection using a local model.
             Defaults to True.
-        language (str): The language for the notifications.
+        language (str): Language for the notifications.
     """
     # Initialise the stream capture object
     streaming_capture = StreamCapture(stream_url=video_url)
@@ -344,7 +344,7 @@ def process_single_image(
     image_path: str,
     model_key: str = 'yolov8x',
     output_folder: str = 'output_images',
-    image_name: str = None,
+    image_name: str | None = None,
     language: str = 'en',
 ) -> None:
     """
@@ -363,7 +363,8 @@ def process_single_image(
             print(f"Error: Failed to load image {image_path}")
             return
 
-        # Initialise the live stream detector (but here used for a single image)
+        # Initialise the live stream detector,
+        # but here used for a single image
         api_url = os.getenv('API_URL', 'http://localhost:5000')
         live_stream_detector = LiveStreamDetector(
             api_url=api_url, model_key=model_key, output_folder=output_folder,
