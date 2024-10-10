@@ -61,12 +61,10 @@ class DetectionModelManager:
         self.base_model_path = Path('models/pt/')
         self.model_names = [
             'yolo11x',
+            'yolo11l',
+            'yolo11m',
+            'yolo11s',
             'yolo11n',
-            'yolov8x'
-            'yolov8l',
-            'yolov8m',
-            'yolov8s',
-            'yolov8n',
         ]
         self.models = self.load_all_models()
         self.last_modified_times = self.get_last_modified_times()
