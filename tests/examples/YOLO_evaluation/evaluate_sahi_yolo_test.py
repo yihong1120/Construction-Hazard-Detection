@@ -13,7 +13,7 @@ from examples.YOLO_evaluation.evaluate_sahi_yolo import main
 
 class TestCOCOEvaluator(unittest.TestCase):
     def setUp(self) -> None:
-        self.model_path: str = 'models/pt/best_yolov8n.pt'
+        self.model_path: str = 'models/pt/best_yolo11n.pt'
         self.coco_json: str = 'tests/dataset/coco_annotations.json'
         self.image_dir: str = 'tests/dataset/val/images'
         self.evaluator = COCOEvaluator(
@@ -109,7 +109,7 @@ class TestCOCOEvaluator(unittest.TestCase):
     )
     @patch(
         'argparse.ArgumentParser.parse_args', return_value=argparse.Namespace(
-            model_path='models/pt/best_yolov8n.pt',
+            model_path='models/pt/best_yolo11n.pt',
             coco_json='tests/dataset/coco_annotations.json',
             image_dir='tests/dataset/val/images',
         ),

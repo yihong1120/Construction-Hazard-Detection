@@ -21,7 +21,7 @@ class TestLiveStreamDetector(unittest.TestCase):
         Initialise test variables and LiveStreamDetector.
         """
         self.stream_url: str = 'tests/videos/test.mp4'
-        self.model_path: str = 'models/pt/best_yolov8n.pt'
+        self.model_path: str = 'models/pt/best_yolo11n.pt'
         self.detector: LiveStreamDetector = LiveStreamDetector(
             self.stream_url, self.model_path,
         )
