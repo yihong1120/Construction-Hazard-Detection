@@ -1,16 +1,16 @@
 from __future__ import annotations
-from concurrent.futures import ProcessPoolExecutor
 
-import os
-import time
-import cv2
 import argparse
 import gc
+import os
 import random
+import time
 import uuid
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import albumentations as A
+import cv2
 import numpy as np
 from tqdm import tqdm
 
@@ -32,7 +32,13 @@ class DataAugmentation:
         self.train_path = Path(train_path)
         self.num_augmentations = num_augmentations
 
-    def resize_image_and_bboxes(self, image, bboxes, class_labels, image_path) -> tuple[np.ndarray, list]:  
+    def resize_image_and_bboxes(
+        self,
+        image: np.ndarray,
+        bboxes: list[list[float]],
+        class_labels: list[int],
+        image_path: Path,
+    ) -> tuple[np.ndarray, list]:
         """
         Resize images and bounding boxes if they are too small or too large.
 
@@ -48,28 +54,54 @@ class DataAugmentation:
         # Check and resize small images
         if image.shape[0] < 32 or image.shape[1] < 32:
             print(f"Resize {image_path} due to small size: {image.shape}")
-            transform = A.Compose([
-                A.SmallestMaxSize(max_size=64, interpolation=cv2.INTER_LINEAR),
-                A.LongestMaxSize(max_size=64, interpolation=cv2.INTER_LINEAR)
-            ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True))
-            transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
+            transform = A.Compose(
+                [
+                    A.SmallestMaxSize(
+                        max_size=64, interpolation=cv2.INTER_LINEAR,
+                    ),
+                    A.LongestMaxSize(
+                        max_size=64, interpolation=cv2.INTER_LINEAR,
+                    ),
+                ],
+                bbox_params=A.BboxParams(
+                    format='yolo',
+                    label_fields=['class_labels'],
+                    clip=True,
+                ),
+            )
+            transformed = transform(
+                image=image, bboxes=bboxes, class_labels=class_labels,
+            )
             image, bboxes = transformed['image'], transformed['bboxes']
 
         # Check and resize large images
         if image.shape[0] > 1920 or image.shape[1] > 1920:
             print(f"Resize {image_path} due to large size: {image.shape}")
-            transform = A.Compose([
-                A.LongestMaxSize(max_size=1920, interpolation=cv2.INTER_LINEAR),
-                A.SmallestMaxSize(max_size=1920, interpolation=cv2.INTER_LINEAR)
-            ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True))
-            transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
+            transform = A.Compose(
+                [
+                    A.LongestMaxSize(
+                        max_size=1920, interpolation=cv2.INTER_LINEAR,
+                    ),
+                    A.SmallestMaxSize(
+                        max_size=1920, interpolation=cv2.INTER_LINEAR,
+                    ),
+                ],
+                bbox_params=A.BboxParams(
+                    format='yolo',
+                    label_fields=['class_labels'],
+                    clip=True,
+                ),
+            )
+            transformed = transform(
+                image=image, bboxes=bboxes, class_labels=class_labels,
+            )
             image, bboxes = transformed['image'], transformed['bboxes']
 
         return image, bboxes
 
     def random_crop_with_random_size(self, image, **kwargs) -> np.ndarray:
         """
-        Custom function to randomly crop the image at a random position with a random size.
+        Randomly crop the image at a random position with a random size.
 
         Args:
             image (np.ndarray): Input image.
@@ -78,21 +110,24 @@ class DataAugmentation:
             np.ndarray: Cropped image.
         """
         height, width = image.shape[:2]
-        
+
         # Randomly generate the height and width of the crop box
         crop_height = random.randint(400, 800)
         crop_width = random.randint(400, 800)
-        
+
         # Ensure the crop box does not exceed the original image size
         max_x = max(0, width - crop_width)
         max_y = max(0, height - crop_height)
-        
+
         # Randomly generate the top-left coordinates of the crop box
         start_x = random.randint(0, max_x)
         start_y = random.randint(0, max_y)
-        
+
         # Crop the image
-        cropped_image = image[start_y:start_y + crop_height, start_x:start_x + crop_width]
+        cropped_image = image[
+            start_y:start_y +
+            crop_height, start_x:start_x + crop_width,
+        ]
         return cropped_image
 
     def random_transform(self) -> A.Compose:
@@ -113,11 +148,11 @@ class DataAugmentation:
                 translate_percent=(0.05, 0.1),  # Translation percentage range
                 shear=(-15, 15),  # Shear angle range
                 rotate=45,  # Rotation angle range
-                p=1  # Probability
+                p=1,  # Probability
             ),
             A.Transpose(p=1),
             A.Perspective(scale=(0.05, 0.1), p=1),
-            A.ElasticTransform(alpha=1, sigma=50, alpha_affine=None, p=1),
+            A.ElasticTransform(alpha=1, sigma=50, p=1),
             A.Lambda(image=self.random_crop_with_random_size, p=1),
             A.RandomResizedCrop(size=(640, 640), scale=(0.3, 1.0), p=1),
         ]
@@ -128,11 +163,19 @@ class DataAugmentation:
             A.RandomBrightnessContrast(
                 brightness_limit=(0.0, 0.03),
                 contrast_limit=(0.0, 0.03),
-                p=1.0
+                p=1.0,
             ),
-            A.RGBShift(r_shift_limit=3, g_shift_limit=3, b_shift_limit=3, p=1.0),
-            A.HueSaturationValue(hue_shift_limit=3, sat_shift_limit=5, val_shift_limit=3, p=1.0),
-            A.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0.02, p=1.0),
+            A.RGBShift(
+                r_shift_limit=3, g_shift_limit=3,
+                b_shift_limit=3, p=1.0,
+            ),
+            A.HueSaturationValue(
+                hue_shift_limit=3, sat_shift_limit=5, val_shift_limit=3, p=1.0,
+            ),
+            A.ColorJitter(
+                brightness=0.05, contrast=0.05,
+                saturation=0.05, hue=0.02, p=1.0,
+            ),
             A.PlanckianJitter(p=1),
             # Blur and noise
             A.MotionBlur(blur_limit=(3, 7), p=1.0),
@@ -143,45 +186,85 @@ class DataAugmentation:
             # Colour space and contrast adjustments
             A.CLAHE(clip_limit=2, p=1.0),
             A.Sharpen(alpha=(0.1, 0.3), lightness=(0.7, 1.0), p=1.0),
-            A.CoarseDropout(num_holes_range=(1, 6), hole_height_range=(0, 6), hole_width_range=(0, 6), p=1.0),
+            A.CoarseDropout(
+                num_holes_range=(1, 6), hole_height_range=(
+                    0, 6,
+                ), hole_width_range=(0, 6), p=1.0,
+            ),
             A.ToGray(p=1),
             A.Equalize(p=1),
             A.Posterize(num_bits=4, p=1.0),
             A.InvertImg(p=1),
             # Special effects
-            A.RandomShadow(shadow_roi=(0.3, 0.3, 0.7, 0.7), num_shadows_limit = (1, 1), shadow_dimension=1, p=1.0),
+            A.RandomShadow(
+                shadow_roi=(0.3, 0.3, 0.7, 0.7),
+                num_shadows_limit=(1, 1), shadow_dimension=1, p=1.0,
+            ),
             # A.RandomFog(fog_coef_lower=0.05, fog_coef_upper=0.1, p=1.0),
-            A.RandomSnow(snow_point_range=(0.05, 0.15), brightness_coeff=1.2, p=1.0),
-            A.RandomRain(slant_range=(-5,5), drop_length=5, drop_width=1, blur_value=1, p=1.0),
+            A.RandomSnow(
+                snow_point_range=(0.05, 0.15),
+                brightness_coeff=1.2, p=1.0,
+            ),
+            A.RandomRain(
+                slant_range=(-5, 5), drop_length=5,
+                drop_width=1, blur_value=1, p=1.0,
+            ),
             A.ChannelShuffle(p=1),
-            A.RandomSunFlare(flare_roi=(0.02, 0.04, 0.08, 0.08), angle_range=(0, 1), p=1),
+            A.RandomSunFlare(
+                flare_roi=(0.02, 0.04, 0.08, 0.08),
+                angle_range=(0, 1), p=1,
+            ),
             A.Defocus(radius=(3, 5), p=1),
             # Other augmentations
             A.RandomToneCurve(scale=0.05, p=1.0),
             A.RandomGamma(gamma_limit=(90, 110), p=1.0),
             A.Superpixels(p_replace=0.1, n_segments=100, p=1),
-            A.ImageCompression(quality_range = (70, 90), p=1.0),
+            A.ImageCompression(quality_range=(70, 90), p=1.0),
             A.GlassBlur(sigma=0.5, max_delta=1, p=1.0),
             A.PixelDropout(dropout_prob=0.05, p=1),
-            A.OpticalDistortion(distort_limit=(0.05, 0.1), shift_limit=(0.05, 0.1), p=1.0)
+            A.OpticalDistortion(
+                distort_limit=(0.05, 0.1),
+                shift_limit=(0.05, 0.1), p=1.0,
+            ),
         ]
 
         # Randomly select 1 to 2 augmentations that affect bounding boxes
         num_bbox_transforms = random.randint(1, 2)
-        chosen_bbox_transforms = random.sample(bbox_augmentations, k=num_bbox_transforms)
+        chosen_bbox_transforms = random.sample(
+            bbox_augmentations, k=num_bbox_transforms,
+        )
 
-        # Randomly select 2 to 3 augmentations that do not affect bounding boxes
+        # Randomly select 2 to 3 augmentations
+        # that do not affect bounding boxes
         num_non_bbox_transforms = random.randint(2, 3)
-        chosen_non_bbox_transforms = random.sample(non_bbox_augmentations, k=num_non_bbox_transforms)
+        chosen_non_bbox_transforms = random.sample(
+            non_bbox_augmentations, k=num_non_bbox_transforms,
+        )
 
         chosen_transforms = chosen_bbox_transforms + chosen_non_bbox_transforms
 
         # Return the augmentation pipeline
-        return A.Compose(chosen_transforms + [
-            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0)
-        ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True))
+        return A.Compose(
+            chosen_transforms + [
+                A.Normalize(
+                    mean=(0.485, 0.456, 0.406), std=(
+                        0.229, 0.224, 0.225,
+                    ), max_pixel_value=255.0,
+                ),
+            ],
+            bbox_params=A.BboxParams(
+                format='yolo',
+                label_fields=['class_labels'],
+                clip=True,
+            ),
+        )
 
-    def process_image(self, image: np.ndarray, bboxes: list, class_labels: list[int]) -> dict:
+    def process_image(
+        self,
+        image: np.ndarray,
+        bboxes: list[list[float]],
+        class_labels: list[int],
+    ) -> dict:
         """
         Apply augmentations to the image and bounding boxes.
 
@@ -195,10 +278,12 @@ class DataAugmentation:
         """
         # Generate a random augmentation pipeline
         aug_transform = self.random_transform()
-        
+
         # Apply the augmentation pipeline to the image and bounding boxes
-        transformed = aug_transform(image=image, bboxes=bboxes, class_labels=class_labels)
-        
+        transformed = aug_transform(
+            image=image, bboxes=bboxes, class_labels=class_labels,
+        )
+
         return transformed
 
     def augment_image(self, image_path: Path) -> None:
@@ -208,8 +293,14 @@ class DataAugmentation:
         Args:
             image_path (Path): The path to the image file.
         """
+        if image_path is None:
+            print('Error processing image: None')
+            return
+
+        # Initialise image and bboxes to None
         image = None
         bboxes = None
+
         try:
             # Read the image using OpenCV
             image = cv2.imread(str(image_path))
@@ -220,26 +311,40 @@ class DataAugmentation:
 
             # Remove the alpha channel if the image has 4 channels
             if image.shape[2] == 4:
-                image = image[ :, :, :3]
+                image = image[:, :, :3]
 
             # Convert the BGR image to RGB
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             image = np.clip(image, 0, 255).astype(np.uint8)
 
             # Read the label file
-            label_path = self.train_path / 'labels' / image_path.with_suffix('.txt').name
+            label_path = self.train_path / 'labels' / \
+                image_path.with_suffix('.txt').name
             class_labels, bboxes = self.read_label_file(label_path)
 
             # Resize the image and bounding boxes
-            image, bboxes = self.resize_image_and_bboxes(image, bboxes, class_labels, image_path)
+            image, bboxes = self.resize_image_and_bboxes(
+                image, bboxes, class_labels, image_path,
+            )
 
             # Ensure the coordinates are between 0 and 1
             bboxes = np.clip(bboxes, 0, 1)
 
+            if bboxes is None or class_labels is None:
+                print(
+                    f"Skipping augmentation for {image_path} "
+                    f"due to missing labels.",
+                )
+                return
+
             for i in range(self.num_augmentations):
                 # Apply augmentations to the image and bounding boxes
-                transformed = self.process_image(image=image, bboxes=bboxes, class_labels=class_labels)
-                image_aug, bboxes_aug, class_labels_aug = transformed['image'], transformed['bboxes'], transformed['class_labels']
+                transformed = self.process_image(
+                    image=image, bboxes=bboxes, class_labels=class_labels,
+                )
+                image_aug, bboxes_aug, class_labels_aug = transformed[
+                    'image'
+                ], transformed['bboxes'], transformed['class_labels']
 
                 # Ensure the coordinates are between 0 and 1
                 bboxes_aug = np.clip(bboxes_aug, 0, 1)
@@ -248,18 +353,32 @@ class DataAugmentation:
                 image_aug = np.clip(image_aug * 255, 0, 255).astype(np.uint8)
 
                 # Save the augmented image and label file
-                aug_image_filename = f"{image_path.stem}_aug_{i}{image_path.suffix}"
-                aug_label_filename = f"{image_path.stem}_aug_{i}.txt"
+                aug_image_filename = (
+                    f"{image_path.stem}_aug_{i}{image_path.suffix}"
+                )
+                aug_label_filename = (
+                    f"{image_path.stem}_aug_{i}.txt"
+                )
 
-                image_aug_path = self.train_path / 'images' / aug_image_filename
-                label_aug_path = self.train_path / 'labels' / aug_label_filename
+                image_aug_path = (
+                    self.train_path / 'images' / aug_image_filename
+                )
+                label_aug_path = (
+                    self.train_path / 'labels' / aug_label_filename
+                )
 
                 # Convert the image back to uint8
                 image_aug = (image_aug * 255).clip(0, 255).astype(np.uint8)
 
                 # Save the image using OpenCV
-                cv2.imwrite(str(image_aug_path), cv2.cvtColor(image_aug * 255, cv2.COLOR_RGB2BGR))
-                self.write_label_file(bboxes_aug, class_labels_aug, str(label_aug_path))
+                cv2.imwrite(
+                    str(image_aug_path), cv2.cvtColor(
+                        image_aug * 255, cv2.COLOR_RGB2BGR,
+                    ),
+                )
+                self.write_label_file(
+                    bboxes_aug, class_labels_aug, Path(label_aug_path),
+                )
 
         except Exception as e:
             print(f"Error processing image: {image_path}: {e}")
@@ -278,39 +397,58 @@ class DataAugmentation:
             batch_size (int): The number of images to process in each batch.
         """
         image_paths = list(self.train_path.glob('images/*.jpg'))
-        num_workers = min(batch_size, os.cpu_count() - 1)
+        cpu_count = os.cpu_count() or 1
+        num_workers = min(batch_size, cpu_count - 1)
 
         print(f"Using {num_workers} parallel workers for data augmentation.")
 
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            list(tqdm(executor.map(self.augment_image, image_paths), total=len(image_paths)))
+            list(
+                tqdm(
+                    executor.map(
+                        self.augment_image,
+                        image_paths,
+                    ), total=len(image_paths),
+                ),
+            )
 
     @staticmethod
-    def read_label_file(label_path: Path) -> tuple[list[list[float]], list[int]]:
+    def read_label_file(
+        label_path: Path,
+    ) -> tuple[list[int], list[list[float]]]:
         """
-        Reads a label file and converts it into a list of bounding boxes and class labels.
+        Reads a label file and converts it into a list of bounding boxes
+        and class labels.
 
         Args:
             label_path (Path): The path to the label file.
 
         Returns:
-            tuple[list[list[float]], list[int]]: The list of bounding boxes and class labels.
+            tuple[list[list[float]], list[int]]:
+                The list of bounding boxes and class labels.
         """
         annotations = []
-        with open(label_path, 'r') as f:
+        with open(label_path) as f:
             for line in f:
-                class_id, x_center, y_center, width, height = map(float, line.strip().split())
-                annotations.append([class_id, x_center, y_center, width, height])
-
+                class_id, x_center, y_center, width, height = map(
+                    float, line.strip().split(),
+                )
+                annotations.append(
+                    [class_id, x_center, y_center, width, height],
+                )
 
         # Prepare the bounding boxes and class labels
         bboxes = [ann[1:] for ann in annotations]
-        class_labels = [ann[0] for ann in annotations]
+        class_labels = [int(ann[0]) for ann in annotations]
 
         return class_labels, bboxes
-        
+
     @staticmethod
-    def write_label_file(bboxes_aug: list[tuple], class_labels_aug: list[int], label_path: Path) -> None:
+    def write_label_file(
+        bboxes_aug: list[tuple],
+        class_labels_aug: list[int],
+        label_path: Path,
+    ) -> None:
         """
         Writes bounding boxes and class labels to a label file.
 
@@ -320,12 +458,16 @@ class DataAugmentation:
             label_path (Path): The path to the label file.
         """
         # Combine class labels with the transformed bounding boxes
-        annotations = [[class_labels_aug[i]] + list(bboxes_aug[i]) for i in range(len(bboxes_aug))]
+        annotations = [[class_labels_aug[i]] +
+                       list(bboxes_aug[i]) for i in range(len(bboxes_aug))]
 
         with open(label_path, 'w') as f:
             for ann in annotations:
                 class_id, x_center, y_center, width, height = ann
-                f.write(f'{int(class_id)} {x_center:.6} {y_center:.6} {width:.6} {height:.6}\n')
+                f.write(
+                    f'{int(class_id)} {x_center:.6} {y_center:.6} '
+                    f'{width:.6} {height:.6}\n',
+                )
 
     def shuffle_data(self) -> None:
         """
@@ -343,7 +485,9 @@ class DataAugmentation:
         label_paths = list(label_dir.glob('*'))
 
         # Ensure the count of images and labels matches
-        assert len(image_paths) == len(label_paths), 'The counts of image and label files do not match!'
+        assert len(image_paths) == len(
+            label_paths,
+        ), 'The counts of image and label files do not match!'
 
         # Sort paths to ensure matching between images and labels
         image_paths.sort()
