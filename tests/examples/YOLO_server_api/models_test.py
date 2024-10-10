@@ -91,7 +91,7 @@ class TestDetectionModelManager(unittest.TestCase):
         mock_model = MagicMock()
         mock_from_pretrained.return_value = mock_model
 
-        model_name: str = 'yolov8x'
+        model_name: str = 'yolo11x'
         model = self.model_manager.load_single_model(model_name)
         mock_from_pretrained.assert_called_once_with(
             'yolov8',
