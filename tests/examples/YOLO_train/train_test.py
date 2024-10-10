@@ -14,7 +14,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         """
         Set up the test environment before each test.
         """
-        self.model_name: str = 'models/pt/best_yolov8x.pt'
+        self.model_name: str = 'models/pt/best_yolo11x.pt'
         self.handler: YOLOModelHandler = YOLOModelHandler(self.model_name)
 
     def tearDown(self) -> None:
@@ -55,22 +55,22 @@ class TestYOLOModelHandler(unittest.TestCase):
         # Case 1: MPS available
         mock_mps_available.return_value = True
         mock_cuda_available.return_value = False
-        handler = YOLOModelHandler('models/pt/best_yolov8x.pt')
-        mock_yolo.assert_called_with('models/pt/best_yolov8x.pt')
+        handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
+        mock_yolo.assert_called_with('models/pt/best_yolo11x.pt')
         self.assertEqual(handler.device.type, 'mps')
 
         # Case 2: CUDA available but MPS is not
         mock_mps_available.return_value = False
         mock_cuda_available.return_value = True
-        handler = YOLOModelHandler('models/pt/best_yolov8x.pt')
-        mock_yolo.assert_called_with('models/pt/best_yolov8x.pt')
+        handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
+        mock_yolo.assert_called_with('models/pt/best_yolo11x.pt')
         self.assertEqual(handler.device.type, 'cuda')
 
         # Case 3: Neither MPS nor CUDA is available, should fall back to CPU
         mock_mps_available.return_value = False
         mock_cuda_available.return_value = False
-        handler = YOLOModelHandler('models/pt/best_yolov8x.pt')
-        mock_yolo.assert_called_with('models/pt/best_yolov8x.pt')
+        handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
+        mock_yolo.assert_called_with('models/pt/best_yolo11x.pt')
         self.assertEqual(handler.device.type, 'cpu')
 
     @patch('examples.YOLO_train.train.YOLO')
@@ -122,7 +122,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         """
         Test that training without loading a model raises RuntimeError.
         """
-        handler = YOLOModelHandler('models/pt/best_yolov8x.pt')
+        handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
             handler.train_model('dataset/data.yaml', 10, 'auto')
@@ -139,7 +139,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         """
         Test that validating without loading a model raises RuntimeError.
         """
-        handler = YOLOModelHandler('models/pt/best_yolov8x.pt')
+        handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
             handler.validate_model()
@@ -156,7 +156,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         """
         Test that predicting without loading a model raises RuntimeError.
         """
-        handler = YOLOModelHandler('models/pt/best_yolov8x.pt')
+        handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
             handler.predict_image('path/to/image.jpg')
@@ -173,7 +173,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         """
         Test that exporting without loading a model raises RuntimeError.
         """
-        handler = YOLOModelHandler('models/pt/best_yolov8x.pt')
+        handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
             handler.export_model('onnx')
@@ -190,7 +190,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         """
         Test that saving without loading a model raises RuntimeError.
         """
-        handler = YOLOModelHandler('models/pt/best_yolov8x.pt')
+        handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
             handler.save_model('path/to/save/model.pt')
@@ -206,7 +206,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         """
         Test that cross-validation without loading a model raises RuntimeError.
         """
-        handler = YOLOModelHandler('models/pt/best_yolov8x.pt')
+        handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
             handler.cross_validate_model('dataset/data.yaml', 10, 'auto')
@@ -306,11 +306,11 @@ class TestYOLOModelHandler(unittest.TestCase):
         )
 
         result = YOLOModelHandler.predict_image_sahi(
-            'models/pt/best_yolov8x.pt', 'path/to/image.jpg',
+            'models/pt/best_yolo11x.pt', 'path/to/image.jpg',
         )
         mock_auto_detection_model.assert_called_with(
             model_type='yolov8',
-            model_path='models/pt/best_yolov8x.pt',
+            model_path='models/pt/best_yolo11x.pt',
             confidence_threshold=0.3,
         )
         mock_sahi_predict.assert_called()
@@ -344,7 +344,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_parse_args.return_value = argparse.Namespace(
             data_config='dataset/data.yaml',
             epochs=100,
-            model_name='models/pt/best_yolov8x.pt',
+            model_name='models/pt/best_yolo11x.pt',
             export_format='onnx',
             onnx_path=None,
             pt_path='model.pt',
@@ -377,7 +377,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_parse_args.return_value = argparse.Namespace(
             data_config='dataset/data.yaml',
             epochs=100,
-            model_name='models/pt/best_yolov8x.pt',
+            model_name='models/pt/best_yolo11x.pt',
             export_format='onnx',
             onnx_path=None,
             pt_path='model.pt',
@@ -420,7 +420,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_parse_args.return_value = argparse.Namespace(
             data_config='dataset/data.yaml',
             epochs=100,
-            model_name='models/pt/best_yolov8x.pt',
+            model_name='models/pt/best_yolo11x.pt',
             export_format='onnx',
             onnx_path=None,
             pt_path='model.pt',
