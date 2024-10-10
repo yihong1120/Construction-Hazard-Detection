@@ -1,10 +1,14 @@
-from unittest import TestCase
-from unittest.mock import MagicMock, patch
-from flask_socketio import SocketIO, emit
-from flask import Flask
+from __future__ import annotations
 
-# Import the functions to test
-from examples.streaming_web.sockets import register_sockets, update_images
+from unittest import TestCase
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
+from flask import Flask
+from flask_socketio import SocketIO
+
+from examples.streaming_web.sockets import register_sockets
+from examples.streaming_web.sockets import update_images
 
 
 class TestSockets(TestCase):
@@ -26,7 +30,9 @@ class TestSockets(TestCase):
         Test the 'connect' event handler to ensure a message is emitted.
         """
         # Trigger the connect event
-        client = self.socketio.test_client(self.app)  # Simulates a client connection
+        client = self.socketio.test_client(
+            self.app,
+        )  # Simulates a client connection
         client.get_received()
 
         # Check if the message was emitted with correct data
@@ -35,7 +41,8 @@ class TestSockets(TestCase):
     @patch('builtins.print')
     def test_handle_disconnect(self, mock_print: MagicMock) -> None:
         """
-        Test the 'disconnect' event handler to ensure the correct message is printed.
+        Test the 'disconnect' event handler to
+        ensure the correct message is printed.
         """
         # Simulate a client disconnection
         client = self.socketio.test_client(self.app)
@@ -49,23 +56,29 @@ class TestSockets(TestCase):
         """
         Test the 'error' event handler to ensure the error message is printed.
         """
-        error_message = "Mocked error"
-        
-        # Trigger the error event by simulating an error during socket communication
+        error_message = 'Mocked error'
+
+        # Trigger the error event by simulating
+        # an error during socket communication
         client = self.socketio.test_client(self.app)
         client.emit('error', {'data': error_message})
 
         # Check if the error message was printed
-        mock_print.assert_called_once_with(f"Error: {{'data': '{error_message}'}}")
+        mock_print.assert_called_once_with(
+            f"Error: {{'data': '{error_message}'}}",
+        )
 
     @patch('examples.streaming_web.sockets.get_labels')
     @patch('examples.streaming_web.sockets.get_image_data')
     @patch('examples.streaming_web.sockets.SocketIO.emit')
     @patch('examples.streaming_web.sockets.SocketIO.sleep')
-    def test_update_images(self, mock_sleep: MagicMock, mock_emit: MagicMock, 
-                           mock_get_image_data: MagicMock, mock_get_labels: MagicMock) -> None:
+    def test_update_images(
+        self, mock_sleep: MagicMock, mock_emit: MagicMock,
+        mock_get_image_data: MagicMock, mock_get_labels: MagicMock,
+    ) -> None:
         """
-        Test the 'update_images' function to ensure labels and images are emitted correctly.
+        Test the 'update_images' function to
+        ensure labels and images are emitted correctly.
         """
         # Mock the behavior of get_labels and get_image_data
         mock_get_labels.return_value = ['label1', 'label2']
@@ -75,7 +88,10 @@ class TestSockets(TestCase):
         ]
 
         # Limit loop iterations for test
-        with patch('examples.streaming_web.sockets.update_images', side_effect=StopIteration):
+        with patch(
+            'examples.streaming_web.sockets.update_images',
+            side_effect=StopIteration,
+        ):
             try:
                 update_images(self.socketio, self.redis_mock)
             except StopIteration:
@@ -92,7 +108,7 @@ class TestSockets(TestCase):
                 'label': 'label1',
                 'images': [b'image_data1'],
                 'image_names': ['image1.png'],
-            }
+            },
         )
         mock_emit.assert_any_call(
             'update',
@@ -100,13 +116,13 @@ class TestSockets(TestCase):
                 'label': 'label2',
                 'images': [b'image_data2'],
                 'image_names': ['image2.png'],
-            }
+            },
         )
 
     def tearDown(self) -> None:
         """
         Clean up after each test.
         """
-        self.socketio = None
-        self.redis_mock = None
+        self.socketio = MagicMock()
+        self.redis_mock = MagicMock()
         self.app = None
