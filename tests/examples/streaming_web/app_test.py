@@ -1,12 +1,13 @@
+from __future__ import annotations
+
 import unittest
-from unittest.mock import patch, MagicMock
-import redis
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
 from flask import Flask
-from flask_socketio import SocketIO
-from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask_cors import CORS
-from examples.streaming_web.app import app, register_routes, register_sockets
+from flask_socketio import SocketIO
+
 
 class TestStreamingWebApp(unittest.TestCase):
     def setUp(self) -> None:
@@ -23,21 +24,31 @@ class TestStreamingWebApp(unittest.TestCase):
         Test that the Redis connection is properly established.
         """
         mock_redis.return_value = MagicMock()
-        r = mock_redis(host='localhost', port=6379, password='_sua6oub4Ss', decode_responses=False)
+        r = mock_redis(
+            host='localhost', port=6379,
+            password='passcode', decode_responses=False,
+        )
         self.assertIsInstance(r, MagicMock)
-        mock_redis.assert_called_once_with(host='localhost', port=6379, password='_sua6oub4Ss', decode_responses=False)
+        mock_redis.assert_called_once_with(
+            host='localhost', port=6379,
+            password='passcode', decode_responses=False,
+        )
 
     @patch('flask_cors.CORS')
     def test_cors_initialization(self, mock_cors: MagicMock) -> None:
         """
         Test that CORS is properly initialized for the Flask app.
         """
-        cors = mock_cors(self.app, resources={r"/*": {"origins": "*"}})
+        cors = mock_cors(self.app, resources={r'/*': {'origins': '*'}})
         self.assertIsInstance(cors, MagicMock)
-        mock_cors.assert_called_once_with(self.app, resources={r"/*": {"origins": "*"}})
+        mock_cors.assert_called_once_with(
+            self.app, resources={r'/*': {'origins': '*'}},
+        )
 
     @patch('examples.streaming_web.app.Limiter')
-    def test_rate_limiter_initialization(self, mock_limiter: MagicMock) -> None:
+    def test_rate_limiter_initialization(
+        self, mock_limiter: MagicMock,
+    ) -> None:
         """
         Test that the rate limiter is properly initialized.
         """
@@ -52,13 +63,16 @@ class TestStreamingWebApp(unittest.TestCase):
         """
         socketio = SocketIO(self.app)
         socketio.run(self.app, host='127.0.0.1', port=8000, debug=False)
-        mock_run.assert_called_once_with(self.app, host='127.0.0.1', port=8000, debug=False)
+        mock_run.assert_called_once_with(
+            self.app, host='127.0.0.1', port=8000, debug=False,
+        )
 
     def tearDown(self) -> None:
         """
         Clean up after each test.
         """
         self.client = None
+
 
 if __name__ == '__main__':
     unittest.main()
