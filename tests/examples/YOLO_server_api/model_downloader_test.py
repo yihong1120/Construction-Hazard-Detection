@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import MagicMock
+from unittest.mock import mock_open
 from unittest.mock import patch
 
 import requests
@@ -60,9 +61,10 @@ class ModelDownloaderTestCase(unittest.TestCase):
                 'examples.YOLO_server_api.model_downloader.Path.exists',
                 return_value=True,
             ):
-                response = self.client.get('/models/best_yolov8l.pt')
-
-                self.assertEqual(response.status_code, 304)
+                # Use a mocked open to simulate reading a file
+                with patch('builtins.open', mock_open(read_data='dummy data')):
+                    response = self.client.get('/models/best_yolo11l.pt')
+                    self.assertEqual(response.status_code, 304)
 
     @patch('examples.YOLO_server_api.model_downloader.requests.head')
     @patch('examples.YOLO_server_api.model_downloader.send_from_directory')
@@ -97,13 +99,13 @@ class ModelDownloaderTestCase(unittest.TestCase):
         }
         mock_requests_head.return_value = mock_response
 
+        # Mock `send_from_directory` to simulate sending a file
         mock_send_from_directory.return_value = MagicMock()
 
         with patch(
             'examples.YOLO_server_api.model_downloader.Path.stat',
         ) as mock_stat:
             # Set the timestamp to match the date in the Last-Modified header
-            # Corresponding to 'Sat, 01 Jan 2000 00:00:00 GMT'
             mock_stat.return_value.st_mtime = 946684800.0
 
             # Ensure the path exists and is correct
@@ -111,11 +113,12 @@ class ModelDownloaderTestCase(unittest.TestCase):
                 'examples.YOLO_server_api.model_downloader.Path.exists',
                 return_value=True,
             ):
-                # Update the mock to simulate the file being downloaded
-                response = self.client.get('/models/best_yolov8l.pt')
+                # Use a mocked open to simulate reading a file
+                with patch('builtins.open', mock_open(read_data='dummy data')):
+                    response = self.client.get('/models/best_yolo11l.pt')
 
-                self.assertEqual(response.status_code, 200)
-                mock_send_from_directory.assert_called_once()
+                    self.assertEqual(response.status_code, 200)
+                    mock_send_from_directory.assert_called_once()
 
     @patch('examples.YOLO_server_api.model_downloader.requests.head')
     def test_download_model_request_exception(self, mock_requests_head):
@@ -123,7 +126,7 @@ class ModelDownloaderTestCase(unittest.TestCase):
         Test the download_model endpoint when there is a request exception.
         """
         mock_requests_head.side_effect = requests.RequestException
-        response = self.client.get('/models/best_yolov8l.pt')
+        response = self.client.get('/models/best_yolo11l.pt')
         self.assertEqual(response.status_code, 500)
         self.assertIn(b'Failed to fetch model information.', response.data)
 
