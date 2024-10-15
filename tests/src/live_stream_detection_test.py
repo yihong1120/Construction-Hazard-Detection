@@ -23,7 +23,7 @@ class TestLiveStreamDetector(unittest.TestCase):
         Set up the LiveStreamDetector instance for tests.
         """
         self.api_url: str = 'http://localhost:5000'
-        self.model_key: str = 'yolov8n'
+        self.model_key: str = 'yolo11n'
         self.output_folder: str = 'test_output'
         self.run_local: bool = True
         self.detector: LiveStreamDetector = LiveStreamDetector(
@@ -448,7 +448,7 @@ class TestLiveStreamDetector(unittest.TestCase):
             main()
             mock_init.assert_called_once_with(
                 api_url='http://localhost:5000',
-                model_key='yolov8n',
+                model_key='yolo11n',
                 output_folder=None,
                 run_local=True,
             )
