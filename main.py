@@ -398,6 +398,9 @@ def process_single_image(
     except Exception as e:
         print(f"Error processing the image: {str(e)}")
 
+#TODO: Use watch to monitor the config file and restart the process when the file is updated
+#TODO: Add expire time for threads and processes
+#TODO: Adjust line_token format from str to list, and add a loop to send notifications to multiple users
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
