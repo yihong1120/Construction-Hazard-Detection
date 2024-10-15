@@ -27,7 +27,7 @@
       <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
    </a>
    <a href="https://github.com/pre-commit/pre-commit">
-      <img src="https://img.shields.io/badge/pre--commit-3.8.0-blue?logo=pre-commit" alt="Pre-commit 3.8.0">
+      <img src="https://img.shields.io/badge/pre--commit-4.0.1-blue?logo=pre-commit" alt="Pre-commit 4.0.1">
    </a>
    <a href="https://docs.pytest.org/en/latest/">
       <img src="https://img.shields.io/badge/pytest-8.3.3-blue?logo=pytest" alt="pytest 8.3.3">
@@ -44,7 +44,7 @@
 - 未佩戴安全帽的工人
 - 未穿著安全背心的工人
 - 靠近機械或車輛的工人
-- 進入限制區域的工人
+- 進入限制區域的工人，透過安全錐座標的計算和分群，限制區域將自動產生。
 
 後處理算法進一步提高了偵測的準確性。該系統專為即時部署而設計，能夠對檢測到的危險進行即時分析並發出警報。
 
@@ -60,7 +60,7 @@
 
 多語言支援使該系統在全球範圍內的使用者都能方便使用，提升了不同地區的可用性。
 
-> **待辦事項**：新增對 WhatsApp 通知的支援，從YOLOv8轉換至YOLO11
+> **待辦事項**：新增對 WhatsApp 通知的支援，使用Line Message API。
 
 <br>
 <br>
@@ -200,10 +200,14 @@
       ```
 
    4. 安裝並啟動 MySQL 服務：
+
+      Linux 使用者：
       ```bash
       sudo apt install mysql-server
       sudo systemctl start mysql.service
       ```
+
+      對於其他人，您可以在此[連結](https://dev.mysql.com/downloads/)下載並安裝適用於您的作業系統的MySQL。
 
    5. 設置用戶帳戶和密碼。使用以下命令啟動用戶管理 API：
       ```bash
@@ -223,9 +227,16 @@
       將 `/path/to/your/configuration.yaml` 替換為您的配置文件的實際路徑。
 
    8. 要啟動串流 Web 服務，執行以下命令：
-      ```bash
+
+      對於 Linux 使用者：
+      ````bash
       gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.streaming_web.app:streaming-web-app"
-      ```
+      ````
+
+      對於 Windows 使用者：
+      ````
+      waitress-serve --host=127.0.0.1 --port=8002 "examples.streaming_web.app:streaming-web-app"
+      ````
 
 </details>
 

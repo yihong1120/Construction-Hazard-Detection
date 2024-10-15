@@ -42,13 +42,13 @@ class DetectionData(TypedDict):
 class LiveStreamDetector:
     """
     A class to perform live stream detection and tracking
-    using YOLOv8 with SAHI.
+    using YOLO with SAHI.
     """
 
     def __init__(
         self,
         api_url: str = 'http://localhost:5000',
-        model_key: str = 'yolov8l',
+        model_key: str = 'yolo11n',
         output_folder: str | None = None,
         run_local: bool = True,
     ):
@@ -195,7 +195,7 @@ class LiveStreamDetector:
         frame: np.ndarray,
     ) -> list[list[float]]:
         """
-        Generates detections locally using YOLOv8.
+        Generates detections locally using YOLO.
 
         Args:
             frame (np.ndarray): The frame to send for detection.
@@ -220,7 +220,7 @@ class LiveStreamDetector:
             overlap_width_ratio=0.3,
         )
 
-        # Compile detection data in YOLOv8 format
+        # Compile detection data in YOLO format
         datas = []
         for object_prediction in result.object_prediction_list:
             label = int(object_prediction.category.id)
@@ -244,7 +244,7 @@ class LiveStreamDetector:
         Removes overlapping labels for Hardhat and Safety Vest categories.
 
         Args:
-            datas (list): A list of detection data in YOLOv8 format.
+            datas (list): A list of detection data in YOLO format.
 
         Returns:
             list: A list of detection data with overlapping labels removed.
@@ -335,7 +335,7 @@ class LiveStreamDetector:
         Removes labels fully contained in Hardhat/Safety Vest categories.
 
         Args:
-            datas (list): A list of detection data in YOLOv8 format.
+            datas (list): A list of detection data in YOLO format.
 
         Returns:
             list: Detection data with fully contained labels removed.
@@ -440,7 +440,7 @@ class LiveStreamDetector:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Perform live stream detection and tracking using YOLOv8.',
+        description='Perform live stream detection and tracking using YOLO.',
     )
     parser.add_argument(
         '--url',
@@ -457,7 +457,7 @@ def main():
     parser.add_argument(
         '--model_key',
         type=str,
-        default='yolov8n',
+        default='yolo11n',
         help='Model key for detection',
     )
     parser.add_argument(

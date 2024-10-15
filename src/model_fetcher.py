@@ -53,10 +53,8 @@ def download_model(model_name, url):
 def main():
     # Define the URLs for the model files
     MODEL_URLS = {
-        'best_yolov8l.pt':
-            'http://changdar-server.mooo.com:28000/models/best_yolov8l.pt',
-        'best_yolov8x.pt':
-            'http://changdar-server.mooo.com:28000/models/best_yolov8x.pt',
+        'best_yolo11n.pt':
+            'http://changdar-server.mooo.com:28000/models/best_yolo11n.pt',
     }
 
     # Iterate over all models and download them if they don't already exist

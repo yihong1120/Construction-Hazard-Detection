@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from flask.testing import FlaskClient
 from flask_jwt_extended import JWTManager
 
 from examples.YOLO_server_api.app import app
@@ -13,13 +14,17 @@ from examples.YOLO_server_api.app import scheduler
 
 
 class TestYOLOServerAPI(unittest.TestCase):
+    """
+    Test suite for the YOLO server API application.
+    """
+
     def setUp(self) -> None:
         """
         Set up the Flask test client and other necessary mocks.
         """
         self.app = app
         self.app.testing = True
-        self.client = self.app.test_client()
+        self.client: FlaskClient | None = self.app.test_client()
 
     @patch('examples.YOLO_server_api.app.JWTManager')
     def test_jwt_initialization(self, mock_jwt_manager: MagicMock) -> None:

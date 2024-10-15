@@ -6,6 +6,7 @@ import os
 import random
 import time
 import uuid
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -138,7 +139,7 @@ class DataAugmentation:
             A.Compose: The augmentation pipeline.
         """
         # Augmentations that affect bounding boxes
-        bbox_augmentations = [
+        bbox_augmentations: Sequence[A.BasicTransform | A.BaseCompose] = [
             A.HorizontalFlip(p=1),
             A.VerticalFlip(p=1),
             A.RandomRotate90(p=1),
@@ -297,9 +298,9 @@ class DataAugmentation:
             print('Error processing image: None')
             return
 
-        # Initialise image and bboxes to None
+        # Initialise image and bboxes to None or an empty array
         image = None
-        bboxes = None
+        bboxes: list[list[float]] = []
 
         try:
             # Read the image using OpenCV
@@ -328,7 +329,7 @@ class DataAugmentation:
             )
 
             # Ensure the coordinates are between 0 and 1
-            bboxes = np.clip(bboxes, 0, 1)
+            bboxes = np.clip(bboxes, 0, 1).tolist()
 
             if bboxes is None or class_labels is None:
                 print(
