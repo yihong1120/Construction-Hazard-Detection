@@ -1,6 +1,7 @@
-albumentations==1.4.17
+albumentations==1.4.18
 apscheduler==3.10.4
 codecov==2.1.13
+cloudinary==1.41.0
 eventlet==0.37.0
 Flask==3.0.3
 Flask-Cors==5.0.0
