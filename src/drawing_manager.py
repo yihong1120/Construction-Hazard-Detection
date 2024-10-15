@@ -15,6 +15,10 @@ from .lang_config import LANGUAGES
 
 
 class DrawingManager:
+    """
+    A class for drawing detections on frames and saving them to disk.
+    """
+
     def __init__(self, language: str = 'en') -> None:
         """
         Initialise the DrawingManager class.

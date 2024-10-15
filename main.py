@@ -57,7 +57,7 @@ class StreamConfig(TypedDict):
 def process_single_stream(
     logger: logging.Logger,
     video_url: str,
-    model_key: str = 'yolov8x',
+    model_key: str = 'yolo11n',
     label: str | None = None,
     image_name: str = 'prediction_visual',
     line_token: str | None = None,
@@ -342,7 +342,7 @@ def run_multiple_streams(config_file: str) -> None:
 
 def process_single_image(
     image_path: str,
-    model_key: str = 'yolov8x',
+    model_key: str = 'yolo11n',
     output_folder: str = 'output_images',
     image_name: str | None = None,
     language: str = 'en',
@@ -419,7 +419,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--model_key',
         type=str,
-        default='yolov8x',
+        default='yolo11n',
         help='Model key to use for detection',
     )
     parser.add_argument(

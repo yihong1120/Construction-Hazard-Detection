@@ -12,6 +12,10 @@ from examples.streaming_web.sockets import update_images
 
 
 class TestSockets(TestCase):
+    """
+    Test suite for the streaming_web sockets.
+    """
+
     def setUp(self) -> None:
         """
         Set up a SocketIO instance and mocks for Redis.
@@ -123,6 +127,6 @@ class TestSockets(TestCase):
         """
         Clean up after each test.
         """
-        self.socketio = MagicMock()
-        self.redis_mock = MagicMock()
-        self.app = None
+        del self.socketio
+        del self.redis_mock
+        del self.app

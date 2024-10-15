@@ -10,6 +10,10 @@ from flask_socketio import SocketIO
 
 
 class TestStreamingWebApp(unittest.TestCase):
+    """
+    Test suite for the streaming_web Flask app.
+    """
+
     def setUp(self) -> None:
         """
         Set up the Flask test client and other necessary mocks.
@@ -71,7 +75,7 @@ class TestStreamingWebApp(unittest.TestCase):
         """
         Clean up after each test.
         """
-        self.client = None
+        del self.client
 
 
 if __name__ == '__main__':

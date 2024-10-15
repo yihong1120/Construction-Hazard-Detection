@@ -122,12 +122,8 @@ class TestModelFetcher(unittest.TestCase):
         main()
         calls = [
             call(
-                'best_yolov8l.pt',
-                'http://changdar-server.mooo.com:28000/models/best_yolov8l.pt',
-            ),
-            call(
-                'best_yolov8x.pt',
-                'http://changdar-server.mooo.com:28000/models/best_yolov8x.pt',
+                'best_yolo11n.pt',
+                'http://changdar-server.mooo.com:28000/models/best_yolo11n.pt',
             ),
         ]
         mock_download_model.assert_has_calls(calls, any_order=True)
