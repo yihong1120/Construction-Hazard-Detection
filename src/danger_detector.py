@@ -6,36 +6,18 @@ from shapely.geometry import Point
 from shapely.geometry import Polygon
 from sklearn.cluster import HDBSCAN
 
-from .lang_config import LANGUAGES
-
 
 class DangerDetector:
     """
     A class to detect potential safety hazards based on the detection data.
     """
 
-    def __init__(self, language: str = 'en'):
+    def __init__(self):
         """
         Initialises the danger detector.
         """
-        # Set the language for warning messages
-        self.language: str = language
-
         # Initialise the HDBSCAN clusterer
         self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
-
-    def get_text(self, key, **kwargs):
-        """
-        Retrieves the text for the specified key based on the current language.
-
-        Args:
-            key (str): The key for the text to retrieve.
-            kwargs (dict): Additional formatting arguments.
-
-        Returns:
-            str: The localised text.
-        """
-        return LANGUAGES[self.language].get(key, '').format(**kwargs)
 
     def normalise_bbox(self, bbox):
         """
@@ -160,7 +142,7 @@ class DangerDetector:
     def detect_danger(
         self,
         datas: list[list[float]],
-    ) -> tuple[set[str], list[Polygon]]:
+    ) -> tuple[list[str], list[Polygon]]:
         """
         Detects potential safety violations in a construction site.
 
@@ -188,9 +170,8 @@ class DangerDetector:
         )
         if people_count > 0:
             warnings.add(
-                self.get_text(
-                    'warning_people_in_controlled_area', count=people_count,
-                ),
+                f"Warning: {people_count} people "
+                'have entered the controlled area!',
             )
 
         # Classify detected objects into different categories
@@ -217,31 +198,26 @@ class DangerDetector:
         for violation in hardhat_violations + safety_vest_violations:
             label = 'NO-Hardhat' if violation[5] == 2 else 'NO-Safety Vest'
             if not any(
-                self.overlap_percentage(
-                    violation[:4], p[:4],
-                ) > 0.5 for p in persons
+                self.overlap_percentage(violation[:4], p[:4]) > 0.5
+                for p in persons
             ):
-                warning_msg = self.get_text(
-                    'warning_no_hardhat' if label == 'NO-Hardhat'
-                    else 'warning_no_safety_vest',
+                warning_msg = (
+                    'Warning: Someone is not wearing a hardhat!'
+                    if label == 'NO-Hardhat'
+                    else 'Warning: Someone is not wearing a safety vest!'
                 )
                 warnings.add(warning_msg)
 
         # Check if anyone is dangerously close to machinery or vehicles
         for person in persons:
             for mv in machinery_vehicles:
-                label_key = (
-                    'machinery' if mv[5] == 8 else 'vehicle'
-                )
-                label_text = self.get_text(label_key)
-                if self.is_dangerously_close(person[:4], mv[:4], label_text):
-                    warning_msg = self.get_text(
-                        'warning_close_to_machinery', label=label_text,
-                    )
+                label = 'machinery' if mv[5] == 8 else 'vehicle'
+                if self.is_dangerously_close(person[:4], mv[:4], label):
+                    warning_msg = f"Warning: Someone is too close to {label}!"
                     warnings.add(warning_msg)
                     break
 
-        return warnings, polygons
+        return list(warnings), polygons
 
     @staticmethod
     def is_driver(person_bbox: list[float], vehicle_bbox: list[float]) -> bool:
@@ -349,10 +325,9 @@ class DangerDetector:
         person_area = person_width * person_height
 
         # Calculate the area of the vehicle bounding box
-        vehicle_area = (vehicle_bbox[2] - vehicle_bbox[0]) * (
-            vehicle_bbox[3] - vehicle_bbox[1]
-        )
-        acceptable_ratio = 0.1 if label == '車輛' else 0.05
+        vehicle_area = (vehicle_bbox[2] - vehicle_bbox[0]) * \
+            (vehicle_bbox[3] - vehicle_bbox[1])
+        acceptable_ratio = 0.1 if label == 'vehicle' else 0.05
 
         # Check if person area ratio is acceptable compared to vehicle area
         if person_area / vehicle_area > acceptable_ratio:
@@ -380,7 +355,7 @@ class DangerDetector:
 
 
 def main():
-    detector = DangerDetector(language='en')
+    detector = DangerDetector()
 
     data: list[list[float]] = [
         [50, 50, 150, 150, 0.95, 0],    # Hardhat
@@ -405,7 +380,8 @@ def main():
     ]
 
     warnings, polygons = detector.detect_danger(data)
-    print(warnings)
+    print(f"Warnings: {warnings}")
+    print(f"Polygons: {polygons}")
 
 
 if __name__ == '__main__':

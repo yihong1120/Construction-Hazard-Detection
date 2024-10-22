@@ -328,20 +328,21 @@ class TestDangerDetector(unittest.TestCase):
         """
         with patch.object(
             DangerDetector, 'detect_danger', return_value=(
-                {
+                [
                     'Warning: Someone is not wearing a hardhat!',
                     'Warning: 1 people have entered the controlled area!',
-                },
+                ],
                 [Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])],
             ),
         ) as mock_detect_danger:
             main()
             mock_detect_danger.assert_called_once()
             mock_print.assert_any_call(
-                {
-                    'Warning: Someone is not wearing a hardhat!',
-                    'Warning: 1 people have entered the controlled area!',
-                },
+                "Warnings: ['Warning: Someone is not wearing a hardhat!', "
+                "'Warning: 1 people have entered the controlled area!']",
+            )
+            mock_print.assert_any_call(
+                'Polygons: [<POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))>]',
             )
 
 
