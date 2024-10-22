@@ -421,10 +421,10 @@ class TestLineMessenger(unittest.TestCase):
 
         with patch('builtins.print') as mock_print:
             records = self.messenger.load_image_records()
+            self.assertEqual(records, {})
             mock_print.assert_called_once_with(
                 'Failed to load image records: Mocked exception',
             )
-            self.assertEqual(records, {})
 
     @patch('builtins.open', new_callable=mock_open)
     def test_save_image_records_failure(self, mock_file):
