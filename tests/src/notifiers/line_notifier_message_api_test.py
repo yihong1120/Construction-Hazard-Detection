@@ -4,7 +4,7 @@ import os
 import unittest
 from datetime import datetime
 from datetime import timedelta
-from unittest.mock import mock_open
+from unittest.mock import MagicMock, mock_open
 from unittest.mock import patch
 
 import cv2
@@ -413,7 +413,7 @@ class TestLineMessenger(unittest.TestCase):
         )
 
     @patch('builtins.open', new_callable=mock_open)
-    def test_load_image_records_failure(self, mock_file):
+    def test_load_image_records_failure(self, mock_file: MagicMock) -> None:
         """
         Test failure when loading image records from JSON file.
         """
