@@ -166,7 +166,10 @@ class TestDataAugmentation(unittest.TestCase):
 
             self.assertTrue(mock_imwrite.called)
 
-    @patch('examples.YOLO_data_augmentation.data_augmentation_albumentations.A.Compose')
+    @patch(
+        'examples.YOLO_data_augmentation.data_augmentation_albumentations.'
+        'A.Compose',
+    )
     def test_resize_small_image(self, mock_compose: MagicMock) -> None:
         """
         Test resize_image_and_bboxes method with a small image.
@@ -179,20 +182,20 @@ class TestDataAugmentation(unittest.TestCase):
         # Mock the transformation result
         mock_transformed = {
             'image': np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8),
-            'bboxes': [[0.5, 0.5, 0.2, 0.2]]
+            'bboxes': [[0.5, 0.5, 0.2, 0.2]],
         }
         mock_transform = MagicMock()
         mock_transform.return_value = mock_transformed
         mock_compose.return_value = mock_transform
 
         resized_image, resized_bboxes = self.augmenter.resize_image_and_bboxes(
-            mock_image, mock_bboxes, class_labels, image_path
+            mock_image, mock_bboxes, class_labels, image_path,
         )
 
         # Verify that the Compose and BboxParams were called correctly
         mock_compose.assert_called()
         mock_transform.assert_called_once_with(
-            image=mock_image, bboxes=mock_bboxes, class_labels=class_labels
+            image=mock_image, bboxes=mock_bboxes, class_labels=class_labels,
         )
 
         # Verify the transformation result
