@@ -33,7 +33,7 @@ head:
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 7], 1, Concat, [1]]  # cat backbone P4
   - [-1, 2, C3k2, [512, False]]  # P4/16-large
-  
+
   # P4 output
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 5], 1, Concat, [1]]  # cat backbone P3

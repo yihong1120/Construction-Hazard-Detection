@@ -1,8 +1,17 @@
+from __future__ import annotations
+
 import unittest
-from unittest.mock import MagicMock, patch
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
 from watchdog.events import FileModifiedEvent
-from src.utils import RedisManager, Utils, FileEventHandler
+
+from src.utils import FileEventHandler
+from src.utils import RedisManager
+from src.utils import Utils
+
 
 class TestUtils(unittest.TestCase):
     def test_is_expired_with_valid_date(self):
@@ -18,6 +27,7 @@ class TestUtils(unittest.TestCase):
         # Test with None (should return False)
         self.assertFalse(Utils.is_expired(None))
 
+
 class TestFileEventHandler(unittest.TestCase):
     def test_on_modified_triggers_callback(self):
         # Create a mock callback function
@@ -27,7 +37,9 @@ class TestFileEventHandler(unittest.TestCase):
         file_path = '/path/to/test/file.txt'
 
         # Create an instance of FileEventHandler
-        event_handler = FileEventHandler(file_path=file_path, callback=mock_callback)
+        event_handler = FileEventHandler(
+            file_path=file_path, callback=mock_callback,
+        )
 
         # Create a mock event for a file modification
         event = FileModifiedEvent(file_path)
@@ -46,7 +58,9 @@ class TestFileEventHandler(unittest.TestCase):
         file_path = '/path/to/test/file.txt'
 
         # Create an instance of FileEventHandler
-        event_handler = FileEventHandler(file_path=file_path, callback=mock_callback)
+        event_handler = FileEventHandler(
+            file_path=file_path, callback=mock_callback,
+        )
 
         # Create a mock event for a different file modification
         different_file_path = '/path/to/other/file.txt'
@@ -57,6 +71,7 @@ class TestFileEventHandler(unittest.TestCase):
 
         # Assert that the callback was not called
         mock_callback.assert_not_called()
+
 
 class TestRedisManager(unittest.TestCase):
     """
@@ -93,7 +108,7 @@ class TestRedisManager(unittest.TestCase):
         """
         key = 'test_key'
         value = b'test_value'
-        self.mock_redis_instance.set.side_effect = Exception("Redis error")
+        self.mock_redis_instance.set.side_effect = Exception('Redis error')
 
         # Call the set method and verify it handles the exception
         with self.assertLogs(level='ERROR'):
@@ -121,7 +136,7 @@ class TestRedisManager(unittest.TestCase):
         Simulate an exception during the Redis get operation
         """
         key = 'test_key'
-        self.mock_redis_instance.get.side_effect = Exception("Redis error")
+        self.mock_redis_instance.get.side_effect = Exception('Redis error')
 
         # Call the get method and verify it handles the exception
         with self.assertLogs(level='ERROR'):
@@ -137,7 +152,8 @@ class TestRedisManager(unittest.TestCase):
         # Call the delete method
         self.redis_manager.delete(key)
 
-        # Assert that the Redis delete method was called with correct parameters
+        # Assert that the Redis delete method
+        # was called with correct parameters
         self.mock_redis_instance.delete.assert_called_once_with(key)
 
     def test_delete_error(self):
@@ -145,7 +161,7 @@ class TestRedisManager(unittest.TestCase):
         Simulate an exception during the Redis delete operation
         """
         key = 'test_key'
-        self.mock_redis_instance.delete.side_effect = Exception("Redis error")
+        self.mock_redis_instance.delete.side_effect = Exception('Redis error')
 
         # Call the delete method and verify it handles the exception
         with self.assertLogs(level='ERROR'):
