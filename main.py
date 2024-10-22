@@ -14,6 +14,7 @@ from typing import TypedDict
 import cv2
 import yaml
 from dotenv import load_dotenv
+from watchdog.observers import Observer
 
 from src.danger_detector import DangerDetector
 from src.drawing_manager import DrawingManager
@@ -48,10 +49,73 @@ if not is_windows:
 class StreamConfig(TypedDict):
     video_url: str
     model_key: str
-    label: str
-    image_name: str
-    line_token: str
-    run_local: bool
+
+    def reload_configurations():
+        with open(config_file, encoding='utf-8') as file:
+            configurations = yaml.safe_load(file)
+
+        current_configs = {
+            config['video_url']: config for config in configurations
+        }
+
+        with lock:
+            # Stop processes for removed or updated configurations
+            for video_url in list(running_processes.keys()):
+                config = current_configs.get(video_url)
+
+                # Stop the process if the configuration is removed
+                if not config or Utils.is_expired(config.get('expire_date')):
+                    logger.info(f"Stop workflow: {video_url}")
+                    stop_process(running_processes[video_url])
+                    del running_processes[video_url]
+                    del current_config_hashes[video_url]
+
+                # Restart the process if the configuration is updated
+                elif compute_config_hash(config) != current_config_hashes.get(
+                    video_url,
+                ):
+                    logger.info(
+                        f"Config changed for {video_url}. "
+                        'Restarting workflow.',
+                    )
+                    stop_process(running_processes[video_url])
+                    running_processes[video_url] = start_process(config)
+                    current_config_hashes[video_url] = compute_config_hash(
+                        config,
+                    )
+
+            # Start processes for new configurations
+            for video_url, config in current_configs.items():
+                if Utils.is_expired(config.get('expire_date')):
+                    logger.info(f"Skip expired configuration: {video_url}")
+                    continue
+
+                if video_url not in running_processes:
+                    logger.info(f"Launch new workflow: {video_url}")
+                    running_processes[video_url] = start_process(config)
+                    current_config_hashes[video_url] = compute_config_hash(
+                        config,
+                    )
+
+    # Initial load of configurations
+    reload_configurations()
+
+    # Set up watchdog observer
+    event_handler = FileEventHandler(config_file, reload_configurations)
+    observer = Observer()
+    observer.schedule(
+        event_handler, path=os.path.dirname(
+            config_file,
+        ), recursive=False,
+    )
+    observer.start()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
 
 
 def process_single_stream(
@@ -301,45 +365,6 @@ def stop_process(process: Process) -> None:
     process.join()
 
 
-def run_multiple_streams(config_file: str) -> None:
-    """
-    Manage multiple video streams based on a config file.
-
-
-    Args:
-        config_file (str): The path to the YAML configuration file.
-
-    Returns:
-        None
-    """
-    running_processes: dict[str, Process] = {}
-    lock = threading.Lock()
-
-    while True:
-        with open(config_file, encoding='utf-8') as file:
-            configurations = yaml.safe_load(file)
-
-        current_configs = {
-            config['video_url']: config for config in configurations
-        }
-
-        with lock:
-            # Stop processes for removed configurations
-            for video_url in list(running_processes.keys()):
-                if video_url not in current_configs:
-                    print(f"Stop workflow: {video_url}")
-                    stop_process(running_processes[video_url])
-                    del running_processes[video_url]
-
-            # Start processes for new configurations
-            for video_url, config in current_configs.items():
-                if video_url not in running_processes:
-                    print(f"Launch new workflow: {video_url}")
-                    running_processes[video_url] = start_process(config)
-
-        time.sleep(3600)
-
-
 def process_single_image(
     image_path: str,
     model_key: str = 'yolo11n',
@@ -398,9 +423,6 @@ def process_single_image(
     except Exception as e:
         print(f"Error processing the image: {str(e)}")
 
-#TODO: Use watch to monitor the config file and restart the process when the file is updated
-#TODO: Add expire time for threads and processes
-#TODO: Adjust line_token format from str to list, and add a loop to send notifications to multiple users
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
