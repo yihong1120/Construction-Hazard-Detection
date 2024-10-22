@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from datetime import datetime
 from datetime import timedelta
 from typing import TypedDict
@@ -78,7 +79,7 @@ class LineMessenger:
                 with open(self.image_record_file) as file:
                     return json.load(file)
         except Exception as e:
-            print(f"Failed to load image records: {e}")
+            logging.error(f"Failed to load image records: {e}")
         return {}
 
     def save_image_records(self) -> None:

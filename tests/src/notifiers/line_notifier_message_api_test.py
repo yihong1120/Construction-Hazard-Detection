@@ -418,8 +418,8 @@ class TestLineMessenger(unittest.TestCase):
     def test_load_image_records_failure(
         self,
         mock_logging_error: MagicMock,
-        mock_file: MagicMock,
-    ) -> None:
+        mock_file: MagicMock
+        ) -> None:
         """
         Test failure when loading image records from JSON file.
         """
