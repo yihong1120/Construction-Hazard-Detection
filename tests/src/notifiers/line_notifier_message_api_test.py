@@ -4,7 +4,8 @@ import os
 import unittest
 from datetime import datetime
 from datetime import timedelta
-from unittest.mock import MagicMock, mock_open
+from unittest.mock import MagicMock
+from unittest.mock import mock_open
 from unittest.mock import patch
 
 import cv2
@@ -413,18 +414,22 @@ class TestLineMessenger(unittest.TestCase):
         )
 
     @patch('builtins.open', new_callable=mock_open)
-    def test_load_image_records_failure(self, mock_file: MagicMock) -> None:
+    @patch('logging.error')
+    def test_load_image_records_failure(
+        self,
+        mock_logging_error: MagicMock,
+        mock_file: MagicMock,
+    ) -> None:
         """
         Test failure when loading image records from JSON file.
         """
         mock_file.side_effect = Exception('Mocked exception')
 
-        with patch('builtins.print') as mock_print:
-            records = self.messenger.load_image_records()
-            self.assertEqual(records, {})
-            mock_print.assert_called_once_with(
-                'Failed to load image records: Mocked exception',
-            )
+        records = self.messenger.load_image_records()
+        self.assertEqual(records, {})
+        mock_logging_error.assert_called_once_with(
+            'Failed to load image records: Mocked exception',
+        )
 
     @patch('builtins.open', new_callable=mock_open)
     def test_save_image_records_failure(self, mock_file):
