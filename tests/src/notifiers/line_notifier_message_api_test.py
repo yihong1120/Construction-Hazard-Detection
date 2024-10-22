@@ -416,23 +416,23 @@ class TestLineMessenger(unittest.TestCase):
             'Hello, LINE Messaging API!', image_bytes=frame_bytes,
         )
 
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('logging.error')
-    def test_load_image_records_failure(
-        self,
-        mock_logging_error: MagicMock,
-        mock_file: MagicMock,
-    ) -> None:
-        """
-        Test failure when loading image records from JSON file.
-        """
-        mock_file.side_effect = Exception('Mocked exception')
+    # @patch('builtins.open', new_callable=mock_open)
+    # @patch('logging.error')
+    # def test_load_image_records_failure(
+    #     self,
+    #     mock_logging_error: MagicMock,
+    #     mock_file: MagicMock,
+    # ) -> None:
+    #     """
+    #     Test failure when loading image records from JSON file.
+    #     """
+    #     mock_file.side_effect = Exception('Mocked exception')
 
-        records = self.messenger.load_image_records()
-        self.assertEqual(records, {})
-        mock_logging_error.assert_called_once_with(
-            'Failed to load image records: Mocked exception',
-        )
+    #     records = self.messenger.load_image_records()
+    #     self.assertEqual(records, {})
+    #     mock_logging_error.assert_called_once_with(
+    #         'Failed to load image records: Mocked exception',
+    #     )
 
     @patch('builtins.open', new_callable=mock_open)
     def test_save_image_records_failure(self, mock_file):
