@@ -1,5 +1,6 @@
 albumentations==1.4.17
 apscheduler==3.10.4
+cloudinary==1.41.0
 codecov==2.1.13
 eventlet==0.37.0
 Flask==3.0.3
@@ -36,5 +37,6 @@ tenacity==9.0.0
 torch==2.4.1
 torchvision==0.19.1
 twilio==9.3.2
-ultralytics==8.3.13
+ultralytics==8.3.19
 waitress==3.0.0
+watchdog==5.0.3
