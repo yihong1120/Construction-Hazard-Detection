@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import unittest
 from io import BytesIO
 from unittest.mock import MagicMock
@@ -168,6 +170,46 @@ class TestWeChatNotifier(unittest.TestCase):
             print_args, print_kwargs = mock_print.call_args
             self.assertIn('errcode', print_args[0])
             self.assertIn('errmsg', print_args[0])
+
+    @patch('requests.post')
+    @patch.dict(
+        os.environ, {
+            'WECHAT_CORP_ID': 'test_corp_id',
+            'WECHAT_CORP_SECRET': 'test_corp_secret',
+            'WECHAT_AGENT_ID': '1000002',
+        },
+    )
+    def test_main_as_script(self, mock_post: MagicMock) -> None:
+        """
+        Test running the wechat_notifier.py script as the main program.
+        """
+        mock_response: MagicMock = MagicMock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        # Get the absolute path to the wechat_notifier.py script
+        script_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                '../../../src/notifiers/wechat_notifier.py',
+            ),
+        )
+
+        # Run the script using subprocess
+        result = subprocess.run(
+            ['python', script_path],
+            capture_output=True, text=True,
+        )
+
+        # Print stdout and stderr for debugging
+        print('STDOUT:', result.stdout)
+        print('STDERR:', result.stderr)
+
+        # Assert that the script runs without errors
+        self.assertEqual(
+            result.returncode, 0,
+            'Script exited with a non-zero status.',
+        )
 
 
 if __name__ == '__main__':

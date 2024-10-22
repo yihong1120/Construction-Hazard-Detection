@@ -110,37 +110,43 @@
 在運行應用程式之前，您需要配置系統，指定視頻流的詳細信息和其他參數，這些信息需要在 YAML 配置文件中進行設置。示例配置文件 `configuration.yaml` 應該看起來像這樣：
 
 ```yaml
-# 這是一個視頻配置列表
-- video_url: "rtsp://example1.com/stream"  # 視頻的 URL
-  image_name: "cam1"  # 圖像的名稱
-  label: "label1"  # 視頻的標籤
-  model_key: "yolo11n"  # 視頻使用的模型鍵
-  line_token: "token1"  # 用於通知的 Line Token
-  run_local: True  # 本地運行物件檢測
-  language: "en" # 將語言設置成英文
-- video_url: "rtsp://example2.com/stream"
-  image_name: "cam2"
-  label: "label2"
-  model_key: "yolo11n"
-  line_token: "token2"
-  run_local: True
-  language: "zh-TW"
+# 這是一個視訊配置的列表
+- video_url: "rtsp://example1.com/stream"  # 視訊串流的 URL
+  site: "建築工地"  # 監控系統的位置
+  stream_name: "前門"  # 監視器的名稱或編號
+  model_key: "yolo11n"  # 視訊所使用的模型鍵
+  notifications:  # LINE 通知的令牌列表及對應的語言
+    line_token_1: language_1
+    line_token_2: language_2
+  detect_with_server: True  # 使用伺服器進行物件偵測
+  expire_date: "2024-12-31T23:59:59"  # 到期日期，使用 ISO 8601 格式
+- video_url: "串流 URL"  # 視訊串流的 URL
+  site: "工廠1"  # 監控系統的位置
+  stream_name: "相機1"  # 監視器的名稱或編號
+  model_key: "yolo11n"  # 用於偵測的模型鍵
+  notifications:  # LINE 通知的令牌列表及對應的語言
+    line_token_3: language_3
+    line_token_4: language_4
+  detect_with_server: False  # 在本地進行物件偵測
+  expire_date: "無到期日期"  # 無到期日期的字串
 ```
 
 數組中的每個對象代表一個視頻流配置，包含以下字段：
 
-- `video_url`: 現場視頻流的 URL。這可以包括：
+- `video_url`：視訊串流的 URL，可能包括：
    - 監控流
    - RTSP
    - 副流
    - YouTube 視頻或直播
    - Discord
-- `image_name`: 分配給圖像或攝影機的名稱。
-- `label`: 分配給視頻流的標籤。
-- `model_key`: 用於機器學習模型的鍵標識符。
-- `line_token`: 用於發送通知的 LINE 訊息 API Token，有關如何取得TOKEN的資訊，請參閱 [Line Notify教學](docs/zh/line_notify_guide_zh.md)。
-- `run_local`: 布爾值，指示是否在本地運行物件檢測。
-- `language`: 通知和系統訊息的語言。
+- `site`：監控系統的位置（例如：建築工地、工廠）。
+- `stream_name`：指派給監視器或串流的名稱（例如：「前門」、「相機1」）。
+- `model_key`：機器學習模型的識別鍵（例如：「yolo11n」）。
+- `notifications`：LINE 通知的 API 令牌和對應語言的列表。
+   - `line_token_1`, `line_token_2` 等：這些是 LINE API 令牌。
+   - `language_1`, `language_2` 等：通知的語言（例如：「en」表示英文，「zh-TW」表示繁體中文）。有關如何獲取 LINE 令牌的資訊，請參閱  [Line Notify教學](docs/zh/line_notify_guide_zh.md)。
+- `detect_with_server`：布林值，指示是否使用伺服器 API 進行物件偵測。如果為 `True`，系統將使用伺服器進行物件偵測。如果為 `False`，物件偵測將在本地機器上執行。
+- `expire_date`：視訊串流配置的到期日期，使用 ISO 8601 格式（例如：「2024-12-31T23:59:59」）。如果沒有到期日期，可以使用類似「無到期日期」的字串。
 
 <br>
 

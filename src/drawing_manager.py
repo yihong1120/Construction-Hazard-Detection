@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gc
 from pathlib import Path
 
 import cv2
@@ -8,7 +7,6 @@ import numpy as np
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageFont
-from shapely import LineString
 from shapely.geometry import Polygon
 
 from .lang_config import LANGUAGES
@@ -19,67 +17,68 @@ class DrawingManager:
     A class for drawing detections on frames and saving them to disk.
     """
 
-    def __init__(self, language: str = 'en') -> None:
+    # Class variable for caching default font
+    default_font: ImageFont.ImageFont | None = None
+
+    def __init__(self) -> None:
         """
         Initialise the DrawingManager class.
+        """
+        # Font cache to avoid repeated loading
+        self.font_cache: dict[str, ImageFont.ImageFont] = {}
+
+        # Load default font if not already loaded
+        if DrawingManager.default_font is None:
+            DrawingManager.default_font = ImageFont.load_default()
+
+    def get_font(self, language: str) -> ImageFont.ImageFont:
+        """
+        Load the appropriate font based on the language input, with caching.
 
         Args:
-            language (str): The language to use for labels. Default is 'en'.
-        """
-        self.language = language
-        self.lang_config = LANGUAGES.get(language, LANGUAGES['en'])
+            language (str): The language to use for the font.
 
-        # Load the font used for drawing labels on the image
+        Returns:
+            ImageFont.ImageFont: The loaded font object.
+        """
+        # Select font path based on language
         if language == 'th':
             font_path = 'assets/fonts/NotoSansThai-VariableFont_wdth.ttf'
         else:
             font_path = 'assets/fonts/NotoSansTC-VariableFont_wght.ttf'
-        self.font: ImageFont.FreeTypeFont = ImageFont.truetype(font_path, 20)
 
-        # Mapping of category IDs to their corresponding names
-        self.category_id_to_name: dict[int, str] = {
-            0: self.lang_config['helmet'],
-            1: self.lang_config['mask'],
-            2: self.lang_config['no_helmet'],
-            3: self.lang_config['no_mask'],
-            4: self.lang_config['no_vest'],
-            5: self.lang_config['person'],
-            6: self.lang_config['cone'],
-            7: self.lang_config['vest'],
-            8: self.lang_config['machinery'],
-            9: self.lang_config['vehicle'],
-        }
+        # Check if the font is already in the cache
+        if font_path in self.font_cache:
+            return self.font_cache[font_path]
 
-        # Define colours for each category
-        self.colors: dict[str, tuple[int, int, int]] = {
-            self.lang_config['helmet']: (0, 255, 0),
-            self.lang_config['vest']: (0, 255, 0),
-            self.lang_config['machinery']: (255, 225, 0),
-            self.lang_config['vehicle']: (255, 255, 0),
-            self.lang_config['no_helmet']: (255, 0, 0),
-            self.lang_config['no_vest']: (255, 0, 0),
-            self.lang_config['person']: (255, 165, 0),
-        }
+        # Load and cache the font
+        try:
+            font = ImageFont.truetype(font_path, 20)
+        except OSError:
+            print(f"Error loading font from {font_path}. Using default font.")
+            if DrawingManager.default_font is None:
+                # Load default font only once
+                DrawingManager.default_font = ImageFont.load_default()
+            return DrawingManager.default_font
 
-        # Generate exclude_labels automatically
-        self.exclude_labels: list[str] = [
-            label for label in self.category_id_to_name.values()
-            if label not in self.colors
-        ]
+        # Cache the font using the path as the key
+        self.font_cache[font_path] = font
+        return font
 
-    def draw_safety_cones_polygon(
+    def draw_polygons(
         self,
         frame: np.ndarray,
         polygons: list[Polygon],
     ) -> np.ndarray:
         """
-        Draws safety cones on the given frame and forms a polygon from them.
+        Draws polygons on the given frame.
 
         Args:
-            frame (np.ndarray): The frame on which to draw safety cones.
+            frame (np.ndarray): The frame on which to draw polygons.
             polygons (List[Polygon]): list of polygons containing safety cones.
+
         Returns:
-            np.ndarray: The frame with safety cones drawn.
+            np.ndarray: The frame with polygons drawn.
         """
         # Convert frame to PIL image
         frame_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -88,29 +87,23 @@ class DrawingManager:
         overlay = Image.new('RGBA', frame_pil.size, (255, 0, 0, 0))
         overlay_draw = ImageDraw.Draw(overlay)
 
-        # Draw the safety cones
+        # Draw the polygons
         for polygon in polygons:
-            # Determine the type and get the points accordingly
-            if isinstance(polygon, Polygon):
-                points = polygon.exterior.coords
-            elif isinstance(polygon, LineString):
-                points = polygon.coords
-            else:
-                continue  # Skip if it's not a Polygon or LineString
-
-            # Convert points to a numpy array for processing
-            polygon_points = np.array(points, dtype=np.float32)
+            # Get polygon points
+            points = polygon.exterior.coords if isinstance(
+                polygon, Polygon,
+            ) else polygon.coords
+            points = [
+                tuple(point)
+                for point in points
+            ]  # Convert points to tuples
 
             # Draw the polygon or line
-            overlay_draw.polygon(
-                [tuple(point) for point in polygon_points],
-                fill=(255, 105, 180, 128),
-            )
+            overlay_draw.polygon(points, fill=(255, 105, 180, 128))
 
             # Draw the polygon border
             overlay_draw.line(
-                [tuple(point) for point in polygon_points] +
-                [tuple(polygon_points[0])],
+                points + [points[0]],
                 fill=(255, 0, 255), width=2,
             )
 
@@ -129,20 +122,54 @@ class DrawingManager:
         frame: np.ndarray,
         polygons: list[Polygon],
         datas: list[list[float]],
+        language: str = 'en',  # Accept language as input
     ) -> np.ndarray:
         """
-        Draws detections on the given frame.
+        Draws detections on the given frame
+        and supports dynamic language selection.
 
         Args:
             frame (np.ndarray): The frame on which to draw detections.
             datas (List[List[float]]): The detection data.
+            language (str): The language to use for labels.
 
         Returns:
             np.ndarray: The frame with detections drawn.
         """
-        # Draw safety cones first
+        # Load language configuration
+        lang_config = LANGUAGES.get(language, LANGUAGES['en'])
+
+        # Define category names based on language
+        category_id_to_name: dict[int, str] = {
+            0: lang_config['helmet'],
+            1: lang_config['mask'],
+            2: lang_config['no_helmet'],
+            3: lang_config['no_mask'],
+            4: lang_config['no_vest'],
+            5: lang_config['person'],
+            6: lang_config['cone'],
+            7: lang_config['vest'],
+            8: lang_config['machinery'],
+            9: lang_config['vehicle'],
+        }
+
+        # Define colours for each category
+        colours: dict[str, tuple[int, int, int]] = {
+            lang_config['helmet']: (0, 255, 0),
+            lang_config['vest']: (0, 255, 0),
+            lang_config['machinery']: (255, 225, 0),
+            lang_config['vehicle']: (255, 255, 0),
+            lang_config['no_helmet']: (255, 0, 0),
+            lang_config['no_vest']: (255, 0, 0),
+            lang_config['person']: (255, 165, 0),
+        }
+
+        # Load the font based on the input language
+        font = self.get_font(language)
+
+        # Draw polygons first
         if polygons:
-            frame = self.draw_safety_cones_polygon(frame, polygons)
+            frame = self.draw_polygons(frame, polygons)
 
         # Convert the frame to RGB and create a PIL image
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -153,28 +180,28 @@ class DrawingManager:
         for data in datas:
             x1, y1, x2, y2, _, label_id = data
             label_id = int(label_id)
-            if label_id in self.category_id_to_name:
-                label = self.category_id_to_name[label_id]
+            if label_id in category_id_to_name:
+                label = category_id_to_name[label_id]
             else:
                 continue
 
             # Draw the bounding box
             x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
-            if label not in self.exclude_labels:
-                color = self.colors.get(label, (255, 255, 255))
-                draw.rectangle((x1, y1, x2, y2), outline=color, width=2)
+            if label in colours:
+                colour = colours.get(label, (255, 255, 255))
+                draw.rectangle((x1, y1, x2, y2), outline=colour, width=2)
                 text = f"{label}"
-                text_bbox = draw.textbbox((x1, y1), text, font=self.font)
+                text_bbox = draw.textbbox((x1, y1), text, font=font)
                 text_width, text_height = text_bbox[2] - \
                     text_bbox[0], text_bbox[3] - text_bbox[1]
                 text_background = (
                     x1, y1 - text_height -
                     5, x1 + text_width, y1,
                 )
-                draw.rectangle(text_background, fill=color)
+                draw.rectangle(text_background, fill=colour)
                 draw.text(
                     (x1, y1 - text_height - 5), text,
-                    fill=(0, 0, 0), font=self.font,
+                    fill=(0, 0, 0), font=font,
                 )
 
         # Convert the PIL image back to OpenCV format
@@ -203,16 +230,12 @@ class DrawingManager:
         with open(output_path, 'wb') as f:
             f.write(frame_bytes)
 
-        # Clean up
-        del output_dir, output_path, frame_bytes
-        gc.collect()
-
 
 def main() -> None:
     """
     Main function to process and save the frame with detections.
     """
-    drawer_saver = DrawingManager(language='zh-TW')
+    drawer_saver = DrawingManager()
 
     # Load frame and detection data (example)
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -238,7 +261,7 @@ def main() -> None:
 
     # Draw detections on frame (including safety cones)
     frame_with_detections = drawer_saver.draw_detections_on_frame(
-        frame, [polygon], datas,
+        frame, [polygon], datas, language='en',
     )
 
     # Save the frame with detections
