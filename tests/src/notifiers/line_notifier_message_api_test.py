@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import unittest
 from datetime import datetime
@@ -24,6 +25,8 @@ class TestLineMessenger(unittest.TestCase):
         """
         Set up mock data and environment for each test case.
         """
+        logging.basicConfig(level=logging.ERROR)
+
         self.channel_access_token = 'test_channel_access_token'
         self.messenger = LineMessenger(
             channel_access_token=self.channel_access_token,
@@ -418,8 +421,8 @@ class TestLineMessenger(unittest.TestCase):
     def test_load_image_records_failure(
         self,
         mock_logging_error: MagicMock,
-        mock_file: MagicMock
-        ) -> None:
+        mock_file: MagicMock,
+    ) -> None:
         """
         Test failure when loading image records from JSON file.
         """
