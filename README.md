@@ -115,19 +115,23 @@ Before running the application, you need to configure the system by specifying t
 ```yaml
 # This is a list of video configurations
 - video_url: "rtsp://example1.com/stream"  # URL of the video
-  image_name: "cam1"  # Name of the image
-  label: "label1"  # Label of the video
+  site: "Construction Site"  # Location of the monitoring system
+  stream_name: "Front Gate"  #  Number of the monitor
   model_key: "yolo11n"  # Model key for the video
-  line_token: "token1"  # Line token for notification
-  run_local: True  # Run object detection locally
-  language: "en" # Set language to English
-- video_url: "rtsp://example2.com/stream"
-  image_name: "cam2"
-  label: "label2"
-  model_key: "yolo11n"
-  line_token: "token2"
-  run_local: True
-  language: "zh-TW"
+  notifications:  # List of line tokens, and languages for notifications
+    line_token_1: language_1
+    line_token_2: language_2
+  detect_with_server: True  # Run objection detection with server
+  expire_date: "2024-12-31T23:59:59"  # Expire date in ISO 8601 format
+- video_url: "streaming URL"  # Streaming URL of the video
+  site: "Factory_1"  # Location of the monitoring system
+  stream_name: "camera_1"  # Number of the monitor
+  model_key: "yolo11n"  # Model key for detection
+  notifications:  # List of line tokens, and languages for notifications
+    line_token_3: language_3
+    line_token_4: language_4
+  detect_with_server: False  # Run objection detection in local
+  expire_date: "No Expire Date"  # String for no expire date
 ```
 
 Each object in the array represents a video stream configuration with the following fields:
@@ -138,12 +142,15 @@ Each object in the array represents a video stream configuration with the follow
    - Secondary streams
    - YouTube videos or live streams
    - Discord streams
-- `image_name`: The name assigned to the image or camera.
-- `label`: The label assigned to the video stream.
-- `model_key`: The key identifier for the machine learning model to use.
+- `site`: TThe location of the monitoring system (e.g., construction site, factory).
+- `stream_name`: The name assigned to the camera or stream (e.g., "Front Gate", "Camera 1").
+- `model_key`: The key identifier for the machine learning model to use (e.g., "yolo11n").
+- `notifications`: A list of LINE messaging API tokens and corresponding languages for sending notifications.
+   - `line_token_1`, `line_token_2`, etc.: These are the LINE API tokens.
+   - `language_1`, `language_2`, etc.: The languages for the notifications (e.g., "en" for English, "zh-TW" for Traditional Chinese). For information on how to obtain a LINE token, please refer to [line_notify_guide_en](docs/en/line_notify_guide_en.md).
 - `line_token`: The LINE messaging API token for sending notifications.  For information on how to obtain a LINE token, please refer to [line_notify_guide_en](docs/en/line_notify_guide_en.md).
-- `run_local`: Boolean value indicating whether to run object detection locally.
-- `language`: The language for notifications and system messages.
+- `detect_with_server`: Boolean value indicating whether to run object detection using a server API. If `True`, the system will use the server for object detection. If `False`, object detection will run locally on the machine.
+- `expire_date`: Expire date for the video stream configuration in ISO 8601 format (e.g., "2024-12-31T23:59:59"). If there is no expiration date, a string like "No Expire Date" can be used.
 
 <br>
 

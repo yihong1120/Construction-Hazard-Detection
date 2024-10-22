@@ -4,7 +4,6 @@ import argparse
 import gc
 import logging
 import os
-import re
 import threading
 import time
 from datetime import datetime
@@ -18,37 +17,73 @@ from watchdog.observers import Observer
 
 from src.danger_detector import DangerDetector
 from src.drawing_manager import DrawingManager
+from src.lang_config import Translator
 from src.live_stream_detection import LiveStreamDetector
 from src.monitor_logger import LoggerConfig
 from src.notifiers.line_notifier import LineNotifier
 from src.stream_capture import StreamCapture
+from src.utils import FileEventHandler
+from src.utils import RedisManager
+from src.utils import Utils
 
 # Load environment variables
 load_dotenv()
 
 is_windows = os.name == 'nt'
 
+# Initialise Redis manager
 if not is_windows:
-    import redis
-    from redis import Redis
-
-    # Redis configuration
-    redis_host: str = os.getenv('redis_host', 'localhost')
-    redis_port: int = int(os.getenv('redis_port', '6379'))
-    redis_password: str | None = os.getenv('redis_password', None)
-
-    # Connect to Redis
-    r: Redis = redis.StrictRedis(
-        host=redis_host,
-        port=redis_port,
-        password=redis_password,
-        decode_responses=True,
-    )
+    redis_manager = RedisManager()
 
 
-class StreamConfig(TypedDict):
+class StreamConfig(TypedDict, total=False):
     video_url: str
     model_key: str
+    site: str | None
+    stream_name: str
+    notifications: dict[str, str] | None
+    detect_with_server: bool
+    expire_date: str | None
+    line_token: str | None
+    language: str | None
+
+
+def run_multiple_streams(config_file: str) -> None:
+    """
+    Manage multiple video streams based on a config file.
+
+    Args:
+        config_file (str): The path to the YAML configuration file.
+
+    Returns:
+        None
+    """
+    running_processes: dict[str, Process] = {}
+    current_config_hashes: dict[str, str] = {}
+    lock = threading.Lock()
+
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.INFO)
+
+    def compute_config_hash(config: dict) -> str:
+        """
+        Compute a hash based on relevant configuration parameters.
+
+        Args:
+            config (dict): The configuration dictionary for a video stream.
+
+        Returns:
+            str: A hash representing the configuration.
+        """
+        relevant_config = {
+            'video_url': config['video_url'],
+            'model_key': config['model_key'],
+            'site': config['site'],
+            'stream_name': config.get('stream_name', 'prediction_visual'),
+            'notifications': config['notifications'],
+            'detect_with_server': config['detect_with_server'],
+        }
+        return str(relevant_config)  # Convert to string for hashing
 
     def reload_configurations():
         with open(config_file, encoding='utf-8') as file:
@@ -122,11 +157,10 @@ def process_single_stream(
     logger: logging.Logger,
     video_url: str,
     model_key: str = 'yolo11n',
-    label: str | None = None,
-    image_name: str = 'prediction_visual',
-    line_token: str | None = None,
-    run_local: bool = True,
-    language: str = 'en',
+    site: str | None = None,
+    stream_name: str = 'prediction_visual',
+    notifications: dict[str, str] | None = None,
+    detect_with_server: bool = False,
 ) -> None:
     """
     Function to detect hazards, notify, log, save images (optional).
@@ -134,14 +168,11 @@ def process_single_stream(
     Args:
         logger (logging.Logger): A logger instance for logging messages.
         video_url (str): The URL of the live stream to monitor.
-        label (Optional[str]): The label of image_name.
-        image_name (str, optional): Image file name for notifications.
-            Defaults to 'demo_data/{label}/prediction_visual.png'.
-        line_token (Optional[str]): The LINE token for sending notifications.
-            Defaults to None.
-        run_local (bool): Whether to run detection using a local model.
-            Defaults to True.
-        language (str): Language for the notifications.
+        site (Optional[str]): The site for stream processing.
+        stream_name (str, optional): Image file name for notifications.
+            Defaults to 'demo_data/{site}/prediction_visual.png'.
+        notifications (Optional[dict]): Line tokens with their languages.
+        detect_with_server (bool): Whether to run detection using a server api.
     """
     # Initialise the stream capture object
     streaming_capture = StreamCapture(stream_url=video_url)
@@ -153,18 +184,18 @@ def process_single_stream(
     live_stream_detector = LiveStreamDetector(
         api_url=api_url,
         model_key=model_key,
-        output_folder=label,
-        run_local=run_local,
+        output_folder=site,
+        detect_with_server=detect_with_server,
     )
 
     # Initialise the drawing manager
-    drawing_manager = DrawingManager(language=language)
+    drawing_manager = DrawingManager()
 
     # Initialise the LINE notifier
-    line_notifier = LineNotifier(line_token=line_token)
+    line_notifier = LineNotifier()
 
     # Initialise the DangerDetector
-    danger_detector = DangerDetector(language=language)
+    danger_detector = DangerDetector()
 
     # Init last_notification_time to 300s ago, no microseconds
     last_notification_time = int(time.time()) - 300
@@ -173,9 +204,8 @@ def process_single_stream(
     for frame, timestamp in streaming_capture.execute_capture():
         start_time = time.time()
         # Convert UNIX timestamp to datetime object and format it as string
-        detection_time = datetime.fromtimestamp(
-            timestamp,
-        ).strftime('%Y-%m-%d %H:%M:%S')
+        detection_time = datetime.fromtimestamp(timestamp)
+        current_hour = detection_time.hour
 
         # Detect hazards in the frame
         datas, _ = live_stream_detector.generate_detections(frame)
@@ -185,104 +215,167 @@ def process_single_stream(
             datas,
         )
 
-        # Draw the detections on the frame
-        frame_with_detections = (
-            drawing_manager.draw_detections_on_frame(
-                frame, controlled_zone_polygon, datas,
-            )
+        # Check if there is a warning for people in the controlled zone
+        controlled_zone_warning_str = next(
+            # Find the first warning containing 'controlled area'
+            (warning for warning in warnings if 'controlled area' in warning),
+            None,
         )
 
-        # Save the frame with detections
-        # save_file_name = f'{label}_{image_name}_{detection_time}'
-        # drawing_manager.save_frame(
-        #   frame_with_detections,
-        #   save_file_name
-        # )
+        # Convert the warning to a list for translation
+        controlled_zone_warning: list[str] = [
+            controlled_zone_warning_str,
+        ] if controlled_zone_warning_str else []
 
-        # Convert the frame to a byte array
-        _, buffer = cv2.imencode('.png', frame_with_detections)
-        frame_bytes = buffer.tobytes()
+        # Track whether we sent any notification
+        notification_sent = False
+        last_line_token = None
+        last_language = None
+        frame_with_detections = None
 
-        # Log the detection results
-        logger.info(f"{label} - {image_name}")
-        logger.info(f"Detection time: {detection_time}")
+        if not notifications:
+            logger.info('No notifications provided.')
 
-        # Get the current hour
-        current_hour = datetime.now().hour
-
-        # Check if it is outside the specified time range
-        # and if warnings contaim a warning for people in the controlled zone
-        if (timestamp - last_notification_time) > 300:
-            # Check if there is a warning for people in the controlled zone
-            controlled_zone_warning_template = danger_detector.get_text(
-                'warning_people_in_controlled_area', count='',
+            # Draw the detections on the frame
+            frame_with_detections = (
+                drawing_manager.draw_detections_on_frame(
+                    frame, controlled_zone_polygon, datas,
+                )
             )
 
-            # Create a regex pattern to match the warning
-            pattern = re.escape(controlled_zone_warning_template).replace(
-                re.escape('{count}'), r'\d+',
+            # Convert the frame to a byte array
+            _, buffer = cv2.imencode('.png', frame_with_detections)
+            frame_bytes = buffer.tobytes()
+            continue
+
+        # Check if notifications are provided
+        for line_token, language in notifications.items():
+            # Check if notification should be skipped
+            # (sent within last 300 seconds)
+            if (timestamp - last_notification_time) < 300:
+                # Store the last token and language,
+                # but don't send notifications
+                last_line_token = line_token
+                last_language = language
+                # Skip the current notification but remember the last one
+                continue
+
+            # Translate the warnings
+            translated_warnings = Translator.translate_warning(
+                warnings, language,
             )
 
-            controlled_zone_warning = next(
-                (
-                    warning for warning in warnings
-                    if re.match(pattern, warning)
-                ),
-                None,
+            # Draw the detections on the frame
+            frame_with_detections = (
+                drawing_manager.draw_detections_on_frame(
+                    frame, controlled_zone_polygon, datas,
+                    language=language,
+                )
             )
+
+            # Save the frame with detections
+            # save_file_name = f'{site}_{stream_name}_{detection_time}'
+            # drawing_manager.save_frame(
+            #   frame_with_detections,
+            #   save_file_name
+            # )
+
+            # Convert the frame to a byte array
+            _, buffer = cv2.imencode('.png', frame_with_detections)
+            frame_bytes = buffer.tobytes()
+
+            # Log the detection results
+            logger.info(f"{site} - {stream_name}")
+            logger.info(f"Detection time: {detection_time}")
 
             # If it is outside working hours and there is
             # a warning for people in the controlled zone
             if controlled_zone_warning and not (7 <= current_hour < 18):
+                translated_controlled_zone_warning: list[str] = (
+                    Translator.translate_warning(
+                        controlled_zone_warning, language,
+                    )
+                )
                 message = (
-                    f"{image_name}\n[{detection_time}]\n"
-                    f"{controlled_zone_warning}"
+                    f"{stream_name}\n[{detection_time}]\n"
+                    f"{translated_controlled_zone_warning}"
                 )
 
-            elif warnings and (7 <= current_hour < 18):
+            elif translated_warnings and (7 <= current_hour < 18):
                 # During working hours, combine all warnings
                 message = (
-                    f"{image_name}\n[{detection_time}]\n"
-                    + '\n'.join(warnings)
+                    f"{stream_name}\n[{detection_time}]\n"
+                    + '\n'.join(translated_warnings)
                 )
 
             else:
                 message = None
 
             # If a notification needs to be sent
-            if message:
-                notification_status = line_notifier.send_notification(
-                    message, image=frame_bytes
-                    if frame_bytes is not None
-                    else None,
+            if not message:
+                logger.info('No warnings or outside notification time.')
+                continue
+
+            notification_status = line_notifier.send_notification(
+                message,
+                image=frame_bytes
+                if frame_bytes is not None
+                else None,
+                line_token=line_token,
+            )
+
+            # If you want to connect to the broadcast system, do it here:
+            # broadcast_status = (
+            #   broadcast_notifier.broadcast_message(message)
+            # )
+            # logger.info(f"Broadcast status: {broadcast_status}")
+
+            if notification_status == 200:
+                logger.info(
+                    f"Notification sent successfully: {message}",
+                )
+                notification_sent = True  # Mark that a notification was sent
+            else:
+                logger.error(f"Failed to send notification: {message}")
+
+            # Log the notification token and language
+            logger.info(f"Notification sent to {line_token} in {language}.")
+
+        # If no notification was sent and the time condition was met,
+        # only draw the image
+        if last_line_token and last_language:
+
+            # Draw the detections on the frame for the last token/language
+            # (if not already drawn)
+            if frame_with_detections is None:
+                frame_with_detections = (
+                    drawing_manager.draw_detections_on_frame(
+                        frame, controlled_zone_polygon,
+                        datas,
+                        language=last_language,
+                    )
                 )
 
-                # If you want to connect to the broadcast system, do it here:
-                # broadcast_status = (
-                #   broadcast_notifier.broadcast_message(message)
-                # )
-                # logger.info(f"Broadcast status: {broadcast_status}")
+            # Convert the frame to a byte array
+            _, buffer = cv2.imencode('.png', frame_with_detections)
+            frame_bytes = buffer.tobytes()
 
-                if notification_status == 200:
-                    logger.info(
-                        f"Notification sent successfully: {message}",
-                    )
-                else:
-                    logger.error(f"Failed to send notification: {message}")
+            # Optionally save the frame with detections
+            # drawing_manager.save_frame(frame_with_detections, save_file_name)
 
-                # Update the last notification time
-                last_notification_time = int(timestamp)
-        else:
-            logger.info('No warnings or outside notification time.')
+        # Update last_notification_time only
+        # if at least one notification was sent
+        if notification_sent:
+            last_notification_time = int(timestamp)
 
+        # Store the frame in Redis if not running on Windows
         if not is_windows:
             try:
                 # Use a unique key for each thread or process
-                key = f"{label}_{image_name}".encode()
+                key = f"{site}_{stream_name}"
 
                 # Store the frame in Redis
-                r.set(key, frame_bytes)
-
+                redis_manager.set(key, frame_bytes)
             except Exception as e:
                 logger.error(f"Failed to store frame in Redis: {e}")
 
@@ -325,14 +418,43 @@ def process_streams(config: StreamConfig) -> None:
     logger = logger_config.get_logger()
 
     try:
+        # Check if 'notifications' field exists (new format)
+        if 'notifications' in config and config['notifications'] is not None:
+            notifications = config['notifications']
+        # Otherwise, handle the old format
+        elif 'line_token' in config and 'language' in config:
+            line_token = config.get('line_token')
+            language = config.get('language')
+            if line_token is not None and language is not None:
+                notifications = {line_token: language}
+            else:
+                notifications = None
+        else:
+            notifications = None
+
+        # Continue processing the remaining configuration
+        video_url = config.get('video_url', '')
+        model_key = config.get('model_key', 'yolo11n')
+        site = config.get('site')
+        stream_name = config.get('stream_name', 'prediction_visual')
+        detect_with_server = config.get('detect_with_server', False)
+
         # Run hazard detection on a single video stream
-        process_single_stream(logger, **config)
+        process_single_stream(
+            logger,
+            video_url=video_url,
+            model_key=model_key,
+            site=site,
+            stream_name=stream_name,
+            notifications=notifications,
+            detect_with_server=detect_with_server,
+        )
     finally:
         if not is_windows:
-            label = config.get('label')
-            image_name = config.get('image_name', 'prediction_visual')
-            key = f"{label}_{image_name}"
-            r.delete(key)
+            site = config.get('site')
+            stream_name = config.get('stream_name', 'prediction_visual')
+            key = f"{site}_{stream_name}"
+            redis_manager.delete(key)
             logger.info(f"Deleted Redis key: {key}")
 
 
@@ -369,7 +491,7 @@ def process_single_image(
     image_path: str,
     model_key: str = 'yolo11n',
     output_folder: str = 'output_images',
-    image_name: str | None = None,
+    stream_name: str | None = None,
     language: str = 'en',
 ) -> None:
     """
@@ -396,7 +518,7 @@ def process_single_image(
         )
 
         # Initialise the drawing manager
-        drawing_manager = DrawingManager(language=language)
+        drawing_manager = DrawingManager()
 
         # Detect hazards in the image
         detections, _ = live_stream_detector.generate_detections(image)
@@ -404,6 +526,7 @@ def process_single_image(
         # For this example, no polygons are needed, so pass an empty list
         frame_with_detections = drawing_manager.draw_detections_on_frame(
             image, [], detections,
+            language=language,
         )
 
         # Ensure the output folder exists
@@ -411,10 +534,10 @@ def process_single_image(
             os.makedirs(output_folder)
 
         # Generate the output file name if not provided
-        if not image_name:
+        if not stream_name:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            image_name = f"detection_{timestamp}.png"
-        output_path = os.path.join(output_folder, image_name)
+            stream_name = f"detection_{timestamp}.png"
+        output_path = os.path.join(output_folder, stream_name)
 
         # Save the image with detections
         cv2.imwrite(output_path, frame_with_detections)

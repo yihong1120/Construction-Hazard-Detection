@@ -25,12 +25,12 @@ class TestLiveStreamDetector(unittest.TestCase):
         self.api_url: str = 'http://localhost:5000'
         self.model_key: str = 'yolo11n'
         self.output_folder: str = 'test_output'
-        self.run_local: bool = True
+        self.detect_with_server: bool = False
         self.detector: LiveStreamDetector = LiveStreamDetector(
             api_url=self.api_url,
             model_key=self.model_key,
             output_folder=self.output_folder,
-            run_local=self.run_local,
+            detect_with_server=self.detect_with_server,
         )
 
     @patch(
@@ -57,14 +57,14 @@ class TestLiveStreamDetector(unittest.TestCase):
             api_url=self.api_url,
             model_key=self.model_key,
             output_folder=self.output_folder,
-            run_local=self.run_local,
+            detect_with_server=self.detect_with_server,
         )
 
         # Assert initialisation values
         self.assertEqual(detector.api_url, self.api_url)
         self.assertEqual(detector.model_key, self.model_key)
         self.assertEqual(detector.output_folder, self.output_folder)
-        self.assertEqual(detector.run_local, self.run_local)
+        self.assertEqual(detector.detect_with_server, self.detect_with_server)
         self.assertIsNotNone(detector.session)
         self.assertEqual(detector.access_token, None)
         self.assertEqual(detector.token_expiry, 0.0)
@@ -88,7 +88,6 @@ class TestLiveStreamDetector(unittest.TestCase):
         mock_from_pretrained.return_value = mock_model
 
         frame: np.ndarray = np.zeros((480, 640, 3), dtype=np.uint8)
-        # mat_frame = cv2.Mat(frame)
         mock_result: MagicMock = MagicMock()
         mock_result.object_prediction_list = [
             MagicMock(
@@ -137,7 +136,7 @@ class TestLiveStreamDetector(unittest.TestCase):
         mock_generate_detections.return_value = (
             [], np.zeros((480, 640, 3), dtype=np.uint8),
         )
-        stream_url: str = 'https://cctv6.kctmc.nat.gov.tw/ea05668e/'
+        stream_url: str = 'http://example.com/virtual_stream'
         cap_mock: MagicMock = MagicMock()
         cap_mock.read.side_effect = [
             (True, np.zeros((480, 640, 3), dtype=np.uint8)),
@@ -317,7 +316,7 @@ class TestLiveStreamDetector(unittest.TestCase):
         """
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         mat_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        self.detector.run_local = True
+        self.detector.detect_with_server = False
         with patch.object(
             self.detector, 'generate_detections_local',
             return_value=[[10, 10, 50, 50, 0.9, 0]],
@@ -327,7 +326,7 @@ class TestLiveStreamDetector(unittest.TestCase):
             self.assertEqual(datas[0][5], 0)
             mock_local.assert_called_once_with(mat_frame)
 
-        self.detector.run_local = False
+        self.detector.detect_with_server = True
         with patch.object(
             self.detector, 'generate_detections_cloud',
             return_value=[[20, 20, 60, 60, 0.8, 1]],
@@ -428,7 +427,7 @@ class TestLiveStreamDetector(unittest.TestCase):
     @patch(
         'sys.argv', [
             'main', '--url',
-            'https://cctv6.kctmc.nat.gov.tw/ea05668e/', '--run_local',
+            'http://example.com/virtual_stream', '--detect_with_server',
         ],
     )
     @patch('src.live_stream_detection.LiveStreamDetector.run_detection')
@@ -450,10 +449,10 @@ class TestLiveStreamDetector(unittest.TestCase):
                 api_url='http://localhost:5000',
                 model_key='yolo11n',
                 output_folder=None,
-                run_local=True,
+                detect_with_server=True,
             )
             mock_run_detection.assert_called_once_with(
-                'https://cctv6.kctmc.nat.gov.tw/ea05668e/',
+                'http://example.com/virtual_stream',
             )
 
 

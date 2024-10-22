@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import unittest
 from io import BytesIO
 from unittest.mock import MagicMock
@@ -24,30 +26,39 @@ class TestLineNotifier(unittest.TestCase):
         self.line_token: str = 'test_token'
         self.message: str = 'Test Message'
         self.image: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-        self.notifier: LineNotifier = LineNotifier(line_token=self.line_token)
+        self.notifier: LineNotifier = LineNotifier()
 
     @patch.dict('os.environ', {'LINE_NOTIFY_TOKEN': 'test_env_token'})
-    def test_init_with_env_token(self) -> None:
+    # Mock the requests.post call
+    @patch('src.notifiers.line_notifier.requests.post')
+    def test_init_with_env_token(self, mock_post: MagicMock) -> None:
         """
-        Test case for initialising LineNotifier with environment token.
+        Test case for sending a notification using an environment token.
         """
-        notifier: LineNotifier = LineNotifier()
-        self.assertEqual(notifier.line_token, 'test_env_token')
+        # Mock the response from requests.post
+        mock_response: MagicMock = MagicMock()
+        mock_response.status_code = 200  # Simulate a successful request
+        mock_post.return_value = mock_response
 
-    def test_init_with_provided_token(self) -> None:
-        """
-        Test case for initialising LineNotifier with provided token.
-        """
-        notifier: LineNotifier = LineNotifier(line_token='provided_token')
-        self.assertEqual(notifier.line_token, 'provided_token')
+        notifier: LineNotifier = LineNotifier()
+        status_code: int = notifier.send_notification(self.message)
+
+        # Assert that the status code is 200
+        self.assertEqual(status_code, 200)
+        mock_post.assert_called_once_with(
+            'https://notify-api.line.me/api/notify',
+            headers={'Authorization': 'Bearer test_env_token'},
+            params={'message': self.message},
+            files=None,
+        )
 
     def test_init_without_token(self) -> None:
         """
-        Test case for initialising LineNotifier
-            without a token (expects ValueError).
+        Test case for sending a notification without a token
+        (expects ValueError).
         """
         with self.assertRaises(ValueError):
-            LineNotifier(line_token=None)
+            self.notifier.send_notification(self.message, line_token=None)
 
     @patch('src.notifiers.line_notifier.requests.post')
     def test_send_notification_without_image(
@@ -61,12 +72,15 @@ class TestLineNotifier(unittest.TestCase):
         mock_response.status_code = 200
         mock_post.return_value = mock_response
 
-        status_code: int = self.notifier.send_notification(self.message)
+        status_code: int = self.notifier.send_notification(
+            self.message, line_token=self.line_token,
+        )
         self.assertEqual(status_code, 200)
         mock_post.assert_called_once_with(
             'https://notify-api.line.me/api/notify',
             headers={'Authorization': f'Bearer {self.line_token}'},
             params={'message': self.message},
+            files=None,
         )
 
     @patch('src.notifiers.line_notifier.requests.post')
@@ -81,6 +95,7 @@ class TestLineNotifier(unittest.TestCase):
         status_code: int = self.notifier.send_notification(
             self.message,
             self.image,
+            line_token=self.line_token,
         )
         self.assertEqual(status_code, 200)
         mock_post.assert_called_once()
@@ -114,7 +129,7 @@ class TestLineNotifier(unittest.TestCase):
         image_bytes: bytes = buffer.read()
 
         status_code: int = self.notifier.send_notification(
-            self.message, image_bytes,
+            self.message, image_bytes, line_token=self.line_token,
         )
         self.assertEqual(status_code, 200)
         mock_post.assert_called_once()
@@ -140,7 +155,39 @@ class TestLineNotifier(unittest.TestCase):
 
         with patch('builtins.print') as mock_print:
             main()
-            mock_print.assert_called_once_with('Response code: 200')
+            mock_print.assert_called_once_with('Response codes: 200')
+
+    @patch.dict(os.environ, {'LINE_NOTIFY_TOKEN': 'test_token'})
+    @patch('src.notifiers.line_notifier.requests.post')
+    def test_main_as_script(self, mock_post: MagicMock) -> None:
+        mock_response: MagicMock = MagicMock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        # Get the absolute path to the line_notifier.py script
+        script_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(
+                    __file__,
+                ), '../../../src/notifiers/line_notifier.py',
+            ),
+        )
+
+        # Run the script using subprocess
+        result = subprocess.run(
+            ['python', script_path],
+            capture_output=True, text=True,
+        )
+
+        # Print stderr and stdout for debugging
+        print('STDOUT:', result.stdout)
+        print('STDERR:', result.stderr)
+
+        # Assert that the script runs without errors
+        self.assertEqual(
+            result.returncode, 0,
+            'Script exited with a non-zero status.',
+        )
 
 
 if __name__ == '__main__':

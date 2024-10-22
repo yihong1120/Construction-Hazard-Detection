@@ -114,3 +114,85 @@ LANGUAGES = {
         'cone': 'กรวยนิรภัย',
     },
 }
+
+
+class Translator:
+    """
+    A class to handle translations based on the provided language.
+    """
+
+    @staticmethod
+    def translate_warning(warnings: list[str], language: str) -> list[str]:
+        """
+        Translate warnings from English to the specified language.
+
+        Args:
+            warnings (list[str]): A list of warnings in English.
+            language (str): The target language code (e.g., 'zh-TW', 'en').
+
+        Returns:
+            list[str]: Translated warnings.
+        """
+        translated_warnings = []
+
+        # Use English as the default language
+        # if the specified language is not supported
+        if language not in LANGUAGES:
+            language = 'en'
+
+        # Loop through all warnings and translate them
+        for warning in warnings:
+            if 'Someone is not wearing a hardhat!' in warning:
+                translated_warning = LANGUAGES[language].get(
+                    'warning_no_hardhat', warning,
+                )
+            elif 'Someone is not wearing a safety vest!' in warning:
+                translated_warning = LANGUAGES[language].get(
+                    'warning_no_safety_vest', warning,
+                )
+            elif 'Someone is too close to' in warning:
+                label_key = (
+                    'machinery'
+                    if 'machinery' in warning
+                    else 'vehicle'
+                )
+                translated_warning = LANGUAGES[language].get(
+                    'warning_close_to_machinery', warning,
+                ).replace(
+                    '{label}', LANGUAGES[language].get(label_key, label_key),
+                )
+            elif 'people have entered the controlled area!' in warning:
+                count = warning.split(' ')[1]  # Extract count of people
+                translated_warning = LANGUAGES[language].get(
+                    'warning_people_in_controlled_area', warning,
+                ).replace('{count}', count)
+            else:
+                # Keep the original warning if no match
+                translated_warning = warning
+            translated_warnings.append(translated_warning)
+
+        return translated_warnings
+
+
+def main():
+    # Example warnings in English
+    warnings = [
+        'Warning: Someone is not wearing a hardhat!',
+        'Warning: 2 people have entered the controlled area!',
+        'Warning: Someone is too close to machinery!',
+    ]
+
+    # Specify the language to translate to
+    # (e.g., 'zh-TW' for Traditional Chinese)
+    language = 'zh-TW'
+
+    # Translate the warnings
+    translated_warnings = Translator.translate_warning(warnings, language)
+
+    # Output the translated warnings
+    print('Original Warnings:', warnings)
+    print('Translated Warnings:', translated_warnings)
+
+
+if __name__ == '__main__':
+    main()

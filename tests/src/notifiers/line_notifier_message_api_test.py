@@ -24,12 +24,11 @@ class TestLineMessenger(unittest.TestCase):
         Set up mock data and environment for each test case.
         """
         self.channel_access_token = 'test_channel_access_token'
-        self.recipient_id = 'test_recipient_id'
         self.messenger = LineMessenger(
             channel_access_token=self.channel_access_token,
-            recipient_id=self.recipient_id,
         )
         self.message = 'Test message'
+        self.recipient_id = 'test_recipient_id'
         self.image_bytes = b'test_image_bytes'
         self.headers = {
             'Content-Type': 'application/json',
@@ -42,20 +41,12 @@ class TestLineMessenger(unittest.TestCase):
         Test initializing LineMessenger without a channel access token.
         """
         with self.assertRaises(ValueError) as context:
-            LineMessenger(recipient_id=self.recipient_id)
+            LineMessenger()
         self.assertEqual(
             str(context.exception),
             'LINE_CHANNEL_ACCESS_TOKEN not provided '
             'or in environment variables.',
         )
-
-    def test_init_without_recipient_id(self):
-        """
-        Test initializing LineMessenger without a recipient ID.
-        """
-        with self.assertRaises(ValueError) as context:
-            LineMessenger(channel_access_token=self.channel_access_token)
-        self.assertEqual(str(context.exception), 'Recipient ID not provided.')
 
     @patch('src.notifiers.line_notifier_message_api.requests.post')
     @patch(
@@ -76,7 +67,9 @@ class TestLineMessenger(unittest.TestCase):
         mock_post.return_value.status_code = 200
 
         response_code = self.messenger.push_message(
-            self.message, image_bytes=self.image_bytes,
+            recipient_id=self.recipient_id,
+            message=self.message,
+            image_bytes=self.image_bytes,
         )
 
         # Verify that the upload_image_to_cloudinary method was called
@@ -108,6 +101,76 @@ class TestLineMessenger(unittest.TestCase):
         # Verify the response code is 200
         self.assertEqual(response_code, 200)
 
+    @patch(
+        'src.notifiers.line_notifier_message_api.LineMessenger.'
+        'delete_old_images',
+    )
+    @patch(
+        'src.notifiers.line_notifier_message_api.LineMessenger.'
+        'save_image_records',
+    )
+    def test_delete_old_images_with_interval_no_last_checked(
+        self,
+        mock_save_image_records: unittest.mock.MagicMock,
+        mock_delete_old_images: unittest.mock.MagicMock,
+    ):
+        """
+        Test the delete_old_images_with_interval method
+        when last_checked is None.
+        """
+        # Ensure last_checked is None
+        self.messenger.image_records['last_checked'] = None
+
+        # Call the method
+        self.messenger.delete_old_images_with_interval()
+
+        # Verify that delete_old_images
+        # was called since last_checked is None
+        mock_delete_old_images.assert_called_once()
+
+        # Verify that the save_image_records
+        # was called to save the new check time
+        mock_save_image_records.assert_called_once()
+
+        # Check that last_checked is now set to the current time
+        self.assertIn('last_checked', self.messenger.image_records)
+
+    @patch(
+        'src.notifiers.line_notifier_message_api.LineMessenger.'
+        'delete_old_images',
+    )
+    @patch(
+        'src.notifiers.line_notifier_message_api.LineMessenger.'
+        'save_image_records',
+    )
+    def test_delete_old_images_with_invalid_last_checked(
+        self,
+        mock_save_image_records: unittest.mock.MagicMock,
+        mock_delete_old_images: unittest.mock.MagicMock,
+    ):
+        """
+        Test the delete_old_images_with_interval method
+        when last_checked is invalid.
+        """
+        # Set an invalid last_checked value to
+        # simulate ValueError during parsing
+        self.messenger.image_records['last_checked'] = (
+            'invalid_datetime_format'
+        )
+
+        # Call the method
+        self.messenger.delete_old_images_with_interval()
+
+        # Verify that delete_old_images was called
+        # since last_checked is invalid
+        mock_delete_old_images.assert_called_once()
+
+        # Verify that save_image_records was called to save the new check time
+        mock_save_image_records.assert_called_once()
+
+        # Check that last_checked is now set to the current time
+        self.assertIn('last_checked', self.messenger.image_records)
+
     @patch('src.notifiers.line_notifier_message_api.requests.post')
     def test_push_message_without_image(self, mock_post):
         """
@@ -115,7 +178,10 @@ class TestLineMessenger(unittest.TestCase):
         """
         mock_post.return_value.status_code = 200
 
-        response_code = self.messenger.push_message(self.message)
+        response_code = self.messenger.push_message(
+            recipient_id=self.recipient_id,
+            message=self.message,
+        )
 
         # Verify that no image upload is attempted
         expected_data = {
@@ -388,7 +454,9 @@ class TestLineMessenger(unittest.TestCase):
 
         with self.assertRaises(ValueError) as context:
             self.messenger.push_message(
-                self.message, image_bytes=self.image_bytes,
+                recipient_id=self.recipient_id,
+                message=self.message,
+                image_bytes=self.image_bytes,
             )
         self.assertEqual(
             str(context.exception),
@@ -404,7 +472,10 @@ class TestLineMessenger(unittest.TestCase):
         mock_post.return_value.text = 'Bad Request'
 
         with patch('builtins.print') as mock_print:
-            response_code = self.messenger.push_message(self.message)
+            response_code = self.messenger.push_message(
+                recipient_id=self.recipient_id,
+                message=self.message,
+            )
             mock_print.assert_called_once_with('Error: 400, Bad Request')
             self.assertEqual(response_code, 400)
 
