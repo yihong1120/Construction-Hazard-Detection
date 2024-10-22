@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import os
 import logging
-from redis import Redis
+import os
 from datetime import datetime
+
+from redis import Redis
 from watchdog.events import FileSystemEventHandler
+
 
 class Utils:
     @staticmethod
@@ -23,7 +25,8 @@ class Utils:
             expire_date = datetime.fromisoformat(expire_date_str)
             return datetime.now() > expire_date
         return False
-    
+
+
 class FileEventHandler(FileSystemEventHandler):
     def __init__(self, file_path: str, callback):
         """
@@ -31,7 +34,7 @@ class FileEventHandler(FileSystemEventHandler):
 
         Args:
             file_path (str): The path of the file to watch.
-            callback (Callable): The function to call when the file is modified.
+            callback (Callable): The function to call when file is modified.
         """
         self.file_path = file_path
         self.callback = callback
@@ -45,6 +48,7 @@ class FileEventHandler(FileSystemEventHandler):
         """
         if event.src_path == self.file_path:
             self.callback()
+
 
 class RedisManager:
     def __init__(self):
@@ -66,7 +70,7 @@ class RedisManager:
     def set(self, key: str, value: bytes) -> None:
         """
         Set a key-value pair in Redis.
-        
+
         Args:
             key (str): The key under which to store the value.
             value (bytes): The value to store (in bytes).
@@ -79,7 +83,7 @@ class RedisManager:
     def get(self, key: str) -> bytes | None:
         """
         Retrieve a value from Redis based on the key.
-        
+
         Args:
             key (str): The key whose value needs to be retrieved.
 
@@ -92,11 +96,10 @@ class RedisManager:
             logging.error(f"Error retrieving Redis key {key}: {str(e)}")
             return None
 
-
     def delete(self, key: str) -> None:
         """
         Delete a key from Redis.
-        
+
         Args:
             key (str): The key to delete from Redis.
         """
