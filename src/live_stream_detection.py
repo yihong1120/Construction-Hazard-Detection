@@ -27,7 +27,7 @@ load_dotenv()
 class InputData(TypedDict):
     frame: np.ndarray
     model_key: str
-    run_local: bool
+    detect_with_server: bool
 
 
 class DetectionData(TypedDict):
@@ -50,7 +50,7 @@ class LiveStreamDetector:
         api_url: str = 'http://localhost:5000',
         model_key: str = 'yolo11n',
         output_folder: str | None = None,
-        run_local: bool = True,
+        detect_with_server: bool = False,
     ):
         """
         Initialises the LiveStreamDetector.
@@ -64,7 +64,7 @@ class LiveStreamDetector:
         self.model_key = model_key
         self.output_folder = output_folder
         self.session = self.requests_retry_session()
-        self.run_local = run_local
+        self.detect_with_server = detect_with_server
         self.model = None
         self.access_token = None
         self.token_expiry = 0.0
@@ -404,10 +404,10 @@ class LiveStreamDetector:
             Tuple[List[List[float]], np.ndarray]:
                 Detections and original frame.
         """
-        if self.run_local:
-            datas = self.generate_detections_local(frame)
-        else:
+        if self.detect_with_server:
             datas = self.generate_detections_cloud(frame)
+        else:
+            datas = self.generate_detections_local(frame)
 
         return datas, frame
 
@@ -466,9 +466,9 @@ def main():
         help='Output folder for detected frames',
     )
     parser.add_argument(
-        '--run_local',
+        '--detect_with_server',
         action='store_true',
-        help='Run detection using local model',
+        help='Run detection using server api',
     )
     args = parser.parse_args()
 
@@ -476,7 +476,7 @@ def main():
         api_url=args.api_url,
         model_key=args.model_key,
         output_folder=args.output_folder,
-        run_local=args.run_local,
+        detect_with_server=args.detect_with_server,
     )
     detector.run_detection(args.url)
 

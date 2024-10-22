@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import unittest
+from unittest.mock import MagicMock
 from unittest.mock import Mock
 from unittest.mock import patch
 
@@ -86,6 +89,39 @@ class TestBroadcastNotifier(unittest.TestCase):
 
         # Assert the print function was called with the expected output
         mock_print.assert_called_once_with('Broadcast status: True')
+
+    @patch('requests.post')
+    def test_main_as_script(self, mock_post: MagicMock) -> None:
+        """
+        Test running the broadcast_notifier.py script as the main program.
+        """
+        mock_response: MagicMock = MagicMock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        # Get the absolute path to the broadcast_notifier.py script
+        script_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                '../../../src/notifiers/broadcast_notifier.py',
+            ),
+        )
+
+        # Run the script using subprocess
+        result = subprocess.run(
+            ['python', script_path],
+            capture_output=True, text=True,
+        )
+
+        # Print stdout and stderr for debugging
+        print('STDOUT:', result.stdout)
+        print('STDERR:', result.stderr)
+
+        # Assert that the script runs without errors
+        self.assertEqual(
+            result.returncode, 0,
+            'Script exited with a non-zero status.',
+        )
 
 
 if __name__ == '__main__':

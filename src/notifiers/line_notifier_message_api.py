@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 from datetime import timedelta
@@ -12,10 +13,6 @@ import cv2
 import numpy as np
 import requests
 from dotenv import load_dotenv
-
-# JSON file to store image records
-IMAGE_RECORD_FILE = 'config/image_records.json'
-CHECK_INTERVAL_DAYS = 1  # Check for old images once a day
 
 
 class InputData(TypedDict):
@@ -36,7 +33,8 @@ class LineMessenger:
     def __init__(
         self,
         channel_access_token: str | None = None,
-        recipient_id: str | None = None,
+        image_record_file: str = 'config/image_records.json',
+        check_interval_days: int = 1,
     ) -> None:
         """
         Initialises the LineMessenger instance.
@@ -44,12 +42,13 @@ class LineMessenger:
         Args:
             channel_access_token (Optional[str]): The LINE Messaging API
                 channel access token.
+            image_record_file (str): Path to JSON file to store image records.
+            check_interval_days (int): Number of days to check for old images.
         """
         load_dotenv()
         self.channel_access_token = channel_access_token or os.getenv(
             'LINE_CHANNEL_ACCESS_TOKEN',
         )
-        self.recipient_id = recipient_id
 
         if not self.channel_access_token:
             raise ValueError(
@@ -57,15 +56,16 @@ class LineMessenger:
                 'or in environment variables.',
             )
 
-        if not self.recipient_id:
-            raise ValueError('Recipient ID not provided.')
-
         # Configure Cloudinary
         cloudinary.config(
             cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
             api_key=os.getenv('CLOUDINARY_API_KEY'),
             api_secret=os.getenv('CLOUDINARY_API_SECRET'),
         )
+
+        # Set image record file and check interval
+        self.image_record_file = image_record_file
+        self.check_interval_days = check_interval_days
 
         # Load upload records
         self.image_records = self.load_image_records()
@@ -75,11 +75,11 @@ class LineMessenger:
         Loads image records from the JSON file.
         """
         try:
-            if os.path.exists(IMAGE_RECORD_FILE):
-                with open(IMAGE_RECORD_FILE) as file:
+            if os.path.exists(self.image_record_file):
+                with open(self.image_record_file) as file:
                     return json.load(file)
         except Exception as e:
-            print(f"Failed to load image records: {e}")
+            logging.error(f"Failed to load image records: {e}")
         return {}
 
     def save_image_records(self) -> None:
@@ -87,13 +87,14 @@ class LineMessenger:
         Saves image records to the JSON file.
         """
         try:
-            with open(IMAGE_RECORD_FILE, 'w') as file:
+            with open(self.image_record_file, 'w') as file:
                 json.dump(self.image_records, file)
         except Exception as e:
             print(f"Failed to save image records: {e}")
 
     def push_message(
         self,
+        recipient_id: str,
         message: str,
         image_bytes: bytes | None = None,
     ) -> int:
@@ -115,7 +116,7 @@ class LineMessenger:
         }
 
         message_data = {
-            'to': self.recipient_id,
+            'to': recipient_id,
             'messages': [
                 {
                     'type': 'text',
@@ -199,7 +200,7 @@ class LineMessenger:
             try:
                 last_checked_time = datetime.fromisoformat(last_checked)
                 now = datetime.now()
-                interval = timedelta(days=CHECK_INTERVAL_DAYS)
+                interval = timedelta(days=self.check_interval_days)
                 should_check = now - last_checked_time > interval
             except ValueError:
                 # If last_checked is not a valid datetime, check immediately
