@@ -63,8 +63,6 @@ Additionally, the system integrates AI recognition results in real-time via a we
 
 This multi-language support makes the system accessible to a global audience, improving usability across different regions.
 
-> **TODO**: Add support for WhatsApp notifications, and utilise Line Message API.
-
 <br>
 <br>
 
@@ -148,7 +146,6 @@ Each object in the array represents a video stream configuration with the follow
 - `notifications`: A list of LINE messaging API tokens and corresponding languages for sending notifications.
    - `line_token_1`, `line_token_2`, etc.: These are the LINE API tokens.
    - `language_1`, `language_2`, etc.: The languages for the notifications (e.g., "en" for English, "zh-TW" for Traditional Chinese). For information on how to obtain a LINE token, please refer to [line_notify_guide_en](docs/en/line_notify_guide_en.md).
-- `line_token`: The LINE messaging API token for sending notifications.  For information on how to obtain a LINE token, please refer to [line_notify_guide_en](docs/en/line_notify_guide_en.md).
 - `detect_with_server`: Boolean value indicating whether to run object detection using a server API. If `True`, the system will use the server for object detection. If `False`, object detection will run locally on the machine.
 - `expire_date`: Expire date for the video stream configuration in ISO 8601 format (e.g., "2024-12-31T23:59:59"). If there is no expiration date, a string like "No Expire Date" can be used.
 
@@ -314,6 +311,13 @@ We welcome contributions to this project. Please follow these steps:
 - [x] Testing and validation in simulated environments.
 - [x] Deployment in actual construction sites for field testing.
 - [x] Ongoing maintenance and updates based on user feedback.
+
+## TODO
+
+- Add support for WhatsApp notifications,
+- Switch from Flask to Fastapi in server_api and streaming_web
+- Refactor main.py
+
 
 ## License
 
