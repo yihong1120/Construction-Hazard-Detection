@@ -304,5 +304,11 @@
 - [x] 在實際建築工地進行現場測試。
 - [x] 根據用戶反饋進行持續維護和更新。
 
+## 待辦事項
+
+- 新增對 WhatsApp 通知的支援，
+- 在 server_api 和 streaming_web 中從 Flask 切換到 Fastapi
+- 重構 main.py
+
 ## 授權
 此項目根據 [AGPL-3.0](LICENSE.md) 授權。
