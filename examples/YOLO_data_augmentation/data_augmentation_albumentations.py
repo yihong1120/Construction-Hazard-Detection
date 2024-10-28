@@ -131,6 +131,23 @@ class DataAugmentation:
         ]
         return cropped_image
 
+    def get_random_target_image(self) -> np.ndarray:
+        """
+        Get a random target image for the Fisher Discriminant Analysis (FDA).
+
+        Returns:
+            np.ndarray: The target image.
+        """
+        image_paths = [
+            p for p in self.train_path.glob(
+                'images/*.jpg',
+            ) if '_aug_' not in p.stem
+        ]
+        random_image_path = random.choice(image_paths)
+        image = cv2.imread(str(random_image_path))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        return image
+
     def random_transform(self) -> A.Compose:
         """
         Generate a random augmentation pipeline.
@@ -156,6 +173,8 @@ class DataAugmentation:
             A.ElasticTransform(alpha=1, sigma=50, p=1),
             A.Lambda(image=self.random_crop_with_random_size, p=1),
             A.RandomResizedCrop(size=(640, 640), scale=(0.3, 1.0), p=1),
+            A.RandomGridShuffle(grid=(3, 3), p=1),
+            A.GridDistortion(p=1),
         ]
 
         # Augmentations that do not affect bounding boxes
@@ -199,7 +218,7 @@ class DataAugmentation:
             # Special effects
             A.RandomShadow(
                 shadow_roi=(0.3, 0.3, 0.7, 0.7),
-                num_shadows_limit=(1, 1), shadow_dimension=1, p=1.0,
+                num_shadows_limit=(1, 1), shadow_dimension=3, p=1.0,
             ),
             # A.RandomFog(fog_coef_lower=0.05, fog_coef_upper=0.1, p=1.0),
             A.RandomSnow(
@@ -227,6 +246,15 @@ class DataAugmentation:
                 distort_limit=(0.05, 0.1),
                 shift_limit=(0.05, 0.1), p=1.0,
             ),
+            A.Emboss(p=1),
+            A.MaskDropout(p=1),
+            A.Spatter(p=1),
+            A.ToSepia(p=1),
+            A.FancyPCA(alpha=0.1, p=1),
+            A.FDA(
+                [self.get_random_target_image()], beta_limit=0.5,
+                p=1, read_fn=lambda x: x,
+            ),  # 加入 FDA
         ]
 
         # Randomly select 1 to 2 augmentations that affect bounding boxes
@@ -388,7 +416,7 @@ class DataAugmentation:
                 del image
             if bboxes is not None:
                 del bboxes
-            gc.collect()  # 強制垃圾回收
+            gc.collect()
 
     def augment_data(self, batch_size=10) -> None:
         """
