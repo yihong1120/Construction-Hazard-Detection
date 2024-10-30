@@ -45,5 +45,5 @@ torch==2.5.0
 torchvision==0.20.0
 twilio==9.3.6
 ultralytics==8.3.23
-waitress==3.0.0
+waitress==3.0.1
 watchdog==5.0.3
