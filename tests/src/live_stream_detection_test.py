@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
+import pytest
 
 from src.live_stream_detection import LiveStreamDetector
 from src.live_stream_detection import main
@@ -22,7 +23,7 @@ class TestLiveStreamDetector(unittest.TestCase):
         """
         Set up the LiveStreamDetector instance for tests.
         """
-        self.api_url: str = 'http://localhost:5000'
+        self.api_url: str = 'http://127.0.0.1:8001'
         self.model_key: str = 'yolo11n'
         self.output_folder: str = 'test_output'
         self.detect_with_server: bool = False
@@ -33,24 +34,17 @@ class TestLiveStreamDetector(unittest.TestCase):
             detect_with_server=self.detect_with_server,
         )
 
-    @patch(
-        'src.live_stream_detection.LiveStreamDetector.requests_retry_session',
-    )
     @patch('PIL.ImageFont.truetype')
     def test_initialisation(
         self,
         mock_truetype: MagicMock,
-        mock_requests_retry_session: MagicMock,
     ) -> None:
         """
         Test the initialisation of the LiveStreamDetector instance.
 
         Args:
             mock_truetype (MagicMock): Mock for PIL.ImageFont.truetype.
-            mock_requests_retry_session (MagicMock): Mock for
-                requests_retry_session.
         """
-        mock_requests_retry_session.return_value = MagicMock()
         mock_truetype.return_value = MagicMock()
 
         detector = LiveStreamDetector(
@@ -65,13 +59,13 @@ class TestLiveStreamDetector(unittest.TestCase):
         self.assertEqual(detector.model_key, self.model_key)
         self.assertEqual(detector.output_folder, self.output_folder)
         self.assertEqual(detector.detect_with_server, self.detect_with_server)
-        self.assertIsNotNone(detector.session)
         self.assertEqual(detector.access_token, None)
         self.assertEqual(detector.token_expiry, 0.0)
 
     @patch('src.live_stream_detection.cv2.VideoCapture')
     @patch('src.live_stream_detection.AutoDetectionModel.from_pretrained')
-    def test_generate_detections_local(
+    @pytest.mark.asyncio
+    async def test_generate_detections_local(
         self,
         mock_from_pretrained: MagicMock,
         mock_video_capture: MagicMock,
@@ -103,11 +97,11 @@ class TestLiveStreamDetector(unittest.TestCase):
         ]
         mock_model.predict.return_value = mock_result
 
-        datas: list[list[Any]] = self.detector.generate_detections_local(
+        datas: list[list[Any]] = await self.detector.generate_detections_local(
             frame,
         )
 
-        # Assert the structure and types of the detection data
+        # Assert the structure and types of the detection dataㄋ
         self.assertIsInstance(datas, list)
         for data in datas:
             self.assertIsInstance(data, list)
@@ -119,23 +113,11 @@ class TestLiveStreamDetector(unittest.TestCase):
             self.assertIsInstance(data[4], float)
             self.assertIsInstance(data[5], int)
 
-    @patch('src.live_stream_detection.cv2.destroyAllWindows')
-    @patch('src.live_stream_detection.LiveStreamDetector.generate_detections')
-    def test_run_detection(
-        self,
-        mock_generate_detections: MagicMock,
-        mock_destroyAllWindows: MagicMock,
-    ) -> None:
+    @pytest.mark.asyncio
+    async def test_run_detection(self) -> None:
         """
         Test the run_detection method.
-
-        Args:
-            mock_generate_detections (MagicMock): Mock for generate_detections.
-            mock_destroyAllWindows (MagicMock): Mock for cv2.destroyAllWindows.
         """
-        mock_generate_detections.return_value = (
-            [], np.zeros((480, 640, 3), dtype=np.uint8),
-        )
         stream_url: str = 'http://example.com/virtual_stream'
         cap_mock: MagicMock = MagicMock()
         cap_mock.read.side_effect = [
@@ -154,35 +136,33 @@ class TestLiveStreamDetector(unittest.TestCase):
                     'src.live_stream_detection.cv2.waitKey',
                     side_effect=[-1, ord('q')],
                 ):
-                    self.detector.run_detection(stream_url)
+                    await self.detector.run_detection(stream_url)
 
         cap_mock.read.assert_called()
         cap_mock.release.assert_called_once()
-        mock_destroyAllWindows.assert_called()
 
-    @patch('src.live_stream_detection.requests.Session.post')
-    @patch('src.live_stream_detection.LiveStreamDetector.authenticate')
-    def test_generate_detections_cloud(
+    @pytest.mark.asyncio
+    @patch('aiohttp.ClientSession.post')
+    async def test_generate_detections_cloud(
         self,
-        mock_authenticate: MagicMock,
         mock_post: MagicMock,
     ) -> None:
         """
         Test cloud detection generation.
 
         Args:
-            mock_authenticate (MagicMock): Mock for authenticate.
-            mock_post (MagicMock): Mock for requests.Session.post.
+            mock_post (MagicMock): Mock for aiohttp.ClientSession.post.
         """
         frame: np.ndarray = np.zeros((480, 640, 3), dtype=np.uint8)
-        # mat_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         mock_response: MagicMock = MagicMock()
         mock_response.json.return_value = [
             [10, 10, 50, 50, 0.9, 0], [20, 20, 60, 60, 0.8, 1],
         ]
-        mock_post.return_value = mock_response
+        mock_post.return_value.__aenter__.return_value = mock_response
 
-        datas: list[list[Any]] = self.detector.generate_detections_cloud(frame)
+        datas: list[list[Any]] = await self.detector.generate_detections_cloud(
+            frame,
+        )
 
         # Assert the structure and types of the detection data
         self.assertIsInstance(datas, list)
@@ -196,26 +176,23 @@ class TestLiveStreamDetector(unittest.TestCase):
             self.assertIsInstance(data[4], float)
             self.assertIsInstance(data[5], int)
 
-    @patch('src.live_stream_detection.LiveStreamDetector.ensure_authenticated')
-    @patch('src.live_stream_detection.requests.Session.post')
-    def test_authenticate(
+    @pytest.mark.asyncio
+    @patch('aiohttp.ClientSession.post')
+    async def test_authenticate(
         self,
         mock_post: MagicMock,
-        mock_ensure_authenticated: MagicMock,
     ) -> None:
         """
         Test the authentication process.
 
         Args:
             mock_post (MagicMock): Mock for requests.Session.post.
-            mock_ensure_authenticated (MagicMock): Mock
-                for ensure_authenticated.
         """
         mock_response: MagicMock = MagicMock()
         mock_response.json.return_value = {'access_token': 'fake_token'}
-        mock_post.return_value = mock_response
+        mock_post.return_value.__aenter__.return_value = mock_response
 
-        self.detector.authenticate()
+        await self.detector.authenticate()
 
         # Assert the access token and token expiry
         self.assertEqual(self.detector.access_token, 'fake_token')
@@ -231,7 +208,8 @@ class TestLiveStreamDetector(unittest.TestCase):
         self.detector.token_expiry = time.time() + 1000
         self.assertFalse(self.detector.token_expired())
 
-    def test_ensure_authenticated(self) -> None:
+    @pytest.mark.asyncio
+    async def test_ensure_authenticated(self) -> None:
         """
         Test the ensure_authenticated method.
         """
@@ -239,7 +217,7 @@ class TestLiveStreamDetector(unittest.TestCase):
             with patch.object(
                 self.detector, 'authenticate',
             ) as mock_authenticate:
-                self.detector.ensure_authenticated()
+                await self.detector.ensure_authenticated()
                 mock_authenticate.assert_called_once()
 
     def test_remove_overlapping_labels(self) -> None:
@@ -293,24 +271,26 @@ class TestLiveStreamDetector(unittest.TestCase):
         overlap = self.detector.overlap_percentage(bbox1, bbox2)
         self.assertAlmostEqual(overlap, 0.262344, places=6)
 
-    @patch('src.live_stream_detection.requests.Session.post')
-    def test_authenticate_error(self, mock_post: MagicMock) -> None:
+    @pytest.mark.asyncio
+    @patch('aiohttp.ClientSession.post')
+    async def test_authenticate_error(self, mock_post: MagicMock) -> None:
         """
         Test the authenticate method with error response.
 
         Args:
-            mock_post (MagicMock): Mock for requests.Session.post.
+            mock_post (MagicMock): Mock for aiohttp.ClientSession.post.
         """
         mock_response: MagicMock = MagicMock()
         mock_response.json.return_value = {'msg': 'Authentication failed'}
-        mock_post.return_value = mock_response
+        mock_post.return_value.__aenter__.return_value = mock_response
 
         with self.assertRaises(Exception) as context:
-            self.detector.authenticate()
+            await self.detector.authenticate()
 
         self.assertIn('Authentication failed', str(context.exception))
 
-    def test_generate_detections(self) -> None:
+    @pytest.mark.asyncio
+    async def test_generate_detections(self) -> None:
         """
         Test the generate_detections method.
         """
@@ -321,7 +301,7 @@ class TestLiveStreamDetector(unittest.TestCase):
             self.detector, 'generate_detections_local',
             return_value=[[10, 10, 50, 50, 0.9, 0]],
         ) as mock_local:
-            datas, _ = self.detector.generate_detections(mat_frame)
+            datas, _ = await self.detector.generate_detections(mat_frame)
             self.assertEqual(len(datas), 1)
             self.assertEqual(datas[0][5], 0)
             mock_local.assert_called_once_with(mat_frame)
@@ -331,12 +311,13 @@ class TestLiveStreamDetector(unittest.TestCase):
             self.detector, 'generate_detections_cloud',
             return_value=[[20, 20, 60, 60, 0.8, 1]],
         ) as mock_cloud:
-            datas, _ = self.detector.generate_detections(mat_frame)
+            datas, _ = await self.detector.generate_detections(mat_frame)
             self.assertEqual(len(datas), 1)
             self.assertEqual(datas[0][5], 1)
             mock_cloud.assert_called_once_with(mat_frame)
 
-    def test_run_detection_fail_read_frame(self) -> None:
+    @pytest.mark.asyncio
+    async def test_run_detection_fail_read_frame(self) -> None:
         """
         Test the run_detection method when failing to read a frame.
         """
@@ -355,7 +336,7 @@ class TestLiveStreamDetector(unittest.TestCase):
                 side_effect=[-1, -1, ord('q')],
             ):
                 try:
-                    self.detector.run_detection(stream_url)
+                    await self.detector.run_detection(stream_url)
                 except StopIteration:
                     pass
 
@@ -431,7 +412,8 @@ class TestLiveStreamDetector(unittest.TestCase):
         ],
     )
     @patch('src.live_stream_detection.LiveStreamDetector.run_detection')
-    def test_main(self, mock_run_detection: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_main(self, mock_run_detection: MagicMock) -> None:
         """
         Test the main function.
 
@@ -444,9 +426,9 @@ class TestLiveStreamDetector(unittest.TestCase):
             return_value=None,
         ) as mock_init:
             mock_init.return_value = None
-            main()
+            await main()
             mock_init.assert_called_once_with(
-                api_url='http://localhost:5000',
+                api_url='http://127.0.0.1:8001',
                 model_key='yolo11n',
                 output_folder=None,
                 detect_with_server=True,

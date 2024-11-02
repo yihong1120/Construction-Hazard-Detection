@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime
 import gc
-import time
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from typing import TypedDict
 
 import cv2
@@ -34,6 +34,8 @@ class StreamCapture:
 
         Args:
             stream_url (str): The URL of the video stream.
+            capture_interval (int, optional): The interval at which frames
+                should be captured. Defaults to 15.
         """
         # Video stream URL
         self.stream_url = stream_url
@@ -44,7 +46,7 @@ class StreamCapture:
         # Flag to indicate successful capture
         self.successfully_captured = False
 
-    def initialise_stream(self, stream_url: str) -> None:
+    async def initialise_stream(self, stream_url: str) -> None:
         """
         Initialises the video stream.
 
@@ -56,10 +58,10 @@ class StreamCapture:
         # self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
 
         if not self.cap.isOpened():
-            time.sleep(5)
+            await asyncio.sleep(5)
             self.cap.open(stream_url)
 
-    def release_resources(self) -> None:
+    async def release_resources(self) -> None:
         """
         Releases resources like the capture object.
         """
@@ -68,14 +70,16 @@ class StreamCapture:
             self.cap = None
         gc.collect()
 
-    def execute_capture(self) -> Generator[tuple[np.ndarray, float]]:
+    async def execute_capture(
+        self,
+    ) -> AsyncGenerator[tuple[np.ndarray, float]]:
         """
         Captures frames from the stream and yields them with timestamps.
 
         Yields:
             Tuple[np.ndarray, float]: The captured frame and the timestamp.
         """
-        self.initialise_stream(self.stream_url)
+        await self.initialise_stream(self.stream_url)
         last_process_time = datetime.datetime.now() - datetime.timedelta(
             seconds=self.capture_interval,
         )
@@ -83,7 +87,7 @@ class StreamCapture:
 
         while True:
             if self.cap is None:
-                self.initialise_stream(self.stream_url)
+                await self.initialise_stream(self.stream_url)
 
             ret, frame = (
                 self.cap.read() if self.cap is not None else (False, None)
@@ -95,12 +99,15 @@ class StreamCapture:
                     'Failed to read frame, trying to reinitialise stream. '
                     f"Fail count: {fail_count}",
                 )
-                self.release_resources()
-                self.initialise_stream(self.stream_url)
+                await self.release_resources()
+                await self.initialise_stream(self.stream_url)
                 # Switch to generic frame capture after 5 consecutive failures
                 if fail_count >= 5 and not self.successfully_captured:
                     print('Switching to generic frame capture method.')
-                    yield from self.capture_generic_frames()
+                    async for generic_frame, timestamp in (
+                        self.capture_generic_frames()
+                    ):
+                        yield generic_frame, timestamp
                     return
                 continue
             else:
@@ -108,7 +115,7 @@ class StreamCapture:
                 fail_count = 0
 
                 # Mark as successfully captured
-                self.successfully_captured = True  #
+                self.successfully_captured = True
 
             # Process the frame if the capture interval has elapsed
             current_time = datetime.datetime.now()
@@ -124,9 +131,9 @@ class StreamCapture:
                 del frame, timestamp
                 gc.collect()
 
-            time.sleep(0.01)  # Adjust the sleep time as needed
+            await asyncio.sleep(0.01)  # Adjust the sleep time as needed
 
-        self.release_resources()
+        await self.release_resources()
 
     def check_internet_speed(self) -> tuple[float, float]:
         """
@@ -137,7 +144,7 @@ class StreamCapture:
         """
         st = speedtest.Speedtest()
         st.get_best_server()
-        download_speed = st.download() / 1_000_000
+        download_speed = st.download() / 1_000_000  # Turn into Mbps
         upload_speed = st.upload() / 1_000_000
         return download_speed, upload_speed
 
@@ -183,9 +190,9 @@ class StreamCapture:
             print(f"Error selecting quality based on speed: {e}")
             return None
 
-    def capture_generic_frames(
+    async def capture_generic_frames(
         self,
-    ) -> Generator[tuple[np.ndarray, float]]:
+    ) -> AsyncGenerator[tuple[np.ndarray, float]]:
         """
         Captures frames from a generic stream.
 
@@ -199,7 +206,7 @@ class StreamCapture:
             return
 
         # Initialise the stream with the selected URL
-        self.initialise_stream(stream_url)
+        await self.initialise_stream(stream_url)
 
         last_process_time = datetime.datetime.now()
         fail_count = 0  # Counter for consecutive failures
@@ -221,8 +228,8 @@ class StreamCapture:
                 # Reinitialise the stream after 5 consecutive failures
                 if fail_count >= 5 and not self.successfully_captured:
                     print('Reinitialising the generic stream.')
-                    self.release_resources()
-                    time.sleep(5)
+                    await self.release_resources()
+                    await asyncio.sleep(5)
                     stream_url = self.select_quality_based_on_speed()
 
                     # Exit if no suitable stream quality is available
@@ -231,7 +238,7 @@ class StreamCapture:
                         continue
 
                     # Reinitialise the stream with the new URL
-                    self.initialise_stream(stream_url)
+                    await self.initialise_stream(stream_url)
                     fail_count = 0
                 continue
             else:
@@ -253,7 +260,7 @@ class StreamCapture:
                 del frame, timestamp
                 gc.collect()
 
-            time.sleep(0.01)  # Adjust the sleep time as needed
+            await asyncio.sleep(0.01)  # Adjust the sleep time as needed
 
     def update_capture_interval(self, new_interval: int) -> None:
         """
@@ -265,9 +272,9 @@ class StreamCapture:
         self.capture_interval = new_interval
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(
-        description='Capture video stream frames.',
+        description='Capture video stream frames asynchronously.',
     )
     parser.add_argument(
         '--url',
@@ -278,7 +285,7 @@ def main():
     args = parser.parse_args()
 
     stream_capture = StreamCapture(args.url)
-    for frame, timestamp in stream_capture.execute_capture():
+    async for frame, timestamp in stream_capture.execute_capture():
         # Process the frame here
         print(f"Frame at {timestamp} displayed")
         # Release the frame resources
@@ -287,4 +294,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

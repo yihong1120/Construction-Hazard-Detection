@@ -6,6 +6,7 @@ from datetime import timedelta
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import pytest
 from watchdog.events import FileModifiedEvent
 
 from src.utils import FileEventHandler
@@ -28,8 +29,9 @@ class TestUtils(unittest.TestCase):
         self.assertFalse(Utils.is_expired(None))
 
 
+@pytest.mark.asyncio
 class TestFileEventHandler(unittest.TestCase):
-    def test_on_modified_triggers_callback(self):
+    async def test_on_modified_triggers_callback(self):
         # Create a mock callback function
         mock_callback = MagicMock()
 
@@ -45,12 +47,14 @@ class TestFileEventHandler(unittest.TestCase):
         event = FileModifiedEvent(file_path)
 
         # Trigger the on_modified event
-        event_handler.on_modified(event)
+        await event_handler.on_modified(event)
 
         # Assert that the callback was called
         mock_callback.assert_called_once()
 
-    def test_on_modified_does_not_trigger_callback_for_different_file(self):
+    async def test_on_modified_does_not_trigger_callback_for_different_file(
+        self,
+    ):
         # Create a mock callback function
         mock_callback = MagicMock()
 
@@ -67,17 +71,18 @@ class TestFileEventHandler(unittest.TestCase):
         event = FileModifiedEvent(different_file_path)
 
         # Trigger the on_modified event
-        event_handler.on_modified(event)
+        await event_handler.on_modified(event)
 
         # Assert that the callback was not called
         mock_callback.assert_not_called()
 
 
+@pytest.mark.asyncio
 class TestRedisManager(unittest.TestCase):
     """
     Test cases for the RedisManager class
     """
-    @patch('src.utils.Redis')
+    @patch('src.utils.redis.Redis')
     def setUp(self, mock_redis):
         """
         Set up a RedisManager instance with a mocked Redis connection
@@ -89,7 +94,7 @@ class TestRedisManager(unittest.TestCase):
         # Initialize RedisManager
         self.redis_manager = RedisManager()
 
-    def test_set_success(self):
+    async def test_set_success(self):
         """
         Test successful set operation
         """
@@ -97,12 +102,12 @@ class TestRedisManager(unittest.TestCase):
         value = b'test_value'
 
         # Call the set method
-        self.redis_manager.set(key, value)
+        await self.redis_manager.set(key, value)
 
         # Assert that the Redis set method was called with correct parameters
         self.mock_redis_instance.set.assert_called_once_with(key, value)
 
-    def test_set_error(self):
+    async def test_set_error(self):
         """
         Simulate an exception during the Redis set operation
         """
@@ -112,9 +117,9 @@ class TestRedisManager(unittest.TestCase):
 
         # Call the set method and verify it handles the exception
         with self.assertLogs(level='ERROR'):
-            self.redis_manager.set(key, value)
+            await self.redis_manager.set(key, value)
 
-    def test_get_success(self):
+    async def test_get_success(self):
         """
         Mock the Redis get method to return a value
         """
@@ -123,7 +128,7 @@ class TestRedisManager(unittest.TestCase):
         self.mock_redis_instance.get.return_value = expected_value
 
         # Call the get method
-        value = self.redis_manager.get(key)
+        value = await self.redis_manager.get(key)
 
         # Assert that the Redis get method was called with correct parameters
         self.mock_redis_instance.get.assert_called_once_with(key)
@@ -131,7 +136,7 @@ class TestRedisManager(unittest.TestCase):
         # Assert the value returned is correct
         self.assertEqual(value, expected_value)
 
-    def test_get_error(self):
+    async def test_get_error(self):
         """
         Simulate an exception during the Redis get operation
         """
@@ -140,23 +145,23 @@ class TestRedisManager(unittest.TestCase):
 
         # Call the get method and verify it handles the exception
         with self.assertLogs(level='ERROR'):
-            value = self.redis_manager.get(key)
+            value = await self.redis_manager.get(key)
             self.assertIsNone(value)
 
-    def test_delete_success(self):
+    async def test_delete_success(self):
         """
         Test successful delete operation
         """
         key = 'test_key'
 
         # Call the delete method
-        self.redis_manager.delete(key)
+        await self.redis_manager.delete(key)
 
         # Assert that the Redis delete method
         # was called with correct parameters
         self.mock_redis_instance.delete.assert_called_once_with(key)
 
-    def test_delete_error(self):
+    async def test_delete_error(self):
         """
         Simulate an exception during the Redis delete operation
         """
@@ -165,7 +170,7 @@ class TestRedisManager(unittest.TestCase):
 
         # Call the delete method and verify it handles the exception
         with self.assertLogs(level='ERROR'):
-            self.redis_manager.delete(key)
+            await self.redis_manager.delete(key)
 
 
 if __name__ == '__main__':
