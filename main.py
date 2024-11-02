@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import gc
 import logging
 import os
-import threading
 import time
 from datetime import datetime
 from multiprocessing import Process
 from typing import TypedDict
 
+import anyio
 import cv2
 import yaml
 from dotenv import load_dotenv
@@ -36,7 +37,10 @@ if not is_windows:
     redis_manager = RedisManager()
 
 
-class StreamConfig(TypedDict, total=False):
+class AppConfig(TypedDict, total=False):
+    """
+    Typed dictionary for the configuration of a video stream.
+    """
     video_url: str
     model_key: str
     site: str | None
@@ -48,24 +52,25 @@ class StreamConfig(TypedDict, total=False):
     language: str | None
 
 
-def run_multiple_streams(config_file: str) -> None:
+class MainApp:
     """
-    Manage multiple video streams based on a config file.
-
-    Args:
-        config_file (str): The path to the YAML configuration file.
-
-    Returns:
-        None
+    Main application class for managing multiple video streams.
     """
-    running_processes: dict[str, Process] = {}
-    current_config_hashes: dict[str, str] = {}
-    lock = threading.Lock()
 
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
+    def __init__(self, config_file: str):
+        """
+        Initialise the MainApp class.
 
-    def compute_config_hash(config: dict) -> str:
+        Args:
+            config_file (str): The path to the YAML configuration file.
+        """
+        self.config_file = config_file
+        self.running_processes: dict[str, dict] = {}
+        self.current_config_hashes: dict[str, str] = {}
+        self.lock = anyio.Lock()
+        self.logger = LoggerConfig().get_logger()
+
+    def compute_config_hash(self, config: dict) -> str:
         """
         Compute a hash based on relevant configuration parameters.
 
@@ -85,265 +90,316 @@ def run_multiple_streams(config_file: str) -> None:
         }
         return str(relevant_config)  # Convert to string for hashing
 
-    def reload_configurations():
-        with open(config_file, encoding='utf-8') as file:
+    async def reload_configurations(self):
+        """
+        Reload the configurations from the YAML file.
+        """
+        with open(self.config_file, encoding='utf-8') as file:
             configurations = yaml.safe_load(file)
 
         current_configs = {
             config['video_url']: config for config in configurations
         }
 
-        with lock:
+        async with self.lock:
+            # Track keys that exist in the current config
+            current_keys = {
+                (
+                    f"{config['site']}_"
+                    f"{config.get('stream_name', 'prediction_visual')}"
+                )
+                for config in configurations
+            }
+
             # Stop processes for removed or updated configurations
-            for video_url in list(running_processes.keys()):
+            for video_url in list(self.running_processes.keys()):
+                config_data = self.running_processes[video_url]
                 config = current_configs.get(video_url)
+
+                # Get the key to be deleted
+                # if config has been removed or modified
+                site = config_data['config']['site']
+                stream_name = config_data['config'].get(
+                    'stream_name', 'prediction_visual',
+                )
+                key_to_delete = f"{site}_{stream_name}"
 
                 # Stop the process if the configuration is removed
                 if not config or Utils.is_expired(config.get('expire_date')):
-                    logger.info(f"Stop workflow: {video_url}")
-                    stop_process(running_processes[video_url])
-                    del running_processes[video_url]
-                    del current_config_hashes[video_url]
+                    self.logger.info(f"Stop workflow: {video_url}")
+                    self.stop_process(config_data['process'])
+                    del self.running_processes[video_url]
+                    del self.current_config_hashes[video_url]
+
+                    # Delete old key in Redis
+                    # if it no longer exists in the config
+                    if key_to_delete not in current_keys:
+                        await redis_manager.delete(key_to_delete)
+                        self.logger.info(f"Deleted Redis key: {key_to_delete}")
 
                 # Restart the process if the configuration is updated
-                elif compute_config_hash(config) != current_config_hashes.get(
-                    video_url,
+                elif self.compute_config_hash(config) != (
+                    self.current_config_hashes.get(
+                        video_url,
+                    )
                 ):
-                    logger.info(
+                    self.logger.info(
                         f"Config changed for {video_url}. "
                         'Restarting workflow.',
                     )
-                    stop_process(running_processes[video_url])
-                    running_processes[video_url] = start_process(config)
-                    current_config_hashes[video_url] = compute_config_hash(
-                        config,
+                    self.stop_process(config_data['process'])
+
+                    # Delete old key in Redis
+                    # if it no longer exists in the config
+                    if key_to_delete not in current_keys:
+                        await redis_manager.delete(key_to_delete)
+                        self.logger.info(f"Deleted Redis key: {key_to_delete}")
+
+                    # Start the new process
+                    self.running_processes[video_url] = {
+                        'process': self.start_process(config),
+                        'config': config,
+                    }
+                    self.current_config_hashes[video_url] = (
+                        self.compute_config_hash(
+                            config,
+                        )
                     )
 
             # Start processes for new configurations
             for video_url, config in current_configs.items():
                 if Utils.is_expired(config.get('expire_date')):
-                    logger.info(f"Skip expired configuration: {video_url}")
+                    self.logger.info(
+                        f"Skip expired configuration: {video_url}",
+                    )
                     continue
 
-                if video_url not in running_processes:
-                    logger.info(f"Launch new workflow: {video_url}")
-                    running_processes[video_url] = start_process(config)
-                    current_config_hashes[video_url] = compute_config_hash(
-                        config,
+                if video_url not in self.running_processes:
+                    self.logger.info(f"Launch new workflow: {video_url}")
+                    self.running_processes[video_url] = {
+                        'process': self.start_process(config),
+                        'config': config,
+                    }
+                    self.current_config_hashes[video_url] = (
+                        self.compute_config_hash(
+                            config,
+                        )
                     )
 
-    # Initial load of configurations
-    reload_configurations()
+    async def run_multiple_streams(self) -> None:
+        """
+        Manage multiple video streams based on a config file.
 
-    # Set up watchdog observer
-    event_handler = FileEventHandler(config_file, reload_configurations)
-    observer = Observer()
-    observer.schedule(
-        event_handler, path=os.path.dirname(
-            config_file,
-        ), recursive=False,
-    )
-    observer.start()
+        Args:
+            config_file (str): The path to the YAML configuration file.
 
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
+        Returns:
+            None
+        """
+        # Initial load of configurations
+        await self.reload_configurations()
 
+        # Set up watchdog observer
+        event_handler = FileEventHandler(
+            self.config_file, self.reload_configurations,
+        )
+        observer = Observer()
+        observer.schedule(
+            event_handler, path=os.path.dirname(
+                self.config_file,
+            ), recursive=False,
+        )
+        observer.start()
 
-def process_single_stream(
-    logger: logging.Logger,
-    video_url: str,
-    model_key: str = 'yolo11n',
-    site: str | None = None,
-    stream_name: str = 'prediction_visual',
-    notifications: dict[str, str] | None = None,
-    detect_with_server: bool = False,
-) -> None:
-    """
-    Function to detect hazards, notify, log, save images (optional).
+        try:
+            while True:
+                await anyio.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+        observer.join()
 
-    Args:
-        logger (logging.Logger): A logger instance for logging messages.
-        video_url (str): The URL of the live stream to monitor.
-        site (Optional[str]): The site for stream processing.
-        stream_name (str, optional): Image file name for notifications.
-            Defaults to 'demo_data/{site}/prediction_visual.png'.
-        notifications (Optional[dict]): Line tokens with their languages.
-        detect_with_server (bool): Whether to run detection using a server api.
-    """
-    # Initialise the stream capture object
-    streaming_capture = StreamCapture(stream_url=video_url)
+    async def process_single_stream(
+        self,
+        logger: logging.Logger,
+        video_url: str,
+        model_key: str = 'yolo11n',
+        site: str | None = None,
+        stream_name: str = 'prediction_visual',
+        notifications: dict[str, str] | None = None,
+        detect_with_server: bool = False,
+    ) -> None:
+        """
+        Function to detect hazards, notify, log, save images (optional).
 
-    # Get the API URL from environment variables
-    api_url = os.getenv('API_URL', 'http://localhost:5000')
+        Args:
+            logger (logging.Logger): A logger instance for logging messages.
+            video_url (str): The URL of the live stream to monitor.
+            site (Optional[str]): The site for stream processing.
+            stream_name (str, optional): Image file name for notifications.
+                Defaults to 'demo_data/{site}/prediction_visual.png'.
+            notifications (Optional[dict]): Line tokens with their languages.
+            detect_with_server (bool): If run detection with server api or not.
+        """
+        # Initialise the stream capture object
+        streaming_capture = StreamCapture(stream_url=video_url)
 
-    # Initialise the live stream detector
-    live_stream_detector = LiveStreamDetector(
-        api_url=api_url,
-        model_key=model_key,
-        output_folder=site,
-        detect_with_server=detect_with_server,
-    )
+        # Get the API URL from environment variables
+        api_url = os.getenv('API_URL', 'http://localhost:5000')
 
-    # Initialise the drawing manager
-    drawing_manager = DrawingManager()
-
-    # Initialise the LINE notifier
-    line_notifier = LineNotifier()
-
-    # Initialise the DangerDetector
-    danger_detector = DangerDetector()
-
-    # Init last_notification_time to 300s ago, no microseconds
-    last_notification_time = int(time.time()) - 300
-
-    # Use the generator function to process detections
-    for frame, timestamp in streaming_capture.execute_capture():
-        start_time = time.time()
-        # Convert UNIX timestamp to datetime object and format it as string
-        detection_time = datetime.fromtimestamp(timestamp)
-        current_hour = detection_time.hour
-
-        # Detect hazards in the frame
-        datas, _ = live_stream_detector.generate_detections(frame)
-
-        # Check for warnings and send notifications if necessary
-        warnings, controlled_zone_polygon = danger_detector.detect_danger(
-            datas,
+        # Initialise the live stream detector
+        live_stream_detector = LiveStreamDetector(
+            api_url=api_url,
+            model_key=model_key,
+            output_folder=site,
+            detect_with_server=detect_with_server,
         )
 
-        # Check if there is a warning for people in the controlled zone
-        controlled_zone_warning_str = next(
-            # Find the first warning containing 'controlled area'
-            (warning for warning in warnings if 'controlled area' in warning),
-            None,
-        )
+        # Initialise the drawing manager
+        drawing_manager = DrawingManager()
 
-        # Convert the warning to a list for translation
-        controlled_zone_warning: list[str] = [
-            controlled_zone_warning_str,
-        ] if controlled_zone_warning_str else []
+        # Initialise the LINE notifier
+        line_notifier = LineNotifier()
 
-        # Track whether we sent any notification
-        notification_sent = False
-        last_line_token = None
-        last_language = None
-        frame_with_detections = None
+        # Initialise the DangerDetector
+        danger_detector = DangerDetector()
 
-        if not notifications:
-            logger.info('No notifications provided.')
+        # Init last_notification_time to 300s ago, no microseconds
+        last_notification_time = int(time.time()) - 300
 
-            # Draw the detections on the frame
-            frame_with_detections = (
-                drawing_manager.draw_detections_on_frame(
-                    frame, controlled_zone_polygon, datas,
-                )
+        # Use the generator function to process detections
+        async for frame, timestamp in streaming_capture.execute_capture():
+            start_time = time.time()
+            # Convert UNIX timestamp to datetime object and format it as string
+            detection_time = datetime.fromtimestamp(timestamp)
+            current_hour = detection_time.hour
+
+            # Detect hazards in the frame
+            datas, _ = await live_stream_detector.generate_detections(frame)
+
+            # Check for warnings and send notifications if necessary
+            warnings, controlled_zone_polygon = danger_detector.detect_danger(
+                datas,
             )
 
-            # Convert the frame to a byte array
-            _, buffer = cv2.imencode('.png', frame_with_detections)
-            frame_bytes = buffer.tobytes()
-            continue
-
-        # Check if notifications are provided
-        for line_token, language in notifications.items():
-            # Check if notification should be skipped
-            # (sent within last 300 seconds)
-            if (timestamp - last_notification_time) < 300:
-                # Store the last token and language,
-                # but don't send notifications
-                last_line_token = line_token
-                last_language = language
-                # Skip the current notification but remember the last one
-                continue
-
-            # Translate the warnings
-            translated_warnings = Translator.translate_warning(
-                warnings, language,
+            # Check if there is a warning for people in the controlled zone
+            controlled_zone_warning_str = next(
+                # Find the first warning containing 'controlled area'
+                (
+                    warning
+                    for warning in warnings
+                    if 'controlled area' in warning
+                ),
+                None,
             )
 
-            # Draw the detections on the frame
-            frame_with_detections = (
-                drawing_manager.draw_detections_on_frame(
-                    frame, controlled_zone_polygon, datas,
-                    language=language,
-                )
-            )
+            # Convert the warning to a list for translation
+            controlled_zone_warning: list[str] = [
+                controlled_zone_warning_str,
+            ] if controlled_zone_warning_str else []
 
-            # Save the frame with detections
-            # save_file_name = f'{site}_{stream_name}_{detection_time}'
-            # drawing_manager.save_frame(
-            #   frame_with_detections,
-            #   save_file_name
-            # )
+            # Track whether we sent any notification
+            last_line_token = None
+            last_language = None
+            frame_with_detections = None
 
-            # Convert the frame to a byte array
-            _, buffer = cv2.imencode('.png', frame_with_detections)
-            frame_bytes = buffer.tobytes()
+            if not notifications:
+                logger.info('No notifications provided.')
 
-            # Log the detection results
-            logger.info(f"{site} - {stream_name}")
-            logger.info(f"Detection time: {detection_time}")
+            else:
+                # Check if notifications are provided
+                for line_token, language in notifications.items():
+                    # Check if notification should be skipped
+                    # (sent within last 300 seconds)
+                    if (timestamp - last_notification_time) < 300:
+                        # Store the last token and language,
+                        # but don't send notifications
+                        last_line_token = line_token
+                        last_language = language
+                        # Skip the current notification
+                        # but remember the last one
+                        continue
 
-            # If it is outside working hours and there is
-            # a warning for people in the controlled zone
-            if controlled_zone_warning and not (7 <= current_hour < 18):
-                translated_controlled_zone_warning: list[str] = (
-                    Translator.translate_warning(
-                        controlled_zone_warning, language,
+                    # Translate the warnings
+                    translated_warnings = Translator.translate_warning(
+                        warnings, language,
                     )
-                )
-                message = (
-                    f"{stream_name}\n[{detection_time}]\n"
-                    f"{translated_controlled_zone_warning}"
-                )
 
-            elif translated_warnings and (7 <= current_hour < 18):
-                # During working hours, combine all warnings
-                message = (
-                    f"{stream_name}\n[{detection_time}]\n"
-                    + '\n'.join(translated_warnings)
-                )
+                    # Draw the detections on the frame
+                    frame_with_detections = (
+                        drawing_manager.draw_detections_on_frame(
+                            frame, controlled_zone_polygon, datas,
+                            language=language,
+                        )
+                    )
 
-            else:
-                message = None
+                    # Convert the frame to a byte array
+                    _, buffer = cv2.imencode('.png', frame_with_detections)
+                    frame_bytes = buffer.tobytes()
 
-            # If a notification needs to be sent
-            if not message:
-                logger.info('No warnings or outside notification time.')
-                continue
+                    # If it is outside working hours and there is
+                    # a warning for people in the controlled zone
+                    if (
+                        controlled_zone_warning
+                        and not (7 <= current_hour < 18)
+                    ):
+                        translated_controlled_zone_warning: list[str] = (
+                            Translator.translate_warning(
+                                controlled_zone_warning, language,
+                            )
+                        )
+                        message = (
+                            f"{stream_name}\n[{detection_time}]\n"
+                            f"{translated_controlled_zone_warning}"
+                        )
 
-            notification_status = line_notifier.send_notification(
-                message,
-                image=frame_bytes
-                if frame_bytes is not None
-                else None,
-                line_token=line_token,
-            )
+                    elif translated_warnings and (7 <= current_hour < 18):
+                        # During working hours, combine all warnings
+                        message = (
+                            f"{stream_name}\n[{detection_time}]\n"
+                            + '\n'.join(translated_warnings)
+                        )
 
-            # If you want to connect to the broadcast system, do it here:
-            # broadcast_status = (
-            #   broadcast_notifier.broadcast_message(message)
-            # )
-            # logger.info(f"Broadcast status: {broadcast_status}")
+                    else:
+                        message = None
 
-            if notification_status == 200:
-                logger.info(
-                    f"Notification sent successfully: {message}",
-                )
-                notification_sent = True  # Mark that a notification was sent
-            else:
-                logger.error(f"Failed to send notification: {message}")
+                    # If a notification needs to be sent
+                    if not message:
+                        logger.info(
+                            'No warnings or outside notification time.',
+                        )
+                        continue
 
-            # Log the notification token and language
-            logger.info(f"Notification sent to {line_token} in {language}.")
+                    notification_status = line_notifier.send_notification(
+                        message,
+                        image=frame_bytes
+                        if frame_bytes is not None
+                        else None,
+                        line_token=line_token,
+                    )
 
-        # If no notification was sent and the time condition was met,
-        # only draw the image
-        if last_line_token and last_language:
+                    # To connect to the broadcast system, do it here:
+                    # broadcast_status = (
+                    #   broadcast_notifier.broadcast_message(message)
+                    # )
+                    # logger.info(f"Broadcast status: {broadcast_status}")
+
+                    if notification_status == 200:
+                        logger.info(
+                            f"Notification sent successfully: {message}",
+                        )
+                        last_notification_time = int(timestamp)
+                    else:
+                        logger.error(f"Failed to send notification: {message}")
+
+                    # Log the notification token and language
+                    logger.info(
+                        f"Notification sent to {line_token} in {language}.",
+                    )
+
+                # If no notification was sent and the time condition was met,
+                # only draw the image
+                if last_line_token and last_language:
+                    language = last_language
 
             # Draw the detections on the frame for the last token/language
             # (if not already drawn)
@@ -352,7 +408,7 @@ def process_single_stream(
                     drawing_manager.draw_detections_on_frame(
                         frame, controlled_zone_polygon,
                         datas,
-                        language=last_language,
+                        language=last_language or 'en',
                     )
                 )
 
@@ -360,134 +416,129 @@ def process_single_stream(
             _, buffer = cv2.imencode('.png', frame_with_detections)
             frame_bytes = buffer.tobytes()
 
-            # Optionally save the frame with detections
-            # drawing_manager.save_frame(frame_with_detections, save_file_name)
+            # Save the frame with detections
+            # save_file_name = f'{site}_{stream_name}_{detection_time}'
+            # drawing_manager.save_frame(
+            #   frame_with_detections,
+            #   save_file_name
+            # )
 
-        # Update last_notification_time only
-        # if at least one notification was sent
-        if notification_sent:
-            last_notification_time = int(timestamp)
+            # Store the frame in Redis if not running on Windows
+            if not is_windows:
+                try:
+                    # Use a unique key for each thread or process
+                    key = f"{site}_{stream_name}"
 
-        # Store the frame in Redis if not running on Windows
-        if not is_windows:
-            try:
-                # Use a unique key for each thread or process
-                key = f"{site}_{stream_name}"
+                    # Store the frame in Redis Stream
+                    # with a maximum length of 10
+                    await redis_manager.add_to_stream(
+                        key, {'frame': frame_bytes}, maxlen=10,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to store frame in Redis: {e}")
 
-                # Store the frame in Redis
-                redis_manager.set(key, frame_bytes)
-            except Exception as e:
-                logger.error(f"Failed to store frame in Redis: {e}")
+            # Update the capture interval based on processing time
+            end_time = time.time()
+            processing_time = end_time - start_time
+            new_interval = int(processing_time) + 5
+            streaming_capture.update_capture_interval(new_interval)
 
-        end_time = time.time()
+            # Log the detection results
+            logger.info(f"{site} - {stream_name}")
+            logger.info(f"Detection time: {detection_time}")
+            logger.info(f"Processing time: {processing_time:.2f} seconds")
 
-        # Calculate the processing time
-        processing_time = end_time - start_time
+            # Clear variables to free up memory
+            del datas, frame, timestamp, detection_time
+            del frame_with_detections, buffer, frame_bytes
+            gc.collect()
 
-        # Update the capture interval based on the processing time
-        new_interval = int(processing_time) + 5
-        streaming_capture.update_capture_interval(new_interval)
-
-        # Log the processing time
-        logger.info(f"Processing time: {processing_time:.2f} seconds")
-
-        # Clear variables to free up memory
-        del datas, frame, timestamp, detection_time
-        del frame_with_detections, buffer, frame_bytes
+        # Release resources after processing
+        await streaming_capture.release_resources()
         gc.collect()
 
-    # Release resources after processing
-    streaming_capture.release_resources()
-    gc.collect()
+    async def process_streams(self, config: AppConfig) -> None:
+        """
+        Process a video stream based on the given configuration.
 
+        Args:
+            config (StreamConfig): The configuration for the stream processing.
 
-def process_streams(config: StreamConfig) -> None:
-    """
-    Process a video stream based on the given configuration.
-
-    Args:
-        config (StreamConfig): The configuration for the stream processing.
-
-    Returns:
-        None
-    """
-    # Load the logger configuration
-    logger_config = LoggerConfig()
-
-    # Initialise the logger
-    logger = logger_config.get_logger()
-
-    try:
-        # Check if 'notifications' field exists (new format)
-        if 'notifications' in config and config['notifications'] is not None:
-            notifications = config['notifications']
-        # Otherwise, handle the old format
-        elif 'line_token' in config and 'language' in config:
-            line_token = config.get('line_token')
-            language = config.get('language')
-            if line_token is not None and language is not None:
-                notifications = {line_token: language}
+        Returns:
+            None
+        """
+        try:
+            # Check if 'notifications' field exists (new format)
+            if (
+                'notifications' in config and
+                config['notifications'] is not None
+            ):
+                notifications = config['notifications']
+            # Otherwise, handle the old format
+            elif 'line_token' in config and 'language' in config:
+                line_token = config.get('line_token')
+                language = config.get('language')
+                if line_token is not None and language is not None:
+                    notifications = {line_token: language}
+                else:
+                    notifications = None
             else:
                 notifications = None
-        else:
-            notifications = None
 
-        # Continue processing the remaining configuration
-        video_url = config.get('video_url', '')
-        model_key = config.get('model_key', 'yolo11n')
-        site = config.get('site')
-        stream_name = config.get('stream_name', 'prediction_visual')
-        detect_with_server = config.get('detect_with_server', False)
-
-        # Run hazard detection on a single video stream
-        process_single_stream(
-            logger,
-            video_url=video_url,
-            model_key=model_key,
-            site=site,
-            stream_name=stream_name,
-            notifications=notifications,
-            detect_with_server=detect_with_server,
-        )
-    finally:
-        if not is_windows:
+            # Continue processing the remaining configuration
+            video_url = config.get('video_url', '')
+            model_key = config.get('model_key', 'yolo11n')
             site = config.get('site')
             stream_name = config.get('stream_name', 'prediction_visual')
-            key = f"{site}_{stream_name}"
-            redis_manager.delete(key)
-            logger.info(f"Deleted Redis key: {key}")
+            detect_with_server = config.get('detect_with_server', False)
+
+            # Run hazard detection on a single video stream
+            await self.process_single_stream(
+                self.logger,
+                video_url=video_url,
+                model_key=model_key,
+                site=site,
+                stream_name=stream_name,
+                notifications=notifications,
+                detect_with_server=detect_with_server,
+            )
+        finally:
+            if not is_windows:
+                site = config.get('site')
+                stream_name = config.get('stream_name', 'prediction_visual')
+                key = f"{site}_{stream_name}"
+                await redis_manager.delete(key)
+                self.logger.info(f"Deleted Redis key: {key}")
+
+    def start_process(self, config: AppConfig) -> Process:
+        """
+        Start a new process for processing a video stream.
+
+        Args:
+            config (StreamConfig): The configuration for the stream processing.
+
+        Returns:
+            Process: The newly started process.
+        """
+        p = Process(target=lambda: asyncio.run(self.process_streams(config)))
+        p.start()
+        return p
+
+    def stop_process(self, process: Process) -> None:
+        """
+        Stop a running process.
+
+        Args:
+            process (Process): The process to be terminated.
+
+        Returns:
+            None
+        """
+        process.terminate()
+        process.join()
 
 
-def start_process(config: StreamConfig) -> Process:
-    """
-    Start a new process for processing a video stream.
-
-    Args:
-        config (StreamConfig): The configuration for the stream processing.
-
-    Returns:
-        Process: The newly started process.
-    """
-    p = Process(target=process_streams, args=(config,))
-    p.start()
-    return p
-
-
-def stop_process(process: Process) -> None:
-    """
-    Stop a running process.
-
-    Args:
-        process (Process): The process to be terminated.
-
-    Returns:
-        None
-    """
-    process.terminate()
-    process.join()
-
-
-def process_single_image(
+async def process_single_image(
     image_path: str,
     model_key: str = 'yolo11n',
     output_folder: str = 'output_images',
@@ -496,6 +547,16 @@ def process_single_image(
 ) -> None:
     """
     Process a single image for hazard detection and save the result.
+
+    Args:
+        image_path (str): The path to the image file.
+        model_key (str): The model key to use for detection.
+        output_folder (str): The folder to save the output image.
+        stream_name (str): The name of the output image file.
+        language (str): The language for labels on the output image.
+
+    Returns:
+        None
     """
     try:
         # Check if the image path exists
@@ -521,7 +582,7 @@ def process_single_image(
         drawing_manager = DrawingManager()
 
         # Detect hazards in the image
-        detections, _ = live_stream_detector.generate_detections(image)
+        detections, _ = await live_stream_detector.generate_detections(image)
 
         # For this example, no polygons are needed, so pass an empty list
         frame_with_detections = drawing_manager.draw_detections_on_frame(
@@ -547,7 +608,7 @@ def process_single_image(
         print(f"Error processing the image: {str(e)}")
 
 
-if __name__ == '__main__':
+async def main():
     parser = argparse.ArgumentParser(
         description=(
             'Run hazard detection on multiple video streams or a single image.'
@@ -586,7 +647,7 @@ if __name__ == '__main__':
 
     # If an image path is provided, process the single image
     if args.image:
-        process_single_image(
+        await process_single_image(
             image_path=args.image,
             model_key=args.model_key,
             output_folder=args.output_folder,
@@ -594,4 +655,9 @@ if __name__ == '__main__':
         )
     else:
         # Otherwise, run hazard detection on multiple video streams
-        run_multiple_streams(args.config)
+        app = MainApp(args.config)
+        await app.run_multiple_streams()
+
+
+if __name__ == '__main__':
+    anyio.run(main)

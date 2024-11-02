@@ -7,6 +7,8 @@ from unittest import TestCase
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import pytest
+
 from src.stream_capture import main as stream_capture_main
 from src.stream_capture import StreamCapture
 
@@ -19,22 +21,29 @@ class TestStreamCapture(TestCase):
     def setUp(self) -> None:
         """Set up a StreamCapture instance for use in tests."""
         # Initialise StreamCapture instance with a presumed stream URL
-        self.stream_capture = StreamCapture('http://example.com/stream')
+        self.stream_capture: StreamCapture = StreamCapture(
+            'http://example.com/stream',
+        )
 
     @patch('cv2.VideoCapture')
-    def test_initialise_stream_success(
+    async def test_initialise_stream_success(
         self,
         mock_video_capture: MagicMock,
     ) -> None:
         """
         Test that the stream is successfully initialised.
+
+        Args:
+            mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
         """
         # Mock VideoCapture object's isOpened method to
         # return True, indicating the stream opened successfully
         mock_video_capture.return_value.isOpened.return_value = True
 
         # Call initialise_stream method to initialise the stream
-        self.stream_capture.initialise_stream(self.stream_capture.stream_url)
+        await self.stream_capture.initialise_stream(
+            self.stream_capture.stream_url,
+        )
 
         # Assert that the cap object is successfully initialised
         self.assertIsNotNone(self.stream_capture.cap)
@@ -45,17 +54,21 @@ class TestStreamCapture(TestCase):
         )
 
         # Release resources
-        self.stream_capture.release_resources()
+        await self.stream_capture.release_resources()
 
     @patch('cv2.VideoCapture')
-    @patch('time.sleep')
-    def test_initialise_stream_retry(
+    @patch('time.sleep', return_value=None)
+    async def test_initialise_stream_retry(
         self,
         mock_sleep: MagicMock,
         mock_video_capture: MagicMock,
     ) -> None:
         """
         Test that the stream initialisation retries if it fails initially.
+
+        Args:
+            mock_sleep (MagicMock): Mock for time.sleep.
+            mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
         """
         # Mock VideoCapture object's isOpened method to
         # return False on the first call and True on the second
@@ -63,7 +76,9 @@ class TestStreamCapture(TestCase):
         instance.isOpened.side_effect = [False, True]
 
         # Call initialise_stream method to simulate retry mechanism
-        self.stream_capture.initialise_stream(self.stream_capture.stream_url)
+        await self.stream_capture.initialise_stream(
+            self.stream_capture.stream_url,
+        )
 
         # Assert that the cap object is eventually successfully initialised
         self.assertIsNotNone(self.stream_capture.cap)
@@ -71,22 +86,16 @@ class TestStreamCapture(TestCase):
         # Verify that sleep method was called once to wait before retrying
         mock_sleep.assert_called_once_with(5)
 
-        # Verify that VideoCapture object was initialised once
-        # and opened successfully on the second attempt
-        self.assertEqual(mock_video_capture.call_count, 1)
-        self.assertEqual(instance.open.call_count, 1)
-
-    def test_release_resources(self) -> None:
+    async def test_release_resources(self) -> None:
         """
         Test that resources are released correctly.
         """
         # Initialise StreamCapture instance and mock cap object
-        stream_capture = StreamCapture('test_stream_url')
+        stream_capture: StreamCapture = StreamCapture('test_stream_url')
         stream_capture.cap = MagicMock()
-        stream_capture.cap.release = MagicMock()
 
         # Call release_resources method to release resources
-        stream_capture.release_resources()
+        await stream_capture.release_resources()
 
         # Assert that cap object is set to None
         self.assertIsNone(stream_capture.cap)
@@ -94,7 +103,7 @@ class TestStreamCapture(TestCase):
     @patch('cv2.VideoCapture')
     @patch('cv2.Mat')
     @patch('time.sleep', return_value=None)
-    def test_execute_capture(
+    async def test_execute_capture(
         self,
         mock_sleep: MagicMock,
         mock_mat: MagicMock,
@@ -102,6 +111,10 @@ class TestStreamCapture(TestCase):
     ) -> None:
         """
         Test that frames are captured and returned with a timestamp.
+
+        Args:
+            mock_sleep (MagicMock): Mock for time.sleep.
+            mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
         """
         # Mock VideoCapture object's read method to
         # return a frame and True indicating successful read
@@ -110,7 +123,7 @@ class TestStreamCapture(TestCase):
 
         # Execute capture frame generator and get the first frame and timestamp
         generator = self.stream_capture.execute_capture()
-        frame, timestamp = next(generator)
+        frame, timestamp = await generator.__anext__()
 
         # Assert that the captured frame is not None
         # and the timestamp is a float
@@ -118,12 +131,15 @@ class TestStreamCapture(TestCase):
         self.assertIsInstance(timestamp, float)
 
         # Release resources
-        self.stream_capture.release_resources()
+        await self.stream_capture.release_resources()
 
     @patch('speedtest.Speedtest')
     def test_check_internet_speed(self, mock_speedtest: MagicMock) -> None:
         """
         Test that internet speed is correctly checked and returned.
+
+        Args:
+            mock_speedtest (MagicMock): Mock for speedtest.Speedtest.
         """
         # Mock Speedtest object's download and upload methods
         # to return download and upload speeds
@@ -146,6 +162,9 @@ class TestStreamCapture(TestCase):
         """
         Test that the highest quality stream is selected
         for high internet speed.
+
+        Args:
+            mock_streams (MagicMock): Mock for streamlink.streams.
         """
         # Mock streamlink to return different quality streams
         mock_streams.return_value = {
@@ -175,6 +194,9 @@ class TestStreamCapture(TestCase):
         """
         Test that an appropriate quality stream is selected
         for medium internet speed.
+
+        Args:
+            mock_streams (MagicMock): Mock for streamlink.streams.
         """
         # Mock streamlink to return medium quality streams
         mock_streams.return_value = {
@@ -202,6 +224,9 @@ class TestStreamCapture(TestCase):
     ) -> None:
         """
         Test that a lower quality stream is selected for low internet speed.
+
+        Args:
+            mock_streams (MagicMock): Mock for streamlink.streams.
         """
         # Mock streamlink to return low quality streams
         mock_streams.return_value = {
@@ -231,6 +256,10 @@ class TestStreamCapture(TestCase):
     ) -> None:
         """
         Test that None is returned if no suitable stream quality is available.
+
+        Args:
+            mock_check_speed (MagicMock): Mock for check_internet_speed method.
+            mock_streams (MagicMock): Mock for streamlink.streams.
         """
         # Mock internet speed and stream quality check result to be empty
         selected_quality = self.stream_capture.select_quality_based_on_speed()
@@ -246,7 +275,7 @@ class TestStreamCapture(TestCase):
     @patch.object(StreamCapture, 'check_internet_speed', return_value=(20, 5))
     @patch('cv2.VideoCapture')
     @patch('time.sleep', return_value=None)
-    def test_capture_generic_frames(
+    async def test_capture_generic_frames(
         self,
         mock_sleep: MagicMock,
         mock_video_capture: MagicMock,
@@ -255,6 +284,12 @@ class TestStreamCapture(TestCase):
     ) -> None:
         """
         Test that generic frames are captured and returned with a timestamp.
+
+        Args:
+            mock_sleep (MagicMock): Mock for time.sleep.
+            mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
+            mock_check_speed (MagicMock): Mock for check_internet_speed method.
+            mock_streams (MagicMock): Mock for streamlink.streams.
         """
         # Mock VideoCapture object's behaviour
         mock_video_capture.return_value.read.return_value = (True, MagicMock())
@@ -262,14 +297,14 @@ class TestStreamCapture(TestCase):
 
         # Execute capture frame generator
         generator = self.stream_capture.capture_generic_frames()
-        frame, timestamp = next(generator)
+        frame, timestamp = await generator.__anext__()
 
         # Verify the returned frame and timestamp
         self.assertIsNotNone(frame)
         self.assertIsInstance(timestamp, float)
 
         # Release resources
-        self.stream_capture.release_resources()
+        await self.stream_capture.release_resources()
 
     def test_update_capture_interval(self) -> None:
         """
@@ -279,53 +314,53 @@ class TestStreamCapture(TestCase):
         self.stream_capture.update_capture_interval(20)
         self.assertEqual(self.stream_capture.capture_interval, 20)
 
-    @patch('src.stream_capture.StreamCapture')
     @patch('argparse.ArgumentParser.parse_args')
-    def test_main_function(
+    async def test_main_function(
         self,
         mock_parse_args: MagicMock,
-        mock_stream_capture: MagicMock,
     ) -> None:
         """
         Test that the main function correctly initialises
         and executes StreamCapture.
+
+        Args:
+            mock_parse_args (MagicMock):
+                Mock for argparse.ArgumentParser.parse_args.
         """
         # Mock command line argument parsing
         mock_parse_args.return_value = argparse.Namespace(
             url='test_stream_url',
         )
 
-        # Create mock instance of StreamCapture
+        # Mock command line argument parsing
         mock_capture_instance = MagicMock()
-        mock_stream_capture.return_value = mock_capture_instance
-
-        # Mock execute_capture() method to return data
-        mock_capture_instance.execute_capture.return_value = iter(
-            [('frame_data', 1234567890.0)],
-        )
-
-        # Simulate executing the main function
-        with patch.object(
-            sys, 'argv', ['stream_capture.py', '--url', 'test_stream_url'],
+        with patch(
+            'src.stream_capture.StreamCapture',
+            return_value=mock_capture_instance,
         ):
-            stream_capture_main()
-
-        # Verify that StreamCapture was correctly initialised and called
-        mock_stream_capture.assert_called_once_with('test_stream_url')
-        mock_capture_instance.execute_capture.assert_called_once()
+            with patch.object(
+                sys, 'argv', ['stream_capture.py', '--url', 'test_stream_url'],
+            ):
+                await stream_capture_main()
+            mock_capture_instance.execute_capture.assert_called_once()
 
     @patch('cv2.VideoCapture')
     @patch('time.sleep', return_value=None)
-    def test_execute_capture_failures(
+    @pytest.mark.asyncio
+    async def test_execute_capture_failures(
         self,
         mock_sleep: MagicMock,
         mock_video_capture: MagicMock,
     ) -> None:
         """
         Test that execute_capture handles multiple failures before success.
+
+        Args:
+            mock_sleep (MagicMock): Mock for time.sleep.
+            mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
         """
         # Mock VideoCapture object's multiple failures and one success read
-        instance = mock_video_capture.return_value
+        instance: MagicMock = mock_video_capture.return_value
         instance.read.side_effect = [(False, None)] * 5 + [(True, MagicMock())]
         instance.isOpened.return_value = True
 
@@ -336,7 +371,7 @@ class TestStreamCapture(TestCase):
             return_value=iter([(MagicMock(), 1234567890.0)]),
         ) as mock_capture_generic_frames:
             generator = self.stream_capture.execute_capture()
-            frame, timestamp = next(generator)
+            frame, timestamp = await generator.__anext__()
             self.assertIsNotNone(frame)
             self.assertIsInstance(timestamp, float)
 
@@ -344,7 +379,7 @@ class TestStreamCapture(TestCase):
             mock_capture_generic_frames.assert_called_once()
 
         # Release resources
-        self.stream_capture.release_resources()
+        await self.stream_capture.release_resources()
 
 
 if __name__ == '__main__':

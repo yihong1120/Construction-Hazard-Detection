@@ -8,18 +8,17 @@ import time
 from pathlib import Path
 from typing import TypedDict
 
+import aiohttp
+import anyio
 import cv2
 import numpy as np
-import requests
 from dotenv import load_dotenv
-from requests.adapters import HTTPAdapter
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 from tenacity import retry
 from tenacity import retry_if_exception_type
 from tenacity import stop_after_attempt
 from tenacity import wait_fixed
-from urllib3.util import Retry
 
 load_dotenv()
 
@@ -60,82 +59,44 @@ class LiveStreamDetector:
             model_key (str): The model key for detection.
             output_folder (Optional[str]): Folder for detected frames.
         """
-        self.api_url = api_url
-        self.model_key = model_key
-        self.output_folder = output_folder
-        self.session = self.requests_retry_session()
-        self.detect_with_server = detect_with_server
-        self.model = None
-        self.access_token = None
-        self.token_expiry = 0.0
-
-    def requests_retry_session(
-        self,
-        retries: int = 7,
-        backoff_factor: int = 1,
-        status_forcelist: tuple[int, ...] = (500, 502, 504, 401, 104),
-        session: requests.Session | None = None,
-        allowed_methods: frozenset = frozenset(
-            ['HEAD', 'GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'TRACE'],
-        ),
-    ) -> requests.Session:
-        """
-        Configures a requests session with retry logic.
-
-        Args:
-            retries (int): The number of retry attempts.
-            backoff_factor (int): The backoff factor for retries.
-            status_forcelist (Tuple[int]): List of HTTP status codes for retry.
-            session (Optional[requests.Session]): An optional requests session.
-            allowed_methods (frozenset): The set of allowed HTTP methods.
-
-        Returns:
-            requests.Session: The configured requests requests session.
-        """
-        session = session or requests.Session()
-        retry = Retry(
-            total=retries,
-            read=retries,
-            connect=retries,
-            backoff_factor=backoff_factor,
-            status_forcelist=status_forcelist,
-            allowed_methods=allowed_methods,
-            raise_on_status=False,
+        self.api_url: str = (
+            api_url if api_url.startswith('http') else f"http://{api_url}"
         )
-        adapter = HTTPAdapter(max_retries=retry)
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
-        return session
+        self.model_key: str = model_key
+        self.output_folder: str | None = output_folder
+        self.detect_with_server: bool = detect_with_server
+        self.model: AutoDetectionModel | None = None
+        self.access_token: str | None = None
+        self.token_expiry: float = 0
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(2),
-        retry=retry_if_exception_type(requests.RequestException),
+        retry=retry_if_exception_type(aiohttp.ClientError),
     )
-    def authenticate(self) -> None:
+    async def authenticate(self) -> None:
         """
         Authenticates with the API and retrieves the access token.
         """
-        response = self.session.post(
-            f"{self.api_url}/token",
-            json={
-                'username': os.getenv(
-                    'API_USERNAME',
-                ),
-                'password': os.getenv('API_PASSWORD'),
-            },
-        )
-        response.raise_for_status()
-        token_data = response.json()
-        if 'msg' in token_data:
-            raise Exception(token_data['msg'])
-        elif 'access_token' in token_data:
-            self.access_token = token_data['access_token']
-        else:
-            raise Exception(
-                "Token data does not contain 'msg' or 'access_token'",
-            )
-        self.token_expiry = time.time() + 850
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.api_url}/token",
+                json={
+                    'username': os.getenv('API_USERNAME'),
+                    'password': os.getenv('API_PASSWORD'),
+                },
+            ) as response:
+                response.raise_for_status()
+                token_data = await response.json()
+                if 'msg' in token_data:
+                    raise Exception(token_data['msg'])
+                elif 'access_token' in token_data:
+                    self.access_token = token_data['access_token']
+                else:
+                    raise Exception(
+                        "Token data does not contain 'msg' or 'access_token'",
+                    )
+                self.token_expiry = time.time() + 850
 
     def token_expired(self) -> bool:
         """
@@ -146,19 +107,19 @@ class LiveStreamDetector:
         """
         return time.time() >= self.token_expiry
 
-    def ensure_authenticated(self) -> None:
+    async def ensure_authenticated(self) -> None:
         """
         Ensures that the access token is valid and not expired.
         """
         if self.access_token is None or self.token_expired():
-            self.authenticate()
+            await self.authenticate()
 
     @retry(
         stop=stop_after_attempt(2),
         wait=wait_fixed(3),
-        retry=retry_if_exception_type(requests.RequestException),
+        retry=retry_if_exception_type(aiohttp.ClientError),
     )
-    def generate_detections_cloud(
+    async def generate_detections_cloud(
         self,
         frame: np.ndarray,
     ) -> list[list[float]]:
@@ -171,7 +132,7 @@ class LiveStreamDetector:
         Returns:
             List[List[float]]: The detection data.
         """
-        self.ensure_authenticated()
+        await self.ensure_authenticated()
 
         _, frame_encoded = cv2.imencode('.png', frame)
         frame_encoded_bytes = frame_encoded.tobytes()
@@ -179,18 +140,24 @@ class LiveStreamDetector:
         filename = f"frame_{timestamp}.png"
 
         headers = {'Authorization': f"Bearer {self.access_token}"}
-        files = {'image': (filename, frame_encoded_bytes, 'image/png')}
-        response = self.session.post(
-            f"{self.api_url}/detect",
-            files=files,
-            params={'model': self.model_key},
-            headers=headers,
+        data = aiohttp.FormData()
+        data.add_field(
+            'image', frame_encoded_bytes,
+            filename=filename, content_type='image/png',
         )
-        response.raise_for_status()
-        detections = response.json()
-        return detections
 
-    def generate_detections_local(
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.api_url}/detect",
+                data=data,
+                params={'model': self.model_key},
+                headers=headers,
+            ) as response:
+                response.raise_for_status()
+                detections = await response.json()
+                return detections
+
+    async def generate_detections_local(
         self,
         frame: np.ndarray,
     ) -> list[list[float]]:
@@ -391,7 +358,7 @@ class LiveStreamDetector:
 
         return datas
 
-    def generate_detections(
+    async def generate_detections(
         self, frame: np.ndarray,
     ) -> tuple[list[list[float]], np.ndarray]:
         """
@@ -405,13 +372,12 @@ class LiveStreamDetector:
                 Detections and original frame.
         """
         if self.detect_with_server:
-            datas = self.generate_detections_cloud(frame)
+            datas = await self.generate_detections_cloud(frame)
         else:
-            datas = self.generate_detections_local(frame)
-
+            datas = await self.generate_detections_local(frame)
         return datas, frame
 
-    def run_detection(self, stream_url: str) -> None:
+    async def run_detection(self, stream_url: str) -> None:
         """
         Runs detection on the live stream.
 
@@ -430,6 +396,9 @@ class LiveStreamDetector:
                     continue
 
                 # Perform detection
+                datas, frame = await self.generate_detections(frame)
+                print(datas)  # You can replace this with actual processing
+
                 cv2.imshow('Frame', frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
@@ -438,7 +407,7 @@ class LiveStreamDetector:
             cv2.destroyAllWindows()
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(
         description='Perform live stream detection and tracking using YOLO.',
     )
@@ -478,8 +447,8 @@ def main():
         output_folder=args.output_folder,
         detect_with_server=args.detect_with_server,
     )
-    detector.run_detection(args.url)
+    await detector.run_detection(args.url)
 
 
 if __name__ == '__main__':
-    main()
+    anyio.run(main)

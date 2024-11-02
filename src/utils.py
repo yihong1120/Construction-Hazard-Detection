@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime
 
-from redis import Redis
+import redis.asyncio as redis
 from watchdog.events import FileSystemEventHandler
 
 
 class Utils:
+    """
+    A class to provide utility functions.
+    """
+
     @staticmethod
     def is_expired(expire_date_str: str | None) -> bool:
         """
@@ -28,6 +33,10 @@ class Utils:
 
 
 class FileEventHandler(FileSystemEventHandler):
+    """
+    A class to handle file events.
+    """
+
     def __init__(self, file_path: str, callback):
         """
         Initialises the FileEventHandler instance.
@@ -47,27 +56,32 @@ class FileEventHandler(FileSystemEventHandler):
             event (FileSystemEvent): The event object.
         """
         if event.src_path == self.file_path:
-            self.callback()
+            # Run the callback function
+            asyncio.run(self.callback())
 
 
 class RedisManager:
+    """
+    A class to manage Redis operations.
+    """
+
     def __init__(self):
         """
         Initialise the RedisManager by connecting to Redis.
         """
         self.redis_host: str = os.getenv('redis_host', 'localhost')
-        self.redis_port: int = int(os.getenv('redis_port', '6379'))
-        self.redis_password: str | None = os.getenv('redis_password', None)
+        self.redis_port: int = int(os.getenv('redis_port', 6379))
+        self.redis_password: str | None = os.getenv('redis_password')
 
-        # Set decode_responses=False to allow bytes storage
-        self.redis: Redis = Redis(
+        # Create Redis connection
+        self.redis = redis.Redis(
             host=self.redis_host,
             port=self.redis_port,
             password=self.redis_password,
             decode_responses=False,
         )
 
-    def set(self, key: str, value: bytes) -> None:
+    async def set(self, key: str, value: bytes) -> None:
         """
         Set a key-value pair in Redis.
 
@@ -76,11 +90,11 @@ class RedisManager:
             value (bytes): The value to store (in bytes).
         """
         try:
-            self.redis.set(key, value)
+            await self.redis.set(key, value)
         except Exception as e:
             logging.error(f"Error setting Redis key {key}: {str(e)}")
 
-    def get(self, key: str) -> bytes | None:
+    async def get(self, key: str) -> bytes | None:
         """
         Retrieve a value from Redis based on the key.
 
@@ -91,12 +105,12 @@ class RedisManager:
             bytes | None: The value if found, None otherwise.
         """
         try:
-            return self.redis.get(key)
+            return await self.redis.get(key)
         except Exception as e:
             logging.error(f"Error retrieving Redis key {key}: {str(e)}")
             return None
 
-    def delete(self, key: str) -> None:
+    async def delete(self, key: str) -> None:
         """
         Delete a key from Redis.
 
@@ -104,6 +118,65 @@ class RedisManager:
             key (str): The key to delete from Redis.
         """
         try:
-            self.redis.delete(key)
+            await self.redis.delete(key)
         except Exception as e:
             logging.error(f"Error deleting Redis key {key}: {str(e)}")
+
+    async def add_to_stream(
+        self,
+        stream_name: str,
+        data: dict,
+        maxlen: int = 10,
+    ) -> None:
+        """
+        Add data to a Redis stream with a maximum length.
+
+        Args:
+            stream_name (str): The name of the Redis stream.
+            data (dict): The data to add to the stream.
+            maxlen (int): The maximum length of the stream.
+        """
+        try:
+            await self.redis.xadd(stream_name, data, maxlen=maxlen)
+        except Exception as e:
+            logging.error(
+                f"Error adding to Redis stream {stream_name}: {str(e)}",
+            )
+
+    async def read_from_stream(
+        self,
+        stream_name: str,
+        last_id: str = '0',
+    ) -> list:
+        """
+        Read data from a Redis stream.
+
+        Args:
+            stream_name (str): The name of the Redis stream.
+            last_id (str): The ID of the last read message.
+
+        Returns:
+            list: A list of messages from the stream.
+        """
+        try:
+            return await self.redis.xread({stream_name: last_id})
+        except Exception as e:
+            logging.error(
+                f"Error reading from Redis stream {stream_name}: {str(e)}",
+            )
+            return []
+
+    async def delete_stream(self, stream_name: str) -> None:
+        """
+        Delete a Redis stream.
+
+        Args:
+            stream_name (str): The name of the Redis stream to delete.
+        """
+        try:
+            await self.redis.delete(stream_name)
+            logging.info(f"Deleted Redis stream: {stream_name}")
+        except Exception as e:
+            logging.error(
+                f"Error deleting Redis stream {stream_name}: {str(e)}",
+            )

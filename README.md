@@ -316,8 +316,6 @@ We welcome contributions to this project. Please follow these steps:
 
 - Add support for WhatsApp notifications,
 - Switch from Flask to Fastapi in server_api and streaming_web
-- Refactor main.py
-
 
 ## License
 

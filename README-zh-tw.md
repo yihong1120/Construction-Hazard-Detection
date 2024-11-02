@@ -308,7 +308,6 @@
 
 - 新增對 WhatsApp 通知的支援，
 - 在 server_api 和 streaming_web 中從 Flask 切換到 Fastapi
-- 重構 main.py
 
 ## 授權
 此項目根據 [AGPL-3.0](LICENSE.md) 授權。

@@ -18,20 +18,25 @@ class DrawingManager:
     """
 
     # Class variable for caching default font
-    default_font: ImageFont.ImageFont | None = None
+    default_font: ImageFont.FreeTypeFont | ImageFont.ImageFont | None = None
 
     def __init__(self) -> None:
         """
         Initialise the DrawingManager class.
         """
         # Font cache to avoid repeated loading
-        self.font_cache: dict[str, ImageFont.ImageFont] = {}
+        self.font_cache: dict[
+            str, ImageFont.FreeTypeFont |
+            ImageFont.ImageFont,
+        ] = {}
 
         # Load default font if not already loaded
         if DrawingManager.default_font is None:
             DrawingManager.default_font = ImageFont.load_default()
 
-    def get_font(self, language: str) -> ImageFont.ImageFont:
+    def get_font(
+        self, language: str,
+    ) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         """
         Load the appropriate font based on the language input, with caching.
 
@@ -39,7 +44,8 @@ class DrawingManager:
             language (str): The language to use for the font.
 
         Returns:
-            ImageFont.ImageFont: The loaded font object.
+            ImageFont.FreeTypeFont | ImageFont.ImageFont:
+            The loaded font object.
         """
         # Select font path based on language
         if language == 'th':
