@@ -23,8 +23,8 @@
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
    </a>
-   <a href="https://flask.palletsprojects.com/en/3.0.x/">
-      <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
+   <a href="https://fastapi.tiangolo.com/">
+      <img src="https://img.shields.io/badge/fastapi-0.115.4-blue?logo=fastapi" alt="FastAPI 0.115.4">
    </a>
    <a href="https://github.com/pre-commit/pre-commit">
       <img src="https://img.shields.io/badge/pre--commit-4.0.1-blue?logo=pre-commit" alt="Pre-commit 4.0.1">

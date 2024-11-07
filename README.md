@@ -23,8 +23,8 @@
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
    </a>
-   <a href="https://flask.palletsprojects.com/en/3.0.x/">
-      <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
+   <a href="https://fastapi.tiangolo.com/">
+      <img src="https://img.shields.io/badge/fastapi-0.115.4-blue?logo=fastapi" alt="FastAPI 0.115.4">
    </a>
    <a href="https://github.com/pre-commit/pre-commit">
       <img src="https://img.shields.io/badge/pre--commit-4.0.1-blue?logo=pre-commit" alt="Pre-commit 4.0.1">
@@ -227,7 +227,7 @@ Now, you could launch the hazard-detection system in Docker or Python env:
 
    6. Run object detection API:
       ```bash
-      gunicorn -w 1 -b 0.0.0.0:8001 "examples.YOLO_server_api.app:app"
+      uvicorn examples.YOLO_server.app:sio_app --host 0.0.0.0 --port 8001
       ```
 
    7. Run the main application with a specific configuration file:
@@ -240,7 +240,7 @@ Now, you could launch the hazard-detection system in Docker or Python env:
 
       For linux users:
       ```bash
-      gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.streaming_web.app:streaming-web-app"
+      uvicorn examples.streaming_web.app:sio_app --host 0.0.0.0 --port 8002
       ```
 
       For windows users:
