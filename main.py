@@ -263,8 +263,15 @@ class MainApp:
         # Initialise the DangerDetector
         danger_detector = DangerDetector()
 
-        # Init last_notification_time to 300s ago, no microseconds
-        last_notification_time = int(time.time()) - 300
+        # Dictionary to store last notification time for each language
+        if notifications is None:
+            notifications = {}
+
+        last_notification_times = {
+            line_token: int(
+                time.time(),
+            ) - 300 for line_token in notifications
+        }
 
         # Use the generator function to process detections
         async for frame, timestamp in streaming_capture.execute_capture():
@@ -310,7 +317,7 @@ class MainApp:
                 for line_token, language in notifications.items():
                     # Check if notification should be skipped
                     # (sent within last 300 seconds)
-                    if (timestamp - last_notification_time) < 300:
+                    if (timestamp - last_notification_times[line_token]) < 300:
                         # Store the last token and language,
                         # but don't send notifications
                         last_line_token = line_token
@@ -387,7 +394,7 @@ class MainApp:
                         logger.info(
                             f"Notification sent successfully: {message}",
                         )
-                        last_notification_time = int(timestamp)
+                        last_notification_times[line_token] = int(timestamp)
                     else:
                         logger.error(f"Failed to send notification: {message}")
 
@@ -438,10 +445,8 @@ class MainApp:
                     logger.error(f"Failed to store frame in Redis: {e}")
 
             # Update the capture interval based on processing time
-            end_time = time.time()
-            processing_time = end_time - start_time
-            new_interval = int(processing_time) + 5
-            streaming_capture.update_capture_interval(new_interval)
+            processing_time = time.time() - start_time
+            streaming_capture.update_capture_interval(int(processing_time) + 1)
 
             # Log the detection results
             logger.info(f"{site} - {stream_name}")
