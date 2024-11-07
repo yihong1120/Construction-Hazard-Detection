@@ -122,7 +122,7 @@ class MainApp:
                 stream_name = config_data['config'].get(
                     'stream_name', 'prediction_visual',
                 )
-                key_to_delete = f"{site}_{stream_name}"
+                key_to_delete = f"stream_frame:{site}_{stream_name}"
 
                 # Stop the process if the configuration is removed
                 if not config or Utils.is_expired(config.get('expire_date')):
@@ -434,7 +434,7 @@ class MainApp:
             if not is_windows:
                 try:
                     # Use a unique key for each thread or process
-                    key = f"{site}_{stream_name}"
+                    key = f"stream_frame:{site}_{stream_name}"
 
                     # Store the frame in Redis Stream
                     # with a maximum length of 10
@@ -454,8 +454,6 @@ class MainApp:
             logger.info(f"Processing time: {processing_time:.2f} seconds")
 
             # Clear variables to free up memory
-            del datas, frame, timestamp, detection_time
-            del frame_with_detections, buffer, frame_bytes
             gc.collect()
 
         # Release resources after processing
@@ -511,7 +509,7 @@ class MainApp:
             if not is_windows:
                 site = config.get('site')
                 stream_name = config.get('stream_name', 'prediction_visual')
-                key = f"{site}_{stream_name}"
+                key = f"stream_frame:{site}_{stream_name}"
                 await redis_manager.delete(key)
                 self.logger.info(f"Deleted Redis key: {key}")
 
