@@ -2,56 +2,77 @@ from __future__ import annotations
 
 from typing import Any
 
-from flask_socketio import emit
-from flask_socketio import SocketIO
-
-from .utils import get_image_data
-from .utils import get_labels
+import socketio
 
 
-def register_sockets(socketio: SocketIO, r: Any) -> None:
-    @socketio.on('connect')
-    def handle_connect() -> None:
+def register_sockets(sio: socketio.AsyncServer, redis_manager: Any) -> None:
+    """
+    Registers Socket.IO event handlers
+    for connection, disconnection, and errors.
+
+    Args:
+        sio (socketio.AsyncServer): The Socket.IO server instance.
+        redis_manager (Any): The RedisManager instance for Redis operations.
+    """
+
+    @sio.event
+    async def connect(sid: str, environ: dict) -> None:
         """
-        Handle client connection to the WebSocket.
-        """
-        emit('message', {'data': 'Connected'})
-        socketio.start_background_task(update_images, socketio, r)
+        Handles new client connections by emitting a welcome message
+        and starting the background task for image updates.
 
-    @socketio.on('disconnect')
-    def handle_disconnect() -> None:
+        Args:
+            sid (str): The session ID of the connected client.
+            environ (dict): The environment dictionary for the connection.
         """
-        Handle client disconnection from the WebSocket.
+        await sio.emit('message', {'data': 'Connected'}, room=sid)
+        sio.start_background_task(update_images, sio, redis_manager)
+
+    @sio.event
+    async def disconnect(sid: str) -> None:
+        """
+        Handles client disconnections by logging the event.
+
+        Args:
+            sid (str): The session ID of the disconnected client.
         """
         print('Client disconnected')
 
-    @socketio.on('error')
-    def handle_error(e: Exception) -> None:
+    @sio.event
+    async def error(sid: str, e: Exception) -> None:
         """
-        Handle errors in WebSocket communication.
+        Handles errors by logging the exception details.
 
         Args:
-            e (Exception): The exception that occurred.
+            sid (str): The session ID of the client experiencing the error.
+            e (Exception): The exception raised during the event.
         """
         print(f"Error: {str(e)}")
 
 
-def update_images(socketio: SocketIO, r: Any) -> None:
+async def update_images(sio: socketio.AsyncServer, redis_manager: Any) -> None:
     """
-    Update images every 10 seconds by scanning Redis
-    and emitting updates to clients.
+    Background task to update images for all labels at a set interval. Emits
+    updated images to connected clients for each label.
 
     Args:
-        socketio (SocketIO): The SocketIO instance.
-        r (Any): The Redis connection.
+        sio (socketio.AsyncServer): The Socket.IO server instance.
+        redis_manager (Any): The RedisManager instance to interact with Redis.
     """
     while True:
         try:
-            socketio.sleep(10)
-            labels = get_labels(r)
+            # Waits for 1 seconds before updating images
+            await sio.sleep(1)
+
+            # Fetches all labels from Redis
+            labels = await redis_manager.get_labels()
+
             for label in labels:
-                image_data = get_image_data(r, label)
-                socketio.emit(
+                # Fetches image data for each label
+                image_data = await redis_manager.fetch_latest_frames(label)
+
+                # Emits updated image data to all clients
+                await sio.emit(
                     'update',
                     {
                         'label': label,
@@ -60,5 +81,6 @@ def update_images(socketio: SocketIO, r: Any) -> None:
                     },
                 )
         except Exception as e:
+            # Logs any exceptions that occur during the update process
             print(f"Error updating images: {str(e)}")
             break

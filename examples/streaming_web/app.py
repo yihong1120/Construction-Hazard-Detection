@@ -1,42 +1,73 @@
 from __future__ import annotations
 
-import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
-import redis
-from dotenv import load_dotenv
-from flask import Flask
-from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from flask_socketio import SocketIO
+import socketio
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi_limiter import FastAPILimiter
 
 from .routes import register_routes
 from .sockets import register_sockets
+from .utils import redis_manager
 
-load_dotenv()
 
-# Redis configuration
-redis_host: str = os.getenv('redis_host') or 'localhost'
-redis_port: int = int(os.getenv('redis_port') or 6379)
-redis_password: str | None = os.getenv('redis_password') or None
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    """
+    Initialises resources at startup and performs cleanup on shutdown.
 
-# Connect to Redis
-r = redis.StrictRedis(
-    host=redis_host,
-    port=redis_port,
-    password=redis_password,
-    decode_responses=False,
+    Args:
+        app (FastAPI): The FastAPI application instance.
+
+    Yields:
+        None
+    """
+    # Initialises rate limiter with the Redis client
+    await FastAPILimiter.init(redis_manager.client)
+    try:
+        yield
+    finally:
+        # Cleanup code: Closes the Redis connection after application shutdown
+        await redis_manager.client.close()
+        print('Redis connection closed.')
+
+
+# Create the FastAPI application with a lifespan manager for setup and cleanup
+app = FastAPI(lifespan=lifespan)
+
+# Add CORS middleware to allow cross-origin requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
-app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests from any domain
-# Allow all origins for WebSocket connections
-socketio = SocketIO(app, cors_allowed_origins='*')
-limiter = Limiter(key_func=get_remote_address)
+# Mount the static files directory to serve static assets
+app.mount(
+    '/static',
+    StaticFiles(directory='examples/streaming_web/static'),
+    name='static',
+)
 
+# Initialise Socket.IO server with ASGI support
+sio = socketio.AsyncServer(async_mode='asgi')
+sio_app = socketio.ASGIApp(sio, app)
 
-register_routes(app, limiter, r)
-register_sockets(socketio, r)
+# Register application routes and Socket.IO events
+register_routes(app)
+register_sockets(sio, redis_manager)
 
+# Run the application using Uvicorn ASGI server
 if __name__ == '__main__':
-    socketio.run(app, host='127.0.0.1', port=8000, debug=False)
+    import uvicorn
+    uvicorn.run(
+        'examples.streaming_web.app:sio_app',
+        host='127.0.0.1',
+        port=8000,
+        log_level='info',
+    )
