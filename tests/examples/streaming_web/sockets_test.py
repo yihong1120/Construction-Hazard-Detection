@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from unittest import TestCase
+import unittest
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-from flask import Flask
-from flask_socketio import SocketIO
+import socketio
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from examples.streaming_web.sockets import register_sockets
 from examples.streaming_web.sockets import update_images
 
 
-class TestSockets(TestCase):
+class TestSockets(unittest.IsolatedAsyncioTestCase):
     """
     Test suite for the streaming_web sockets.
     """
@@ -20,27 +21,33 @@ class TestSockets(TestCase):
         """
         Set up a SocketIO instance and mocks for Redis.
         """
-        self.app = Flask(__name__)
-        self.socketio = SocketIO(self.app)
+        self.app = FastAPI()
+        self.sio = socketio.AsyncServer(async_mode='asgi')
+        self.sio_app = socketio.ASGIApp(
+            self.sio, self.app, socketio_path='/socket.io',
+        )
+        self.client = TestClient(self.sio_app)
         self.redis_mock = MagicMock()
 
         # Register sockets to the SocketIO instance with mock Redis
-        with self.app.app_context():
-            register_sockets(self.socketio, self.redis_mock)
+        register_sockets(self.sio, self.redis_mock)
 
-    @patch('examples.streaming_web.sockets.emit')
+    @patch('examples.streaming_web.sockets.socketio.AsyncServer.emit')
     def test_handle_connect(self, mock_emit: MagicMock) -> None:
         """
         Test the 'connect' event handler to ensure a message is emitted.
         """
         # Trigger the connect event
-        client = self.socketio.test_client(
-            self.app,
-        )  # Simulates a client connection
-        client.get_received()
+        with self.client.websocket_connect('/socket.io') as websocket:
+            try:
+                websocket.receive_json()
+            except Exception as e:
+                print(f"WebSocket connection failed with error: {str(e)}")
 
         # Check if the message was emitted with correct data
-        mock_emit.assert_called_once_with('message', {'data': 'Connected'})
+        mock_emit.assert_called_once_with(
+            'message', {'data': 'Connected'}, room=unittest.mock.ANY,
+        )
 
     @patch('builtins.print')
     def test_handle_disconnect(self, mock_print: MagicMock) -> None:
@@ -49,8 +56,11 @@ class TestSockets(TestCase):
         ensure the correct message is printed.
         """
         # Simulate a client disconnection
-        client = self.socketio.test_client(self.app)
-        client.disconnect()
+        with self.client.websocket_connect('/socket.io') as websocket:
+            try:
+                websocket.close()
+            except Exception as e:
+                print(f"WebSocket disconnection failed with error: {str(e)}")
 
         # Check if 'Client disconnected' was printed
         mock_print.assert_called_once_with('Client disconnected')
@@ -64,8 +74,11 @@ class TestSockets(TestCase):
 
         # Trigger the error event by simulating
         # an error during socket communication
-        client = self.socketio.test_client(self.app)
-        client.emit('error', {'data': error_message})
+        with self.client.websocket_connect('/socket.io') as websocket:
+            try:
+                self.sio.emit('error', {'data': error_message}, room=websocket)
+            except Exception as e:
+                print(f"Error event failed with error: {str(e)}")
 
         # Check if the error message was printed
         mock_print.assert_called_once_with(
@@ -74,9 +87,9 @@ class TestSockets(TestCase):
 
     @patch('examples.streaming_web.sockets.get_labels')
     @patch('examples.streaming_web.sockets.get_image_data')
-    @patch('examples.streaming_web.sockets.SocketIO.emit')
-    @patch('examples.streaming_web.sockets.SocketIO.sleep')
-    def test_update_images(
+    @patch('examples.streaming_web.sockets.socketio.AsyncServer.emit')
+    @patch('examples.streaming_web.sockets.socketio.AsyncServer.sleep')
+    async def test_update_images(
         self, mock_sleep: MagicMock, mock_emit: MagicMock,
         mock_get_image_data: MagicMock, mock_get_labels: MagicMock,
     ) -> None:
@@ -97,7 +110,7 @@ class TestSockets(TestCase):
             side_effect=StopIteration,
         ):
             try:
-                update_images(self.socketio, self.redis_mock)
+                await update_images(self.sio, self.redis_mock)
             except StopIteration:
                 pass
 
@@ -127,6 +140,11 @@ class TestSockets(TestCase):
         """
         Clean up after each test.
         """
-        del self.socketio
+        del self.sio
         del self.redis_mock
         del self.app
+        del self.client
+
+
+if __name__ == '__main__':
+    unittest.main()
