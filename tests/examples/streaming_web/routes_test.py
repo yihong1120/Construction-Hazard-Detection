@@ -1,136 +1,125 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 from unittest.mock import patch
 
-from flask import Flask
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from fastapi_limiter import FastAPILimiter
+from fastapi_limiter.depends import RateLimiter
 
 from examples.streaming_web.routes import register_routes
 
 
-class TestRoutes(unittest.TestCase):
-    """
-    Test suite for the streaming_web routes.
-    """
-
-    @patch('redis.Redis')
-    def setUp(self, mock_redis) -> None:
+class TestRoutes(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
         """
         Set up the test environment before each test.
-
-        This method creates a Flask app, sets up rate limiting with Limiter
-        using a mocked Redis, registers the routes, and creates a test client.
         """
-        self.app = Flask(__name__)
+        self.app = FastAPI()
 
-        # Mock Redis instance
-        self.mock_redis_instance = mock_redis.return_value
-        self.mock_redis_instance.get.return_value = None  # Mock default return
+        # Mock Redis instance with AsyncMock
+        self.mock_redis_instance = AsyncMock()
+        self.mock_redis_instance.get.return_value = None
+        self.mock_redis_instance.script_load.return_value = 'mock_lua_sha'
 
-        # Use the mocked Redis instance in Limiter
-        self.limiter = Limiter(
-            get_remote_address,
-            app=self.app,
-            storage_uri='memory://',  # Avoid actual Redis
+        # Register routes
+        register_routes(self.app)
+
+        # Mock Redis in the routes
+        patcher_redis = patch(
+            'examples.streaming_web.redis_client.r', self.mock_redis_instance,
         )
+        patcher_redis.start()
 
-        # Register the routes
-        register_routes(self.app, self.limiter, self.mock_redis_instance)
+        # Initialize FastAPILimiter with mocked Redis
+        asyncio.run(FastAPILimiter.init(self.mock_redis_instance))
 
-        self.client = self.app.test_client()
+        # Disable rate limiter by overriding the Depends call
+        self.app.dependency_overrides[RateLimiter] = lambda *args, **kwargs: None
+
+        # Initialize the test client
+        self.client = TestClient(self.app)
 
     def tearDown(self) -> None:
         """
         Clean up after each test.
         """
-        self.mock_redis_instance.reset_mock()
+        patch.stopall()
 
-    @patch('examples.streaming_web.routes.get_labels')
-    @patch('examples.streaming_web.routes.render_template')
-    def test_index(
-        self, mock_render_template: MagicMock, mock_get_labels: MagicMock,
-    ) -> None:
+    @patch('examples.streaming_web.utils.get_labels', new_callable=AsyncMock)
+    def test_index(self, mock_get_labels: AsyncMock):
         """
-        Test the index route to ensure it renders
-        the index.html template with the correct labels.
+        Test the index route to ensure it renders the correct template and context.
         """
         mock_get_labels.return_value = ['label1', 'label2']
-        mock_render_template.return_value = 'rendered_template'
 
         response = self.client.get('/')
+        self.assertEqual(response.status_code, 200)
+        mock_get_labels.assert_called_once()
+        self.assertIn('label1', response.text)
 
-        mock_get_labels.assert_called_once_with(self.mock_redis_instance)
-        mock_render_template.assert_called_once_with(
-            'index.html', labels=['label1', 'label2'],
-        )
-        self.assertEqual(response.data.decode(), 'rendered_template')
-
-    @patch('examples.streaming_web.routes.get_image_data')
-    @patch('examples.streaming_web.routes.render_template')
-    def test_label_page(
-        self, mock_render_template: MagicMock, mock_get_image_data: MagicMock,
-    ) -> None:
+    @patch('examples.streaming_web.utils.get_image_data', new_callable=AsyncMock)
+    def test_label_page(self, mock_get_image_data: AsyncMock):
         """
-        Test the label page route to ensure it renders
-        the label.html template with the correct image data.
+        Test the label page route to ensure it renders the correct template
+        with image data.
         """
-        mock_get_image_data.return_value = ['image1', 'image2']
-        mock_render_template.return_value = 'rendered_template'
+        mock_get_image_data.return_value = [
+            ('image1', 'filename1'), ('image2', 'filename2'),
+        ]
 
         response = self.client.get('/label/test_label')
-
+        self.assertEqual(response.status_code, 200)
         mock_get_image_data.assert_called_once_with(
             self.mock_redis_instance, 'test_label',
         )
-        mock_render_template.assert_called_once_with(
-            'label.html', label='test_label', image_data=['image1', 'image2'],
-        )
-        self.assertEqual(response.data.decode(), 'rendered_template')
+        self.assertIn('image1', response.text)
+        self.assertIn('image2', response.text)
 
-    def test_image_not_found(self) -> None:
+    def test_image_not_found(self):
         """
-        Test the image route to ensure it returns a 404 error
-        if the image is not found in Redis.
+        Test the image route when image is not found in Redis,
+        expecting a 404 error.
         """
         self.mock_redis_instance.get.return_value = None
 
         response = self.client.get('/image/test_label/test_image.png')
-
         self.assertEqual(response.status_code, 404)
 
-    def test_image_found(self) -> None:
+    def test_image_found(self):
         """
-        Test the image route to ensure it returns
-        the correct image data when found in Redis.
+        Test the image route when image is found in Redis.
         """
-        self.mock_redis_instance.get.return_value = b'image_data'
+        img_data = base64.b64encode(b'test_image_data').decode('utf-8')
+        self.mock_redis_instance.get.return_value = img_data
 
         response = self.client.get('/image/test_label/test_image.png')
-
-        self.mock_redis_instance.get.assert_called_once_with(
-            'test_label_test_image',
-        )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, b'image_data')
         self.assertEqual(response.headers['Content-Type'], 'image/png')
+        self.assertEqual(response.content, b'test_image_data')
 
-    @patch('examples.streaming_web.routes.render_template')
-    def test_camera_page(self, mock_render_template: MagicMock) -> None:
+    def test_camera_page(self):
         """
-        Test the camera page route to ensure it renders
-        the camera.html template with the correct camera ID and label.
+        Test the camera page route to ensure it renders the correct template
+        with camera data.
         """
-        mock_render_template.return_value = 'rendered_template'
-
         response = self.client.get('/camera/test_label/test_camera')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('test_label', response.text)
+        self.assertIn('test_camera', response.text)
 
-        mock_render_template.assert_called_once_with(
-            'camera.html', label='test_label', camera_id='test_camera',
-        )
-        self.assertEqual(response.data.decode(), 'rendered_template')
+    def test_webhook(self):
+        """
+        Test the webhook endpoint to ensure it returns the correct response.
+        """
+        body = {'event': 'test_event'}
+        response = self.client.post('/webhook', json=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'status': 'ok'})
 
 
 if __name__ == '__main__':

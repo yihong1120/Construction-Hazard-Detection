@@ -1,74 +1,80 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-from flask import Flask
-from flask_limiter.util import get_remote_address
-from flask_socketio import SocketIO
+import uvicorn
+from fastapi.testclient import TestClient
+
+import examples.streaming_web.app as app_module
 
 
-class TestStreamingWebApp(unittest.TestCase):
+class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
     """
-    Test suite for the streaming_web Flask app.
+    Test suite for the streaming_web FastAPI app.
     """
 
     def setUp(self) -> None:
         """
-        Set up the Flask test client and other necessary mocks.
+        Set up the test environment before each test.
         """
-        self.app = Flask(__name__)
-        self.app.testing = True
-        self.client = self.app.test_client()
+        self.app = app_module.app
+        self.client = TestClient(self.app)
 
-    @patch('examples.streaming_web.app.redis.StrictRedis')
-    def test_redis_connection(self, mock_redis: MagicMock) -> None:
+    @patch('examples.streaming_web.app.r', new_callable=AsyncMock)
+    async def test_redis_connection(self, mock_redis: AsyncMock) -> None:
         """
         Test that the Redis connection is properly established.
         """
-        mock_redis.return_value = MagicMock()
-        r = mock_redis(
+        mock_redis.return_value = AsyncMock()
+        r = await mock_redis(
             host='localhost', port=6379,
             password='passcode', decode_responses=False,
         )
-        self.assertIsInstance(r, MagicMock)
-        mock_redis.assert_called_once_with(
+        self.assertIsInstance(r, AsyncMock)
+        mock_redis.assert_awaited_once_with(
             host='localhost', port=6379,
             password='passcode', decode_responses=False,
         )
 
-    @patch('flask_cors.CORS')
+    @patch('examples.streaming_web.app.CORSMiddleware')
     def test_cors_initialization(self, mock_cors: MagicMock) -> None:
         """
-        Test that CORS is properly initialized for the Flask app.
+        Test that CORS is properly initialized for the FastAPI app.
         """
-        cors = mock_cors(self.app, resources={r'/*': {'origins': '*'}})
+        cors = mock_cors(
+            self.app, allow_origins=['*'],
+            allow_credentials=True, allow_methods=['*'], allow_headers=['*'],
+        )
         self.assertIsInstance(cors, MagicMock)
         mock_cors.assert_called_once_with(
-            self.app, resources={r'/*': {'origins': '*'}},
+            self.app, allow_origins=['*'],
+            allow_credentials=True, allow_methods=['*'], allow_headers=['*'],
         )
 
-    @patch('examples.streaming_web.app.Limiter')
-    def test_rate_limiter_initialization(
-        self, mock_limiter: MagicMock,
-    ) -> None:
+    @patch('examples.streaming_web.app.FastAPILimiter.init', new_callable=AsyncMock)
+    async def test_rate_limiter_initialization(self, mock_limiter_init: AsyncMock) -> None:
         """
         Test that the rate limiter is properly initialized.
         """
-        limiter = mock_limiter(key_func=get_remote_address)
-        self.assertIsInstance(limiter, MagicMock)
-        mock_limiter.assert_called_once_with(key_func=get_remote_address)
+        await mock_limiter_init(app_module.r)
+        mock_limiter_init.assert_awaited_once_with(app_module.r)
 
-    @patch('examples.streaming_web.app.SocketIO.run')
-    def test_app_running_configuration(self, mock_run: MagicMock) -> None:
+    @patch('uvicorn.run')
+    def test_app_running_configuration(self, mock_uvicorn_run: MagicMock) -> None:
         """
         Test that the application runs with the expected configurations.
         """
-        socketio = SocketIO(self.app)
-        socketio.run(self.app, host='127.0.0.1', port=8000, debug=False)
-        mock_run.assert_called_once_with(
-            self.app, host='127.0.0.1', port=8000, debug=False,
+        uvicorn.run(
+            'examples.streaming_web.app:sio_app',
+            host='127.0.0.1', port=8000, log_level='info',
+        )
+        mock_uvicorn_run.assert_called_once_with(
+            'examples.streaming_web.app:sio_app',
+            host='127.0.0.1', port=8000, log_level='info',
         )
 
     def tearDown(self) -> None:

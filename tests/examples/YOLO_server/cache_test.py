@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from examples.YOLO_server_api.cache import user_cache
+from examples.YOLO_server.cache import user_cache
 
 
 class CacheTestCase(unittest.TestCase):
