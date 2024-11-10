@@ -157,15 +157,3 @@ class Utils:
             'label': label,
             'images': updated_data,
         })
-
-
-# Define Redis connection settings and initialise RedisManager
-# redis_host = os.getenv('REDIS_HOST')
-# redis_port = os.getenv('REDIS_PORT')
-# redis_password = os.getenv('REDIS_PASSWORD')
-
-redis_host = os.getenv('REDIS_HOST')
-redis_port = os.getenv('REDIS_PORT')
-redis_password = os.getenv('REDIS_PASSWORD')
-
-redis_manager = RedisManager(redis_host, redis_port, redis_password)
