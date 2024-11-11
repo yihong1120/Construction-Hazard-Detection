@@ -12,12 +12,49 @@ class DangerDetector:
     A class to detect potential safety hazards based on the detection data.
     """
 
-    def __init__(self):
+    def __init__(self, detection_items: dict[str, bool] = {}):
         """
         Initialises the danger detector.
+
+        Args:
+            detection_items (Dict[str, bool]): A dictionary of detection items
+                to enable/disable specific safety checks. The keys are:
+                - 'detect_no_safety_vest_or_helmet': Detect if workers are not
+                  wearing hardhats or safety vests.
+                - 'detect_near_machinery_or_vehicle': Detect if workers are
+                  dangerously close to machinery or vehicles.
+                - 'detect_in_restricted_area': Detect if workers are entering
+                  restricted areas.
+
+        Raises:
+            ValueError: If the detection_items is not a dictionary or if any
+                of the keys are not strings or values are not booleans.
+
+        Examples:
+            >>> detector = DangerDetector({
+            ...     'detect_no_safety_vest_or_helmet': True,
+            ...     'detect_near_machinery_or_vehicle': True,
+            ...     'detect_in_restricted_area': True,
+            ... })
         """
         # Initialise the HDBSCAN clusterer
         self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
+
+        # Define required keys
+        required_keys = {
+            'detect_no_safety_vest_or_helmet',
+            'detect_near_machinery_or_vehicle',
+            'detect_in_restricted_area',
+        }
+
+        # Validate detection_items type and content
+        if isinstance(detection_items, dict) and all(
+            isinstance(k, str) and isinstance(v, bool)
+            for k, v in detection_items.items()
+        ) and required_keys.issubset(detection_items.keys()):
+            self.detection_items = detection_items
+        else:
+            self.detection_items = {}
 
     def normalise_bbox(self, bbox):
         """
@@ -163,16 +200,21 @@ class DangerDetector:
         # Normalise data
         datas = self.normalise_data(datas)
 
-        # Check if people are entering the controlled area
-        polygons = self.detect_polygon_from_cones(datas)
-        people_count = self.calculate_people_in_controlled_area(
-            polygons, datas,
-        )
-        if people_count > 0:
-            warnings.add(
-                f"Warning: {people_count} people "
-                'have entered the controlled area!',
+        # Check if detection is enabled or no specific detection items are set
+        if (
+            not self.detection_items or
+            self.detection_items.get('detect_in_restricted_area', False)
+        ):
+            # Check if people are entering the controlled area
+            polygons = self.detect_polygon_from_cones(datas)
+            people_count = self.calculate_people_in_controlled_area(
+                polygons, datas,
             )
+            if people_count > 0:
+                warnings.add(
+                    f"Warning: {people_count} people "
+                    'have entered the controlled area!',
+                )
 
         # Classify detected objects into different categories
         persons = [d for d in datas if d[5] == 5]  # Persons
@@ -194,28 +236,42 @@ class DangerDetector:
             ]
             persons = non_drivers
 
-        # Check for hardhat and safety vest violations
-        for violation in hardhat_violations + safety_vest_violations:
-            label = 'NO-Hardhat' if violation[5] == 2 else 'NO-Safety Vest'
-            if not any(
-                self.overlap_percentage(violation[:4], p[:4]) > 0.5
-                for p in persons
-            ):
-                warning_msg = (
-                    'Warning: Someone is not wearing a hardhat!'
-                    if label == 'NO-Hardhat'
-                    else 'Warning: Someone is not wearing a safety vest!'
+        # Check if detection is enabled or no specific detection items are set
+        if (
+            not self.detection_items or
+                self.detection_items.get(
+                    'detect_no_safety_vest_or_helmet', False,
                 )
-                warnings.add(warning_msg)
-
-        # Check if anyone is dangerously close to machinery or vehicles
-        for person in persons:
-            for mv in machinery_vehicles:
-                label = 'machinery' if mv[5] == 8 else 'vehicle'
-                if self.is_dangerously_close(person[:4], mv[:4], label):
-                    warning_msg = f"Warning: Someone is too close to {label}!"
+        ):
+            # Check for hardhat and safety vest violations
+            for violation in hardhat_violations + safety_vest_violations:
+                label = 'NO-Hardhat' if violation[5] == 2 else 'NO-Safety Vest'
+                if not any(
+                    self.overlap_percentage(violation[:4], p[:4]) > 0.5
+                    for p in persons
+                ):
+                    warning_msg = (
+                        'Warning: Someone is not wearing a hardhat!'
+                        if label == 'NO-Hardhat'
+                        else 'Warning: Someone is not wearing a safety vest!'
+                    )
                     warnings.add(warning_msg)
-                    break
+
+        # Check if detection is enabled or no specific detection items are set
+        if (
+            not self.detection_items or
+            self.detection_items.get('detect_near_machinery_or_vehicle', False)
+        ):
+            # Check if anyone is dangerously close to machinery or vehicles
+            for person in persons:
+                for mv in machinery_vehicles:
+                    label = 'machinery' if mv[5] == 8 else 'vehicle'
+                    if self.is_dangerously_close(person[:4], mv[:4], label):
+                        warning_msg = (
+                            f"Warning: Someone is too close to {label}!"
+                        )
+                        warnings.add(warning_msg)
+                        break
 
         return list(warnings), polygons
 

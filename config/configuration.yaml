@@ -8,12 +8,20 @@
     line_token_2: language_2
   detect_with_server: True  # Run objection detection with server
   expire_date: "2024-12-31T23:59:59"  # Expire date in ISO 8601 format
-- video_url: "streaming URL"  # Streaming URL of the video
-  site: "Factory_1"  # Location of the monitoring system
-  stream_name: "camera_1"  # Number of the camera
-  model_key: "yolo11n"  # Model key for detection
-  notifications:  # List of line tokens, and languages for notifications
+  detection_items:  # Detection items
+    detect_no_safety_vest_or_helmet: True       # Detect if no safety vest or helmet is worn
+    detect_near_machinery_or_vehicle: True      # Detect if a person is near machinery or vehicle
+    detect_in_restricted_area: True             # Detect if a person is in a restricted area
+- video_url: "streaming URL"
+  site: "Factory_1"
+  stream_name: "camera_1"
+  model_key: "yolo11n"
+  notifications:
     line_token_3: language_3
     line_token_4: language_4
-  detect_with_server: False  # Run objection detection in local
-  expire_date: "No Expire Date"  # String for no expire date
+  detect_with_server: False
+  expire_date: "No Expire Date"
+  detection_items:
+    detect_no_safety_vest_or_helmet: True
+    detect_near_machinery_or_vehicle: False
+    detect_in_restricted_area: True

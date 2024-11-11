@@ -120,15 +120,23 @@
     line_token_2: language_2
   detect_with_server: True  # 使用伺服器進行物件偵測
   expire_date: "2024-12-31T23:59:59"  # 到期日期，使用 ISO 8601 格式
-- video_url: "串流 URL"  # 視訊串流的 URL
-  site: "工廠1"  # 監控系統的位置
-  stream_name: "相機1"  # 監視器的名稱或編號
-  model_key: "yolo11n"  # 用於偵測的模型鍵
-  notifications:  # LINE 通知的令牌列表及對應的語言
+  detector_items: # 檢測項目
+    detector_no_safety_vest_or_helmet: True     # 偵測是否未配戴安全背心或頭盔
+    detector_near_machinery_or_vehicle: True    # 偵測人是否靠近機械或車輛
+    detector_in_restricted_area: True           # 偵測一個人是否在限制區域內
+- video_url: "串流 URL"
+  site: "工廠1"
+  stream_name: "相機1"
+  model_key: "yolo11n"
+  notifications:
     line_token_3: language_3
     line_token_4: language_4
-  detect_with_server: False  # 在本地進行物件偵測
-  expire_date: "無到期日期"  # 無到期日期的字串
+  detect_with_server: False
+  expire_date: "無到期日期"
+  detection_items:
+    detect_no_safety_vest_or_helmet: True
+    detect_near_machinery_or_vehicle: False
+    detect_in_restricted_area: True
 ```
 
 數組中的每個對象代表一個視頻流配置，包含以下字段：
@@ -139,15 +147,27 @@
    - 副流
    - YouTube 視頻或直播
    - Discord
+
 - `site`：監控系統的位置（例如：建築工地、工廠）。
+
 - `stream_name`：指派給監視器或串流的名稱（例如：「前門」、「相機1」）。
+
 - `model_key`：機器學習模型的識別鍵（例如：「yolo11n」）。
+
 - `notifications`：LINE 通知的 API 令牌和對應語言的列表。
    - `line_token_1`, `line_token_2` 等：這些是 LINE API 令牌。
-   - `language_1`, `language_2` 等：通知的語言（例如：「en」表示英文，「zh-TW」表示繁體中文）。有關如何獲取 LINE 令牌的資訊，請參閱  [Line Notify教學](docs/zh/line_notify_guide_zh.md)。
+   - `language_1`, `language_2` 等：通知的語言（例如：「en」表示英文，「zh-TW」表示繁體中文）。
+
+   有關如何獲取 LINE 令牌的資訊，請參閱  [Line Notify教學](docs/zh/line_notify_guide_zh.md)。
+
 - `detect_with_server`：布林值，指示是否使用伺服器 API 進行物件偵測。如果為 `True`，系統將使用伺服器進行物件偵測。如果為 `False`，物件偵測將在本地機器上執行。
+
 - `expire_date`：視訊串流配置的到期日期，使用 ISO 8601 格式（例如：「2024-12-31T23:59:59」）。如果沒有到期日期，可以使用類似「無到期日期」的字串。
 
+- `detection_items`：指定監控特定場景的安全偵測項目。每個項目都可以設定為“True”以啟用或設定為“False”以停用。可用的檢測項目有：
+   - `detect_no_safety_vest_or_helmet`：偵測人員是否未配戴安全背心或頭盔。這對於在必須配備安全裝備以保護人員的場所監控其安全裝備要求的遵守情況至關重要。
+   - `detect_near_machinery_or_vehicle`：偵測人員是否危險地靠近機器或車輛。這有助於防止在建築工地或工業區經常遇到的因靠近重型設備或移動車輛而引起的事故。
+   - `detect_in_restricted_area`：偵測人員是否進入限製或控制區域。限制區域對於未經訓練的人員可能是危險的，或者可能包含敏感設備，因此此設定有助於控制對此類區域的存取。
 <br>
 
 <details>
@@ -278,7 +298,7 @@
    | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
    | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
    | YOLO11n | 640                   | 54.1               | 31.0               | 2.6               | 6.5               |
-   | YOLO11s | 640                   | //                 | //                 | 9.4               | 21.6              |
+   | YOLO11s | 640                   | 70.1               | 44.8               | 9.4               | 21.6              |
    | YOLO11m | 640                   | //                 | //                 | 20.1              | 68.0              |
    | YOLO11l | 640                   | //                 | //                 | 25.3              | 86.9              |
    | YOLO11x | 640                   | 76.8               | 52.5               | 56.9              | 194.9             |
