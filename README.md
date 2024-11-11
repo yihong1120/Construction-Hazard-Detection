@@ -121,15 +121,23 @@ Before running the application, you need to configure the system by specifying t
     line_token_2: language_2
   detect_with_server: True  # Run objection detection with server
   expire_date: "2024-12-31T23:59:59"  # Expire date in ISO 8601 format
-- video_url: "streaming URL"  # Streaming URL of the video
-  site: "Factory_1"  # Location of the monitoring system
-  stream_name: "camera_1"  # Number of the monitor
-  model_key: "yolo11n"  # Model key for detection
-  notifications:  # List of line tokens, and languages for notifications
+  detection_items:  # Detection items
+    detect_no_safety_vest_or_helmet: True       # Detect if no safety vest or helmet is worn
+    detect_near_machinery_or_vehicle: True      # Detect if a person is near machinery or vehicle
+    detect_in_restricted_area: True             # Detect if a person is in a restricted area
+- video_url: "streaming URL"
+  site: "Factory_1"
+  stream_name: "camera_1"
+  model_key: "yolo11n"
+  notifications:
     line_token_3: language_3
     line_token_4: language_4
-  detect_with_server: False  # Run objection detection in local
-  expire_date: "No Expire Date"  # String for no expire date
+  detect_with_server: False
+  expire_date: "No Expire Date"
+  detection_items:
+    detect_no_safety_vest_or_helmet: True
+    detect_near_machinery_or_vehicle: False
+    detect_in_restricted_area: True
 ```
 
 Each object in the array represents a video stream configuration with the following fields:
@@ -140,14 +148,28 @@ Each object in the array represents a video stream configuration with the follow
    - Secondary streams
    - YouTube videos or live streams
    - Discord streams
-- `site`: TThe location of the monitoring system (e.g., construction site, factory).
+
+- `site`: The location of the monitoring system (e.g., construction site, factory).
+
 - `stream_name`: The name assigned to the camera or stream (e.g., "Front Gate", "Camera 1").
+
 - `model_key`: The key identifier for the machine learning model to use (e.g., "yolo11n").
+
 - `notifications`: A list of LINE messaging API tokens and corresponding languages for sending notifications.
    - `line_token_1`, `line_token_2`, etc.: These are the LINE API tokens.
-   - `language_1`, `language_2`, etc.: The languages for the notifications (e.g., "en" for English, "zh-TW" for Traditional Chinese). For information on how to obtain a LINE token, please refer to [line_notify_guide_en](docs/en/line_notify_guide_en.md).
+   - `language_1`, `language_2`, etc.: The languages for the notifications (e.g., "en" for English, "zh-TW" for Traditional Chinese).
+
+   For information on how to obtain a LINE token, please refer to [line_notify_guide_en](docs/en/line_notify_guide_en.md).
+
 - `detect_with_server`: Boolean value indicating whether to run object detection using a server API. If `True`, the system will use the server for object detection. If `False`, object detection will run locally on the machine.
+
 - `expire_date`: Expire date for the video stream configuration in ISO 8601 format (e.g., "2024-12-31T23:59:59"). If there is no expiration date, a string like "No Expire Date" can be used.
+
+- `detection_items`: Specifies the safety detection items for monitoring specific scenarios. Each item can be set to `True` to enable or `False` to disable. The available detection items are:
+   - `detect_no_safety_vest_or_helmet`: Detects if a person is not wearing a safety vest or helmet. This is essential for monitoring compliance with safety gear requirements on sites where such equipment is mandatory for personnel protection.
+   - `detect_near_machinery_or_vehicle`: Detects if a person is dangerously close to machinery or vehicles. This helps prevent accidents caused by close proximity to heavy equipment or moving vehicles, often encountered in construction sites or industrial areas.
+   - `detect_in_restricted_area`: Detects if a person has entered a restricted or controlled area. Restricted areas may be dangerous for untrained personnel or may contain sensitive equipment, so this setting aids in controlling access to such zones.
+
 
 <br>
 
@@ -284,7 +306,7 @@ The primary dataset for training this model is the [Construction Site Safety Ima
    | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
    | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
    | YOLO11n | 640                   | 54.1               | 31.0               | 2.6               | 6.5               |
-   | YOLO11s | 640                   | //                 | //                 | 9.4               | 21.6              |
+   | YOLO11s | 640                   | 70.1               | 44.8               | 9.4               | 21.6              |
    | YOLO11m | 640                   | //                 | //                 | 20.1              | 68.0              |
    | YOLO11l | 640                   | //                 | //                 | 25.3              | 86.9              |
    | YOLO11x | 640                   | 76.8               | 52.5               | 56.9              | 194.9             |

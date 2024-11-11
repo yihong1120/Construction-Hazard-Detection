@@ -50,6 +50,7 @@ class AppConfig(TypedDict, total=False):
     expire_date: str | None
     line_token: str | None
     language: str | None
+    detection_items: dict[str, bool] | None
 
 
 class MainApp:
@@ -227,6 +228,7 @@ class MainApp:
         stream_name: str = 'prediction_visual',
         notifications: dict[str, str] | None = None,
         detect_with_server: bool = False,
+        detection_items: dict[str, bool] | None = {},
     ) -> None:
         """
         Function to detect hazards, notify, log, save images (optional).
@@ -239,6 +241,7 @@ class MainApp:
                 Defaults to 'demo_data/{site}/prediction_visual.png'.
             notifications (Optional[dict]): Line tokens with their languages.
             detect_with_server (bool): If run detection with server api or not.
+            detection_items (dict): The detection items to check for.
         """
         # Initialise the stream capture object
         streaming_capture = StreamCapture(stream_url=video_url)
@@ -261,7 +264,7 @@ class MainApp:
         line_notifier = LineNotifier()
 
         # Initialise the DangerDetector
-        danger_detector = DangerDetector()
+        danger_detector = DangerDetector(detection_items=detection_items or {})
 
         # Dictionary to store last notification time for each language
         if notifications is None:
@@ -496,6 +499,7 @@ class MainApp:
             site = config.get('site')
             stream_name = config.get('stream_name', 'prediction_visual')
             detect_with_server = config.get('detect_with_server', False)
+            detection_items = config.get('detection_items', None)
 
             # Run hazard detection on a single video stream
             await self.process_single_stream(
@@ -506,6 +510,7 @@ class MainApp:
                 stream_name=stream_name,
                 notifications=notifications,
                 detect_with_server=detect_with_server,
+                detection_items=detection_items,
             )
         finally:
             if not is_windows:
