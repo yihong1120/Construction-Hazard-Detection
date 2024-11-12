@@ -5,7 +5,8 @@ from fastapi import Depends
 from fastapi import HTTPException
 from fastapi_jwt import JwtAccessBearer
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
 from .cache import user_cache
 from .config import Settings
@@ -22,31 +23,47 @@ class UserLogin(BaseModel):
 
 
 @auth_router.post('/token')
-def create_token(user: UserLogin, db: Session = Depends(get_db)):
+async def create_token(user: UserLogin, db: AsyncSession = Depends(get_db)):
+    """
+    Authenticates a user and generates an access token for them.
+
+    Args:
+        user (UserLogin): The user login details.
+        db (AsyncSession): The database session.
+
+    Returns:
+        dict: The access token for the user.
+    """
     print(f"db_user.__dict__ = {user.__dict__}")
+
+    # Check if the user is in the cache
     db_user = user_cache.get(user.username)
-    print(db_user)
     if not db_user:
-        db_user = db.query(User).filter(User.username == user.username).first()
+        result = await db.execute(
+            select(User).where(User.username == user.username),
+        )
+        db_user = result.scalar()
         if db_user:
+            # Add the user to the cache
             user_cache[user.username] = db_user
 
-    if not db_user or not db_user.check_password(user.password):
+    # Check if the user exists and the password is correct
+    if not db_user or not await db_user.check_password(user.password):
         raise HTTPException(
             status_code=401, detail='Wrong username or password',
         )
 
+    # Check if the user account is active
     if not db_user.is_active:
-        raise HTTPException(
-            status_code=403, detail='User account is inactive',
-        )
+        raise HTTPException(status_code=403, detail='User account is inactive')
 
+    # Check if the user has the required role
     if db_user.role not in ['admin', 'model_manager', 'user', 'guest']:
         raise HTTPException(
             status_code=403, detail='User does not have the required role',
         )
 
-    # access_token = jwt_access.create_access_token(subject=user.username)
+    # Generate an access token for the user
     access_token = jwt_access.create_access_token(
         subject={'username': user.username, 'role': db_user.role},
     )
