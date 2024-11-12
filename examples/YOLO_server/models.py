@@ -1,21 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import threading
-from collections.abc import Generator
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import AsyncGenerator
 
 from sahi.predict import AutoDetectionModel
 from sqlalchemy import Boolean
 from sqlalchemy import Column
-from sqlalchemy import create_engine
 from sqlalchemy import DateTime
 from sqlalchemy import Integer
 from sqlalchemy import String
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import sessionmaker
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 from werkzeug.security import check_password_hash
@@ -26,24 +27,25 @@ from .config import Settings
 # Load settings
 settings = Settings()
 
-# Set up SQLAlchemy engine and session
-engine = create_engine(settings.sqlalchemy_database_uri)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Set up SQLAlchemy async engine and session
+engine = create_async_engine(
+    settings.sqlalchemy_database_uri.replace('mysql://', 'mysql+asyncmy://'),
+)
+AsyncSessionLocal = async_sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False,
+)
 
 # Base for SQLAlchemy ORM models
-Base: type = declarative_base()
+Base = declarative_base()
 
 
-def get_db() -> Generator[Session]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
     """
     Provides a database session generator, ensuring that the session is
     closed after use.
     """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    async with AsyncSessionLocal() as session:
+        yield session
 
 
 class User(Base):
@@ -65,9 +67,9 @@ class User(Base):
         ), nullable=False,
     )
     updated_at = Column(
-        DateTime, default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
-        nullable=False,
+        DateTime, default=datetime.now(
+            timezone.utc,
+        ), onupdate=datetime.now(timezone.utc), nullable=False,
     )
 
     def set_password(self, password: str) -> None:
@@ -79,7 +81,7 @@ class User(Base):
         """
         self.password_hash = generate_password_hash(password)
 
-    def check_password(self, password: str) -> bool:
+    async def check_password(self, password: str) -> bool:
         """
         Checks if the provided password matches the stored hashed password.
 
@@ -89,7 +91,11 @@ class User(Base):
         Returns:
             bool: True if the password is correct, False otherwise.
         """
-        return check_password_hash(self.password_hash, password)
+        return await asyncio.to_thread(
+            check_password_hash,
+            str(self.password_hash),
+            password,
+        )
 
     def to_dict(self):
         """
@@ -132,11 +138,11 @@ class ModelFileChangeHandler(FileSystemEventHandler):
         Args:
             event: The file system event.
         """
-        #
+        # Ignore directories
         if event.is_directory:
             return
 
-        #
+        # Reload model if it is a .pt file
         if event.src_path.endswith('.pt'):
             model_name = Path(event.src_path).stem.split('best_')[-1]
             if model_name in self.model_manager.model_names:
@@ -163,6 +169,7 @@ class DetectionModelManager:
             'yolo11x',
             'yolo11l', 'yolo11m', 'yolo11s', 'yolo11n',
         ]
+
         # Load each model
         self.models: dict[str, AutoDetectionModel] = {
             name: self.load_single_model(name) for name in self.model_names
@@ -176,6 +183,7 @@ class DetectionModelManager:
                 self.base_model_path,
             ), recursive=False,
         )
+
         # Run the observer in a separate thread
         self.observer_thread = threading.Thread(target=self.observer.start)
         self.observer_thread.start()

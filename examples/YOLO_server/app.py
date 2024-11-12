@@ -22,9 +22,6 @@ from .security import update_secret_key
 # Instantiate the FastAPI app
 app = FastAPI()
 
-# Initialise database tables
-Base.metadata.create_all(bind=engine)
-
 # Register API routers for different functionalities
 app.include_router(auth_router)
 app.include_router(detection_router)
@@ -45,7 +42,6 @@ scheduler.start()
 # Initialise Socket.IO server for real-time events
 sio = socketio.AsyncServer(async_mode='asgi')
 sio_app = socketio.ASGIApp(sio, app)
-
 
 # Define Socket.IO events
 @sio.event
@@ -70,7 +66,6 @@ async def disconnect(sid: str) -> None:
     """
     print('Client disconnected:', sid)
 
-
 # Define lifespan event to manage the application startup and shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -81,26 +76,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         app (FastAPI): The FastAPI application instance.
     """
     # Initialise Redis connection pool for rate limiting
-    # and store it in app.state
+    redis_host = os.getenv('REDIS_HOST', '127.0.0.1')
+    redis_port = os.getenv('REDIS_PORT', '6379')
+    redis_password = os.getenv('REDIS_PASSWORD', None)
+
+    redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/0"
+
+    # Initialise Redis connection pool for rate limiting
     app.state.redis_pool = await redis.from_url(
-        os.getenv('REDIS_URL'),
+        redis_url,
         encoding='utf-8',
         decode_responses=True,
-        password=os.getenv('REDIS_PASSWORD'),
     )
     await FastAPILimiter.init(app.state.redis_pool)
+
+    # Create database tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
     # Yield control to allow application operation
     yield
 
-    # Shutdown the scheduler and Redis connection pool upon
-    # application termination
+    # Shutdown the scheduler and Redis connection pool upon application termination
     scheduler.shutdown()
     await app.state.redis_pool.close()
 
 # Assign lifespan context to the FastAPI app
 app.router.lifespan_context = lifespan
-
 
 # Main entry point for running the app
 if __name__ == '__main__':
