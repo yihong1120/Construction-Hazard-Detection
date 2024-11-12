@@ -24,7 +24,7 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         self.app = app_module.app
         self.client = TestClient(self.app)
 
-    @patch('examples.streaming_web.app.r', new_callable=AsyncMock)
+    @patch('examples.streaming_web.app.redis_manager', new_callable=AsyncMock)
     async def test_redis_connection(self, mock_redis: AsyncMock) -> None:
         """
         Test that the Redis connection is properly established.
@@ -60,8 +60,8 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         """
         Test that the rate limiter is properly initialized.
         """
-        await mock_limiter_init(app_module.r)
-        mock_limiter_init.assert_awaited_once_with(app_module.r)
+        await mock_limiter_init(app_module.redis_manager)
+        mock_limiter_init.assert_awaited_once_with(app_module.redis_manager)
 
     @patch('uvicorn.run')
     def test_app_running_configuration(self, mock_uvicorn_run: MagicMock) -> None:

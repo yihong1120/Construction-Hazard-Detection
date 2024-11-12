@@ -1,33 +1,54 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
-from fastapi.testclient import TestClient
-from examples.YOLO_server.detection import (
-    detection_router, convert_to_image, get_prediction_result,
-    compile_detection_data, process_labels, remove_overlapping_labels,
-    remove_completely_contained_labels, get_category_indices, calculate_overlap,
-    calculate_intersection, calculate_area, is_contained, find_overlaps,
-    find_contained_labels, find_overlapping_indices, find_contained_indices,
-    check_containment
-)
-from fastapi import FastAPI, Depends
 from io import BytesIO
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
+from unittest.mock import patch
+
 import numpy as np
+from fastapi import Depends
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from examples.YOLO_server.detection import calculate_area
+from examples.YOLO_server.detection import calculate_intersection
+from examples.YOLO_server.detection import calculate_overlap
+from examples.YOLO_server.detection import check_containment
+from examples.YOLO_server.detection import compile_detection_data
+from examples.YOLO_server.detection import convert_to_image
+from examples.YOLO_server.detection import detection_router
+from examples.YOLO_server.detection import find_contained_indices
+from examples.YOLO_server.detection import find_contained_labels
+from examples.YOLO_server.detection import find_overlapping_indices
+from examples.YOLO_server.detection import find_overlaps
+from examples.YOLO_server.detection import get_category_indices
+from examples.YOLO_server.detection import get_prediction_result
+from examples.YOLO_server.detection import is_contained
+from examples.YOLO_server.detection import process_labels
+from examples.YOLO_server.detection import remove_completely_contained_labels
+from examples.YOLO_server.detection import remove_overlapping_labels
 
 app = FastAPI()
 
 # Mock JWT 身份验证依赖
+
+
 async def mock_jwt_dependency():
-    return MagicMock(subject="test_user")
+    return MagicMock(subject='test_user')
 
 # 使用 mock 依赖替换实际的 jwt_access 依赖
-app.include_router(detection_router, dependencies=[Depends(mock_jwt_dependency)])
+app.include_router(
+    detection_router, dependencies=[
+        Depends(mock_jwt_dependency),
+    ],
+)
+
 
 class TestDetection(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.client = TestClient(app)
-        self.image_data = BytesIO(b"test_image_data").getvalue()
+        self.image_data = BytesIO(b'test_image_data').getvalue()
 
     @patch('examples.YOLO_server.detection.RateLimiter.__call__', new_callable=AsyncMock)
     @patch('examples.YOLO_server.detection.model_loader')
@@ -38,18 +59,20 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         mock_rate_limiter.return_value = None
 
         # Mock the JWT access to provide valid credentials
-        mock_jwt_access.verify.return_value = MagicMock(subject="test_user")
+        mock_jwt_access.verify.return_value = MagicMock(subject='test_user')
 
         # Mock the model loader and prediction result
         mock_model_loader.get_model.return_value = MagicMock()
-        mock_get_prediction_result.return_value = MagicMock(object_prediction_list=[])
+        mock_get_prediction_result.return_value = MagicMock(
+            object_prediction_list=[],
+        )
 
         # Send a test POST request to the /detect endpoint
         response = self.client.post(
-            "/detect",
-            files={"image": ("test.jpg", self.image_data, "image/jpeg")},
-            data={"model": "yolo11n"},
-            headers={"Authorization": "Bearer mocktoken"}
+            '/detect',
+            files={'image': ('test.jpg', self.image_data, 'image/jpeg')},
+            data={'model': 'yolo11n'},
+            headers={'Authorization': 'Bearer mocktoken'},
         )
 
         # Verify that the response status code is 200 and returns a JSON list
@@ -70,7 +93,9 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.YOLO_server.detection.get_sliced_prediction')
     async def test_get_prediction_result(self, mock_get_sliced_prediction):
-        mock_get_sliced_prediction.return_value = MagicMock(object_prediction_list=[])
+        mock_get_sliced_prediction.return_value = MagicMock(
+            object_prediction_list=[],
+        )
         img = MagicMock()
         model = MagicMock()
 
@@ -188,5 +213,5 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result, set)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()
