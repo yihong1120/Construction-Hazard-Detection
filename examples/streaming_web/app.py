@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-import os
 
 import socketio
 from fastapi import FastAPI
@@ -12,19 +11,8 @@ from fastapi_limiter import FastAPILimiter
 
 from .routes import register_routes
 from .sockets import register_sockets
-from .utils import RedisManager
+from .utils import redis_manager
 
-# Define Redis connection settings with default values and initialise RedisManager
-redis_host = os.getenv('REDIS_HOST', 'localhost')
-redis_port = int(os.getenv('REDIS_PORT', 6379))
-redis_password = os.getenv('REDIS_PASSWORD', None)
-
-try:
-    redis_manager = RedisManager(redis_host, redis_port, redis_password)
-    print("Redis connection initialised successfully.")
-except Exception as e:
-    print(f"Failed to initialise Redis connection: {e}")
-    raise SystemExit("Exiting application due to Redis connection failure.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
