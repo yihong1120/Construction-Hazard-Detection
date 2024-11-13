@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
-import redis
 from fastapi import FastAPI
-from fastapi import status
 from fastapi.testclient import TestClient
 from fastapi_limiter import FastAPILimiter
+from fastapi_limiter.depends import RateLimiter
 
 from examples.streaming_web.routes import register_routes
 
@@ -16,114 +17,109 @@ from examples.streaming_web.routes import register_routes
 class TestRoutes(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         """
-        Sets up the FastAPI app and test client.
+        Set up the test environment before each test.
         """
         self.app = FastAPI()
-        self.app.add_event_handler(
-            'startup',
-            self.init_redis,
-        )
+
+        # Mock Redis instance with AsyncMock
+        self.mock_redis_instance = AsyncMock()
+        self.mock_redis_instance.get.return_value = None
+        self.mock_redis_instance.script_load.return_value = 'mock_lua_sha'
+
+        # Register routes
         register_routes(self.app)
+
+        # Mock Redis in the routes
+        patcher_redis = patch(
+            'examples.streaming_web.redis_client.r', self.mock_redis_instance,
+        )
+        patcher_redis.start()
+
+        # Initialize FastAPILimiter with mocked Redis
+        asyncio.run(FastAPILimiter.init(self.mock_redis_instance))
+
+        # Disable rate limiter by overriding the Depends call
+        self.app.dependency_overrides[RateLimiter] = lambda *args, **kwargs: None
+
+        # Initialize the test client
         self.client = TestClient(self.app)
 
-    def init_redis(self) -> None:
-        redis_instance = redis.StrictRedis(host='localhost', port=6379, db=0)
-        FastAPILimiter.init(redis_instance)
-
-    @patch('examples.streaming_web.routes.redis_manager.get_labels', new_callable=AsyncMock)
-    def test_index(self, mock_get_labels) -> None:
+    def tearDown(self) -> None:
         """
-        Tests the '/' endpoint to check if the labels are fetched and displayed correctly.
+        Clean up after each test.
+        """
+        patch.stopall()
+
+    @patch('examples.streaming_web.utils.get_labels', new_callable=AsyncMock)
+    def test_index(self, mock_get_labels: AsyncMock):
+        """
+        Test the index route to ensure it renders the correct template and context.
         """
         mock_get_labels.return_value = ['label1', 'label2']
 
         response = self.client.get('/')
-
-        # Check if the response status code is 200
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Verify that the labels are included in the response HTML
-        self.assertIn('label1', response.text)
-        self.assertIn('label2', response.text)
-
-    @patch('examples.streaming_web.routes.redis_manager.get_labels', new_callable=AsyncMock)
-    def test_label_page_found(self, mock_get_labels) -> None:
-        """
-        Tests the '/label/{label}' endpoint to check if a valid label page is returned.
-        """
-        mock_get_labels.return_value = ['label1', 'label2']
-
-        response = self.client.get('/label/label1')
-
-        # Check if the response status code is 200
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Verify that the correct label is included in the response HTML
+        self.assertEqual(response.status_code, 200)
+        mock_get_labels.assert_called_once()
         self.assertIn('label1', response.text)
 
-    @patch('examples.streaming_web.routes.redis_manager.get_labels', new_callable=AsyncMock)
-    def test_label_page_not_found(self, mock_get_labels) -> None:
+    @patch('examples.streaming_web.utils.get_image_data', new_callable=AsyncMock)
+    def test_label_page(self, mock_get_image_data: AsyncMock):
         """
-        Tests the '/label/{label}' endpoint for an invalid label.
+        Test the label page route to ensure it renders the correct template
+        with image data.
         """
-        mock_get_labels.return_value = ['label1', 'label2']
+        mock_get_image_data.return_value = [
+            ('image1', 'filename1'), ('image2', 'filename2'),
+        ]
 
-        response = self.client.get('/label/invalid_label')
+        response = self.client.get('/label/test_label')
+        self.assertEqual(response.status_code, 200)
+        mock_get_image_data.assert_called_once_with(
+            self.mock_redis_instance, 'test_label',
+        )
+        self.assertIn('image1', response.text)
+        self.assertIn('image2', response.text)
 
-        # Check if the response status code is 404
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-
-    # @patch('examples.streaming_web.routes.redis_manager.get_keys_for_label', new_callable=AsyncMock)
-    # def test_websocket_label_stream(self, mock_get_keys_for_label) -> None:
-    #     """
-    #     Tests the '/ws/label/{label}' websocket endpoint.
-    #     """
-    #     mock_get_keys_for_label.return_value = ['key1', 'key2']
-
-    #     with self.client.websocket_connect('/ws/label/label1') as websocket:
-    #         # Verify that the connection was accepted and the first message is correct
-    #         data = websocket.receive_json()
-    #         self.assertNotIn('error', data)
-
-    @patch('examples.streaming_web.routes.redis_manager.get_keys_for_label', new_callable=AsyncMock)
-    def test_websocket_label_stream_no_keys(self, mock_get_keys_for_label) -> None:
+    def test_image_not_found(self):
         """
-        Tests the '/ws/label/{label}' websocket endpoint with no keys for the label.
+        Test the image route when image is not found in Redis,
+        expecting a 404 error.
         """
-        mock_get_keys_for_label.return_value = []
+        self.mock_redis_instance.get.return_value = None
 
-        with self.client.websocket_connect('/ws/label/label1') as websocket:
-            # Expecting an error response
-            data = websocket.receive_json()
-            self.assertIn('error', data)
+        response = self.client.get('/image/test_label/test_image.png')
+        self.assertEqual(response.status_code, 404)
 
-    @patch('builtins.print', new_callable=AsyncMock)
-    def test_webhook(self, mock_print) -> None:
+    def test_image_found(self):
         """
-        Tests the '/webhook' endpoint to check if the incoming request is logged and acknowledged.
+        Test the image route when image is found in Redis.
         """
-        body = {'key': 'value'}
+        img_data = base64.b64encode(b'test_image_data').decode('utf-8')
+        self.mock_redis_instance.get.return_value = img_data
+
+        response = self.client.get('/image/test_label/test_image.png')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Content-Type'], 'image/png')
+        self.assertEqual(response.content, b'test_image_data')
+
+    def test_camera_page(self):
+        """
+        Test the camera page route to ensure it renders the correct template
+        with camera data.
+        """
+        response = self.client.get('/camera/test_label/test_camera')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('test_label', response.text)
+        self.assertIn('test_camera', response.text)
+
+    def test_webhook(self):
+        """
+        Test the webhook endpoint to ensure it returns the correct response.
+        """
+        body = {'event': 'test_event'}
         response = self.client.post('/webhook', json=body)
-
-        # Verify that the webhook request was printed
-        mock_print.assert_called_once_with(body)
-        # Check if the response status code is 200 and contains correct content
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'status': 'ok'})
-
-    @patch('builtins.print', new_callable=AsyncMock)
-    def test_upload_file(self, mock_print) -> None:
-        """
-        Tests the '/upload' endpoint to check if the file is uploaded and saved correctly.
-        """
-        filename = 'test.txt'
-        content = b'Some content for testing'
-        files = {'file': (filename, content)}
-
-        response = self.client.post('/upload', files=files)
-
-        # Verify if the response status code is 200 and contains the URL of the uploaded file
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('url', response.json())
-        self.assertTrue(response.json()['url'].endswith(filename))
 
 
 if __name__ == '__main__':

@@ -66,8 +66,6 @@ class RedisManager:
                 )
                 if match:
                     label, stream_name = match.groups()
-
-                if 'test' not in label:
                     labels.add(f"{label}")
 
             if cursor == 0:  # Exit loop if scan cursor has reached the end
@@ -159,15 +157,3 @@ class Utils:
             'label': label,
             'images': updated_data,
         })
-
-# Define Redis connection settings and initialise RedisManager
-redis_host = os.getenv('REDIS_HOST', 'localhost')
-redis_port = int(os.getenv('REDIS_PORT', 6379))
-redis_password = os.getenv('REDIS_PASSWORD', None)
-
-try:
-    redis_manager = RedisManager(redis_host, redis_port, redis_password)
-    print("Redis connection initialised successfully.")
-except Exception as e:
-    print(f"Failed to initialise Redis connection: {e}")
-    raise SystemExit("Exiting application due to Redis connection failure.")
