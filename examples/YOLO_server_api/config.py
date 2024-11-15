@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     )
     sqlalchemy_database_uri: str = os.getenv(
         'DATABASE_URL',
-        'mysql://user:password@localhost/dbname',
+        'mysql+asyncmy://user:password@localhost/dbname',
     )
     sqlalchemy_track_modifications: bool = False
 

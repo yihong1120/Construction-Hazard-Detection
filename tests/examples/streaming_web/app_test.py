@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -8,6 +7,7 @@ from unittest.mock import patch
 
 import uvicorn
 from fastapi.testclient import TestClient
+from fastapi_limiter import FastAPILimiter
 
 import examples.streaming_web.app as app_module
 
@@ -24,20 +24,33 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         self.app = app_module.app
         self.client = TestClient(self.app)
 
-    @patch('examples.streaming_web.app.r', new_callable=AsyncMock)
-    async def test_redis_connection(self, mock_redis: AsyncMock) -> None:
+    @patch(
+        'examples.streaming_web.app.redis_manager.client',
+        new_callable=AsyncMock,
+    )
+    async def test_redis_connection(
+        self, mock_redis_client: AsyncMock,
+    ) -> None:
         """
-        Test that the Redis connection is properly established.
+        Test that the Redis connection is properly established using
+        a mocked Redis client with virtual parameters.
         """
-        mock_redis.return_value = AsyncMock()
-        r = await mock_redis(
-            host='localhost', port=6379,
-            password='passcode', decode_responses=False,
+        # Simulate an AsyncMock instance as a Redis client with
+        # virtual parameters
+        mock_redis_client.return_value = AsyncMock()
+
+        # Mock connection using arbitrary (virtual) Redis parameters
+        await mock_redis_client(
+            host='virtualhost', port=1234,
+            password='virtualpass', decode_responses=True,
         )
-        self.assertIsInstance(r, AsyncMock)
-        mock_redis.assert_awaited_once_with(
-            host='localhost', port=6379,
-            password='passcode', decode_responses=False,
+
+        # Verify that the mock Redis client was called with
+        # the virtual parameters
+        self.assertIsInstance(mock_redis_client, AsyncMock)
+        mock_redis_client.assert_awaited_once_with(
+            host='virtualhost', port=1234,
+            password='virtualpass', decode_responses=True,
         )
 
     @patch('examples.streaming_web.app.CORSMiddleware')
@@ -55,16 +68,30 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
             allow_credentials=True, allow_methods=['*'], allow_headers=['*'],
         )
 
-    @patch('examples.streaming_web.app.FastAPILimiter.init', new_callable=AsyncMock)
-    async def test_rate_limiter_initialization(self, mock_limiter_init: AsyncMock) -> None:
+    @patch(
+        'examples.streaming_web.app.FastAPILimiter.init',
+        new_callable=AsyncMock,
+    )
+    @patch(
+        'examples.streaming_web.app.redis_manager.client',
+        new_callable=AsyncMock,
+    )
+    async def test_rate_limiter_initialization(
+        self,
+        mock_redis_client: AsyncMock,
+        mock_limiter_init: AsyncMock,
+    ) -> None:
         """
-        Test that the rate limiter is properly initialized.
+        Test that the rate limiter is properly initialized with
+        a mocked Redis client.
         """
-        await mock_limiter_init(app_module.r)
-        mock_limiter_init.assert_awaited_once_with(app_module.r)
+        await FastAPILimiter.init(mock_redis_client)
+        mock_limiter_init.assert_awaited_once_with(mock_redis_client)
 
     @patch('uvicorn.run')
-    def test_app_running_configuration(self, mock_uvicorn_run: MagicMock) -> None:
+    def test_app_running_configuration(
+        self, mock_uvicorn_run: MagicMock,
+    ) -> None:
         """
         Test that the application runs with the expected configurations.
         """
