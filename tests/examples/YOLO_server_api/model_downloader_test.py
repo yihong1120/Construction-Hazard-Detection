@@ -1,143 +1,182 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock
-from unittest.mock import mock_open
+from datetime import datetime
+from datetime import timedelta
+from pathlib import Path
+from unittest.mock import AsyncMock
 from unittest.mock import patch
 
-import requests
-from flask import Flask
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
+from httpx import RequestError
 
-from examples.YOLO_server_api.model_downloader import models_blueprint
+from examples.YOLO_server_api.model_downloader import download_model
+from examples.YOLO_server_api.model_downloader import MODELS_DIRECTORY
 
 
-class ModelDownloaderTestCase(unittest.TestCase):
-    def setUp(self):
+class TestDownloadModel(unittest.TestCase):
+    """
+    Unit tests for the download_model function.
+    """
+
+    def setUp(self) -> None:
         """
-        Set up the test environment before each test.
+        Set up common attributes for tests.
         """
-        self.app = Flask(__name__)
-        self.app.register_blueprint(models_blueprint)
-        self.client = self.app.test_client()
+        # Define model name and local file path in MODELS_DIRECTORY
+        self.model_name: str = 'best_yolo11x.pt'
+        self.local_file_path: Path = MODELS_DIRECTORY / self.model_name
 
-    def tearDown(self):
-        """
-        Clean up after each test.
-        """
-        # Delete the Flask app and test client instances
-        del self.client
-        del self.app
-
-    @patch('examples.YOLO_server_api.model_downloader.requests.head')
-    @patch('examples.YOLO_server_api.model_downloader.send_from_directory')
-    def test_download_model_up_to_date(
+    @patch('examples.YOLO_server_api.model_downloader.httpx.AsyncClient')
+    @patch('examples.YOLO_server_api.model_downloader.Path.exists')
+    @patch('examples.YOLO_server_api.model_downloader.Path.stat')
+    async def test_download_model_up_to_date(
         self,
-        mock_send_from_directory,
-        mock_requests_head,
-    ):
+        mock_stat: unittest.mock.Mock,
+        mock_exists: unittest.mock.Mock,
+        mock_httpx: unittest.mock.Mock,
+    ) -> None:
         """
-        Test the download_model endpoint when the local model is up-to-date.
+        Test when the local model file is up-to-date and no download is
+        required.
+
+        Args:
+            mock_stat: Mock for Path.stat() to simulate file modification time.
+            mock_exists: Mock for Path.exists() to simulate file existence.
+            mock_httpx: Mock for AsyncClient to simulate HTTP interactions.
         """
-        # Prepare mocks
-        mock_response = MagicMock()
-        mock_response.status_code = 200
+        mock_exists.return_value = True
+        # Set local modification time to one day ago
+        mock_stat.return_value.st_mtime = (
+            datetime.now() - timedelta(days=1)
+        ).timestamp()
+
+        # Set server's Last-Modified header to two days ago
+        server_last_modified = datetime.now() - timedelta(days=2)
+        mock_response = AsyncMock(status_code=200)
         mock_response.headers = {
-            'Last-Modified': 'Wed, 22 Sep 2023 10:00:00 GMT',
+            'Last-Modified': server_last_modified.strftime(
+                '%a, %d %b %Y %H:%M:%S GMT',
+            ),
         }
-        mock_requests_head.return_value = mock_response
+        mock_httpx.return_value.head.return_value = mock_response
 
-        # Simulate FileNotFoundError to ensure 404 is correctly handled
-        mock_send_from_directory.side_effect = FileNotFoundError
+        # Verify that the function returns a 304 status indicating no need
+        # for download
+        response = await download_model(self.model_name)
+        self.assertEqual(
+            response, ({'message': 'Local model is up-to-date'}, 304),
+        )
 
-        # Mock the stat method to simulate an up-to-date file
-        with patch(
-            'examples.YOLO_server_api.model_downloader.Path.stat',
-        ) as mock_stat:
-            # Corresponding to 'Wed, 22 Sep 2023 10:00:00 GMT'
-            mock_stat.return_value.st_mtime = 1695386400.0
+    @patch('examples.YOLO_server_api.model_downloader.httpx.AsyncClient')
+    async def test_download_model_network_error(
+        self, mock_httpx: unittest.mock.Mock,
+    ) -> None:
+        """
+        Test behaviour when a network error occurs during model download.
 
-            # Ensure the path exists and is correct
-            with patch(
-                'examples.YOLO_server_api.model_downloader.Path.exists',
-                return_value=True,
-            ):
-                # Use a mocked open to simulate reading a file
-                with patch('builtins.open', mock_open(read_data='dummy data')):
-                    response = self.client.get('/models/best_yolo11l.pt')
-                    self.assertEqual(response.status_code, 304)
+        Args:
+            mock_httpx: Mock for AsyncClient to simulate a network error.
+        """
+        # Simulate network error
+        mock_httpx.return_value.head.side_effect = RequestError(
+            'Network error',
+        )
 
-    @patch('examples.YOLO_server_api.model_downloader.requests.head')
-    @patch('examples.YOLO_server_api.model_downloader.send_from_directory')
-    def test_download_model_not_found(
+        # Expect a 500 HTTPException to be raised due to network failure
+        with self.assertRaises(HTTPException) as context:
+            await download_model(self.model_name)
+        self.assertEqual(context.exception.status_code, 500)
+        self.assertEqual(
+            context.exception.detail,
+            'Failed to fetch model information',
+        )
+
+    @patch('examples.YOLO_server_api.model_downloader.Path.resolve')
+    async def test_invalid_model_name_path_traversal(
+        self, mock_resolve: unittest.mock.Mock,
+    ) -> None:
+        """
+        Test behaviour when an invalid model name indicating path traversal
+        is used.
+
+        Args:
+            mock_resolve: Mock for Path.resolve() to simulate invalid path.
+        """
+        # Simulate ValueError raised for invalid path
+        # (e.g., path traversal attempt)
+        mock_resolve.side_effect = ValueError('Invalid path')
+
+        # Expect a 400 HTTPException due to invalid model path
+        with self.assertRaises(HTTPException) as context:
+            await download_model(self.model_name)
+        self.assertEqual(context.exception.status_code, 400)
+
+    @patch('examples.YOLO_server_api.model_downloader.httpx.AsyncClient')
+    async def test_model_not_found_on_server(
+        self, mock_httpx: unittest.mock.Mock,
+    ) -> None:
+        """
+        Test behaviour when the model file is not found on the server.
+
+        Args:
+            mock_httpx: Mock for AsyncClient to simulate HTTP interactions.
+        """
+        # Simulate a 404 response from server indicating model not found
+        mock_response = AsyncMock(status_code=404)
+        mock_httpx.return_value.head.return_value = mock_response
+
+        # Expect a 404 HTTPException due to missing model on server
+        with self.assertRaises(HTTPException) as context:
+            await download_model(self.model_name)
+        self.assertEqual(context.exception.status_code, 404)
+
+    @patch('examples.YOLO_server_api.model_downloader.httpx.AsyncClient')
+    @patch('examples.YOLO_server_api.model_downloader.Path.exists')
+    @patch('examples.YOLO_server_api.model_downloader.Path.stat')
+    async def test_download_model_outdated(
         self,
-        mock_send_from_directory,
-        mock_requests_head,
-    ):
+        mock_stat: unittest.mock.Mock,
+        mock_exists: unittest.mock.Mock,
+        mock_httpx: unittest.mock.Mock,
+    ) -> None:
         """
-        Test the download_model endpoint when the model is not found.
-        """
-        mock_send_from_directory.side_effect = FileNotFoundError
-        response = self.client.get('/models/non_existent_model.pt')
-        self.assertEqual(response.status_code, 404)
-        self.assertIn(b'Model not found.', response.data)
+        Test when the local model file is outdated and requires re-downloading.
 
-    @patch('examples.YOLO_server_api.model_downloader.requests.head')
-    @patch('examples.YOLO_server_api.model_downloader.send_from_directory')
-    def test_download_model_success(
-        self,
-        mock_send_from_directory,
-        mock_requests_head,
-    ):
+        Args:
+            mock_stat: Mock for Path.stat() to simulate file modification time.
+            mock_exists: Mock for Path.exists() to simulate file existence.
+            mock_httpx: Mock for AsyncClient to simulate HTTP interactions.
         """
-        Test the download_model endpoint
-        when the model is successfully downloaded.
-        """
-        mock_response = MagicMock()
-        mock_response.status_code = 200
+        mock_exists.return_value = True
+        # Set local modification time to two days ago
+        mock_stat.return_value.st_mtime = (
+            datetime.now() - timedelta(days=2)
+        ).timestamp()
+
+        # Set server's Last-Modified header to one day ago
+        server_last_modified = datetime.now() - timedelta(days=1)
+        mock_response = AsyncMock(status_code=200)
         mock_response.headers = {
-            'Last-Modified': 'Wed, 22 Sep 2023 10:05:00 GMT',
+            'Last-Modified': server_last_modified.strftime(
+                '%a, %d %b %Y %H:%M:%S GMT',
+            ),
         }
-        mock_requests_head.return_value = mock_response
+        mock_httpx.return_value.head.return_value = mock_response
 
-        # Mock `send_from_directory` to simulate sending a file
-        mock_send_from_directory.return_value = MagicMock()
-
+        # Mock FileResponse to return a file response for the outdated model
         with patch(
-            'examples.YOLO_server_api.model_downloader.Path.stat',
-        ) as mock_stat:
-            # Set the timestamp to match the date in the Last-Modified header
-            mock_stat.return_value.st_mtime = 946684800.0
+            'examples.YOLO_server_api.model_downloader.FileResponse',
+        ) as mock_file_response:
+            mock_file_response.return_value = FileResponse(
+                self.local_file_path,
+            )
+            response = await download_model(self.model_name)
 
-            # Ensure the path exists and is correct
-            with patch(
-                'examples.YOLO_server_api.model_downloader.Path.exists',
-                return_value=True,
-            ):
-                # Use a mocked open to simulate reading a file
-                with patch('builtins.open', mock_open(read_data='dummy data')):
-                    response = self.client.get('/models/best_yolo11l.pt')
-
-                    self.assertEqual(response.status_code, 200)
-                    mock_send_from_directory.assert_called_once()
-
-    @patch('examples.YOLO_server_api.model_downloader.requests.head')
-    def test_download_model_request_exception(self, mock_requests_head):
-        """
-        Test the download_model endpoint when there is a request exception.
-        """
-        mock_requests_head.side_effect = requests.RequestException
-        response = self.client.get('/models/best_yolo11l.pt')
-        self.assertEqual(response.status_code, 500)
-        self.assertIn(b'Failed to fetch model information.', response.data)
-
-    def test_download_model_invalid_name(self):
-        """
-        Test the download_model endpoint
-        when an invalid model name is provided.
-        """
-        response = self.client.get('/models/invalid_model_name.pt')
-        self.assertEqual(response.status_code, 404)
-        self.assertIn(b'Model not found.', response.data)
+            # Verify that the response is of type FileResponse,
+            # indicating a re-download
+            self.assertIsInstance(response, FileResponse)
 
 
 if __name__ == '__main__':

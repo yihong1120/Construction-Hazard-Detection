@@ -1,223 +1,178 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import _patch
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-from flask import Flask
-from flask.ctx import AppContext
-from flask.testing import FlaskClient
-from flask_jwt_extended import JWTManager
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from examples.YOLO_server_api.auth import auth_blueprint
-from examples.YOLO_server_api.models import db
+from examples.YOLO_server_api.auth import auth_router
+from examples.YOLO_server_api.auth import UserLogin
+from examples.YOLO_server_api.models import User
 
-jwt = JWTManager()
+# Initialise FastAPI app and test client
+app = FastAPI()
+app.include_router(auth_router)
+client = TestClient(app)
 
 
-class AuthBlueprintTestCase(unittest.TestCase):
-    app: Flask
-    client: FlaskClient
-    app_context: AppContext  # Use AppContext instead of Flask
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """
-        Set up the Flask application and register extensions for all tests.
-        """
-        cls.app = Flask(__name__)
-        cls.app.config['TESTING'] = True
-        cls.app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-        cls.app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-        cls.app.config['JWT_SECRET_KEY'] = 'super-secret'
-
-        # Initialize the database and JWT with the app
-        db.init_app(cls.app)
-        jwt.init_app(cls.app)
-
-        # Register the blueprint
-        cls.app.register_blueprint(auth_blueprint)
+class TestAuth(unittest.TestCase):
+    """
+    Unit tests for the FastAPI authentication routes.
+    """
 
     def setUp(self) -> None:
         """
-        Ensure that each test runs with a fresh application context.
+        Set up required mocks and patchers before each test.
         """
-        self.app_context = self.app.app_context()
-        self.app_context.push()
+        self.username: str = 'testuser'
+        self.password: str = 'testpassword'
+        self.user_login: UserLogin = UserLogin(
+            username=self.username, password=self.password,
+        )
 
-        # Create the test client
-        self.client = self.app.test_client()
+        # Create a mock user instance and define its properties
+        self.mock_user: MagicMock = MagicMock(spec=User)
+        self.mock_user.username = self.username
+        self.mock_user.role = 'user'
+        self.mock_user.is_active = True
+        self.mock_user.check_password.return_value = True
 
-        # Create all tables
-        with self.app_context:
-            db.create_all()
+        # Patch user cache and JWT access token generator
+        self.user_cache_patcher: _patch = patch(
+            'examples.YOLO_server_api.auth.user_cache', {},
+        )
+        self.jwt_access_patcher: _patch = patch(
+            'examples.YOLO_server_api.auth.jwt_access',
+        )
+
+        # Start patchers and assign mock objects to instance variables
+        self.mock_user_cache: dict = self.user_cache_patcher.start()
+        self.mock_jwt_access: MagicMock = self.jwt_access_patcher.start()
+
+        # Mock the creation of a JWT access token
+        self.mock_jwt_access.create_access_token.return_value = 'mocked_token'
 
     def tearDown(self) -> None:
         """
-        Pop the application context to clean up.
+        Stop all active patchers after each test.
         """
-        db.session.remove()
-        db.drop_all()
-        self.app_context.pop()
+        self.user_cache_patcher.stop()
+        self.jwt_access_patcher.stop()
 
-    @patch('examples.YOLO_server_api.auth.user_cache')
-    @patch('examples.YOLO_server_api.auth.User.query')
-    def test_create_token_success_with_cache(
-        self,
-        mock_user_query: MagicMock,
-        mock_user_cache: MagicMock,
+    @patch('examples.YOLO_server_api.auth.get_db')
+    async def test_create_token_successful_login(
+        self, mock_get_db: MagicMock,
     ) -> None:
         """
-        Test successful token creation with user data from cache.
-        """
-        # Setup mock cache to return a user
-        mock_user = MagicMock()
-        mock_user.check_password.return_value = True
-        mock_user_cache.get.return_value = mock_user
+        Test successful token creation with valid user credentials.
 
-        response = self.client.post(
+        Args:
+            mock_get_db (MagicMock): Mocked database session dependency.
+        """
+        # Mock the AsyncSession for database interactions
+        mock_db: MagicMock = MagicMock(spec=AsyncSession)
+        mock_get_db.return_value = mock_db
+
+        # Add mock user to cache to simulate cached authentication
+        self.mock_user_cache[self.username] = self.mock_user
+
+        # Send a POST request to retrieve a token
+        response = client.post(
             '/token', json={
-                'username': 'testuser',
-                'password': 'password123',
+                'username': self.username,
+                'password': self.password,
             },
         )
 
-        # Ensure that response.json is not None
-        self.assertIsNotNone(response.json)
-        response_json = response.json
-        if response_json is not None:
-            # Check that the cache was accessed
-            mock_user_cache.get.assert_called_once_with('testuser')
-            # Check that the response contains
-            # a token and has a 200 status code
-            self.assertEqual(response.status_code, 200)
-            self.assertIn('access_token', response_json)
-        else:
-            self.fail('response.json is None')
+        # Assert successful response with token in response JSON
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('access_token', response.json())
+        self.assertEqual(response.json()['access_token'], 'mocked_token')
 
-    @patch('examples.YOLO_server_api.auth.user_cache')
-    @patch('examples.YOLO_server_api.auth.User.query')
-    def test_create_token_success_with_db(
-        self,
-        mock_user_query: MagicMock,
-        mock_user_cache: MagicMock,
+    @patch('examples.YOLO_server_api.auth.get_db')
+    async def test_create_token_incorrect_password(
+        self, mock_get_db: MagicMock,
     ) -> None:
         """
-        Test successful token creation with user data from the database.
-        """
-        # Setup mock cache to return None (forcing DB query)
-        mock_user_cache.get.return_value = None
-        # Setup mock database query to return a user
-        mock_user = MagicMock()
-        mock_user.check_password.return_value = True
-        mock_user_query.filter_by.return_value.first.return_value = mock_user
+        Test token creation failure due to incorrect password.
 
-        response = self.client.post(
+        Args:
+            mock_get_db (MagicMock): Mocked database session dependency.
+        """
+        # Set mock user to return False for password check
+        self.mock_user.check_password.return_value = False
+        mock_db: MagicMock = MagicMock(spec=AsyncSession)
+        mock_get_db.return_value = mock_db
+
+        # Send a POST request with incorrect password
+        response = client.post(
             '/token', json={
-                'username': 'testuser',
-                'password': 'password123',
-            },
-        )
-
-        # Ensure that response.json is not None
-        self.assertIsNotNone(response.json)
-        response_json = response.json
-        if response_json is not None:
-            # Check that the DB query was made and the user was cached
-            mock_user_query.filter_by.assert_called_once_with(
-                username='testuser',
-            )
-            mock_user_cache.__setitem__.assert_called_once_with(
-                'testuser', mock_user,
-            )
-            # Check that the response contains a token
-            # and has a 200 status code
-            self.assertEqual(response.status_code, 200)
-            self.assertIn('access_token', response_json)
-        else:
-            self.fail('response.json is None')
-
-    @patch('examples.YOLO_server_api.auth.user_cache')
-    @patch('examples.YOLO_server_api.auth.User.query')
-    def test_create_token_invalid_credentials(
-        self,
-        mock_user_query: MagicMock,
-        mock_user_cache: MagicMock,
-    ) -> None:
-        """
-        Test token creation failure due to invalid credentials.
-        """
-        # Setup mock cache and DB to return no valid user
-        mock_user_cache.get.return_value = None
-        mock_user_query.filter_by.return_value.first.return_value = None
-
-        response = self.client.post(
-            '/token', json={
-                'username': 'testuser',
+                'username': self.username,
                 'password': 'wrongpassword',
             },
         )
 
-        # Ensure that response.json is not None
-        self.assertIsNotNone(response.json)
-        response_json = response.json
-        if response_json is not None:
-            # Check that the cache and DB were accessed
-            # but no valid user was found
-            mock_user_cache.get.assert_called_once_with('testuser')
-            mock_user_query.filter_by.assert_called_once_with(
-                username='testuser',
-            )
-            # Check that the response indicates failure
-            # and has a 401 status code
-            self.assertEqual(response.status_code, 401)
-            self.assertEqual(
-                response_json['msg'],
-                'Wrong user name or passcode.',
-            )
-        else:
-            self.fail('response.json is None')
+        # Assert the response indicates failed authentication
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json()['detail'], 'Wrong username or password',
+        )
 
-    @patch('examples.YOLO_server_api.auth.User.query')
-    @patch('examples.YOLO_server_api.auth.user_cache')
-    def test_create_token_user_not_in_db_or_cache(
-        self,
-        mock_user_cache: MagicMock,
-        mock_user_query: MagicMock,
+    @patch('examples.YOLO_server_api.auth.get_db')
+    async def test_create_token_user_not_found(
+        self, mock_get_db: MagicMock,
     ) -> None:
         """
-        Test token creation failure when user is not found in cache or DB.
-        """
-        # Setup mock cache to return None (forcing DB query)
-        mock_user_cache.get.return_value = None
-        # Setup mock database query to return None
-        mock_user_query.filter_by.return_value.first.return_value = None
+        Test token creation failure when the user is not found.
 
-        response = self.client.post(
+        Args:
+            mock_get_db (MagicMock): Mocked database session dependency.
+        """
+        # Mock scenario where user is not found in the database
+        mock_db: MagicMock = MagicMock(spec=AsyncSession)
+        mock_get_db.return_value = mock_db
+
+        # Send a POST request for a non-existent user
+        response = client.post(
+            '/token', json={'username': 'nonexistent', 'password': 'password'},
+        )
+
+        # Assert the response indicates user not found
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json()['detail'], 'Wrong username or password',
+        )
+
+    @patch('examples.YOLO_server_api.auth.get_db')
+    async def test_create_token_user_in_cache(
+        self, mock_get_db: MagicMock,
+    ) -> None:
+        """
+        Test token creation using a cached user without querying the database.
+
+        Args:
+            mock_get_db (MagicMock): Mocked database session dependency.
+        """
+        # Add the mock user to cache to simulate cached authentication
+        self.mock_user_cache[self.username] = self.mock_user
+
+        # Send a POST request to retrieve a token for cached user
+        response = client.post(
             '/token', json={
-                'username': 'nonexistentuser',
-                'password': 'password123',
+                'username': self.username,
+                'password': self.password,
             },
         )
 
-        # Ensure that response.json is not None
-        self.assertIsNotNone(response.json)
-        response_json = response.json
-        if response_json is not None:
-            # Check that the cache was accessed but no user was found
-            mock_user_cache.get.assert_called_once_with('nonexistentuser')
-            mock_user_query.filter_by.assert_called_once_with(
-                username='nonexistentuser',
-            )
-            # Check that the response indicates failure
-            # and has a 401 status code
-            self.assertEqual(response.status_code, 401)
-            self.assertEqual(
-                response_json['msg'],
-                'Wrong user name or passcode.',
-            )
-        else:
-            self.fail('response.json is None')
+        # Assert the response contains the token and database was not queried
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('access_token', response.json())
+        self.assertEqual(response.json()['access_token'], 'mocked_token')
+        mock_get_db.assert_not_called()  # Ensure database query was bypassed
 
 
 if __name__ == '__main__':

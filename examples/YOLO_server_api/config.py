@@ -3,34 +3,38 @@ from __future__ import annotations
 import os
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
 
 # Load environment variables from a .env file
 load_dotenv()
 
 
-class Config:
+class Settings(BaseSettings):
     """
-    Configuration class for setting and retrieving environment variables.
+    A class to represent the application settings.
 
     Attributes:
-        JWT_SECRET_KEY (str): The secret key used for JWT authentication.
-            Defaults to a fallback key if not set.
-        SQLALCHEMY_DATABASE_URI (str): The URI for the SQL database connection.
-        SQLALCHEMY_TRACK_MODIFICATIONS (bool): Flag to disable or enable
-            track modifications feature of SQLAlchemy.
+        authjwt_secret_key (str): The secret key for JWT authentication.
+        sqlalchemy_database_uri (str): The URI for the SQLAlchemy database
+            connection.
+        sqlalchemy_track_modifications (bool): Flag to track modifications in
+            SQLAlchemy.
     """
 
-    # Fetch the JWT secret key from environment or use a fallback
-    JWT_SECRET_KEY: str = os.getenv(
+    authjwt_secret_key: str = os.getenv(
         'JWT_SECRET_KEY',
         'your_fallback_secret_key',
     )
-
-    # Get database URL from environment or use fallback connection string
-    SQLALCHEMY_DATABASE_URI: str = os.getenv(
+    sqlalchemy_database_uri: str = os.getenv(
         'DATABASE_URL',
-        'mysql://user:password@localhost/dbname',
+        'mysql+asyncmy://user:password@localhost/dbname',
     )
+    sqlalchemy_track_modifications: bool = False
 
-    # Set SQLAlchemy to not track modifications for performance benefits
-    SQLALCHEMY_TRACK_MODIFICATIONS: bool = False
+    def __init__(self) -> None:
+        """
+        Initialise the Settings instance with environment variables.
+
+        If the environment variables are not set, fallback values will be used.
+        """
+        super().__init__()  # Ensure the BaseSettings initialisation is called
