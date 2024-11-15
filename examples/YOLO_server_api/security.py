@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import secrets
 
-from flask import Flask
+from fastapi import FastAPI
 
 
-def update_secret_key(app: Flask) -> None:
+def update_secret_key(app: FastAPI) -> None:
     """
-    Updates the JWT secret key in the application configuration.
+    Updates the JWT secret key for the FastAPI application.
 
-    This function generates a new, secure JWT secret key and updates the
-    Flask application's config with this token. It helps protect against
-    security breaches by regularly rotating the secret key.
+    This function generates a new, secure JWT secret key and assigns it to
+    the application's state. The new key is a URL-safe token of 16 bytes.
 
     Args:
-        app (Flask): The Flask app instance to update the JWT secret key.
+        app (FastAPI): The FastAPI application instance to update.
     """
-    # Securely generate a new, random JWT secret key using the secrets library
-    app.config['JWT_SECRET_KEY'] = secrets.token_urlsafe(16)
+    # Generate a new URL-safe token of 16 bytes
+    app.state.jwt_secret_key = secrets.token_urlsafe(16)

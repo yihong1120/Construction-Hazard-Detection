@@ -1,106 +1,166 @@
 from __future__ import annotations
 
-import atexit
+import asyncio
 import unittest
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-from flask.testing import FlaskClient
-from flask_jwt_extended import JWTManager
+import socketio
+from fastapi.testclient import TestClient
+from fastapi_jwt import JwtAccessBearer
 
 from examples.YOLO_server_api.app import app
-from examples.YOLO_server_api.app import db
-from examples.YOLO_server_api.app import scheduler
+from examples.YOLO_server_api.app import lifespan
 
 
-class TestYOLOServerAPI(unittest.TestCase):
+class TestApp(unittest.IsolatedAsyncioTestCase):
     """
-    Test suite for the YOLO server API application.
+    Unit tests for FastAPI app functionality and dependencies.
     """
 
     def setUp(self) -> None:
         """
-        Set up the Flask test client and other necessary mocks.
+        Sets up the TestClient instance for testing FastAPI app routes.
         """
-        self.app = app
-        self.app.testing = True
-        self.client: FlaskClient | None = self.app.test_client()
+        self.client = TestClient(app)
 
-    @patch('examples.YOLO_server_api.app.JWTManager')
-    def test_jwt_initialization(self, mock_jwt_manager: MagicMock) -> None:
+    @patch('examples.YOLO_server_api.app.redis.from_url', new_callable=AsyncMock)
+    @patch(
+        'examples.YOLO_server_api.app.scheduler.shutdown',
+        new_callable=MagicMock,
+    )
+    @patch('examples.YOLO_server_api.app.engine', autospec=True)
+    async def test_redis_initialization(
+        self,
+        mock_engine: MagicMock,
+        mock_scheduler_shutdown: MagicMock,
+        mock_redis_from_url: AsyncMock,
+    ) -> None:
         """
-        Test if the JWTManager is properly initialized.
+        Tests Redis and SQLAlchemy engine initialisation within app lifespan.
+
+        Args:
+            mock_engine (MagicMock): Mocked SQLAlchemy engine instance.
+            mock_scheduler_shutdown (MagicMock): Mock for scheduler shutdown.
+            mock_redis_from_url (AsyncMock): Mock for Redis connection.
         """
-        mock_jwt_manager.return_value = JWTManager(self.app)
-        jwt = mock_jwt_manager(self.app)
-        self.assertIsInstance(jwt, JWTManager)
+        # Mock Redis client behaviour
+        mock_redis_client = AsyncMock()
+        mock_redis_from_url.return_value = mock_redis_client
+
+        # Mock SQLAlchemy engine connection and transaction
+        mock_conn = AsyncMock()
+        mock_engine.begin.return_value.__aenter__.return_value = mock_conn
+
+        # Start the lifespan context to test initialisation behaviour
+        async with lifespan(app):
+            mock_redis_from_url.assert_called_once()
+            mock_engine.begin.assert_called_once()
+            mock_redis_client.close.assert_not_called()
+            mock_scheduler_shutdown.assert_not_called()
 
     @patch(
-        'examples.YOLO_server_api.app.secrets.token_urlsafe',
-        return_value='mocked_secret_key',
+        'examples.YOLO_server_api.app.FastAPILimiter.init',
+        new_callable=AsyncMock,
     )
-    def test_jwt_secret_key(self, mock_secrets: MagicMock) -> None:
+    @patch('examples.YOLO_server_api.app.redis.from_url', new_callable=AsyncMock)
+    @patch('examples.YOLO_server_api.app.engine', autospec=True)
+    async def test_lifespan_context(
+        self,
+        mock_engine: MagicMock,
+        mock_redis_from_url: AsyncMock,
+        mock_limiter_init: AsyncMock,
+    ) -> None:
         """
-        Test that the JWT secret key is securely generated.
-        """
-        with patch.dict(
-            self.app.config,
-            {'JWT_SECRET_KEY': mock_secrets.return_value},
-        ):
-            self.assertEqual(
-                self.app.config['JWT_SECRET_KEY'], 'mocked_secret_key',
-            )
+        Tests the lifespan context to verify resource initialisation.
 
-    @patch('examples.YOLO_server_api.app.db.init_app')
-    def test_database_initialization(self, mock_init_app: MagicMock) -> None:
+        Args:
+            mock_engine (MagicMock): Mocked SQLAlchemy engine instance.
+            mock_redis_from_url (AsyncMock): Mock for Redis connection.
+            mock_limiter_init (AsyncMock): Mock for rate limiter
+                initialisation.
         """
-        Test if the database is properly initialized.
-        """
-        with self.app.app_context():
-            db.init_app(self.app)
-            mock_init_app.assert_called_once_with(self.app)
+        # Mock Redis client and SQLAlchemy engine behaviour
+        mock_redis_client = AsyncMock()
+        mock_redis_from_url.return_value = mock_redis_client
+        mock_conn = AsyncMock()
+        mock_engine.begin.return_value.__aenter__.return_value = mock_conn
 
-    def test_routes_registration(self) -> None:
-        """
-        Test that the blueprints are properly registered.
-        """
-        self.assertIn('auth', self.app.blueprints)
-        self.assertIn('detection', self.app.blueprints)
-        self.assertIn('models', self.app.blueprints)
+        # Start the lifespan context to test the initialisation behaviour
+        async with lifespan(app):
+            mock_redis_from_url.assert_called_once()
+            mock_engine.begin.assert_called_once()
+            mock_limiter_init.assert_called_once()
 
-    @patch('examples.YOLO_server_api.app.update_secret_key')
-    def test_scheduler_job(self, mock_update_secret_key: MagicMock) -> None:
+    def test_routes_exist(self) -> None:
         """
-        Test that the scheduler has a job to
-        update the JWT secret key every 30 days.
+        Checks the existence of primary app routes.
         """
-        job = scheduler.get_jobs()[0]
-        self.assertEqual(job.func.__name__, '<lambda>')
-        self.assertEqual(job.trigger.interval.days, 30)
+        # Test main route endpoints
+        response = self.client.get('/auth/some_endpoint')
+        # Expecting either success or not found
+        self.assertIn(response.status_code, [200, 404])
+        response = self.client.get('/detect/some_endpoint')
+        self.assertIn(response.status_code, [200, 404])
+        response = self.client.get('/models/some_endpoint')
+        self.assertIn(response.status_code, [200, 404])
 
-    @patch('examples.YOLO_server_api.app.atexit.register')
-    def test_scheduler_shutdown(self, mock_atexit_register: MagicMock) -> None:
+    @patch(
+        'examples.YOLO_server_api.app.JwtAccessBearer.__init__',
+        return_value=None,
+    )
+    def test_jwt_initialization(
+        self, mock_jwt_access_bearer_init: MagicMock,
+    ) -> None:
         """
-        Test that the scheduler is shut down gracefully upon application exit.
-        """
-        atexit.register(lambda: scheduler.shutdown())
-        mock_atexit_register.assert_called_once()
+        Tests initialisation of JWT Access Bearer with a mock secret key.
 
-    def test_app_running_configuration(self) -> None:
+        Args:
+            mock_jwt_access_bearer_init (MagicMock): Mock for JwtAccessBearer
+                initialisation.
         """
-        Test that the application runs with the expected configurations.
-        """
-        with patch.object(self.app, 'run') as mock_run:
-            self.app.run(threaded=True, host='0.0.0.0', port=5000)
-            mock_run.assert_called_once_with(
-                threaded=True, host='0.0.0.0', port=5000,
-            )
+        JwtAccessBearer(secret_key='mocked_secret')
+        mock_jwt_access_bearer_init.assert_called_once_with(
+            secret_key='mocked_secret',
+        )
 
-    def tearDown(self) -> None:
+    @patch('socketio.AsyncClient.connect', new_callable=AsyncMock)
+    @patch('socketio.AsyncClient.disconnect', new_callable=AsyncMock)
+    def test_socketio_connect_disconnect(
+        self,
+        mock_disconnect: AsyncMock,
+        mock_connect: AsyncMock,
+    ) -> None:
         """
-        Clean up after each test.
+        Tests socket.io client connection and disconnection.
+
+        Args:
+            mock_disconnect (AsyncMock): Mock for socket.io client
+                disconnection.
+            mock_connect (AsyncMock): Mock for socket.io client connection.
         """
-        self.client = None
+        client = socketio.AsyncClient()
+
+        @client.event
+        async def connect() -> None:
+            print('Connected to server')
+
+        @client.event
+        async def disconnect() -> None:
+            print('Disconnected from server')
+
+        async def socket_test() -> None:
+            """
+            Asynchronously tests connection and disconnection to socket server.
+            """
+            await client.connect('http://0.0.0.0:5000')
+            mock_connect.assert_called_once()
+            await client.disconnect()
+            mock_disconnect.assert_called_once()
+
+        # Run the asynchronous socket test
+        asyncio.run(socket_test())
 
 
 if __name__ == '__main__':

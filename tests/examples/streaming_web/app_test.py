@@ -1,74 +1,107 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-from flask import Flask
-from flask_limiter.util import get_remote_address
-from flask_socketio import SocketIO
+import uvicorn
+from fastapi.testclient import TestClient
+from fastapi_limiter import FastAPILimiter
+
+import examples.streaming_web.app as app_module
 
 
-class TestStreamingWebApp(unittest.TestCase):
+class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
     """
-    Test suite for the streaming_web Flask app.
+    Test suite for the streaming_web FastAPI app.
     """
 
     def setUp(self) -> None:
         """
-        Set up the Flask test client and other necessary mocks.
+        Set up the test environment before each test.
         """
-        self.app = Flask(__name__)
-        self.app.testing = True
-        self.client = self.app.test_client()
+        self.app = app_module.app
+        self.client = TestClient(self.app)
 
-    @patch('examples.streaming_web.app.redis.StrictRedis')
-    def test_redis_connection(self, mock_redis: MagicMock) -> None:
-        """
-        Test that the Redis connection is properly established.
-        """
-        mock_redis.return_value = MagicMock()
-        r = mock_redis(
-            host='localhost', port=6379,
-            password='passcode', decode_responses=False,
-        )
-        self.assertIsInstance(r, MagicMock)
-        mock_redis.assert_called_once_with(
-            host='localhost', port=6379,
-            password='passcode', decode_responses=False,
-        )
-
-    @patch('flask_cors.CORS')
-    def test_cors_initialization(self, mock_cors: MagicMock) -> None:
-        """
-        Test that CORS is properly initialized for the Flask app.
-        """
-        cors = mock_cors(self.app, resources={r'/*': {'origins': '*'}})
-        self.assertIsInstance(cors, MagicMock)
-        mock_cors.assert_called_once_with(
-            self.app, resources={r'/*': {'origins': '*'}},
-        )
-
-    @patch('examples.streaming_web.app.Limiter')
-    def test_rate_limiter_initialization(
-        self, mock_limiter: MagicMock,
+    @patch(
+        'examples.streaming_web.app.redis_manager.client',
+        new_callable=AsyncMock,
+    )
+    async def test_redis_connection(
+        self, mock_redis_client: AsyncMock,
     ) -> None:
         """
-        Test that the rate limiter is properly initialized.
+        Test that the Redis connection is properly established using
+        a mocked Redis client with virtual parameters.
         """
-        limiter = mock_limiter(key_func=get_remote_address)
-        self.assertIsInstance(limiter, MagicMock)
-        mock_limiter.assert_called_once_with(key_func=get_remote_address)
+        # Simulate an AsyncMock instance as a Redis client with
+        # virtual parameters
+        mock_redis_client.return_value = AsyncMock()
 
-    @patch('examples.streaming_web.app.SocketIO.run')
-    def test_app_running_configuration(self, mock_run: MagicMock) -> None:
+        # Mock connection using arbitrary (virtual) Redis parameters
+        await mock_redis_client(
+            host='virtualhost', port=1234,
+            password='virtualpass', decode_responses=True,
+        )
+
+        # Verify that the mock Redis client was called with
+        # the virtual parameters
+        self.assertIsInstance(mock_redis_client, AsyncMock)
+        mock_redis_client.assert_awaited_once_with(
+            host='virtualhost', port=1234,
+            password='virtualpass', decode_responses=True,
+        )
+
+    @patch('examples.streaming_web.app.CORSMiddleware')
+    def test_cors_initialization(self, mock_cors: MagicMock) -> None:
+        """
+        Test that CORS is properly initialized for the FastAPI app.
+        """
+        cors = mock_cors(
+            self.app, allow_origins=['*'],
+            allow_credentials=True, allow_methods=['*'], allow_headers=['*'],
+        )
+        self.assertIsInstance(cors, MagicMock)
+        mock_cors.assert_called_once_with(
+            self.app, allow_origins=['*'],
+            allow_credentials=True, allow_methods=['*'], allow_headers=['*'],
+        )
+
+    @patch(
+        'examples.streaming_web.app.FastAPILimiter.init',
+        new_callable=AsyncMock,
+    )
+    @patch(
+        'examples.streaming_web.app.redis_manager.client',
+        new_callable=AsyncMock,
+    )
+    async def test_rate_limiter_initialization(
+        self,
+        mock_redis_client: AsyncMock,
+        mock_limiter_init: AsyncMock,
+    ) -> None:
+        """
+        Test that the rate limiter is properly initialized with
+        a mocked Redis client.
+        """
+        await FastAPILimiter.init(mock_redis_client)
+        mock_limiter_init.assert_awaited_once_with(mock_redis_client)
+
+    @patch('uvicorn.run')
+    def test_app_running_configuration(
+        self, mock_uvicorn_run: MagicMock,
+    ) -> None:
         """
         Test that the application runs with the expected configurations.
         """
-        socketio = SocketIO(self.app)
-        socketio.run(self.app, host='127.0.0.1', port=8000, debug=False)
-        mock_run.assert_called_once_with(
-            self.app, host='127.0.0.1', port=8000, debug=False,
+        uvicorn.run(
+            'examples.streaming_web.app:sio_app',
+            host='127.0.0.1', port=8000, log_level='info',
+        )
+        mock_uvicorn_run.assert_called_once_with(
+            'examples.streaming_web.app:sio_app',
+            host='127.0.0.1', port=8000, log_level='info',
         )
 
     def tearDown(self) -> None:

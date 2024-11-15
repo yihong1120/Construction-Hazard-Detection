@@ -1,62 +1,111 @@
 from __future__ import annotations
 
-import atexit
-import secrets
+import os
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
-import pymysql
+import redis.asyncio as redis
+import socketio
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask
-from flask_jwt_extended import JWTManager
+from fastapi import FastAPI
+from fastapi_jwt import JwtAccessBearer
+from fastapi_limiter import FastAPILimiter
 
-from .auth import auth_blueprint
-from .config import Config
-from .detection import detection_blueprint
-from .model_downloader import models_blueprint
-from .models import db
+from .auth import auth_router
+from .config import Settings
+from .detection import detection_router
+from .model_downloader import models_router
+from .models import Base
+from .models import engine
 from .security import update_secret_key
 
-# Use pymysql as MySQLdb for compatibility with SQLAlchemy
-pymysql.install_as_MySQLdb()
+# Instantiate the FastAPI app
+app = FastAPI()
 
-app = Flask(__name__)  # Initialise the Flask application
+# Register API routers for different functionalities
+app.include_router(auth_router)
+app.include_router(detection_router)
+app.include_router(models_router)
 
-# Securely generate a random JWT secret key using secrets library
-app.config['JWT_SECRET_KEY'] = secrets.token_urlsafe(16)
+# Set up JWT authentication
+jwt_access = JwtAccessBearer(secret_key=Settings().authjwt_secret_key)
 
-# Load configurations from Config class
-app.config.from_object(Config)
-
-# Initialise JWTManager with the Flask app
-jwt = JWTManager(app)
-
-# Initialise the database with the Flask app
-db.init_app(app)
-
-# Register authentication-related routes
-app.register_blueprint(auth_blueprint)
-
-# Register object detection-related routes
-app.register_blueprint(detection_blueprint)
-
-# Register object models-related routes
-app.register_blueprint(models_blueprint)
-
-# Set up a background scheduler
+# Configure background scheduler to refresh secret keys every 30 days
 scheduler = BackgroundScheduler()
-
-# Schedule a job to update the JWT secret key every 30 days
 scheduler.add_job(
     func=lambda: update_secret_key(app),
     trigger='interval',
     days=30,
 )
-
-# Start the scheduler
 scheduler.start()
 
-# Ensure the scheduler is shut down gracefully upon exiting the application
-atexit.register(lambda: scheduler.shutdown())
+# Initialise Socket.IO server for real-time events
+sio = socketio.AsyncServer(async_mode='asgi')
+sio_app = socketio.ASGIApp(sio, app)
 
+# Define Socket.IO events
+@sio.event
+async def connect(sid: str, environ: dict) -> None:
+    """
+    Handles client connection event to the Socket.IO server.
+
+    Args:
+        sid (str): The session ID of the connected client.
+        environ (dict): The environment dictionary for the connection.
+    """
+    print('Client connected:', sid)
+
+
+@sio.event
+async def disconnect(sid: str) -> None:
+    """
+    Handles client disconnection from the Socket.IO server.
+
+    Args:
+        sid (str): The session ID of the disconnected client.
+    """
+    print('Client disconnected:', sid)
+
+# Define lifespan event to manage the application startup and shutdown
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    """
+    Context manager to handle application startup and shutdown tasks.
+
+    Args:
+        app (FastAPI): The FastAPI application instance.
+    """
+    # Initialise Redis connection pool for rate limiting
+    redis_host = os.getenv('REDIS_HOST', '127.0.0.1')
+    redis_port = os.getenv('REDIS_PORT', '6379')
+    redis_password = os.getenv('REDIS_PASSWORD', '')
+
+    redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/0"
+
+    # Initialise Redis connection pool for rate limiting
+    app.state.redis_pool = await redis.from_url(
+        redis_url,
+        encoding='utf-8',
+        decode_responses=True,
+    )
+    await FastAPILimiter.init(app.state.redis_pool)
+
+    # Create database tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Yield control to allow application operation
+    yield
+
+    # Shutdown the scheduler and Redis connection pool
+    # upon application termination
+    scheduler.shutdown()
+    await app.state.redis_pool.close()
+
+# Assign lifespan context to the FastAPI app
+app.router.lifespan_context = lifespan
+
+# Main entry point for running the app
 if __name__ == '__main__':
-    # Run the Flask application on all available IPs at port 5000
-    app.run(Thread=True, host='0.0.0.0', port=5000)
+    import uvicorn
+    uvicorn.run(sio_app, host='0.0.0.0', port=5000)

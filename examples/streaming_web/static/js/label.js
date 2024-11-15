@@ -6,47 +6,27 @@ $(document).ready(() => {
  * Initialize the WebSocket connection and set up event handlers.
  */
 function initializeWebSocket() {
-    const protocol = getWebSocketProtocol();
-    if (!isSocketIODefined()) return;
-
-    const socket = createWebSocketConnection(protocol);
-
+    const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
     const currentPageLabel = getCurrentPageLabel();
 
-    setupSocketEventHandlers(socket, currentPageLabel);
-}
+    const socket = new WebSocket(`${protocol}${window.location.host}/ws/label/${currentPageLabel}`);
 
-/**
- * Get the appropriate WebSocket protocol based on the current page protocol.
- * @returns {string} The WebSocket protocol ('ws://' or 'wss://').
- */
-function getWebSocketProtocol() {
-    return window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-}
+    socket.onopen = () => {
+        console.log('WebSocket connected!');
+    };
 
-/**
- * Check if Socket.IO is defined.
- * @returns {boolean} True if Socket.IO is defined, false otherwise.
- */
-function isSocketIODefined() {
-    if (typeof io === 'undefined') {
-        showError('Socket.IO is not defined. Please ensure it is included in your HTML.');
-        return false;
-    }
-    return true;
-}
+    socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleUpdate(data, currentPageLabel);
+    };
 
-/**
- * Create a WebSocket connection with reconnection strategy.
- * @param {string} protocol - The WebSocket protocol ('ws://' or 'wss://').
- * @returns {Object} The WebSocket connection instance.
- */
-function createWebSocketConnection(protocol) {
-    return io.connect(protocol + document.domain + ':' + location.port, {
-        transports: ['websocket'],
-        reconnectionAttempts: 5,   // Maximum of 5 reconnection attempts
-        reconnectionDelay: 2000    // Reconnection interval of 2000 milliseconds
-    });
+    socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+    };
+
+    socket.onclose = () => {
+        console.log('WebSocket closed');
+    };
 }
 
 /**
@@ -54,125 +34,54 @@ function createWebSocketConnection(protocol) {
  * @returns {string} The label of the current page.
  */
 function getCurrentPageLabel() {
-    return $('h1').text();  // Assuming the <h1> tag contains the current label name
+    return $('h1').text();
 }
 
 /**
- * Set up WebSocket event handlers.
- * @param {Object} socket - The WebSocket connection instance.
- * @param {string} currentPageLabel - The label of the current page.
- */
-function setupSocketEventHandlers(socket, currentPageLabel) {
-    socket.on('connect', () => {
-        debugLog('WebSocket connected!');
-    });
-
-    socket.on('connect_error', (error) => {
-        debugLog('WebSocket connection error:', error);
-    });
-
-    socket.on('reconnect_attempt', () => {
-        debugLog('Attempting to reconnect...');
-    });
-
-    socket.on('update', (data) => {
-        handleUpdate(data, currentPageLabel);
-    });
-}
-
-/**
- * Handle WebSocket updates
+ * Handle WebSocket updates for multiple images.
  * @param {Object} data - The received data
  * @param {string} currentPageLabel - The label of the current page
  */
 function handleUpdate(data, currentPageLabel) {
-    // Check if the received data is applicable to the current page's label
     if (data.label === currentPageLabel) {
-        debugLog('Received update for current label:', data.label);
-        updateCameraGrid(data);
+        console.log('Received update for current label:', data.label);
+        updateCameraGrid(data.images); // 更新為處理多鏡頭影像
     } else {
-        debugLog('Received update for different label:', data.label);
+        console.log('Received update for different label:', data.label);
     }
 }
 
 /**
- * Update the camera grid
- * @param {Object} data - The data containing images and names
+ * Update the camera grid with new images for multiple cameras.
+ * @param {Array} images - The array of images with key and base64 data.
  */
-function updateCameraGrid(data) {
-    const fragment = document.createDocumentFragment();
-    data.images.forEach((image, index) => {
-        const cameraData = {
-            image: image,
-            imageName: data.image_names[index],
-            label: data.label
-        };
-        const cameraDiv = createCameraDiv(cameraData);
-        fragment.appendChild(cameraDiv);
+function updateCameraGrid(images) {
+    images.forEach((cameraData) => {
+        // 檢查是否已經存在相同的 image_name
+        const existingCameraDiv = $(`.camera h2:contains(${cameraData.key.split('_').pop()})`).closest('.camera');
+
+        if (existingCameraDiv.length > 0) {
+            // 更新現有的圖像
+            existingCameraDiv.find('img').attr('src', `data:image/png;base64,${cameraData.image}`);
+        } else {
+            // 如果沒有相同的 image_name，則創建新的圖區
+            const cameraDiv = createCameraDiv(cameraData);
+            $('.camera-grid').append(cameraDiv);
+        }
     });
-    $('.camera-grid').empty().append(fragment);
 }
 
 /**
- * Create a camera div element
+ * Create a camera div element.
  * @param {Object} cameraData - The data for creating the camera div
- * @param {string} cameraData.image - The image data
- * @param {string} cameraData.imageName - The image name
- * @param {string} cameraData.label - The label name
  * @returns {HTMLElement} - The div element containing the image and title
  */
-function createCameraDiv({ image, imageName, label }) {
+function createCameraDiv(cameraData) {
     const cameraDiv = $('<div>').addClass('camera');
-    const title = $('<h2>').text(imageName);
-    const img = $('<img>').attr('src', `data:image/png;base64,${image}`).attr('alt', `${label} image`);
+    // 只保留 _ 之後的部分作為標題
+    const titleText = cameraData.key.split('_').pop();
+    const title = $('<h2>').text(titleText);
+    const img = $('<img>').attr('src', `data:image/png;base64,${cameraData.image}`).attr('alt', `${cameraData.key} image`);
     cameraDiv.append(title).append(img);
     return cameraDiv[0];
-}
-
-/**
- * Log messages for debugging purposes
- * @param  {...any} messages - The messages to log
- */
-function debugLog(...messages) {
-    if (isDevelopmentEnvironment()) {
-        logToConsole(...messages);
-    }
-}
-
-/**
- * Show error messages.
- * @param {string} message - The error message to display.
- */
-function showError(message) {
-    if (isDevelopmentEnvironment()) {
-        logErrorToConsole(message);
-    }
-}
-
-/**
- * Log messages to the console.
- * @param  {...any} messages - The messages to log.
- */
-function logToConsole(...messages) {
-    if (typeof console !== 'undefined') {
-        console.log(...messages);
-    }
-}
-
-/**
- * Log error messages to the console.
- * @param {string} message - The error message to log.
- */
-function logErrorToConsole(message) {
-    if (typeof console !== 'undefined') {
-        console.error(message);
-    }
-}
-
-/**
- * Check if the current environment is development.
- * @returns {boolean} True if the current environment is development, false otherwise.
- */
-function isDevelopmentEnvironment() {
-    return typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development';
 }

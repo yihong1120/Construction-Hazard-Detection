@@ -1,227 +1,222 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from pathlib import Path
+from unittest.mock import create_autospec
 from unittest.mock import MagicMock
-from unittest.mock import mock_open
+from unittest.mock import Mock
 from unittest.mock import patch
 
+from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import sessionmaker
+
+from examples.YOLO_server_api.models import Base
 from examples.YOLO_server_api.models import DetectionModelManager
+from examples.YOLO_server_api.models import get_db
+from examples.YOLO_server_api.models import ModelFileChangeHandler
 from examples.YOLO_server_api.models import User
+
+# Define the in-memory database URI for testing
+DATABASE_URL = 'sqlite:///:memory:'
+
+# Configure the testing database and session
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base.metadata.create_all(bind=engine)
 
 
 class TestUserModel(unittest.TestCase):
-    user: User
-    password: str
+    """
+    Test cases for the User model.
+    """
 
     def setUp(self) -> None:
         """
-        Set up a User instance for testing.
+        Set up a test database session.
         """
-        self.user = User(username='testuser')
-        self.password = 'securepassword'
-        self.user.set_password(self.password)
+        self.session: Session = SessionLocal()
+
+    def tearDown(self) -> None:
+        """
+        Clean up the database after each test.
+        """
+        self.session.close()
 
     def test_set_password(self) -> None:
         """
-        Test that the password is hashed correctly.
+        Test password hashing in the User model.
         """
-        self.assertNotEqual(self.password, self.user.password_hash)
-        self.assertTrue(self.user.check_password(self.password))
+        user = User(username='testuser')
+        user.set_password('secure_password')
+        # Ensure password hash does not store the actual password
+        self.assertNotEqual(user.password_hash, 'secure_password')
+        # Check password validation
+        self.assertTrue(asyncio.run(user.check_password('secure_password')))
 
     def test_check_password(self) -> None:
         """
-        Test the password verification method.
+        Test password verification in the User model.
         """
-        self.assertTrue(self.user.check_password(self.password))
-        self.assertFalse(self.user.check_password('wrongpassword'))
+        user = User(username='testuser')
+        user.set_password('secure_password')
+        # Confirm correct and incorrect passwords
+        self.assertTrue(asyncio.run(user.check_password('secure_password')))
+        self.assertFalse(asyncio.run(user.check_password('wrong_password')))
+
+    def test_to_dict(self) -> None:
+        """
+        Test the to_dict method of the User model.
+        """
+        user = User(username='testuser', role='admin', is_active=True)
+        user.set_password('secure_password')
+        self.session.add(user)
+        self.session.commit()
+
+        # Convert user instance to dictionary
+        user_dict = user.to_dict()
+
+        # Validate dictionary contents
+        self.assertEqual(user_dict['username'], 'testuser')
+        self.assertEqual(user_dict['role'], 'admin')
+        self.assertTrue(user_dict['is_active'])
+        self.assertIn('created_at', user_dict)
+        self.assertIn('updated_at', user_dict)
 
 
 class TestDetectionModelManager(unittest.TestCase):
-    model_manager: DetectionModelManager
+    """
+    Test cases for the DetectionModelManager.
+    """
 
-    @patch(
-        'examples.YOLO_server_api.models.'
-        'AutoDetectionModel.from_pretrained',
-    )
-    @patch('builtins.open', new_callable=mock_open, read_data='dummy data')
-    def setUp(
-        self,
-        mock_open_file: MagicMock,
-        mock_from_pretrained: MagicMock,
-    ) -> None:
+    def setUp(self) -> None:
         """
-        Set up the DetectionModelManager
-        and mock model loading and file access.
-
-        Args:
-            mock_open_file (MagicMock): Mocked file open function.
-            mock_from_pretrained (MagicMock): Mocked function to
-                load pretrained models.
+        Set up the model manager for testing.
         """
-        mock_model = MagicMock()
-        mock_from_pretrained.return_value = mock_model
-
-        # Initialize the model manager with mocks
+        # Patch AutoDetectionModel to avoid actual model loading
+        self.patcher = patch('examples.YOLO_server_api.models.AutoDetectionModel')
+        self.mock_model = self.patcher.start()
         self.model_manager = DetectionModelManager()
 
-        # Ensure that models were loaded correctly
-        self.assertEqual(
-            len(self.model_manager.models),
-            len(self.model_manager.model_names),
-        )
-        for name in self.model_manager.model_names:
-            self.assertIn(name, self.model_manager.models)
-
-    @patch(
-        'examples.YOLO_server_api.models.'
-        'AutoDetectionModel.from_pretrained',
-    )
-    def test_load_single_model(
-        self,
-        mock_from_pretrained: MagicMock,
-    ) -> None:
+    def tearDown(self) -> None:
         """
-        Test loading a single model with mocked file access.
-
-        Args:
-            mock_from_pretrained (MagicMock): Mocked function to
-                load pretrained models.
+        Stop patching the model manager.
         """
-        mock_model = MagicMock()
-        mock_from_pretrained.return_value = mock_model
+        self.patcher.stop()
 
-        model_name: str = 'yolo11x'
-        model = self.model_manager.load_single_model(model_name)
-        mock_from_pretrained.assert_called_once_with(
-            'yolov8',
-            model_path=str(Path('models/pt/') / f"best_{model_name}.pt"),
+    def test_load_single_model(self) -> None:
+        """
+        Test loading a single model into the manager.
+        """
+        # Confirm model is loaded with correct parameters
+        self.assertEqual(self.mock_model.from_pretrained.call_count, 5)
+        self.mock_model.from_pretrained.assert_any_call(
+            'yolov8', model_path=str(Path('models/pt/best_yolo11n.pt')),
             device='cuda:0',
         )
-        self.assertEqual(model, mock_model)
 
-    @patch('examples.YOLO_server_api.models.Path.stat')
-    def test_get_last_modified_time(
-        self,
-        mock_stat: MagicMock,
-    ) -> None:
+    def test_get_model(self) -> None:
         """
-        Test retrieving the last modified time of
-        a model file with mocked stat.
-
-        Args:
-            mock_stat (MagicMock): Mocked function to
-                retrieve file statistics.
+        Test retrieving a model by its key from the manager.
         """
-        mock_time: float = 1650000000.0
-        mock_stat.return_value.st_mtime = mock_time
+        # Mock a loaded model for testing retrieval
+        self.model_manager.models['yolo11n'] = self.mock_model
+        model = self.model_manager.get_model('yolo11n')
 
-        model_name: str = 'yolov8x'
-        last_modified_time: float = self.model_manager.get_last_modified_time(
-            model_name,
-        )
-        self.assertEqual(last_modified_time, mock_time)
-        mock_stat.assert_called_once_with()
+        # Validate that the retrieved model matches the mock model
+        self.assertEqual(model, self.mock_model)
 
-    @patch(
-        'examples.YOLO_server_api.models.DetectionModelManager.'
-        'get_last_modified_times',
-    )
-    @patch(
-        'examples.YOLO_server_api.models.DetectionModelManager.'
-        'load_single_model',
-    )
-    @patch('time.sleep', return_value=None)
-    def test_reload_models_every_hour(
-        self,
-        mock_sleep: MagicMock,
-        mock_load_single_model: MagicMock,
-        mock_get_last_modified_times: MagicMock,
-    ) -> None:
+        # Test retrieval of non-existent model
+        model_none = self.model_manager.get_model('nonexistent')
+        self.assertIsNone(model_none)
+
+    @patch.object(DetectionModelManager, 'observer', create=True)
+    def test_cleanup_on_delete(self, mock_observer: Mock) -> None:
         """
-        Test the reloading of models every hour
-        with mocked file access and timing.
-
-        Args:
-            mock_sleep (MagicMock): Mocked sleep function to
-                simulate time delays.
-            mock_load_single_model (MagicMock): Mocked function to
-                load a single model.
-            mock_get_last_modified_times (MagicMock): Mocked function to
-                retrieve last modified times.
+        Test that the observer is stopped and joined upon deletion.
         """
-        initial_times: dict[str, float] = {
-            name: 1650000000.0 for name in self.model_manager.model_names
-        }
-        modified_times: dict[str, float] = {
-            name: 1650003600.0 for name in self.model_manager.model_names
-        }
+        manager = DetectionModelManager()
+        manager.observer = mock_observer
 
-        mock_get_last_modified_times.side_effect = [
-            initial_times, modified_times,
-        ]
+        # Explicitly call __del__ to test cleanup
+        manager.__del__()
+        mock_observer.stop.assert_called_once()
+        mock_observer.join.assert_called_once()
 
-        def reload_models_once() -> None:
-            current_times: dict[str, float] = (
-                self.model_manager.get_last_modified_times()
-            )
-            for name in self.model_manager.model_names:
-                if current_times[name] != (
-                    self.model_manager.last_modified_times.get(name)
-                ):
-                    self.model_manager.models[name] = (
-                        self.model_manager.load_single_model(name)
-                    )
-                    self.model_manager.last_modified_times[name] = (
-                        current_times[name]
-                    )
 
-            # Stop after one loop for testing
-            raise StopIteration
+class TestModelFileChangeHandler(unittest.TestCase):
+    """
+    Test cases for the ModelFileChangeHandler.
+    """
 
-        with patch.object(
-            self.model_manager,
-            'reload_models_every_hour',
-            reload_models_once,
-        ):
-            with self.assertRaises(StopIteration):
-                self.model_manager.reload_models_every_hour()
-
-        self.assertEqual(
-            mock_load_single_model.call_count,
-            len(self.model_manager.model_names),
-        )
-
-    @patch(
-        'examples.YOLO_server_api.models.DetectionModelManager.'
-        'get_last_modified_time',
-    )
-    def test_get_last_modified_times(
-        self,
-        mock_get_last_modified_time: MagicMock,
-    ) -> None:
+    def setUp(self) -> None:
         """
-        Test retrieving last modified times
-        for all models with mocked file access.
-
-        Args:
-            mock_get_last_modified_time (MagicMock): Mocked function to
-                retrieve last modified time.
+        Set up the model manager and file change handler.
         """
-        mock_time: float = 1650000000.0
-        mock_get_last_modified_time.return_value = mock_time
+        # Mock DetectionModelManager with necessary attributes and methods
+        self.model_manager = create_autospec(DetectionModelManager)
+        self.model_manager.model_names = ['yolo11n']
+        self.model_manager.models = {}
+        self.model_manager.load_single_model = Mock(return_value='dummy_model')
 
-        last_modified_times: dict[
-            str,
-            float,
-        ] = self.model_manager.get_last_modified_times()
-        self.assertEqual(
-            len(last_modified_times),
-            len(self.model_manager.model_names),
-        )
-        for name in self.model_manager.model_names:
-            self.assertEqual(last_modified_times[name], mock_time)
+        # Initialise the handler with the mocked model manager
+        self.handler = ModelFileChangeHandler(self.model_manager)
+
+    def test_on_modified_with_directory(self) -> None:
+        """
+        Test handling of a directory modification event (should ignore).
+        """
+        event = MagicMock()
+        event.is_directory = True
+        # Ensure directory modifications do not trigger model loading
+        self.handler.on_modified(event)
+        self.model_manager.load_single_model.assert_not_called()
+
+    def test_on_modified_with_model_file(self) -> None:
+        """
+        Test handling of a model file modification event.
+        """
+        event = MagicMock()
+        event.is_directory = False
+        event.src_path = 'models/pt/best_yolo11n.pt'
+
+        # Trigger the file modification event
+        self.handler.on_modified(event)
+
+        # Verify the model was reloaded
+        self.model_manager.load_single_model.assert_called_once_with('yolo11n')
+        self.assertEqual(self.model_manager.models['yolo11n'], 'dummy_model')
 
 
+class TestDatabase(unittest.TestCase):
+    """
+    Test cases for database connection and session generator.
+    """
+
+    @staticmethod
+    async def async_get_db() -> AsyncSession:
+        """
+        Yield an asynchronous database session for testing.
+        """
+        async for session in get_db():
+            return session
+        return None
+
+    def test_get_db(self) -> None:
+        """
+        Test the database session generator.
+        """
+        session = asyncio.run(self.async_get_db())
+
+        # Confirm the session is an AsyncSession instance
+        self.assertIsInstance(session, AsyncSession)
+
+        # Close session to avoid resource leak
+        asyncio.run(session.close())
+
+
+# Run the tests with pytest if this script is called directly
 if __name__ == '__main__':
     unittest.main()

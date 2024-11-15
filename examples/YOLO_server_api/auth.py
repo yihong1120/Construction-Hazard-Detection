@@ -1,57 +1,71 @@
 from __future__ import annotations
 
-from flask import Blueprint
-from flask import jsonify
-from flask import request
-from flask import Response
-from flask_jwt_extended import create_access_token
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import HTTPException
+from fastapi_jwt import JwtAccessBearer
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
 from .cache import user_cache
+from .config import Settings
+from .models import get_db
 from .models import User
 
-auth_blueprint = Blueprint('auth', __name__)
+auth_router = APIRouter()
+jwt_access = JwtAccessBearer(secret_key=Settings().authjwt_secret_key)
 
 
-@auth_blueprint.route('/token', methods=['POST'])
-def create_token() -> Response:
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+@auth_router.post('/token')
+async def create_token(user: UserLogin, db: AsyncSession = Depends(get_db)):
     """
-    Authenticates a user and generates a JWT token.
+    Authenticates a user and generates an access token for them.
+
+    Args:
+        user (UserLogin): The user login details.
+        db (AsyncSession): The database session.
 
     Returns:
-        Response: Flask response with JWT token or error message.
-
-    Raises:
-        HTTP 401: If the username or password is incorrect.
+        dict: The access token for the user.
     """
-    # Ensure the request contains JSON data
-    if not request.json:
-        response = jsonify({'msg': 'Missing JSON in request.'})
-        response.status_code = 400
-        return response
+    print(f"db_user.__dict__ = {user.__dict__}")
 
-    # Extract username and password from JSON body of the request
-    username = request.json.get('username', None)
-    password = request.json.get('password', None)
+    # Check if the user is in the cache
+    db_user = user_cache.get(user.username)
+    if not db_user:
+        result = await db.execute(
+            select(User).where(User.username == user.username),
+        )
+        db_user = result.scalar()
+        if db_user:
+            # Add the user to the cache
+            user_cache[user.username] = db_user
 
-    # Attempt to fetch the user details from cache
-    user = user_cache.get(username)
+    # Check if the user exists and the password is correct
+    if not db_user or not await db_user.check_password(user.password):
+        raise HTTPException(
+            status_code=401, detail='Wrong username or password',
+        )
 
-    # If not in cache, query the database
-    if not user:
-        user = User.query.filter_by(username=username).first()
-        # If user is found, store in cache
-        if user:
-            user_cache[username] = user
+    # Check if the user account is active
+    if not db_user.is_active:
+        raise HTTPException(status_code=403, detail='User account is inactive')
 
-    # Check user and verify password
-    if not user or not user.check_password(password):
-        # Return error if authentication fails
-        response = jsonify({'msg': 'Wrong user name or passcode.'})
-        response.status_code = 401
-        return response
+    # Check if the user has the required role
+    if db_user.role not in ['admin', 'model_manager', 'user', 'guest']:
+        raise HTTPException(
+            status_code=403, detail='User does not have the required role',
+        )
 
-    # Generate access token
-    access_token = create_access_token(identity=username)
+    # Generate an access token for the user
+    access_token = jwt_access.create_access_token(
+        subject={'username': user.username, 'role': db_user.role},
+    )
 
-    # Return the access token in JSON format
-    return jsonify(access_token=access_token)
+    return {'access_token': access_token}

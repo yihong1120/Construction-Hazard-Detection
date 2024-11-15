@@ -14,7 +14,7 @@ This section an example implementation of a YOLO Server API, designed to facilit
     or
 
     ```sh
-    gunicorn -w 1 -b 0.0.0.0:8000 "examples.object_detection_server_api.app:app"
+    uvicorn examples.YOLO_server.app:sio_app --host 127.0.0.1 --port 8000
     ```
 
 4. **Send a request to the API:**

@@ -23,8 +23,8 @@
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
    </a>
-   <a href="https://flask.palletsprojects.com/en/3.0.x/">
-      <img src="https://img.shields.io/badge/flask-3.0.3-blue?logo=flask" alt="Flask 3.0.3">
+   <a href="https://fastapi.tiangolo.com/">
+      <img src="https://img.shields.io/badge/fastapi-0.115.4-blue?logo=fastapi" alt="FastAPI 0.115.4">
    </a>
    <a href="https://github.com/pre-commit/pre-commit">
       <img src="https://img.shields.io/badge/pre--commit-4.0.1-blue?logo=pre-commit" alt="Pre-commit 4.0.1">
@@ -34,6 +34,9 @@
    </a>
    <a href="https://codecov.io/github/yihong1120/Construction-Hazard-Detection" >
       <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D"/>
+   </a>
+   <a href="https://universe.roboflow.com/object-detection-qn97p/construction-hazard-detection">
+      <img src="https://app.roboflow.com/images/download-dataset-badge.svg" alt="Download Dataset from Roboflow">
    </a>
 </div>
 
@@ -299,7 +302,7 @@
    | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
    | YOLO11n | 640                   | 54.1               | 31.0               | 2.6               | 6.5               |
    | YOLO11s | 640                   | 70.1               | 44.8               | 9.4               | 21.6              |
-   | YOLO11m | 640                   | //                 | //                 | 20.1              | 68.0              |
+   | YOLO11m | 640                   | 73.3               | 42.6               | 20.1              | 68.0              |
    | YOLO11l | 640                   | //                 | //                 | 25.3              | 86.9              |
    | YOLO11x | 640                   | 76.8               | 52.5               | 56.9              | 194.9             |
 

@@ -1,68 +1,175 @@
 from __future__ import annotations
 
 import base64
-from functools import lru_cache
+import os
+import re
 
-import redis
+import redis.asyncio as redis
+from dotenv import load_dotenv
+from fastapi import WebSocket
+
+# Load environment variables
+load_dotenv()
 
 
-@lru_cache(maxsize=1024)
-def encode_image(image: bytes) -> str:
+class RedisManager:
     """
-    Encode the image data to a base64 string,
-    with caching to optimize performance.
-
-    Args:
-        image (bytes): The image data in bytes.
-
-    Returns:
-        str: The base64 encoded string of the image.
+    Manages asynchronous Redis operations for fetching labels, keys,
+    and image data.
     """
-    return base64.b64encode(image).decode('utf-8')
+
+    def __init__(
+        self, redis_host: str, redis_port: int, redis_password: str,
+    ) -> None:
+        """
+        Initialises RedisManager with Redis configuration details.
+
+        Args:
+            redis_host (str): The Redis server hostname.
+            redis_port (int): The Redis server port.
+            redis_password (str): The Redis password for authentication.
+        """
+        self.redis_host = redis_host
+        self.redis_port = redis_port
+        self.redis_password = redis_password
+
+        # Connect to Redis (asynchronous)
+        self.client = redis.Redis(
+            host=self.redis_host,
+            port=self.redis_port,
+            password=self.redis_password,
+            decode_responses=False,
+        )
+
+    async def get_labels(self) -> list[str]:
+        """
+        Fetches unique label and stream_name combinations from Redis keys.
+
+        Returns:
+            list[str]: A sorted list of unique label-stream_name combinations.
+        """
+        cursor = 0
+        labels: set[str] = set()
+
+        while True:
+            # Scan Redis for keys and decode them to UTF-8
+            cursor, keys = await self.client.scan(cursor=cursor)
+            decoded_keys = [
+                key.decode('utf-8', errors='ignore')
+                for key in keys
+            ]
+
+            # Match and extract unique label and stream_name
+            for key in decoded_keys:
+                match = re.match(
+                    r'stream_frame:([\w\x80-\xFF]+)_([\w\x80-\xFF]+)', key,
+                )
+                if match:
+                    label, stream_name = match.groups()
+
+                if 'test' not in label:
+                    labels.add(f"{label}")
+
+            if cursor == 0:  # Exit loop if scan cursor has reached the end
+                break
+
+        return sorted(labels)
+
+    async def get_keys_for_label(self, label: str) -> list[str]:
+        """
+        Retrieves Redis keys that match a given label-stream_name pattern.
+
+        Args:
+            label (str): The label-stream_name combination to search for.
+
+        Returns:
+            list[str]: A list of Redis keys associated with the given label.
+        """
+        cursor = 0
+        matching_keys: list[str] = []
+
+        while True:
+            cursor, keys = await self.client.scan(
+                cursor=cursor, match=f"stream_frame:{label}_*",
+            )
+            matching_keys.extend(
+                key.decode('utf-8')
+                for key in keys
+                if key.decode('utf-8').startswith('stream_frame:')
+            )
+
+            if cursor == 0:  # Exit loop if scan cursor has reached the end
+                break
+
+        return sorted(matching_keys)
+
+    async def fetch_latest_frames(
+        self, last_ids: dict[str, str],
+    ) -> list[dict[str, str]]:
+        """
+        Fetches only the latest frame for each Redis stream.
+
+        Args:
+            last_ids (dict[str, str]): A dictionary mapping stream names to
+                their last read message ID.
+
+        Returns:
+            list[dict[str, str]]: A list of dictionaries
+                with updated frame data for each stream.
+        """
+        updated_data = []
+
+        for key, last_id in last_ids.items():
+            messages = await self.client.xrevrange(key, count=1)
+            if not messages:
+                continue
+
+            message_id, data = messages[0]
+            last_ids[key] = message_id  # Update to the latest message ID
+            frame_data = data.get(b'frame')
+            if frame_data:
+                image = base64.b64encode(frame_data).decode('utf-8')
+                updated_data.append(
+                    {'key': key.split('_')[-1], 'image': image},
+                )
+
+        return updated_data
 
 
-def get_labels(r: redis.Redis) -> list[str]:
+class Utils:
     """
-    Retrieve and decode unique labels from Redis keys, excluding 'test'.
-
-    Args:
-        r (redis.Redis): The Redis connection.
-
-    Returns:
-        list: Sorted list of unique labels.
+    Contains utility methods for processing and sending frame data.
     """
-    cursor, keys = r.scan()
-    decoded_keys = [key.decode('utf-8') for key in keys]
-    labels = {
-        key.split('_')[0]
-        for key in decoded_keys
-        if key.count('_') == 1
-        and not key.startswith('_')
-        and not key.endswith('_')
-        and key.split('_')[0] != 'test'
-    }
-    return sorted(labels)
+
+    @staticmethod
+    async def send_frames(
+        websocket: WebSocket,
+        label: str,
+        updated_data: list[dict[str, str]],
+    ) -> None:
+        """
+        Sends the latest frames to the WebSocket client.
+
+        Args:
+            websocket (WebSocket): The WebSocket connection object.
+            label (str): The label associated with the frames.
+            updated_data (list[dict[str, str]]): The latest frames to be sent.
+        """
+        await websocket.send_json({
+            'label': label,
+            'images': updated_data,
+        })
 
 
-def get_image_data(r: redis.Redis, label: str) -> list[tuple[str, str]]:
-    """
-    Retrieve and process image data for a specific label.
+# Define Redis connection settings with default values
+# and initialise RedisManager
+redis_host = os.getenv('REDIS_HOST', 'localhost')
+redis_port = int(os.getenv('REDIS_PORT', 6379))
+redis_password = os.getenv('REDIS_PASSWORD', '')
 
-    Args:
-        r (redis.Redis): The Redis connection.
-        label (str): The label/category of the images.
-
-    Returns:
-        list: List of tuples containing base64 encoded images and their names.
-    """
-    cursor, keys = r.scan(match=f"{label}_*")
-    image_data = []
-
-    for key in keys:
-        image = r.get(key)
-        if image is not None:
-            encoded_image = encode_image(image)
-            image_name = key.decode('utf-8').split('_')[1]
-            image_data.append((encoded_image, image_name))
-
-    return sorted(image_data, key=lambda x: x[1])
+try:
+    redis_manager = RedisManager(redis_host, redis_port, redis_password)
+    print('Redis connection initialised successfully.')
+except Exception as e:
+    print(f"Failed to initialise Redis connection: {e}")
+    raise SystemExit('Exiting application due to Redis connection failure.')
