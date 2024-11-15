@@ -38,6 +38,9 @@
    <a href="https://codebeat.co/projects/github-com-yihong1120-construction-hazard-detection-main">
       <img alt="codebeat badge" src="https://codebeat.co/badges/383396a9-e2cb-4604-8990-c1707e5870cf" />
    </a>
+   <a href="https://universe.roboflow.com/object-detection-qn97p/construction-hazard-detection">
+      <img src="https://app.roboflow.com/images/download-dataset-badge.svg" alt="Download Dataset from Roboflow">
+   </a>
 </div>
 
 <br>
@@ -307,7 +310,7 @@ The primary dataset for training this model is the [Construction Site Safety Ima
    | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
    | YOLO11n | 640                   | 54.1               | 31.0               | 2.6               | 6.5               |
    | YOLO11s | 640                   | 70.1               | 44.8               | 9.4               | 21.6              |
-   | YOLO11m | 640                   | //                 | //                 | 20.1              | 68.0              |
+   | YOLO11m | 640                   | 73.3               | 42.6               | 20.1              | 68.0              |
    | YOLO11l | 640                   | //                 | //                 | 25.3              | 86.9              |
    | YOLO11x | 640                   | 76.8               | 52.5               | 56.9              | 194.9             |
 
