@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Initialise Redis connection pool for rate limiting
     redis_host = os.getenv('REDIS_HOST', '127.0.0.1')
     redis_port = os.getenv('REDIS_PORT', '6379')
-    redis_password = os.getenv('REDIS_PASSWORD', None)
+    redis_password = os.getenv('REDIS_PASSWORD', '')
 
     redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/0"
 
@@ -97,7 +97,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Yield control to allow application operation
     yield
 
-    # Shutdown the scheduler and Redis connection pool upon application termination
+    # Shutdown the scheduler and Redis connection pool
+    # upon application termination
     scheduler.shutdown()
     await app.state.redis_pool.close()
 
