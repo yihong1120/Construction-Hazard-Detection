@@ -55,7 +55,8 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
     )
     def test_index(self, mock_get_labels: AsyncMock):
         """
-        Test the index route to ensure it renders the correct template and context.
+        Test the index route to ensure it renders the correct template
+        and context.
         """
         # Mock the get_labels function to return a list of labels
         mock_get_labels.return_value = ['label1', 'label2']
@@ -71,7 +72,8 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
     )
     def test_label_page_found(self, mock_get_labels: AsyncMock):
         """
-        Test the label route to ensure it renders the correct template and context.
+        Test the label route to ensure it renders the correct template
+        and context.
 
         Args:
             mock_get_labels (AsyncMock): Mocked get_labels function.
@@ -90,7 +92,8 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
     )
     def test_label_page_not_found(self, mock_get_labels: AsyncMock):
         """
-        Test the label route to ensure it returns a 404 error when the label is not found.
+        Test the label route to ensure it returns a 404 error when the label
+        is not found.
 
         Args:
             mock_get_labels (AsyncMock): Mocked get_labels function.
@@ -129,7 +132,8 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
 
     def test_upload_file_missing_filename(self):
         """
-        Test the upload route to ensure it returns a 422 error when the filename is missing.
+        Test the upload route to ensure it returns a 422 error
+        when the filename is missing.
         """
         files = {'file': ('', b'data', 'image/png')}
         response = self.client.post('/upload', files=files)

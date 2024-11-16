@@ -25,7 +25,10 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         """
         self.client = TestClient(app)
 
-    @patch('examples.YOLO_server_api.app.redis.from_url', new_callable=AsyncMock)
+    @patch(
+        'examples.YOLO_server_api.app.redis.from_url',
+        new_callable=AsyncMock,
+    )
     @patch(
         'examples.YOLO_server_api.app.scheduler.shutdown',
         new_callable=MagicMock,
@@ -64,7 +67,10 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         'examples.YOLO_server_api.app.FastAPILimiter.init',
         new_callable=AsyncMock,
     )
-    @patch('examples.YOLO_server_api.app.redis.from_url', new_callable=AsyncMock)
+    @patch(
+        'examples.YOLO_server_api.app.redis.from_url',
+        new_callable=AsyncMock,
+    )
     @patch('examples.YOLO_server_api.app.engine', autospec=True)
     async def test_lifespan_context(
         self,

@@ -8,8 +8,12 @@ from unittest.mock import patch
 
 import numpy as np
 
-from examples.YOLO_data_augmentation.data_augmentation_albumentations import DataAugmentation
-from examples.YOLO_data_augmentation.data_augmentation_albumentations import main
+from examples.YOLO_data_augmentation.data_augmentation_albumentations import (
+    DataAugmentation,
+)
+from examples.YOLO_data_augmentation.data_augmentation_albumentations import (
+    main,
+)
 
 
 class TestDataAugmentation(unittest.TestCase):
