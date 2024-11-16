@@ -96,7 +96,9 @@ class TestDetectionModelManager(unittest.TestCase):
         Set up the model manager for testing.
         """
         # Patch AutoDetectionModel to avoid actual model loading
-        self.patcher = patch('examples.YOLO_server_api.models.AutoDetectionModel')
+        self.patcher = patch(
+            'examples.YOLO_server_api.models.AutoDetectionModel',
+        )
         self.mock_model = self.patcher.start()
         self.model_manager = DetectionModelManager()
 

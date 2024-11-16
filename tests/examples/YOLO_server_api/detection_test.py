@@ -30,8 +30,11 @@ from examples.YOLO_server_api.detection import get_prediction_result
 from examples.YOLO_server_api.detection import is_contained
 from examples.YOLO_server_api.detection import jwt_access
 from examples.YOLO_server_api.detection import process_labels
-from examples.YOLO_server_api.detection import remove_completely_contained_labels
+from examples.YOLO_server_api.detection import (
+    remove_completely_contained_labels,
+)
 from examples.YOLO_server_api.detection import remove_overlapping_labels
+
 
 app = FastAPI()
 
@@ -226,7 +229,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        'examples.YOLO_server_api.detection.remove_completely_contained_labels',
+        'examples.YOLO_server_api.detection.'
+        'remove_completely_contained_labels',
         new_callable=AsyncMock,
     )
     async def test_process_labels(
