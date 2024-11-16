@@ -7,6 +7,8 @@ cloudinary==1.41.0
 codecov==2.1.13
 fastapi==0.115.5
 fastapi_jwt==0.3.0
+fastapi_limiter==0.1.6
+flask==3.1.0
 imagecorruptions==1.1.2
 imageio==2.35.1
 imgaug==0.4.0
@@ -40,3 +42,4 @@ ultralytics==8.3.31
 unicorn==2.1.1
 waitress==3.0.1
 watchdog==5.0.3
+werkzeug==3.1.3
