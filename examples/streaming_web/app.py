@@ -11,7 +11,9 @@ from fastapi_limiter import FastAPILimiter
 
 from .routes import register_routes
 from .sockets import register_sockets
-from .utils import redis_manager
+from .utils import RedisManager
+
+redis_manager = RedisManager()
 
 
 @asynccontextmanager

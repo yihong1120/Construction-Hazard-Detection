@@ -19,7 +19,10 @@ class RedisManager:
     """
 
     def __init__(
-        self, redis_host: str, redis_port: int, redis_password: str,
+        self,
+        redis_host: str = '127.0.0.1',
+        redis_port: int = 6379,
+        redis_password: str = '',
     ) -> None:
         """
         Initialises RedisManager with Redis configuration details.
@@ -29,9 +32,11 @@ class RedisManager:
             redis_port (int): The Redis server port.
             redis_password (str): The Redis password for authentication.
         """
-        self.redis_host = redis_host
-        self.redis_port = redis_port
-        self.redis_password = redis_password
+        self.redis_host: str = os.getenv('REDIS_HOST') or redis_host
+        self.redis_port: int = int(os.getenv('REDIS_PORT')) or redis_port
+        self.redis_password: str = os.getenv(
+            'REDIS_PASSWORD',
+        ) or redis_password
 
         # Connect to Redis (asynchronous)
         self.client = redis.Redis(
@@ -40,6 +45,11 @@ class RedisManager:
             password=self.redis_password,
             decode_responses=False,
         )
+
+        if not self.client.ping():
+            raise SystemExit(
+                'Exiting application due to Redis connection failure.',
+            )
 
     async def get_labels(self) -> list[str]:
         """
@@ -67,7 +77,7 @@ class RedisManager:
                 if match:
                     label, stream_name = match.groups()
 
-                if 'test' not in label:
+                if label and 'test' not in label:
                     labels.add(f"{label}")
 
             if cursor == 0:  # Exit loop if scan cursor has reached the end
@@ -159,17 +169,3 @@ class Utils:
             'label': label,
             'images': updated_data,
         })
-
-
-# Define Redis connection settings with default values
-# and initialise RedisManager
-redis_host = os.getenv('REDIS_HOST', 'localhost')
-redis_port = int(os.getenv('REDIS_PORT', 6379))
-redis_password = os.getenv('REDIS_PASSWORD', '')
-
-try:
-    redis_manager = RedisManager(redis_host, redis_port, redis_password)
-    print('Redis connection initialised successfully.')
-except Exception as e:
-    print(f"Failed to initialise Redis connection: {e}")
-    raise SystemExit('Exiting application due to Redis connection failure.')

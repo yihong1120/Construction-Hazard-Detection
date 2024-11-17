@@ -16,8 +16,10 @@ from fastapi_limiter.depends import RateLimiter
 from starlette.responses import Response
 from starlette.templating import Jinja2Templates
 
-from .utils import redis_manager
+from .utils import RedisManager
 from .utils import Utils
+
+redis_manager = RedisManager()
 
 # Create an API router for defining routes
 router = APIRouter()

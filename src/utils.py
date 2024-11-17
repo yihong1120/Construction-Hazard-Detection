@@ -65,13 +65,25 @@ class RedisManager:
     A class to manage Redis operations.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        redis_host: str = '127.0.0.1',
+        redis_port: int = 6379,
+        redis_password: str = '',
+    ) -> None:
         """
-        Initialise the RedisManager by connecting to Redis.
+        Initialises RedisManager with Redis configuration details.
+
+        Args:
+            redis_host (str): The Redis server hostname.
+            redis_port (int): The Redis server port.
+            redis_password (str): The Redis password for authentication.
         """
-        self.redis_host: str = os.getenv('redis_host', 'localhost')
-        self.redis_port: int = int(os.getenv('redis_port', 6379))
-        self.redis_password: str | None = os.getenv('redis_password')
+        self.redis_host: str = os.getenv('REDIS_HOST') or redis_host
+        self.redis_port: int = int(os.getenv('REDIS_PORT')) or redis_port
+        self.redis_password: str = os.getenv(
+            'REDIS_PASSWORD',
+        ) or redis_password
 
         # Create Redis connection
         self.redis = redis.Redis(
@@ -80,6 +92,12 @@ class RedisManager:
             password=self.redis_password,
             decode_responses=False,
         )
+
+        # Check if Redis connection is successful
+        if not self.redis.ping():
+            raise SystemExit(
+                'Exiting application due to Redis connection failure.',
+            )
 
     async def set(self, key: str, value: bytes) -> None:
         """
