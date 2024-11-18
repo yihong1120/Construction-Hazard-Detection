@@ -12,7 +12,7 @@ from fastapi_limiter import FastAPILimiter
 from examples.streaming_web.routes import rate_limiter_index
 from examples.streaming_web.routes import rate_limiter_label
 from examples.streaming_web.routes import register_routes
-from examples.streaming_web.utils import redis_manager
+from examples.streaming_web.utils import RedisManager
 
 
 class TestRoutes(unittest.IsolatedAsyncioTestCase):
@@ -23,14 +23,14 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.app = FastAPI()
 
         # Mock Redis instance with AsyncMock
-        self.mock_redis_instance = AsyncMock()
-        redis_manager.client = self.mock_redis_instance
+        self.redis_manager = RedisManager()
+        RedisManager.client = AsyncMock()  # Mock Redis client
 
         # Register routes
         register_routes(self.app)
 
         # Initialise rate limiter with the Redis client
-        asyncio.run(FastAPILimiter.init(self.mock_redis_instance))
+        asyncio.run(FastAPILimiter.init(RedisManager.client))
 
         # Mock rate limiter dependencies
         async def mock_rate_limiter():
@@ -50,7 +50,7 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         patch.stopall()
 
     @patch(
-        'examples.streaming_web.utils.redis_manager.get_labels',
+        'examples.streaming_web.utils.RedisManager.get_labels',
         new_callable=AsyncMock,
     )
     def test_index(self, mock_get_labels: AsyncMock):
@@ -67,7 +67,7 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertIn('label1', response.text)
 
     @patch(
-        'examples.streaming_web.utils.redis_manager.get_labels',
+        'examples.streaming_web.utils.RedisManager.get_labels',
         new_callable=AsyncMock,
     )
     def test_label_page_found(self, mock_get_labels: AsyncMock):
@@ -87,7 +87,7 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         mock_get_labels.assert_called_once_with()
 
     @patch(
-        'examples.streaming_web.utils.redis_manager.get_labels',
+        'examples.streaming_web.utils.RedisManager.get_labels',
         new_callable=AsyncMock,
     )
     def test_label_page_not_found(self, mock_get_labels: AsyncMock):
