@@ -220,7 +220,8 @@ class DetectionModelManager:
 
     def __del__(self) -> None:
         """
-        Cleans up by stopping the file observer thread.
+        Cleans up by stopping the file observer thread if it exists.
         """
-        self.observer.stop()
-        self.observer.join()
+        if hasattr(self, 'observer') and self.observer is not None:
+            self.observer.stop()
+            self.observer.join()
