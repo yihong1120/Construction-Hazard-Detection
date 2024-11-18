@@ -311,7 +311,7 @@ The primary dataset for training this model is the [Construction Site Safety Ima
    | YOLO11n | 640                   | 54.1               | 31.0               | 2.6               | 6.5               |
    | YOLO11s | 640                   | 70.1               | 44.8               | 9.4               | 21.6              |
    | YOLO11m | 640                   | 73.3               | 42.6               | 20.1              | 68.0              |
-   | YOLO11l | 640                   | //                 | //                 | 25.3              | 86.9              |
+   | YOLO11l | 640                   | 77.3               | 54.6               | 25.3              | 86.9              |
    | YOLO11x | 640                   | 76.8               | 52.5               | 56.9              | 194.9             |
 
 </details>
