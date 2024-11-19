@@ -74,11 +74,16 @@ class RedisManager:
                 match = re.match(
                     r'stream_frame:([\w\x80-\xFF]+)_([\w\x80-\xFF]+)', key,
                 )
-                if match:
-                    label, stream_name = match.groups()
+                if not match:
+                    continue
 
-                if label and 'test' not in label:
-                    labels.add(f"{label}")
+                label, stream_name = match.groups()
+
+                if 'test' in label:
+                    continue
+
+                labels.add(label)
+
 
             if cursor == 0:  # Exit loop if scan cursor has reached the end
                 break
