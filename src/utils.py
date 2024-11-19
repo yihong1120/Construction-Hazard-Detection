@@ -27,8 +27,12 @@ class Utils:
             bool: True if expired, False otherwise.
         """
         if expire_date_str:
-            expire_date = datetime.fromisoformat(expire_date_str)
-            return datetime.now() > expire_date
+            try:
+                expire_date = datetime.fromisoformat(expire_date_str)
+                return datetime.now() > expire_date
+            except ValueError:
+                # If the string cannot be parsed as a valid ISO 8601 date
+                return False
         return False
 
 
