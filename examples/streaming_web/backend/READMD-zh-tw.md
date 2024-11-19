@@ -15,7 +15,7 @@
     或是
 
     ```sh
-    uvicorn examples.streaming_web.app:sio_app --host 127.0.0.1 --port 8000
+    uvicorn examples.streaming_web.backend.app:sio_app --host 127.0.0.1 --port 8000
     ```
 
 2. **打開您的網頁瀏覽器並導航至：**

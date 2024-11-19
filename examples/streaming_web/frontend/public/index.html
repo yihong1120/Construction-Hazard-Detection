@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"> <!-- Specifies the character encoding for the document -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Ensures responsive design for various screen sizes -->
+    <title>Camera Streams</title> <!-- The title of the webpage, displayed on the browser tab -->
+
+    <!-- Link to the stylesheet for the webpage -->
+    <link rel="stylesheet" href="/css/styles.css">
+
+    <!-- Specifies the favicon for the webpage -->
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+
+    <!-- Include jQuery library from a CDN -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+
+    <!-- Link to the main JavaScript file for the webpage, loaded after the DOM -->
+    <script src="/js/index.js" defer></script>
+
+    <!-- Inline styling specific to this page -->
+    <style>
+        .camera a {
+            display: block; /* Ensures the link occupies the full container */
+            text-decoration: none; /* Removes the underline from the link */
+            color: inherit; /* Keeps the link colour consistent with normal text */
+            height: 100%; /* Ensures the link fills the container's height */
+        }
+    </style>
+</head>
+<body>
+    <h1>Camera Labels</h1> <!-- Main heading for the page -->
+
+    <!-- A grid container to display the camera labels dynamically -->
+    <div id="camera-grid" class="camera-grid"></div>
+</body>
+</html>
