@@ -52,7 +52,7 @@ app.add_middleware(
 # Mount the static files directory to serve static assets
 app.mount(
     '/static',
-    StaticFiles(directory='examples/streaming_web/static'),
+    StaticFiles(directory='examples/streaming_web/backend/static'),
     name='static',
 )
 
