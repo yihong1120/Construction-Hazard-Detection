@@ -11,7 +11,6 @@
 *.json
 *.ipynb
 *.csv
-*.json
 *.zip
 *.yaml
 .env
@@ -36,3 +35,6 @@ app copy.py
 !models/pt/best_yolo11m.pt
 !models/pt/best_yolo11s.pt
 !models/pt/best_yolo11n.pt
+examples/streaming_web/frontend/node_modules/**
+examples/streaming_web/frontend/dist/**
+!examples/streaming_web/frontend/package.json
