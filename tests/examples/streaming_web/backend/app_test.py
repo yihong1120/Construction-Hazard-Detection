@@ -9,7 +9,7 @@ import uvicorn
 from fastapi.testclient import TestClient
 from fastapi_limiter import FastAPILimiter
 
-import examples.streaming_web.app as app_module
+import examples.streaming_web.backend.app as app_module
 
 
 class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
@@ -25,7 +25,7 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         self.client = TestClient(self.app)
 
     @patch(
-        'examples.streaming_web.app.redis_manager.client',
+        'examples.streaming_web.backend.app.redis_manager.client',
         new_callable=AsyncMock,
     )
     async def test_redis_connection(
@@ -53,7 +53,7 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
             password='virtualpass', decode_responses=True,
         )
 
-    @patch('examples.streaming_web.app.CORSMiddleware')
+    @patch('examples.streaming_web.backend.app.CORSMiddleware')
     def test_cors_initialization(self, mock_cors: MagicMock) -> None:
         """
         Test that CORS is properly initialized for the FastAPI app.
@@ -69,11 +69,11 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.streaming_web.app.FastAPILimiter.init',
+        'examples.streaming_web.backend.app.FastAPILimiter.init',
         new_callable=AsyncMock,
     )
     @patch(
-        'examples.streaming_web.app.redis_manager.client',
+        'examples.streaming_web.backend.app.redis_manager.client',
         new_callable=AsyncMock,
     )
     async def test_rate_limiter_initialization(
@@ -96,11 +96,11 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         Test that the application runs with the expected configurations.
         """
         uvicorn.run(
-            'examples.streaming_web.app:sio_app',
+            'examples.streaming_web.backend.app:sio_app',
             host='127.0.0.1', port=8000, log_level='info',
         )
         mock_uvicorn_run.assert_called_once_with(
-            'examples.streaming_web.app:sio_app',
+            'examples.streaming_web.backend.app:sio_app',
             host='127.0.0.1', port=8000, log_level='info',
         )
 
