@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import socketio
 
-from examples.streaming_web.sockets import register_sockets
-from examples.streaming_web.sockets import update_images
+from examples.streaming_web.backend.sockets import register_sockets
+from examples.streaming_web.backend.sockets import update_images
 
 
 class TestSockets(unittest.IsolatedAsyncioTestCase):

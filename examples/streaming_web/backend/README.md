@@ -15,7 +15,7 @@ This section provides an example implementation of a Streaming Web application, 
     or
 
     ```sh
-    uvicorn examples.streaming_web.app:sio_app --host 127.0.0.1 --port 8000
+    uvicorn examples.streaming_web.backend.app:sio_app --host 127.0.0.1 --port 8000
     ```
 
 2. **Open your web browser and navigate to:**
