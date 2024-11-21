@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 import redis
 from fastapi import WebSocket
 
-from examples.streaming_web.utils import RedisManager
-from examples.streaming_web.utils import Utils
+from examples.streaming_web.backend.utils import RedisManager
+from examples.streaming_web.backend.utils import Utils
 
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):

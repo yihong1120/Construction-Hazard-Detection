@@ -11,10 +11,7 @@ from fastapi import UploadFile
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi_limiter.depends import RateLimiter
-from starlette.responses import Response
-from starlette.templating import Jinja2Templates
 
 from .utils import RedisManager
 from .utils import Utils
@@ -23,9 +20,6 @@ redis_manager = RedisManager()
 
 # Create an API router for defining routes
 router = APIRouter()
-templates = Jinja2Templates(
-    directory='examples/streaming_web/templates',
-)
 
 
 def register_routes(app: Any) -> None:
@@ -37,96 +31,62 @@ def register_routes(app: Any) -> None:
     """
     app.include_router(router)
 
-    # Mount the static files directory to serve static assets
-    app.mount(
-        '/static',
-        StaticFiles(directory='examples/streaming_web/static'),
-        name='static',
-    )
 
-
+# Create rate limiters for the API routes
 rate_limiter_index = RateLimiter(times=60, seconds=60)
 rate_limiter_label = RateLimiter(times=6000, seconds=6000)
 
 
-@router.get('/', dependencies=[Depends(rate_limiter_index)])
-async def index(request: Request) -> Response:
-    """
-    Renders the index page with available labels from Redis.
-
-    Args:
-        request (Request): The HTTP request object.
-
-    Returns:
-        Response: The rendered HTML template for the index page,
-            containing available labels.
-    """
-    try:
-        # Retrieve available labels from Redis
-        labels = await redis_manager.get_labels()
-    except Exception as e:
-        # Raise HTTP 500 error if labels cannot be fetched
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch labels: {str(e)}",
-        )
-    # Render and return the index template with the fetched labels
-    return templates.TemplateResponse(
-        request,
-        'index.html',
-        {
-            'labels': labels,
-        },
-    )
-
-
-@router.get('/label/{label}', dependencies=[Depends(rate_limiter_label)])
-async def label_page(
-    request: Request,
-    label: str,
-) -> Response:
+@router.get('/api/labels', dependencies=[Depends(rate_limiter_index)])
+async def get_labels() -> JSONResponse:
     """
     Renders the page for a specific label with available labels from Redis.
 
     Args:
-        request (Request): The HTTP request object.
-        label (str): The label identifier to display on the page.
+        None
 
     Returns:
-        Response: The rendered HTML template for the label page
-            with available labels.
+        JSONResponse: A JSON response containing the labels.
     """
     try:
         # Retrieve available labels from Redis
         labels = await redis_manager.get_labels()
 
-        # Check if the requested label is present in the available labels
-        if label not in labels:
-            # Raise HTTP 404 error if the label is not found
-            raise HTTPException(
-                status_code=404, detail=f"Label '{label}' not found",
-            )
-    except HTTPException as e:
-        # Re-raise HTTP exceptions
-        raise e
+    except ValueError as ve:
+        print(f"ValueError while fetching labels: {str(ve)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid data encountered: {str(ve)}",
+        )
+    except KeyError as ke:
+        print(f"KeyError while fetching labels: {str(ke)}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Missing key encountered: {str(ke)}",
+        )
+    except ConnectionError as ce:
+        print(f"ConnectionError while fetching labels: {str(ce)}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to connect to the database: {str(ce)}",
+        )
+    except TimeoutError as te:
+        print(f"TimeoutError while fetching labels: {str(te)}")
+        raise HTTPException(
+            status_code=504,
+            detail=f"Request timed out: {str(te)}",
+        )
     except Exception as e:
-        # Log unexpected errors and raise HTTP 500 error
         print(f"Unexpected error while fetching labels: {str(e)}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to fetch labels: {str(e)}",
+            status_code=500,
+            detail=f"Failed to fetch labels: {str(e)}",
         )
 
-    # Render and return the label template with the fetched labels
-    return templates.TemplateResponse(
-        request,
-        'label.html',
-        {
-            'label': label,
-            'labels': labels,
-        },
-    )
+    return JSONResponse(content={'labels': labels})
 
 
-@router.websocket('/ws/label/{label}')
+@router.websocket('/api/ws/labels/{label}')
 async def websocket_label_stream(websocket: WebSocket, label: str) -> None:
     """
     Establishes a WebSocket connection to stream updated frames
@@ -168,7 +128,7 @@ async def websocket_label_stream(websocket: WebSocket, label: str) -> None:
         print('WebSocket connection closed')
 
 
-@router.post('/webhook')
+@router.post('/api/webhook')
 async def webhook(request: Request) -> JSONResponse:
     """
     Processes incoming webhook requests by logging the request body.
@@ -188,7 +148,7 @@ async def webhook(request: Request) -> JSONResponse:
 # Uncomment and use the following endpoint for file uploads if needed
 
 
-@router.post('/upload')
+@router.post('/api/upload')
 async def upload_file(file: UploadFile) -> JSONResponse:
     """
     Saves an uploaded file to the designated upload folder
@@ -200,10 +160,10 @@ async def upload_file(file: UploadFile) -> JSONResponse:
     Returns:
         JSONResponse: A JSON response containing the URL of the uploaded file.
     """
-    UPLOAD_FOLDER = Path('static/uploads')
+    UPLOAD_FOLDER = Path('uploads')
     UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
-    # 检查 filename 是否为 None
+    # Check if the file has a filename
     if not file.filename:
         raise HTTPException(status_code=400, detail='Filename is missing')
 
@@ -216,5 +176,5 @@ async def upload_file(file: UploadFile) -> JSONResponse:
             status_code=500, detail=f"Failed to save file: {str(e)}",
         )
 
-    url = f"https://yihong-server.mooo.com/static/uploads/{file.filename}"
+    url = f"/uploads/{file.filename}"
     return JSONResponse(content={'url': url})
