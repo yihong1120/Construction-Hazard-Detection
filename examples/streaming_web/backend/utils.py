@@ -33,7 +33,7 @@ class RedisManager:
             redis_password (str): The Redis password for authentication.
         """
         self.redis_host: str = os.getenv('REDIS_HOST') or redis_host
-        self.redis_port: int = int(os.getenv('REDIS_PORT')) or redis_port
+        self.redis_port: int = int(os.getenv('REDIS_PORT') or redis_port)
         self.redis_password: str = os.getenv(
             'REDIS_PASSWORD',
         ) or redis_password
