@@ -14,6 +14,7 @@
 <br>
 
 <div align="center">
+   <!-- Row 1: Tools and Frameworks -->
    <a href="https://www.python.org/downloads/release/python-3127/">
       <img src="https://img.shields.io/badge/python-3.12.7-blue?logo=python" alt="Python 3.12.7">
    </a>
@@ -24,8 +25,16 @@
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
    </a>
    <a href="https://fastapi.tiangolo.com/">
-      <img src="https://img.shields.io/badge/fastapi-0.115.4-blue?logo=fastapi" alt="FastAPI 0.115.4">
+      <img src="https://img.shields.io/badge/fastapi-0.115.5-blue?logo=fastapi" alt="FastAPI 0.115.5">
    </a>
+   <a href="https://redis.io/">
+      <img src="https://img.shields.io/badge/Redis-7.0.15-red?logo=redis" alt="Redis 7.0.15">
+   </a>
+   <a href="https://www.docker.com/">
+      <img src="https://img.shields.io/badge/Docker-Container-blue?logo=docker" alt="Docker">
+   </a>
+
+   <!-- Row 2: Testing, code quality and data -->
    <a href="https://github.com/pre-commit/pre-commit">
       <img src="https://img.shields.io/badge/pre--commit-4.0.1-blue?logo=pre-commit" alt="Pre-commit 4.0.1">
    </a>
@@ -303,7 +312,7 @@ The primary dataset for training this model is the [Construction Site Safety Ima
 - `8: 'Machinery'`
 - `9: 'Vehicle'`
 
-<summary>Models for detection</summary>
+### Models for detection
 
 | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
 | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
@@ -311,7 +320,7 @@ The primary dataset for training this model is the [Construction Site Safety Ima
 | YOLO11s | 640                   | 70.1               | 44.8               | 9.4               | 21.6              |
 | YOLO11m | 640                   | 73.3               | 42.6               | 20.1              | 68.0              |
 | YOLO11l | 640                   | 77.3               | 54.6               | 25.3              | 86.9              |
-| YOLO11x | 640                   | 76.8               | 52.5               | 56.9              | 194.9             |
+| YOLO11x | 640                   | 82.0               | 61.7               | 56.9              | 194.9             |
 
 <br>
 
@@ -337,7 +346,7 @@ We welcome contributions to this project. Please follow these steps:
 ## TODO
 
 - Add support for WhatsApp notifications,
-- Separation of front and back ends
+- Added a new page for streaming single shots to the Internet
 
 ## License
 

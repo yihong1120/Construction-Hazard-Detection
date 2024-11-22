@@ -14,6 +14,7 @@
 <br>
 
 <div align="center">
+   <!-- 第一行：工具与框架 -->
    <a href="https://www.python.org/downloads/release/python-3127/">
       <img src="https://img.shields.io/badge/python-3.12.7-blue?logo=python" alt="Python 3.12.7">
    </a>
@@ -26,6 +27,14 @@
    <a href="https://fastapi.tiangolo.com/">
       <img src="https://img.shields.io/badge/fastapi-0.115.4-blue?logo=fastapi" alt="FastAPI 0.115.4">
    </a>
+   <a href="https://redis.io/">
+      <img src="https://img.shields.io/badge/Redis-7.0.15-red?logo=redis" alt="Redis 7.0.15">
+   </a>
+   <a href="https://www.docker.com/">
+      <img src="https://img.shields.io/badge/Docker-Container-blue?logo=docker" alt="Docker">
+   </a>
+
+   <!-- 第二行：测试、代码质量与数据 -->
    <a href="https://github.com/pre-commit/pre-commit">
       <img src="https://img.shields.io/badge/pre--commit-4.0.1-blue?logo=pre-commit" alt="Pre-commit 4.0.1">
    </a>
@@ -33,7 +42,10 @@
       <img src="https://img.shields.io/badge/pytest-8.3.3-blue?logo=pytest" alt="pytest 8.3.3">
    </a>
    <a href="https://codecov.io/github/yihong1120/Construction-Hazard-Detection" >
-      <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D"/>
+      <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D" alt="Codecov">
+   </a>
+   <a href="https://codebeat.co/projects/github-com-yihong1120-construction-hazard-detection-main">
+      <img alt="codebeat badge" src="https://codebeat.co/badges/383396a9-e2cb-4604-8990-c1707e5870cf" />
    </a>
    <a href="https://universe.roboflow.com/object-detection-qn97p/construction-hazard-detection">
       <img src="https://app.roboflow.com/images/download-dataset-badge.svg" alt="Download Dataset from Roboflow">
@@ -293,7 +305,7 @@
 - `8: '機械'`
 - `9: '車輛'`
 
-<summary>檢測模型</summary>
+### 檢測模型
 
 | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
 | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
@@ -301,7 +313,7 @@
 | YOLO11s | 640                   | 70.1               | 44.8               | 9.4               | 21.6              |
 | YOLO11m | 640                   | 73.3               | 42.6               | 20.1              | 68.0              |
 | YOLO11l | 640                   | 77.3               | 54.6               | 25.3              | 86.9              |
-| YOLO11x | 640                   | 76.8               | 52.5               | 56.9              | 194.9             |
+| YOLO11x | 640                   | 82.0               | 61.7               | 56.9              | 194.9             |
 
 <br>
 
@@ -325,7 +337,7 @@
 ## 待辦事項
 
 - 新增對 WhatsApp 通知的支援，
-- 前後端分離
+- 新增了一個新頁面，用於將單鏡頭串流到互聯網
 
 ## 授權
 此項目根據 [AGPL-3.0](LICENSE.md) 授權。
