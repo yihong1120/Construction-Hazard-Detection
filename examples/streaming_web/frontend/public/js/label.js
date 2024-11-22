@@ -99,7 +99,7 @@ function updateCameraGrid(images) {
 
             // Create a title for the camera
             const title = document.createElement('h2');
-            title.textContent = key.split('_').pop(); // Extract and display a simplified key
+            title.textContent = key; // Display the key directly
 
             // Create an image element for the camera
             const img = document.createElement('img');

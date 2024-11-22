@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import gc
 import logging
 import os
@@ -123,6 +124,14 @@ class MainApp:
                 stream_name = config_data['config'].get(
                     'stream_name', 'prediction_visual',
                 )
+
+                site = base64.urlsafe_b64encode(
+                    site.encode('utf-8'),
+                ).decode('utf-8')
+                stream_name = base64.urlsafe_b64encode(
+                    stream_name.encode('utf-8'),
+                ).decode('utf-8')
+
                 key_to_delete = f"stream_frame:{site}_{stream_name}"
 
                 # Stop the process if the configuration is removed
@@ -436,8 +445,18 @@ class MainApp:
             # Store the frame in Redis if not running on Windows
             if not is_windows:
                 try:
+                    # Encode site and stream_name to avoid issues
+                    # with special characters
+                    encoded_site = base64.urlsafe_b64encode(
+                        (site or 'default_site').encode('utf-8'),
+                    ).decode('utf-8')
+
+                    encoded_stream_name = base64.urlsafe_b64encode(
+                        stream_name.encode('utf-8'),
+                    ).decode('utf-8')
+
                     # Use a unique key for each thread or process
-                    key = f"stream_frame:{site}_{stream_name}"
+                    key = f"stream_frame:{encoded_site}_{encoded_stream_name}"
 
                     # Store the frame in Redis Stream
                     # with a maximum length of 10
@@ -514,6 +533,14 @@ class MainApp:
             if not is_windows:
                 site = config.get('site')
                 stream_name = config.get('stream_name', 'prediction_visual')
+
+                site = base64.urlsafe_b64encode(
+                    (site or 'default_site').encode('utf-8'),
+                ).decode('utf-8')
+                stream_name = base64.urlsafe_b64encode(
+                    stream_name.encode('utf-8'),
+                ).decode('utf-8')
+
                 key = f"stream_frame:{site}_{stream_name}"
                 await redis_manager.delete(key)
                 self.logger.info(f"Deleted Redis key: {key}")
