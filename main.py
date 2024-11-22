@@ -199,12 +199,6 @@ class MainApp:
     async def run_multiple_streams(self) -> None:
         """
         Manage multiple video streams based on a config file.
-
-        Args:
-            config_file (str): The path to the YAML configuration file.
-
-        Returns:
-            None
         """
         # Initial load of configurations
         await self.reload_configurations()
@@ -225,8 +219,16 @@ class MainApp:
             while True:
                 await anyio.sleep(1)
         except KeyboardInterrupt:
+            print('\n[INFO] Received KeyboardInterrupt. Stopping observer...')
             observer.stop()
-        observer.join()
+        finally:
+            observer.join()  # Wait for the observer to finish
+            print('[INFO] Observer stopped.')
+            # Stop all running processes
+            for video_url, data in self.running_processes.items():
+                self.stop_process(data['process'])
+            self.running_processes.clear()
+            print('[INFO] All processes stopped.')
 
     async def process_single_stream(
         self,
@@ -680,18 +682,26 @@ async def main():
     )
     args = parser.parse_args()
 
-    # If an image path is provided, process the single image
-    if args.image:
-        await process_single_image(
-            image_path=args.image,
-            model_key=args.model_key,
-            output_folder=args.output_folder,
-            language=args.language,
-        )
-    else:
-        # Otherwise, run hazard detection on multiple video streams
-        app = MainApp(args.config)
-        await app.run_multiple_streams()
+    try:
+        if args.image:
+            # If an image path is provided, process the single image
+            await process_single_image(
+                image_path=args.image,
+                model_key=args.model_key,
+                output_folder=args.output_folder,
+                language=args.language,
+            )
+        else:
+            # Otherwise, run hazard detection on multiple video streams
+            app = MainApp(args.config)
+            await app.run_multiple_streams()
+    except KeyboardInterrupt:
+        print('\n[INFO] Received KeyboardInterrupt. Shutting down...')
+    finally:
+        # Perform necessary cleanup if needed
+        if not is_windows:
+            await redis_manager.close_connection()
+            print('[INFO] Redis connection closed.')
 
 
 if __name__ == '__main__':
