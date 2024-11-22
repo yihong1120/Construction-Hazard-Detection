@@ -202,3 +202,13 @@ class RedisManager:
             logging.error(
                 f"Error deleting Redis stream {stream_name}: {str(e)}",
             )
+
+    async def close_connection(self) -> None:
+        """
+        Close the Redis connection.
+        """
+        try:
+            await self.redis.close()
+            print('[INFO] Redis connection successfully closed.')
+        except Exception as e:
+            print(f"[ERROR] Failed to close Redis connection: {e}")
