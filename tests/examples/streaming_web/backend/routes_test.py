@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from fastapi_limiter import FastAPILimiter
 
-from examples.streaming_web.backend.routes import rate_limiter_index, rate_limiter_label, register_routes
+from examples.streaming_web.backend.routes import rate_limiter_index
+from examples.streaming_web.backend.routes import rate_limiter_label
+from examples.streaming_web.backend.routes import register_routes
 from examples.streaming_web.backend.utils import RedisManager
 
 
@@ -46,7 +49,10 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.app.dependency_overrides.clear()
         patch.stopall()
 
-    @patch('examples.streaming_web.backend.utils.RedisManager.get_labels', new_callable=AsyncMock)
+    @patch(
+        'examples.streaming_web.backend.utils.RedisManager.get_labels',
+        new_callable=AsyncMock,
+    )
     def test_index(self, mock_get_labels: AsyncMock):
         """
         Test the index route to ensure it renders the correct response.
@@ -56,7 +62,10 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
 
-    @patch('examples.streaming_web.backend.utils.RedisManager.get_keys_for_label', new_callable=AsyncMock)
+    @patch(
+        'examples.streaming_web.backend.utils.RedisManager.get_keys_for_label',
+        new_callable=AsyncMock,
+    )
     def test_label_page_found(self, mock_get_keys: AsyncMock):
         """
         Test the WebSocket route for an existing label.
