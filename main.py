@@ -444,7 +444,7 @@ class MainApp:
             #   save_file_name
             # )
 
-            # Store the frame in Redis if not running on Windows
+            # Store the frame and warnings in Redis if not running on Windows
             if not is_windows:
                 try:
                     # Encode site and stream_name to avoid issues
@@ -460,13 +460,34 @@ class MainApp:
                     # Use a unique key for each thread or process
                     key = f"stream_frame:{encoded_site}_{encoded_stream_name}"
 
-                    # Store the frame in Redis Stream
+                    if not warnings:
+                        warnings = ['No warning']
+
+                    # warnings = [
+                    #     'Warning: Someone is not wearing a hardhat!',
+                    #     'Warning: 2 people have entered the controlled area!',
+                    #     'Warning: Someone is too close to machinery!',
+                    # ]
+
+                    # Translate the warnings
+                    translated_warnings = Translator.translate_warning(
+                        warnings=warnings, language='zh-TW',
+                    )
+
+                    # Combine warnings into a single string for storage
+                    warnings_str = '\n'.join(translated_warnings)
+
+                    # Store the frame and warnings in Redis Stream
                     # with a maximum length of 10
                     await redis_manager.add_to_stream(
-                        key, {'frame': frame_bytes}, maxlen=10,
+                        key,
+                        {'frame': frame_bytes, 'warnings': warnings_str},
+                        maxlen=10,
                     )
                 except Exception as e:
-                    logger.error(f"Failed to store frame in Redis: {e}")
+                    logger.error(
+                        f"Failed to store frame and warnings in Redis: {e}",
+                    )
 
             # Update the capture interval based on processing time
             processing_time = time.time() - start_time
