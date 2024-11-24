@@ -25,7 +25,13 @@ export default defineConfig({
   },
 
   build: {
-    // Specify the output directory for the build process
-    outDir: '../dist',
+    outDir: '../dist', // Output directory outside of public
+    rollupOptions: {
+      input: {
+        main: './public/index.html', // Main entry
+        label: './public/label.html', // Additional entry
+        camera: './public/camera.html', // Additional entry
+      },
+    },
   },
 });
