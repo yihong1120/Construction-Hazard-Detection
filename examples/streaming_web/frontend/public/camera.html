@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- Specifies the document's character encoding -->
+    <meta charset="UTF-8">
+    <!-- Ensures proper scaling and responsiveness on mobile devices -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Sets the title of the page -->
+    <title>Camera Stream</title>
+    <!-- Links the external CSS file for styling -->
+    <link rel="stylesheet" href="/css/styles.css">
+    <!-- Links the external JavaScript file for functionality, loaded asynchronously -->
+    <script src="/js/camera.js" defer></script>
+</head>
+<body>
+    <!-- Page header to display the camera title -->
+    <h1 id="camera-title"></h1>
+    <div id="camera-container">
+        <!-- Left section: Displays the live stream -->
+        <div id="camera-stream">
+            <!-- Loading indicator shown before the stream loads -->
+            <div id="loading-indicator" class="loading">Loading stream...</div>
+            <!-- Placeholder for the live stream image, initially hidden -->
+            <img id="stream-image" alt="Live Stream" class="hidden" />
+            <!-- Displays metadata for the stream, such as the last updated timestamp -->
+            <div id="stream-meta" class="meta"></div>
+        </div>
+        <!-- Right section: Displays warnings dynamically -->
+        <div id="warnings-list">
+            <!-- Unordered list where warning messages will be dynamically added -->
+            <ul id="warnings-ul">
+                <!-- Warning items will be inserted here via JavaScript -->
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
