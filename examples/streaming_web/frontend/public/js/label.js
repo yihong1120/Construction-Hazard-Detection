@@ -4,6 +4,7 @@ let socket; // Define the WebSocket globally to manage the connection throughout
 document.addEventListener('DOMContentLoaded', () => {
     const labelTitle = document.getElementById('label-title'); // Reference to the label title element
     const cameraGrid = document.getElementById('camera-grid'); // Reference to the camera grid container
+    const loadingMessage = document.getElementById('loading-message'); // Reference to the loading message element
     const urlParams = new URLSearchParams(window.location.search); // Extract query parameters from the URL
     const label = urlParams.get('label'); // Retrieve the 'label' parameter
 
@@ -16,8 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Set the page's title to the label name
     labelTitle.textContent = label;
-
-    // Initialise the WebSocket connection for the given label
+    loadingMessage.style.display = 'block'; // Show the loading message
     initializeWebSocket(label);
 
     // Ensure the WebSocket connection is closed when the page is unloaded
@@ -75,9 +75,11 @@ function initializeWebSocket(label) {
  * @param {string} currentLabel - The label currently being displayed.
  */
 function handleUpdate(data, currentLabel) {
+    const loadingMessage = document.getElementById('loading-message');
     if (data.label === currentLabel && data.images.length > 0) {
         console.log('Received update for current label:', data.label);
         updateCameraGrid(data.images); // Update the camera grid with new images
+        loadingMessage.style.display = 'none'; // Hide the loading message
     } else {
         console.log('No data for the current label, redirecting to index.html');
         window.location.href = 'index.html'; // Redirect to index.html if no images
@@ -120,6 +122,13 @@ function updateCameraGrid(images) {
 
             // Append the camera div to the grid
             cameraGrid.appendChild(cameraDiv);
+
+            // Add a click event listener to the camera div
+            cameraDiv.addEventListener('click', () => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const label = urlParams.get('label'); // Retrieve the 'label' parameter
+                window.location.href = `/camera.html?label=${encodeURIComponent(label)}&key=${encodeURIComponent(key)}`; // Redirect to the camera page
+            });
         }
     });
 }

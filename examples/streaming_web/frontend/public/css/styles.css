@@ -1,91 +1,230 @@
-
+/* General styling for all pages */
 body {
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 10px;
-    background-color: #f4f4f4;
-    color: #333;
+    font-family: Arial, sans-serif; /* Use Arial as the font family */
+    margin: 0; /* Remove default margin */
+    padding: 10px; /* Add padding to the body */
+    background-color: #f4f4f4; /* Light grey background for better contrast */
+    color: #333; /* Dark grey text colour for readability */
 }
 
 h1 {
-    text-align: center;
+    text-align: center; /* Centre-align headings */
 }
 
+/* Camera grid for index.html and label.html */
 .camera-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 10px;
-    padding: 10px;
+    display: grid; /* Use CSS Grid for layout */
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); /* Responsive column layout */
+    gap: 10px; /* Add spacing between grid items */
+    padding: 10px; /* Add padding to the grid */
 }
 
 .camera img {
-    width: 100%;
-    height: auto;
-    border-radius: 8px;
-    transition: transform 0.2s; /* Smooth zoom on hover */
+    width: 100%; /* Ensure images take up the full width of their container */
+    height: auto; /* Maintain aspect ratio */
+    border-radius: 8px; /* Add rounded corners to images */
+    transition: transform 0.2s; /* Smooth zoom effect on hover */
 }
 
 .camera img:hover {
-    transform: scale(1.03); /* Slight zoom on hover */
+    transform: scale(1.03); /* Slight zoom on hover for visual feedback */
 }
 
 .camera {
-    background: white;
-    padding: 10px;
-    border-radius: 8px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    background: white; /* White background for individual camera containers */
+    padding: 10px; /* Add padding inside camera containers */
+    border-radius: 8px; /* Add rounded corners */
+    cursor: pointer; /* Change cursor to indicate interactivity */
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1); /* Add subtle shadow for depth */
 }
 
-/* Forced Colors Mode adjustments */
+/* High contrast mode adjustments (for compatible browsers) */
 @media (forced-colors: active) {
     body {
-        forced-color-adjust: auto;
-        background-color: Canvas;
-        color: CanvasText;
+        forced-color-adjust: auto; /* Allow the browser to adjust colours */
+        background-color: Canvas; /* Use the system's canvas background */
+        color: CanvasText; /* Use the system's canvas text colour */
     }
 
     .camera {
-        background: Canvas;
-        color: CanvasText;
-        box-shadow: none; /* Simplify styles in high contrast mode */
+        background: Canvas; /* System-defined background colour */
+        color: CanvasText; /* System-defined text colour */
+        box-shadow: none; /* Remove shadow for simpler design */
     }
 
     .camera img {
-        border-radius: 0; /* Disable rounded corners in high contrast mode */
+        border-radius: 0; /* Remove rounded corners */
     }
 }
 
-/* Responsive design adjustments */
-@media (max-width: 600px) {
-    .camera-grid {
-        grid-template-columns: 1fr; /* Stack cameras on top of each other on small screens */
+/* Fallback for unsupported browsers */
+@supports not (forced-color-adjust: auto) {
+    body {
+        background-color: #fff; /* Default to white background */
+        color: #000; /* Default to black text */
     }
 
     .camera {
-        margin-bottom: 20px;
+        background: #fff; /* White background for compatibility */
+        color: #000; /* Black text for compatibility */
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Slightly darker shadow */
+    }
+
+    .camera img {
+        border-radius: 8px; /* Keep rounded corners */
+    }
+}
+
+/* Responsive design adjustments for index.html and label.html */
+@media (max-width: 600px) {
+    .camera-grid {
+        grid-template-columns: 1fr; /* Stack cameras vertically on small screens */
+    }
+
+    .camera {
+        margin-bottom: 20px; /* Add spacing between stacked items */
     }
 
     h1 {
-        font-size: 24px;
+        font-size: 24px; /* Reduce heading size for smaller screens */
     }
 }
 
 @media (min-width: 601px) and (max-width: 999px) {
     .camera-grid {
-        grid-template-columns: repeat(2, 1fr); /* Two columns on medium screens */
+        grid-template-columns: repeat(2, 1fr); /* Use two columns on medium screens */
     }
 
     h1 {
-        font-size: 28px;
+        font-size: 28px; /* Adjust heading size for medium screens */
     }
 }
 
 @media (min-width: 1000px) {
     .camera-grid {
-        grid-template-columns: repeat(3, 1fr); /* Three columns on large screens */
+        grid-template-columns: repeat(3, 1fr); /* Use three columns on large screens */
     }
 
     h1 {
-        font-size: 32px;
+        font-size: 32px; /* Increase heading size for larger screens */
+    }
+}
+
+/* Camera.html specific styles */
+#camera-container {
+    display: flex; /* Use flexbox for layout */
+    justify-content: space-between; /* Space items evenly */
+    align-items: flex-start; /* Align items to the top */
+    gap: 20px; /* Add space between stream and warnings */
+    padding: 20px; /* Add padding inside the container */
+    background: white; /* White background for clarity */
+    border-radius: 8px; /* Rounded corners */
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1); /* Subtle shadow for depth */
+    max-width: 90%; /* Restrict maximum width */
+    margin: 20px auto; /* Centre the container */
+}
+
+#camera-stream {
+    flex: 3; /* Take up three parts of the available space */
+    display: flex; /* Use flexbox for layout */
+    flex-direction: column; /* Stack children vertically */
+    align-items: center; /* Centre-align items */
+    justify-content: center; /* Centre-align items vertically */
+}
+
+.hidden {
+    display: none; /* Hide elements */
+}
+
+#stream-image {
+    max-width: 100%; /* Ensure the image scales properly */
+    max-height: 80vh; /* Limit the height to 80% of the viewport */
+    border-radius: 8px; /* Rounded corners */
+    object-fit: cover; /* Maintain aspect ratio while covering the container */
+    margin-bottom: 10px; /* Add spacing below the image */
+}
+
+.meta {
+    font-size: 14px; /* Smaller font size for metadata */
+    color: #666; /* Grey text for secondary information */
+    text-align: center; /* Centre-align metadata */
+    margin-top: 10px; /* Add spacing above */
+}
+
+.loading {
+    font-size: 18px; /* Slightly larger font for the loading message */
+    color: #999; /* Light grey text for loading indicator */
+    text-align: center; /* Centre-align the loading message */
+}
+
+/* Warning message container styles */
+#warnings-list {
+    flex: 2;
+    padding: 10px;
+    border-radius: 8px;
+    overflow-y: auto;
+    max-height: 80vh;
+    font-size: clamp(16px, 2vw, 18px); /* Dynamic font size */
+    line-height: 1.6; /* Increase line spacing */
+    word-wrap: break-word; /* Ensure long words wrap correctly */
+    display: flex;
+    flex-direction: column; /* Stack warnings vertically */
+    justify-content: flex-start;
+    align-items: flex-start;
+}
+
+/* Style for no warnings (green background) */
+#warnings-list.no-warnings {
+    background-color: #e0f7e9; /* Light green background */
+    color: #1b5e20; /* Dark green text */
+    text-align: center; /* Centre-align text */
+}
+
+/* Style for warnings present (red background) */
+#warnings-list.warnings {
+    background-color: #ffebee; /* Light red background */
+    color: #b71c1c; /* Dark red text */
+    text-align: left; /* Align text to the left */
+}
+
+/* Individual warning message styles */
+.warning-item {
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 5px; /* Rounded corners */
+    text-align: left;
+    background-color: #ffebee; /* Default light red background */
+    color: #b71c1c; /* Default dark red text */
+}
+
+/* Style for individual no-warning message */
+.warning-item.no-warning {
+    background-color: #e0f7e9; /* Light green background */
+    color: #1b5e20; /* Dark green text */
+}
+
+/* Responsive design: Warning messages below image and centred on small screens */
+@media (max-width: 600px) {
+    #camera-container {
+        flex-direction: column; /* Stack elements vertically */
+        align-items: center; /* Centre-align elements */
+    }
+
+    #warnings-list {
+        max-width: 100%; /* Full width for warnings list */
+        text-align: center; /* Centre-align text */
+        align-items: center; /* Centre-align content */
+    }
+}
+
+/* Large screen: Align warnings next to the image */
+@media (min-width: 601px) {
+    #camera-container {
+        flex-direction: row; /* Arrange elements in a row */
+    }
+
+    #warnings-list {
+        text-align: left; /* Align text to the left */
+        align-items: flex-start;
     }
 }
