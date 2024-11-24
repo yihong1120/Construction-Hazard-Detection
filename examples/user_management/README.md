@@ -9,7 +9,7 @@ This User Management System is a Flask-based web application that provides endpo
 To start the application, navigate to the directory containing `app.py` and execute the following command:
 
 ```sh
-flask run --host=0.0.0.0 --port=6000
+uvicorn examples.user_management.app:app --host 127.0.0.1 --port 6000
 ```
 
 This will start the Flask development server on all available IPs at port 6000.
