@@ -158,6 +158,10 @@ async def websocket_stream(websocket: WebSocket, label: str, key: str) -> None:
                 last_id = message['id']
                 # Send the latest frame and warnings to the client
                 await websocket.send_json(message)
+            else:
+                # Send an error message if no new data is available
+                await websocket.send_json({'error': 'No new data available'})
+
     except WebSocketDisconnect:
         print('WebSocket disconnected')
     except Exception as e:
