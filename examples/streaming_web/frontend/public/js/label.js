@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // If the label is missing from the URL, log an error and terminate further execution
     if (!label) {
         console.error('Label parameter is missing in the URL');
+        window.location.href = 'index.html'; // Redirect to index.html
         return;
     }
 
@@ -56,10 +57,15 @@ function initializeWebSocket(label) {
     };
 
     // Handle WebSocket errors
-    socket.onerror = (error) => console.error('WebSocket error:', error);
+    socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        window.location.href = 'index.html'; // Redirect to index.html on error
+    };
 
     // Handle WebSocket closure
-    socket.onclose = () => console.log('WebSocket closed');
+    socket.onclose = () => {
+        console.log('WebSocket closed');
+    };
 }
 
 /**
@@ -69,11 +75,12 @@ function initializeWebSocket(label) {
  * @param {string} currentLabel - The label currently being displayed.
  */
 function handleUpdate(data, currentLabel) {
-    if (data.label === currentLabel) {
+    if (data.label === currentLabel && data.images.length > 0) {
         console.log('Received update for current label:', data.label);
         updateCameraGrid(data.images); // Update the camera grid with new images
     } else {
-        console.log('Received update for different label:', data.label);
+        console.log('No data for the current label, redirecting to index.html');
+        window.location.href = 'index.html'; // Redirect to index.html if no images
     }
 }
 
@@ -84,6 +91,7 @@ function handleUpdate(data, currentLabel) {
  */
 function updateCameraGrid(images) {
     const cameraGrid = document.getElementById('camera-grid'); // Reference to the camera grid container
+    cameraGrid.innerHTML = ''; // Clear existing content in the grid
     images.forEach(({ key, image }) => {
         // Check if a camera div for the given key already exists
         const existingCameraDiv = document.querySelector(`.camera[data-key="${key}"]`);
