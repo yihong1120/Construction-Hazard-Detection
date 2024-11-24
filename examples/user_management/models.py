@@ -1,24 +1,44 @@
 from __future__ import annotations
 
-from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+from datetime import timezone
+
+from sqlalchemy import Boolean
+from sqlalchemy import Column
+from sqlalchemy import DateTime
+from sqlalchemy import Integer
+from sqlalchemy import String
+from sqlalchemy.orm import declarative_base
 from werkzeug.security import check_password_hash
 from werkzeug.security import generate_password_hash
 
-db = SQLAlchemy()
+Base = declarative_base()
 
 
-class User(db.Model):  # type: ignore
+class User(Base):  # type: ignore
     """
-    User model that represents an authenticated user in the database.
-
-    Attributes:
-        id (int): The primary key for the user.
-        username (str): The username, must be unique and not nullable.
-        password_hash (str): The hashed password, not stored as plain text.
+    Represents a user entity in the database with password hashing for
+    security.
     """
-    id: int = db.Column(db.Integer, primary_key=True)
-    username: str = db.Column(db.String(50), unique=True, nullable=False)
-    password_hash: str = db.Column(db.String(255), nullable=False)
+
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(80), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    # Roles: admin, model_manage, user, guest
+    role = Column(String(20), default='user', nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(
+        DateTime, default=datetime.now(
+            timezone.utc,
+        ), nullable=False,
+    )
+    updated_at = Column(
+        DateTime,
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc),
+        nullable=False,
+    )
 
     def set_password(self, password: str) -> None:
         """

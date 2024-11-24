@@ -1,102 +1,194 @@
 from __future__ import annotations
 
-from .models import db
-from .models import User
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+from examples.user_management.models import User
 
 
-def add_user(username: str, password: str) -> str:
+async def add_user(
+    username: str, password: str, role: str, db: AsyncSession,
+) -> str:
     """
-    Create a new user instance and add it to the database.
+    Add a new user to the database with the specified role.
 
     Args:
-        username (str): The username of the new user.
-        password (str): The password for the new user.
+        username (str): The username for the new user. Must be unique.
+        password (str): The password for the new user, stored as a hash.
+        role (str): The role assigned to the user (e.g., admin, user, guest).
+        db (AsyncSession): The database session for executing queries.
 
     Returns:
-        str: Success or error message.
+        str: A message indicating the result of the operation.
 
+    Raises:
+        IntegrityError: If the username already exists.
+        Exception: For any other errors during the operation.
     """
-    # Create a new user instance with the provided username
-    new_user = User(username=username)
-    new_user.set_password(password)  # Set the password after hashing
-    db.session.add(new_user)
+    # Create a new user instance and hash the password
+    new_user = User(username=username, role=role)
+    new_user.set_password(password)
+    db.add(new_user)
+
     try:
-        db.session.commit()  # Commit the transaction to the database
-        return f"User {username} added successfully."
+        # Commit the transaction to save the user
+        await db.commit()
+        return f"User {username} with role {role} added successfully."
+    except IntegrityError:
+        # Handle duplicate username errors
+        await db.rollback()
+        return f"Error: Username {username} already exists."
     except Exception as e:
-        db.session.rollback()  # Roll back the transaction on error
+        # Handle other unexpected errors
+        await db.rollback()
         return f"Error adding user: {str(e)}"
 
 
-def delete_user(username: str) -> str:
+async def delete_user(username: str, db: AsyncSession) -> str:
     """
-    Delete a user from the database by username.
+    Delete a user from the database by their username.
 
     Args:
         username (str): The username of the user to delete.
+        db (AsyncSession): The database session for executing queries.
 
     Returns:
-        str: Success or error message.
+        str: A message indicating the result of the operation.
+
+    Raises:
+        Exception: If there is an error during the deletion process.
     """
-    # Fetch the user from the database by username
-    user = User.query.filter_by(username=username).first()
+    # Fetch the user by their username
+    stmt = select(User).where(User.username == username)
+    result = await db.execute(stmt)
+    user = result.scalars().first()
+
     if user:
-        db.session.delete(user)
+        # User exists; proceed with deletion
+        await db.delete(user)
         try:
-            db.session.commit()  # Commit the deletion
+            await db.commit()
             return f"User {username} deleted successfully."
         except Exception as e:
-            db.session.rollback()  # Roll back if commit fails
+            await db.rollback()
             return f"Error deleting user: {str(e)}"
-    else:
-        return f"User {username} not found."
+    return f"User {username} not found."
 
 
-def update_username(old_username: str, new_username: str) -> str:
+async def update_username(
+    old_username: str, new_username: str, db: AsyncSession,
+) -> str:
     """
-    Update a user's username.
+    Update a user's username in the database.
 
     Args:
-        old_username (str): The current username.
-        new_username (str): The new username to update to.
+        old_username (str): The current username of the user.
+        new_username (str): The new username to assign to the user.
+        db (AsyncSession): The database session for executing queries.
 
     Returns:
-        str: Success or error message.
+        str: A message indicating the result of the operation.
+
+    Raises:
+        IntegrityError: If the new username already exists.
+        Exception: For any other errors during the operation.
     """
-    # Locate the user by the old username
-    user = User.query.filter_by(username=old_username).first()
+    # Locate the user by their current username
+    stmt = select(User).where(User.username == old_username)
+    result = await db.execute(stmt)
+    user = result.scalars().first()
+
     if user:
-        user.username = new_username  # Assign the new username
+        # Update the user's username
+        user.username = new_username
         try:
-            db.session.commit()  # Commit changes to the database
+            await db.commit()
             return f"Username updated successfully to {new_username}."
+        except IntegrityError:
+            # Handle duplicate username errors
+            await db.rollback()
+            return f"Error: Username {new_username} already exists."
         except Exception as e:
-            db.session.rollback()  # Roll back if an error occurs during commit
+            # Handle other unexpected errors
+            await db.rollback()
             return f"Error updating username: {str(e)}"
-    else:
-        return f"User {old_username} not found."
+    return f"User {old_username} not found."
 
 
-def update_password(username: str, new_password: str) -> str:
+async def update_password(
+    username: str,
+    new_password: str,
+    db: AsyncSession,
+) -> str:
     """
     Update a user's password.
 
     Args:
-        username (str): The username for which to update the password.
-        new_password (str): The new password to be set.
+        username (str): The username of the user whose password
+            will be updated.
+        new_password (str): The new password to assign to the user.
+        db (AsyncSession): The database session for executing queries.
 
     Returns:
-        str: Success or error message.
+        str: A message indicating the result of the operation.
+
+    Raises:
+        Exception: If there is an error during the password update process.
     """
-    # Find the user by username
-    user = User.query.filter_by(username=username).first()
+    # Locate the user by their username
+    stmt = select(User).where(User.username == username)
+    result = await db.execute(stmt)
+    user = result.scalars().first()
+
     if user:
-        user.set_password(new_password)  # Set the new password after hashing
+        # Update and hash the new password
+        user.set_password(new_password)
         try:
-            db.session.commit()  # Commit the changes
+            await db.commit()
             return f"Password updated successfully for user {username}."
         except Exception as e:
-            db.session.rollback()  # Roll back on failure
+            # Handle unexpected errors
+            await db.rollback()
             return f"Error updating password: {str(e)}"
-    else:
-        return f"User {username} not found."
+    return f"User {username} not found."
+
+
+async def set_user_active_status(
+    username: str, is_active: bool, db: AsyncSession,
+) -> str:
+    """
+    Update a user's active status.
+
+    Args:
+        username (str): The username of the user whose status will be updated.
+        is_active (bool): The active status to assign
+            (True for active, False for inactive).
+        db (AsyncSession): The database session for executing queries.
+
+    Returns:
+        str: A message indicating the result of the operation.
+
+    Raises:
+        Exception: If there is an error during the status update process.
+    """
+    # Locate the user by their username
+    stmt = select(User).where(User.username == username)
+    result = await db.execute(stmt)
+    user = result.scalars().first()
+
+    if user:
+        # Update the user's active status
+        user.is_active = is_active
+        try:
+            await db.commit()
+            await db.commit()
+            return (
+                f"User {username} is now "
+                f"{'active' if is_active else 'inactive'}."
+            )
+        except Exception as e:
+            # Handle unexpected errors
+            await db.rollback()
+            return f"Error updating active status: {str(e)}"
+    return f"User {username} not found."

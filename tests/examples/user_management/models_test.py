@@ -2,92 +2,129 @@ from __future__ import annotations
 
 import unittest
 
-from flask import Flask
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import sessionmaker
 
-from examples.user_management.models import db
+from examples.user_management.models import Base
 from examples.user_management.models import User
 
 
-class UserModelTestCase(unittest.TestCase):
+class UserModelTestCase(unittest.IsolatedAsyncioTestCase):
     """
-    Unit tests for the User model.
+    Unit tests for the User model using an in-memory SQLite database.
     """
 
-    def setUp(self) -> None:
+    async def asyncSetUp(self) -> None:
         """
         Set up the test environment before each test.
         """
-        # Create a Flask application for testing
-        self.app = Flask(__name__)
-        self.app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-        self.app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+        # Use an in-memory SQLite database for testing
+        self.TEST_DATABASE_URL = 'sqlite+aiosqlite:///:memory:'
+        self.test_engine = create_async_engine(
+            self.TEST_DATABASE_URL, echo=False,
+        )
+        self.test_sessionmaker = sessionmaker(
+            bind=self.test_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        self.session = self.test_sessionmaker()
 
-        # Initialize the SQLAlchemy database
-        db.init_app(self.app)
+        # Create database schema
+        async with self.test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
-        # Create the database and the User table
-        with self.app.app_context():
-            db.create_all()
-
-        # Create a test client
-        self.client = self.app.test_client()
-
-    def tearDown(self) -> None:
+    async def asyncTearDown(self) -> None:
         """
         Clean up the test environment after each test.
         """
-        # Drop all tables from the database
-        with self.app.app_context():
-            db.session.remove()
-            db.drop_all()
+        # Drop all tables
+        async with self.test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
 
-    def test_set_password(self) -> None:
+        # Close the session
+        await self.session.close()
+        await self.test_engine.dispose()
+
+    async def test_set_password(self) -> None:
         """
         Test that the password is hashed correctly when set.
         """
-        with self.app.app_context():
-            user = User(username='testuser')
-            user.set_password('password123')
+        user = User(username='testuser')
+        user.set_password('securepassword123')
 
-            # Ensure the password_hash is not equal to the plain text password
-            self.assertNotEqual(user.password_hash, 'password123')
+        # Ensure the password hash is not the same as the plain text password
+        self.assertNotEqual(user.password_hash, 'securepassword123')
 
-            # Ensure the password_hash is not empty
-            self.assertTrue(user.password_hash)
+        # Ensure the password hash is not empty
+        self.assertTrue(user.password_hash)
 
-    def test_check_password(self) -> None:
+    async def test_check_password(self) -> None:
         """
-        Test that the correct password validates against the hash.
+        Test that the correct password matches the hash
+        and an incorrect one does not.
         """
-        with self.app.app_context():
-            user = User(username='testuser')
-            user.set_password('password123')
+        user = User(username='testuser')
+        user.set_password('securepassword123')
 
-            # Ensure the password check returns True for correct password
-            self.assertTrue(user.check_password('password123'))
+        # Ensure the correct password matches the hash
+        self.assertTrue(user.check_password('securepassword123'))
 
-            # Ensure the password check returns False for incorrect password
-            self.assertFalse(user.check_password('wrongpassword'))
+        # Ensure an incorrect password does not match the hash
+        self.assertFalse(user.check_password('wrongpassword'))
 
-    def test_unique_username(self) -> None:
+    async def test_user_creation(self) -> None:
         """
-        Test that usernames must be unique in the database.
+        Test that a user can be created and stored in the database.
         """
-        with self.app.app_context():
-            # Create a user with a unique username
-            user1 = User(username='uniqueuser')
-            user1.set_password('password123')
-            db.session.add(user1)
-            db.session.commit()
+        user = User(username='testuser', role='user')
+        user.set_password('securepassword123')
+        self.session.add(user)
+        await self.session.commit()
 
-            # Attempt to create another user with the same username
-            user2 = User(username='uniqueuser')
-            user2.set_password('password456')
-            db.session.add(user2)
+        # Retrieve the user from the database
+        retrieved_user = await self.session.get(User, user.id)
 
-            # Ensure an integrity error is raised due to the unique constraint
-            with self.assertRaises(Exception):
-                db.session.commit()
+        self.assertIsNotNone(retrieved_user)
+        self.assertEqual(retrieved_user.username, 'testuser')
+        self.assertEqual(retrieved_user.role, 'user')
+        self.assertTrue(retrieved_user.is_active)
+
+    async def test_unique_username_constraint(self) -> None:
+        """
+        Test that the username must be unique in the database.
+        """
+        user1 = User(username='uniqueuser')
+        user1.set_password('password123')
+        self.session.add(user1)
+        await self.session.commit()
+
+        # Attempt to add another user with the same username
+        user2 = User(username='uniqueuser')
+        user2.set_password('password456')
+        self.session.add(user2)
+
+        with self.assertRaises(Exception):
+            await self.session.commit()
+
+    async def test_default_values(self) -> None:
+        """
+        Test that default values are correctly assigned when a user is created.
+        """
+        user = User(username='defaultuser')
+        user.set_password('password123')
+        self.session.add(user)
+        await self.session.commit()
+
+        # Retrieve the user from the database
+        retrieved_user = await self.session.get(User, user.id)
+
+        # Check default values
+        self.assertEqual(retrieved_user.role, 'user')
+        self.assertTrue(retrieved_user.is_active)
+        self.assertIsNotNone(retrieved_user.created_at)
+        self.assertIsNotNone(retrieved_user.updated_at)
 
 
 if __name__ == '__main__':

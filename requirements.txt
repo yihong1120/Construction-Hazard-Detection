@@ -1,3 +1,4 @@
+aiosqlite==0.20.0
 albumentations==1.4.21
 apscheduler==3.10.4
 asyncmy==0.2.9
@@ -8,8 +9,6 @@ codecov==2.1.13
 fastapi==0.115.5
 fastapi_jwt==0.3.0
 fastapi_limiter==0.1.6
-flask==3.1.0
-flask_sqlalchemy==3.1.1
 imagecorruptions==1.1.2
 imageio==2.35.1
 imgaug==0.4.0

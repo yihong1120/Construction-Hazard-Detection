@@ -9,7 +9,7 @@
 要啟動應用程式，請導航至包含`app.py`的目錄，並執行以下命令：
 
 ```sh
-flask run --host=0.0.0.0 --port=6000
+uvicorn examples.user_management.app:app --host 127.0.0.1 --port 6000
 ```
 
 這將在所有可用的IP上啟動Flask開發伺服器，端口為6000。

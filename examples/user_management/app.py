@@ -1,183 +1,201 @@
 from __future__ import annotations
 
-import os
+from typing import AsyncGenerator
 
-from flask import Flask
-from flask import request
+from fastapi import Depends
+from fastapi import FastAPI
+from fastapi import HTTPException
 from markupsafe import escape
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import sessionmaker
 
-from .models import db
-from .user_operation import add_user
-from .user_operation import delete_user
-from .user_operation import update_password
-from .user_operation import update_username
+from examples.user_management.user_operation import add_user
+from examples.user_management.user_operation import delete_user
+from examples.user_management.user_operation import set_user_active_status
+from examples.user_management.user_operation import update_password
+from examples.user_management.user_operation import update_username
 
-app = Flask(__name__)
+# Define the database URL for connection
+DATABASE_URL = 'mysql+asyncmy://username:password@localhost/database_name'
 
-# with your actual database URI
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
-    'DATABASE_URI', 'sqlite:///:memory:',
+# Initialise the FastAPI application
+app = FastAPI()
+
+# Set up the SQLAlchemy asynchronous engine and session
+engine = create_async_engine(DATABASE_URL, echo=True)
+async_session = sessionmaker(
+    engine, expire_on_commit=False, class_=AsyncSession,
 )
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db.init_app(app)
-
-# Create all database tables before the first run
-with app.app_context():
-    db.create_all()
 
 
-@app.route('/add_user', methods=['POST'])
-def add_user_route() -> tuple[str, int]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
+    """
+    Provides a dependency for obtaining a database session.
+
+    Yields:
+        AsyncSession: The database session for performing operations.
+    """
+    async with async_session() as session:
+        yield session
+
+
+# Define the Pydantic models for request validation
+class UserCreate(BaseModel):
+    """
+    Represents the payload for creating a new user.
+
+    Attributes:
+        username (str): The username for the new user.
+        password (str): The password for the new user.
+        role (str): The role assigned to the user (default is 'user').
+    """
+    username: str
+    password: str
+    role: str = 'user'
+
+
+class UpdateUsername(BaseModel):
+    """
+    Represents the payload for updating a user's username.
+
+    Attributes:
+        old_username (str): The current username.
+        new_username (str): The new username to be assigned.
+    """
+    old_username: str
+    new_username: str
+
+
+class UpdatePassword(BaseModel):
+    """
+    Represents the payload for updating a user's password.
+
+    Attributes:
+        username (str): The username of the user whose password will be updated.
+        new_password (str): The new password to be set.
+    """
+    username: str
+    new_password: str
+
+
+@app.post('/add_user')
+async def add_user_route(user: UserCreate, db: AsyncSession = Depends(get_db)) -> dict:
     """
     Endpoint to add a new user to the database.
 
+    Args:
+        user (UserCreate): The data required to create a user.
+        db (AsyncSession): The database session dependency.
+
     Returns:
-        tuple[str, int]: Result message indicating success
-            or failure of the operation and the status code.
+        dict: A message indicating the result of the operation.
+
+    Raises:
+        HTTPException: If the user creation fails.
     """
-    try:
-        username = request.form['username']
-        password = request.form['password']
-
-        # Validate input
-        if not username or not password:
-            return 'Username and password are required', 400
-
-        # Escape user input to prevent XSS
-        username = escape(username)
-        password = escape(password)
-
-        result = add_user(username, password)
-
-        # Check if the addition was successful
-        if result:
-            return 'User added successfully', 200
-        else:
-            return 'Failed to add user', 500
-
-    except KeyError:
-        return 'Invalid input', 400
-    except Exception as e:
-        # Log the exception for internal tracking
-        # And do not expose the exception message to the user
-        app.logger.error(f'Error adding user: {e}')
-        return 'An internal error occurred', 500
+    result = await add_user(user.username, user.password, user.role, db)
+    if 'successfully' in result:
+        return {'message': result}
+    raise HTTPException(status_code=400, detail=result)
 
 
-@app.route('/delete_user/<username>', methods=['DELETE'])
-def delete_user_route(username: str) -> tuple[str, int]:
+@app.delete('/delete_user/{username}')
+async def delete_user_route(username: str, db: AsyncSession = Depends(get_db)) -> dict:
     """
-    Endpoint to delete an existing user from the database.
+    Endpoint to delete a user from the database.
 
     Args:
-        username (str): Username of the user to be deleted.
+        username (str): The username of the user to be deleted.
+        db (AsyncSession): The database session dependency.
 
     Returns:
-        tuple[str, int]: Result message indicating success
-            or failure of the operation and the status code.
+        dict: A message indicating the result of the operation.
+
+    Raises:
+        HTTPException: If the user deletion fails.
     """
-    try:
-        # Validate input
-        if not username:
-            return 'Username is required', 400
-
-        # Escape user input to prevent XSS
-        username = escape(username)
-
-        result = delete_user(username)
-
-        # Check if the deletion was successful
-        if result:
-            return 'User deleted successfully', 200
-        else:
-            return 'Failed to delete user', 500
-
-    except Exception as e:
-        # Log the exception for internal tracking
-        # And do not expose the exception message to the user
-        app.logger.error(f'Error deleting user {username}: {e}')
-        return 'An internal error occurred', 500
+    username = escape(username)
+    result = await delete_user(username, db)
+    if 'successfully' in result:
+        return {'message': result}
+    raise HTTPException(status_code=404, detail=result)
 
 
-@app.route('/update_username', methods=['PUT'])
-def update_username_route() -> tuple[str, int]:
+@app.put('/update_username')
+async def update_username_route(
+    update_data: UpdateUsername, db: AsyncSession = Depends(get_db),
+) -> dict:
     """
-    Endpoint to update a user's username in the database.
+    Endpoint to update a user's username.
+
+    Args:
+        update_data (UpdateUsername): The data required to update the username.
+        db (AsyncSession): The database session dependency.
 
     Returns:
-        tuple[str, int]: Result message indicating success
-            or failure of the operation and the status code.
+        dict: A message indicating the result of the operation.
+
+    Raises:
+        HTTPException: If the username update fails.
     """
-    try:
-        old_username = request.form['old_username']
-        new_username = request.form['new_username']
-
-        # Validate input
-        if not old_username or not new_username:
-            return 'Old username and new username are required', 400
-
-        # Escape user input to prevent XSS
-        old_username = escape(old_username)
-        new_username = escape(new_username)
-
-        result = update_username(old_username, new_username)
-
-        # Check if the update was successful
-        if result:
-            return 'Username updated successfully', 200
-        else:
-            return 'Failed to update username', 500
-
-    except KeyError:
-        return 'Invalid input', 400
-    except Exception as e:
-        # Log the exception for internal tracking
-        # And do not expose the exception message to the user
-        app.logger.error(f'Error updating username: {e}')
-        return 'An internal error occurred', 500
+    old_username = escape(update_data.old_username)
+    new_username = escape(update_data.new_username)
+    result = await update_username(old_username, new_username, db)
+    if 'successfully' in result:
+        return {'message': result}
+    raise HTTPException(status_code=400, detail=result)
 
 
-@app.route('/update_password', methods=['PUT'])
-def update_password_route() -> tuple[str, int]:
+@app.put('/update_password')
+async def update_password_route(
+    update_data: UpdatePassword, db: AsyncSession = Depends(get_db),
+) -> dict:
     """
-    Endpoint to update a user's password in the database.
+    Endpoint to update a user's password.
+
+    Args:
+        update_data (UpdatePassword): The data required to update the password.
+        db (AsyncSession): The database session dependency.
 
     Returns:
-        tuple[str, int]: Result message indicating success
-            or failure of the operation and the status code.
+        dict: A message indicating the result of the operation.
+
+    Raises:
+        HTTPException: If the password update fails.
     """
-    try:
-        username = request.form['username']
-        new_password = request.form['new_password']
+    username = escape(update_data.username)
+    new_password = escape(update_data.new_password)
+    result = await update_password(username, new_password, db)
+    if 'successfully' in result:
+        return {'message': result}
+    raise HTTPException(status_code=400, detail=result)
 
-        # Validate input
-        if not username or not new_password:
-            return 'Username and new password are required', 400
 
-        # Escape user input to prevent XSS
-        username = escape(username)
-        new_password = escape(new_password)
+@app.put('/set_user_active_status/{username}')
+async def set_user_active_status_route(
+    username: str, is_active: bool, db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Endpoint to update a user's active status.
 
-        result = update_password(username, new_password)
+    Args:
+        username (str): The username of the user.
+        is_active (bool): The new active status.
+        db (AsyncSession): The database session dependency.
 
-        # Check if the update was successful
-        if result:
-            return 'Password updated successfully', 200
-        else:
-            return 'Failed to update password', 500
+    Returns:
+        dict: A message indicating the result of the operation.
 
-    except KeyError:
-        return 'Invalid input', 400
-    except Exception as e:
-        # Log the exception for internal tracking
-        # And do not expose the exception message to the user
-        app.logger.error(f'Error updating password: {e}')
-        return 'An internal error occurred', 500
-
+    Raises:
+        HTTPException: If the active status update fails.
+    """
+    result = await set_user_active_status(username, is_active, db)
+    if 'successfully' in result:
+        return {'message': result}
+    raise HTTPException(status_code=400, detail=result)
 
 if __name__ == '__main__':
-    # Ensure the database tables are created at startup
-    with app.app_context():
-        db.create_all()
-    # Run the application on all available IPs at port 6000
-    app.run(host='0.0.0.0', port=6000)
+    import uvicorn
+    uvicorn.run(app, host='127.0.0.1', port=8000)
