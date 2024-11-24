@@ -463,12 +463,6 @@ class MainApp:
                     if not warnings:
                         warnings = ['No warning']
 
-                    # warnings = [
-                    #     'Warning: Someone is not wearing a hardhat!',
-                    #     'Warning: 2 people have entered the controlled area!',
-                    #     'Warning: Someone is too close to machinery!',
-                    # ]
-
                     # Translate the warnings
                     translated_warnings = Translator.translate_warning(
                         warnings=warnings, language='zh-TW',
