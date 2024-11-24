@@ -128,6 +128,44 @@ async def websocket_label_stream(websocket: WebSocket, label: str) -> None:
         print('WebSocket connection closed')
 
 
+@router.websocket('/api/ws/stream/{label}/{key}')
+async def websocket_stream(websocket: WebSocket, label: str, key: str) -> None:
+    """
+    Establishes a WebSocket connection to stream data for a single camera.
+
+    Args:
+        websocket (WebSocket): The WebSocket connection object.
+        label (str): The label associated with the stream.
+        key (str): The key identifying the specific camera stream.
+    """
+    await websocket.accept()
+    try:
+        # Encode the label and key for Redis lookup
+        encoded_label = Utils.encode(label)
+        encoded_key = Utils.encode(key)
+        redis_key = f"stream_frame:{encoded_label}_{encoded_key}"
+
+        # Initialize last message ID for the stream
+        last_id = '0'
+
+        while True:
+            # Fetch the latest frame for the specific stream
+            message = await redis_manager.fetch_latest_frame_for_key(
+                redis_key, last_id,
+            )
+            if message:
+                # Update the last ID
+                last_id = message['id']
+                # Send the latest frame and warnings to the client
+                await websocket.send_json(message)
+    except WebSocketDisconnect:
+        print('WebSocket disconnected')
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+    finally:
+        print('WebSocket connection closed')
+
+
 @router.post('/api/webhook')
 async def webhook(request: Request) -> JSONResponse:
     """

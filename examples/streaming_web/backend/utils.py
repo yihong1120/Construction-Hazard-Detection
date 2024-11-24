@@ -154,6 +154,47 @@ class RedisManager:
 
         return updated_data
 
+    async def fetch_latest_frame_for_key(
+        self,
+        redis_key: str,
+        last_id: str,
+    ) -> dict[str, str] | None:
+        """
+        Fetches the latest frame and warnings for a specific Redis key.
+
+        Args:
+            redis_key (str): The Redis key to fetch data for.
+            last_id (str): The last read message ID.
+
+        Returns:
+            dict[str, str] | None: A dictionary with frame and warnings data,
+            or None if no new data is found.
+        """
+        # Fetch the latest message for the specific Redis key
+        messages = await self.client.xrevrange(redis_key, min=last_id, count=1)
+
+        if not messages:
+            return None
+
+        # Extract the message ID and data
+        message_id, data = messages[0]
+
+        frame_data = data.get(b'frame')
+        warnings_data = data.get(b'warnings')
+
+        if frame_data:
+            # Decode frame and warnings data
+            image = base64.b64encode(frame_data).decode('utf-8')
+            warnings = warnings_data.decode('utf-8') if warnings_data else ''
+
+            return {
+                'id': message_id.decode('utf-8'),
+                'image': image,
+                'warnings': warnings,
+            }
+
+        return None
+
 
 class Utils:
     """
