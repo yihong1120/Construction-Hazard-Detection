@@ -102,7 +102,7 @@ async def add_user_route(user: UserCreate, db: AsyncSession = Depends(get_db)) -
     try:
         result = await add_user(user.username, user.password, user.role, db)
         if 'successfully' in result:
-            return {'message': result}
+            return {'message': 'User added successfully.'}
         raise HTTPException(status_code=400, detail="Failed to add user.")
     except Exception as e:
         logger.error(f"Error adding user: {e}")
@@ -128,7 +128,7 @@ async def delete_user_route(username: str, db: AsyncSession = Depends(get_db)) -
         username = escape(username)
         result = await delete_user(username, db)
         if 'successfully' in result:
-            return {'message': result}
+            return {'message': 'User deleted successfully.'}
         raise HTTPException(status_code=404, detail="User not found.")
     except Exception as e:
         logger.error(f"Error deleting user: {e}")
@@ -157,7 +157,7 @@ async def update_username_route(
         new_username = escape(update_data.new_username)
         result = await update_username(old_username, new_username, db)
         if 'successfully' in result:
-            return {'message': result}
+            return {'message': 'Username updated successfully.'}
         raise HTTPException(status_code=400, detail="Failed to update username.")
     except Exception as e:
         logger.error(f"Error updating username: {e}")
@@ -186,7 +186,7 @@ async def update_password_route(
         new_password = escape(update_data.new_password)
         result = await update_password(username, new_password, db)
         if 'successfully' in result:
-            return {'message': result}
+            return {'message': 'Password updated successfully.'}
         raise HTTPException(status_code=400, detail="Failed to update password.")
     except Exception as e:
         logger.error(f"Error updating password: {e}")
@@ -214,7 +214,7 @@ async def set_user_active_status_route(
     try:
         result = await set_user_active_status(username, is_active, db)
         if 'successfully' in result:
-            return {'message': result}
+            return {'message': 'Active status updated successfully.'}
         raise HTTPException(status_code=400, detail="Failed to update active status.")
     except Exception as e:
         logger.error(f"Error updating active status: {e}")
