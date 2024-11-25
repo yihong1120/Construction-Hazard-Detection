@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import sessionmaker
+import logging
 
 from examples.user_management.user_operation import add_user
 from examples.user_management.user_operation import delete_user
@@ -29,6 +30,9 @@ async_session = sessionmaker(
     engine, expire_on_commit=False, class_=AsyncSession,
 )
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """
@@ -95,10 +99,14 @@ async def add_user_route(user: UserCreate, db: AsyncSession = Depends(get_db)) -
     Raises:
         HTTPException: If the user creation fails.
     """
-    result = await add_user(user.username, user.password, user.role, db)
-    if 'successfully' in result:
-        return {'message': result}
-    raise HTTPException(status_code=400, detail=result)
+    try:
+        result = await add_user(user.username, user.password, user.role, db)
+        if 'successfully' in result:
+            return {'message': result}
+        raise HTTPException(status_code=400, detail="Failed to add user.")
+    except Exception as e:
+        logger.error(f"Error adding user: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error.")
 
 
 @app.delete('/delete_user/{username}')
@@ -116,11 +124,15 @@ async def delete_user_route(username: str, db: AsyncSession = Depends(get_db)) -
     Raises:
         HTTPException: If the user deletion fails.
     """
-    username = escape(username)
-    result = await delete_user(username, db)
-    if 'successfully' in result:
-        return {'message': result}
-    raise HTTPException(status_code=404, detail=result)
+    try:
+        username = escape(username)
+        result = await delete_user(username, db)
+        if 'successfully' in result:
+            return {'message': result}
+        raise HTTPException(status_code=404, detail="User not found.")
+    except Exception as e:
+        logger.error(f"Error deleting user: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error.")
 
 
 @app.put('/update_username')
@@ -140,12 +152,16 @@ async def update_username_route(
     Raises:
         HTTPException: If the username update fails.
     """
-    old_username = escape(update_data.old_username)
-    new_username = escape(update_data.new_username)
-    result = await update_username(old_username, new_username, db)
-    if 'successfully' in result:
-        return {'message': result}
-    raise HTTPException(status_code=400, detail=result)
+    try:
+        old_username = escape(update_data.old_username)
+        new_username = escape(update_data.new_username)
+        result = await update_username(old_username, new_username, db)
+        if 'successfully' in result:
+            return {'message': result}
+        raise HTTPException(status_code=400, detail="Failed to update username.")
+    except Exception as e:
+        logger.error(f"Error updating username: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error.")
 
 
 @app.put('/update_password')
@@ -165,12 +181,16 @@ async def update_password_route(
     Raises:
         HTTPException: If the password update fails.
     """
-    username = escape(update_data.username)
-    new_password = escape(update_data.new_password)
-    result = await update_password(username, new_password, db)
-    if 'successfully' in result:
-        return {'message': result}
-    raise HTTPException(status_code=400, detail=result)
+    try:
+        username = escape(update_data.username)
+        new_password = escape(update_data.new_password)
+        result = await update_password(username, new_password, db)
+        if 'successfully' in result:
+            return {'message': result}
+        raise HTTPException(status_code=400, detail="Failed to update password.")
+    except Exception as e:
+        logger.error(f"Error updating password: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error.")
 
 
 @app.put('/set_user_active_status/{username}')
@@ -191,10 +211,14 @@ async def set_user_active_status_route(
     Raises:
         HTTPException: If the active status update fails.
     """
-    result = await set_user_active_status(username, is_active, db)
-    if 'successfully' in result:
-        return {'message': result}
-    raise HTTPException(status_code=400, detail=result)
+    try:
+        result = await set_user_active_status(username, is_active, db)
+        if 'successfully' in result:
+            return {'message': result}
+        raise HTTPException(status_code=400, detail="Failed to update active status.")
+    except Exception as e:
+        logger.error(f"Error updating active status: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error.")
 
 if __name__ == '__main__':
     import uvicorn
