@@ -39,13 +39,13 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         # Mock the Redis scan method to return some keys
         self.redis_mock.scan.return_value = (
             0, [
-                b'stream_frame:label1_image1',
-                b'stream_frame:label1_image2',
-                b'stream_frame:label2_image1',
-                b'stream_frame:test_image',
+                b'stream_frame:bGFiZWwx_image1',
+                b'stream_frame:bGFiZWwx_image2',
+                b'stream_frame:bGFiZWwy_image1',
+                b'stream_frame:bGFiZWwz_image1',
+                b'stream_frame:dGVzdA==_image',
                 b'__invalid_key',
                 b'_another_invalid_key',
-                b'stream_frame:label3_image1',
             ],
         )
 
