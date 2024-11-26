@@ -188,35 +188,33 @@ async def webhook(request: Request) -> JSONResponse:
     return JSONResponse(content={'status': 'ok'})
 
 # Uncomment and use the following endpoint for file uploads if needed
+# @router.post('/api/upload')
+# async def upload_file(file: UploadFile) -> JSONResponse:
+#     """
+#     Saves an uploaded file to the designated upload folder
+#     and returns its accessible URL.
 
+#     Args:
+#         file (UploadFile): The file to upload.
 
-@router.post('/api/upload')
-async def upload_file(file: UploadFile) -> JSONResponse:
-    """
-    Saves an uploaded file to the designated upload folder
-    and returns its accessible URL.
+#     Returns:
+#         JSONResponse: A JSON response containing the URL of the uploaded file.
+#     """
+#     UPLOAD_FOLDER = Path('uploads')
+#     UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
-    Args:
-        file (UploadFile): The file to upload.
+#     # Check if the file has a filename
+#     if not file.filename:
+#         raise HTTPException(status_code=400, detail='Filename is missing')
 
-    Returns:
-        JSONResponse: A JSON response containing the URL of the uploaded file.
-    """
-    UPLOAD_FOLDER = Path('uploads')
-    UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+#     file_path = UPLOAD_FOLDER / file.filename
+#     try:
+#         with open(file_path, 'wb') as buffer:
+#             buffer.write(await file.read())
+#     except PermissionError as e:
+#         raise HTTPException(
+#             status_code=500, detail=f"Failed to save file: {str(e)}",
+#         )
 
-    # Check if the file has a filename
-    if not file.filename:
-        raise HTTPException(status_code=400, detail='Filename is missing')
-
-    file_path = UPLOAD_FOLDER / file.filename
-    try:
-        with open(file_path, 'wb') as buffer:
-            buffer.write(await file.read())
-    except PermissionError as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to save file: {str(e)}",
-        )
-
-    url = f"/uploads/{file.filename}"
-    return JSONResponse(content={'url': url})
+#     url = f"/uploads/{file.filename}"
+#     return JSONResponse(content={'url': url})

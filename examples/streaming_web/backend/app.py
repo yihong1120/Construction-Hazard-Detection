@@ -49,12 +49,13 @@ app.add_middleware(
     allow_headers=['*'],
 )
 
+# Uncomment and use the following endpoint for file uploads if needed
 # Mount the static files directory to serve static assets
-app.mount(
-    '/static',
-    StaticFiles(directory='examples/streaming_web/backend/static'),
-    name='static',
-)
+# app.mount(
+#     '/static',
+#     StaticFiles(directory='examples/streaming_web/backend/static'),
+#     name='static',
+# )
 
 # Initialise Socket.IO server with ASGI support
 sio = socketio.AsyncServer(async_mode='asgi')
