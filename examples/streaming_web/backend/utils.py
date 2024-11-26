@@ -219,6 +219,25 @@ class Utils:
         return base64_encoded.replace('_', '-')
 
     @staticmethod
+    def is_base64(value: str) -> bool:
+        """
+        Check if the string is a valid Base64 encoded string.
+
+        Args:
+            value (str): The string to check.
+
+        Returns:
+            bool: True if the string is Base64, False otherwise.
+        """
+        if not value or not isinstance(value, str):
+            return False
+        # Base64 strings must be a multiple of 4 in length
+        if len(value) % 4 != 0:
+            return False
+        # Check if the string matches the Base64 regex pattern
+        return re.fullmatch(r'^[A-Za-z0-9\-_]+={0,2}$', value) is not None
+
+    @staticmethod
     def decode(value: str) -> str:
         """
         Decode a URL-safe Base64 string, restoring underscores.
@@ -229,6 +248,10 @@ class Utils:
         Returns:
             str: The decoded value.
         """
+        # Check if the value is valid Base64
+        if not Utils.is_base64(value):
+            return value  # Return the original value if it's not Base64
+
         # Restore underscores before decoding
         adjusted_value = value.replace('-', '_')
         return base64.urlsafe_b64decode(

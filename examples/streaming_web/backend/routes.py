@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
-from fastapi import UploadFile
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -15,6 +13,8 @@ from fastapi_limiter.depends import RateLimiter
 
 from .utils import RedisManager
 from .utils import Utils
+# from pathlib import Path
+# from fastapi import UploadFile
 
 redis_manager = RedisManager()
 
@@ -198,7 +198,8 @@ async def webhook(request: Request) -> JSONResponse:
 #         file (UploadFile): The file to upload.
 
 #     Returns:
-#         JSONResponse: A JSON response containing the URL of the uploaded file.
+#         JSONResponse: A JSON response containing the URL of
+#             the uploaded file.
 #     """
 #     UPLOAD_FOLDER = Path('uploads')
 #     UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)

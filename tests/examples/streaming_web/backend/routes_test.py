@@ -83,25 +83,25 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'status': 'ok'})
 
-    def test_upload_file_successful(self):
-        """
-        Test the upload route to ensure it returns a successful response.
-        """
-        file_content = b'fake image data'
-        files = {'file': ('test_image.png', file_content, 'image/png')}
-        response = self.client.post('/api/upload', files=files)
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('url', response.json())
+    # def test_upload_file_successful(self):
+    #     """
+    #     Test the upload route to ensure it returns a successful response.
+    #     """
+    #     file_content = b'fake image data'
+    #     files = {'file': ('test_image.png', file_content, 'image/png')}
+    #     response = self.client.post('/api/upload', files=files)
+    #     self.assertEqual(response.status_code, 200)
+    #     self.assertIn('url', response.json())
 
-    def test_upload_file_missing_filename(self):
-        """
-        Test the upload route to ensure it returns a 422 error
-        when the filename is missing.
-        """
-        # FastAPI automatically raises a 422 for missing file validation
-        files = {'file': ('', b'data', 'image/png')}
-        response = self.client.post('/api/upload', files=files)
-        self.assertEqual(response.status_code, 422)
+    # def test_upload_file_missing_filename(self):
+    #     """
+    #     Test the upload route to ensure it returns a 422 error
+    #     when the filename is missing.
+    #     """
+    #     # FastAPI automatically raises a 422 for missing file validation
+    #     files = {'file': ('', b'data', 'image/png')}
+    #     response = self.client.post('/api/upload', files=files)
+    #     self.assertEqual(response.status_code, 422)
 
 
 if __name__ == '__main__':

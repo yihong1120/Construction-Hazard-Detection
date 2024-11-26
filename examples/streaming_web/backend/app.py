@@ -6,12 +6,12 @@ from contextlib import asynccontextmanager
 import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi_limiter import FastAPILimiter
 
 from .routes import register_routes
 from .sockets import register_sockets
 from .utils import RedisManager
+# from fastapi.staticfiles import StaticFiles
 
 redis_manager = RedisManager()
 

@@ -18,6 +18,7 @@ class TestLangConfig(unittest.TestCase):
             'warning_no_hardhat',
             'warning_no_safety_vest',
             'warning_close_to_machinery',
+            'no_warning',
             'machinery',
             'vehicle',
             'helmet',
