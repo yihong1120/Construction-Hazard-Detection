@@ -97,12 +97,6 @@ class RedisManager:
             decode_responses=False,
         )
 
-        # Check if Redis connection is successful
-        if not self.redis.ping():
-            raise SystemExit(
-                'Exiting application due to Redis connection failure.',
-            )
-
     async def set(self, key: str, value: bytes) -> None:
         """
         Set a key-value pair in Redis.
