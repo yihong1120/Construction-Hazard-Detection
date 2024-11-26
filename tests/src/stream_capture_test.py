@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 import unittest
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from src.stream_capture import main as stream_capture_main
 from src.stream_capture import StreamCapture
 
 
-class TestStreamCapture(TestCase):
+class TestStreamCapture(IsolatedAsyncioTestCase):
     """
     Tests for the StreamCapture class.
     """
@@ -57,17 +60,18 @@ class TestStreamCapture(TestCase):
         await self.stream_capture.release_resources()
 
     @patch('cv2.VideoCapture')
-    @patch('time.sleep', return_value=None)
+    @patch('asyncio.sleep', new_callable=AsyncMock)
+    @pytest.mark.asyncio
     async def test_initialise_stream_retry(
         self,
-        mock_sleep: MagicMock,
+        mock_sleep: AsyncMock,
         mock_video_capture: MagicMock,
     ) -> None:
         """
         Test that the stream initialisation retries if it fails initially.
 
         Args:
-            mock_sleep (MagicMock): Mock for time.sleep.
+            mock_sleep (AsyncMock): Mock for asyncio.sleep.
             mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
         """
         # Mock VideoCapture object's isOpened method to
@@ -365,21 +369,21 @@ class TestStreamCapture(TestCase):
         instance.isOpened.return_value = True
 
         # Mock capture_generic_frames method and execute
+        async def mock_generic_frames():
+            for _ in range(3):
+                yield np.zeros((480, 640, 3), dtype=np.uint8), time.time()
+
         with patch.object(
             self.stream_capture,
             'capture_generic_frames',
-            return_value=iter([(MagicMock(), 1234567890.0)]),
-        ) as mock_capture_generic_frames:
+            side_effect=mock_generic_frames,
+        ):
             generator = self.stream_capture.execute_capture()
             frame, timestamp = await generator.__anext__()
-            self.assertIsNotNone(frame)
+
+            # Assert that a frame and timestamp were returned
+            self.assertIsInstance(frame, np.ndarray)
             self.assertIsInstance(timestamp, float)
-
-            # Verify that capture_generic_frames method was called
-            mock_capture_generic_frames.assert_called_once()
-
-        # Release resources
-        await self.stream_capture.release_resources()
 
 
 if __name__ == '__main__':

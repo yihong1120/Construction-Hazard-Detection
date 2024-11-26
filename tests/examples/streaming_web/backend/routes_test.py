@@ -62,9 +62,17 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
 
-    @patch('examples.streaming_web.backend.utils.RedisManager.get_labels', new_callable=AsyncMock)
-    @patch('examples.streaming_web.backend.utils.RedisManager.get_keys_for_label', new_callable=AsyncMock)
-    def test_label_page_found(self, mock_get_keys: AsyncMock, mock_get_labels: AsyncMock):
+    @patch(
+        'examples.streaming_web.backend.utils.RedisManager.get_labels',
+        new_callable=AsyncMock,
+    )
+    @patch(
+        'examples.streaming_web.backend.utils.RedisManager.get_keys_for_label',
+        new_callable=AsyncMock,
+    )
+    def test_label_page_found(
+        self, mock_get_keys: AsyncMock, mock_get_labels: AsyncMock,
+    ):
         """
         Test the WebSocket route for an existing label.
         """
