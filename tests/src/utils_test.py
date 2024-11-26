@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 from datetime import timedelta
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -78,7 +79,7 @@ class TestFileEventHandler(unittest.TestCase):
 
 
 @pytest.mark.asyncio
-class TestRedisManager(unittest.TestCase):
+class TestRedisManager(unittest.IsolatedAsyncioTestCase):
     """
     Test cases for the RedisManager class
     """
@@ -89,6 +90,7 @@ class TestRedisManager(unittest.TestCase):
         """
         # Mock Redis instance
         self.mock_redis_instance = MagicMock()
+        self.mock_redis_instance.get = AsyncMock()
         mock_redis.return_value = self.mock_redis_instance
 
         # Initialize RedisManager
