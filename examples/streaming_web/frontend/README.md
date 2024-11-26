@@ -85,22 +85,14 @@ For Debian-based distributions (e.g., Ubuntu), you can use the following command
 
 For other distributions, please refer to the [Node.js installation guide](https://nodejs.org/en/download/package-manager/).
 
-### 2. Clone the repository
-
-Clone the repository to your local machine using Git:
-```sh
-git clone https://your-gitea-server.com/username/repository.git
-cd repository/examples/streaming_web/frontend
-```
-
-### 3. Install dependencies
+### 2. Install dependencies
 
 Navigate to the project directory and install the required dependencies by running:
 ```sh
 npm install
 ```
 
-### 4. Start the development server
+### 3. Start the development server
 
 Start the Vite development server on port 8888 by running:
 ```sh
@@ -108,7 +100,7 @@ npm run dev
 ```
 You should see output indicating that the server is running. Open your browser and navigate to `http://localhost:8888` to view the application.
 
-### 5. Build for production
+### 4. Build for production
 
 To build the project for production, run:
 ```sh

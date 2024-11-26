@@ -86,22 +86,14 @@
 
 對於其他發行版，請參考 [Node.js 安裝指南](https://nodejs.org/en/download/package-manager/)。
 
-### 2. 克隆倉庫
-
-使用 Git 將倉庫克隆到您的本地機器：
-```sh
-git clone https://your-gitea-server.com/username/repository.git
-cd repository/examples/streaming_web/frontend
-```
-
-### 3. 安裝依賴
+### 2. 安裝依賴
 
 導航到專案目錄並運行以下命令以安裝所需的依賴：
 ```sh
 npm install
 ```
 
-### 4. 啟動開發伺服器
+### 3. 啟動開發伺服器
 
 運行以下命令以在端口 8888 上啟動 Vite 開發伺服器：
 ```sh
@@ -109,7 +101,7 @@ npm run dev
 ```
 您應該會看到伺服器正在運行的輸出。打開瀏覽器並導航到 `http://localhost:8888` 以查看應用程式。
 
-### 5. 構建生產版本
+### 4. 構建生產版本
 
 運行以下命令以構建專案的生產版本：
 ```sh
