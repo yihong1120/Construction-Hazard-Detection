@@ -1,5 +1,7 @@
 name: Workflow for Codecov example-python
+
 on: [push, pull_request]
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -11,7 +13,11 @@ jobs:
       - name: Set up Python 3.12.7
         uses: actions/setup-python@v4
         with:
-          python-version: "3.13.0"
+          python-version: "3.12.7"
+      - name: Update and upgrade apt-get
+        run: |
+          sudo apt-get update
+          sudo apt-get upgrade -y
       - name: Install unicorn
         run: sudo apt-get install unicorn -y
       - name: Install dependencies
