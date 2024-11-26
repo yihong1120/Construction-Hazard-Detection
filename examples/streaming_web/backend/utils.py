@@ -46,11 +46,6 @@ class RedisManager:
             decode_responses=False,
         )
 
-        if not self.client.ping():
-            raise SystemExit(
-                'Exiting application due to Redis connection failure.',
-            )
-
     async def get_labels(self) -> list[str]:
         """
         Fetches unique label and stream_name combinations from Redis keys.
