@@ -62,17 +62,19 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
 
-    @patch(
-        'examples.streaming_web.backend.utils.RedisManager.get_keys_for_label',
-        new_callable=AsyncMock,
-    )
-    def test_label_page_found(self, mock_get_keys: AsyncMock):
+    @patch('examples.streaming_web.backend.utils.RedisManager.get_labels', new_callable=AsyncMock)
+    @patch('examples.streaming_web.backend.utils.RedisManager.get_keys_for_label', new_callable=AsyncMock)
+    def test_label_page_found(self, mock_get_keys: AsyncMock, mock_get_labels: AsyncMock):
         """
         Test the WebSocket route for an existing label.
         """
+        mock_get_labels.return_value = ['label1', 'label2']
         mock_get_keys.return_value = ['stream_frame:label1_Cam0']
+
+        # Call the API endpoint
         response = self.client.get('/api/labels')
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
 
     def test_webhook(self):
         """
