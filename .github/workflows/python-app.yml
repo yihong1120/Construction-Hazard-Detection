@@ -23,6 +23,8 @@ jobs:
       uses: actions/setup-python@v3
       with:
         python-version: "3.12.7"
+    - name: Install unicorn
+      run: sudo apt-get install unicorn -y
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
