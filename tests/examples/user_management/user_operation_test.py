@@ -11,6 +11,7 @@ from examples.user_management.models import Base
 from examples.user_management.models import User
 from examples.user_management.user_operation import add_user
 from examples.user_management.user_operation import delete_user
+from examples.user_management.user_operation import set_user_active_status
 from examples.user_management.user_operation import update_password
 from examples.user_management.user_operation import update_username
 
@@ -18,7 +19,7 @@ from examples.user_management.user_operation import update_username
 class UserOperationTestCase(unittest.IsolatedAsyncioTestCase):
     """
     Unit tests for user operations, including adding, deleting,
-    updating usernames, and updating passwords for users.
+    updating usernames, updating passwords, and setting user active status.
 
     Attributes:
         TEST_DATABASE_URL (str): The URL for the test database.
@@ -180,6 +181,40 @@ class UserOperationTestCase(unittest.IsolatedAsyncioTestCase):
         """
         result = await update_password(
             'nonexistentuser', 'newpassword123', self.session,
+        )
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error'], 'NotFound')
+        self.assertEqual(
+            result['message'],
+            "User 'nonexistentuser' not found.",
+        )
+
+    async def test_set_user_active_status_success(self) -> None:
+        """
+        Test that a user's active status can be updated successfully.
+        """
+        await add_user('testuser', 'password123', 'user', self.session)
+        result = await set_user_active_status(
+            'testuser', is_active=False, db=self.session,
+        )
+        self.assertTrue(result['success'])
+        self.assertEqual(
+            result['message'],
+            "User 'testuser' is now inactive.",
+        )
+
+        stmt = select(User).where(User.username == 'testuser')
+        execution_result = await self.session.execute(stmt)
+        user = execution_result.scalars().first()
+        self.assertFalse(user.is_active)
+
+    async def test_set_user_active_status_user_not_found(self) -> None:
+        """
+        Test that updating the active status of a non-existent user
+        returns an error.
+        """
+        result = await set_user_active_status(
+            'nonexistentuser', is_active=True, db=self.session,
         )
         self.assertFalse(result['success'])
         self.assertEqual(result['error'], 'NotFound')

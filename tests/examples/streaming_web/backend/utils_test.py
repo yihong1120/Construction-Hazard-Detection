@@ -12,6 +12,108 @@ from examples.streaming_web.backend.utils import RedisManager
 from examples.streaming_web.backend.utils import Utils
 
 
+class TestRedisManager(unittest.IsolatedAsyncioTestCase):
+    """
+    Test suite for RedisManager methods.
+    """
+
+    def setUp(self) -> None:
+        """
+        Set up the test environment before each test.
+        """
+        self.redis_mock = MagicMock(spec=redis.Redis)
+        self.redis_mock.xrevrange = AsyncMock()
+        self.redis_mock.scan = AsyncMock()
+
+    async def test_fetch_latest_frame_for_key_with_data(self) -> None:
+        """
+        Test fetch_latest_frame_for_key method when Redis contains valid data.
+        """
+        redis_key = 'stream_frame:test_label_image1'
+        last_id = '0-0'
+
+        # Mock Redis response
+        message_id = '1234-0'
+        frame_data = b'sample_frame_data'
+        warnings_data = b'Sample warning'
+        self.redis_mock.xrevrange.return_value = [
+            (
+                message_id.encode('utf-8'),
+                {b'frame': frame_data, b'warnings': warnings_data},
+            ),
+        ]
+
+        redis_manager = RedisManager('localhost', 6379, 'password')
+        redis_manager.client = self.redis_mock
+        result = await redis_manager.fetch_latest_frame_for_key(
+            redis_key,
+            last_id,
+        )
+
+        expected_result = {
+            'id': message_id,
+            'image': base64.b64encode(frame_data).decode('utf-8'),
+            'warnings': warnings_data.decode('utf-8'),
+        }
+        self.assertEqual(result, expected_result)
+
+    async def test_fetch_latest_frame_for_key_no_data(self) -> None:
+        """
+        Test fetch_latest_frame_for_key method when Redis contains no new data.
+        """
+        redis_key = 'stream_frame:test_label_image1'
+        last_id = '0-0'
+
+        # Mock Redis response
+        self.redis_mock.xrevrange.return_value = []
+
+        redis_manager = RedisManager('localhost', 6379, 'password')
+        redis_manager.client = self.redis_mock
+        result = await redis_manager.fetch_latest_frame_for_key(
+            redis_key,
+            last_id,
+        )
+
+        self.assertIsNone(result)
+
+    async def test_fetch_latest_frames(self) -> None:
+        """
+        Test the fetch_latest_frames method for multiple streams.
+        """
+        last_ids = {
+            'stream_frame:test_label_image1': '0-0',
+            'stream_frame:test_label_image2': '0-0',
+        }
+
+        # Mock Redis response
+        self.redis_mock.xrevrange.side_effect = [
+            [
+                ('1234-0', {b'frame': b'image1_frame'}),
+            ],
+            [
+                ('5678-0', {b'frame': b'image2_frame'}),
+            ],
+        ]
+
+        redis_manager = RedisManager('localhost', 6379, 'password')
+        redis_manager.client = self.redis_mock
+        result = await redis_manager.fetch_latest_frames(last_ids)
+
+        expected_result = [
+            {
+                'key': 'image1', 'image': base64.b64encode(
+                    b'image1_frame',
+                ).decode('utf-8'),
+            },
+            {
+                'key': 'image2', 'image': base64.b64encode(
+                    b'image2_frame',
+                ).decode('utf-8'),
+            },
+        ]
+        self.assertEqual(result, expected_result)
+
+
 class TestUtils(unittest.IsolatedAsyncioTestCase):
     """
     Test suite for utility functions in the streaming_web module.
@@ -174,6 +276,49 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             'images': updated_data,
         }
         websocket_mock.send_json.assert_called_once_with(expected_data)
+
+    async def test_is_base64(self) -> None:
+        """
+        Test the is_base64 function for different cases.
+        """
+        valid_base64 = 'QmFzZTY0U3RyaW5n'
+        invalid_base64 = 'NotBase64@#%'
+        empty_string = ''
+
+        self.assertTrue(Utils.is_base64(valid_base64))
+        self.assertFalse(Utils.is_base64(invalid_base64))
+        self.assertFalse(Utils.is_base64(empty_string))
+
+    async def test_encode(self) -> None:
+        """
+        Test the encode function to ensure it encodes correctly.
+        """
+        input_string = 'test_label'
+        encoded_string = Utils.encode(input_string)
+
+        # Check if encoding and underscore replacement work as expected
+        expected_encoded = base64.urlsafe_b64encode(
+            input_string.encode('utf-8'),
+        ).decode('utf-8').replace('_', '-')
+        self.assertEqual(encoded_string, expected_encoded)
+
+    async def test_decode_valid_base64(self) -> None:
+        """
+        Test the decode function with valid Base64 input.
+        """
+        input_string = base64.urlsafe_b64encode(
+            b'test_label',
+        ).decode('utf-8').replace('_', '-')
+        decoded_string = Utils.decode(input_string)
+        self.assertEqual(decoded_string, 'test_label')
+
+    async def test_decode_invalid_base64(self) -> None:
+        """
+        Test the decode function with invalid Base64 input.
+        """
+        input_string = 'Invalid_String!'
+        decoded_string = Utils.decode(input_string)
+        self.assertEqual(decoded_string, input_string)
 
 
 if __name__ == '__main__':
