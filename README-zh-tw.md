@@ -200,14 +200,14 @@
       ```
    3. 使用 Docker Compose 構建並運行服務：
       ```bash
-      docker-compose up --build
+      docker-compose build
       ```
 
-   4. 使用特定的配置文件運行主應用程序，使用以下命令：
+   4. 要運行該應用程序，請使用以下命令：
       ```bash
-      docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
+      docker-compose up
       ```
-      將 `/path/in/container/configuration.yaml` 替換為容器內配置文件的實際路徑。
+      您可在http://localhost查看辨識結果
 
    5. 停止服務，使用以下命令：
       ```bash

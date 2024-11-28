@@ -1,65 +1,93 @@
+networks:
+  # Define a custom network named 'app_network' using the bridge driver
+  app_network:
+    driver: bridge
+
 services:
-  db:
-    image: mysql:latest
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: construction_hazard_detection
-      MYSQL_USER: user
-      MYSQL_PASSWORD: passcode
-    ports:
-      - "3306:3306"
-    volumes:
-      - db_data:/var/lib/mysql
-      - ./scripts/init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 20s
-      retries: 5
-
+  # Configuration for the Redis service
   redis:
+    # Use the latest Redis image from Docker Hub
     image: redis:latest
+    # Start the Redis server with a required password for security
+    command: redis-server --requirepass 'passcode'
+    # Expose port 6379 to the host machine
     ports:
-      - "6379:6379"
+      - '6379:6379'
+    # System control parameters for optimising network performance
+    sysctls:
+      net.core.somaxconn: 1024
+    # Health check to ensure Redis is running properly
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    # Connect the Redis service to the custom network
+    networks:
+      - app_network
 
-  model-server:
-    build: .
-    command: gunicorn -w 1 -b 0.0.0.0:8000 "examples.YOLOv8_server_api.app:app"
+  # Configuration for the streaming web backend service
+  streaming-web-backend:
+    # Build the Docker image using the specified context and Dockerfile
+    build:
+      context: .
+      dockerfile: examples/streaming_web/backend/Dockerfile
+    # Environment variables for connecting to Redis and setting Python path
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: passcode
+      PYTHONPATH: /app
+    # Mount the local 'examples' directory into the container
     volumes:
-      - .:/app
+      - ./examples:/app/examples
+    # Ensure the backend starts after Redis is available
+    depends_on:
+      - redis
+    # Command to start the backend application using Uvicorn
+    command: ["uvicorn", "examples.streaming_web.backend.app:sio_app", "--host", "0.0.0.0", "--port", "8000"]
+    # Expose port 8000 to the host machine
     ports:
       - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
-    container_name: model-server
+    # Connect the backend service to the custom network
+    networks:
+      - app_network
 
-  stream-web:
-    build: .
-    command: gunicorn -w 1 -b 0.0.0.0:8001 "examples.streaming_web.app:app"
-    volumes:
-      - .:/app
+  # Configuration for the streaming web frontend service
+  streaming-web-frontend:
+    # Build the Docker image using the specified context and Dockerfile
+    build:
+      context: ./examples/streaming_web/frontend
+      dockerfile: Dockerfile
+    # Ensure the frontend starts after the backend is available
+    depends_on:
+      - streaming-web-backend
+    # Expose port 80 to the host machine
     ports:
-      - "8001:8001"
-    depends_on:
-      db:
-        condition: service_healthy
+      - "80:80"
+    # Connect the frontend service to the custom network
+    networks:
+      - app_network
 
-  main-application:
-    build: .
-    command: /bin/bash -c "python src/model_fetcher.py && python main.py --config /app/config/configuration.yaml"
+  # Configuration for the construction hazard detection service
+  construction-hazard-detection:
+    # Build the Docker image using the specified context and Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Environment variables for connecting to Redis
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: passcode
+    # Mount the local 'config' directory into the container
     volumes:
-      - .:/app
-      - ./config/configuration.yaml:/app/config/configuration.yaml
+      - ./config:/app/config
+    # Ensure this service starts after Redis is available
     depends_on:
-      db:
-        condition: service_healthy
-      model-server:
-        condition: service_started
-      stream-web:
-        condition: service_started
-      redis:
-        condition: service_started
-
-volumes:
-  db_data:
+      - redis
+    # Command to run the application with the specified configuration file
+    command: ["--config", "/app/config/configuration.yaml"]
+    # Connect the service to the custom network
+    networks:
+      - app_network
