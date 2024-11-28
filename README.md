@@ -124,9 +124,9 @@ Before running the application, you need to configure the system by specifying t
 
 ```yaml
 # This is a list of video configurations
-- video_url: "rtsp://example1.com/stream"  # URL of the video
-  site: "Construction Site"  # Location of the monitoring system
-  stream_name: "Front Gate"  #  Number of the monitor
+- video_url: "https://cctv1.kctmc.nat.gov.tw/6e559e58/"  # URL of the video
+  site: "Kaohsiung"  # Location of the monitoring system
+  stream_name: "Test"  #  Number of the monitor
   model_key: "yolo11n"  # Model key for the video
   notifications:  # List of line tokens, and languages for notifications
     line_token_1: language_1
