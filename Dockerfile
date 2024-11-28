@@ -1,4 +1,4 @@
-# Use an official PyTorch image with CUDA 11.8 as the base image
+# Use an official PyTorch image with CUDA 12.1 as the base image
 FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
 
 # Create a user to run the app (for better security)
@@ -11,7 +11,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
-    redis \
     libgl1-mesa-glx \
     libglib2.0-0 \
     tzdata \
@@ -21,23 +20,17 @@ RUN apt-get update && apt-get install -y \
 ENV TZ=Asia/Taipei
 
 # Install any needed packages specified in requirements.txt
-# Note: Copy only requirements.txt first to leverage Docker cache
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the current directory contents into the container at /app
-# Use --chown to change the ownership of the copied files to the non-root user
 COPY --chown=appuser:appuser . /app
-
-# Copy the init script into the container
-COPY scripts/init_db.sh /docker-entrypoint-initdb.d/
 
 # Switch to non-root user for better security
 USER appuser
 
-# Expose the ports used by the Gunicorn servers
-EXPOSE 8000 8001
+# Set ENTRYPOINT to allow dynamic arguments for the configuration file
+ENTRYPOINT ["python3", "main.py"]
 
-# The CMD directive is used to run the script.
-# Since we are using docker-compose to override this command, it can be left blank or set as a placeholder.
-CMD ["echo", "Please use docker-compose to run this container."]
+# Default CMD provides a placeholder configuration file
+CMD ["--config", "/app/config/configuration.yaml"]
