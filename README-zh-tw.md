@@ -124,9 +124,9 @@
 
 ```yaml
 # 這是一個視訊配置的列表
-- video_url: "rtsp://example1.com/stream"  # 視訊串流的 URL
-  site: "建築工地"  # 監控系統的位置
-  stream_name: "前門"  # 監視器的名稱或編號
+- video_url: "https://cctv1.kctmc.nat.gov.tw/6e559e58/"  # 視訊串流的 URL
+  site: "高雄"  # 監控系統的位置
+  stream_name: "測試"  # 監視器的名稱或編號
   model_key: "yolo11n"  # 視訊所使用的模型鍵
   notifications:  # LINE 通知的令牌列表及對應的語言
     line_token_1: language_1
