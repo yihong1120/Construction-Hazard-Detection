@@ -206,14 +206,14 @@ Now, you could launch the hazard-detection system in Docker or Python env:
 
    3. Build and run the services using Docker Compose:
       ```bash
-      docker-compose up --build
+      docker-compose build
       ```
 
-   4. To run the main application with a specific configuration file, use the following command:
+   4. To run the application, use the following command:
       ```bash
-      docker-compose run main-application python main.py --config /path/in/container/configuration.yaml
+      docker-compose up
       ```
-      Replace `/path/in/container/configuration.yaml` with the actual path to your configuration file inside the container.
+      You can view the detection results at http://localhost
 
    5. To stop the services, use the following command:
       ```bash
