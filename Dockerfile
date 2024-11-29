@@ -26,6 +26,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the current directory contents into the container at /app
 COPY --chown=appuser:appuser . /app
 
+# Create the 'logs' directory and set ownership if it does not exist
+RUN [ ! -d /app/logs ] && mkdir /app/logs && chown appuser:appuser /app/logs || echo "/app/logs already exists"
+
 # Switch to non-root user for better security
 USER appuser
 

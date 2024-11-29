@@ -1,77 +1,155 @@
 networks:
-  # Define a custom network named 'app_network' using the bridge driver
+  # Define a custom bridge network for communication between services
   app_network:
     driver: bridge
 
 services:
-  # Configuration for the Redis service
+  # Redis service configuration
   redis:
-    # Use the latest Redis image from Docker Hub
+    # Use the latest Redis image
     image: redis:latest
-    # Start the Redis server with a required password for security
+    # Command to start Redis with a password for security
     command: redis-server --requirepass 'passcode'
-    # Expose port 6379 to the host machine
+    # Expose Redis on port 6379
     ports:
       - '6379:6379'
-    # System control parameters for optimising network performance
-    sysctls:
-      net.core.somaxconn: 1024
-    # Health check to ensure Redis is running properly
+    # Configure a health check to ensure Redis is running
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
-    # Connect the Redis service to the custom network
+    # Attach Redis to the custom network
     networks:
       - app_network
 
-  # Configuration for the streaming web backend service
+  # MySQL database service configuration
+  mysql:
+    # Use the latest MySQL image
+    image: mysql:latest
+    # Set the container name for easier reference
+    container_name: mysql-container
+    # Environment variables for configuring the MySQL database
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: construction_hazard_detection
+      MYSQL_USER: username
+      MYSQL_PASSWORD: password
+    # Expose MySQL on port 3306
+    ports:
+      - '3306:3306'
+    # Mount an initialisation SQL script to the MySQL entrypoint directory
+    volumes:
+      - ./examples/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    # Configure a health check to ensure MySQL is running
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    # Attach MySQL to the custom network
+    networks:
+      - app_network
+
+  # User management service configuration
+  user-management:
+    # Build the image from the specified Dockerfile
+    build:
+      context: .
+      dockerfile: examples/user_management/Dockerfile
+    # Environment variables for database connection
+    environment:
+      DATABASE_URL: mysql+asyncmy://username:password@mysql/construction_hazard_detection
+    # Mount the examples directory for application access
+    volumes:
+      - ./examples:/app/examples
+    # Ensure the service starts only after MySQL is healthy
+    depends_on:
+      mysql:
+        condition: service_healthy
+    # Expose the user management service on port 8001
+    ports:
+      - '8001:8001'
+    # Attach the service to the custom network
+    networks:
+      - app_network
+
+  # YOLO Server API service configuration
+  yolo-server-api:
+    # Build the image from the specified Dockerfile
+    build:
+      context: .
+      dockerfile: examples/YOLO_server_api/Dockerfile
+    # Environment variables for connecting to Redis and MySQL
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: passcode
+      DATABASE_URL: mysql+asyncmy://username:password@mysql/construction_hazard_detection
+    # Ensure the service starts only after Redis and MySQL are healthy
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    # Mount the examples directory for application access
+    volumes:
+      - ./examples:/app/examples
+    # Expose the YOLO Server API on port 5000
+    ports:
+      - '5000:5000'
+    # Attach the service to the custom network
+    networks:
+      - app_network
+
+  # Streaming web backend service configuration
   streaming-web-backend:
-    # Build the Docker image using the specified context and Dockerfile
+    # Build the image from the specified Dockerfile
     build:
       context: .
       dockerfile: examples/streaming_web/backend/Dockerfile
-    # Environment variables for connecting to Redis and setting Python path
+    # Environment variables for connecting to Redis
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: passcode
       PYTHONPATH: /app
-    # Mount the local 'examples' directory into the container
+    # Mount the examples directory for application access
     volumes:
       - ./examples:/app/examples
-    # Ensure the backend starts after Redis is available
+    # Ensure the backend starts only after Redis is healthy
     depends_on:
-      - redis
-    # Command to start the backend application using Uvicorn
+      redis:
+        condition: service_healthy
+    # Command to run the backend using Uvicorn
     command: ["uvicorn", "examples.streaming_web.backend.app:sio_app", "--host", "0.0.0.0", "--port", "8000"]
-    # Expose port 8000 to the host machine
+    # Expose the backend on port 8000
     ports:
-      - "8000:8000"
-    # Connect the backend service to the custom network
+      - '8000:8000'
+    # Attach the backend to the custom network
     networks:
       - app_network
 
-  # Configuration for the streaming web frontend service
+  # Streaming web frontend service configuration
   streaming-web-frontend:
-    # Build the Docker image using the specified context and Dockerfile
+    # Build the image from the specified Dockerfile
     build:
       context: ./examples/streaming_web/frontend
       dockerfile: Dockerfile
-    # Ensure the frontend starts after the backend is available
+    # Ensure the frontend starts only after the backend is running
     depends_on:
-      - streaming-web-backend
-    # Expose port 80 to the host machine
+      streaming-web-backend:
+        condition: service_started
+    # Expose the frontend on port 80
     ports:
-      - "80:80"
-    # Connect the frontend service to the custom network
+      - '80:80'
+    # Attach the frontend to the custom network
     networks:
       - app_network
 
-  # Configuration for the construction hazard detection service
+  # Construction hazard detection service configuration
   construction-hazard-detection:
-    # Build the Docker image using the specified context and Dockerfile
+    # Build the image from the specified Dockerfile
     build:
       context: .
       dockerfile: Dockerfile
@@ -80,14 +158,18 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: passcode
-    # Mount the local 'config' directory into the container
+    # Mount the configuration directory for application access
     volumes:
       - ./config:/app/config
-    # Ensure this service starts after Redis is available
+    # Ensure the service starts only after Redis is healthy
     depends_on:
-      - redis
-    # Command to run the application with the specified configuration file
+      redis:
+        condition: service_healthy
+    # Command to run the application with the specified configuration
     command: ["--config", "/app/config/configuration.yaml"]
-    # Connect the service to the custom network
+    # Expose the service on port 8002
+    ports:
+      - '8002:8002'
+    # Attach the service to the custom network
     networks:
       - app_network

@@ -15,9 +15,10 @@ from examples.user_management.user_operation import delete_user
 from examples.user_management.user_operation import set_user_active_status
 from examples.user_management.user_operation import update_password
 from examples.user_management.user_operation import update_username
+from examples.user_management.models import Base
 
 # Define the database URL for connection
-DATABASE_URL: str = 'mysql+asyncmy://username:password@localhost/database_name'
+DATABASE_URL: str = 'mysql+asyncmy://username:password@mysql/construction_hazard_detection'
 
 # Initialise the FastAPI application
 app: FastAPI = FastAPI()
@@ -27,6 +28,21 @@ engine = create_async_engine(DATABASE_URL, echo=True)
 async_session = sessionmaker(
     engine, expire_on_commit=False, class_=AsyncSession,
 )
+
+@app.on_event("startup")
+async def create_default_user():
+    """
+    Create a default user with username 'user' and password 'password'
+    when the application starts.
+    """
+    async with async_session() as db:
+        result = await add_user("user", "passcode", "user", db)
+        if result["success"]:
+            logger.info("Default user created successfully.")
+        else:
+            logger.warning(
+                f"Failed to create default user: {result['message']}"
+            )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
