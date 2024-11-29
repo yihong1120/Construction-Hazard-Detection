@@ -293,7 +293,6 @@ Now, you could launch the hazard-detection system in Docker or Python env:
 ### Notes
 
 - Ensure that the `Dockerfile` is present in the root directory of the project and is properly configured as per your application's requirements.
-- The `-p 8080:8080` flag maps port 8080 of the container to port 8080 on your host machine, allowing you to access the application via the host's IP address and port number.
 
 For more information on Docker usage and commands, refer to the [Docker documentation](https://docs.docker.com/).
 
