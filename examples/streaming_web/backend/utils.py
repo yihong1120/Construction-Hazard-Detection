@@ -67,7 +67,7 @@ class RedisManager:
             # Match and extract unique label and stream_name
             for key in decoded_keys:
                 match = re.match(
-                    r'stream_frame:([\w\x80-\xFF]+)_([\w\x80-\xFF]+)', key,
+                    r'stream_frame:([\w\x80-\xFF]+)\|([\w\x80-\xFF]+)', key,
                 )
                 if not match:
                     continue
@@ -102,7 +102,7 @@ class RedisManager:
 
         while True:
             cursor, keys = await self.client.scan(
-                cursor=cursor, match=f"stream_frame:{encoded_label}_*",
+                cursor=cursor, match=f"stream_frame:{encoded_label}|*",
             )
             matching_keys.extend(
                 key.decode('utf-8')
@@ -140,7 +140,7 @@ class RedisManager:
             last_ids[key] = message_id  # Update to the latest message ID
             frame_data = data.get(b'frame')
             if frame_data:
-                stream_name = key.split('_')[-1]
+                stream_name = key.split('|')[-1]
                 decoded_stream_name = Utils.decode(stream_name)
                 image = base64.b64encode(frame_data).decode('utf-8')
                 updated_data.append(
@@ -199,19 +199,17 @@ class Utils:
     @staticmethod
     def encode(value: str) -> str:
         """
-        Encode a value into a URL-safe Base64 string and replace underscores.
+        Encode a value into a URL-safe Base64 string.
 
         Args:
             value (str): The value to encode.
 
         Returns:
-            str: The encoded and adjusted string.
+            str: The encoded string.
         """
-        base64_encoded = base64.urlsafe_b64encode(
+        return base64.urlsafe_b64encode(
             value.encode('utf-8'),
         ).decode('utf-8')
-        # Replace underscores in the Base64-encoded string
-        return base64_encoded.replace('_', '-')
 
     @staticmethod
     def is_base64(value: str) -> bool:
@@ -235,7 +233,7 @@ class Utils:
     @staticmethod
     def decode(value: str) -> str:
         """
-        Decode a URL-safe Base64 string, restoring underscores.
+        Decode a URL-safe Base64 string.
 
         Args:
             value (str): The encoded string to decode.
@@ -243,15 +241,9 @@ class Utils:
         Returns:
             str: The decoded value.
         """
-        # Check if the value is valid Base64
         if not Utils.is_base64(value):
             return value  # Return the original value if it's not Base64
-
-        # Restore underscores before decoding
-        adjusted_value = value.replace('-', '_')
-        return base64.urlsafe_b64decode(
-            adjusted_value.encode('utf-8'),
-        ).decode('utf-8')
+        return base64.urlsafe_b64decode(value.encode('utf-8')).decode('utf-8')
 
     @staticmethod
     async def send_frames(

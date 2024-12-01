@@ -458,7 +458,7 @@ class MainApp:
                     ).decode('utf-8')
 
                     # Use a unique key for each thread or process
-                    key = f"stream_frame:{encoded_site}_{encoded_stream_name}"
+                    key = f"stream_frame:{encoded_site}|{encoded_stream_name}"
 
                     if not warnings:
                         warnings = ['No warning']
