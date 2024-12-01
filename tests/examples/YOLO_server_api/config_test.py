@@ -56,7 +56,7 @@ class TestSettings(unittest.TestCase):
         # environment variables
         self.assertEqual(
             settings.sqlalchemy_database_uri,
-            'mysql+asyncmy://user:passcode@localhost/'
+            'mysql+asyncmy://username:password@mysql/'
             'construction_hazard_detection',
         )
 
@@ -81,7 +81,7 @@ class TestSettings(unittest.TestCase):
         # Assert that the database URL is correctly loaded with default values
         self.assertEqual(
             settings.sqlalchemy_database_uri,
-            'mysql+asyncmy://user:passcode@localhost/'
+            'mysql+asyncmy://username:password@mysql/'
             'construction_hazard_detection',
         )
 
