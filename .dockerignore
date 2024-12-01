@@ -4,12 +4,12 @@
 **/.DS_Store
 **/*.pyc
 .dockerignore
-Dockerfile
+# Dockerfile
 README.md
 *.git
 *.gitignore
 venv/
-examples/
+# examples/
 tests/
 __pycache__/
 *.log

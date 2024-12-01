@@ -36,7 +36,7 @@ async def create_default_user():
     when the application starts.
     """
     async with async_session() as db:
-        result = await add_user("user", "passcode", "user", db)
+        result = await add_user("user", "password", "user", db)
         if result["success"]:
             logger.info("Default user created successfully.")
         else:
