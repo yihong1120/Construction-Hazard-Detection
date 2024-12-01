@@ -143,7 +143,7 @@ async def websocket_stream(websocket: WebSocket, label: str, key: str) -> None:
         # Encode the label and key for Redis lookup
         encoded_label = Utils.encode(label)
         encoded_key = Utils.encode(key)
-        redis_key = f"stream_frame:{encoded_label}_{encoded_key}"
+        redis_key = f"stream_frame:{encoded_label}|{encoded_key}"
 
         # Initialize last message ID for the stream
         last_id = '0'
