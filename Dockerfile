@@ -1,35 +1,18 @@
-# Use an official PyTorch image with CUDA 12.1 as the base image
-FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
-
-# Create a user to run the app (for better security)
-RUN useradd -ms /bin/bash appuser
+# Use the previously built base image
+FROM base:latest
 
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    tzdata \
-    && rm -rf /var/lib/apt/lists/*
+# Copy only necessary files into the container
+COPY --chown=appuser:appuser config /app/config
+COPY --chown=appuser:appuser src /app/src
+COPY --chown=appuser:appuser main.py /app/main.py
 
-# Set the timezone to Asia/Taipei
-ENV TZ=Asia/Taipei
+# Create the 'logs' directory and set ownership
+RUN mkdir -p /app/logs && chown appuser:appuser /app/logs
 
-# Install any needed packages specified in requirements.txt
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the current directory contents into the container at /app
-COPY --chown=appuser:appuser . /app
-
-# Create the 'logs' directory and set ownership if it does not exist
-RUN [ ! -d /app/logs ] && mkdir /app/logs && chown appuser:appuser /app/logs || echo "/app/logs already exists"
-
-# Switch to non-root user for better security
+# Switch to the non-root user
 USER appuser
 
 # Set ENTRYPOINT to allow dynamic arguments for the configuration file

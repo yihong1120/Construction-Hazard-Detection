@@ -4,12 +4,20 @@ networks:
     driver: bridge
 
 services:
+  base:
+    build:
+      context: .
+      dockerfile: scripts/base.Dockerfile
+    networks:
+      - app_network
+    image: base:latest 
+
   # Redis service configuration
   redis:
     # Use the latest Redis image
     image: redis:latest
     # Command to start Redis with a password for security
-    command: redis-server --requirepass 'passcode'
+    command: redis-server --requirepass 'password'
     # Expose Redis on port 6379
     ports:
       - '6379:6379'
@@ -40,7 +48,7 @@ services:
       - '3306:3306'
     # Mount an initialisation SQL script to the MySQL entrypoint directory
     volumes:
-      - ./examples/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     # Configure a health check to ensure MySQL is running
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
@@ -55,8 +63,8 @@ services:
   user-management:
     # Build the image from the specified Dockerfile
     build:
-      context: .
-      dockerfile: examples/user_management/Dockerfile
+      context: ./examples/user_management
+      dockerfile: Dockerfile
     # Environment variables for database connection
     environment:
       DATABASE_URL: mysql+asyncmy://username:password@mysql/construction_hazard_detection
@@ -65,6 +73,8 @@ services:
       - ./examples:/app/examples
     # Ensure the service starts only after MySQL is healthy
     depends_on:
+      base:
+        condition: service_started
       mysql:
         condition: service_healthy
     # Expose the user management service on port 8001
@@ -84,10 +94,12 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: passcode
+      REDIS_PASSWORD: password
       DATABASE_URL: mysql+asyncmy://username:password@mysql/construction_hazard_detection
     # Ensure the service starts only after Redis and MySQL are healthy
     depends_on:
+      base:
+        condition: service_started
       redis:
         condition: service_healthy
       mysql:
@@ -95,9 +107,10 @@ services:
     # Mount the examples directory for application access
     volumes:
       - ./examples:/app/examples
+      - ./models/pt:/app/models/pt
     # Expose the YOLO Server API on port 5000
     ports:
-      - '5000:5000'
+      - '6000:6000'
     # Attach the service to the custom network
     networks:
       - app_network
@@ -106,19 +119,21 @@ services:
   streaming-web-backend:
     # Build the image from the specified Dockerfile
     build:
-      context: .
-      dockerfile: examples/streaming_web/backend/Dockerfile
+      context: ./examples/streaming_web/backend
+      dockerfile: Dockerfile
     # Environment variables for connecting to Redis
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: passcode
+      REDIS_PASSWORD: password
       PYTHONPATH: /app
     # Mount the examples directory for application access
     volumes:
       - ./examples:/app/examples
     # Ensure the backend starts only after Redis is healthy
     depends_on:
+      base:
+        condition: service_started
       redis:
         condition: service_healthy
     # Command to run the backend using Uvicorn
@@ -157,16 +172,24 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: passcode
+      REDIS_PASSWORD: password
+    env_file:
+      - .env 
     # Mount the configuration directory for application access
     volumes:
       - ./config:/app/config
+      - ./models/pt:/app/models/pt
+      - ./.env:/app/.env
     # Ensure the service starts only after Redis is healthy
     depends_on:
+      base:
+        condition: service_started
       redis:
         condition: service_healthy
+      yolo-server-api:
+        condition: service_started
     # Command to run the application with the specified configuration
-    command: ["--config", "/app/config/configuration.yaml"]
+    # command: ["--config", "/app/config/configuration.yaml"]
     # Expose the service on port 8002
     ports:
       - '8002:8002'
