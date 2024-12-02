@@ -81,8 +81,8 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
         Test the fetch_latest_frames method for multiple streams.
         """
         last_ids = {
-            'stream_frame:test_label_image1': '0-0',
-            'stream_frame:test_label_image2': '0-0',
+            'stream_frame:test_label|image1': '0-0',
+            'stream_frame:test_label|image2': '0-0',
         }
 
         # Mock Redis response
@@ -141,11 +141,11 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         # Mock the Redis scan method to return some keys
         self.redis_mock.scan.return_value = (
             0, [
-                b'stream_frame:bGFiZWwx_image1',
-                b'stream_frame:bGFiZWwx_image2',
-                b'stream_frame:bGFiZWwy_image1',
-                b'stream_frame:bGFiZWwz_image1',
-                b'stream_frame:dGVzdA==_image',
+                b'stream_frame:bGFiZWwx|image1',
+                b'stream_frame:bGFiZWwx|image2',
+                b'stream_frame:bGFiZWwy|image1',
+                b'stream_frame:bGFiZWwz|image1',
+                b'stream_frame:dGVzdA==|image',
                 b'__invalid_key',
                 b'_another_invalid_key',
             ],
