@@ -41,16 +41,18 @@ class FileEventHandler(FileSystemEventHandler):
     A class to handle file events.
     """
 
-    def __init__(self, file_path: str, callback):
+    def __init__(self, file_path: str, callback, loop):
         """
         Initialises the FileEventHandler instance.
 
         Args:
             file_path (str): The path of the file to watch.
             callback (Callable): The function to call when file is modified.
+            loop (asyncio.AbstractEventLoop): The asyncio event loop.
         """
-        self.file_path = file_path
+        self.file_path = os.path.abspath(file_path)
         self.callback = callback
+        self.loop = loop
 
     def on_modified(self, event):
         """
@@ -59,9 +61,10 @@ class FileEventHandler(FileSystemEventHandler):
         Args:
             event (FileSystemEvent): The event object.
         """
-        if event.src_path == self.file_path:
-            # Run the callback function
-            asyncio.run(self.callback())
+        event_path = os.path.abspath(event.src_path)
+        if event_path == self.file_path:
+            print(f"[DEBUG] Configuration file modified: {event_path}")
+            asyncio.run_coroutine_threadsafe(self.callback(), self.loop)
 
 
 class RedisManager:
