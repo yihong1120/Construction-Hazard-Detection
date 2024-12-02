@@ -24,6 +24,14 @@ class TestAuth(unittest.IsolatedAsyncioTestCase):
     Unit tests for the FastAPI authentication routes.
     """
 
+    # Add type annotations for all instance attributes
+    user_cache_patcher: unittest.mock._patch
+    jwt_access_patcher: unittest.mock._patch
+    mock_user_cache: dict
+    mock_jwt_access: MagicMock
+    aclient: AsyncClient
+    mock_db: MagicMock
+
     async def asyncSetUp(self) -> None:
         """
         Set up required mocks and patchers before each test.
