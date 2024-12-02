@@ -120,36 +120,45 @@
 
 ## 操作說明
 
-在運行應用程式之前，您需要配置系統，指定視頻流的詳細信息和其他參數，這些信息需要在 YAML 配置文件中進行設置。示例配置文件 `configuration.yaml` 應該看起來像這樣：
+在運行應用程式之前，您需要配置系統，指定視頻流的詳細信息和其他參數，這些信息需要在 JSON 配置文件中進行設置。示例配置文件 `config/configuration.json` 應該看起來像這樣：
 
-```yaml
-# 這是一個視訊配置的列表
-- video_url: "https://cctv1.kctmc.nat.gov.tw/6e559e58/"  # 視訊串流的 URL
-  site: "高雄"  # 監控系統的位置
-  stream_name: "測試"  # 監視器的名稱或編號
-  model_key: "yolo11n"  # 視訊所使用的模型鍵
-  notifications:  # LINE 通知的令牌列表及對應的語言
-    line_token_1: language_1
-    line_token_2: language_2
-  detect_with_server: True  # 使用伺服器進行物件偵測
-  expire_date: "2024-12-31T23:59:59"  # 到期日期，使用 ISO 8601 格式
-  detector_items: # 檢測項目
-    detector_no_safety_vest_or_helmet: True     # 偵測是否未配戴安全背心或頭盔
-    detector_near_machinery_or_vehicle: True    # 偵測人是否靠近機械或車輛
-    detector_in_restricted_area: True           # 偵測一個人是否在限制區域內
-- video_url: "串流 URL"
-  site: "工廠1"
-  stream_name: "相機1"
-  model_key: "yolo11n"
-  notifications:
-    line_token_3: language_3
-    line_token_4: language_4
-  detect_with_server: False
-  expire_date: "無到期日期"
-  detection_items:
-    detect_no_safety_vest_or_helmet: True
-    detect_near_machinery_or_vehicle: False
-    detect_in_restricted_area: True
+```json
+[
+  {
+    "video_url": "https://cctv1.kctmc.nat.gov.tw/6e559e58/",
+    "site": "Kaohsiung",
+    "stream_name": "Test",
+    "model_key": "yolo11n",
+    "notifications": {
+      "line_token_1": "language_1",
+      "line_token_2": "language_2"
+    },
+    "detect_with_server": true,
+    "expire_date": "2024-12-31T23:59:59",
+    "detection_items": {
+      "detect_no_safety_vest_or_helmet": true,
+      "detect_near_machinery_or_vehicle": true,
+      "detect_in_restricted_area": true
+    }
+  },
+  {
+    "video_url": "streaming URL",
+    "site": "Factory_1",
+    "stream_name": "camera_1",
+    "model_key": "yolo11n",
+    "notifications": {
+      "line_token_3": "language_3",
+      "line_token_4": "language_4"
+    },
+    "detect_with_server": false,
+    "expire_date": "No Expire Date",
+    "detection_items": {
+      "detect_no_safety_vest_or_helmet": true,
+      "detect_near_machinery_or_vehicle": false,
+      "detect_in_restricted_area": true
+    }
+  }
+]
 ```
 
 數組中的每個對象代表一個視頻流配置，包含以下字段：
@@ -170,6 +179,15 @@
 - `notifications`：LINE 通知的 API 令牌和對應語言的列表。
    - `line_token_1`, `line_token_2` 等：這些是 LINE API 令牌。
    - `language_1`, `language_2` 等：通知的語言（例如：「en」表示英文，「zh-TW」表示繁體中文）。
+
+   支援的通知語言包括：
+   - `zh-TW`: 繁體中文
+   - `zh-CN`: 簡體中文
+   - `en`: 英語
+   - `fr`：法語
+   - `vi`：越南語
+   - `id`：印尼語
+   - `th`：泰語
 
    有關如何獲取 LINE 令牌的資訊，請參閱  [Line Notify教學](docs/zh/line_notify_guide_zh.md)。
 
@@ -261,9 +279,9 @@
 
    7. 使用特定的配置文件運行主應用程序，使用以下命令：
       ```bash
-      python3 main.py --config /path/to/your/configuration.yaml
+      python3 main.py --config config/configuration.json
       ```
-      將 `/path/to/your/configuration.yaml` 替換為您的配置文件的實際路徑。
+      將 `config/configuration.json` 替換為您的配置文件的實際路徑。
 
    8. 要啟動串流 Web 服務，執行以下命令：
 
