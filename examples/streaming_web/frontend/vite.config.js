@@ -31,6 +31,7 @@ export default defineConfig({
         main: './public/index.html', // Main entry
         label: './public/label.html', // Additional entry
         camera: './public/camera.html', // Additional entry
+        config: './public/config.html', // Additional entry
       },
     },
   },
