@@ -1,0 +1,19 @@
+[
+    {
+        "video_url": "https://cctv1.kctmc.nat.gov.tw/6e559e58/",
+        "site": "Kaohsiung",
+        "stream_name": "Test",
+        "model_key": "yolo11n",
+        "notifications": {
+          "line_token_1": "language_1",
+          "line_token_2": "language_2"
+        },
+        "detect_with_server": true,
+        "expire_date": "2024-12-31T23:59:59",
+        "detection_items": {
+          "detect_no_safety_vest_or_helmet": true,
+          "detect_near_machinery_or_vehicle": true,
+          "detect_in_restricted_area": true
+        }
+    }      
+]
