@@ -26,7 +26,7 @@ pytest==8.3.4
 pytest-cov==6.0.0
 pytest-xdist==3.6.1
 python-dotenv==1.0.1
-python-multipart==0.0.17
+python-multipart==0.0.18
 python-socketio==5.11.4
 python-telegram-bot==21.7
 redis==5.2.0
