@@ -10,7 +10,7 @@ services:
       dockerfile: scripts/base.Dockerfile
     networks:
       - app_network
-    image: base:latest 
+    image: base:latest
 
   # Redis service configuration
   redis:
@@ -174,7 +174,7 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: password
     env_file:
-      - .env 
+      - .env
     # Mount the configuration directory for application access
     volumes:
       - ./config:/app/config
