@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import base64
 import gc
+import json
 import logging
 import os
 import time
@@ -13,7 +14,6 @@ from typing import TypedDict
 
 import anyio
 import cv2
-import yaml
 from dotenv import load_dotenv
 from watchdog.observers import Observer
 
@@ -64,12 +64,12 @@ class MainApp:
         Initialise the MainApp class.
 
         Args:
-            config_file (str): The path to the YAML configuration file.
+            config_file (str): The path to the JSON configuration file.
         """
         self.config_file = config_file
         self.running_processes: dict[str, dict] = {}
         self.current_config_hashes: dict[str, str] = {}
-        self.lock = anyio.Lock()
+        self.lock = asyncio.Lock()
         self.logger = LoggerConfig().get_logger()
 
     def compute_config_hash(self, config: dict) -> str:
@@ -93,17 +93,15 @@ class MainApp:
         return str(relevant_config)  # Convert to string for hashing
 
     async def reload_configurations(self):
-        """
-        Reload the configurations from the YAML file.
-        """
-        with open(self.config_file, encoding='utf-8') as file:
-            configurations = yaml.safe_load(file)
-
-        current_configs = {
-            config['video_url']: config for config in configurations
-        }
-
         async with self.lock:
+            self.logger.info('Reloading configurations...')
+            with open(self.config_file, encoding='utf-8') as file:
+                configurations = json.load(file)
+
+            current_configs = {
+                config['video_url']: config for config in configurations
+            }
+
             # Track keys that exist in the current config
             current_keys = {
                 (
@@ -132,7 +130,7 @@ class MainApp:
                     stream_name.encode('utf-8'),
                 ).decode('utf-8')
 
-                key_to_delete = f"stream_frame:{site}_{stream_name}"
+                key_to_delete = f"stream_frame:{site}|{stream_name}"
 
                 # Stop the process if the configuration is removed
                 if not config or Utils.is_expired(config.get('expire_date')):
@@ -203,32 +201,37 @@ class MainApp:
         # Initial load of configurations
         await self.reload_configurations()
 
+        # Get the absolute path of the configuration file
+        config_file_path = os.path.abspath(self.config_file)
+        # Get the directory of the configuration file
+        config_dir = os.path.dirname(config_file_path)
+        # Get the current event loop
+        loop = asyncio.get_running_loop()
+
         # Set up watchdog observer
         event_handler = FileEventHandler(
-            self.config_file, self.reload_configurations,
+            config_file_path, self.reload_configurations, loop,
         )
         observer = Observer()
-        observer.schedule(
-            event_handler, path=os.path.dirname(
-                self.config_file,
-            ), recursive=False,
-        )
+        observer.schedule(event_handler, path=config_dir, recursive=False)
         observer.start()
 
         try:
             while True:
                 await anyio.sleep(1)
         except KeyboardInterrupt:
-            print('\n[INFO] Received KeyboardInterrupt. Stopping observer...')
+            self.logger.info(
+                '\n[INFO] Received KeyboardInterrupt. Stopping observer...',
+            )
             observer.stop()
         finally:
             observer.join()  # Wait for the observer to finish
-            print('[INFO] Observer stopped.')
+            self.logger.info('[INFO] Observer stopped.')
             # Stop all running processes
             for video_url, data in self.running_processes.items():
                 self.stop_process(data['process'])
             self.running_processes.clear()
-            print('[INFO] All processes stopped.')
+            self.logger.info('[INFO] All processes stopped.')
 
     async def process_single_stream(
         self,
@@ -558,7 +561,7 @@ class MainApp:
                     stream_name.encode('utf-8'),
                 ).decode('utf-8')
 
-                key = f"stream_frame:{site}_{stream_name}"
+                key = f"stream_frame:{site}|{stream_name}"
                 await redis_manager.delete(key)
                 self.logger.info(f"Deleted Redis key: {key}")
 
@@ -669,7 +672,7 @@ async def main():
     parser.add_argument(
         '--config',
         type=str,
-        default='config/configuration.yaml',
+        default='config/configuration.json',
         help='Configuration file path for stream processing',
     )
     parser.add_argument(

@@ -120,36 +120,45 @@ Below are examples of real-time hazard detection by the system:
 
 ## Usage
 
-Before running the application, you need to configure the system by specifying the details of the video streams and other parameters in a YAML configuration file. An example configuration file `configuration.yaml` should look like this:
+Before running the application, you need to configure the system by specifying the details of the video streams and other parameters in a JSON configuration file. An example configuration file `config/configuration.json` should look like this:
 
-```yaml
-# This is a list of video configurations
-- video_url: "https://cctv1.kctmc.nat.gov.tw/6e559e58/"  # URL of the video
-  site: "Kaohsiung"  # Location of the monitoring system
-  stream_name: "Test"  #  Number of the monitor
-  model_key: "yolo11n"  # Model key for the video
-  notifications:  # List of line tokens, and languages for notifications
-    line_token_1: language_1
-    line_token_2: language_2
-  detect_with_server: True  # Run objection detection with server
-  expire_date: "2024-12-31T23:59:59"  # Expire date in ISO 8601 format
-  detection_items:  # Detection items
-    detect_no_safety_vest_or_helmet: True       # Detect if no safety vest or helmet is worn
-    detect_near_machinery_or_vehicle: True      # Detect if a person is near machinery or vehicle
-    detect_in_restricted_area: True             # Detect if a person is in a restricted area
-- video_url: "streaming URL"
-  site: "Factory_1"
-  stream_name: "camera_1"
-  model_key: "yolo11n"
-  notifications:
-    line_token_3: language_3
-    line_token_4: language_4
-  detect_with_server: False
-  expire_date: "No Expire Date"
-  detection_items:
-    detect_no_safety_vest_or_helmet: True
-    detect_near_machinery_or_vehicle: False
-    detect_in_restricted_area: True
+```json
+[
+  {
+    "video_url": "https://cctv1.kctmc.nat.gov.tw/6e559e58/",
+    "site": "Kaohsiung",
+    "stream_name": "Test",
+    "model_key": "yolo11n",
+    "notifications": {
+      "line_token_1": "language_1",
+      "line_token_2": "language_2"
+    },
+    "detect_with_server": true,
+    "expire_date": "2024-12-31T23:59:59",
+    "detection_items": {
+      "detect_no_safety_vest_or_helmet": true,
+      "detect_near_machinery_or_vehicle": true,
+      "detect_in_restricted_area": true
+    }
+  },
+  {
+    "video_url": "streaming URL",
+    "site": "Factory_1",
+    "stream_name": "camera_1",
+    "model_key": "yolo11n",
+    "notifications": {
+      "line_token_3": "language_3",
+      "line_token_4": "language_4"
+    },
+    "detect_with_server": false,
+    "expire_date": "No Expire Date",
+    "detection_items": {
+      "detect_no_safety_vest_or_helmet": true,
+      "detect_near_machinery_or_vehicle": false,
+      "detect_in_restricted_area": true
+    }
+  }
+]
 ```
 
 Each object in the array represents a video stream configuration with the following fields:
@@ -170,6 +179,15 @@ Each object in the array represents a video stream configuration with the follow
 - `notifications`: A list of LINE messaging API tokens and corresponding languages for sending notifications.
    - `line_token_1`, `line_token_2`, etc.: These are the LINE API tokens.
    - `language_1`, `language_2`, etc.: The languages for the notifications (e.g., "en" for English, "zh-TW" for Traditional Chinese).
+
+   Supported languages for notifications include:
+   - `zh-TW`: Traditional Chinese
+   - `zh-CN`: Simplified Chinese
+   - `en`: English
+   - `fr`: French
+   - `vi`: Vietnamese
+   - `id`: Indonesian
+   - `th`: Thai
 
    For information on how to obtain a LINE token, please refer to [line_notify_guide_en](docs/en/line_notify_guide_en.md).
 
@@ -266,9 +284,9 @@ Now, you could launch the hazard-detection system in Docker or Python env:
 
    7. Run the main application with a specific configuration file:
       ```bash
-      python3 main.py --config /path/to/your/configuration.yaml
+      python3 main.py --config config/configuration.json
       ```
-      Replace `/path/to/your/configuration.yaml` with the actual path to your configuration file.
+      Replace `config/configuration.json` with the actual path to your configuration file.
 
    8. Start the streaming web service:
 
