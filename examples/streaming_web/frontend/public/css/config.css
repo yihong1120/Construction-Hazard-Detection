@@ -1,0 +1,88 @@
+/* Basic styling for the body element */
+body {
+    font-family: Arial, sans-serif; /* Set a clean, sans-serif font */
+    margin: 0; /* Remove default margins */
+    padding: 20px; /* Add padding for spacing */
+    background-color: #f9f9f9; /* Light grey background for the page */
+    color: #333; /* Dark grey text colour for readability */
+}
+
+/* Styling for the main heading */
+h1 {
+    text-align: center; /* Centre-align the text */
+    font-size: 24px; /* Set a larger font size for the heading */
+    color: #444; /* Medium grey colour for the text */
+    margin-bottom: 20px; /* Add space below the heading */
+}
+
+/* Styling for the configuration container */
+#config-container {
+    max-width: 800px; /* Limit the width of the container */
+    margin: 0 auto; /* Centre-align the container */
+    padding: 20px; /* Add padding inside the container */
+    background-color: #fff; /* White background for the container */
+    border-radius: 8px; /* Rounded corners for a softer appearance */
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1); /* Subtle shadow for depth */
+}
+
+/* Styling for the read-only view of the configuration */
+#config-view {
+    background-color: #f0f0f0; /* Light grey background for the view */
+    padding: 15px; /* Add padding around the text */
+    border-radius: 8px; /* Rounded corners */
+    font-family: monospace; /* Use monospace font for code-like appearance */
+    font-size: 14px; /* Slightly smaller font for compactness */
+    line-height: 1.6; /* Improve readability with line spacing */
+    white-space: pre-wrap; /* Preserve whitespace and wrap long lines */
+    overflow-x: auto; /* Allow horizontal scrolling for long lines */
+}
+
+/* Styling for buttons */
+button {
+    display: inline-block; /* Inline styling with block-like behaviour */
+    padding: 10px 20px; /* Add spacing inside the button */
+    font-size: 14px; /* Set a standard font size */
+    color: #fff; /* White text colour */
+    background-color: #007bff; /* Primary blue background */
+    border: none; /* Remove border for a cleaner look */
+    border-radius: 5px; /* Rounded corners for the button */
+    cursor: pointer; /* Show pointer cursor on hover */
+    transition: background-color 0.3s; /* Smooth transition for hover effect */
+    margin-top: 10px; /* Add spacing above buttons */
+}
+
+/* Styling for button hover state */
+button:hover {
+    background-color: #0056b3; /* Darker blue background on hover */
+}
+
+/* Styling for the editor section */
+#editor {
+    margin-top: 20px; /* Add spacing above the editor */
+}
+
+/* Styling for the editable configuration text area */
+#config-editor {
+    width: 100%; /* Make the text area span the full width */
+    height: 300px; /* Set a fixed height for the text area */
+    font-family: monospace; /* Monospace font for a code-like appearance */
+    font-size: 14px; /* Standard font size for readability */
+    padding: 10px; /* Add padding inside the text area */
+    border: 1px solid #ddd; /* Light grey border */
+    border-radius: 8px; /* Rounded corners */
+    background-color: #f9f9f9; /* Light grey background */
+    color: #333; /* Dark grey text colour */
+}
+
+/* Styling for status messages */
+#status {
+    margin-top: 15px; /* Add spacing above the status message */
+    font-size: 14px; /* Set a standard font size */
+    text-align: centre; /* Centre-align the status text */
+    color: #007bff; /* Primary blue colour for messages */
+}
+
+/* Styling for hidden elements */
+.hidden {
+    display: none; /* Completely hide elements with this class */
+}
