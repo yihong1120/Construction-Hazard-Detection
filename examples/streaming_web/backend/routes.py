@@ -21,6 +21,8 @@ redis_manager = RedisManager()
 # Create an API router for defining routes
 router = APIRouter()
 
+CONFIG_PATH = 'config/configuration.json'  # Path to the configuration file
+
 
 def register_routes(app: Any) -> None:
     """
@@ -186,6 +188,57 @@ async def webhook(request: Request) -> JSONResponse:
     print(body)
     # Respond with a JSON status message
     return JSONResponse(content={'status': 'ok'})
+
+
+@router.get('/api/config')
+async def get_config(request: Request) -> JSONResponse:
+    """
+    Retrieve the current configuration.
+
+    Args:
+        request (Request): The HTTP request.
+
+    Returns:
+        JSONResponse: A JSON response containing the current configuration.
+    """
+    Utils.verify_localhost(request)
+    config = Utils.load_configuration(CONFIG_PATH)
+    return JSONResponse(content={'config': config})
+
+
+@router.post('/api/config')
+async def update_config(request: Request) -> JSONResponse:
+    """
+    Update the configuration with the provided data.
+
+    Args:
+        request (Request): The HTTP request containing the new configuration.
+
+    Returns:
+        JSONResponse: A JSON response indicating the status of the request.
+    """
+    Utils.verify_localhost(request)
+
+    try:
+        # Retrieve the new configuration data
+        data = await request.json()
+        new_config = data.get('config', [])
+
+        # Update the configuration file
+        updated_config = Utils.update_configuration(CONFIG_PATH, new_config)
+
+        return JSONResponse(
+            content={
+                'status': 'Configuration updated successfully.',
+                'config': updated_config,
+            },
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update configuration: {e}",
+        )
+
 
 # Uncomment and use the following endpoint for file uploads if needed
 # @router.post('/api/upload')

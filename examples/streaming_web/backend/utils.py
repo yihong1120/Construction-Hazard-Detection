@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
+from typing import Any
 
 import redis.asyncio as redis
 from dotenv import load_dotenv
+from fastapi import HTTPException
+from fastapi import Request
 from fastapi import WebSocket
 
 # Load environment variables
@@ -23,6 +27,7 @@ class RedisManager:
         redis_host: str = '127.0.0.1',
         redis_port: int = 6379,
         redis_password: str = '',
+        max_connections: int = 10,
     ) -> None:
         """
         Initialises RedisManager with Redis configuration details.
@@ -38,13 +43,15 @@ class RedisManager:
             'REDIS_PASSWORD',
         ) or redis_password
 
-        # Connect to Redis (asynchronous)
-        self.client = redis.Redis(
+        # Set up Redis connection pool
+        self.pool = redis.ConnectionPool(
             host=self.redis_host,
             port=self.redis_port,
             password=self.redis_password,
             decode_responses=False,
+            max_connections=max_connections,
         )
+        self.client = redis.Redis(connection_pool=self.pool)
 
     async def get_labels(self) -> list[str]:
         """
@@ -190,6 +197,48 @@ class RedisManager:
 
         return None
 
+    async def update_partial_config(self, key: str, value: Any) -> None:
+        """
+        Update a single key in the Redis configuration cache.
+        """
+        cached_config = await self.get_config_cache()
+        cached_config[key] = value
+        await self.set_config_cache(cached_config)
+
+    async def get_partial_config(self, key: str) -> Any:
+        """
+        Retrieve a single key from the Redis configuration cache.
+        """
+        cached_config = await self.get_config_cache()
+        return cached_config.get(key)
+
+    async def delete_config_cache(self) -> None:
+        """
+        Clear the Redis configuration cache.
+        """
+        await self.client.delete('config_cache')
+
+    async def get_config_cache(self) -> dict:
+        """
+        Retrieve the full configuration from Redis cache.
+        """
+        cached_config = await self.client.get('config_cache')
+        if cached_config:
+            return json.loads(cached_config)
+        return {}
+
+    async def set_config_cache(self, config: dict, ttl: int = 3600) -> None:
+        """
+        Save the full configuration to Redis cache.
+        """
+        await self.client.set('config_cache', json.dumps(config), ex=ttl)
+
+    async def close(self):
+        """
+        Close the Redis connection pool.
+        """
+        await self.client.close()
+
 
 class Utils:
     """
@@ -263,3 +312,103 @@ class Utils:
             'label': label,
             'images': updated_data,
         })
+
+    @staticmethod
+    def load_configuration(config_path: str) -> list[dict]:
+        """
+        Load a JSON configuration file and return its content as a list.
+
+        Args:
+            config_path (str): The path to the JSON configuration file.
+
+        Returns:
+            list[dict]: The configuration data as a list of dictionaries.
+        """
+        try:
+            with open(config_path, encoding='utf-8') as file:
+                content = file.read()
+                return json.loads(content)
+        except Exception as e:
+            print(f"Error loading configuration: {e}")
+            return []
+
+    @staticmethod
+    def save_configuration(config_path: str, data: list[dict]) -> None:
+        """
+        Save a list of dictionaries as JSON to a configuration file.
+
+        Args:
+            config_path (str): The path to the JSON configuration file.
+            data (list[dict]): The data to save to the file
+
+        Raises:
+            Exception: If an error occurs while saving the configuration.
+        """
+        try:
+            with open(config_path, mode='w', encoding='utf-8') as file:
+                content = json.dumps(data, indent=4, ensure_ascii=False)
+                file.write(content)
+        except Exception as e:
+            print(f"Error saving configuration: {e}")
+
+    @staticmethod
+    def verify_localhost(request: Request) -> None:
+        """
+        Verify that the request is made from localhost.
+
+        Args:
+            request (Request): The incoming HTTP request.
+
+        Raises:
+            HTTPException: If the request is not made from localhost.
+        """
+        if request.client.host not in ['127.0.0.1', '::1']:
+            raise HTTPException(
+                status_code=403,
+                detail='Access is restricted to localhost only.',
+            )
+
+    @staticmethod
+    def update_configuration(
+        config_path: str, new_config: list[dict],
+    ) -> list[dict]:
+        """
+        Update the configuration file with new data.
+
+        Args:
+            config_path (str): The path to the JSON configuration file.
+            new_config (list[dict]): The new configuration data to add.
+
+        Returns:
+            list[dict]: The updated configuration data.
+
+        Raises:
+            ValueError: If the configuration file
+                is not in the expected format.
+        """
+        current_config = Utils.load_configuration(config_path)
+
+        if not isinstance(current_config, list):
+            raise ValueError(
+                'Invalid configuration format. Expected a list in JSON file.',
+            )
+
+        for new_item in new_config:
+            # Check if the item already exists in the configuration
+            existing_item = next(
+                (
+                    item for item in current_config if item['video_url']
+                    == new_item['video_url']
+                ),
+                None,
+            )
+            if existing_item:
+                # If the item exists, update it
+                existing_item.update(new_item)
+            else:
+                # If the item does not exist, add it to the configuration
+                current_config.append(new_item)
+
+        # Save the updated configuration to the file
+        Utils.save_configuration(config_path, current_config)
+        return current_config
