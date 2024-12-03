@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 LANGUAGES = {
     'zh-TW': {
         'warning_people_in_controlled_area': '警告: 有{count}個人進入受控區域!',
@@ -129,12 +131,13 @@ class Translator:
     """
 
     @staticmethod
-    def translate_warning(warnings: list[str], language: str) -> list[str]:
+    @lru_cache(maxsize=128)
+    def translate_warning(warnings: tuple[str, ...], language: str) -> list[str]:
         """
         Translate warnings from English to the specified language.
 
         Args:
-            warnings (list[str]): A list of warnings in English.
+            warnings (tuple[str, ...]): A tuple of warnings in English.
             language (str): The target language code (e.g., 'zh-TW', 'en').
 
         Returns:
@@ -162,21 +165,21 @@ class Translator:
                     'warning_no_safety_vest', warning,
                 )
             elif 'Someone is too close to' in warning:
-                label_key = (
-                    'machinery'
-                    if 'machinery' in warning
-                    else 'vehicle'
-                )
+                label_key = 'machinery' if 'machinery' in warning else 'vehicle'
                 translated_warning = LANGUAGES[language].get(
                     'warning_close_to_machinery', warning,
-                ).replace(
+                )
+                translated_warning = translated_warning.replace(
                     '{label}', LANGUAGES[language].get(label_key, label_key),
                 )
             elif 'people have entered the controlled area!' in warning:
                 count = warning.split(' ')[1]  # Extract count of people
                 translated_warning = LANGUAGES[language].get(
                     'warning_people_in_controlled_area', warning,
-                ).replace('{count}', count)
+                )
+                translated_warning = translated_warning.replace(
+                    '{count}', count,
+                )
             else:
                 # Keep the original warning if no match
                 translated_warning = warning
@@ -196,11 +199,9 @@ def main():
     # Specify the language to translate to
     # (e.g., 'zh-TW' for Traditional Chinese)
     language = 'zh-TW'
-
-    # Translate the warnings
-    translated_warnings = Translator.translate_warning(warnings, language)
-
-    # Output the translated warnings
+    translated_warnings = Translator.translate_warning(
+        tuple(warnings), language,
+    )
     print('Original Warnings:', warnings)
     print('Translated Warnings:', translated_warnings)
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import gc
 import json
 import logging
@@ -12,7 +11,6 @@ from datetime import datetime
 from multiprocessing import Process
 from typing import TypedDict
 
-import anyio
 import cv2
 from dotenv import load_dotenv
 from watchdog.observers import Observer
@@ -32,10 +30,6 @@ from src.utils import Utils
 load_dotenv()
 
 is_windows = os.name == 'nt'
-
-# Initialise Redis manager
-if not is_windows:
-    redis_manager = RedisManager()
 
 
 class AppConfig(TypedDict, total=False):
@@ -94,6 +88,9 @@ class MainApp:
 
     async def reload_configurations(self):
         async with self.lock:
+            if not is_windows:
+                redis_manager = RedisManager()
+
             self.logger.info('Reloading configurations...')
             with open(self.config_file, encoding='utf-8') as file:
                 configurations = json.load(file)
@@ -123,12 +120,8 @@ class MainApp:
                     'stream_name', 'prediction_visual',
                 )
 
-                site = base64.urlsafe_b64encode(
-                    site.encode('utf-8'),
-                ).decode('utf-8')
-                stream_name = base64.urlsafe_b64encode(
-                    stream_name.encode('utf-8'),
-                ).decode('utf-8')
+                site = Utils.encode(site)
+                stream_name = Utils.encode(stream_name)
 
                 key_to_delete = f"stream_frame:{site}|{stream_name}"
 
@@ -194,6 +187,9 @@ class MainApp:
                         )
                     )
 
+            # Close Redis connection
+            await redis_manager.close_connection()
+
     async def run_multiple_streams(self) -> None:
         """
         Manage multiple video streams based on a config file.
@@ -218,7 +214,7 @@ class MainApp:
 
         try:
             while True:
-                await anyio.sleep(1)
+                await asyncio.sleep(1)
         except KeyboardInterrupt:
             self.logger.info(
                 '\n[INFO] Received KeyboardInterrupt. Stopping observer...',
@@ -257,15 +253,15 @@ class MainApp:
             detect_with_server (bool): If run detection with server api or not.
             detection_items (dict): The detection items to check for.
         """
+        if not is_windows:
+            redis_manager = RedisManager()
+
         # Initialise the stream capture object
         streaming_capture = StreamCapture(stream_url=video_url)
 
-        # Get the API URL from environment variables
-        api_url = os.getenv('API_URL', 'http://localhost:5000')
-
         # Initialise the live stream detector
         live_stream_detector = LiveStreamDetector(
-            api_url=api_url,
+            api_url=os.getenv('API_URL', 'http://localhost:5000'),
             model_key=model_key,
             output_folder=site,
             detect_with_server=detect_with_server,
@@ -345,7 +341,7 @@ class MainApp:
 
                     # Translate the warnings
                     translated_warnings = Translator.translate_warning(
-                        warnings, language,
+                        tuple(warnings), language,
                     )
 
                     # Draw the detections on the frame
@@ -368,7 +364,7 @@ class MainApp:
                     ):
                         translated_controlled_zone_warning: list[str] = (
                             Translator.translate_warning(
-                                controlled_zone_warning, language,
+                                tuple(controlled_zone_warning), language,
                             )
                         )
                         message = (
@@ -452,13 +448,10 @@ class MainApp:
                 try:
                     # Encode site and stream_name to avoid issues
                     # with special characters
-                    encoded_site = base64.urlsafe_b64encode(
-                        (site or 'default_site').encode('utf-8'),
-                    ).decode('utf-8')
-
-                    encoded_stream_name = base64.urlsafe_b64encode(
-                        stream_name.encode('utf-8'),
-                    ).decode('utf-8')
+                    encoded_site = Utils.encode(site or 'default site')
+                    encoded_stream_name = Utils.encode(
+                        stream_name,
+                    ) or 'default stream name'
 
                     # Use a unique key for each thread or process
                     key = f"stream_frame:{encoded_site}|{encoded_stream_name}"
@@ -468,7 +461,7 @@ class MainApp:
 
                     # Translate the warnings
                     translated_warnings = Translator.translate_warning(
-                        warnings=warnings, language='zh-TW',
+                        warnings=tuple(warnings), language='zh-TW',
                     )
 
                     # Combine warnings into a single string for storage
@@ -500,6 +493,11 @@ class MainApp:
 
         # Release resources after processing
         await streaming_capture.release_resources()
+
+        # Close the Redis connection
+        if not is_windows:
+            await redis_manager.close_connection()
+
         gc.collect()
 
     async def process_streams(self, config: AppConfig) -> None:
@@ -551,19 +549,23 @@ class MainApp:
             )
         finally:
             if not is_windows:
-                site = config.get('site')
-                stream_name = config.get('stream_name', 'prediction_visual')
+                redis_manager = RedisManager()
+                site = config.get('site') or 'default site'
+                stream_name = config.get(
+                    'stream_name',
+                ) or 'default stream name'
 
-                site = base64.urlsafe_b64encode(
-                    (site or 'default_site').encode('utf-8'),
-                ).decode('utf-8')
-                stream_name = base64.urlsafe_b64encode(
-                    stream_name.encode('utf-8'),
-                ).decode('utf-8')
+                site = Utils.encode(site)
+                stream_name = Utils.encode(
+                    stream_name,
+                )
 
                 key = f"stream_frame:{site}|{stream_name}"
                 await redis_manager.delete(key)
                 self.logger.info(f"Deleted Redis key: {key}")
+
+                # Close the Redis connection
+                await redis_manager.close_connection()
 
     def start_process(self, config: AppConfig) -> Process:
         """
@@ -628,9 +630,10 @@ async def process_single_image(
 
         # Initialise the live stream detector,
         # but here used for a single image
-        api_url = os.getenv('API_URL', 'http://localhost:5000')
         live_stream_detector = LiveStreamDetector(
-            api_url=api_url, model_key=model_key, output_folder=output_folder,
+            api_url=os.getenv('API_URL', 'http://localhost:5000'),
+            model_key=model_key,
+            output_folder=output_folder,
         )
 
         # Initialise the drawing manager
@@ -717,10 +720,13 @@ async def main():
         print('\n[INFO] Received KeyboardInterrupt. Shutting down...')
     finally:
         # Perform necessary cleanup if needed
-        if not is_windows:
-            await redis_manager.close_connection()
-            print('[INFO] Redis connection closed.')
+        # if not is_windows:
+        #     await redis_manager.close_connection()
+        #     print('[INFO] Redis connection closed.')
+        print('[INFO] Application stopped.')
+        # Clear the asyncio event loop
+        await asyncio.sleep(0)
 
 
 if __name__ == '__main__':
-    anyio.run(main)
+    asyncio.run(main())

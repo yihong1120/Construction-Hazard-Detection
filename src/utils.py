@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 from datetime import datetime
@@ -35,6 +36,21 @@ class Utils:
                 return False
         return False
 
+    @staticmethod
+    def encode(value: str) -> str:
+        """
+        Encode a value into a URL-safe Base64 string.
+
+        Args:
+            value (str): The value to encode.
+
+        Returns:
+            str: The encoded string.
+        """
+        return base64.urlsafe_b64encode(
+            value.encode('utf-8'),
+        ).decode('utf-8')
+
 
 class FileEventHandler(FileSystemEventHandler):
     """
@@ -64,7 +80,9 @@ class FileEventHandler(FileSystemEventHandler):
         event_path = os.path.abspath(event.src_path)
         if event_path == self.file_path:
             print(f"[DEBUG] Configuration file modified: {event_path}")
-            asyncio.run_coroutine_threadsafe(self.callback(), self.loop)
+            asyncio.run_coroutine_threadsafe(
+                self.callback(), self.loop,  # Ensure the callback is run in the loop
+            )
 
 
 class RedisManager:
