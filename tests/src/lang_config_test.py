@@ -35,6 +35,15 @@ class TestLangConfig(unittest.TestCase):
         self.supported_languages = {
             'zh-TW', 'zh-CN', 'en', 'fr', 'vi', 'id', 'th',
         }
+        # Backup original translations for restoration in tearDown
+        self.original_translations = LANGUAGES.copy()
+
+    def tearDown(self):
+        # Restore original LANGUAGES dictionary
+        LANGUAGES.clear()
+        LANGUAGES.update(self.original_translations)
+        # Clear the cache to avoid side effects
+        Translator.translate_warning.cache_clear()
 
     def test_all_languages_exist(self):
         """
@@ -83,7 +92,7 @@ class TestLangConfig(unittest.TestCase):
         unsupported_language = 'xx'  # This language code is not supported
 
         translated_warnings = Translator.translate_warning(
-            warnings, unsupported_language,
+            tuple(warnings), unsupported_language,
         )
 
         # Since the language is unsupported, it should default to English
@@ -173,7 +182,9 @@ class TestLangConfig(unittest.TestCase):
         ]
         language = 'zh-TW'  # Example of a non-English language
 
-        translated_warnings = Translator.translate_warning(warnings, language)
+        translated_warnings = Translator.translate_warning(
+            tuple(warnings), language,
+        )
 
         expected_warnings = [
             '警告: 有人無穿著安全背心!',
@@ -184,8 +195,6 @@ class TestLangConfig(unittest.TestCase):
         """
         Test that language codes are case-insensitive.
         """
-        from src.lang_config import Translator
-
         warnings = [
             'Warning: Someone is not wearing a hardhat!',
             'Warning: 2 people have entered the controlled area!',
@@ -195,7 +204,7 @@ class TestLangConfig(unittest.TestCase):
 
         try:
             translated_warnings = Translator.translate_warning(
-                warnings, language.lower(),
+                tuple(warnings), language.lower(),
             )
             expected_warnings = [
                 'Warning: Someone is not wearing a hardhat!',
@@ -210,8 +219,6 @@ class TestLangConfig(unittest.TestCase):
         """
         Test that specific language translations are correct.
         """
-        from src.lang_config import Translator
-
         test_cases = {
             'zh-TW': {
                 'Warning: Someone is not wearing a hardhat!': '警告: 有人無配戴安全帽!',
@@ -228,7 +235,7 @@ class TestLangConfig(unittest.TestCase):
 
         for lang, expected_translations in test_cases.items():
             translated_warnings = Translator.translate_warning(
-                set(expected_translations.keys()), lang,
+                tuple(expected_translations.keys()), lang,
             )
             for original, expected in expected_translations.items():
                 self.assertIn(
@@ -244,8 +251,6 @@ class TestLangConfig(unittest.TestCase):
         Test that translations with missing placeholders
         are handled gracefully.
         """
-        from src.lang_config import Translator
-
         warnings = [
             'Warning: Someone is not wearing a hardhat!',
             'Warning: 2 people have entered the controlled area!',
@@ -261,9 +266,8 @@ class TestLangConfig(unittest.TestCase):
 
         try:
             translated_warnings = Translator.translate_warning(
-                warnings, language,
+                tuple(warnings), language,
             )
-            # Since all placeholders are present, no error should occur
             expected_warnings = [
                 'Warning: Someone is not wearing a hardhat!',
                 'Warning: 2 people have entered the controlled area!',
@@ -273,7 +277,10 @@ class TestLangConfig(unittest.TestCase):
         except Exception as e:
             self.fail(f"Translation failed with all placeholders present: {e}")
 
-        # Now, remove a placeholder and expect a KeyError or handle gracefully
+        # Clear the cache to ensure changes to LANGUAGES are picked up
+        Translator.translate_warning.cache_clear()
+
+        # Now, remove a placeholder and expect it to handle gracefully
         # Missing {count}
         LANGUAGES[language]['warning_people_in_controlled_area'] = (
             'Warning: people have entered the controlled area!'
@@ -281,9 +288,8 @@ class TestLangConfig(unittest.TestCase):
 
         try:
             translated_warnings = Translator.translate_warning(
-                warnings, language,
+                tuple(warnings), language,
             )
-            # The warning without placeholder should remain unchanged
             expected_warnings = [
                 'Warning: Someone is not wearing a hardhat!',
                 'Warning: people have entered the controlled area!',
@@ -304,7 +310,9 @@ class TestLangConfig(unittest.TestCase):
         ]
         language = 'zh-TW'  # Example of a non-English language
 
-        translated_warnings = Translator.translate_warning(warnings, language)
+        translated_warnings = Translator.translate_warning(
+            tuple(warnings), language,
+        )
 
         # Since the warning doesn't match any known pattern,
         # it should be kept as-is
