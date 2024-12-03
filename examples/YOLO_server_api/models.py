@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import AsyncGenerator
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
-from typing import AsyncGenerator
 
 from sahi.predict import AutoDetectionModel
 from sqlalchemy import Boolean
