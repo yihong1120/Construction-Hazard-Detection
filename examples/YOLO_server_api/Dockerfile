@@ -1,5 +1,5 @@
 # Use the shared base image
-FROM base:latest
+FROM yihong123/base:latest
 
 # Set working directory
 WORKDIR /app

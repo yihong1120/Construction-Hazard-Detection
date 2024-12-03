@@ -1,5 +1,5 @@
 # Use the previously built base image
-FROM base:latest
+FROM yihong123/base:latest
 
 # Set the working directory in the container
 WORKDIR /app
@@ -8,6 +8,9 @@ WORKDIR /app
 COPY --chown=appuser:appuser config /app/config
 COPY --chown=appuser:appuser src /app/src
 COPY --chown=appuser:appuser main.py /app/main.py
+
+# Ensure 'appuser' exists (if not already present in base image)
+RUN groupadd -g 1001 appuser && useradd -u 1001 -g appuser -m appuser || true
 
 # Create the 'logs' directory and set ownership
 RUN mkdir -p /app/logs && chown appuser:appuser /app/logs
@@ -19,4 +22,4 @@ USER appuser
 ENTRYPOINT ["python3", "main.py"]
 
 # Default CMD provides a placeholder configuration file
-CMD ["--config", "/app/config/configuration.yaml"]
+CMD ["--config", "/app/config/configuration.json"]
