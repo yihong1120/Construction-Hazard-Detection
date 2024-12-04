@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import unittest
 from datetime import datetime
 from datetime import timedelta
@@ -7,7 +9,6 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-import pytest
 from watchdog.events import FileModifiedEvent
 
 from src.utils import FileEventHandler
@@ -15,7 +16,7 @@ from src.utils import RedisManager
 from src.utils import Utils
 
 
-class TestUtils(unittest.TestCase):
+class TestUtils(unittest.IsolatedAsyncioTestCase):
     def test_is_expired_with_valid_date(self):
         # Test with a past date (should return True)
         past_date = (datetime.now() - timedelta(days=1)).isoformat()
@@ -34,42 +35,55 @@ class TestUtils(unittest.TestCase):
         # Test with None (should return False)
         self.assertFalse(Utils.is_expired(None))
 
+    def test_encode(self):
+        # Test encoding a string
+        value = 'test_value'
+        encoded_value = Utils.encode(value)
+        expected_value = base64.urlsafe_b64encode(
+            value.encode('utf-8'),
+        ).decode('utf-8')
+        self.assertEqual(encoded_value, expected_value)
 
-@pytest.mark.asyncio
-class TestFileEventHandler(unittest.TestCase):
+
+class TestFileEventHandler(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+
+    def tearDown(self):
+        self.loop.close()
+
     async def test_on_modified_triggers_callback(self):
         # Create a mock callback function
-        mock_callback = MagicMock()
+        mock_callback = AsyncMock()
 
         # File path to watch
         file_path = '/path/to/test/file.txt'
 
         # Create an instance of FileEventHandler
         event_handler = FileEventHandler(
-            file_path=file_path, callback=mock_callback,
+            file_path=file_path, callback=mock_callback, loop=self.loop,
         )
 
         # Create a mock event for a file modification
         event = FileModifiedEvent(file_path)
 
         # Trigger the on_modified event
-        await event_handler.on_modified(event)
+        event_handler.on_modified(event)
 
         # Assert that the callback was called
         mock_callback.assert_called_once()
 
-    async def test_on_modified_does_not_trigger_callback_for_different_file(
-        self,
-    ):
+    async def test_on_modified_different_file(self):
         # Create a mock callback function
-        mock_callback = MagicMock()
+        mock_callback = AsyncMock()
 
         # File path to watch
         file_path = '/path/to/test/file.txt'
 
         # Create an instance of FileEventHandler
         event_handler = FileEventHandler(
-            file_path=file_path, callback=mock_callback,
+            file_path=file_path, callback=mock_callback, loop=self.loop,
         )
 
         # Create a mock event for a different file modification
@@ -77,13 +91,12 @@ class TestFileEventHandler(unittest.TestCase):
         event = FileModifiedEvent(different_file_path)
 
         # Trigger the on_modified event
-        await event_handler.on_modified(event)
+        event_handler.on_modified(event)
 
         # Assert that the callback was not called
         mock_callback.assert_not_called()
 
 
-@pytest.mark.asyncio
 class TestRedisManager(unittest.IsolatedAsyncioTestCase):
     """
     Test cases for the RedisManager class
