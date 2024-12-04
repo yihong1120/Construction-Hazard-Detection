@@ -81,7 +81,8 @@ class FileEventHandler(FileSystemEventHandler):
         if event_path == self.file_path:
             print(f"[DEBUG] Configuration file modified: {event_path}")
             asyncio.run_coroutine_threadsafe(
-                self.callback(), self.loop,  # Ensure the callback is run in the loop
+                # Ensure the callback is run in the loop
+                self.callback(), self.loop,
             )
 
 
