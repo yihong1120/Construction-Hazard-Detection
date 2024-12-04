@@ -44,6 +44,8 @@ sio = socketio.AsyncServer(async_mode='asgi')
 sio_app = socketio.ASGIApp(sio, app)
 
 # Define Socket.IO events
+
+
 @sio.event
 async def connect(sid: str, environ: dict) -> None:
     """
@@ -67,6 +69,8 @@ async def disconnect(sid: str) -> None:
     print('Client disconnected:', sid)
 
 # Define lifespan event to manage the application startup and shutdown
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """
