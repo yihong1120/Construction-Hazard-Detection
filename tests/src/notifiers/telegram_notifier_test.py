@@ -22,38 +22,30 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
     telegram_notifier: TelegramNotifier
 
     @classmethod
-    def setUpClass(cls) -> None:
+    @patch(
+        'src.notifiers.telegram_notifier.os.getenv',
+        return_value='test_bot_token',
+    )
+    def setUpClass(cls, mock_getenv) -> None:
         """
         Set up the TelegramNotifier instance for tests.
         """
-        cls.telegram_notifier = TelegramNotifier(
-            bot_token='test_bot_token',
-        )
+        cls.telegram_notifier = TelegramNotifier()
 
     def test_init(self) -> None:
         """
         Test if the TelegramNotifier instance is initialised correctly.
         """
-        self.assertEqual(self.telegram_notifier.bot_token, 'test_bot_token')
-
-    def test_init_no_token(self) -> None:
-        """
-        Test if ValueError is raised when no bot token is provided.
-        """
-        with patch(
-            'src.notifiers.telegram_notifier.os.getenv',
-            return_value=None,
-        ):
-            with self.assertRaises(ValueError) as context:
-                TelegramNotifier(bot_token=None)
-            self.assertEqual(
-                str(context.exception),
-                'Telegram bot token must be provided',
-            )
+        self.assertIsInstance(self.telegram_notifier, TelegramNotifier)
 
     @patch('telegram.Bot.send_message', new_callable=AsyncMock)
+    @patch(
+        'src.notifiers.telegram_notifier.os.getenv',
+        return_value='test_bot_token',
+    )
     async def test_send_notification_no_image(
         self,
+        mock_getenv,
         mock_send_message: AsyncMock,
     ) -> None:
         """
@@ -75,8 +67,13 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch('telegram.Bot.send_photo', new_callable=AsyncMock)
+    @patch(
+        'src.notifiers.telegram_notifier.os.getenv',
+        return_value='test_bot_token',
+    )
     async def test_send_notification_with_image(
         self,
+        mock_getenv,
         mock_send_photo: AsyncMock,
     ) -> None:
         """
