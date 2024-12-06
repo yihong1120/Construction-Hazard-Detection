@@ -4,8 +4,8 @@ import os
 from io import BytesIO
 from typing import TypedDict
 
+import aiohttp
 import numpy as np
-import requests
 from dotenv import load_dotenv
 from PIL import Image
 
@@ -30,25 +30,12 @@ class LineNotifier:
         """
         load_dotenv()
 
-    def send_notification(
+    async def send_notification(
         self,
         message: str,
         image: np.ndarray | bytes | None = None,
         line_token: str | None = None,
     ) -> int:
-        """
-        Sends a notification via LINE Notify, optionally including an image.
-
-        Args:
-            message (str): The message to send.
-            image (Optional[np.ndarray | bytes]): Image sent with the message.
-                Defaults to None.
-            line_token (Optional[str]): The LINE Notify token to use.
-
-        Returns:
-            int: The status code of the response.
-        """
-        # Get the LINE Notify token
         if not line_token:
             line_token = os.getenv('LINE_NOTIFY_TOKEN')
         if not line_token:
@@ -59,49 +46,51 @@ class LineNotifier:
         payload = {'message': message}
         headers = {'Authorization': f"Bearer {line_token}"}
 
-        # Prepare image if provided
-        files = self._prepare_image_file(image) if image is not None else None
+        # 使用 FormData 來處理附檔
+        form = aiohttp.FormData()
+        # 將文字參數加入 form（LINE Notify 的參數需用 form-data 的方式提交）
+        for k, v in payload.items():
+            form.add_field(k, v)
 
-        # Send the request
-        response = requests.post(
-            'https://notify-api.line.me/api/notify',
-            headers=headers,
-            params=payload,
-            files=files,
-        )
+        if image is not None:
+            image_buffer = self._prepare_image_file(image)
+            # 使用 add_field 指定檔案名稱及 content_type
+            form.add_field(
+                'imageFile', image_buffer,
+                filename='image.png', content_type='image/png',
+            )
 
-        return response.status_code
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                'https://notify-api.line.me/api/notify',
+                headers=headers,
+                data=form,
+            ) as response:
+                return response.status
 
-    def _prepare_image_file(self, image: np.ndarray | bytes) -> dict:
-        """
-        Prepares the image file for the request.
-
-        Args:
-            image (np.ndarray | bytes): The image to send.
-
-        Returns:
-            dict: The files dictionary for the request.
-        """
+    def _prepare_image_file(self, image: np.ndarray | bytes) -> BytesIO:
         if isinstance(image, bytes):
             image = np.array(Image.open(BytesIO(image)))
         image_pil = Image.fromarray(image)
         buffer = BytesIO()
         image_pil.save(buffer, format='PNG')
         buffer.seek(0)
-        return {'imageFile': ('image.png', buffer, 'image/png')}
-
+        return buffer
 
 # Example usage
-def main():
+
+
+async def main():
     notifier = LineNotifier()
     message = 'Hello, LINE Notify!'
     # Create a dummy image for testing
     image = np.zeros((100, 100, 3), dtype=np.uint8)
-    response_codes = notifier.send_notification(
+    response_code = await notifier.send_notification(
         message, image=image, line_token='YOUR_LINE_TOKEN',
     )
-    print(f"Response codes: {response_codes}")
+    print(f"Response code: {response_code}")
 
 
 if __name__ == '__main__':
-    main()
+    import asyncio
+    asyncio.run(main())
