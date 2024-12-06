@@ -14,29 +14,18 @@ class MessengerNotifier:
     A class to handle sending notifications through Facebook Messenger
     """
 
-    def __init__(self, page_access_token: str | None = None):
+    def __init__(self):
         """
-        Initialises the MessengerNotifier with a Facebook page access token.
-
-        Args:
-            page_access_token (str, optional): The token for the Facebook page.
-                Defaults to environment variable 'FACEBOOK_PAGE_ACCESS_TOKEN'.
-
-        Raises:
-            ValueError: If 'FACEBOOK_PAGE_ACCESS_TOKEN' is missing.
+        Initialises the MessengerNotifier.
         """
         load_dotenv()
-        self.page_access_token = page_access_token or os.getenv(
-            'FACEBOOK_PAGE_ACCESS_TOKEN',
-        )
-        if not self.page_access_token:
-            raise ValueError('FACEBOOK_PAGE_ACCESS_TOKEN missing.')
 
     def send_notification(
         self,
         recipient_id: str,
         message: str,
         image: np.ndarray | None = None,
+        page_access_token: str | None = None,
     ) -> int:
         """
         Sends a notification to a specified recipient via Facebook Messenger.
@@ -45,18 +34,29 @@ class MessengerNotifier:
             recipient_id (str): The recipient's ID.
             message (str): The text message to send.
             image (np.ndarray): Optional image as a NumPy array (RGB format).
+            page_access_token (str, optional): The token for the Facebook page.
+                Defaults to environment variable 'FACEBOOK_PAGE_ACCESS_TOKEN'.
 
         Returns:
             int: The HTTP status code of the response.
+
+        Raises:
+            ValueError: If 'FACEBOOK_PAGE_ACCESS_TOKEN' is missing.
 
         Notes:
             - If image is provided, it sends a message with image attachment.
             - Otherwise, sends a text message.
         """
-        headers = {'Authorization': f"Bearer {self.page_access_token}"}
+        page_access_token = page_access_token or os.getenv(
+            'FACEBOOK_PAGE_ACCESS_TOKEN',
+        )
+        if not page_access_token:
+            raise ValueError('FACEBOOK_PAGE_ACCESS_TOKEN missing.')
+
+        headers = {'Authorization': f"Bearer {page_access_token}"}
         url = (
             f"https://graph.facebook.com/v11.0/me/messages?"
-            f"access_token={self.page_access_token}"
+            f"access_token={page_access_token}"
         )
 
         if image is not None:
@@ -98,8 +98,12 @@ def main():
     recipient_id = 'your_recipient_id_here'
     message = 'Hello, Messenger!'
     image = np.zeros((100, 100, 3), dtype=np.uint8)  # Example image (black)
+    page_access_token = 'your_page_access_token_here'
     response_code = notifier.send_notification(
-        recipient_id, message, image=image,
+        recipient_id,
+        message,
+        image=image,
+        page_access_token=page_access_token,
     )
     print(f"Response code: {response_code}")
 

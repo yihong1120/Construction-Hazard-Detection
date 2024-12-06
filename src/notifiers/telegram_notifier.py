@@ -36,24 +36,18 @@ class TelegramNotifier:
     A class to handle sending notifications through Telegram.
     """
 
-    def __init__(self, bot_token: str | None = None):
+    def __init__(self):
         """
-        Initialises the TelegramNotifier with a bot token.
-
-        Args:
-            bot_token (str, optional): The Telegram bot token. If not provided,
-                attempts to read from environment variables.
+        Initialises the TelegramNotifier.
         """
         load_dotenv()
-        self.bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
-        if not self.bot_token:
-            raise ValueError('Telegram bot token must be provided')
-        self.bot = Bot(token=self.bot_token)
 
     async def send_notification(
-        self, chat_id: str,
+        self,
+        chat_id: str,
         message: str,
         image: np.ndarray | None = None,
+        bot_token: str | None = None,
     ) -> Message:
         """
         Sends a notification to a specified Telegram chat.
@@ -62,10 +56,20 @@ class TelegramNotifier:
             chat_id (str): The chat ID where the notification will be sent.
             message (str): The text message to send.
             image (np.ndarray): An optional image in NumPy array (RGB format).
+            bot_token (str, optional): The Telegram bot token. If not provided,
+                attempts to read from environment variables.
 
         Returns:
             Message: The response object from Telegram API.
+
+        Raises:
+            ValueError: If 'TELEGRAM_BOT_TOKEN' is missing.
         """
+        bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
+        if not bot_token:
+            raise ValueError('Telegram bot token must be provided')
+        bot = Bot(token=bot_token)
+
         if image is not None:
             # Convert NumPy array to PIL Image
             image_pil = Image.fromarray(image)
@@ -74,14 +78,14 @@ class TelegramNotifier:
             image_pil.save(buffer, format='PNG')
             buffer.seek(0)
             # Send photo with caption
-            response = await self.bot.send_photo(
+            response = await bot.send_photo(
                 chat_id=chat_id,
                 photo=buffer,
                 caption=message,
             )
         else:
             # Send text message
-            response = await self.bot.send_message(
+            response = await bot.send_message(
                 chat_id=chat_id,
                 text=message,
             )
@@ -94,7 +98,10 @@ async def main():
     chat_id = 'your_chat_id_here'
     message = 'Hello, Telegram!'
     image = np.zeros((100, 100, 3), dtype=np.uint8)  # Example image (black)
-    response = await notifier.send_notification(chat_id, message, image=image)
+    bot_token = 'your_bot_token_here'
+    response = await notifier.send_notification(
+        chat_id, message, image=image, bot_token=bot_token,
+    )
     print(response)
 
 

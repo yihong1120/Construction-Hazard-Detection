@@ -19,25 +19,32 @@ class TestMessengerNotifier(unittest.TestCase):
     messenger_notifier: MessengerNotifier
 
     @classmethod
-    def setUpClass(cls) -> None:
+    @patch(
+        'src.notifiers.messenger_notifier.os.getenv',
+        return_value='test_page_access_token',
+    )
+    def setUpClass(cls, mock_getenv) -> None:
         """
         Set up class method to initialise the MessengerNotifier instance.
         """
-        cls.messenger_notifier = MessengerNotifier(
-            page_access_token='test_page_access_token',
-        )
+        cls.messenger_notifier = MessengerNotifier()
 
     def test_init(self) -> None:
         """
         Test if the MessengerNotifier instance is initialised correctly.
         """
-        self.assertEqual(
-            self.messenger_notifier.page_access_token,
-            'test_page_access_token',
-        )
+        self.assertIsInstance(self.messenger_notifier, MessengerNotifier)
 
     @patch('requests.post')
-    def test_send_notification_no_image(self, mock_post: Any) -> None:
+    @patch(
+        'src.notifiers.messenger_notifier.os.getenv',
+        return_value='test_page_access_token',
+    )
+    def test_send_notification_no_image(
+        self,
+        mock_getenv: Any,
+        mock_post: Any,
+    ) -> None:
         """
         Test sending a notification without an image.
 
@@ -62,7 +69,15 @@ class TestMessengerNotifier(unittest.TestCase):
         )
 
     @patch('requests.post')
-    def test_send_notification_with_image(self, mock_post: Any) -> None:
+    @patch(
+        'src.notifiers.messenger_notifier.os.getenv',
+        return_value='test_page_access_token',
+    )
+    def test_send_notification_with_image(
+        self,
+        mock_getenv: Any,
+        mock_post: Any,
+    ) -> None:
         """
         Test sending a notification with an image.
 
@@ -83,16 +98,6 @@ class TestMessengerNotifier(unittest.TestCase):
         self.assertIn('filedata', files)
         self.assertEqual(files['filedata'][0], 'image.png')
         self.assertEqual(files['filedata'][2], 'image/png')
-
-    def test_missing_page_access_token(self) -> None:
-        """
-        Test initialisation without a page access token.
-        """
-        with self.assertRaises(
-            ValueError,
-            msg='FACEBOOK_PAGE_ACCESS_TOKEN missing.',
-        ):
-            MessengerNotifier(page_access_token=None)
 
     @patch(
         'src.notifiers.messenger_notifier.MessengerNotifier.send_notification',
