@@ -389,12 +389,14 @@ class MainApp:
                         )
                         continue
 
-                    notification_status = line_notifier.send_notification(
-                        message,
-                        image=frame_bytes
-                        if frame_bytes is not None
-                        else None,
-                        line_token=line_token,
+                    notification_status = (
+                        await line_notifier.send_notification(
+                            message,
+                            image=frame_bytes
+                            if frame_bytes is not None
+                            else None,
+                            line_token=line_token,
+                        )
                     )
 
                     # To connect to the broadcast system, do it here:

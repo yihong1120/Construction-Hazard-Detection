@@ -14,7 +14,7 @@ from src.notifiers.line_notifier import LineNotifier
 from src.notifiers.line_notifier import main
 
 
-class TestLineNotifier(unittest.TestCase):
+class TestLineNotifier(unittest.IsolatedAsyncioTestCase):
     """
     Unit tests for the LineNotifier class methods.
     """
@@ -29,19 +29,18 @@ class TestLineNotifier(unittest.TestCase):
         self.notifier: LineNotifier = LineNotifier()
 
     @patch.dict('os.environ', {'LINE_NOTIFY_TOKEN': 'test_env_token'})
-    # Mock the requests.post call
-    @patch('src.notifiers.line_notifier.requests.post')
-    def test_init_with_env_token(self, mock_post: MagicMock) -> None:
+    @patch('aiohttp.ClientSession.post')
+    async def test_init_with_env_token(self, mock_post: MagicMock) -> None:
         """
         Test case for sending a notification using an environment token.
         """
-        # Mock the response from requests.post
+        # Mock the response from aiohttp.ClientSession.post
         mock_response: MagicMock = MagicMock()
-        mock_response.status_code = 200  # Simulate a successful request
-        mock_post.return_value = mock_response
+        mock_response.status = 200  # Simulate a successful request
+        mock_post.return_value.__aenter__.return_value = mock_response
 
         notifier: LineNotifier = LineNotifier()
-        status_code: int = notifier.send_notification(self.message)
+        status_code: int = await notifier.send_notification(self.message)
 
         # Assert that the status code is 200
         self.assertEqual(status_code, 200)
@@ -49,19 +48,22 @@ class TestLineNotifier(unittest.TestCase):
             'https://notify-api.line.me/api/notify',
             headers={'Authorization': 'Bearer test_env_token'},
             params={'message': self.message},
-            files=None,
+            data=None,
         )
 
-    def test_init_without_token(self) -> None:
+    async def test_init_without_token(self) -> None:
         """
         Test case for sending a notification without a token
         (expects ValueError).
         """
         with self.assertRaises(ValueError):
-            self.notifier.send_notification(self.message, line_token=None)
+            await self.notifier.send_notification(
+                self.message,
+                line_token=None,
+            )
 
-    @patch('src.notifiers.line_notifier.requests.post')
-    def test_send_notification_without_image(
+    @patch('aiohttp.ClientSession.post')
+    async def test_send_notification_without_image(
         self,
         mock_post: MagicMock,
     ) -> None:
@@ -69,10 +71,10 @@ class TestLineNotifier(unittest.TestCase):
         Test case for sending notification without an image.
         """
         mock_response: MagicMock = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
 
-        status_code: int = self.notifier.send_notification(
+        status_code: int = await self.notifier.send_notification(
             self.message, line_token=self.line_token,
         )
         self.assertEqual(status_code, 200)
@@ -80,19 +82,21 @@ class TestLineNotifier(unittest.TestCase):
             'https://notify-api.line.me/api/notify',
             headers={'Authorization': f'Bearer {self.line_token}'},
             params={'message': self.message},
-            files=None,
+            data=None,
         )
 
-    @patch('src.notifiers.line_notifier.requests.post')
-    def test_send_notification_with_image(self, mock_post: MagicMock) -> None:
+    @patch('aiohttp.ClientSession.post')
+    async def test_send_notification_with_image(
+        self, mock_post: MagicMock,
+    ) -> None:
         """
         Test case for sending notification with an image as a NumPy array.
         """
         mock_response: MagicMock = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
 
-        status_code: int = self.notifier.send_notification(
+        status_code: int = await self.notifier.send_notification(
             self.message,
             self.image,
             line_token=self.line_token,
@@ -100,18 +104,19 @@ class TestLineNotifier(unittest.TestCase):
         self.assertEqual(status_code, 200)
         mock_post.assert_called_once()
         args, kwargs = mock_post.call_args
-        self.assertIn('files', kwargs)
-        self.assertIn('imageFile', kwargs['files'])
+        self.assertIn('data', kwargs)
+        self.assertIn('imageFile', kwargs['data'])
 
-        # Check if the image is correctly converted and sent
-        image_file = kwargs['files']['imageFile']
-        self.assertEqual(image_file[0], 'image.png')
-        self.assertEqual(image_file[2], 'image/png')
-        image: Image.Image = Image.open(image_file[1])
+        # 檢查 imageFile
+        image_file = kwargs['data']['imageFile']
+        self.assertEqual(image_file.name, 'image.png')
+        self.assertEqual(image_file.content_type, 'image/png')
+        image_file.seek(0)
+        image: Image.Image = Image.open(image_file)
         self.assertTrue(np.array_equal(np.array(image), self.image))
 
-    @patch('src.notifiers.line_notifier.requests.post')
-    def test_send_notification_with_bytes_image(
+    @patch('aiohttp.ClientSession.post')
+    async def test_send_notification_with_bytes_image(
         self,
         mock_post: MagicMock,
     ) -> None:
@@ -120,49 +125,49 @@ class TestLineNotifier(unittest.TestCase):
             with an image as bytes (e.g., BytesIO).
         """
         mock_response: MagicMock = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
 
         buffer: BytesIO = BytesIO()
         Image.fromarray(self.image).save(buffer, format='PNG')
         buffer.seek(0)
         image_bytes: bytes = buffer.read()
 
-        status_code: int = self.notifier.send_notification(
+        status_code: int = await self.notifier.send_notification(
             self.message, image_bytes, line_token=self.line_token,
         )
         self.assertEqual(status_code, 200)
         mock_post.assert_called_once()
         args, kwargs = mock_post.call_args
-        self.assertIn('files', kwargs)
-        self.assertIn('imageFile', kwargs['files'])
+        self.assertIn('data', kwargs)
+        self.assertIn('imageFile', kwargs['data'])
 
         # Check if the image is correctly converted and sent
-        image_file = kwargs['files']['imageFile']
-        self.assertEqual(image_file[0], 'image.png')
-        self.assertEqual(image_file[2], 'image/png')
-        image: Image.Image = Image.open(image_file[1])
+        image_file = kwargs['data']['imageFile']
+        self.assertEqual(image_file.name, 'image.png')
+        self.assertEqual(image_file.content_type, 'image/png')
+        image: Image.Image = Image.open(image_file)
         self.assertTrue(np.array_equal(np.array(image), self.image))
 
-    @patch('src.notifiers.line_notifier.requests.post')
-    def test_main(self, mock_post: MagicMock) -> None:
+    @patch('aiohttp.ClientSession.post')
+    async def test_main(self, mock_post: MagicMock) -> None:
         """
         Test the main function to ensure the complete process is covered.
         """
         mock_response: MagicMock = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
 
         with patch('builtins.print') as mock_print:
-            main()
-            mock_print.assert_called_once_with('Response codes: 200')
+            await main()
+            mock_print.assert_called_once_with('Response code: 200')
 
     @patch.dict(os.environ, {'LINE_NOTIFY_TOKEN': 'test_token'})
-    @patch('src.notifiers.line_notifier.requests.post')
-    def test_main_as_script(self, mock_post: MagicMock) -> None:
+    @patch('aiohttp.ClientSession.post')
+    async def test_main_as_script(self, mock_post: MagicMock) -> None:
         mock_response: MagicMock = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
 
         # Get the absolute path to the line_notifier.py script
         script_path = os.path.abspath(
