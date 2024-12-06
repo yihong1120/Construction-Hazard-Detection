@@ -483,7 +483,7 @@ class MainApp:
 
             # Update the capture interval based on processing time
             processing_time = time.time() - start_time
-            streaming_capture.update_capture_interval(int(processing_time) + 1)
+            streaming_capture.update_capture_interval(1 if int(processing_time) < 1 else int(processing_time) + 1)
 
             # Log the detection results
             logger.info(f"{site} - {stream_name}")
