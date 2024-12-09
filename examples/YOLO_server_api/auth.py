@@ -32,7 +32,7 @@ async def create_token(user: UserLogin, db: AsyncSession = Depends(get_db)):
         db (AsyncSession): The database session.
 
     Returns:
-        dict: The access token for the user.
+        dict: { 'access_token': '...', 'role': '...', 'username': '...' }
     """
     print(f"db_user.__dict__ = {user.__dict__}")
 
@@ -47,25 +47,29 @@ async def create_token(user: UserLogin, db: AsyncSession = Depends(get_db)):
             # Add the user to the cache
             user_cache[user.username] = db_user
 
-    # Check if the user exists and the password is correct
+    # Check if user and password correct
     if not db_user or not await db_user.check_password(user.password):
         raise HTTPException(
             status_code=401, detail='Wrong username or password',
         )
 
-    # Check if the user account is active
+    # Check active
     if not db_user.is_active:
         raise HTTPException(status_code=403, detail='User account is inactive')
 
-    # Check if the user has the required role
+    # Check role
     if db_user.role not in ['admin', 'model_manager', 'user', 'guest']:
         raise HTTPException(
             status_code=403, detail='User does not have the required role',
         )
 
-    # Generate an access token for the user
+    # Generate access token
     access_token = jwt_access.create_access_token(
         subject={'username': user.username, 'role': db_user.role},
     )
 
-    return {'access_token': access_token}
+    return {
+        'access_token': access_token,
+        'role': db_user.role,
+        'username': db_user.username,
+    }

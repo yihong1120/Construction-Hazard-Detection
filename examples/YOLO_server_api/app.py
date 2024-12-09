@@ -8,24 +8,36 @@ import redis.asyncio as redis
 import socketio
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi_jwt import JwtAccessBearer
 from fastapi_limiter import FastAPILimiter
 
 from .auth import auth_router
 from .config import Settings
-from .detection import detection_router
-from .model_downloader import models_router
 from .models import Base
 from .models import engine
+from .routers import detection_router
+from .routers import model_management_router
+from .routers import user_management_router
 from .security import update_secret_key
 
 # Instantiate the FastAPI app
 app = FastAPI()
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
+
 # Register API routers for different functionalities
 app.include_router(auth_router)
 app.include_router(detection_router)
-app.include_router(models_router)
+app.include_router(model_management_router)
+app.include_router(user_management_router)
 
 # Set up JWT authentication
 jwt_access = JwtAccessBearer(secret_key=Settings().authjwt_secret_key)
