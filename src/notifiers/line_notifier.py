@@ -11,20 +11,36 @@ from PIL import Image
 
 
 class InputData(TypedDict):
+    """
+    A type definition for input data to the notifier.
+
+    Attributes:
+        message (str): The notification message.
+        image (np.ndarray | None): An optional image in NumPy array format.
+    """
     message: str
     image: np.ndarray | None
 
 
 class ResultData(TypedDict):
+    """
+    A type definition for the result of a notification request.
+
+    Attributes:
+        response_code (int): The HTTP response status code.
+    """
     response_code: int
 
 
 class LineNotifier:
     """
     A class for managing notifications sent via the LINE Notify API.
+
+    This class facilitates sending messages and optional images to LINE Notify,
+    handling token retrieval and image preparation.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Initialises the LineNotifier instance.
         """
@@ -36,30 +52,50 @@ class LineNotifier:
         image: np.ndarray | bytes | None = None,
         line_token: str | None = None,
     ) -> int:
+        """
+        Sends a notification via LINE Notify.
+
+        Args:
+            message (str): The message to be sent.
+            image (np.ndarray | bytes | None): An optional image, provided as
+                a NumPy array or bytes (e.g., encoded image data).
+            line_token (str | None): The LINE Notify token. If not provided,
+                attempts to load from environment variables.
+
+        Returns:
+            int: The HTTP response status code from LINE Notify.
+
+        Raises:
+            ValueError: If the LINE Notify token is not provided or not found
+                in environment variables.
+        """
         if not line_token:
             line_token = os.getenv('LINE_NOTIFY_TOKEN')
         if not line_token:
             raise ValueError(
-                'LINE_NOTIFY_TOKEN not provided or in environment variables.',
+                'LINE_NOTIFY_TOKEN not provided '
+                'or found in environment variables.',
             )
 
+        # Prepare the payload and headers for the request.
         payload = {'message': message}
         headers = {'Authorization': f"Bearer {line_token}"}
 
-        # 使用 FormData 來處理附檔
+        # Use FormData to handle file attachment and form submission.
         form = aiohttp.FormData()
-        # 將文字參數加入 form（LINE Notify 的參數需用 form-data 的方式提交）
-        for k, v in payload.items():
-            form.add_field(k, v)
+        # Add message to form data.
+        for key, value in payload.items():
+            form.add_field(key, value)
 
         if image is not None:
+            # Prepare the image for upload.
             image_buffer = self._prepare_image_file(image)
-            # 使用 add_field 指定檔案名稱及 content_type
             form.add_field(
                 'imageFile', image_buffer,
                 filename='image.png', content_type='image/png',
             )
 
+        # Send the request asynchronously using aiohttp.
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 'https://notify-api.line.me/api/notify',
@@ -69,21 +105,38 @@ class LineNotifier:
                 return response.status
 
     def _prepare_image_file(self, image: np.ndarray | bytes) -> BytesIO:
+        """Prepares an image file for sending.
+
+        Converts a NumPy array or raw bytes into a PNG image suitable for
+        upload.
+
+        Args:
+            image (np.ndarray | bytes): The image to prepare.
+
+        Returns:
+            BytesIO: A binary stream containing the PNG image.
+        """
         if isinstance(image, bytes):
+            # If the image is in bytes, decode it into a NumPy array.
             image = np.array(Image.open(BytesIO(image)))
+        # Convert the NumPy array into a PIL Image.
         image_pil = Image.fromarray(image)
+        # Save the image into a binary buffer in PNG format.
         buffer = BytesIO()
         image_pil.save(buffer, format='PNG')
-        buffer.seek(0)
+        buffer.seek(0)  # Reset the buffer position for reading.
         return buffer
 
-# Example usage
 
+async def main() -> None:
+    """
+    Demonstrates usage of the LineNotifier class.
 
-async def main():
+    Sends a test message with an optional dummy image to LINE Notify.
+    """
     notifier = LineNotifier()
     message = 'Hello, LINE Notify!'
-    # Create a dummy image for testing
+    # Create a dummy image (100x100 black square) for testing.
     image = np.zeros((100, 100, 3), dtype=np.uint8)
     response_code = await notifier.send_notification(
         message, image=image, line_token='YOUR_LINE_TOKEN',
@@ -93,4 +146,5 @@ async def main():
 
 if __name__ == '__main__':
     import asyncio
+    # Run the example usage function in an asynchronous event loop.
     asyncio.run(main())
