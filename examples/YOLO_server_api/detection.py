@@ -5,95 +5,11 @@ from typing import Any
 
 import cv2
 import numpy as np
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import File
-from fastapi import HTTPException
-from fastapi import Request
-from fastapi import UploadFile
-from fastapi_jwt import JwtAccessBearer
-from fastapi_jwt import JwtAuthorizationCredentials
 from sahi.predict import get_sliced_prediction
 
-from .config import Settings
 from .models import DetectionModelManager
 
-detection_router = APIRouter()
 model_loader = DetectionModelManager()
-jwt_access = JwtAccessBearer(secret_key=Settings().authjwt_secret_key)
-
-
-async def custom_rate_limiter(
-    request: Request,
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
-) -> int:
-    role: str = credentials.subject.get('role', 'user')
-    username: str = credentials.subject.get('username', 'unknown')
-    key_prefix: str = f"rate_limit:{role}:{username}:{request.url.path}"
-
-    max_requests = 24 if role == 'guest' else 3000
-    window_seconds = 86400 if role == 'guest' else 60
-    redis_pool = request.app.state.redis_pool
-
-    current_requests = await redis_pool.incr(key_prefix)
-    ttl = await redis_pool.ttl(key_prefix)
-
-    # Set the expiration only if not already set
-    if ttl == -1:
-        await redis_pool.expire(key_prefix, window_seconds)
-
-    if current_requests > max_requests:
-        raise HTTPException(status_code=429, detail='Rate limit exceeded')
-
-    remaining_requests = max_requests - current_requests
-    return remaining_requests
-
-
-@detection_router.post('/detect')
-async def detect(
-    image: UploadFile = File(...),
-    model: str = 'yolo11n',
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
-    remaining_requests: int = Depends(custom_rate_limiter),
-) -> list[list[float | int]]:
-    """
-    Processes the uploaded image to detect objects based on
-    the specified model.
-
-    Args:
-        image (UploadFile): The uploaded image file for object detection.
-        model (str): The model name to be used for detection
-             (default is 'yolo11n').
-        credentials (JwtAuthorizationCredentials): The JWT credentials for
-            authorisation.
-        remaining_requests (int): The remaining number of allowed requests.
-
-    Returns:
-        List[List[float | int]]: A list containing detection data including
-        bounding boxes, confidence scores, and labels.
-    """
-    # Log authenticated user information
-    print(f"Authenticated user: {credentials.subject}")
-    print(f"Remaining requests: {remaining_requests}")
-
-    # Retrieve image data and convert it to OpenCV format
-    data: bytes = await image.read()
-    img = await convert_to_image(data)
-
-    # Load the specified model for detection
-    model_instance = model_loader.get_model(model)
-
-    # Raise an error if the requested model is not available
-    if model_instance is None:
-        raise HTTPException(status_code=404, detail='Model not found')
-
-    # Perform object detection on the uploaded image
-    result = await get_prediction_result(img, model_instance)
-
-    # Compile and process the detection results
-    datas: list[list[float | int]] = compile_detection_data(result)
-    datas = await process_labels(datas)
-    return datas
 
 
 async def convert_to_image(data: bytes) -> np.ndarray:

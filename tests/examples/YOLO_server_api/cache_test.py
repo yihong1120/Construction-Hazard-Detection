@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
+from fastapi import HTTPException
+
+from examples.YOLO_server_api.cache import custom_rate_limiter
 from examples.YOLO_server_api.cache import user_cache
 
 
-class CacheTestCase(unittest.TestCase):
+class CacheTestCase(unittest.IsolatedAsyncioTestCase):
+    """
+    Test cases for cache functionalities and rate limiter.
+    """
+
     def setUp(self):
         """
         Set up the test environment before each test.
@@ -52,6 +61,34 @@ class CacheTestCase(unittest.TestCase):
         user_cache['user2'] = 'data2'
         user_cache.clear()
         self.assertEqual(len(user_cache), 0)
+
+    async def test_rate_limiter_guest_role(self):
+        """
+        Test rate limiter functionality for a guest role that exceeds
+        the limit.
+        """
+        # Mock Redis and request
+        redis_pool = AsyncMock()
+        redis_pool.incr.return_value = 25  # Exceeding limit
+        redis_pool.ttl.return_value = -1
+
+        mock_request = MagicMock()
+        mock_request.app.state.redis_pool = redis_pool
+        mock_request.url.path = '/rate_limit_test'
+
+        # Mock JWT credentials
+        mock_jwt_access = MagicMock(
+            subject={'role': 'guest', 'username': 'test_user'},
+        )
+
+        # Verify HTTPException is raised for exceeding rate limit
+        with self.assertRaises(HTTPException) as exc:
+            await custom_rate_limiter(
+                mock_request,
+                mock_jwt_access,
+            )
+        self.assertEqual(exc.exception.status_code, 429)
+        self.assertEqual(exc.exception.detail, 'Rate limit exceeded')
 
 
 if __name__ == '__main__':

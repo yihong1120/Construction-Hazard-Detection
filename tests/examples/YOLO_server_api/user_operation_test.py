@@ -7,13 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from examples.user_management.models import Base
-from examples.user_management.models import User
-from examples.user_management.user_operation import add_user
-from examples.user_management.user_operation import delete_user
-from examples.user_management.user_operation import set_user_active_status
-from examples.user_management.user_operation import update_password
-from examples.user_management.user_operation import update_username
+from examples.YOLO_server_api.models import Base
+from examples.YOLO_server_api.models import User
+from examples.YOLO_server_api.user_operation import add_user
+from examples.YOLO_server_api.user_operation import delete_user
+from examples.YOLO_server_api.user_operation import set_user_active_status
+from examples.YOLO_server_api.user_operation import update_password
+from examples.YOLO_server_api.user_operation import update_username
 
 
 class UserOperationTestCase(unittest.IsolatedAsyncioTestCase):
@@ -76,7 +76,7 @@ class UserOperationTestCase(unittest.IsolatedAsyncioTestCase):
         execution_result = await self.session.execute(stmt)
         user = execution_result.scalars().first()
         self.assertIsNotNone(user)
-        self.assertTrue(user.check_password('password123'))
+        self.assertTrue(await user.check_password('password123'))
 
     async def test_add_user_duplicate_username(self) -> None:
         """
@@ -172,7 +172,7 @@ class UserOperationTestCase(unittest.IsolatedAsyncioTestCase):
         stmt = select(User).where(User.username == 'testuser')
         execution_result = await self.session.execute(stmt)
         user = execution_result.scalars().first()
-        self.assertTrue(user.check_password('newpassword123'))
+        self.assertTrue(await user.check_password('newpassword123'))
 
     async def test_update_password_user_not_found(self) -> None:
         """
