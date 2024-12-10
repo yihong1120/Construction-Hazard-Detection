@@ -26,7 +26,7 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
         self.updated_time = datetime.datetime(2023, 1, 1, 0, 0, 0)
         self.destination_path = Path(f'models/pt/best_{self.valid_model}.pt')
 
-    @patch('torch.load')
+    @patch('torch.jit.load')
     @patch('pathlib.Path.rename')
     @patch('pathlib.Path.is_file', return_value=True)
     @patch('pathlib.Path.suffix', new_callable=MagicMock(return_value='.pt'))
@@ -35,16 +35,18 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
         mock_suffix: MagicMock,
         mock_is_file: MagicMock,
         mock_rename: MagicMock,
-        mock_torch_load: MagicMock,
+        mock_torch_jit_load: MagicMock,
     ) -> None:
         """
         Test updating a valid model file with virtual files.
         """
-        mock_torch_load.return_value = True
+        mock_torch_jit_load.return_value = True
 
         await update_model_file(self.valid_model, self.model_file)
-        mock_torch_load.assert_called_once_with(self.model_file)
-        mock_rename.assert_called_once_with(self.destination_path)
+        mock_torch_jit_load.assert_called_once_with(str(self.model_file))
+
+        expected_destination_path = self.destination_path.resolve()
+        mock_rename.assert_called_once_with(expected_destination_path)
 
     async def test_update_model_file_invalid_model(self) -> None:
         """
