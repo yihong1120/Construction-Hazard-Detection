@@ -20,7 +20,8 @@ async def update_model_file(model: str, model_file: Path) -> None:
         raise ValueError(f"Invalid file: {model_file}. Must be a valid `.pt` file.")
 
     try:
-        torch.load(model_file)
+        # Validate the model file by loading it with torch.jit.load
+        torch.jit.load(model_file)
     except Exception as e:
         raise ValueError(f"Invalid PyTorch model file: {e}")
 
