@@ -463,7 +463,7 @@ class MainApp:
 
                     # Translate the warnings
                     translated_warnings = Translator.translate_warning(
-                        warnings=tuple(warnings), language='zh-TW',
+                        warnings=tuple(warnings), language= last_language or 'en',
                     )
 
                     # Combine warnings into a single string for storage
