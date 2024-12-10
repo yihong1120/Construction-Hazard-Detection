@@ -20,7 +20,7 @@ async def custom_rate_limiter(
 ) -> int:
     """
     Custom rate limiter for different user roles.
-    
+
     Args:
         request (Request): The incoming request.
         credentials (JwtAuthorizationCredentials): The JWT credentials.
