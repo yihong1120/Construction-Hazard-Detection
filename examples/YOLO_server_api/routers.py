@@ -53,7 +53,7 @@ class DetectionRequest(BaseModel):
 @detection_router.post('/detect')
 async def detect(
     image: UploadFile = File(...),
-    model: str = 'yolo11n',            
+    model: str = 'yolo11n',
     credentials: JwtAuthorizationCredentials = Depends(jwt_access),
     remaining_requests: int = Depends(custom_rate_limiter),
 ) -> list[list[float | int]]:
@@ -124,11 +124,12 @@ async def add_user_route(
     """
     print(f"UserCreate: {user}")
 
-    if credentials.subject['role'] not in ['admin']:
+    if credentials.subject['role'] != 'admin':
         raise HTTPException(
-            status_code=400,
-            detail='Invalid role. Must be one of: admin, model_manage, user, guest.',
+            status_code=403,
+            detail='Permission denied. Admin privileges are required.',
         )
+
     result = await add_user(user.username, user.password, user.role, db)
     if result['success']:
         logger.info(result['message'])
@@ -167,10 +168,10 @@ async def delete_user_route(
     Raises:
         HTTPException: If user deletion fails.
     """
-    if credentials.subject['role'] not in ['admin']:
+    if credentials.subject['role'] != 'admin':
         raise HTTPException(
             status_code=403,
-            detail='Permission denied. Admin role required.',
+            detail='Permission denied. Admin privileges are required.',
         )
 
     result = await delete_user(user.username, db)
@@ -210,10 +211,10 @@ async def update_username_route(
     Raises:
         HTTPException: If the username update fails.
     """
-    if credentials.subject['role'] not in ['admin']:
+    if credentials.subject['role'] != 'admin':
         raise HTTPException(
-            status_code=400,
-            detail='Invalid role. Must be one of: admin, model_manage, user, guest.',
+            status_code=403,
+            detail='Permission denied. Admin privileges are required.',
         )
 
     result = await update_username(
@@ -256,10 +257,10 @@ async def update_password_route(
     Raises:
         HTTPException: If the password update fails.
     """
-    if credentials.subject['role'] not in ['admin']:
+    if credentials.subject['role'] != 'admin':
         raise HTTPException(
-            status_code=400,
-            detail='Invalid role. Must be one of: admin, model_manage, user, guest.',
+            status_code=403,
+            detail='Permission denied. Admin privileges are required.',
         )
 
     result = await update_password(
