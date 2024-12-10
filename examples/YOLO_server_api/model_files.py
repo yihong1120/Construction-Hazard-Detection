@@ -3,6 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 import torch
 import datetime
+import hashlib
+
+async def compute_file_hash(file_path: Path) -> str:
+    """
+    Compute the SHA-256 hash of a file.
+
+    Args:
+        file_path (Path): The path to the file.
+
+    Returns:
+        str: The SHA-256 hash of the file.
+    """
+    sha256 = hashlib.sha256()
+    with file_path.open('rb') as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
 
 async def update_model_file(model: str, model_file: Path) -> None:
     """
@@ -18,6 +35,20 @@ async def update_model_file(model: str, model_file: Path) -> None:
 
     if not model_file.is_file() or model_file.suffix != '.pt':
         raise ValueError(f"Invalid file: {model_file}. Must be a valid `.pt` file.")
+
+    # Compute the hash of the uploaded model file
+    uploaded_file_hash = await compute_file_hash(model_file)
+
+    # Retrieve the stored hash for the model
+    stored_hashes = {
+        'yolo11n': 'stored_hash_for_yolo11n',
+        'yolo11s': 'stored_hash_for_yolo11s',
+        'yolo11m': 'stored_hash_for_yolo11m',
+        'yolo11l': 'stored_hash_for_yolo11l',
+        'yolo11x': 'stored_hash_for_yolo11x',
+    }
+    if uploaded_file_hash != stored_hashes.get(model):
+        raise ValueError("The uploaded model file's hash does not match the stored hash.")
 
     try:
         # Validate the model file by loading it with torch.jit.load
