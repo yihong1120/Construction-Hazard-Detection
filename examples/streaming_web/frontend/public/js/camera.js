@@ -44,7 +44,7 @@ function initializeWebSocket(label, key, streamImage, loadingIndicator, streamMe
 
     // Define a list of supported "no warnings" strings in various languages
     const noWarningsMessages = [
-        'No warnings', // English
+        'No warning', // English
         '無警告', // Traditional Chinese
         '无警告', // Simplified Chinese
         'Pas d\'avertissement', // French
