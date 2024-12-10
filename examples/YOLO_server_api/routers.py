@@ -15,6 +15,7 @@ from fastapi import UploadFile
 from fastapi_jwt import JwtAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from werkzeug.utils import secure_filename
 
 from .cache import custom_rate_limiter
 from .cache import jwt_access
@@ -53,7 +54,7 @@ class DetectionRequest(BaseModel):
 @detection_router.post('/detect')
 async def detect(
     image: UploadFile = File(...),
-    model: str = 'yolo11n',            
+    model: str = 'yolo11n',
     credentials: JwtAuthorizationCredentials = Depends(jwt_access),
     remaining_requests: int = Depends(custom_rate_limiter),
 ) -> list[list[float | int]]:
@@ -107,7 +108,9 @@ class UserCreate(BaseModel):
 
 @user_management_router.post('/add_user')
 async def add_user_route(
-    user: UserCreate, db: AsyncSession = Depends(get_db), credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    user: UserCreate,
+    db: AsyncSession = Depends(get_db),
+    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
 ) -> dict:
     """
     Endpoint to add a new user to the system.
@@ -127,7 +130,10 @@ async def add_user_route(
     if credentials.subject['role'] not in ['admin']:
         raise HTTPException(
             status_code=400,
-            detail='Invalid role. Must be one of: admin, model_manage, user, guest.',
+            detail=(
+                'Invalid role. Must be one of: '
+                'admin, model_manage, user, guest.'
+            ),
         )
     result = await add_user(user.username, user.password, user.role, db)
     if result['success']:
@@ -159,7 +165,8 @@ async def delete_user_route(
     Args:
         user (DeleteUser): The data required to delete the user.
         db (AsyncSession): The database session dependency.
-        credentials (JwtAuthorizationCredentials): The JWT credentials for authorisation.
+        credentials (JwtAuthorizationCredentials): The JWT credentials
+        for authorisation.
 
     Returns:
         dict: A success message if the operation is successful.
@@ -195,7 +202,9 @@ class UpdateUsername(BaseModel):
 
 @user_management_router.put('/update_username')
 async def update_username_route(
-    update_data: UpdateUsername, db: AsyncSession = Depends(get_db), credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    update_data: UpdateUsername,
+    db: AsyncSession = Depends(get_db),
+    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
 ) -> dict:
     """
     Endpoint to update a user's username.
@@ -213,7 +222,10 @@ async def update_username_route(
     if credentials.subject['role'] not in ['admin']:
         raise HTTPException(
             status_code=400,
-            detail='Invalid role. Must be one of: admin, model_manage, user, guest.',
+            detail=(
+                'Invalid role. Must be one of: '
+                'admin, model_manage, user, guest.'
+            ),
         )
 
     result = await update_username(
@@ -241,7 +253,9 @@ class UpdatePassword(BaseModel):
 
 @user_management_router.put('/update_password')
 async def update_password_route(
-    update_data: UpdatePassword, db: AsyncSession = Depends(get_db), credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    update_data: UpdatePassword,
+    db: AsyncSession = Depends(get_db),
+    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
 ) -> dict:
     """
     Endpoint to update a user's password.
@@ -259,7 +273,10 @@ async def update_password_route(
     if credentials.subject['role'] not in ['admin']:
         raise HTTPException(
             status_code=400,
-            detail='Invalid role. Must be one of: admin, model_manage, user, guest.',
+            detail=(
+                'Invalid role. Must be one of: '
+                'admin, model_manage, user, guest.'
+            ),
         )
 
     result = await update_password(
@@ -300,7 +317,8 @@ async def set_user_active_status_route(
         user_status (SetUserActiveStatus): The data containing username
             and active status to update.
         db (AsyncSession): The database session dependency.
-        credentials (JwtAuthorizationCredentials): The JWT credentials for authorisation.
+        credentials (JwtAuthorizationCredentials): The JWT credentials
+        for authorisation.
 
     Returns:
         dict: A success message if the operation is successful.
@@ -344,14 +362,16 @@ class ModelFileUpdate(BaseModel):
         file: UploadFile = File(...),
     ) -> ModelFileUpdate:
         """
-        Enables the use of ModelFileUpdate as a FastAPI dependency with form inputs.
+        Enables the use of ModelFileUpdate as a FastAPI dependency
+        with form inputs.
 
         Args:
             model (str): The name of the model.
             file (UploadFile): The file to upload.
 
         Returns:
-            ModelFileUpdate: An instance of ModelFileUpdate populated with the inputs.
+            ModelFileUpdate: An instance of ModelFileUpdate populated
+            with the inputs.
         """
         return cls(model=model, file=file)
 
@@ -362,25 +382,36 @@ async def model_file_update(
     credentials: JwtAuthorizationCredentials = Depends(jwt_access),
 ) -> dict:
     """
-    Endpoint to update the model file for a specific model.
+    Endpoint to update a model file.
 
     Args:
-        data (ModelFileUpdate): The data required for the update.
-        credentials (JwtAuthorizationCredentials): JWT credentials for authorization.
+        data (ModelFileUpdate): The data required to update the model file.
+        credentials (JwtAuthorizationCredentials): The JWT credentials
+        for authorisation.
 
     Returns:
         dict: A success message if the operation is successful.
     """
-    # Validate user role
     if credentials.subject['role'] not in ['admin', 'model_manage']:
         raise HTTPException(
             status_code=403,
-            detail="Permission denied. Role must be 'admin' or 'model_manage'.",
+            detail=(
+                "Permission denied. Role must be 'admin' "
+                "or 'model_manage'."
+            ),
         )
 
     try:
-        # Save the uploaded file temporarily
-        temp_path = Path(f"/tmp/{data.file.filename}")
+        # Ensure the filename is secure
+        secure_file_name = secure_filename(data.file.filename)
+        temp_dir = Path('/tmp')
+        temp_path = temp_dir / secure_file_name
+
+        # Check if the path is within the intended directory
+        if not temp_path.resolve().parent == temp_dir:
+            raise HTTPException(status_code=400, detail='Invalid file path.')
+
+        # Write file to disk
         with temp_path.open('wb') as temp_file:
             temp_file.write(await data.file.read())
 
@@ -408,7 +439,8 @@ class UpdateModelRequest(BaseModel):
 
     Attributes:
         model (str): The name of the model.
-        last_update_time (str): The last update time of the model file in ISO format.
+        last_update_time (str): The last update time of the model file
+        in ISO format.
     """
     model: str
     last_update_time: str
@@ -422,11 +454,12 @@ async def get_new_model(
     Endpoint to retrieve the new model file for a specific model.
 
     Args:
-        update_request (UpdateModelRequest): The request data containing model name
-            and last update time.
+        update_request (UpdateModelRequest): The request data containing
+        model name and last update time.
 
     Returns:
-        dict: The new model file if available or a message indicating no update.
+        dict: The new model file if available
+        or a message indicating no update.
     """
     try:
         # Extract data from the request
