@@ -5,7 +5,6 @@
 <div align="center">
    <a href="examples/YOLO_server_api">Server-API</a> |
    <a href="examples/streaming_web">Streaming-Web</a> |
-   <a href="examples/user_management">User-Management</a> |
    <a href="examples/YOLO_data_augmentation">Data-Augmentation</a> |
    <a href="examples/YOLO_evaluation">Evaluation</a> |
    <a href="examples/YOLO_train">Train</a>

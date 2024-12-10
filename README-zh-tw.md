@@ -5,7 +5,6 @@
 <div align="center">
    <a href="examples/YOLO_server_api">模型伺服器</a> |
    <a href="examples/streaming_web">串流網頁</a> |
-   <a href="examples/user_management">用戶管理</a> |
    <a href="examples/YOLO_data_augmentation">YOLO 數據增強</a> |
    <a href="examples/YOLO_evaluation">YOLO 評估</a> |
    <a href="examples/YOLO_train">YOLO 訓練</a>
