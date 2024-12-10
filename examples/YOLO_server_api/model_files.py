@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-import torch
 import datetime
+from pathlib import Path
+
+import torch
+
 
 async def update_model_file(model: str, model_file: Path) -> None:
     """
@@ -14,10 +16,14 @@ async def update_model_file(model: str, model_file: Path) -> None:
     """
     valid_models = ['yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x']
     if model not in valid_models:
-        raise ValueError(f"Invalid model key: {model}. Must be one of {valid_models}.")
+        raise ValueError(
+            f"Invalid model key: {model}. Must be one of {valid_models}.",
+        )
 
     if not model_file.is_file() or model_file.suffix != '.pt':
-        raise ValueError(f"Invalid file: {model_file}. Must be a valid `.pt` file.")
+        raise ValueError(
+            f"Invalid file: {model_file}. Must be a valid `.pt` file.",
+        )
 
     try:
         torch.load(model_file)
@@ -30,7 +36,7 @@ async def update_model_file(model: str, model_file: Path) -> None:
     try:
         model_file.rename(destination_path)
     except Exception as e:
-        raise IOError(f"Failed to update model file: {e}")
+        raise OSError(f"Failed to update model file: {e}")
 
 
 async def get_new_model_file(model: str, last_update_time: datetime.datetime) -> bytes | None:
@@ -46,17 +52,21 @@ async def get_new_model_file(model: str, last_update_time: datetime.datetime) ->
     """
     valid_models = ['yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x']
     if model not in valid_models:
-        raise ValueError(f"Invalid model key: {model}. Must be one of {valid_models}.")
+        raise ValueError(
+            f"Invalid model key: {model}. Must be one of {valid_models}.",
+        )
 
     destination_path = Path(f'models/pt/best_{model}.pt')
     if not destination_path.is_file():
         return None
 
-    file_mod_time = datetime.datetime.fromtimestamp(destination_path.stat().st_mtime)
+    file_mod_time = datetime.datetime.fromtimestamp(
+        destination_path.stat().st_mtime,
+    )
     if file_mod_time > last_update_time:
         try:
             with destination_path.open('rb') as f:
                 return f.read()
         except Exception as e:
-            raise IOError(f"Failed to read model file: {e}")
+            raise OSError(f"Failed to read model file: {e}")
     return None
