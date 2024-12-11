@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import aiohttp
-import anyio
+import asyncio
 import cv2
 import numpy as np
 from dotenv import load_dotenv
@@ -451,4 +451,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    anyio.run(main)
+    asyncio.run(main)

@@ -225,6 +225,6 @@ class RedisManager:
         """
         try:
             await self.redis.close()
-            print('[INFO] Redis connection successfully closed.')
+            logging.info('[INFO] Redis connection successfully closed.')
         except Exception as e:
-            print(f"[ERROR] Failed to close Redis connection: {e}")
+            logging.error(f"[ERROR] Failed to close Redis connection: {e}")
