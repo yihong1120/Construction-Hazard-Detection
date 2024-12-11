@@ -62,7 +62,9 @@ class TestFileEventHandler(unittest.IsolatedAsyncioTestCase):
 
         # Create an instance of FileEventHandler
         event_handler = FileEventHandler(
-            file_path=file_path, callback=mock_callback, loop=self.loop,
+            file_path=file_path,
+            callback=mock_callback,
+            loop=asyncio.get_running_loop(),
         )
 
         # Create a mock event for a file modification
@@ -216,6 +218,23 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
             stream_name, data, maxlen=maxlen,
         )
 
+    async def test_add_to_stream_error(self):
+        """
+        Simulate an exception during adding data to a Redis stream
+        """
+        stream_name = 'test_stream'
+        data = {'field1': b'value1', 'field2': b'value2'}
+        maxlen = 5
+        self.mock_redis_instance.xadd.side_effect = Exception('Redis error')
+
+        # Call the add_to_stream method and verify it handles the exception
+        with self.assertLogs(level='ERROR') as log:
+            await self.redis_manager.add_to_stream(stream_name, data, maxlen)
+            self.assertIn(
+                f"Error adding to Redis stream {stream_name}: Redis error",
+                log.output[0],
+            )
+
     async def test_read_from_stream(self):
         """
         Test reading data from a Redis stream
@@ -242,6 +261,25 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
         # Assert that the returned messages match the expected messages
         self.assertEqual(messages, expected_messages)
 
+    async def test_read_from_stream_error(self):
+        """
+        Simulate an exception during reading from a Redis stream
+        """
+        stream_name = 'test_stream'
+        last_id = '0'
+        self.mock_redis_instance.xread.side_effect = Exception('Redis error')
+
+        # Call the read_from_stream method and verify it handles the exception
+        with self.assertLogs(level='ERROR') as log:
+            messages = await self.redis_manager.read_from_stream(
+                stream_name, last_id,
+            )
+            self.assertEqual(messages, [])
+            self.assertIn(
+                f"Error reading from Redis stream {stream_name}: Redis error",
+                log.output[0],
+            )
+
     async def test_delete_stream_success(self):
         """
         Test successful deletion of a Redis stream
@@ -254,6 +292,21 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
         # Assert that the Redis delete method was called
         self.mock_redis_instance.delete.assert_called_once_with(stream_name)
 
+    async def test_delete_stream_error(self):
+        """
+        Simulate an exception during deleting a Redis stream
+        """
+        stream_name = 'test_stream'
+        self.mock_redis_instance.delete.side_effect = Exception('Redis error')
+
+        # Call the delete_stream method and verify it handles the exception
+        with self.assertLogs(level='ERROR') as log:
+            await self.redis_manager.delete_stream(stream_name)
+            self.assertIn(
+                f"Error deleting Redis stream {stream_name}: Redis error",
+                log.output[0],
+            )
+
     async def test_close_connection(self):
         """
         Test closing the Redis connection
@@ -263,6 +316,20 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
 
         # Assert that the Redis close method was called
         self.mock_redis_instance.close.assert_called_once()
+
+    async def test_close_connection_error(self):
+        """
+        Simulate an exception during closing the Redis connection
+        """
+        self.mock_redis_instance.close.side_effect = Exception('Redis error')
+
+        # Call the close_connection method and verify it handles the exception
+        with self.assertLogs(level='ERROR') as log:
+            await self.redis_manager.close_connection()
+            self.assertIn(
+                '[ERROR] Failed to close Redis connection: Redis error',
+                log.output[0],
+            )
 
 
 if __name__ == '__main__':
