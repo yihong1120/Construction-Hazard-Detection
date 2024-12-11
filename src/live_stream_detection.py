@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime
 import gc
 import os
@@ -9,7 +10,6 @@ from pathlib import Path
 from typing import TypedDict
 
 import aiohttp
-import asyncio
 import cv2
 import numpy as np
 from dotenv import load_dotenv

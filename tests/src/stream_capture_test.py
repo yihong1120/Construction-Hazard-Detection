@@ -61,7 +61,6 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
 
     @patch('cv2.VideoCapture')
     @patch('asyncio.sleep', new_callable=AsyncMock)
-    @pytest.mark.asyncio
     async def test_initialise_stream_retry(
         self,
         mock_sleep: AsyncMock,
@@ -350,7 +349,6 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
 
     @patch('cv2.VideoCapture')
     @patch('time.sleep', return_value=None)
-    @pytest.mark.asyncio
     async def test_execute_capture_failures(
         self,
         mock_sleep: MagicMock,

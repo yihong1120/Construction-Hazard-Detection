@@ -38,10 +38,16 @@ LANGUAGES = {
         'cone': '安全锥',
     },
     'en': {
-        'warning_people_in_controlled_area': 'Warning: {count} people have entered the controlled area!',
+        'warning_people_in_controlled_area': (
+            'Warning: {count} people have entered the controlled area!'
+        ),
         'warning_no_hardhat': 'Warning: Someone is not wearing a hardhat!',
-        'warning_no_safety_vest': 'Warning: Someone is not wearing a safety vest!',
-        'warning_close_to_machinery': 'Warning: Someone is too close to {label}!',
+        'warning_no_safety_vest': (
+            'Warning: Someone is not wearing a safety vest!'
+        ),
+        'warning_close_to_machinery': (
+            'Warning: Someone is too close to {label}!'
+        ),
         'no_warning': 'No warning',
         'machinery': 'machinery',
         'vehicle': 'vehicle',
@@ -55,10 +61,19 @@ LANGUAGES = {
         'cone': 'cone',
     },
     'fr': {
-        'warning_people_in_controlled_area': 'Avertissement: {count} personnes sont entrées dans la zone contrôlée!',
-        'warning_no_hardhat': "Avertissement: Quelqu'un ne porte pas de casque!",
-        'warning_no_safety_vest': "Avertissement: Quelqu'un ne porte pas de gilet de sécurité!",
-        'warning_close_to_machinery': 'Avertissement: Quelqu’un est trop proche de {label}!',
+        'warning_people_in_controlled_area': (
+            'Avertissement: {count} personnes sont entrées '
+            'dans la zone contrôlée!'
+        ),
+        'warning_no_hardhat': (
+            "Avertissement: Quelqu'un ne porte pas de casque!"
+        ),
+        'warning_no_safety_vest': (
+            "Avertissement: Quelqu'un ne porte pas de gilet de sécurité!"
+        ),
+        'warning_close_to_machinery': (
+            'Avertissement: Quelqu’un est trop proche de {label}!'
+        ),
         'no_warning': 'Pas d\'avertissement',
         'machinery': 'machinerie',
         'vehicle': 'véhicule',
@@ -72,10 +87,16 @@ LANGUAGES = {
         'cone': 'cône',
     },
     'vi': {
-        'warning_people_in_controlled_area': 'Cảnh báo: Có {count} người đã vào khu vực kiểm soát!',
+        'warning_people_in_controlled_area': (
+            'Cảnh báo: Có {count} người đã vào khu vực kiểm soát!'
+        ),
         'warning_no_hardhat': 'Cảnh báo: Có người không đội mũ bảo hộ!',
-        'warning_no_safety_vest': 'Cảnh báo: Có người không mặc áo gi-lê an toàn!',
-        'warning_close_to_machinery': 'Cảnh báo: Có người quá gần với {label}!',
+        'warning_no_safety_vest': (
+            'Cảnh báo: Có người không mặc áo gi-lê an toàn!'
+        ),
+        'warning_close_to_machinery': (
+            'Cảnh báo: Có người quá gần với {label}!'
+        ),
         'no_warning': 'Không có cảnh báo',
         'machinery': 'máy móc',
         'vehicle': 'phương tiện',
@@ -89,10 +110,18 @@ LANGUAGES = {
         'cone': 'cọc tiêu',
     },
     'id': {
-        'warning_people_in_controlled_area': 'Peringatan: {count} orang telah memasuki area terkontrol!',
-        'warning_no_hardhat': 'Peringatan: Seseorang tidak mengenakan helm!',
-        'warning_no_safety_vest': 'Peringatan: Seseorang tidak mengenakan rompi keselamatan!',
-        'warning_close_to_machinery': 'Peringatan: Seseorang terlalu dekat dengan {label}!',
+        'warning_people_in_controlled_area': (
+            'Peringatan: {count} orang telah memasuki area terkontrol!'
+        ),
+        'warning_no_hardhat': (
+            'Peringatan: Seseorang tidak mengenakan helm!'
+        ),
+        'warning_no_safety_vest': (
+            'Peringatan: Seseorang tidak mengenakan rompi keselamatan!'
+        ),
+        'warning_close_to_machinery': (
+            'Peringatan: Seseorang terlalu dekat dengan {label}!'
+        ),
         'no_warning': 'Tidak ada peringatan',
         'machinery': 'mesin',
         'vehicle': 'kendaraan',
@@ -106,10 +135,14 @@ LANGUAGES = {
         'cone': 'kerucut pengaman',
     },
     'th': {
-        'warning_people_in_controlled_area': 'คำเตือน: มี {count} คนเข้ามาในพื้นที่ควบคุม!',
+        'warning_people_in_controlled_area': (
+            'คำเตือน: มี {count} คนเข้ามาในพื้นที่ควบคุม!'
+        ),
         'warning_no_hardhat': 'คำเตือน: มีคนไม่สวมหมวกนิรภัย!',
         'warning_no_safety_vest': 'คำเตือน: มีคนไม่สวมเสื้อกั๊กนิรภัย!',
-        'warning_close_to_machinery': 'คำเตือน: มีคนอยู่ใกล้ {label} มากเกินไป!',
+        'warning_close_to_machinery': (
+            'คำเตือน: มีคนอยู่ใกล้ {label} มากเกินไป!'
+        ),
         'no_warning': 'ไม่มีคำเตือน',
         'machinery': 'เครื่องจักร',
         'vehicle': 'ยานพาหนะ',
@@ -132,7 +165,10 @@ class Translator:
 
     @staticmethod
     @lru_cache(maxsize=128)
-    def translate_warning(warnings: tuple[str, ...], language: str) -> list[str]:
+    def translate_warning(
+        warnings: tuple[str, ...],
+        language: str,
+    ) -> list[str]:
         """
         Translate warnings from English to the specified language.
 
@@ -165,7 +201,9 @@ class Translator:
                     'warning_no_safety_vest', warning,
                 )
             elif 'Someone is too close to' in warning:
-                label_key = 'machinery' if 'machinery' in warning else 'vehicle'
+                label_key = (
+                    'machinery' if 'machinery' in warning else 'vehicle'
+                )
                 translated_warning = LANGUAGES[language].get(
                     'warning_close_to_machinery', warning,
                 )
