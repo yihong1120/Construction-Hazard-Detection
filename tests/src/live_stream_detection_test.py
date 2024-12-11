@@ -312,37 +312,41 @@ class TestLiveStreamDetector(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(datas[0][5], 1)
             mock_cloud.assert_called_once_with(mat_frame)
 
-    async def test_run_detection_fail_read_frame(self) -> None:
+    @patch('src.live_stream_detection.cv2.imshow')
+    @patch('src.live_stream_detection.cv2.waitKey', return_value=ord('q'))
+    @patch('src.live_stream_detection.cv2.VideoCapture')
+    async def test_run_detection_fail_read_frame(
+        self,
+        mock_VideoCapture: MagicMock,
+        mock_waitKey: MagicMock,
+        mock_imshow: MagicMock,
+    ) -> None:
         """
         Test the run_detection method when failing to read a frame.
         """
         stream_url: str = 'https://example.com/fake_stream'
-        cap_mock: MagicMock = MagicMock()
 
-        # Simulate failing to read a frame
+        # Mock VideoCapture behaviour
+        cap_mock = MagicMock()
         cap_mock.read.side_effect = [
+            # Failed to read frame
             (False, None),
             (False, None),
-            (False, None),
-            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
-            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
+
+            # Successful to read frame
             (True, np.zeros((480, 640, 3), dtype=np.uint8)),
         ]
         cap_mock.isOpened.return_value = True
+        mock_VideoCapture.return_value = cap_mock
 
-        with patch(
-            'src.live_stream_detection.cv2.VideoCapture',
-            return_value=cap_mock,
-        ):
-            # When the frame fails to read, waitKey returns -1 (does not exit)
-            with patch(
-                'src.live_stream_detection.cv2.waitKey',
-                side_effect=[-1, -1, ord('q')],
-            ):
-                await self.detector.run_detection(stream_url)
+        # Execute the method under test
+        await self.detector.run_detection(stream_url)
 
+        # Assert expected calls
         cap_mock.read.assert_called()
         cap_mock.release.assert_called_once()
+        mock_waitKey.assert_called()
+        mock_imshow.assert_called()
 
     def test_is_contained(self) -> None:
         """

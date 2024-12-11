@@ -221,14 +221,27 @@ class TestLangConfig(unittest.TestCase):
         """
         test_cases = {
             'zh-TW': {
-                'Warning: Someone is not wearing a hardhat!': '警告: 有人無配戴安全帽!',
-                'Warning: 2 people have entered the controlled area!': '警告: 有2個人進入受控區域!',
-                'Warning: Someone is too close to machinery!': '警告: 有人過於靠近機具!',
+                'Warning: Someone is not wearing a hardhat!': (
+                    '警告: 有人無配戴安全帽!'
+                ),
+                'Warning: 2 people have entered the controlled area!': (
+                    '警告: 有2個人進入受控區域!'
+                ),
+                'Warning: Someone is too close to machinery!': (
+                    '警告: 有人過於靠近機具!'
+                ),
             },
             'fr': {
-                'Warning: Someone is not wearing a hardhat!': "Avertissement: Quelqu'un ne porte pas de casque!",
-                'Warning: 2 people have entered the controlled area!': 'Avertissement: 2 personnes sont entrées dans la zone contrôlée!',
-                'Warning: Someone is too close to machinery!': 'Avertissement: Quelqu’un est trop proche de machinerie!',
+                'Warning: Someone is not wearing a hardhat!': (
+                    "Avertissement: Quelqu'un ne porte pas de casque!"
+                ),
+                'Warning: 2 people have entered the controlled area!': (
+                    'Avertissement: 2 personnes sont entrées '
+                    'dans la zone contrôlée!'
+                ),
+                'Warning: Someone is too close to machinery!': (
+                    'Avertissement: Quelqu’un est trop proche de machinerie!'
+                ),
             },
             # Add more languages and their expected translations if necessary
         }
