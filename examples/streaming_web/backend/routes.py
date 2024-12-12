@@ -161,13 +161,17 @@ async def websocket_stream(websocket: WebSocket, label: str, key: str) -> None:
                 # Send the latest frame and warnings to the client
                 await websocket.send_json(message)
             else:
-                # Send an error message if no new data is available
+                # If no new data is available, close the connection
                 await websocket.send_json({'error': 'No new data available'})
+                await websocket.close()
+                break
 
     except WebSocketDisconnect:
         print('WebSocket disconnected')
     except Exception as e:
         print(f"Unexpected error: {e}")
+        # Close the WebSocket connection on error
+        await websocket.close()
     finally:
         print('WebSocket connection closed')
 

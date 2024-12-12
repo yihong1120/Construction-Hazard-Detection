@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-import uvicorn
 from fastapi.testclient import TestClient
 from fastapi_limiter import FastAPILimiter
 
@@ -95,19 +94,28 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         """
         Test that the application runs with the expected configurations.
         """
-        uvicorn.run(
-            'examples.streaming_web.backend.app:sio_app',
-            host='127.0.0.1', port=8000, log_level='info',
-        )
+        app_module.run_server()
         mock_uvicorn_run.assert_called_once_with(
             'examples.streaming_web.backend.app:sio_app',
             host='127.0.0.1', port=8000, log_level='info',
         )
 
+    @patch(
+        'examples.streaming_web.backend.app.redis_manager.client.close',
+        new_callable=AsyncMock,
+    )
+    def test_lifespan_events(self, mock_close: AsyncMock) -> None:
+        """
+        Test that the lifespan events are properly handled
+        """
+        with TestClient(app_module.app) as client:
+            client.get('/')
+            # Ensure the response is successful
+
+        # Ensure the Redis client is closed after the app is shut down
+        mock_close.assert_awaited_once()
+
     def tearDown(self) -> None:
-        """
-        Clean up after each test.
-        """
         del self.client
 
 

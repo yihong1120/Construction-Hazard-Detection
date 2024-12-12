@@ -5,6 +5,8 @@ import json
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import mock_open
+from unittest.mock import patch
 
 import redis
 from fastapi import HTTPException
@@ -29,6 +31,7 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
         self.redis_mock.get = AsyncMock()
         self.redis_mock.set = AsyncMock()
         self.redis_mock.delete = AsyncMock()
+        self.redis_mock.close = AsyncMock()
 
     async def test_fetch_latest_frame_for_key_with_data(self) -> None:
         """
@@ -81,6 +84,25 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
+    async def test_fetch_latest_frame_for_key_no_frame_data(self) -> None:
+        """
+        Test fetch_latest_frame_for_key method when Redis contains no new data.
+        """
+        redis_key = 'stream_frame:test_label_image1'
+        last_id = '0-0'
+        self.redis_mock.xrevrange.return_value = [
+            (b'1234-0', {b'warnings': b'No frame here'}),
+        ]
+
+        redis_manager = RedisManager('localhost', 6379, 'password')
+        redis_manager.client = self.redis_mock
+        result = await redis_manager.fetch_latest_frame_for_key(
+            redis_key,
+            last_id,
+        )
+
+        self.assertIsNone(result)
+
     async def test_fetch_latest_frames(self) -> None:
         """
         Test the fetch_latest_frames method for multiple streams.
@@ -92,12 +114,8 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
 
         # Mock Redis response
         self.redis_mock.xrevrange.side_effect = [
-            [
-                ('1234-0', {b'frame': b'image1_frame'}),
-            ],
-            [
-                ('5678-0', {b'frame': b'image2_frame'}),
-            ],
+            [('1234-0', {b'frame': b'image1_frame'})],
+            [('5678-0', {b'frame': b'image2_frame'})],
         ]
 
         redis_manager = RedisManager('localhost', 6379, 'password')
@@ -110,6 +128,33 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
                     b'image1_frame',
                 ).decode('utf-8'),
             },
+            {
+                'key': 'image2', 'image': base64.b64encode(
+                    b'image2_frame',
+                ).decode('utf-8'),
+            },
+        ]
+        self.assertEqual(result, expected_result)
+
+    async def test_fetch_latest_frames_empty(self) -> None:
+        """
+        Test fetch_latest_frames method when Redis contains no new data.
+        """
+        last_ids = {
+            'stream_frame:test_label|image1': '0-0',
+            'stream_frame:test_label|image2': '0-0',
+        }
+
+        self.redis_mock.xrevrange.side_effect = [
+            [],  # 第一個key無回應
+            [('5678-0', {b'frame': b'image2_frame'})],
+        ]
+
+        redis_manager = RedisManager('localhost', 6379, 'password')
+        redis_manager.client = self.redis_mock
+        result = await redis_manager.fetch_latest_frames(last_ids)
+
+        expected_result = [
             {
                 'key': 'image2', 'image': base64.b64encode(
                     b'image2_frame',
@@ -257,6 +302,15 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
             'config_cache', json.dumps(config), ex=3600,
         )
 
+    async def test_close(self) -> None:
+        """
+        Test the close method to ensure the Redis connection is closed.
+        """
+        redis_manager = RedisManager('localhost', 6379, 'password')
+        redis_manager.client = self.redis_mock
+        await redis_manager.close()
+        self.redis_mock.close.assert_awaited_once()
+
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):
     """
@@ -355,13 +409,25 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         config_data = [{'key': 'value'}]
 
         # Mock the open function to return the config data
-        with unittest.mock.patch(
+        with patch(
             'builtins.open',
-            unittest.mock.mock_open(read_data=json.dumps(config_data)),
+            mock_open(read_data=json.dumps(config_data)),
         ):
             result = Utils.load_configuration(config_path)
 
         self.assertEqual(result, config_data)
+
+    async def test_load_configuration_exception(self) -> None:
+        """
+        Test load_configuration when an error occurs while reading the file.
+        """
+        config_path = 'non_existent.json'
+        with patch(
+            'builtins.open',
+            side_effect=FileNotFoundError('File not found'),
+        ):
+            result = Utils.load_configuration(config_path)
+        self.assertEqual(result, [])
 
     async def test_save_configuration(self) -> None:
         """
@@ -371,16 +437,25 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         config_data = [{'key': 'value'}]
 
         # Mock the open function
-        with unittest.mock.patch(
-            'builtins.open',
-            unittest.mock.mock_open(),
-        ) as mock_file:
+        with patch('builtins.open', mock_open()) as mock_file:
             Utils.save_configuration(config_path, config_data)
 
             # Check if the file was written with the correct data
             mock_file().write.assert_called_once_with(
                 json.dumps(config_data, indent=4, ensure_ascii=False),
             )
+
+    async def test_save_configuration_exception(self) -> None:
+        """
+        Test save_configuration when an error occurs while writing to the file.
+        """
+        config_path = 'test_config.json'
+        config_data = [{'key': 'value'}]
+
+        with patch('builtins.open', side_effect=OSError('Write error')):
+            # This function should not raise an exception
+            # even if an error occurs while writing to the file
+            Utils.save_configuration(config_path, config_data)
 
     async def test_verify_localhost(self) -> None:
         """
@@ -403,19 +478,18 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         config_path = 'test_config.json'
         current_config = [{'video_url': 'url1', 'key': 'value1'}]
         new_config = [
-            {'video_url': 'url1', 'key': 'new_value1'}, {
-                'video_url': 'url2', 'key': 'value2',
-            },
+            {'video_url': 'url1', 'key': 'new_value1'},
+            {'video_url': 'url2', 'key': 'value2'},
         ]
 
         # Mock the load_configuration and save_configuration functions
-        with unittest.mock.patch(
+        with patch(
             'examples.streaming_web.backend.utils.Utils.load_configuration',
             return_value=current_config,
         ):
-            with unittest.mock.patch(
-                'examples.streaming_web.backend.utils.Utils.'
-                'save_configuration',
+            with patch(
+                'examples.streaming_web.backend.utils.'
+                'Utils.save_configuration',
             ) as mock_save:
                 result = Utils.update_configuration(config_path, new_config)
 
@@ -429,6 +503,36 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
                 # Check if the save_configuration function
                 # was called with the correct data
                 mock_save.assert_called_once_with(config_path, expected_result)
+
+    async def test_update_configuration_not_list(self) -> None:
+        """
+        Test update_configuration when the configuration is not a list.
+        """
+        config_path = 'test_config.json'
+        not_a_list = {'video_url': 'url1', 'key': 'value1'}
+        new_config = [{'video_url': 'url2', 'key': 'value2'}]
+
+        with patch(
+            'examples.streaming_web.backend.utils.Utils.load_configuration',
+            return_value=not_a_list,
+        ):
+            with self.assertRaises(ValueError) as cm:
+                Utils.update_configuration(config_path, new_config)
+            self.assertIn('Invalid configuration format', str(cm.exception))
+
+    async def test_get_config_cache_empty(self):
+        """
+        Test get_config_cache when Redis contains no configuration data.
+        """
+        # Mock Redis response
+        self.redis_mock.get.return_value = None
+
+        redis_manager = RedisManager('localhost', 6379, 'password')
+        redis_manager.client = self.redis_mock
+        result = await redis_manager.get_config_cache()
+
+        # Check the expected result
+        self.assertEqual(result, {})
 
 
 if __name__ == '__main__':

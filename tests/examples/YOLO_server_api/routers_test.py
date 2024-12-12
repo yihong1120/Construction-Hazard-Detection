@@ -18,6 +18,7 @@ from examples.YOLO_server_api.routers import get_db
 from examples.YOLO_server_api.routers import jwt_access
 from examples.YOLO_server_api.routers import model_management_router
 from examples.YOLO_server_api.routers import user_management_router
+# from fastapi import UploadFile
 
 
 class TestRouters(unittest.TestCase):
@@ -126,9 +127,15 @@ class TestRouters(unittest.TestCase):
         files = {'image': ('test_image.jpg', image_content, 'image/jpeg')}
         data = {'model': 'yolo11n'}
 
+        # Successful case
         response = self.client.post('/detect', data=data, files=files)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), [[1.0, 2.0, 3.0, 4.0]])
+
+        # Model not found case
+        mock_get_model.return_value = None
+        response = self.client.post('/detect', data=data, files=files)
+        self.assertEqual(response.status_code, 404)
 
     @patch('examples.YOLO_server_api.routers.add_user', new_callable=AsyncMock)
     @patch('examples.YOLO_server_api.routers.logger')
@@ -152,6 +159,21 @@ class TestRouters(unittest.TestCase):
             },
         )
         mock_logger.info.assert_called_with('User added')
+
+        # Non-admin role
+        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
+            response = self.client.post('/add_user', json=user_data)
+            self.assertEqual(response.status_code, 400)
+
+        # IntegrityError case
+        mock_add_user.return_value = {
+            'success': False,
+            'error': 'IntegrityError',
+            'message': 'Duplicate',
+        }
+        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+            response = self.client.post('/add_user', json=user_data)
+            self.assertEqual(response.status_code, 400)
 
     @patch(
         'examples.YOLO_server_api.routers.delete_user',
@@ -177,7 +199,21 @@ class TestRouters(unittest.TestCase):
         )
         mock_logger.info.assert_called_with('User deleted')
 
-        # Test with non-admin role, should fail
+        # NotFound case
+        mock_delete_user.return_value = {
+            'success': False, 'error': 'NotFound', 'message': 'No user',
+        }
+        response = self.client.post('/delete_user', json=user_data)
+        self.assertEqual(response.status_code, 404)
+
+        # Other error case
+        mock_delete_user.return_value = {
+            'success': False, 'error': 'Other', 'message': 'Error',
+        }
+        response = self.client.post('/delete_user', json=user_data)
+        self.assertEqual(response.status_code, 500)
+
+        # Non-admin role
         self.app.dependency_overrides[jwt_access] = (
             lambda: JwtAuthorizationCredentials(
                 subject={'role': 'user', 'id': 1},
@@ -195,15 +231,11 @@ class TestRouters(unittest.TestCase):
         """
         Test updating a username with mocked update_username function.
         """
-        async def mock_update_username_func(old_username, new_username, db):
+        async def success_func(old_username, new_username, db):
             return {'success': True, 'message': 'Username updated'}
-        mock_update_username.side_effect = mock_update_username_func
+        mock_update_username.side_effect = success_func
 
-        user_data = {
-            'old_username': 'olduser',
-            'new_username': 'newuser',
-        }
-
+        user_data = {'old_username': 'olduser', 'new_username': 'newuser'}
         with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
             response = self.client.put('/update_username', json=user_data)
             self.assertEqual(response.status_code, 200)
@@ -214,6 +246,35 @@ class TestRouters(unittest.TestCase):
             )
             mock_logger.info.assert_called_with('Username updated')
 
+        # IntegrityError
+        async def integrity_error_func(old_username, new_username, db):
+            return {
+                'success': False,
+                'error': 'IntegrityError',
+                'message': 'Duplicate',
+            }
+        mock_update_username.side_effect = integrity_error_func
+        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+            response = self.client.put('/update_username', json=user_data)
+            self.assertEqual(response.status_code, 400)
+
+        # NotFound
+        async def not_found_func(old_username, new_username, db):
+            return {
+                'success': False,
+                'error': 'NotFound',
+                'message': 'Not found',
+            }
+        mock_update_username.side_effect = not_found_func
+        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+            response = self.client.put('/update_username', json=user_data)
+            self.assertEqual(response.status_code, 404)
+
+        # Non-admin role
+        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
+            response = self.client.put('/update_username', json=user_data)
+            self.assertEqual(response.status_code, 400)
+
     @patch(
         'examples.YOLO_server_api.routers.update_password',
         new_callable=AsyncMock,
@@ -223,15 +284,11 @@ class TestRouters(unittest.TestCase):
         """
         Test updating a password with mocked update_password function.
         """
-        async def mock_update_password_func(username, new_password, db):
+        async def success_func(username, new_password, db):
             return {'success': True, 'message': 'Password updated'}
-        mock_update_password.side_effect = mock_update_password_func
+        mock_update_password.side_effect = success_func
 
-        user_data = {
-            'username': 'testuser',
-            'new_password': 'newpassword',
-        }
-
+        user_data = {'username': 'testuser', 'new_password': 'newpassword'}
         with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
             response = self.client.put('/update_password', json=user_data)
             self.assertEqual(response.status_code, 200)
@@ -242,6 +299,31 @@ class TestRouters(unittest.TestCase):
             )
             mock_logger.info.assert_called_with('Password updated')
 
+        # NotFound
+        async def not_found_func(username, new_password, db):
+            return {
+                'success': False,
+                'error': 'NotFound',
+                'message': 'No user',
+            }
+        mock_update_password.side_effect = not_found_func
+        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+            response = self.client.put('/update_password', json=user_data)
+            self.assertEqual(response.status_code, 404)
+
+        # Other error
+        async def other_error_func(username, new_password, db):
+            return {'success': False, 'error': 'Other', 'message': 'Error'}
+        mock_update_password.side_effect = other_error_func
+        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+            response = self.client.put('/update_password', json=user_data)
+            self.assertEqual(response.status_code, 500)
+
+        # Non-admin role
+        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
+            response = self.client.put('/update_password', json=user_data)
+            self.assertEqual(response.status_code, 400)
+
     @patch(
         'examples.YOLO_server_api.routers.set_user_active_status',
         new_callable=AsyncMock,
@@ -249,24 +331,18 @@ class TestRouters(unittest.TestCase):
     @patch('examples.YOLO_server_api.routers.logger')
     def test_set_user_active_status(
         self,
-        mock_logger: AsyncMock,
-        mock_set_user_active_status: AsyncMock,
+        mock_logger,
+        mock_set_user_active_status,
     ):
         """
         Test setting a user's active status
         with mocked set_user_active_status function.
         """
-        async def mock_set_user_active_status_func(username, is_active, db):
+        async def success_func(username, is_active, db):
             return {'success': True, 'message': 'Status updated'}
-        mock_set_user_active_status.side_effect = (
-            mock_set_user_active_status_func
-        )
+        mock_set_user_active_status.side_effect = success_func
 
-        user_data = {
-            'username': 'testuser',
-            'is_active': True,
-        }
-
+        user_data = {'username': 'testuser', 'is_active': True}
         with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
             response = self.client.put(
                 '/set_user_active_status', json=user_data,
@@ -278,6 +354,37 @@ class TestRouters(unittest.TestCase):
                 },
             )
             mock_logger.info.assert_called_with('Status updated')
+
+        # NotFound
+        async def not_found_func(username, is_active, db):
+            return {
+                'success': False,
+                'error': 'NotFound',
+                'message': 'No user',
+            }
+        mock_set_user_active_status.side_effect = not_found_func
+        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+            response = self.client.put(
+                '/set_user_active_status', json=user_data,
+            )
+            self.assertEqual(response.status_code, 404)
+
+        # Other error
+        async def other_error_func(username, is_active, db):
+            return {'success': False, 'error': 'Other', 'message': 'Error'}
+        mock_set_user_active_status.side_effect = other_error_func
+        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+            response = self.client.put(
+                '/set_user_active_status', json=user_data,
+            )
+            self.assertEqual(response.status_code, 500)
+
+        # Non-admin role
+        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
+            response = self.client.put(
+                '/set_user_active_status', json=user_data,
+            )
+            self.assertEqual(response.status_code, 403)
 
     @patch(
         'examples.YOLO_server_api.routers.update_model_file',
@@ -301,6 +408,7 @@ class TestRouters(unittest.TestCase):
         }
         data = {'model': 'yolo11n'}
 
+        # Admin role success
         with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
             response = self.client.post(
                 '/model_file_update', data=data, files=files,
@@ -315,13 +423,27 @@ class TestRouters(unittest.TestCase):
                 'Model yolo11n updated successfully.',
             )
 
+        # Non-admin or model_manage role
+        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
+            response = self.client.post(
+                '/model_file_update', data=data, files=files,
+            )
+            self.assertEqual(response.status_code, 403)
+
+        # Invalid file path scenario
+        with patch(
+            'examples.YOLO_server_api.routers.secure_filename',
+            return_value='../model.pt',
+        ):
+            with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+                response = self.client.post(
+                    '/model_file_update', data=data, files=files,
+                )
+                self.assertEqual(response.status_code, 400)
+
     @patch('examples.YOLO_server_api.routers.get_new_model_file')
     @patch('examples.YOLO_server_api.routers.logger')
-    def test_get_new_model(
-        self,
-        mock_logger,
-        mock_get_new_model_file,
-    ):
+    def test_get_new_model(self, mock_logger, mock_get_new_model_file):
         """
         Test retrieving a new model file
         with mocked get_new_model_file function.
@@ -347,10 +469,9 @@ class TestRouters(unittest.TestCase):
         )
 
         # No new model available
-        async def mock_get_new_model_file_none(model, user_last_update):
+        async def mock_no_update(model, user_last_update):
             return None
-        mock_get_new_model_file.side_effect = mock_get_new_model_file_none
-
+        mock_get_new_model_file.side_effect = mock_no_update
         response = self.client.post('/get_new_model', json=request_data)
         self.assertEqual(response.status_code, 200)
         expected_response = {'message': 'Model yolo11n is up to date.'}
@@ -358,6 +479,23 @@ class TestRouters(unittest.TestCase):
         mock_logger.info.assert_called_with(
             'No update required for model yolo11n.',
         )
+
+        # Invalid datetime format
+        invalid_request_data = {
+            'model': 'yolo11n',
+            'last_update_time': 'invalid_datetime',
+        }
+        response = self.client.post(
+            '/get_new_model', json=invalid_request_data,
+        )
+        self.assertEqual(response.status_code, 400)
+
+        # Exception scenario
+        async def mock_exception(model, user_last_update):
+            raise Exception('Some error')
+        mock_get_new_model_file.side_effect = mock_exception
+        response = self.client.post('/get_new_model', json=request_data)
+        self.assertEqual(response.status_code, 500)
 
 
 if __name__ == '__main__':

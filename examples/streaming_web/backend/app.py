@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import socketio
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_limiter import FastAPILimiter
@@ -65,12 +66,18 @@ sio_app = socketio.ASGIApp(sio, app)
 register_routes(app)
 register_sockets(sio, redis_manager)
 
-# Run the application using Uvicorn ASGI server
-if __name__ == '__main__':
-    import uvicorn
+
+def run_server():
+    """
+    Run the application using Uvicorn ASGI server.
+    """
     uvicorn.run(
-        'examples.streaming_web.app:sio_app',
+        'examples.streaming_web.backend.app:sio_app',
         host='127.0.0.1',
         port=8000,
         log_level='info',
     )
+
+
+if __name__ == '__main__':
+    run_server()
