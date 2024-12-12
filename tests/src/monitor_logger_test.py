@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -24,7 +25,11 @@ class TestLoggerConfig(unittest.TestCase):
         self.level: int = logging.DEBUG
         self.formatter: logging.Formatter = logging.Formatter('%(message)s')
 
-        # Ensure log directory exists
+        # Remove the log directory if it exists
+        if Path(self.log_dir).exists():
+            shutil.rmtree(self.log_dir)
+
+        # Create the log directory
         Path(self.log_dir).mkdir(parents=True, exist_ok=True)
 
         self.logger_config: LoggerConfig = LoggerConfig(
@@ -172,9 +177,12 @@ class TestLoggerConfig(unittest.TestCase):
         Clean up any files or directories created during tests.
         """
         if Path(self.log_dir).exists():
-            for file in Path(self.log_dir).glob('*'):
-                file.unlink()
-            Path(self.log_dir).rmdir()
+            try:
+                # Remove the log directory
+                shutil.rmtree(self.log_dir)
+                print(f"Successfully removed directory: {self.log_dir}")
+            except Exception as e:
+                print(f"Failed to remove directory {self.log_dir}: {e}")
 
 
 if __name__ == '__main__':

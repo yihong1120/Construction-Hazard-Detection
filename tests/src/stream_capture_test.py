@@ -10,7 +10,6 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import numpy as np
-import pytest
 
 from src.stream_capture import main as stream_capture_main
 from src.stream_capture import StreamCapture
@@ -382,6 +381,102 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
             # Assert that a frame and timestamp were returned
             self.assertIsInstance(frame, np.ndarray)
             self.assertIsInstance(timestamp, float)
+
+    @patch.object(
+        StreamCapture,
+        'select_quality_based_on_speed',
+        return_value=None,
+    )
+    async def test_capture_generic_frames_no_quality(
+        self, mock_quality: MagicMock,
+    ) -> None:
+        """
+        Test that capture_generic_frames handles no suitable quality.
+
+        Args:
+            mock_quality (MagicMock): Mock for
+                select_quality_based_on_speed method.
+        """
+        async for _ in self.stream_capture.capture_generic_frames():
+            self.fail('No frame should be yielded when quality is None.')
+
+    @patch('speedtest.Speedtest')
+    @patch('streamlink.streams', side_effect=Exception('Streamlink error'))
+    def test_select_quality_based_on_speed_exception(
+        self,
+        mock_streams: MagicMock,
+        mock_speedtest: MagicMock,
+    ) -> None:
+        # Mock Speedtest object's download and upload methods
+        mock_speedtest.return_value.get_best_server.return_value = {}
+        mock_speedtest.return_value.download.return_value = 20_000_000
+        mock_speedtest.return_value.upload.return_value = 5_000_000
+
+        selected_quality = self.stream_capture.select_quality_based_on_speed()
+        self.assertIsNone(selected_quality)
+
+    @patch('cv2.VideoCapture')
+    @patch.object(
+        StreamCapture,
+        'select_quality_based_on_speed',
+        return_value='http://example.com/stream',
+    )
+    async def test_generic_frame_reinitialisation_logic(
+        self,
+        mock_quality: MagicMock,
+        mock_video_capture: MagicMock,
+    ) -> None:
+        """
+        Test that the generic frame capture handles reinitialisation correctly
+        after multiple consecutive failures.
+        """
+        # Set up the StreamCapture instance with a capture interval of 0
+        self.stream_capture = StreamCapture(
+            'http://example.com/stream', capture_interval=0,
+        )
+
+        # Mock VideoCapture object's read method to
+        # return False 5 times and then True
+        mock_video_capture.return_value.read.side_effect = (
+            [(False, None)] * 5 + [(True, MagicMock())] * 5
+        )
+        mock_video_capture.return_value.isOpened.return_value = True
+
+        # Use the generic frame capture method to
+        # get the first frame and timestamp
+        generator = self.stream_capture.capture_generic_frames()
+        frame, timestamp = await generator.__anext__()
+
+        self.assertIsNotNone(
+            frame, 'Frame should not be None after reinitialisation',
+        )
+        self.assertIsInstance(timestamp, float, 'Timestamp should be a float')
+
+    @patch('cv2.VideoCapture')
+    @patch.object(
+        StreamCapture,
+        'select_quality_based_on_speed',
+        return_value=None,
+    )
+    async def test_generic_frame_no_quality(
+        self,
+        mock_quality: MagicMock,
+        mock_video_capture: MagicMock,
+    ) -> None:
+        """
+        Test that capture_generic_frames skips iterations
+        when no quality is available.
+
+        Args:
+            mock_quality (MagicMock): Mock for select_quality_based_on_speed.
+            mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
+        """
+        # Iterate over the generator and ensure no frames are yielded
+        async for _ in self.stream_capture.capture_generic_frames():
+            self.fail('No frames should be yielded when quality is None')
+
+        # Verify that VideoCapture was not called
+        mock_video_capture.assert_not_called()
 
 
 if __name__ == '__main__':

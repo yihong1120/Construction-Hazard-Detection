@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import datetime
+import logging
 import time
 from pathlib import Path
 
 import requests
 import schedule
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class ModelFetcher:
@@ -73,7 +78,7 @@ class ModelFetcher:
         self.local_dir.mkdir(parents=True, exist_ok=True)
         with open(local_file_path, 'wb') as f:
             f.write(model_file_content)
-        print(f"Model {model} successfully updated at {local_file_path}")
+        logger.info(f"Model {model} successfully updated at {local_file_path}")
 
     def request_new_model(self, model: str, last_update_time: str) -> None:
         """
@@ -99,14 +104,14 @@ class ModelFetcher:
                     model_file_content = bytes.fromhex(data['model_file'])
                     self.download_and_save_model(model, model_file_content)
                 else:
-                    print(f"Model {model} is already up to date.")
+                    logger.info(f"Model {model} is already up to date.")
             else:
-                print(
+                logger.error(
                     f"Failed to fetch model {model}. "
                     f"Server returned status code: {response.status_code}",
                 )
         except requests.exceptions.RequestException as e:
-            print(f"Error requesting model {model}: {e}")
+            logger.error(f"Error requesting model {model}: {e}")
 
     def update_all_models(self):
         """
@@ -117,11 +122,11 @@ class ModelFetcher:
         """
         for model in self.models:
             try:
-                print(f"Checking for updates for model {model}...")
+                logger.info(f"Checking for updates for model {model}...")
                 last_update_time = self.get_last_update_time(model)
                 self.request_new_model(model, last_update_time)
             except Exception as e:
-                print(f"Failed to update model {model}: {e}")
+                logger.error(f"Failed to update model {model}: {e}")
 
 
 # Schedule the task to run every hour
@@ -130,11 +135,14 @@ def schedule_task():
     updater.update_all_models()
 
 
+def run_scheduler_loop():
+    logger.info('Starting scheduled tasks. Press Ctrl+C to exit.')
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+
 if __name__ == '__main__':
     # Execute the scheduled task every hour
     schedule.every(1).hour.do(schedule_task)
-
-    print('Starting scheduled tasks. Press Ctrl+C to exit.')
-    while True:
-        schedule.run_pending()
-        time.sleep(1)  # Sleep for 1 second
+    run_scheduler_loop()
