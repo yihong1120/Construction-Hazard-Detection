@@ -101,19 +101,24 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.streaming_web.backend.app.redis_manager.client.close',
+        "examples.streaming_web.backend.app.redis_manager.client",
         new_callable=AsyncMock,
     )
-    def test_lifespan_events(self, mock_close: AsyncMock) -> None:
+    @patch(
+        "examples.streaming_web.backend.app.FastAPILimiter.init",
+        new_callable=AsyncMock,
+    )
+    def test_lifespan_events(self, mock_limiter_init: AsyncMock, mock_redis_client: AsyncMock) -> None:
         """
-        Test that the lifespan events are properly handled
+        Test that the lifespan events are properly handled.
         """
         with TestClient(app_module.app) as client:
-            client.get('/')
-            # Ensure the response is successful
+            response = client.get("/")
+            # 驗證返回的狀態碼是 404
+            self.assertEqual(response.status_code, 404)
+        mock_limiter_init.assert_called_once_with(mock_redis_client)
+        mock_redis_client.close.assert_called_once()
 
-        # Ensure the Redis client is closed after the app is shut down
-        mock_close.assert_awaited_once()
 
     def tearDown(self) -> None:
         del self.client
