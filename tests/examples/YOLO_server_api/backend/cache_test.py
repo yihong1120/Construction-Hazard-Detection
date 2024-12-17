@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 from fastapi import HTTPException
 
-from examples.YOLO_server_api.cache import custom_rate_limiter
-from examples.YOLO_server_api.cache import user_cache
+from examples.YOLO_server_api.backend.cache import custom_rate_limiter
+from examples.YOLO_server_api.backend.cache import user_cache
 
 
 class CacheTestCase(unittest.IsolatedAsyncioTestCase):

@@ -22,7 +22,7 @@ class UserLogin(BaseModel):
     password: str
 
 
-@auth_router.post('/token')
+@auth_router.post('/api/token')
 async def create_token(user: UserLogin, db: AsyncSession = Depends(get_db)):
     """
     Authenticates a user and generates an access token for them.

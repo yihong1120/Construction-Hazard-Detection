@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 from unittest.mock import mock_open
 from unittest.mock import patch
 
-from examples.YOLO_server_api.model_files import get_new_model_file
-from examples.YOLO_server_api.model_files import update_model_file
+from examples.YOLO_server_api.backend.model_files import get_new_model_file
+from examples.YOLO_server_api.backend.model_files import update_model_file
 
 
 class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):

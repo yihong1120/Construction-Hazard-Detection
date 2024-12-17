@@ -9,14 +9,15 @@ from pathlib import Path
 
 from sahi.predict import AutoDetectionModel
 from sqlalchemy import Boolean
-from sqlalchemy import Column
 from sqlalchemy import DateTime
 from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import Mapped
+from sqlalchemy.orm import mapped_column
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 from werkzeug.security import check_password_hash
@@ -36,7 +37,10 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 # Base for SQLAlchemy ORM models
-Base = declarative_base()
+
+
+class Base(DeclarativeBase):
+    pass
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
@@ -50,60 +54,42 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
 
 class User(Base):
     """
-    Represents a user entity in the database with password hashing for
-    security.
+    Represents a user entity in the database
+    with password hashing for security.
     """
 
     __tablename__ = 'users'
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(80), unique=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
-    # admim, model_manage, user, guest
-    role = Column(String(20), default='user', nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(
-        DateTime, default=datetime.now(
-            timezone.utc,
-        ), nullable=False,
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(
+        String(80), unique=True, nullable=False,
     )
-    updated_at = Column(
-        DateTime, default=datetime.now(
-            timezone.utc,
-        ), onupdate=datetime.now(timezone.utc), nullable=False,
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(
+        String(20), default='user', nullable=False,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc),
+        nullable=False,
     )
 
     def set_password(self, password: str) -> None:
-        """
-        Hashes the given password and stores it as the password hash.
-
-        Args:
-            password (str): The plaintext password to be hashed.
-        """
         self.password_hash = generate_password_hash(password)
 
     async def check_password(self, password: str) -> bool:
-        """
-        Checks if the provided password matches the stored hashed password.
-
-        Args:
-            password (str): The plaintext password to verify.
-
-        Returns:
-            bool: True if the password is correct, False otherwise.
-        """
         return await asyncio.to_thread(
-            check_password_hash,
-            str(self.password_hash),
-            password,
+            check_password_hash, str(self.password_hash), password,
         )
 
     def to_dict(self):
-        """
-        Returns the user entity as a dictionary.
-
-        Returns:
-            dict: The user entity as a dictionary.
-        """
         return {
             'id': self.id,
             'username': self.username,
@@ -200,7 +186,7 @@ class DetectionModelManager:
             AutoDetectionModel: The loaded model ready for predictions.
         """
         return AutoDetectionModel.from_pretrained(
-            'yolov8',
+            'yolo11',
             model_path=str(self.base_model_path / f"best_{model_name}.pt"),
             device='cuda:0',
         )

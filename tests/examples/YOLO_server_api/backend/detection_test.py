@@ -9,24 +9,26 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 
-from examples.YOLO_server_api.detection import calculate_area
-from examples.YOLO_server_api.detection import calculate_intersection
-from examples.YOLO_server_api.detection import calculate_overlap
-from examples.YOLO_server_api.detection import check_containment
-from examples.YOLO_server_api.detection import compile_detection_data
-from examples.YOLO_server_api.detection import convert_to_image
-from examples.YOLO_server_api.detection import find_contained_indices
-from examples.YOLO_server_api.detection import find_contained_labels
-from examples.YOLO_server_api.detection import find_overlapping_indices
-from examples.YOLO_server_api.detection import find_overlaps
-from examples.YOLO_server_api.detection import get_category_indices
-from examples.YOLO_server_api.detection import get_prediction_result
-from examples.YOLO_server_api.detection import is_contained
-from examples.YOLO_server_api.detection import process_labels
-from examples.YOLO_server_api.detection import (
+from examples.YOLO_server_api.backend.detection import calculate_area
+from examples.YOLO_server_api.backend.detection import calculate_intersection
+from examples.YOLO_server_api.backend.detection import calculate_overlap
+from examples.YOLO_server_api.backend.detection import check_containment
+from examples.YOLO_server_api.backend.detection import compile_detection_data
+from examples.YOLO_server_api.backend.detection import convert_to_image
+from examples.YOLO_server_api.backend.detection import find_contained_indices
+from examples.YOLO_server_api.backend.detection import find_contained_labels
+from examples.YOLO_server_api.backend.detection import find_overlapping_indices
+from examples.YOLO_server_api.backend.detection import find_overlaps
+from examples.YOLO_server_api.backend.detection import get_category_indices
+from examples.YOLO_server_api.backend.detection import get_prediction_result
+from examples.YOLO_server_api.backend.detection import is_contained
+from examples.YOLO_server_api.backend.detection import process_labels
+from examples.YOLO_server_api.backend.detection import (
     remove_completely_contained_labels,
 )
-from examples.YOLO_server_api.detection import remove_overlapping_labels
+from examples.YOLO_server_api.backend.detection import (
+    remove_overlapping_labels,
+)
 
 
 class TestDetection(unittest.IsolatedAsyncioTestCase):
@@ -44,8 +46,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         img.save(buf, format='JPEG')
         self.image_data = buf.getvalue()
 
-    @patch('examples.YOLO_server_api.detection.np.frombuffer')
-    @patch('examples.YOLO_server_api.detection.cv2.imdecode')
+    @patch('examples.YOLO_server_api.backend.detection.np.frombuffer')
+    @patch('examples.YOLO_server_api.backend.detection.cv2.imdecode')
     async def test_convert_to_image(
         self,
         mock_imdecode: MagicMock,
@@ -68,7 +70,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         mock_imdecode.assert_called_once()
         self.assertIsNotNone(img)
 
-    @patch('examples.YOLO_server_api.detection.get_sliced_prediction')
+    @patch('examples.YOLO_server_api.backend.detection.get_sliced_prediction')
     async def test_get_prediction_result(
         self, mock_get_sliced_prediction: MagicMock,
     ) -> None:
@@ -110,11 +112,11 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0], [10, 20, 30, 40, 0.9, 1])
 
     @patch(
-        'examples.YOLO_server_api.detection.remove_overlapping_labels',
+        'examples.YOLO_server_api.backend.detection.remove_overlapping_labels',
         new_callable=AsyncMock,
     )
     @patch(
-        'examples.YOLO_server_api.detection.'
+        'examples.YOLO_server_api.backend.detection.'
         'remove_completely_contained_labels',
         new_callable=AsyncMock,
     )

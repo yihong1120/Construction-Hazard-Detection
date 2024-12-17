@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from examples.YOLO_server_api.models import User
+from examples.YOLO_server_api.backend.models import User
 
 
 async def add_user(

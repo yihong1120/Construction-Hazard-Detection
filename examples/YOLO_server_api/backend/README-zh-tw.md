@@ -46,7 +46,7 @@ pip install -r requirements.txt
 ### 3. 啟動伺服器
 使用以下指令啟動伺服器：
 ```sh
-uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
+uvicorn examples.YOLO_server_api.backend.app:sio_app --host 127.0.0.1 --port 8000
 ```
 
 ### 4. 發送請求
@@ -58,7 +58,7 @@ uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
 
 ### YOLO 伺服器 API
 
-- **`POST /detect`**：對上傳的影像執行物件檢測。
+- **`POST /api/detect`**：對上傳的影像執行物件檢測。
   - **參數**：
     - `file`（影像）：要檢測的影像檔案。
     - `model`（字串）：使用的 YOLO 模型（預設：`yolo11n`）。
@@ -71,7 +71,7 @@ uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
 
 ### 使用者管理 API
 
-- **`POST /add_user`**：新增使用者。
+- **`POST /api/add_user`**：新增使用者。
   - **參數**：
     - `username`（字串）：使用者名稱。
     - `password`（字串）：密碼。
@@ -83,7 +83,7 @@ uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
          http://localhost:8000/add_user
     ```
 
-- **`DELETE /delete_user/<username>`**：刪除使用者。
+- **`DELETE /api/delete_user/<username>`**：刪除使用者。
   - **參數**：
     - `username`（字串）：要刪除的使用者名稱。
   - **範例**：
@@ -91,7 +91,7 @@ uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
     curl -X DELETE http://localhost:8000/delete_user/admin
     ```
 
-- **`PUT /update_username`**：更新使用者名稱。
+- **`PUT /api/update_username`**：更新使用者名稱。
   - **參數**：
     - `old_username`（字串）：現有使用者名稱。
     - `new_username`（字串）：新使用者名稱。
@@ -102,7 +102,7 @@ uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
          http://localhost:8000/update_username
     ```
 
-- **`PUT /update_password`**：更新使用者密碼。
+- **`PUT /api/update_password`**：更新使用者密碼。
   - **參數**：
     - `username`（字串）：使用者名稱。
     - `new_password`（字串）：新密碼。
@@ -113,7 +113,7 @@ uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
          http://localhost:8000/update_password
     ```
 
-- **`PUT /set_user_active_status`**：設置使用者啟用狀態。
+- **`PUT /api/set_user_active_status`**：設置使用者啟用狀態。
   - **參數**：
     - `username`（字串）：使用者名稱。
     - `is_active`（布林值）：啟用狀態（`true` 或 `false`）。
@@ -128,7 +128,7 @@ uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
 
 ### 模型管理 API
 
-- **`POST /model_file_update`**：更新 YOLO 模型檔案。
+- **`POST /api/model_file_update`**：更新 YOLO 模型檔案。
   - **參數**：
     - `model`（字串）：模型名稱。
     - `file`（檔案）：模型檔案。
@@ -137,7 +137,7 @@ uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
     curl -X POST -F "model=yolo11n" -F "file=@path/to/model.pt" http://localhost:8000/model_file_update
     ```
 
-- **`POST /get_new_model`**：檢索最新的 YOLO 模型檔案。
+- **`POST /api/get_new_model`**：檢索最新的 YOLO 模型檔案。
   - **參數**：
     - `model`（字串）：模型名稱。
     - `last_update_time`（ISO 8601 字串）：上次更新時間。

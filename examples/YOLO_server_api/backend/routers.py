@@ -51,7 +51,7 @@ class DetectionRequest(BaseModel):
     model: str
 
 
-@detection_router.post('/detect')
+@detection_router.post('/api/detect')
 async def detect(
     image: UploadFile = File(...),
     model: str = 'yolo11n',
@@ -106,7 +106,7 @@ class UserCreate(BaseModel):
     role: str = 'user'
 
 
-@user_management_router.post('/add_user')
+@user_management_router.post('/api/add_user')
 async def add_user_route(
     user: UserCreate,
     db: AsyncSession = Depends(get_db),
@@ -153,7 +153,7 @@ class DeleteUser(BaseModel):
     username: str
 
 
-@user_management_router.post('/delete_user')
+@user_management_router.post('/api/delete_user')
 async def delete_user_route(
     user: DeleteUser,
     db: AsyncSession = Depends(get_db),
@@ -200,7 +200,7 @@ class UpdateUsername(BaseModel):
     new_username: str
 
 
-@user_management_router.put('/update_username')
+@user_management_router.put('/api/update_username')
 async def update_username_route(
     update_data: UpdateUsername,
     db: AsyncSession = Depends(get_db),
@@ -251,7 +251,7 @@ class UpdatePassword(BaseModel):
     role: str = 'user'
 
 
-@user_management_router.put('/update_password')
+@user_management_router.put('/api/update_password')
 async def update_password_route(
     update_data: UpdatePassword,
     db: AsyncSession = Depends(get_db),
@@ -304,7 +304,7 @@ class SetUserActiveStatus(BaseModel):
     is_active: bool
 
 
-@user_management_router.put('/set_user_active_status')
+@user_management_router.put('/api/set_user_active_status')
 async def set_user_active_status_route(
     user_status: SetUserActiveStatus,  # 使用請求正文接收數據
     db: AsyncSession = Depends(get_db),
@@ -376,7 +376,7 @@ class ModelFileUpdate(BaseModel):
         return cls(model=model, file=file)
 
 
-@model_management_router.post('/model_file_update')
+@model_management_router.post('/api/model_file_update')
 async def model_file_update(
     data: ModelFileUpdate = Depends(ModelFileUpdate.as_form),
     credentials: JwtAuthorizationCredentials = Depends(jwt_access),
@@ -403,7 +403,8 @@ async def model_file_update(
 
     try:
         # Ensure the filename is secure
-        secure_file_name = secure_filename(data.file.filename)
+        filename = data.file.filename or 'default_model_name'
+        secure_file_name = secure_filename(filename)
         temp_dir = Path('/tmp')
         temp_path = temp_dir / secure_file_name
 
@@ -446,7 +447,7 @@ class UpdateModelRequest(BaseModel):
     last_update_time: str
 
 
-@model_management_router.post('/get_new_model')
+@model_management_router.post('/api/get_new_model')
 async def get_new_model(
     update_request: UpdateModelRequest = Body(...),
 ) -> dict:
