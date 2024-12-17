@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Define character encoding and viewport settings for responsive design -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Page title -->
+  <title>User Management - YOLO Detection</title>
+
+  <!-- Link stylesheets -->
+  <link rel="stylesheet" href="/css/user_management.css" />
+  <link rel="stylesheet" href="/css/header.css" />
+  <link rel="stylesheet" href="/css/footer.css" />
+  <link rel="stylesheet" href="/css/common.css" />
+
+  <!-- Load the common.js script first to ensure functions like authHeaders are available -->
+  <script type="module" src="/js/common.js"></script>
+
+  <!-- Load scripts for header and footer -->
+  <script type="module" src="/js/headerFooterLoader.js"></script>
+
+  <!-- Load the user management logic -->
+  <script type="module" src="/js/user_management.js"></script>
+</head>
+<body>
+  <!-- Container for the dynamically loaded header -->
+  <header id="header-container"></header>
+
+  <!-- Main content area -->
+  <main>
+    <div class="container">
+      <h1>User Management</h1>
+
+      <!-- Add User Section -->
+      <section class="user-management-section">
+        <h2>Add User</h2>
+        <form id="add-user-form" class="form-group">
+          <div class="input-group">
+            <!-- Input field for the username -->
+            <input type="text" id="add-username" placeholder="Username" required />
+          </div>
+          <div class="input-group">
+            <!-- Input field for the password -->
+            <input type="password" id="add-password" placeholder="Password" required />
+          </div>
+          <div class="input-group">
+            <!-- Dropdown to select the role of the user -->
+            <label for="add-role">Select Role:</label>
+            <select id="add-role">
+              <option value="user">user</option>
+              <option value="guest">guest</option>
+              <option value="model_manager">model_manager</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <!-- Submit button for adding a user -->
+          <button type="submit" class="btn">Add User</button>
+          <!-- Display error messages here -->
+          <p id="add-user-error" class="error-message"></p>
+        </form>
+      </section>
+
+      <!-- Delete User Section -->
+      <section class="user-management-section">
+        <h2>Delete User</h2>
+        <form id="delete-user-form" class="form-group">
+          <div class="input-group">
+            <!-- Input field for the username to delete -->
+            <input type="text" id="delete-username" placeholder="Username to delete" required />
+          </div>
+          <!-- Submit button for deleting a user -->
+          <button type="submit" class="btn">Delete User</button>
+          <!-- Display error messages here -->
+          <p id="delete-user-error" class="error-message"></p>
+        </form>
+      </section>
+
+      <!-- Update Username Section -->
+      <section class="user-management-section">
+        <h2>Update Username</h2>
+        <form id="update-username-form" class="form-group">
+          <div class="input-group">
+            <!-- Input field for the old username -->
+            <input type="text" id="old-username" placeholder="Old Username" required />
+          </div>
+          <div class="input-group">
+            <!-- Input field for the new username -->
+            <input type="text" id="new-username" placeholder="New Username" required />
+          </div>
+          <!-- Submit button for updating the username -->
+          <button type="submit" class="btn">Update Username</button>
+          <!-- Display error messages here -->
+          <p id="update-username-error" class="error-message"></p>
+        </form>
+      </section>
+
+      <!-- Update Password Section -->
+      <section class="user-management-section">
+        <h2>Update Password</h2>
+        <form id="update-password-form" class="form-group">
+          <div class="input-group">
+            <!-- Input field for the username -->
+            <input type="text" id="update-password-username" placeholder="Username" required />
+          </div>
+          <div class="input-group">
+            <!-- Input field for the new password -->
+            <input type="password" id="new-password" placeholder="New Password" required />
+          </div>
+          <!-- Submit button for updating the password -->
+          <button type="submit" class="btn">Update Password</button>
+          <!-- Display error messages here -->
+          <p id="update-password-error" class="error-message"></p>
+        </form>
+      </section>
+
+      <!-- Set User Active Status Section -->
+      <section class="user-management-section">
+        <h2>Set User Active Status</h2>
+        <form id="set-active-status-form" class="form-group">
+          <div class="input-group">
+            <!-- Input field for the username -->
+            <input type="text" id="active-status-username" placeholder="Username" required />
+          </div>
+          <div class="input-group checkbox-group">
+            <!-- Checkbox to set the user's active status -->
+            <label for="is-active">Active:</label>
+            <input type="checkbox" id="is-active" />
+          </div>
+          <!-- Submit button for updating the active status -->
+          <button type="submit" class="btn">Update Status</button>
+          <!-- Display error messages here -->
+          <p id="set-active-status-error" class="error-message"></p>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <!-- Container for the dynamically loaded footer -->
+  <footer id="footer-container"></footer>
+</body>
+</html>

@@ -1,0 +1,10 @@
+/* Responsive Design for Small Screens */
+/* Apply styles when the screen width is 600px or less */
+@media (max-width: 600px) {
+
+  /* Navigation Links */
+  /* Adjust the navigation links to stack vertically */
+  .nav-links {
+    flex-direction: column; /* Stack links in a vertical column */
+  }
+}

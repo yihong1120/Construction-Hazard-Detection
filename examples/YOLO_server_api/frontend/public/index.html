@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Define the character encoding and ensure the webpage is responsive -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Page title -->
+  <title>YOLO Detection - Dashboard</title>
+
+  <!-- Link global styles -->
+  <link rel="stylesheet" href="./css/style.css" />
+
+  <!-- Link styles for the header and footer -->
+  <link rel="stylesheet" href="./css/header.css" />
+  <link rel="stylesheet" href="./css/footer.css" />
+
+  <!-- Load the main functionality script -->
+  <script type="module" src="./js/main.js"></script>
+
+  <!-- Load the script to dynamically insert the header and footer -->
+  <script type="module" src="./js/headerFooterLoader.js"></script>
+</head>
+<body>
+  <!-- Reserve a container for the dynamic Header -->
+  <header id="header-container"></header>
+
+  <!-- Main content section -->
+  <main>
+    <!-- Dashboard greeting -->
+    <h1>Welcome to the YOLO Detection Dashboard</h1>
+
+    <!-- Guidance for users to navigate or log in -->
+    <p>Use the navigation to access features based on your role.</p>
+    <p>If you’re not logged in, please <a href="./login.html">Login</a>.</p>
+
+    <!-- Placeholder for displaying user-specific information -->
+    <div id="user-info"></div>
+  </main>
+
+  <!-- Reserve a container for the dynamic Footer -->
+  <footer id="footer-container"></footer>
+</body>
+</html>

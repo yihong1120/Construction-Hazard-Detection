@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Define character encoding and viewport settings for responsive design -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Page title -->
+  <title>Login - YOLO Detection</title>
+
+  <!-- Link the stylesheet for login page styling -->
+  <link rel="stylesheet" href="./css/login.css" />
+
+  <!-- Load the authentication script for login functionality -->
+  <script type="module" src="./js/auth.js"></script>
+</head>
+<body>
+  <!-- Header section containing the navigation bar -->
+  <header>
+    <nav class="navbar">
+      <!-- Website logo or title -->
+      <div class="logo">YOLO Detection</div>
+
+      <!-- Navigation links -->
+      <ul class="nav-links">
+        <!-- Link to the home page -->
+        <li><a href="./index.html">Home</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <!-- Main content area -->
+  <main>
+    <!-- Login form container -->
+    <div class="login-container">
+      <h2>Login</h2>
+      <!-- Form for user login -->
+      <form id="login-form">
+        <!-- Username input field -->
+        <label for="username">Username</label>
+        <input type="text" id="username" required />
+
+        <!-- Password input field -->
+        <label for="password">Password</label>
+        <input type="password" id="password" required />
+
+        <!-- Submit button for logging in -->
+        <button type="submit">Login</button>
+
+        <!-- Area to display error messages, if any -->
+        <p id="login-error" class="error-message"></p>
+      </form>
+    </div>
+  </main>
+
+  <!-- Footer section -->
+  <footer>
+    <!-- Display copyright information -->
+    <p>© 2024 YOLO Detection System.</p>
+  </footer>
+</body>
+</html>

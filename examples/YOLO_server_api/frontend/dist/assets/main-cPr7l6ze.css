@@ -1,0 +1,1 @@
+body{margin:0;font-family:Arial,sans-serif}header,footer{background:#333;color:#fff;padding:1rem}.navbar{display:flex;align-items:center}.logo{flex:1;font-size:1.5rem;font-weight:700}.nav-links{list-style:none;display:flex;gap:1rem}.nav-links li a{color:#fff;text-decoration:none}.error-message{color:red;font-weight:700}.admin-only,.model-manage-only{display:none}

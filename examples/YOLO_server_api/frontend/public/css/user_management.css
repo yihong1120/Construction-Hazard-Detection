@@ -1,0 +1,112 @@
+/* Global Styles */
+/* Apply a base font and background colour for the entire page */
+body {
+  font-family: Arial, sans-serif; /* Clean and modern sans-serif font */
+  background-color: #f5f5f5; /* Light grey background for contrast */
+}
+
+/* Container */
+/* Centre content and set a maximum width for better readability */
+.container {
+  max-width: 800px; /* Restrict the width for better readability */
+  margin: 2rem auto; /* Centre the container horizontally and add vertical spacing */
+  padding: 0 1rem; /* Add horizontal padding for small screens */
+}
+
+/* Heading Styles */
+/* Style the main heading */
+h1 {
+  text-align: centre; /* Centre-align the heading text */
+  margin-bottom: 2rem; /* Add spacing below the heading */
+}
+
+/* User Management Section */
+/* Style for each section in the user management page */
+.user-management-section {
+  background-color: #fff; /* White background for sections */
+  padding: 1.5rem; /* Add padding inside the section */
+  border-radius: 8px; /* Round the corners for a modern look */
+  margin-bottom: 2rem; /* Space below each section */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Add a subtle shadow for depth */
+}
+
+.user-management-section h2 {
+  margin-bottom: 1rem; /* Space below section headings */
+}
+
+/* Form Group */
+/* Style for forms in the user management sections */
+.form-group {
+  display: flex; /* Use flexbox for layout */
+  flex-direction: column; /* Arrange elements vertically */
+}
+
+/* Input Group */
+/* Grouping for input fields and labels */
+.input-group {
+  display: flex; /* Use flexbox for layout */
+  flex-direction: column; /* Arrange label and input vertically */
+  margin-bottom: 1rem; /* Space below each input group */
+}
+
+.input-group label {
+  margin-bottom: 0.5rem; /* Space below the label */
+}
+
+.input-group input,
+.input-group select {
+  padding: 0.5rem; /* Add padding for better usability */
+  font-size: 1rem; /* Set a consistent font size */
+  border: 1px solid #ccc; /* Add a light border for the input */
+  border-radius: 4px; /* Round the corners for a modern look */
+}
+
+/* Checkbox Group */
+/* Style for checkbox groups */
+.checkbox-group {
+  flex-direction: row; /* Arrange items horizontally */
+  align-items: centre; /* Align checkbox and label vertically */
+}
+
+.checkbox-group label {
+  margin-right: 0.5rem; /* Space between checkbox and label */
+}
+
+/* Buttons */
+/* Style for buttons */
+.btn {
+  align-self: flex-start; /* Align buttons to the left */
+  padding: 0.5rem 1rem; /* Add padding for a clickable area */
+  font-size: 1rem; /* Set a consistent font size */
+  background-color: #0078d7; /* Primary blue colour for buttons */
+  color: #fff; /* White text for contrast */
+  border: none; /* Remove default borders */
+  border-radius: 4px; /* Round the corners for a modern look */
+  cursor: pointer; /* Change cursor to pointer for clickable buttons */
+}
+
+/* Button Hover */
+/* Change the button colour on hover */
+.btn:hover {
+  background-color: #005a9e; /* Darker blue for hover effect */
+}
+
+/* Error Messages */
+/* Style for error messages displayed in the form */
+.error-message {
+  color: red; /* Use red to highlight errors */
+  margin-top: 0.5rem; /* Add spacing above the error message */
+}
+
+/* Responsive Design */
+/* Adjust styles for small screens */
+@media (max-width: 600px) {
+  .user-management-section {
+    padding: 1rem; /* Reduce padding for smaller screens */
+  }
+
+  .btn {
+    width: 100%; /* Make buttons span full width */
+    text-align: centre; /* Centre-align button text */
+  }
+}
