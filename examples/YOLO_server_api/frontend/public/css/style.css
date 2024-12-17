@@ -1,0 +1,58 @@
+/* Global Styles */
+/* Reset default margins and apply a consistent font */
+body {
+  margin: 0; /* Remove default body margin */
+  font-family: Arial, sans-serif; /* Use a clean, sans-serif font */
+}
+
+/* Header and Footer */
+/* Shared styling for the header and footer sections */
+header, footer {
+  background: #333; /* Dark grey background */
+  color: #fff; /* White text for contrast */
+  padding: 1rem; /* Add padding to give space around the content */
+}
+
+/* Navigation Bar */
+/* Flex container for navigation items */
+.navbar {
+  display: flex; /* Use flexbox for alignment */
+  align-items: center; /* Vertically centre the items */
+}
+
+/* Logo */
+/* Styling for the logo within the navigation bar */
+.logo {
+  flex: 1; /* Allow the logo to take up available space */
+  font-size: 1.5rem; /* Increase font size for prominence */
+  font-weight: bold; /* Make the logo text bold */
+}
+
+/* Navigation Links */
+/* Styling for the navigation links */
+.nav-links {
+  list-style: none; /* Remove default list bullet points */
+  display: flex; /* Use flexbox for horizontal layout */
+  gap: 1rem; /* Add spacing between links */
+}
+
+/* Individual Navigation Link */
+/* Style for the links within the navigation bar */
+.nav-links li a {
+  color: #fff; /* White text for links */
+  text-decoration: none; /* Remove underlines for a clean look */
+}
+
+/* Error Messages */
+/* Styling for error messages displayed to users */
+.error-message {
+  color: red; /* Use red to highlight errors */
+  font-weight: bold; /* Make error messages stand out */
+}
+
+/* Role-Specific Elements */
+/* Hide elements by default; visibility managed via JavaScript */
+.admin-only, .model-manage-only {
+  display: none; /* Elements are hidden initially */
+  /* JavaScript will dynamically show these based on the user role */
+}

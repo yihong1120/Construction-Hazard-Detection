@@ -1,0 +1,47 @@
+/* Main Container */
+/* Define the maximum width and centre the main content */
+main {
+  max-width: 800px; /* Limit the main container's width for better readability */
+  margin: 2rem auto; /* Centre the container horizontally and add vertical spacing */
+}
+
+/* Section Styling */
+/* Add spacing between different sections */
+section {
+  margin-bottom: 2rem; /* Space below each section to separate content */
+}
+
+/* Form Inputs and Select Boxes */
+/* Style for form input fields and dropdown menus */
+section form select,
+section form input {
+  margin-bottom: 0.5rem; /* Add spacing below each input field */
+  padding: 0.5rem; /* Inner padding for better usability */
+  width: 100%; /* Make inputs and selects span the full width of the form */
+  box-sizing: border-box; /* Include padding and border in the element's width */
+}
+
+/* Form Buttons */
+/* Style for buttons in the form */
+section form button {
+  margin-top: 1rem; /* Space above the button */
+  padding: 0.7rem; /* Add padding for a comfortable click area */
+  background-color: #007bff; /* Primary blue background colour */
+  color: white; /* White text for contrast */
+  border: none; /* Remove default button borders */
+  border-radius: 5px; /* Slightly rounded corners for a modern look */
+  cursor: pointer; /* Pointer cursor to indicate interactivity */
+}
+
+/* Button Hover Effect */
+/* Change the button's background colour on hover */
+section form button:hover {
+  background-color: #0056b3; /* Darker blue for hover effect */
+}
+
+/* Error Messages */
+/* Style for error messages displayed below inputs */
+.error-message {
+  color: red; /* Highlight error messages in red */
+  font-size: 0.9rem; /* Slightly smaller font size for messages */
+}

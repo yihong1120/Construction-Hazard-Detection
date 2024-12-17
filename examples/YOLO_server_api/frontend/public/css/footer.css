@@ -1,0 +1,40 @@
+/* Footer Styles */
+/* Footer container with a dark background and white text */
+footer {
+  background-color: #333; /* Dark grey background for footer */
+  color: #fff; /* White text for contrast */
+  text-align: center; /* Centre align the text */
+  padding: 1rem 0; /* Vertical padding */
+  margin: 0; /* Remove any default margins */
+  width: 100%; /* Ensure the footer spans the full width of the page */
+  box-shadow: 0px -4px 6px rgba(0, 0, 0, 0.1); /* Add a shadow above the footer */
+  position: relative; /* Default relative positioning */
+  bottom: 0; /* Ensure it remains at the bottom when required */
+}
+
+/* Hyperlink Styles */
+/* Style for links within the footer */
+footer a {
+  color: #fff; /* White text for footer links */
+  text-decoration: none; /* Remove underline by default */
+}
+
+footer a:hover {
+  text-decoration: underline; /* Add underline on hover for emphasis */
+}
+
+/* Body and Layout */
+/* Ensure the body and footer separation */
+body {
+  margin: 0; /* Remove default margin */
+  padding: 0; /* Remove default padding */
+  min-height: 100vh; /* Set a minimum height to fill the viewport */
+  display: flex; /* Enable flexbox layout for vertical alignment */
+  flex-direction: column; /* Arrange elements in a vertical stack */
+}
+
+/* Main Content */
+/* Main content area fills available space between header and footer */
+main {
+  flex: 1; /* Expand to fill remaining vertical space */
+}

@@ -1,0 +1,24 @@
+/* Login Container */
+/* Container for the login form */
+.login-container {
+  max-width: 400px; /* Limit the container width to ensure readability */
+  margin: 2rem auto; /* Centre the container horizontally and add vertical spacing */
+  background: #f9f9f9; /* Light grey background for contrast */
+  padding: 1rem; /* Add inner spacing for content */
+  border-radius: 5px; /* Slightly rounded corners for a softer appearance */
+}
+
+/* Form Labels */
+/* Styling for labels in the login form */
+.login-container form label {
+  display: block; /* Ensure labels occupy their own line */
+  margin-bottom: 0.5rem; /* Add spacing below the label */
+}
+
+/* Form Inputs */
+/* Styling for input fields in the login form */
+.login-container form input {
+  width: 100%; /* Make inputs span the full width of the container */
+  margin-bottom: 1rem; /* Add spacing below each input field */
+  padding: 0.5rem; /* Add inner padding for better usability */
+}

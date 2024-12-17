@@ -1,0 +1,120 @@
+/* Reset */
+/* Remove default margins and paddings; ensure consistent box sizing */
+body, ul {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Header */
+/* Sticky header with a background colour, shadow, and high z-index */
+header {
+  background-color: #333; /* Dark grey background */
+  color: #fff; /* White text */
+  padding: 1rem 0; /* Vertical padding */
+  position: sticky; /* Fix header to the top when scrolling */
+  top: 0; /* Position at the top of the page */
+  z-index: 1000; /* Ensure the header stays above other content */
+  box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1); /* Subtle shadow for depth */
+}
+
+/* Navigation Bar */
+/* Flex container for aligning logo and navigation links */
+.navbar {
+  display: flex; /* Flexbox layout */
+  align-items: center; /* Centre content vertically */
+  justify-content: space-between; /* Space between logo and links */
+  max-width: 1200px; /* Centre and limit width */
+  margin: 0 auto; /* Centre horizontally */
+  padding: 0 1rem; /* Add horizontal padding */
+}
+
+/* Logo */
+/* Styling for the website logo or brand name */
+.logo {
+  font-size: 1.5rem; /* Larger text size for prominence */
+  font-weight: bold; /* Make the text bold */
+}
+
+/* Navigation Links */
+/* List of navigation links */
+.nav-links {
+  list-style: none; /* Remove default list styling */
+  display: flex; /* Horizontal layout for links */
+  gap: 1.5rem; /* Space between links */
+  transition: max-height 0.3s ease-out; /* Smooth transition for dropdown */
+}
+
+.nav-links li a {
+  text-decoration: none; /* Remove underline from links */
+  color: #fff; /* White text colour */
+  font-weight: 500; /* Medium text weight */
+  transition: color 0.3s ease; /* Smooth colour change on hover */
+}
+
+.nav-links li a:hover {
+  color: #00bcd4; /* Change link colour to teal on hover */
+}
+
+/* Logout Button */
+/* Style for the logout button */
+#logout-btn {
+  cursor: pointer; /* Pointer cursor to indicate interactivity */
+  font-weight: bold; /* Bold text for emphasis */
+  background-color: transparent; /* Transparent background */
+  border: none; /* Remove border */
+  color: #fff; /* White text */
+  transition: color 0.3s ease; /* Smooth colour change on hover */
+}
+
+#logout-btn:hover {
+  color: #f44336; /* Change text colour to red on hover */
+}
+
+/* Menu Toggle Button (Hidden on Desktop) */
+/* Button for toggling navigation menu on smaller screens */
+.menu-toggle {
+  display: none; /* Hidden by default */
+  font-size: 1.5rem; /* Larger text size */
+  background: none; /* Transparent background */
+  border: none; /* Remove border */
+  color: #fff; /* White text */
+  cursor: pointer; /* Pointer cursor for interactivity */
+}
+
+/* Responsive Design */
+/* Styles for smaller screens (maximum width: 768px) */
+@media (max-width: 768px) {
+  .menu-toggle {
+    display: block; /* Show the menu toggle button */
+  }
+
+  /* Navigation links for mobile view */
+  .nav-links {
+    display: flex; /* Flexbox layout */
+    flex-direction: column; /* Stack links vertically */
+    align-items: flex-start; /* Align links to the left */
+    background-color: #444; /* Darker grey background for dropdown */
+    position: absolute; /* Position below the header */
+    top: 100%; /* Place just below the header */
+    left: 0; /* Align to the left of the viewport */
+    width: 100%; /* Full width of the viewport */
+    max-height: 0; /* Initially collapsed */
+    overflow: hidden; /* Hide overflowing content */
+    border-top: 1px solid #555; /* Border to separate menu */
+  }
+
+  .nav-links.expanded {
+    max-height: 300px; /* Expand height when menu is toggled */
+  }
+
+  .nav-links li {
+    padding: 0.5rem 1rem; /* Add padding for clickable areas */
+    width: 100%; /* Full width for each item */
+  }
+
+  .nav-links li a {
+    display: block; /* Ensure links are block-level elements */
+    width: 100%; /* Full width for each link */
+  }
+}

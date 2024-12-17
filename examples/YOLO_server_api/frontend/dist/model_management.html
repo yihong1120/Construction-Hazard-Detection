@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Define character encoding and viewport settings for responsive design -->
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <!-- Page title -->
+  <title>Model Management - YOLO Detection</title>
+
+  <!-- Link stylesheets -->
+
+  <!-- Load scripts for header, footer, and model management functionality -->
+  <script type="module" crossorigin src="/assets/model_management-BkVGVr4y.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/common-Ceipz8Vt.js">
+  <link rel="modulepreload" crossorigin href="/assets/headerFooterLoader-LYlhFStm.js">
+  <link rel="stylesheet" crossorigin href="/assets/headerFooterLoader-BAK8Xp3D.css">
+  <link rel="stylesheet" crossorigin href="/assets/model_management-DwGnuJpv.css">
+</head>
+<body>
+  <!-- Container for dynamically loaded header -->
+  <header id="header-container"></header>
+
+  <!-- Main content area -->
+  <main>
+    <h1>Model Management</h1>
+
+    <!-- Section for updating a model file -->
+    <section class="update-model-file-section">
+      <h2>Update Model File</h2>
+      <form id="model-file-update-form">
+        <!-- Dropdown to select a model name -->
+        <label for="model-name">Model Name:</label>
+        <select id="model-name" required>
+          <option value="yolo11n">YOLO11n</option>
+          <option value="yolo11s">YOLO11s</option>
+          <option value="yolo11m">YOLO11m</option>
+          <option value="yolo11l">YOLO11l</option>
+          <option value="yolo11x">YOLO11x</option>
+        </select>
+
+        <!-- File input for uploading a model file -->
+        <label for="model-file">Upload Model File:</label>
+        <input
+          type="file"
+          id="model-file"
+          title="Upload a model file for update"
+          required
+        />
+
+        <!-- Submit button to initiate model file update -->
+        <button type="submit">Update Model File</button>
+        <!-- Display error messages here -->
+        <p id="model-update-error" class="error-message"></p>
+      </form>
+    </section>
+
+    <!-- Section for retrieving a new model file -->
+    <section class="get-new-model-section">
+      <h2>Get New Model File</h2>
+      <form id="get-new-model-form">
+        <!-- Dropdown to select a model name -->
+        <label for="get-model-name">Model Name:</label>
+        <select id="get-model-name" required>
+          <option value="yolo11n">YOLO11n</option>
+          <option value="yolo11s">YOLO11s</option>
+          <option value="yolo11m">YOLO11m</option>
+          <option value="yolo11l">YOLO11l</option>
+          <option value="yolo11x">YOLO11x</option>
+        </select>
+
+        <!-- Submit button to retrieve the model file -->
+        <button type="submit">Get New Model</button>
+        <!-- Display error messages here -->
+        <p id="get-new-model-error" class="error-message"></p>
+      </form>
+
+      <!-- Display the retrieved model file content -->
+      <div id="model-file-content"></div>
+    </section>
+  </main>
+
+  <!-- Container for dynamically loaded footer -->
+  <footer id="footer-container"></footer>
+</body>
+</html>

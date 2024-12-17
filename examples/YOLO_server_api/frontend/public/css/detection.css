@@ -1,0 +1,175 @@
+/* General Styles */
+/* Reset margins, padding, and ensure consistent box sizing */
+body {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: Arial, sans-serif; /* Set a clean, sans-serif font */
+}
+
+/* Layout for the main detection container */
+.detection-container {
+  display: flex; /* Use a flexbox layout for responsiveness */
+  flex-wrap: wrap; /* Allow content to wrap on smaller screens */
+  padding: 1rem;
+  max-width: 1200px; /* Centre the layout with a maximum width */
+  margin: 0 auto;
+}
+
+/* Styles for the controls section */
+.controls {
+  flex: 1; /* Allow this section to take up available space */
+  min-width: 300px; /* Ensure a minimum width for usability */
+  padding: 1rem;
+}
+
+.controls h1 {
+  margin-bottom: 1rem; /* Add spacing below the heading */
+}
+
+/* Style for the form inside the controls section */
+.controls form {
+  display: flex;
+  flex-direction: column; /* Stack form elements vertically */
+}
+
+.controls label {
+  margin-bottom: 0.5rem; /* Add spacing below labels */
+  font-weight: bold; /* Highlight labels for better readability */
+}
+
+.controls select {
+  padding: 0.5rem; /* Add inner spacing for better usability */
+  margin-bottom: 1rem; /* Add spacing below the dropdown */
+  border: 1px solid #ccc; /* Define a subtle border */
+  border-radius: 4px; /* Slightly round the edges */
+}
+
+/* Style for the "Choose File" and "Remove Image" buttons */
+.choose-file-btn,
+.remove-image-btn {
+  display: inline-block;
+  padding: 0.5rem 1rem; /* Add padding for a comfortable click area */
+  background-color: #007bff; /* Set a primary blue colour */
+  color: white; /* White text for contrast */
+  border: none; /* Remove default borders */
+  border-radius: 4px; /* Rounded edges */
+  cursor: pointer; /* Change cursor to pointer for interactivity */
+  text-align: center;
+  margin-bottom: 1rem; /* Add spacing below the buttons */
+  transition: background-color 0.3s ease; /* Smooth hover effect */
+}
+
+.choose-file-btn:hover,
+.remove-image-btn:hover {
+  background-color: #0056b3; /* Darker blue on hover */
+}
+
+/* Style for the "Detect" button */
+.detect-btn {
+  padding: 0.7rem; /* Slightly larger padding for emphasis */
+  background-color: #28a745; /* Green for action buttons */
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.3s ease; /* Smooth hover effect */
+}
+
+.detect-btn:hover {
+  background-color: #218838; /* Darker green on hover */
+}
+
+/* Style for error messages */
+.error-message {
+  color: red;
+  font-size: 0.9rem; /* Smaller font size for messages */
+  margin-top: 0.5rem; /* Add spacing above messages */
+}
+
+/* Detection results container */
+#detection-result-container {
+  margin-top: 1rem; /* Add spacing above the results */
+}
+
+#detection-result-container h2 {
+  margin-bottom: 0.5rem; /* Add spacing below the subheading */
+}
+
+#detection-result {
+  background-color: #f8f9fa; /* Light background for readability */
+  padding: 0.5rem;
+  border: 1px solid #ccc; /* Define a subtle border */
+  border-radius: 4px;
+  max-height: 200px; /* Limit height with scroll enabled */
+  overflow-y: auto; /* Add vertical scrolling if content overflows */
+}
+
+/* Styles for the preview area */
+.preview {
+  flex: 2; /* Allow this section to take up twice the space of controls */
+  min-width: 500px; /* Ensure a minimum width for the preview area */
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Centre content horizontally */
+}
+
+/* Drag-and-drop file area */
+.file-drop-area {
+  border: 2px dashed #ccc; /* Dashed border for drop zone visibility */
+  padding: 20px;
+  text-align: centre;
+  width: 100%; /* Full width for responsiveness */
+  max-width: 700px; /* Limit the maximum width */
+  height: 500px; /* Set a fixed height */
+  position: relative;
+  background-color: #f9f9f9; /* Light background for clarity */
+  transition: background-color 0.3s ease, border-color 0.3s ease; /* Smooth hover effects */
+  display: flex;
+  align-items: centre; /* Centre content vertically */
+  justify-content: centre; /* Centre content horizontally */
+}
+
+.file-drop-area.dragover {
+  background-color: #e6f7ff; /* Light blue when dragging over */
+  border-color: #007bff; /* Highlight border colour */
+}
+
+/* Style for the image canvas inside the drop area */
+#image-canvas {
+  max-width: 100%; /* Ensure canvas scales with the container */
+  max-height: 100%; /* Prevent overflow vertically */
+  display: block; /* Remove extra inline spacing */
+}
+
+/* Responsive Design */
+/* Adjust layout for smaller screens */
+@media (max-width: 768px) {
+  .detection-container {
+    flex-direction: column; /* Stack sections vertically */
+  }
+
+  .preview {
+    margin-top: 2rem; /* Add spacing above the preview area */
+  }
+
+  .file-drop-area {
+    height: 400px; /* Reduce height for smaller screens */
+  }
+}
+
+/* Adjust layout for very small screens */
+@media (max-width: 480px) {
+  .file-drop-area {
+    height: 300px; /* Further reduce height */
+  }
+
+  /* Ensure controls fit within the viewport */
+  .controls select,
+  .controls .choose-file-btn,
+  .detect-btn,
+  .remove-image-btn {
+    width: 100%; /* Make buttons and inputs full width */
+  }
+}

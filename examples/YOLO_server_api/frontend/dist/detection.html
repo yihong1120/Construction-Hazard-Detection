@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Define character encoding and viewport settings for responsive design -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Page title -->
+  <title>Object Detection - YOLO</title>
+
+  <!-- Link stylesheets for detection functionality, header, and footer -->
+
+  <!-- Load the header and footer loader script before the detection logic -->
+  <script type="module" crossorigin src="/assets/detection-A_EFsCI6.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/common-Ceipz8Vt.js">
+  <link rel="modulepreload" crossorigin href="/assets/headerFooterLoader-LYlhFStm.js">
+  <link rel="stylesheet" crossorigin href="/assets/headerFooterLoader-BAK8Xp3D.css">
+  <link rel="stylesheet" crossorigin href="/assets/detection-wC9uOI_D.css">
+</head>
+<body>
+  <!-- Reserve a container for the dynamically loaded header -->
+  <header id="header-container"></header>
+
+  <!-- Main content area for detection functionality -->
+  <main class="detection-container">
+    <div class="controls">
+      <!-- Page heading -->
+      <h1>Object Detection</h1>
+
+      <!-- Detection form -->
+      <form id="detection-form">
+        <!-- Dropdown menu to select the model -->
+        <label for="model-select">Select Model:</label>
+        <select id="model-select" required>
+          <option value="yolo11n">YOLO11n</option>
+          <option value="yolo11s">YOLO11s</option>
+          <option value="yolo11m">YOLO11m</option>
+          <option value="yolo11l">YOLO11l</option>
+          <option value="yolo11x">YOLO11x</option>
+        </select>
+
+        <!-- Label and hidden file input for choosing an image -->
+        <label for="image-input" class="choose-file-btn">Choose File</label>
+        <input type="file" id="image-input" accept="image/*" hidden />
+
+        <!-- Button to remove the selected image -->
+        <button type="button" id="remove-image-btn" class="remove-image-btn">Remove Image</button>
+
+        <!-- Submit button to start detection -->
+        <button type="submit" class="detect-btn">Detect</button>
+
+        <!-- Error message container -->
+        <p id="detection-error" class="error-message"></p>
+      </form>
+
+      <!-- Container to display detection results -->
+      <div id="detection-result-container">
+        <h2>Detection Results</h2>
+        <pre id="detection-result"></pre>
+      </div>
+    </div>
+
+    <!-- Preview area for image display and processing -->
+    <div class="preview">
+      <!-- Drop area for dragging and dropping files -->
+      <div class="file-drop-area" id="file-drop-area">
+        <canvas id="image-canvas"></canvas>
+      </div>
+    </div>
+  </main>
+
+  <!-- Reserve a container for the dynamically loaded footer -->
+  <footer id="footer-container"></footer>
+</body>
+</html>
