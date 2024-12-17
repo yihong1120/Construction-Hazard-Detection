@@ -362,7 +362,8 @@ class Utils:
         Raises:
             HTTPException: If the request is not made from localhost.
         """
-        if request.client.host not in ['127.0.0.1', '::1']:
+        client = request.client
+        if client is None or client.host not in ['127.0.0.1', '::1']:
             raise HTTPException(
                 status_code=403,
                 detail='Access is restricted to localhost only.',
