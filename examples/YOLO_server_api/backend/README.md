@@ -46,7 +46,7 @@ Update the configuration in `config.py` or `.env`:
 ### 3. Run the Server
 You can start the server with:
 ```sh
-uvicorn examples.YOLO_server_api.app:sio_app --host 127.0.0.1 --port 8000
+uvicorn examples.YOLO_server_api.backend.app:sio_app --host 127.0.0.1 --port 8000
 ```
 
 ### 4. Send Requests
@@ -58,7 +58,7 @@ Use tools like `curl`, Postman, or your browser to interact with the API.
 
 ### YOLO Server API Endpoints
 
-- **`POST /detect`**: Perform object detection on an uploaded image.
+- **`POST /api/detect`**: Perform object detection on an uploaded image.
   - **Parameters**:
     - `file` (image): The image file for detection.
     - `model` (str): The YOLO model to use (default: `yolo11n`).
@@ -71,7 +71,7 @@ Use tools like `curl`, Postman, or your browser to interact with the API.
 
 ### User Management Endpoints
 
-- **`POST /add_user`**: Add a new user.
+- **`POST /api/add_user`**: Add a new user.
   - **Parameters**:
     - `username` (str): The username.
     - `password` (str): The password.
@@ -83,7 +83,7 @@ Use tools like `curl`, Postman, or your browser to interact with the API.
          http://localhost:8000/add_user
     ```
 
-- **`DELETE /delete_user/<username>`**: Delete a user.
+- **`DELETE /api/delete_user/<username>`**: Delete a user.
   - **Parameters**:
     - `username` (str): The username to delete.
   - **Example**:
@@ -91,7 +91,7 @@ Use tools like `curl`, Postman, or your browser to interact with the API.
     curl -X DELETE http://localhost:8000/delete_user/admin
     ```
 
-- **`PUT /update_username`**: Update a user's username.
+- **`PUT /api/update_username`**: Update a user's username.
   - **Parameters**:
     - `old_username` (str): Existing username.
     - `new_username` (str): New username.
@@ -102,7 +102,7 @@ Use tools like `curl`, Postman, or your browser to interact with the API.
          http://localhost:8000/update_username
     ```
 
-- **`PUT /update_password`**: Update a user's password.
+- **`PUT /api/update_password`**: Update a user's password.
   - **Parameters**:
     - `username` (str): The username.
     - `new_password` (str): The new password.
@@ -113,7 +113,7 @@ Use tools like `curl`, Postman, or your browser to interact with the API.
          http://localhost:8000/update_password
     ```
 
-- **`PUT /set_user_active_status`**: Set a user's active status.
+- **`PUT /api/set_user_active_status`**: Set a user's active status.
   - **Parameters**:
     - `username` (str): The username.
     - `is_active` (bool): Active status (`true` or `false`).
@@ -128,7 +128,7 @@ Use tools like `curl`, Postman, or your browser to interact with the API.
 
 ### Models Management Endpoints
 
-- **`POST /model_file_update`**: Update a YOLO model file.
+- **`POST /api/model_file_update`**: Update a YOLO model file.
   - **Parameters**:
     - `model` (str): Model name.
     - `file` (file): Model file to upload.
@@ -137,7 +137,7 @@ Use tools like `curl`, Postman, or your browser to interact with the API.
     curl -X POST -F "model=yolo11n" -F "file=@path/to/model.pt" http://localhost:8000/model_file_update
     ```
 
-- **`POST /get_new_model`**: Retrieve an updated YOLO model file if available.
+- **`POST /api/get_new_model`**: Retrieve an updated YOLO model file if available.
   - **Parameters**:
     - `model` (str): Model name.
     - `last_update_time` (ISO 8601 string): Last update time.

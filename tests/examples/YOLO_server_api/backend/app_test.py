@@ -10,8 +10,8 @@ import socketio
 from fastapi.testclient import TestClient
 from fastapi_jwt import JwtAccessBearer
 
-from examples.YOLO_server_api.app import app
-from examples.YOLO_server_api.app import lifespan
+from examples.YOLO_server_api.backend.app import app
+from examples.YOLO_server_api.backend.app import lifespan
 
 
 class TestApp(unittest.IsolatedAsyncioTestCase):
@@ -26,14 +26,14 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         self.client = TestClient(app)
 
     @patch(
-        'examples.YOLO_server_api.app.redis.from_url',
+        'examples.YOLO_server_api.backend.app.redis.from_url',
         new_callable=AsyncMock,
     )
     @patch(
-        'examples.YOLO_server_api.app.scheduler.shutdown',
+        'examples.YOLO_server_api.backend.app.scheduler.shutdown',
         new_callable=MagicMock,
     )
-    @patch('examples.YOLO_server_api.app.engine', autospec=True)
+    @patch('examples.YOLO_server_api.backend.app.engine', autospec=True)
     async def test_redis_initialization(
         self,
         mock_engine: MagicMock,
@@ -64,14 +64,14 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
             mock_scheduler_shutdown.assert_not_called()
 
     @patch(
-        'examples.YOLO_server_api.app.FastAPILimiter.init',
+        'examples.YOLO_server_api.backend.app.FastAPILimiter.init',
         new_callable=AsyncMock,
     )
     @patch(
-        'examples.YOLO_server_api.app.redis.from_url',
+        'examples.YOLO_server_api.backend.app.redis.from_url',
         new_callable=AsyncMock,
     )
-    @patch('examples.YOLO_server_api.app.engine', autospec=True)
+    @patch('examples.YOLO_server_api.backend.app.engine', autospec=True)
     async def test_lifespan_context(
         self,
         mock_engine: MagicMock,
@@ -113,7 +113,7 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         self.assertIn(response.status_code, [200, 404])
 
     @patch(
-        'examples.YOLO_server_api.app.JwtAccessBearer.__init__',
+        'examples.YOLO_server_api.backend.app.JwtAccessBearer.__init__',
         return_value=None,
     )
     def test_jwt_initialization(

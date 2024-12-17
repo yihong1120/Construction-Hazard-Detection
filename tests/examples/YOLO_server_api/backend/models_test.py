@@ -13,11 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import sessionmaker
 
-from examples.YOLO_server_api.models import Base
-from examples.YOLO_server_api.models import DetectionModelManager
-from examples.YOLO_server_api.models import get_db
-from examples.YOLO_server_api.models import ModelFileChangeHandler
-from examples.YOLO_server_api.models import User
+from examples.YOLO_server_api.backend.models import Base
+from examples.YOLO_server_api.backend.models import DetectionModelManager
+from examples.YOLO_server_api.backend.models import get_db
+from examples.YOLO_server_api.backend.models import ModelFileChangeHandler
+from examples.YOLO_server_api.backend.models import User
 
 # Define the in-memory database URI for testing
 DATABASE_URL = 'sqlite:///:memory:'
@@ -97,7 +97,7 @@ class TestDetectionModelManager(unittest.TestCase):
         """
         # Patch AutoDetectionModel to avoid actual model loading
         self.patcher = patch(
-            'examples.YOLO_server_api.models.AutoDetectionModel',
+            'examples.YOLO_server_api.backend.models.AutoDetectionModel',
         )
         self.mock_model = self.patcher.start()
         self.model_manager = DetectionModelManager()
@@ -204,7 +204,7 @@ class TestDatabase(unittest.TestCase):
         """
         async for session in get_db():
             return session
-        return None
+        raise RuntimeError('Failed to create AsyncSession.')
 
     def test_get_db(self) -> None:
         """

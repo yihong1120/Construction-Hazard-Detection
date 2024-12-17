@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 
-from examples.YOLO_server_api.security import update_secret_key
+from examples.YOLO_server_api.backend.security import update_secret_key
 
 
 class TestUpdateSecretKey(unittest.TestCase):
@@ -19,7 +19,7 @@ class TestUpdateSecretKey(unittest.TestCase):
         """
         self.app: FastAPI = FastAPI()
 
-    @patch('examples.YOLO_server_api.security.secrets.token_urlsafe')
+    @patch('examples.YOLO_server_api.backend.security.secrets.token_urlsafe')
     def test_update_secret_key(
         self, mock_token_urlsafe: unittest.mock.MagicMock,
     ) -> None:

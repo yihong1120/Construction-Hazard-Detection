@@ -117,7 +117,7 @@ async def remove_overlapping_labels(
             category_indices['hardhat'],
             category_indices['no_hardhat'],
             datas,
-            0.8,
+            0.5,
         ),
     )
     to_remove.update(
@@ -125,7 +125,7 @@ async def remove_overlapping_labels(
             category_indices['safety_vest'],
             category_indices['no_safety_vest'],
             datas,
-            0.8,
+            0.5,
         ),
     )
 

@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from examples.YOLO_server_api.config import Settings
+from examples.YOLO_server_api.backend.config import Settings
 
 
 class TestSettings(unittest.TestCase):

@@ -9,10 +9,10 @@ from httpx import ASGITransport
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from examples.YOLO_server_api.auth import auth_router
-from examples.YOLO_server_api.auth import UserLogin
-from examples.YOLO_server_api.models import get_db
-from examples.YOLO_server_api.models import User
+from examples.YOLO_server_api.backend.auth import auth_router
+from examples.YOLO_server_api.backend.auth import UserLogin
+from examples.YOLO_server_api.backend.models import get_db
+from examples.YOLO_server_api.backend.models import User
 
 # Initialise FastAPI app
 app = FastAPI()
@@ -51,10 +51,10 @@ class TestAuth(unittest.IsolatedAsyncioTestCase):
 
         # Patch user cache and JWT access token generator
         self.user_cache_patcher = patch(
-            'examples.YOLO_server_api.auth.user_cache', {},
+            'examples.YOLO_server_api.backend.auth.user_cache', {},
         )
         self.jwt_access_patcher = patch(
-            'examples.YOLO_server_api.auth.jwt_access',
+            'examples.YOLO_server_api.backend.auth.jwt_access',
         )
 
         # Start patchers and assign mock objects to instance variables
@@ -106,7 +106,7 @@ class TestAuth(unittest.IsolatedAsyncioTestCase):
 
         # Send a POST request with the username that does not exist
         response = await self.aclient.post(
-            '/token', json={
+            '/api/token', json={
                 'username': self.username,
                 'password': self.password,
             },
@@ -129,7 +129,7 @@ class TestAuth(unittest.IsolatedAsyncioTestCase):
 
         # Send a POST request to retrieve a token
         response = await self.aclient.post(
-            '/token', json={
+            '/api/token', json={
                 'username': self.username,
                 'password': self.password,
             },
@@ -154,7 +154,7 @@ class TestAuth(unittest.IsolatedAsyncioTestCase):
 
         # Send a POST request with incorrect password
         response = await self.aclient.post(
-            '/token', json={
+            '/api/token', json={
                 'username': self.username,
                 'password': 'wrongpassword',
             },
@@ -175,7 +175,7 @@ class TestAuth(unittest.IsolatedAsyncioTestCase):
 
         # Send a POST request to retrieve a token for cached user
         response = await self.aclient.post(
-            '/token', json={
+            '/api/token', json={
                 'username': self.username,
                 'password': self.password,
             },
