@@ -115,7 +115,7 @@ class TestDetectionModelManager(unittest.TestCase):
         # Confirm model is loaded with correct parameters
         self.assertEqual(self.mock_model.from_pretrained.call_count, 5)
         self.mock_model.from_pretrained.assert_any_call(
-            'yolov8', model_path=str(Path('models/pt/best_yolo11n.pt')),
+            'yolo11', model_path=str(Path('models/pt/best_yolo11n.pt')),
             device='cuda:0',
         )
 
