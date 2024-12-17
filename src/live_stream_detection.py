@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import datetime
 import gc
 import os
@@ -10,6 +9,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import aiohttp
+import anyio
 import cv2
 import numpy as np
 from dotenv import load_dotenv
@@ -80,7 +80,7 @@ class LiveStreamDetector:
         """
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{self.api_url}/token",
+                f"{self.api_url}/api/token",
                 json={
                     'username': os.getenv('API_USERNAME'),
                     'password': os.getenv('API_PASSWORD'),
@@ -148,7 +148,7 @@ class LiveStreamDetector:
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{self.api_url}/detect",
+                f"{self.api_url}/api/detect",
                 data=data,
                 params={'model': self.model_key},
                 headers=headers,
@@ -173,7 +173,7 @@ class LiveStreamDetector:
         if self.model is None:
             model_path = Path('models/pt/') / f"best_{self.model_key}.pt"
             self.model = AutoDetectionModel.from_pretrained(
-                'yolov8',
+                'yolo11',
                 model_path=model_path,
                 device='cuda:0',
             )
@@ -451,4 +451,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    asyncio.run(main)
+    anyio.run(main)
