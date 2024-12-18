@@ -6,7 +6,12 @@ import logging
 import os
 from datetime import datetime
 
+import numpy as np
 import redis.asyncio as redis
+from shapely.geometry import MultiPoint
+from shapely.geometry import Point
+from shapely.geometry import Polygon
+from sklearn.cluster import HDBSCAN
 from watchdog.events import FileSystemEventHandler
 
 
@@ -50,6 +55,260 @@ class Utils:
         return base64.urlsafe_b64encode(
             value.encode('utf-8'),
         ).decode('utf-8')
+
+    @staticmethod
+    def normalise_bbox(bbox: list[float]) -> list[float]:
+        """
+        Normalises the bounding box coordinates.
+
+        Args:
+            bbox (List[float]): The bounding box coordinates.
+
+        Returns:
+            List[float]: Normalised coordinates.
+        """
+        left_x = min(bbox[0], bbox[2])
+        right_x = max(bbox[0], bbox[2])
+        top_y = min(bbox[1], bbox[3])
+        bottom_y = max(bbox[1], bbox[3])
+        if len(bbox) > 4:
+            return [left_x, top_y, right_x, bottom_y, bbox[4], bbox[5]]
+        return [left_x, top_y, right_x, bottom_y]
+
+    @staticmethod
+    def normalise_data(datas: list[list[float]]) -> list[list[float]]:
+        """
+        Normalises a list of bounding box data.
+
+        Args:
+            datas (List[List[float]]): List of bounding box data.
+
+        Returns:
+            List[List[float]]: Normalised data.
+        """
+        return [Utils.normalise_bbox(data[:4] + data[4:]) for data in datas]
+
+    @staticmethod
+    def overlap_percentage(bbox1: list[float], bbox2: list[float]) -> float:
+        """
+        Calculate the overlap percentage between two bounding boxes.
+
+        Args:
+            bbox1 (List[float]): The first bounding box.
+            bbox2 (List[float]): The second bounding box.
+
+        Returns:
+            float: The overlap percentage.
+        """
+        # Calculate the coordinates of the intersection rectangle
+        x1 = max(bbox1[0], bbox2[0])
+        y1 = max(bbox1[1], bbox2[1])
+        x2 = min(bbox1[2], bbox2[2])
+        y2 = min(bbox1[3], bbox2[3])
+
+        # Calculate the area of the intersection rectangle
+        overlap_area = max(0, x2 - x1) * max(0, y2 - y1)
+
+        # Calculate the area of both bounding boxes
+        area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+        area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
+
+        # Calculate the overlap percentage
+        return overlap_area / float(area1 + area2 - overlap_area)
+
+    @staticmethod
+    def is_driver(person_bbox: list[float], vehicle_bbox: list[float]) -> bool:
+        """
+        Check if a person is a driver based on position near a vehicle.
+
+        Args:
+            person_bbox (List[float]): Bounding box of person.
+            vehicle_bbox (List[float]): Bounding box of vehicle.
+
+        Returns:
+            bool: True if the person is likely the driver, False otherwise.
+        """
+        # Extract coordinates and dimensions of person and vehicle boxes
+        person_bottom_y = person_bbox[3]
+        person_top_y = person_bbox[1]
+        person_left_x = person_bbox[0]
+        person_right_x = person_bbox[2]
+        person_width = person_bbox[2] - person_bbox[0]
+        person_height = person_bbox[3] - person_bbox[1]
+
+        vehicle_top_y = vehicle_bbox[1]
+        vehicle_bottom_y = vehicle_bbox[3]
+        vehicle_left_x = vehicle_bbox[0]
+        vehicle_right_x = vehicle_bbox[2]
+        vehicle_height = vehicle_bbox[3] - vehicle_bbox[1]
+
+        # 1. Check vertical bottom position: person's bottom should be above
+        #    the vehicle's bottom by at least half the person's height
+        if not (
+            person_bottom_y < vehicle_bottom_y
+            and vehicle_bottom_y - person_bottom_y >= person_height / 2
+        ):
+            return False
+
+        # 2. Check horizontal position: person's edges should not extend
+        #    beyond half the width of the person from the vehicle's edges
+        if not (
+            person_left_x >= vehicle_left_x - person_width / 2
+            and person_right_x <= vehicle_right_x + person_width / 2
+        ):
+            return False
+
+        # 3. The person's top must be below the vehicle's top
+        if not (person_top_y > vehicle_top_y):
+            return False
+
+        # 4. Person's height is less than or equal to half the vehicle's height
+        if not (person_height <= vehicle_height / 2):
+            return False
+
+        return True
+
+    @staticmethod
+    def is_dangerously_close(
+        person_bbox: list[float],
+        vehicle_bbox: list[float],
+        label: str,
+    ) -> bool:
+        """
+        Determine if a person is dangerously close to machinery or vehicles.
+
+        Args:
+            person_bbox (List[float]): Bounding box of person.
+            vehicle_bbox (List[float]): Machine/vehicle box.
+            label (str): Type of the second object ('machinery' or 'vehicle').
+
+        Returns:
+            bool: True if the person is dangerously close, False otherwise.
+        """
+        # Calculate dimensions of the person bounding box
+        person_width = person_bbox[2] - person_bbox[0]
+        person_height = person_bbox[3] - person_bbox[1]
+        person_area = person_width * person_height
+
+        # Calculate the area of the vehicle bounding box
+        vehicle_area = (vehicle_bbox[2] - vehicle_bbox[0]) * \
+            (vehicle_bbox[3] - vehicle_bbox[1])
+        acceptable_ratio = 0.1 if label == 'vehicle' else 0.05
+
+        # Check if person area ratio is acceptable compared to vehicle area
+        if person_area / vehicle_area > acceptable_ratio:
+            return False
+
+        # Define danger distances
+        danger_distance_horizontal = 5 * person_width
+        danger_distance_vertical = 1.5 * person_height
+
+        # Calculate min horizontal/vertical distance between person and vehicle
+        horizontal_distance = min(
+            abs(person_bbox[2] - vehicle_bbox[0]),
+            abs(person_bbox[0] - vehicle_bbox[2]),
+        )
+        vertical_distance = min(
+            abs(person_bbox[3] - vehicle_bbox[1]),
+            abs(person_bbox[1] - vehicle_bbox[3]),
+        )
+
+        # Determine if the person is dangerously close
+        return (
+            horizontal_distance <= danger_distance_horizontal
+            and vertical_distance <= danger_distance_vertical
+        )
+
+    @staticmethod
+    def detect_polygon_from_cones(
+        datas: list[list[float]],
+        clusterer: HDBSCAN,
+    ) -> list[Polygon]:
+        """
+        Detects polygons from the safety cones in the detection data.
+
+        Args:
+            datas (List[List[float]]): The detection data.
+
+        Returns:
+            List[Polygon]: A list of polygons formed by the safety cones.
+        """
+        if not datas:
+            return []
+
+        # Get positions of safety cones
+        cone_positions = np.array([
+            (
+                (float(data[0]) + float(data[2])) / 2,
+                (float(data[1]) + float(data[3])) / 2,
+            )
+            for data in datas if data[5] == 6
+        ])
+
+        # Check if there are at least three safety cones to form a polygon
+        if len(cone_positions) < 3:
+            return []
+
+        # Cluster the safety cones
+        labels = clusterer.fit_predict(cone_positions)
+
+        # Extract clusters
+        clusters: dict[int, list[np.ndarray]] = {}
+        for point, label in zip(cone_positions, labels):
+            if label == -1:
+                continue  # Skip noise points
+            if label not in clusters:
+                clusters[label] = []
+            clusters[label].append(point)
+
+        # Create polygons from clusters
+        polygons = []
+        for cluster_points in clusters.values():
+            if len(cluster_points) >= 3:
+                polygon = MultiPoint(cluster_points).convex_hull
+                polygons.append(polygon)
+
+        return polygons
+
+    @staticmethod
+    def calculate_people_in_controlled_area(
+        polygons: list[Polygon],
+        datas: list[list[float]],
+    ) -> int:
+        """
+        Calculates the number of people within the safety cone area.
+
+        Args:
+            polygons (List[Polygon]): Polygons representing controlled areas.
+            datas (List[List[float]]): The detection data.
+
+        Returns:
+            int: The number of people within the controlled area.
+        """
+        # Check if there are any detections
+        if not datas:
+            return 0
+
+        # Check if there are valid polygons
+        if not polygons:
+            return 0
+
+        # Use a set to track unique people
+        unique_people = set()
+
+        # Count the number of people within the controlled area
+        for data in datas:
+            if data[5] == 5:  # Check if it's a person
+                x_center = (data[0] + data[2]) / 2
+                y_center = (data[1] + data[3]) / 2
+                point = Point(x_center, y_center)
+                for polygon in polygons:
+                    if polygon.contains(point):
+                        # Update the set of unique people
+                        unique_people.add((x_center, y_center))
+                        break  # No need to check other polygons
+
+        return len(unique_people)
 
 
 class FileEventHandler(FileSystemEventHandler):
