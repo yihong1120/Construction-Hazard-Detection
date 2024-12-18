@@ -200,16 +200,16 @@ class DataAugmentation:
             # Blur and noise
             A.MotionBlur(blur_limit=(3, 7), p=1.0),
             A.GaussianBlur(blur_limit=(1, 3), p=1.0),
-            A.GaussNoise(var_limit=(10.0, 50.0), p=1.0),
+            A.GaussNoise(std_range=(0.1, 0.5), p=1.0),
             A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.05, 0.2), p=1.0),
             A.MedianBlur(blur_limit=3, p=1.0),
             # Colour space and contrast adjustments
             A.CLAHE(clip_limit=2, p=1.0),
             A.Sharpen(alpha=(0.1, 0.3), lightness=(0.7, 1.0), p=1.0),
             A.CoarseDropout(
-                num_holes_range=(1, 6), hole_height_range=(
-                    0, 6,
-                ), hole_width_range=(0, 6), p=1.0,
+                num_holes_range=(1, 6),
+                hole_height_range=(1, 6),
+                hole_width_range=(1, 6), p=1.0,
             ),
             A.ToGray(p=1),
             A.Equalize(p=1),
@@ -217,8 +217,8 @@ class DataAugmentation:
             A.InvertImg(p=1),
             # Special effects
             A.RandomShadow(
-                shadow_roi=(0.3, 0.3, 0.7, 0.7),
-                num_shadows_limit=(1, 1), shadow_dimension=3, p=1.0,
+                shadow_roi=(0, 0.5, 1, 1),
+                num_shadows_limit=(1, 1), shadow_dimension=5, p=1.0,
             ),
             # A.RandomFog(fog_coef_lower=0.05, fog_coef_upper=0.1, p=1.0),
             A.RandomSnow(
@@ -247,7 +247,11 @@ class DataAugmentation:
                 shift_limit=(0.05, 0.1), p=1.0,
             ),
             A.Emboss(p=1),
-            A.MaskDropout(p=1),
+            A.MaskDropout(
+                max_objects=3,
+                mask_fill_value=0,
+                p=1.0,
+            ),
             A.Spatter(p=1),
             A.ToSepia(p=1),
             A.FancyPCA(alpha=0.1, p=1),

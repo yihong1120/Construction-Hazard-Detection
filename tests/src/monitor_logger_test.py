@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -171,6 +173,19 @@ class TestLoggerConfig(unittest.TestCase):
         mock_logger_instance.info.assert_called_once_with(
             'Logging setup complete.',
         )
+
+    def test_if_main_called(self) -> None:
+        """
+        Test case to ensure `main` is called when the script is executed.
+        """
+        result = subprocess.run(
+            [sys.executable, 'src/monitor_logger.py'],
+            capture_output=True,
+            text=True,
+        )
+        print(f"STDOUT: {result.stdout}")
+        print(f"STDERR: {result.stderr}")
+        self.assertIn('Logging setup complete.', result.stderr)
 
     def tearDown(self) -> None:
         """

@@ -160,15 +160,24 @@ class TestDataAugmentation(unittest.TestCase):
                 :, :3,
             ] if img.shape[2] == 4 else img
 
-            self.augmenter.augment_image(Path('image_with_alpha.jpg'))
-            self.assertTrue(mock_imread.called)
-            self.assertTrue(mock_cvtColor.called)
+            # Mock the mask to be used in MaskDropout
+            mock_mask = np.random.randint(0, 2, (100, 100), dtype=np.uint8)
 
-            # Ensure the image has 3 channels after removing the alpha channel
-            processed_image = mock_cvtColor(mock_image, None)
-            self.assertEqual(processed_image.shape[2], 3)
+            with patch(
+                'examples.YOLO_data_augmentation.'
+                'data_augmentation_albumentations.A.MaskDropout',
+                return_value={'mask': mock_mask},
+            ):
+                self.augmenter.augment_image(Path('image_with_alpha.jpg'))
+                self.assertTrue(mock_imread.called)
+                self.assertTrue(mock_cvtColor.called)
 
-            self.assertTrue(mock_imwrite.called)
+                # Ensure the image has 3 channels
+                # after removing the alpha channel
+                processed_image = mock_cvtColor(mock_image, None)
+                self.assertEqual(processed_image.shape[2], 3)
+
+                self.assertTrue(mock_imwrite.called)
 
     @patch(
         'examples.YOLO_data_augmentation.data_augmentation_albumentations.'
