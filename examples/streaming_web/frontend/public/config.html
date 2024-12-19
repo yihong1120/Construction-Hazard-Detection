@@ -50,5 +50,96 @@
             </button>
         </div>
     </div>
+
+    <!-- Template for each configuration item -->
+    <template id="config-item-template">
+        <div class="config-item">
+            <div class="config-header">
+                <div class="site-stream">
+                    <label>
+                        Site:
+                        <input type="text" name="site" value="" />
+                    </label>
+                    <span>-</span>
+                    <label>
+                        Stream Name:
+                        <input type="text" name="stream_name" value="" />
+                    </label>
+                </div>
+                <button type="button" class="delete-config-btn" style="display:none;">
+                    <i class="fas fa-trash-alt"></i>
+                </button>
+            </div>
+            <label>
+                Video URL: <input type="text" name="video_url" value="" />
+            </label>
+            <label class="model-key-label">
+                Model Key:
+                <select name="model_key">
+                    <option value="yolo11n">yolo11n</option>
+                    <option value="yolo11s">yolo11s</option>
+                    <option value="yolo11m">yolo11m</option>
+                    <option value="yolo11l">yolo11l</option>
+                    <option value="yolo11x">yolo11x</option>
+                </select>
+            </label>
+            <label class="expire-date-container">
+                Expiry Date:
+                <input type="date" name="expire_date" />
+                <input type="text" value="No Expire Date" disabled style="display:none;">
+            </label>
+            <label>
+                <input type="checkbox" name="detect_with_server" />
+                Detect with Server
+            </label>
+            <fieldset>
+                <legend>Detection Items</legend>
+                <label>
+                    <input type="checkbox" name="detect_no_safety_vest_or_helmet" />
+                    No Safety Vest Or Helmet
+                </label>
+                <label>
+                    <input type="checkbox" name="detect_near_machinery_or_vehicle" />
+                    Near Machinery Or Vehicle
+                </label>
+                <label>
+                    <input type="checkbox" name="detect_in_restricted_area" />
+                    In Restricted Area
+                </label>
+            </fieldset>
+            <fieldset>
+                <legend>Notifications</legend>
+                <div class="notifications-container">
+                </div>
+                <button type="button" class="add-notification" style="display:none;">
+                    <i class="fas fa-plus"></i> Add Notification
+                </button>
+            </fieldset>
+        </div>
+    </template>
+
+    <!-- Template for notification item -->
+    <template id="notification-item-template">
+        <div class="notification-item">
+            <button type="button" class="delete-notification" style="display:none;"><i class="fas fa-times"></i></button>
+            <div class="notification-content">
+                <label>
+                    Token: <input type="text" name="line_token" value="" />
+                </label>
+                <label>
+                    Language:
+                    <select name="language">
+                        <option value="zh-TW">zh-TW</option>
+                        <option value="zh-CN">zh-CN</option>
+                        <option value="en">en</option>
+                        <option value="fr">fr</option>
+                        <option value="id">id</option>
+                        <option value="vt">vt</option>
+                        <option value="th">th</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+    </template>
 </body>
 </html>

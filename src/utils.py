@@ -5,7 +5,9 @@ import base64
 import logging
 import os
 from datetime import datetime
+from typing import Any
 
+import cv2
 import numpy as np
 import redis.asyncio as redis
 from shapely.geometry import MultiPoint
@@ -13,6 +15,8 @@ from shapely.geometry import Point
 from shapely.geometry import Polygon
 from sklearn.cluster import HDBSCAN
 from watchdog.events import FileSystemEventHandler
+
+from src.lang_config import Translator
 
 
 class Utils:
@@ -55,6 +59,81 @@ class Utils:
         return base64.urlsafe_b64encode(
             value.encode('utf-8'),
         ).decode('utf-8')
+
+    @staticmethod
+    def encode_frame(frame: Any) -> bytes | None:
+        try:
+            _, buffer = cv2.imencode('.png', frame)
+            return buffer.tobytes()
+        except Exception as e:
+            logging.error(f"Error encoding frame: {e}")
+            return None
+
+    @staticmethod
+    def generate_message(
+        stream_name: str,
+        detection_time: datetime,
+        warnings: list[str],
+        controlled_zone_warning: list[str],
+        language: str,
+        is_working_hour: bool,
+    ) -> str | None:
+        """
+        Generate a message to send to the notification service.
+
+        Args:
+            stream_name (str): The name of the stream.
+            detection_time (datetime): The time of detection.
+            warnings (list[str]): The list of warnings.
+            controlled_zone_warning (list[str]):
+                The list of controlled zone warnings.
+            language (str): The language for the warnings.
+            is_working_hour (bool): Whether it is working hours.
+
+        Returns:
+            str | None: The message to send, or None if no message to send.
+        """
+        if is_working_hour and warnings:
+            translated_warnings = Translator.translate_warning(
+                tuple(warnings), language,
+            )
+            return (
+                f"{stream_name}\n[{detection_time}]\n"
+                + '\n'.join(translated_warnings)
+            )
+
+        if not is_working_hour and controlled_zone_warning:
+            translated_controlled_zone_warning = (
+                Translator.translate_warning(
+                    tuple(controlled_zone_warning), language,
+                )
+            )
+            return (
+                f"{stream_name}\n[{detection_time}]\n"
+                + '\n'.join(translated_controlled_zone_warning)
+            )
+
+        return None
+
+    @staticmethod
+    def should_notify(
+        timestamp: int,
+        last_notification_time: int,
+        cooldown_period: int = 300,
+    ) -> bool:
+        """
+        Check if a notification should be sent based on the cooldown period.
+
+        Args:
+            timestamp (int): The current timestamp.
+            last_notification_time (int):
+                The timestamp of the last notification.
+            cooldown_period (int): The cooldown period in seconds.
+
+        Returns:
+            bool: True if a notification should be sent, False otherwise.
+        """
+        return (timestamp - last_notification_time) >= cooldown_period
 
     @staticmethod
     def normalise_bbox(bbox: list[float]) -> list[float]:
@@ -178,8 +257,8 @@ class Utils:
         Determine if a person is dangerously close to machinery or vehicles.
 
         Args:
-            person_bbox (List[float]): Bounding box of person.
-            vehicle_bbox (List[float]): Machine/vehicle box.
+            person_bbox (list[float]): Bounding box of person.
+            vehicle_bbox (list[float]): Machine/vehicle box.
             label (str): Type of the second object ('machinery' or 'vehicle').
 
         Returns:
@@ -228,10 +307,10 @@ class Utils:
         Detects polygons from the safety cones in the detection data.
 
         Args:
-            datas (List[List[float]]): The detection data.
+            datas (list[list[float]]): The detection data.
 
         Returns:
-            List[Polygon]: A list of polygons formed by the safety cones.
+            list[Polygon]: A list of polygons formed by the safety cones.
         """
         if not datas:
             return []
@@ -279,8 +358,8 @@ class Utils:
         Calculates the number of people within the safety cone area.
 
         Args:
-            polygons (List[Polygon]): Polygons representing controlled areas.
-            datas (List[List[float]]): The detection data.
+            polygons (list[Polygon]): Polygons representing controlled areas.
+            datas (list[list[float]]): The detection data.
 
         Returns:
             int: The number of people within the controlled area.
@@ -487,3 +566,44 @@ class RedisManager:
             logging.info('[INFO] Redis connection successfully closed.')
         except Exception as e:
             logging.error(f"[ERROR] Failed to close Redis connection: {e}")
+
+    async def store_to_redis(
+        self,
+        site: str,
+        stream_name: str,
+        frame_bytes: bytes | None,
+        warnings: list[str],
+        language: str = 'en',
+    ) -> None:
+        """
+        Store frame and warnings to a Redis stream.
+
+        Args:
+            site (str): Site name.
+            stream_name (str): Stream name.
+            frame_bytes (optional[bytes]): Encoded frame bytes.
+            warnings (list[str]): List of warnings.
+            language (str): Language for the warnings.
+        """
+        # Check if frame is None
+        if not frame_bytes:
+            return
+
+        # Generate the Redis key
+        key = f"stream_frame:{Utils.encode(site)}|{Utils.encode(stream_name)}"
+
+        # Translate warnings to the specified language
+        warnings_to_translate = warnings if warnings else ['No warning']
+        translated_warnings = Translator.translate_warning(
+            tuple(warnings_to_translate), language,
+        )
+        warnings_str = '\n'.join(translated_warnings)
+
+        try:
+            await self.add_to_stream(
+                key,
+                {'frame': frame_bytes, 'warnings': warnings_str},
+                maxlen=10,
+            )
+        except Exception as e:
+            logging.error(f"Error storing data to Redis: {e}")

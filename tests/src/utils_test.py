@@ -9,10 +9,12 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import numpy as np
 from shapely import Polygon
 from sklearn.cluster import HDBSCAN
 from watchdog.events import FileModifiedEvent
 
+from src.lang_config import Translator
 from src.utils import FileEventHandler
 from src.utils import RedisManager
 from src.utils import Utils
@@ -45,6 +47,128 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             value.encode('utf-8'),
         ).decode('utf-8')
         self.assertEqual(encoded_value, expected_value)
+
+    def test_encode_frame_success(self):
+        """
+        Test encoding a valid frame using `encode_frame`.
+        """
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        encoded_frame = Utils.encode_frame(frame)
+        self.assertIsNotNone(encoded_frame)
+
+    def test_encode_frame_failure(self):
+        """
+        Test encoding an invalid frame using `encode_frame`.
+        """
+        invalid_frame = None
+        encoded_frame = Utils.encode_frame(invalid_frame)
+        self.assertIsNone(encoded_frame)
+
+    def test_generate_message_working_hours(self):
+        """
+        Test generating a message during working hours.
+        """
+        stream_name = 'Test Stream'
+        detection_time = datetime.now()
+        warnings = ['Warning 1', 'Warning 2']
+        controlled_zone_warning = []
+        language = 'en'
+        is_working_hour = True
+
+        with patch.object(
+            Translator,
+            'translate_warning',
+            return_value=['Translated Warning 1', 'Translated Warning 2'],
+        ):
+            message = Utils.generate_message(
+                stream_name,
+                detection_time,
+                warnings,
+                controlled_zone_warning,
+                language,
+                is_working_hour,
+            )
+
+        self.assertIn('Translated Warning 1', message)
+        self.assertIn('Translated Warning 2', message)
+
+    def test_generate_message_non_working_hours(self):
+        """
+        Test generating a message outside working hours.
+        """
+        stream_name = 'Test Stream'
+        detection_time = datetime.now()
+        warnings = []
+        controlled_zone_warning = ['Controlled Area Warning']
+        language = 'zh-TW'
+        is_working_hour = False
+
+        with patch.object(
+            Translator,
+            'translate_warning',
+            return_value=['受控區域警告'],
+        ):
+            message = Utils.generate_message(
+                stream_name,
+                detection_time,
+                warnings,
+                controlled_zone_warning,
+                language,
+                is_working_hour,
+            )
+
+        self.assertIn('受控區域警告', message)
+
+    def test_generate_message_no_message(self):
+        """
+        Test generating a message when no conditions are met.
+        """
+        stream_name = 'Test Stream'
+        detection_time = datetime.now()
+        warnings = []
+        controlled_zone_warning = []
+        language = 'en'
+        is_working_hour = True
+
+        message = Utils.generate_message(
+            stream_name,
+            detection_time,
+            warnings,
+            controlled_zone_warning,
+            language,
+            is_working_hour,
+        )
+
+        self.assertIsNone(message)
+
+    def test_should_notify_true(self):
+        """
+        Test `should_notify` returning True when cooldown period has passed.
+        """
+        timestamp = int(datetime.now().timestamp())
+        last_notification_time = timestamp - 400
+        cooldown_period = 300
+
+        self.assertTrue(
+            Utils.should_notify(
+                timestamp, last_notification_time, cooldown_period,
+            ),
+        )
+
+    def test_should_notify_false(self):
+        """
+        Test `should_notify` returning False
+        when cooldown period has not passed.
+        """
+        timestamp = int(datetime.now().timestamp())
+        last_notification_time = timestamp - 200
+        cooldown_period = 300
+
+        self.assertFalse(
+            Utils.should_notify(
+                timestamp, last_notification_time, cooldown_period,
+            ),
+        )
 
     def test_is_driver(self) -> None:
         """
@@ -552,6 +676,143 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
                 '[ERROR] Failed to close Redis connection: Redis error',
                 log.output[0],
             )
+
+    async def test_store_to_redis_success(self):
+        """
+        Test successfully storing data to Redis.
+        """
+        site = 'Test Site'
+        stream_name = 'Test Stream'
+        frame_bytes = b'encoded_frame'
+        warnings = ['Warning: Someone is not wearing a hardhat!']
+        language = 'en'
+
+        # Mock the translate_warning function to return a specific value
+        with patch.object(
+            Translator,
+            'translate_warning',
+            return_value=['Translated Warning'],
+        ):
+            await self.redis_manager.store_to_redis(
+                site, stream_name, frame_bytes, warnings, language,
+            )
+
+        # Assert that xadd was called once
+        self.mock_redis_instance.xadd.assert_called_once()
+        call_args = self.mock_redis_instance.xadd.call_args[0]
+
+        # Assert that the stream name is correctly formed
+        self.assertTrue(call_args[0].startswith('stream_frame'))
+        # Assert that the frame bytes are correctly included
+        self.assertEqual(call_args[1]['frame'], b'encoded_frame')
+        # Assert that the warnings are correctly translated and included
+        self.assertEqual(
+            call_args[1]['warnings'],
+            'Translated Warning',
+        )
+
+    async def test_store_to_redis_no_frame(self):
+        """
+        Test not storing data when frame_bytes is None.
+        """
+        site = 'Test Site'
+        stream_name = 'Test Stream'
+        frame_bytes = None  # No frame provided
+        warnings = ['Warning: Test warning']
+        language = 'en'
+
+        await self.redis_manager.store_to_redis(
+            site, stream_name, frame_bytes, warnings, language,
+        )
+
+        # Assert that xadd was not called
+        self.mock_redis_instance.xadd.assert_not_called()
+
+    async def test_store_to_redis_translate_warning(self):
+        """
+        Test translating warnings before storing to Redis.
+        """
+        site = 'Test Site'
+        stream_name = 'Test Stream'
+        frame_bytes = b'encoded_frame'
+        warnings = ['Warning: 2 people have entered the controlled area!']
+        language = 'zh-TW'
+
+        # Mock the translate_warning function to return a specific value
+        with patch.object(
+            Translator, 'translate_warning', return_value=['警告: 2個人進入受控區域!'],
+        ):
+            await self.redis_manager.store_to_redis(
+                site, stream_name, frame_bytes, warnings, language,
+            )
+
+        # Assert that xadd was called once
+        self.mock_redis_instance.xadd.assert_called_once()
+        call_args = self.mock_redis_instance.xadd.call_args[0]
+
+        # Assert that the stream name is correctly formed
+        self.assertTrue(call_args[0].startswith('stream_frame'))
+        # Assert that the frame bytes are correctly included
+        self.assertEqual(call_args[1]['frame'], b'encoded_frame')
+        # Assert that the warnings are correctly translated and included
+        self.assertEqual(
+            call_args[1]['warnings'],
+            '警告: 2個人進入受控區域!',
+        )
+
+    async def test_store_to_redis_no_warning(self):
+        """
+        Test storing 'No warning' when there are no warnings.
+        """
+        site = 'Test Site'
+        stream_name = 'Test Stream'
+        frame_bytes = b'encoded_frame'
+        warnings = []
+        language = 'zh-TW'
+
+        # Mock the translate_warning function to return a specific value
+        with patch.object(
+            Translator, 'translate_warning', return_value=['無警告'],
+        ):
+            await self.redis_manager.store_to_redis(
+                site, stream_name, frame_bytes, warnings, language,
+            )
+
+        # Assert that xadd was called once
+        self.mock_redis_instance.xadd.assert_called_once()
+        call_args = self.mock_redis_instance.xadd.call_args[0]
+
+        # Assert that the warnings are correctly translated as 'No warning'
+        self.assertEqual(
+            call_args[1]['warnings'],
+            '無警告',
+        )
+
+    async def test_store_to_redis_exception(self):
+        """
+        Test handling an exception during storing to Redis.
+        """
+        site = 'Test Site'
+        stream_name = 'Test Stream'
+        frame_bytes = b'encoded_frame'
+        warnings = ['Warning: Test warning']
+        language = 'en'
+
+        # Mock add_to_stream to raise an exception
+        with patch.object(
+            self.redis_manager,
+            'add_to_stream',
+            side_effect=Exception('Redis error'),
+        ):
+            with self.assertLogs(level='ERROR') as log:
+                await self.redis_manager.store_to_redis(
+                    site, stream_name, frame_bytes, warnings, language,
+                )
+
+                # Assert that an error was logged
+                self.assertIn(
+                    'Error storing data to Redis: Redis error', log.output[0],
+                )
 
 
 if __name__ == '__main__':
