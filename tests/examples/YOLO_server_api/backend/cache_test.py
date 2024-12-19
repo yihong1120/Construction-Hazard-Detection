@@ -90,6 +90,44 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exc.exception.status_code, 429)
         self.assertEqual(exc.exception.detail, 'Rate limit exceeded')
 
+    async def test_rate_limiter_with_ttl_expiry(self):
+        """
+        Test rate limiter functionality where TTL is set because it was -1.
+        """
+        # Mock Redis and request
+        redis_pool = AsyncMock()
+        redis_pool.incr.return_value = 10  # Within limit
+        redis_pool.ttl.return_value = -1  # TTL not set
+
+        mock_request = MagicMock()
+        mock_request.app.state.redis_pool = redis_pool
+        mock_request.url.path = '/rate_limit_test'
+
+        # Mock JWT credentials
+        mock_jwt_access = MagicMock(
+            subject={'role': 'guest', 'username': 'test_user'},
+        )
+
+        # Call the rate limiter
+        remaining_requests = await custom_rate_limiter(
+            mock_request,
+            mock_jwt_access,
+        )
+
+        # Assert remaining requests are calculated correctly
+        self.assertEqual(remaining_requests, 24 - 10)
+
+        # Verify Redis interactions
+        redis_pool.incr.assert_called_once_with(
+            'rate_limit:guest:test_user:/rate_limit_test',
+        )
+        redis_pool.ttl.assert_called_once_with(
+            'rate_limit:guest:test_user:/rate_limit_test',
+        )
+        redis_pool.expire.assert_called_once_with(
+            'rate_limit:guest:test_user:/rate_limit_test', 86400,
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

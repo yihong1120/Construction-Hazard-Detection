@@ -17,7 +17,6 @@ from watchdog.observers import Observer
 
 from src.danger_detector import DangerDetector
 from src.drawing_manager import DrawingManager
-from src.lang_config import Translator
 from src.live_stream_detection import LiveStreamDetector
 from src.monitor_logger import LoggerConfig
 from src.notifiers.line_notifier import LineNotifier
@@ -241,17 +240,18 @@ class MainApp:
         detection_items: dict[str, bool] | None = {},
     ) -> None:
         """
-        Function to detect hazards, notify, log, save images (optional).
+        Process a single video stream with hazard detection, notifications,
+        and Redis storage.
 
         Args:
-            logger (logging.Logger): A logger instance for logging messages.
-            video_url (str): The URL of the live stream to monitor.
-            site (Optional[str]): The site for stream processing.
-            stream_name (str, optional): Image file name for notifications.
-                Defaults to 'demo_data/{site}/prediction_visual.png'.
-            notifications (Optional[dict]): Line tokens with their languages.
-            detect_with_server (bool): If run detection with server api or not.
-            detection_items (dict): The detection items to check for.
+            logger (logging.Logger): Logger instance for logging.
+            video_url (str): Video stream URL.
+            model_key (str): Detection model key.
+            site (str): Site name for the stream.
+            stream_name (str): Stream name for notifications.
+            notifications (dict): Line tokens with their languages.
+            detect_with_server (bool): Whether to use server for detection.
+            detection_items (dict): Items to detect.
         """
         if not is_windows:
             redis_manager = RedisManager()
@@ -274,227 +274,110 @@ class MainApp:
         line_notifier = LineNotifier()
 
         # Initialise the DangerDetector
-        danger_detector = DangerDetector(detection_items=detection_items or {})
+        danger_detector = DangerDetector(detection_items or {})
 
-        # Dictionary to store last notification time for each language
-        if notifications is None:
-            notifications = {}
-
+        # Notifications setup
         last_notification_times = {
-            line_token: int(
+            token: int(
                 time.time(),
-            ) - 300 for line_token in notifications
+            ) - 300 for token in (notifications or {})
         }
+
+        # Get the language for Redis storage
+        redis_storage_language = (
+            list(notifications.values())[-1] if notifications else 'en'
+        )
 
         # Use the generator function to process detections
         async for frame, timestamp in streaming_capture.execute_capture():
+            timestamp = int(timestamp)
             start_time = time.time()
+
             # Convert UNIX timestamp to datetime object and format it as string
             detection_time = datetime.fromtimestamp(timestamp)
-            current_hour = detection_time.hour
 
-            # Detect hazards in the frame
+            # Check if the current time is within working hours
+            is_working_hour = 7 <= detection_time.hour < 23
+
+            # Detection step
             datas, _ = await live_stream_detector.generate_detections(frame)
-
-            # Check for warnings and send notifications if necessary
             warnings, controlled_zone_polygon = danger_detector.detect_danger(
                 datas,
             )
+            controlled_zone_warning = [
+                w for w in warnings if 'controlled area' in w
+            ]
 
-            # Check if there is a warning for people in the controlled zone
-            controlled_zone_warning_str = next(
-                # Find the first warning containing 'controlled area'
-                (
-                    warning
-                    for warning in warnings
-                    if 'controlled area' in warning
-                ),
-                None,
-            )
+            # Notification step
+            for token, lang in (notifications or {}).items():
+                # Check if it is time to send a notification
+                if not Utils.should_notify(
+                    timestamp,
+                    last_notification_times[token],
+                ):
+                    continue
 
-            # Convert the warning to a list for translation
-            controlled_zone_warning: list[str] = [
-                controlled_zone_warning_str,
-            ] if controlled_zone_warning_str else []
+                # Generate the notification message
+                message = Utils.generate_message(
+                    stream_name,
+                    detection_time,
+                    warnings,
+                    controlled_zone_warning,
+                    lang,
+                    is_working_hour,
+                )
+                if not message:
+                    continue
 
-            # Track whether we sent any notification
-            last_line_token = None
-            last_language = None
-            frame_with_detections = None
-
-            if not notifications:
-                logger.info('No notifications provided.')
-
-            else:
-                # Check if notifications are provided
-                for line_token, language in notifications.items():
-                    # Check if notification should be skipped
-                    # (sent within last 300 seconds)
-                    if (timestamp - last_notification_times[line_token]) < 300:
-                        # Store the last token and language,
-                        # but don't send notifications
-                        last_line_token = line_token
-                        last_language = language
-                        # Skip the current notification
-                        # but remember the last one
-                        continue
-
-                    # Translate the warnings
-                    translated_warnings = Translator.translate_warning(
-                        tuple(warnings), language,
-                    )
-
-                    # Draw the detections on the frame
-                    frame_with_detections = (
-                        drawing_manager.draw_detections_on_frame(
-                            frame, controlled_zone_polygon, datas,
-                            language=language,
-                        )
-                    )
-
-                    # Convert the frame to a byte array
-                    _, buffer = cv2.imencode('.png', frame_with_detections)
-                    frame_bytes = buffer.tobytes()
-
-                    # If it is outside working hours and there is
-                    # a warning for people in the controlled zone
-                    if (
-                        controlled_zone_warning
-                        and not (7 <= current_hour < 18)
-                    ):
-                        translated_controlled_zone_warning: list[str] = (
-                            Translator.translate_warning(
-                                tuple(controlled_zone_warning), language,
-                            )
-                        )
-                        message = (
-                            f"{stream_name}\n[{detection_time}]\n"
-                            f"{translated_controlled_zone_warning}"
-                        )
-
-                    elif translated_warnings and (7 <= current_hour < 18):
-                        # During working hours, combine all warnings
-                        message = (
-                            f"{stream_name}\n[{detection_time}]\n"
-                            + '\n'.join(translated_warnings)
-                        )
-
-                    else:
-                        message = None
-
-                    # If a notification needs to be sent
-                    if not message:
-                        logger.info(
-                            'No warnings or outside notification time.',
-                        )
-                        continue
-
-                    notification_status = (
-                        await line_notifier.send_notification(
-                            message,
-                            image=frame_bytes
-                            if frame_bytes is not None
-                            else None,
-                            line_token=line_token,
-                        )
-                    )
-
-                    # To connect to the broadcast system, do it here:
-                    # broadcast_status = (
-                    #   broadcast_notifier.broadcast_message(message)
-                    # )
-                    # logger.info(f"Broadcast status: {broadcast_status}")
-
-                    if notification_status == 200:
-                        logger.info(
-                            f"Notification sent successfully: {message}",
-                        )
-                        last_notification_times[line_token] = int(timestamp)
-                    else:
-                        logger.error(f"Failed to send notification: {message}")
-
-                    # Log the notification token and language
-                    logger.info(
-                        f"Notification sent to {line_token} in {language}.",
-                    )
-
-                # If no notification was sent and the time condition was met,
-                # only draw the image
-                if last_line_token and last_language:
-                    language = last_language
-
-            # Draw the detections on the frame for the last token/language
-            # (if not already drawn)
-            if frame_with_detections is None:
+                # Draw detections for LINE notification
                 frame_with_detections = (
                     drawing_manager.draw_detections_on_frame(
-                        frame, controlled_zone_polygon,
-                        datas,
-                        language=last_language or 'en',
+                        frame, controlled_zone_polygon, datas, language=lang,
                     )
                 )
+                frame_bytes = Utils.encode_frame(frame_with_detections)
 
-            # Convert the frame to a byte array
-            _, buffer = cv2.imencode('.png', frame_with_detections)
-            frame_bytes = buffer.tobytes()
+                # Send the notification
+                status = await line_notifier.send_notification(
+                    message,
+                    image=frame_bytes
+                    if frame_bytes is not None
+                    else None,
+                    line_token=token,
+                )
+                if status == 200:
+                    logger.info(f"Notification sent: {message}")
+                    last_notification_times[token] = timestamp
 
-            # Save the frame with detections
-            # save_file_name = f'{site}_{stream_name}_{detection_time}'
-            # drawing_manager.save_frame(
-            #   frame_with_detections,
-            #   save_file_name
-            # )
+            # Draw detections for Redis storage
+            frame_with_detections = drawing_manager.draw_detections_on_frame(
+                frame,
+                controlled_zone_polygon,
+                datas,
+                language=redis_storage_language or 'en',
+            )
+            frame_bytes = Utils.encode_frame(frame_with_detections)
 
-            # Store the frame and warnings in Redis if not running on Windows
+            # Store the frame bytes to Redis
             if not is_windows:
-                try:
-                    # Encode site and stream_name to avoid issues
-                    # with special characters
-                    encoded_site = Utils.encode(site or 'default site')
-                    encoded_stream_name = Utils.encode(
-                        stream_name,
-                    ) or 'default stream name'
-
-                    # Use a unique key for each thread or process
-                    key = f"stream_frame:{encoded_site}|{encoded_stream_name}"
-
-                    if not warnings:
-                        warnings = ['No warning']
-
-                    # Translate the warnings
-                    translated_warnings = Translator.translate_warning(
-                        warnings=tuple(warnings),
-                        language=last_language or 'en',
-                    )
-
-                    # Combine warnings into a single string for storage
-                    warnings_str = '\n'.join(translated_warnings)
-
-                    # Store the frame and warnings in Redis Stream
-                    # with a maximum length of 10
-                    await redis_manager.add_to_stream(
-                        key,
-                        {'frame': frame_bytes, 'warnings': warnings_str},
-                        maxlen=10,
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to store frame and warnings in Redis: {e}",
-                    )
+                await redis_manager.store_to_redis(
+                    site=site or 'default',
+                    stream_name=stream_name,
+                    frame_bytes=frame_bytes,
+                    warnings=warnings,
+                    language=redis_storage_language,
+                )
 
             # Update the capture interval based on processing time
             processing_time = time.time() - start_time
             streaming_capture.update_capture_interval(
-                1 if int(processing_time) < 1 else int(processing_time) + 1,
+                max(1, int(processing_time) + 1),
             )
 
             # Log the detection results
-            logger.info(f"{site} - {stream_name}")
-            logger.info(f"Detection time: {detection_time}")
-            logger.info(f"Processing time: {processing_time:.2f} seconds")
-
-            # Clear variables to free up memory
-            gc.collect()
+            logger.info(
+                f"Processed {site}-{stream_name} in {processing_time:.2f}s",
+            )
 
         # Release resources after processing
         await streaming_capture.release_resources()

@@ -78,9 +78,32 @@ function updateConfigDataFromForm() {
 function renderConfigForm() {
     configContainer.innerHTML = ""; // Clear existing config items
 
+    const configItemTemplate = document.getElementById("config-item-template");
+    const notificationItemTemplate = document.getElementById("notification-item-template");
+
     configData.forEach((config, index) => {
-        const container = document.createElement("div");
-        container.className = "config-item";
+        const container = configItemTemplate.content.cloneNode(true);
+        const item = container.querySelector(".config-item");
+
+        const siteInput = item.querySelector("input[name='site']");
+        const streamNameInput = item.querySelector("input[name='stream_name']");
+        const videoUrlInput = item.querySelector("input[name='video_url']");
+        const modelKeySelect = item.querySelector("select[name='model_key']");
+        const expireDateInput = item.querySelector("input[name='expire_date']");
+        const noExpireDateText = item.querySelector("input[type='text'][value='No Expire Date']");
+        const detectWithServerCheckbox = item.querySelector("input[name='detect_with_server']");
+        const detectionItems = item.querySelectorAll("input[type='checkbox'][name^='detect_']:not([name='detect_with_server'])");
+        const addNotificationBtn = item.querySelector(".add-notification");
+        const deleteConfigBtn = item.querySelector(".delete-config-btn");
+        const expireDateContainer = item.querySelector(".expire-date-container");
+
+        // Set values
+        siteInput.value = config.site || '';
+        streamNameInput.value = config.stream_name || '';
+        videoUrlInput.value = config.video_url || '';
+        if (modelKeySelect) {
+            modelKeySelect.value = config.model_key || 'yolo11n';
+        }
 
         // Process expire_date
         let expireDateValue;
@@ -89,138 +112,61 @@ function renderConfigForm() {
         } else if (config.expire_date) {
             expireDateValue = config.expire_date;
         } else {
-            // If expire_date is not set, set it to today's date
             expireDateValue = new Date().toISOString().split('T')[0];
             config.expire_date = expireDateValue;
         }
 
-        // Set the inner HTML of the container
-        container.innerHTML = `
-            <div class="config-header">
-                <div class="site-stream">
-                    <label>
-                        Site:
-                        <input type="text" name="site" value="${config.site || ''}" ${isEditing ? "" : "disabled"} />
-                    </label>
-                    <span>-</span>
-                    <label>
-                        Stream Name:
-                        <input type="text" name="stream_name" value="${config.stream_name || ''}" ${isEditing ? "" : "disabled"} />
-                    </label>
-                </div>
-                <button type="button" class="delete-config-btn" style="display: ${isEditing ? "block" : "none"};">
-                    <i class="fas fa-trash-alt"></i>
-                </button>
-            </div>
-            <label>
-                Video URL: <input type="text" name="video_url" value="${config.video_url || ''}" ${isEditing ? "" : "disabled"} />
-            </label>
-            <label>
-                Model Key:
-                <select name="model_key" ${isEditing ? "" : "disabled"}>
-                    ${["yolo11n", "yolo11s", "yolo11m", "yolo11l", "yolo11x"]
-                        .map((key) => `<option value="${key}" ${config.model_key === key ? "selected" : ""}>${key}</option>`)
-                        .join("")}
-                </select>
-            </label>
-            <label>
-                Expiry Date:
-                <input type="date" name="expire_date" value="${expireDateValue}" ${isEditing ? "" : "disabled"} ${config.expire_date === "No Expire Date" ? "style='display:none;'" : ""} />
-                <input type="text" value="No Expire Date" disabled ${config.expire_date === "No Expire Date" ? "" : "style='display:none;'"}>
-                ${isEditing ? `
-                <label>
-                    <input type="checkbox" name="no_expire_date" ${config.expire_date === "No Expire Date" ? "checked" : ""} />
-                    No Expire Date
-                </label>
-                ` : ""}
-            </label>
-            <label>
-                <input type="checkbox" name="detect_with_server" ${config.detect_with_server ? "checked" : ""} ${isEditing ? "" : "disabled"} />
-                Detect with Server
-            </label>
-            <fieldset>
-                <legend>Detection Items</legend>
-                ${Object.entries(config.detection_items).map(([key, value]) => `
-                    <label>
-                        <input type="checkbox" name="${key}" ${value ? "checked" : ""} ${isEditing ? "" : "disabled"} />
-                        ${formatDetectionItemName(key)}
-                    </label>
-                `).join("")}
-            </fieldset>
-            <fieldset>
-                <legend>Notifications</legend>
-                <div class="notifications-container">
-                    ${config.notifications.map((notification, notifIndex) => `
-                        <div class="notification-item" data-notif-index="${notifIndex}">
-                            ${
-                                isEditing
-                                    ? '<button type="button" class="delete-notification"><i class="fas fa-times"></i></button>'
-                                    : ""
-                            }
-                            <div class="notification-content">
-                                <label>
-                                    Token: <input type="text" name="line_token" value="${notification.token}" data-notif-index="${notifIndex}" ${isEditing ? "" : "disabled"} />
-                                </label>
-                                <label>
-                                    Language:
-                                    <select name="language" data-notif-index="${notifIndex}" ${isEditing ? "" : "disabled"}>
-                                        ${["zh-TW", "zh-CN", "en", "fr", "id", "vt", "th"]
-                                            .map((l) => `<option value="${l}" ${notification.language === l ? "selected" : ""}>${l}</option>`)
-                                            .join("")}
-                                    </select>
-                                </label>
-                            </div>
-                        </div>
-                    `).join("")}
-                </div>
-                ${isEditing ? '<button type="button" class="add-notification"><i class="fas fa-plus"></i> Add Notification</button>' : ""}
-            </fieldset>
-        `;
+        expireDateInput.value = expireDateValue;
 
-        // Delete config button event
-        const deleteConfigBtn = container.querySelector(".delete-config-btn");
-        deleteConfigBtn.addEventListener("click", () => {
-            updateConfigDataFromForm();
-            configData.splice(index, 1); // Fetch the updated config data
-            renderConfigForm(); // Re-render the config form
+        // Detect with server
+        detectWithServerCheckbox.checked = !!config.detect_with_server;
+
+        // Detection Items
+        detectionItems.forEach((checkbox) => {
+            const key = checkbox.name;
+            checkbox.checked = !!config.detection_items[key];
+            // Update label text in case keys differ (optional)
+            const label = checkbox.parentElement;
+            label.lastChild.textContent = formatDetectionItemName(key);
         });
 
-        // Event listener for deleting a notification
-        const notificationsContainer = container.querySelector(".notifications-container");
-        notificationsContainer.addEventListener("click", (event) => {
-            if (event.target.closest(".delete-notification")) {
-                // Find the index of the config
-                const configIndex = index;
+        // Notifications
+        const notificationsContainer = item.querySelector(".notifications-container");
+        notificationsContainer.innerHTML = "";
+        config.notifications.forEach((notification, notifIndex) => {
+            const notifEl = notificationItemTemplate.content.cloneNode(true);
+            const notifItem = notifEl.querySelector(".notification-item");
+            const lineTokenInput = notifItem.querySelector("input[name='line_token']");
+            const languageSelect = notifItem.querySelector("select[name='language']");
+            const deleteNotifBtn = notifItem.querySelector(".delete-notification");
 
-                // Find the index of the notification
-                const notificationItem = event.target.closest(".notification-item");
-                const notifIndex = parseInt(notificationItem.getAttribute("data-notif-index"));
+            lineTokenInput.value = notification.token;
+            languageSelect.value = notification.language;
+            lineTokenInput.setAttribute("data-notif-index", notifIndex);
+            languageSelect.setAttribute("data-notif-index", notifIndex);
 
-                updateConfigDataFromForm();
-
-                // Find the updated config
-                const updatedConfig = configData[configIndex];
-
-                // Remove the notification
-                updatedConfig.notifications.splice(notifIndex, 1);
-                renderConfigForm(); // 重新渲染通知
+            // Show/Hide delete notification button based on edit mode
+            if (isEditing) {
+                deleteNotifBtn.style.display = "block";
+            } else {
+                deleteNotifBtn.style.display = "none";
             }
+
+            notificationsContainer.appendChild(notifEl);
         });
 
-        // Event listener for adding a notification
-        const addNotificationBtn = container.querySelector(".add-notification");
-        addNotificationBtn?.addEventListener("click", () => {
-            updateConfigDataFromForm();
-            configData[index].notifications.push({ token: "", language: "en" }); // 添加空的通知
-            renderConfigForm();
-        });
+        // If in editing mode, add a no_expire_date checkbox
+        if (isEditing) {
+            const noExpireDateCheckbox = document.createElement("input");
+            noExpireDateCheckbox.type = "checkbox";
+            noExpireDateCheckbox.name = "no_expire_date";
+            noExpireDateCheckbox.checked = config.expire_date === "No Expire Date";
+            expireDateContainer.appendChild(document.createElement("br"));
+            const noExpireDateLabel = document.createElement("label");
+            noExpireDateLabel.appendChild(noExpireDateCheckbox);
+            noExpireDateLabel.appendChild(document.createTextNode(" No Expire Date"));
+            expireDateContainer.appendChild(noExpireDateLabel);
 
-        // Event listener for toggling no_expire_date
-        const expireDateInput = container.querySelector("input[name='expire_date']");
-        const noExpireDateCheckbox = container.querySelector("input[name='no_expire_date']");
-        const noExpireDateText = container.querySelector("input[type='text'][value='No Expire Date']");
-
-        if (noExpireDateCheckbox) {
             // Initialise the display of the expire date input and no expire date text
             if (noExpireDateCheckbox.checked) {
                 expireDateInput.style.display = "none";
@@ -230,10 +176,8 @@ function renderConfigForm() {
                 noExpireDateText.style.display = "none";
             }
 
-            // Add event listener for toggling the expire date input and no expire date text
             noExpireDateCheckbox.addEventListener("change", () => {
                 if (noExpireDateCheckbox.checked) {
-                    // Save the previous expire date value
                     config.previous_expire_date = expireDateInput.value;
                     expireDateInput.style.display = "none";
                     noExpireDateText.style.display = "";
@@ -244,9 +188,62 @@ function renderConfigForm() {
                     expireDateInput.value = config.previous_expire_date || new Date().toISOString().split('T')[0];
                 }
             });
+        } else {
+            // Not in editing mode
+            if (config.expire_date === "No Expire Date") {
+                expireDateInput.style.display = "none";
+                noExpireDateText.style.display = "";
+            } else {
+                expireDateInput.style.display = "";
+                noExpireDateText.style.display = "none";
+            }
         }
 
-        // Add the container to the config container
+        // Show/Hide delete config button and add notification button based on edit mode
+        if (isEditing) {
+            deleteConfigBtn.style.display = "block";
+            addNotificationBtn.style.display = "inline-block";
+        } else {
+            deleteConfigBtn.style.display = "none";
+            addNotificationBtn.style.display = "none";
+        }
+
+        // Event: delete config
+        deleteConfigBtn.addEventListener("click", () => {
+            updateConfigDataFromForm();
+            configData.splice(index, 1);
+            renderConfigForm();
+        });
+
+        // Event: delete notification
+        notificationsContainer.addEventListener("click", (event) => {
+            if (event.target.closest(".delete-notification")) {
+                const notificationItem = event.target.closest(".notification-item");
+                const notifIndex = parseInt(notificationItem.querySelector("input[name='line_token']").getAttribute("data-notif-index"));
+                updateConfigDataFromForm();
+                const updatedConfig = configData[index];
+                updatedConfig.notifications.splice(notifIndex, 1);
+                renderConfigForm();
+            }
+        });
+
+        // Event: add notification
+        addNotificationBtn.addEventListener("click", () => {
+            updateConfigDataFromForm();
+            configData[index].notifications.push({ token: "", language: "en" });
+            renderConfigForm();
+        });
+
+        // 根據isEditing狀態設定所有input,select的disabled狀態
+        const fields = item.querySelectorAll('input, select');
+        fields.forEach(f => {
+            if (!isEditing) {
+                f.setAttribute('disabled', 'true');
+            } else {
+                f.removeAttribute('disabled');
+            }
+        });
+
         configContainer.appendChild(container);
     });
 }
@@ -341,9 +338,9 @@ async function saveConfig() {
     }
 }
 
-// 按钮事件处理
+// 按鈕事件處理
 editBtn.addEventListener("click", () => toggleEditMode(true));
-cancelBtn.addEventListener("click", () => toggleEditMode(false)); // Exit edit mode
+cancelBtn.addEventListener("click", () => toggleEditMode(false));
 saveBtn.addEventListener("click", saveConfig);
 addConfigBtn.addEventListener("click", () => {
     updateConfigDataFromForm();
@@ -365,10 +362,7 @@ addConfigBtn.addEventListener("click", () => {
         }
     });
 
-    // Re-render the form
     renderConfigForm();
-
-    // Keep the form in edit mode
     toggleEditMode(true);
 });
 
