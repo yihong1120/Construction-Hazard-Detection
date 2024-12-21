@@ -187,6 +187,58 @@ class TestAuth(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()['access_token'], 'mocked_token')
         self.mock_db.execute.assert_not_called()
 
+    async def test_create_token_user_inactive(self) -> None:
+        """
+        Test token creation failure when the user account is inactive.
+        """
+        # Set the mock user to inactive
+        self.mock_user.is_active = False
+
+        # Mock the database execute result to return the user
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = self.mock_user
+        self.mock_db.execute.return_value = mock_result
+
+        # Send a POST request with valid credentials
+        response = await self.aclient.post(
+            '/api/token', json={
+                'username': self.username,
+                'password': self.password,
+            },
+        )
+
+        # Assert the response indicates the account is inactive
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json()['detail'], 'User account is inactive',
+        )
+
+    async def test_create_token_invalid_role(self) -> None:
+        """
+        Test token creation failure when the user role is invalid.
+        """
+        # Set the mock user to have an invalid role
+        self.mock_user.role = 'invalid_role'
+
+        # Mock the database execute result to return the user
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = self.mock_user
+        self.mock_db.execute.return_value = mock_result
+
+        # Send a POST request with valid credentials
+        response = await self.aclient.post(
+            '/api/token', json={
+                'username': self.username,
+                'password': self.password,
+            },
+        )
+
+        # Assert the response indicates the role is invalid
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json()['detail'], 'User does not have the required role',
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
