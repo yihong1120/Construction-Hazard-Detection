@@ -255,6 +255,49 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         result = await check_containment(index1, index2, datas)
         self.assertIsInstance(result, set)
 
+    async def test_remove_overlapping_labels_line_134(self) -> None:
+        """
+        測試移除重疊的標籤，覆蓋到 datas.pop(index) 這一行。
+        """
+        datas = [
+            [0, 0, 100, 100, 0.9, 0],   # 'hardhat' 標籤
+            [0, 0, 100, 100, 0.8, 2],   # 'no_hardhat' 標籤，完全重疊
+            [200, 200, 300, 300, 0.85, 7], # 'safety_vest' 標籤
+            [200, 200, 300, 300, 0.7, 4]   # 'no_safety_vest' 標籤，完全重疊
+        ]
+        result = await remove_overlapping_labels(datas.copy())
+        self.assertEqual(len(result), 2)
+        remaining_labels = [d[5] for d in result]
+        self.assertListEqual(remaining_labels, [0, 7])
+
+    async def test_remove_completely_contained_labels_line_340(self) -> None:
+        """
+        測試移除完全包含的標籤，覆蓋到 datas.pop(index) 這一行。
+        """
+        datas = [
+            [50, 50, 150, 150, 0.9, 0],   # 'hardhat' 標籤
+            [70, 70, 130, 130, 0.8, 2],   # 'no_hardhat' 標籤，完全包含在 'hardhat' 中
+            [200, 200, 300, 300, 0.85, 7], # 'safety_vest' 標籤
+            [220, 220, 280, 280, 0.7, 4]   # 'no_safety_vest' 標籤，完全包含在 'safety_vest' 中
+        ]
+        result = await remove_completely_contained_labels(datas.copy())
+        self.assertEqual(len(result), 2)
+        remaining_labels = [d[5] for d in result]
+        self.assertListEqual(remaining_labels, [0, 7])
+
+    async def test_check_containment_elif_condition(self) -> None:
+        """
+        測試 `check_containment` 函數中的 `elif` 條件，覆蓋相應的代碼行。
+        """
+        index1 = 0
+        index2 = 1
+        datas = [
+            [70, 70, 130, 130, 0.9, 1],  # index1，被 index2 完全包含
+            [50, 50, 150, 150, 0.85, 2], # index2
+        ]
+        result = await check_containment(index1, index2, datas)
+        self.assertSetEqual(result, {0})
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -398,8 +398,9 @@ class TestRouters(unittest.TestCase):
         """
         Test updating a model file with mocked update_model_file function.
         """
+        # Simulate successful execution
         async def mock_update_model_file_func(model, temp_path):
-            pass  # Simulate successful execution
+            pass
         mock_update_model_file.side_effect = mock_update_model_file_func
 
         model_file_content = b'model file content'
@@ -433,7 +434,7 @@ class TestRouters(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 403)
 
-        # Invalid file path scenario
+        # Invalid file path scenario (ValueError)
         with patch(
             'examples.YOLO_server_api.backend.routers.secure_filename',
             return_value='../model.pt',
@@ -443,6 +444,35 @@ class TestRouters(unittest.TestCase):
                     '/api/model_file_update', data=data, files=files,
                 )
                 self.assertEqual(response.status_code, 400)
+                mock_logger.error.assert_called()
+
+        # Simulate ValueError in update_model_file
+        async def mock_update_model_file_raise_value_error(model, temp_path):
+            raise ValueError('Invalid model')
+        mock_update_model_file.side_effect = mock_update_model_file_raise_value_error
+
+        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+            response = self.client.post(
+                '/api/model_file_update', data=data, files=files,
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()['detail'], 'Invalid model')
+            mock_logger.error.assert_called_with(
+                'Model update validation error: Invalid model',
+            )
+
+        # Simulate OSError during file operation
+        with patch('pathlib.Path.open', side_effect=OSError('Disk error')):
+            mock_update_model_file.side_effect = mock_update_model_file_func  # Reset side effect
+            with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
+                response = self.client.post(
+                    '/api/model_file_update', data=data, files=files,
+                )
+                self.assertEqual(response.status_code, 500)
+                self.assertEqual(response.json()['detail'], 'Disk error')
+                mock_logger.error.assert_called_with(
+                    'Model update I/O error: Disk error',
+                )
 
     @patch('examples.YOLO_server_api.backend.routers.get_new_model_file')
     @patch('examples.YOLO_server_api.backend.routers.logger')

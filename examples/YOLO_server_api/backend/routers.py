@@ -410,6 +410,7 @@ async def model_file_update(
 
         # Check if the path is within the intended directory
         if not temp_path.resolve().parent == temp_dir:
+            logger.error(f"Invalid file path detected: {temp_path}")
             raise HTTPException(status_code=400, detail='Invalid file path.')
 
         # Write file to disk
