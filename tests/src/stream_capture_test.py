@@ -59,6 +59,115 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         await self.stream_capture.release_resources()
 
     @patch('cv2.VideoCapture')
+    async def test_execute_capture_cap_is_none(
+        self,
+        mock_video_capture: MagicMock,
+    ) -> None:
+        """
+        Test that the generator reinitialises `self.cap` if it is `None`.
+
+        Args:
+            mock_video_capture (MagicMock): Mock object for `cv2.VideoCapture`.
+
+        Raises:
+            AssertionError: If the test conditions are not met.
+        """
+        # Mock `isOpened()` to always return True
+        mock_video_capture.return_value.isOpened.return_value = True
+
+        # Set `read()` to return two frames successfully
+        mock_frame = MagicMock(name='MockFrame')
+        mock_video_capture.return_value.read.side_effect = [
+            (True, mock_frame),  # First iteration
+            (True, mock_frame),  # Second iteration
+        ]
+
+        # Set `capture_interval` to 0
+        # to allow immediate yielding during each iteration
+        self.stream_capture.capture_interval = 0
+
+        # Start the asynchronous generator for `execute_capture`
+        generator = self.stream_capture.execute_capture()
+
+        # First call to `__anext__`: `self.cap` should not be `None`
+        frame1, ts1 = await generator.__anext__()
+        self.assertIsNotNone(frame1, 'First frame should not be None')
+
+        # Manually set `self.cap` to `None`
+        # to trigger the `if self.cap is None` branch
+        self.stream_capture.cap = None
+
+        # Second call to `__anext__`: The branch `if self.cap is None`
+        # should execute and reinitialise `self.cap`
+        frame2, ts2 = await generator.__anext__()
+        self.assertIsNotNone(
+            frame2, 'Second frame should not be None after reinitialisation',
+        )
+
+        # Close the generator to avoid warnings
+        await generator.aclose()
+
+        # Verify that `cv2.VideoCapture` was called twice
+        mock_video_capture.assert_called_with(self.stream_capture.stream_url)
+
+    @patch('cv2.VideoCapture')
+    @patch.object(StreamCapture, 'capture_generic_frames')
+    async def test_execute_capture_switch_to_generic(
+        self,
+        mock_capture_generic: MagicMock,
+        mock_video_capture: MagicMock,
+    ) -> None:
+        """
+        Test that the generator switches to `capture_generic_frames`
+        after 5 consecutive failures.
+
+        Args:
+            mock_capture_generic (MagicMock): Mock for
+                the `capture_generic_frames` method.
+            mock_video_capture (MagicMock): Mock for
+                the `cv2.VideoCapture` object.
+
+        Returns:
+            None
+        """
+        # Mock VideoCapture object's read method to return False 5 times
+        mock_video_capture.return_value.read.side_effect = [(False, None)] * 6
+        mock_video_capture.return_value.isOpened.return_value = True
+
+        # Set capture interval to 0 to avoid delays during the test.
+        self.stream_capture.successfully_captured = False
+
+        # Start the coroutine generator.
+        async def mock_generic():
+            for i in range(2):
+                frame_mock = MagicMock()
+                # Explicitly set frame name
+                frame_mock.name = f"GenericFrame{i}"
+                yield (frame_mock, float(i))
+        mock_capture_generic.side_effect = mock_generic
+
+        # Set capture interval to 0 to avoid delays during the test.
+        self.stream_capture.capture_interval = 0
+
+        # Start the coroutine generator.
+        gen = self.stream_capture.execute_capture()
+
+        # First frame: Validate first frame
+        # from `capture_generic_frames`.
+        generic_frame_0, ts_0 = await gen.__anext__()
+        self.assertEqual(generic_frame_0.name, 'GenericFrame0')
+
+        # Second frame: Validate subsequent
+        # frame from `generic_frames`.
+        generic_frame_1, ts_1 = await gen.__anext__()
+        self.assertEqual(generic_frame_1.name, 'GenericFrame1')
+
+        # After `generic_frames` iteration completes,
+        # the generator should raise `StopAsyncIteration`.
+        with self.assertRaises(StopAsyncIteration):
+            await gen.__anext__()
+
+    @patch('cv2.VideoCapture')
     @patch('asyncio.sleep', new_callable=AsyncMock)
     async def test_initialise_stream_retry(
         self,

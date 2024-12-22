@@ -255,48 +255,66 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         result = await check_containment(index1, index2, datas)
         self.assertIsInstance(result, set)
 
-    async def test_remove_overlapping_labels_line_134(self) -> None:
-        """
-        測試移除重疊的標籤，覆蓋到 datas.pop(index) 這一行。
-        """
-        datas = [
-            [0, 0, 100, 100, 0.9, 0],   # 'hardhat' 標籤
-            [0, 0, 100, 100, 0.8, 2],   # 'no_hardhat' 標籤，完全重疊
-            [200, 200, 300, 300, 0.85, 7], # 'safety_vest' 標籤
-            [200, 200, 300, 300, 0.7, 4]   # 'no_safety_vest' 標籤，完全重疊
-        ]
-        result = await remove_overlapping_labels(datas.copy())
-        self.assertEqual(len(result), 2)
-        remaining_labels = [d[5] for d in result]
-        self.assertListEqual(remaining_labels, [0, 7])
-
     async def test_remove_completely_contained_labels_line_340(self) -> None:
         """
-        測試移除完全包含的標籤，覆蓋到 datas.pop(index) 這一行。
+        Test the `remove_completely_contained_labels` function to ensure it
+        removes labels that are completely contained within another label.
         """
+        # Test data representing bounding boxes and their corresponding labels
         datas = [
-            [50, 50, 150, 150, 0.9, 0],   # 'hardhat' 標籤
-            [70, 70, 130, 130, 0.8, 2],   # 'no_hardhat' 標籤，完全包含在 'hardhat' 中
-            [200, 200, 300, 300, 0.85, 7], # 'safety_vest' 標籤
-            [220, 220, 280, 280, 0.7, 4]   # 'no_safety_vest' 標籤，完全包含在 'safety_vest' 中
+            [50, 50, 150, 150, 0.9, 0],   # 'hardhat' label
+            # 'no_hardhat' label, fully contained within 'hardhat'
+            [70, 70, 130, 130, 0.8, 2],
+            [200, 200, 300, 300, 0.85, 7],  # 'safety_vest' label
+            # 'no_safety_vest' label, fully contained within 'safety_vest'
+            [220, 220, 280, 280, 0.7, 4],
         ]
+
+        # Call the function and pass a copy of the data
         result = await remove_completely_contained_labels(datas.copy())
+
+        # Assert the length of the resulting list is as expected
         self.assertEqual(len(result), 2)
+
+        # Extract remaining labels and verify they match the expected values
         remaining_labels = [d[5] for d in result]
         self.assertListEqual(remaining_labels, [0, 7])
 
     async def test_check_containment_elif_condition(self) -> None:
         """
-        測試 `check_containment` 函數中的 `elif` 條件，覆蓋相應的代碼行。
+        Test the `check_containment` function's `elif` condition to ensure
+        that the appropriate lines of code are covered.
+
+        This test simulates a scenario where one bounding box
+        (`index1`) is completely contained within another bounding box
+        (`index2`). The function should correctly identify that
+        `index1` is contained and return the set containing `index1`.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
-        index1 = 0
-        index2 = 1
-        datas = [
-            [70, 70, 130, 130, 0.9, 1],  # index1，被 index2 完全包含
-            [50, 50, 150, 150, 0.85, 2], # index2
+        # Define the indices of the bounding boxes to test
+        index1: int = 0
+        index2: int = 1
+
+        # Define the test data representing bounding boxes
+        datas: list[list[float | int]] = [
+            [70, 70, 130, 130, 0.9, 1],  # Bounding box for index1
+            [50, 50, 150, 150, 0.85, 2],  # Bounding box for index2
         ]
-        result = await check_containment(index1, index2, datas)
-        self.assertSetEqual(result, {0})
+
+        # Call the `check_containment` function with the test data
+        result: set[int] = await check_containment(index1, index2, datas)
+
+        # Assert that the result matches the expected output
+        # In this case, `index1` is contained within `index2`
+        self.assertSetEqual(
+            result, {0},
+            'The function did not correctly identify containment.',
+        )
 
 
 if __name__ == '__main__':

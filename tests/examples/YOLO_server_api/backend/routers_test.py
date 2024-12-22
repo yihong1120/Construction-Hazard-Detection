@@ -449,7 +449,9 @@ class TestRouters(unittest.TestCase):
         # Simulate ValueError in update_model_file
         async def mock_update_model_file_raise_value_error(model, temp_path):
             raise ValueError('Invalid model')
-        mock_update_model_file.side_effect = mock_update_model_file_raise_value_error
+        mock_update_model_file.side_effect = (
+            mock_update_model_file_raise_value_error
+        )
 
         with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
             response = self.client.post(
@@ -463,7 +465,7 @@ class TestRouters(unittest.TestCase):
 
         # Simulate OSError during file operation
         with patch('pathlib.Path.open', side_effect=OSError('Disk error')):
-            mock_update_model_file.side_effect = mock_update_model_file_func  # Reset side effect
+            mock_update_model_file.side_effect = mock_update_model_file_func
             with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
                 response = self.client.post(
                     '/api/model_file_update', data=data, files=files,

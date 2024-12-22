@@ -9,7 +9,7 @@ from PIL import ImageDraw
 from PIL import ImageFont
 from shapely.geometry import Polygon
 
-from .lang_config import LANGUAGES
+from src.lang_config import LANGUAGES
 
 
 class DrawingManager:

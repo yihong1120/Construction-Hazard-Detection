@@ -410,6 +410,247 @@ class TestLiveStreamDetector(unittest.IsolatedAsyncioTestCase):
         for fd, ed in zip(filter_datas_sorted, expected_datas_sorted):
             self.assertEqual(fd, ed)
 
+    @patch('aiohttp.ClientSession.post')
+    async def test_authenticate_missing_token_data(
+        self, mock_post: MagicMock,
+    ) -> None:
+        """
+        Test the authenticate method when the token data
+        is missing 'msg' and 'access_token'.
+
+        Args:
+            mock_post (MagicMock): Mock for aiohttp.ClientSession.post.
+        """
+        mock_response: MagicMock = MagicMock()
+        mock_response.json = AsyncMock(return_value={})
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        with self.assertRaises(Exception) as context:
+            await self.detector.authenticate()
+
+        self.assertIn(
+            "Token data does not contain 'msg' or 'access_token'", str(
+                context.exception,
+            ),
+        )
+        mock_post.assert_called_once()
+
+    @patch('src.live_stream_detection.get_sliced_prediction')
+    @patch('src.live_stream_detection.AutoDetectionModel.from_pretrained')
+    async def test_generate_detections_local_with_predictions(
+        self,
+        mock_from_pretrained: MagicMock,
+        mock_get_sliced_prediction: MagicMock,
+    ) -> None:
+        """
+        Test the generate_detections_local method with predictions.
+
+        Args:
+            mock_from_pretrained (MagicMock): Mock for
+                AutoDetectionModel.from_pretrained.
+            mock_get_sliced_prediction (MagicMock): Mock for
+                get_sliced_prediction
+
+        Raises:
+            AssertionError: If the detection data
+                does not match the expected output.
+        """
+        # Mock the model
+        mock_model: MagicMock = MagicMock()
+        mock_from_pretrained.return_value = mock_model
+
+        # Mock the object predictions
+        mock_result: MagicMock = MagicMock()
+        mock_result.object_prediction_list = [
+            MagicMock(
+                category=MagicMock(id=0),  # Set category ID is 0
+                bbox=MagicMock(
+                    # Set the bounding box
+                    to_voc_bbox=lambda: [10.5, 20.3, 50.8, 60.1],
+                ),
+                score=MagicMock(value=0.85),  # Set the score
+            ),
+            MagicMock(
+                category=MagicMock(id=1),  # Set category ID to 1
+                bbox=MagicMock(
+                    to_voc_bbox=lambda: [30, 40, 70, 80],
+                ),
+                score=MagicMock(value=0.9),
+            ),
+        ]
+        mock_get_sliced_prediction.return_value = mock_result
+
+        # Set up the input frame
+        frame: np.ndarray = np.zeros((480, 640, 3), dtype=np.uint8)
+
+        # Generate the detections
+        datas: list[list[Any]] = await self.detector.generate_detections_local(
+            frame,
+        )
+
+        # Validate the structure and types of the detection data
+        self.assertIsInstance(datas, list)
+
+        # Ensure two detections are returned
+        self.assertEqual(len(datas), 2)
+
+        # Ensure the first detection is correct
+        self.assertEqual(datas[0], [10, 20, 50, 60, 0.85, 0])
+        # Ensure the second detection is correct
+        self.assertEqual(datas[1], [30, 40, 70, 80, 0.9, 1])
+
+        # Validate the calls to the model
+        mock_get_sliced_prediction.assert_called_once_with(
+            frame,
+            mock_model,
+            slice_height=376,
+            slice_width=376,
+            overlap_height_ratio=0.3,
+            overlap_width_ratio=0.3,
+        )
+
+    def test_remove_hardhat_in_no_hardhat(self) -> None:
+        """
+        Test the remove_completely_contained_labels method
+
+        Args:
+            self: Instance of the test class.
+
+        Raises:
+            AssertionError: If the filtered data
+                does not match the expected output.
+
+        Test Scenario:
+            - A `No-Hardhat` bounding box (large box) contains a
+            `Hardhat` bounding box (smaller box).
+            - Expected behaviour: The `Hardhat` bounding box
+            should be removed.
+        """
+        # Input data with bounding boxes
+        datas = [
+            [10, 10, 50, 50, 0.8, 2],  # No-Hardhat
+            [20, 20, 30, 30, 0.9, 0],  # Hardhat
+        ]
+
+        # Expected result: Only the No-Hardhat bounding box remains
+        expected_datas = [
+            [10, 10, 50, 50, 0.8, 2],
+        ]
+
+        # Call the method being tested
+        filtered_datas = self.detector.remove_completely_contained_labels(
+            datas,
+        )
+
+        # Assert that the filtered data matches the expected output
+        self.assertEqual(
+            filtered_datas,
+            expected_datas,
+            'Hardhat should be removed '
+            "when it's completely contained within No-Hardhat",
+        )
+
+    def test_remove_safety_vest_in_no_vest(self) -> None:
+        """
+        Test the remove_completely_contained_labels method
+        with a Safety Vest bounding box
+
+        Args:
+            self: Instance of the test class.
+
+        Raises:
+            AssertionError: If the filtered data
+                does not match the expected output.
+
+        Test Scenario:
+            - A `No-Safety Vest` bounding box (large box) contains a
+            `Safety Vest` bounding box (smaller box).
+            - Expected behaviour: The `Safety Vest` bounding box
+            should be removed.
+
+        Example:
+            Input:
+                datas = [
+                    [10, 10, 50, 50, 0.85, 4],  # No-Safety Vest (large box)
+                    [20, 20, 30, 30, 0.9, 7],   # Safety Vest (contained box)
+                ]
+            Output:
+                filtered_datas = [
+                    [10, 10, 50, 50, 0.85, 4],
+                ]
+        """
+        # Input data with bounding boxes
+        datas: list[list[float]] = [
+            # No-Safety Vest bounding box (large box)
+            [10, 10, 50, 50, 0.85, 4],
+            # Safety Vest bounding box (contained within the first)
+            [20, 20, 30, 30, 0.9, 7],
+        ]
+
+        # Expected filtered output: Safety Vest box is removed
+        expected_datas: list[list[float]] = [
+            [10, 10, 50, 50, 0.85, 4],
+        ]
+
+        # Perform filtering using the method under test
+        filtered_datas = self.detector.remove_completely_contained_labels(
+            datas,
+        )
+
+        # Assert the output matches the expected result
+        self.assertEqual(
+            filtered_datas,
+            expected_datas,
+            'Safety Vest should be removed '
+            "when it's contained by No-Safety Vest",
+        )
+
+    @patch('src.live_stream_detection.cv2.VideoCapture')
+    async def test_run_detection_stream_not_opened(
+        self, mock_VideoCapture: MagicMock,
+    ) -> None:
+        """
+        Test the run_detection method when the stream cannot be opened.
+
+        Args:
+            mock_VideoCapture (MagicMock): Mock for cv2.VideoCapture
+
+        Raises:
+            AssertionError: If the exception message
+                does not match the expected value.
+
+        Test Cases:
+            1. Simulates a failure to open the video stream.
+            2. Ensures the method raises a ValueError
+                with the correct error message.
+            3. Validates that `cv2.VideoCapture`
+                and its `isOpened` method are called as expected.
+        """
+        # Simulate the behaviour of VideoCapture
+        cap_mock = MagicMock()
+        cap_mock.isOpened.return_value = False  # Simulate stream open failure
+        mock_VideoCapture.return_value = cap_mock
+
+        # Test URL for the stream
+        stream_url: str = 'http://example.com/fake_stream'
+
+        # Ensure ValueError is raised when the stream cannot be opened
+        with self.assertRaises(ValueError) as context:
+            await self.detector.run_detection(stream_url)
+
+        # Verify the exception message is as expected
+        self.assertEqual(
+            str(context.exception),
+            'Failed to open stream.',
+            'The exception message should match the expected value.',
+        )
+
+        # Validate that VideoCapture was called with the correct URL
+        mock_VideoCapture.assert_called_once_with(stream_url)
+
+        # Validate that `isOpened` was called on the mocked VideoCapture object
+        cap_mock.isOpened.assert_called_once()
+
     @patch(
         'sys.argv', [
             'main', '--url',
