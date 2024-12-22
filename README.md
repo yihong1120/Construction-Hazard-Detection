@@ -38,7 +38,7 @@
       <img src="https://img.shields.io/badge/pre--commit-4.0.1-blue?logo=pre-commit" alt="Pre-commit 4.0.1">
    </a>
    <a href="https://docs.pytest.org/en/latest/">
-      <img src="https://img.shields.io/badge/pytest-8.3.3-blue?logo=pytest" alt="pytest 8.3.3">
+      <img src="https://img.shields.io/badge/pytest-8.3.4-blue?logo=pytest" alt="pytest 8.3.4">
    </a>
    <a href="https://codecov.io/github/yihong1120/Construction-Hazard-Detection" >
       <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D" alt="Codecov">
@@ -138,7 +138,10 @@ Before running the application, you need to configure the system by specifying t
       "detect_no_safety_vest_or_helmet": true,
       "detect_near_machinery_or_vehicle": true,
       "detect_in_restricted_area": true
-    }
+    },
+    "work_start_hour": 7,
+    "work_end_hour": 18,
+    "store_in_redis": true
   },
   {
     "video_url": "streaming URL",
@@ -155,7 +158,10 @@ Before running the application, you need to configure the system by specifying t
       "detect_no_safety_vest_or_helmet": true,
       "detect_near_machinery_or_vehicle": false,
       "detect_in_restricted_area": true
-    }
+    },
+    "work_start_hour": 0,
+    "work_end_hour": 24,
+    "store_in_redis": true
   }
 ]
 ```
@@ -198,6 +204,14 @@ Each object in the array represents a video stream configuration with the follow
    - `detect_no_safety_vest_or_helmet`: Detects if a person is not wearing a safety vest or helmet. This is essential for monitoring compliance with safety gear requirements on sites where such equipment is mandatory for personnel protection.
    - `detect_near_machinery_or_vehicle`: Detects if a person is dangerously close to machinery or vehicles. This helps prevent accidents caused by close proximity to heavy equipment or moving vehicles, often encountered in construction sites or industrial areas.
    - `detect_in_restricted_area`: Detects if a person has entered a restricted or controlled area. Restricted areas may be dangerous for untrained personnel or may contain sensitive equipment, so this setting aids in controlling access to such zones.
+
+- `work_start_hour`: Specifies the hour (in 24-hour format) when the system should start monitoring the video stream. This allows monitoring to be restricted to active work hours, reducing unnecessary processing outside the defined timeframe (e.g., `7` for 7:00 AM).
+
+- `work_end_hour`: Specifies the hour (in 24-hour format) when the system should stop monitoring the video stream. Monitoring will cease after this time to optimise resource usage (e.g., `18` for 6:00 PM).
+
+   Together, `work_start_hour` and `work_end_hour` define the monitoring period during a day. For 24-hour monitoring, set `work_start_hour` to `0` and `work_end_hour` to `24`.
+
+- `store_in_redis`: A boolean value that determines whether to store processed frames and associated detection data in Redis. If `True`, the system will save the data to a Redis database for further use, such as real-time monitoring or integration with other services. If `False`, no data will be saved in Redis.
 
 
 <br>

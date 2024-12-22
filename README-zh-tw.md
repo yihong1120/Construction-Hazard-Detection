@@ -38,7 +38,7 @@
       <img src="https://img.shields.io/badge/pre--commit-4.0.1-blue?logo=pre-commit" alt="Pre-commit 4.0.1">
    </a>
    <a href="https://docs.pytest.org/en/latest/">
-      <img src="https://img.shields.io/badge/pytest-8.3.3-blue?logo=pytest" alt="pytest 8.3.3">
+      <img src="https://img.shields.io/badge/pytest-8.3.4-blue?logo=pytest" alt="pytest 8.3.4">
    </a>
    <a href="https://codecov.io/github/yihong1120/Construction-Hazard-Detection" >
       <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D" alt="Codecov">
@@ -138,7 +138,10 @@
       "detect_no_safety_vest_or_helmet": true,
       "detect_near_machinery_or_vehicle": true,
       "detect_in_restricted_area": true
-    }
+    },
+    "work_start_hour": 0,
+    "work_end_hour": 24,
+    "store_in_redis": true
   },
   {
     "video_url": "streaming URL",
@@ -155,7 +158,10 @@
       "detect_no_safety_vest_or_helmet": true,
       "detect_near_machinery_or_vehicle": false,
       "detect_in_restricted_area": true
-    }
+    },
+    "work_start_hour": 0,
+    "work_end_hour": 24,
+    "store_in_redis": true
   }
 ]
 ```
@@ -198,6 +204,14 @@
    - `detect_no_safety_vest_or_helmet`：偵測人員是否未配戴安全背心或頭盔。這對於在必須配備安全裝備以保護人員的場所監控其安全裝備要求的遵守情況至關重要。
    - `detect_near_machinery_or_vehicle`：偵測人員是否危險地靠近機器或車輛。這有助於防止在建築工地或工業區經常遇到的因靠近重型設備或移動車輛而引起的事故。
    - `detect_in_restricted_area`：偵測人員是否進入限製或控制區域。限制區域對於未經訓練的人員可能是危險的，或者可能包含敏感設備，因此此設定有助於控制對此類區域的存取。
+
+- `work_start_hour`：指定係統應開始監控視訊串流的時間（24 小時格式）。這樣可以將監控限制在活躍的工作時間，從而減少定義的時間範圍之外的不必要的處理（例如，「7」表示上午 7:00）。
+
+- `work_end_hour`：指定係統應停止監控視訊串流的時間（24 小時格式）。在此時間之後，監控將停止以最佳化資源使用（例如「18」表示下午 6:00）。
+
+ 「work_start_hour」和「work_end_hour」一起定義一天中的監控時段。對於 24 小時監控，請將“work_start_hour”設為“0”，將“work_end_hour”設為“24”。
+
+- `store_in_redis`：一個布林值，決定是否將處理後的幀和關聯的檢測資料儲存在 Redis 中。如果為“True”，系統會將資料儲存到 Redis 資料庫以供進一步使用，例如即時監控或與其他服務整合。如果為“False”，則 Redis 中不會保存任何資料。
 <br>
 
 <details>
