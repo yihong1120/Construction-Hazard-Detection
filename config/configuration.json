@@ -14,6 +14,29 @@
           "detect_no_safety_vest_or_helmet": true,
           "detect_near_machinery_or_vehicle": true,
           "detect_in_restricted_area": true
-        }
-    }      
+        },
+        "work_start_hour": 7,
+        "work_end_hour": 18,
+        "store_in_redis": true
+    },
+    {
+        "video_url": "streaming URL",
+        "site": "Factory_1",
+        "stream_name": "camera_1",
+        "model_key": "yolo11n",
+        "notifications": {
+          "line_token_3": "language_3",
+          "line_token_4": "language_4"
+        },
+        "detect_with_server": false,
+        "expire_date": "No Expire Date",
+        "detection_items": {
+          "detect_no_safety_vest_or_helmet": true,
+          "detect_near_machinery_or_vehicle": false,
+          "detect_in_restricted_area": true
+        },
+        "work_start_hour": 0,
+        "work_end_hour": 24,
+        "store_in_redis": true
+      }
 ]

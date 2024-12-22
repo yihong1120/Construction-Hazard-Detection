@@ -28,8 +28,6 @@ from src.utils import Utils
 # Load environment variables
 load_dotenv()
 
-is_windows = os.name == 'nt'
-
 
 class AppConfig(TypedDict, total=False):
     """
@@ -45,6 +43,9 @@ class AppConfig(TypedDict, total=False):
     line_token: str | None
     language: str | None
     detection_items: dict[str, bool] | None
+    work_start_hour: int | None
+    work_end_hour: int | None
+    store_in_redis: bool
 
 
 class MainApp:
@@ -82,13 +83,18 @@ class MainApp:
             'stream_name': config.get('stream_name', 'prediction_visual'),
             'notifications': config['notifications'],
             'detect_with_server': config['detect_with_server'],
+            'expire_date': config.get('expire_date'),
+            'language': config.get('language'),
+            'detection_items': config.get('detection_items'),
+            'work_start_hour': config.get('work_start_hour'),
+            'work_end_hour': config.get('work_end_hour'),
+            'store_in_redis': config.get('store_in_redis', False),
         }
         return str(relevant_config)  # Convert to string for hashing
 
     async def reload_configurations(self):
         async with self.lock:
-            if not is_windows:
-                redis_manager = RedisManager()
+            redis_manager = RedisManager()
 
             self.logger.info('Reloading configurations...')
             with open(self.config_file, encoding='utf-8') as file:
@@ -238,6 +244,9 @@ class MainApp:
         notifications: dict[str, str] | None = None,
         detect_with_server: bool = False,
         detection_items: dict[str, bool] | None = {},
+        work_start_hour: int = 7,
+        work_end_hour: int = 18,
+        store_in_redis: bool = False,
     ) -> None:
         """
         Process a single video stream with hazard detection, notifications,
@@ -253,7 +262,7 @@ class MainApp:
             detect_with_server (bool): Whether to use server for detection.
             detection_items (dict): Items to detect.
         """
-        if not is_windows:
+        if store_in_redis:
             redis_manager = RedisManager()
 
         # Initialise the stream capture object
@@ -297,7 +306,9 @@ class MainApp:
             detection_time = datetime.fromtimestamp(timestamp)
 
             # Check if the current time is within working hours
-            is_working_hour = 7 <= detection_time.hour < 23
+            is_working_hour = (
+                work_start_hour <= detection_time.hour < work_end_hour
+            )
 
             # Detection step
             datas, _ = await live_stream_detector.generate_detections(frame)
@@ -359,7 +370,7 @@ class MainApp:
             frame_bytes = Utils.encode_frame(frame_with_detections)
 
             # Store the frame bytes to Redis
-            if not is_windows:
+            if store_in_redis:
                 await redis_manager.store_to_redis(
                     site=site or 'default',
                     stream_name=stream_name,
@@ -383,7 +394,7 @@ class MainApp:
         await streaming_capture.release_resources()
 
         # Close the Redis connection
-        if not is_windows:
+        if store_in_redis:
             await redis_manager.close_connection()
 
         gc.collect()
@@ -393,7 +404,7 @@ class MainApp:
         Process a video stream based on the given configuration.
 
         Args:
-            config (StreamConfig): The configuration for the stream processing.
+            config (AppConfig): The configuration for the stream processing.
 
         Returns:
             None
@@ -423,6 +434,9 @@ class MainApp:
             stream_name = config.get('stream_name', 'prediction_visual')
             detect_with_server = config.get('detect_with_server', False)
             detection_items = config.get('detection_items', None)
+            store_in_redis = config.get('store_in_redis', False)
+            work_start_hour = config.get('work_start_hour', 7)
+            work_end_hour = config.get('work_end_hour', 18)
 
             # Run hazard detection on a single video stream
             await self.process_single_stream(
@@ -434,9 +448,12 @@ class MainApp:
                 notifications=notifications,
                 detect_with_server=detect_with_server,
                 detection_items=detection_items,
+                work_start_hour=work_start_hour or 7,
+                work_end_hour=work_end_hour or 18,
+                store_in_redis=store_in_redis,
             )
         finally:
-            if not is_windows:
+            if config.get('store_in_redis', False):
                 redis_manager = RedisManager()
                 site = config.get('site') or 'default site'
                 stream_name = config.get(
@@ -444,9 +461,7 @@ class MainApp:
                 ) or 'default stream name'
 
                 site = Utils.encode(site)
-                stream_name = Utils.encode(
-                    stream_name,
-                )
+                stream_name = Utils.encode(stream_name)
 
                 key = f"stream_frame:{site}|{stream_name}"
                 await redis_manager.delete(key)
@@ -608,7 +623,7 @@ async def main():
         print('\n[INFO] Received KeyboardInterrupt. Shutting down...')
     finally:
         # Perform necessary cleanup if needed
-        # if not is_windows:
+        # if store_in_redis:
         #     await redis_manager.close_connection()
         #     print('[INFO] Redis connection closed.')
         print('[INFO] Application stopped.')
