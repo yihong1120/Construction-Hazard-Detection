@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from PIL import ImageFont
 from shapely.geometry import Polygon
 
 from src.drawing_manager import DrawingManager
@@ -85,24 +86,59 @@ class TestDrawingManager(unittest.TestCase):
 
     def test_get_font_fallback_to_default(self) -> None:
         """
-        Test the get_font method when loading a custom font fails,
-        falling back to the default font.
+        Test the fallback behaviour when loading a font fails.
+
+        Raises:
+            AssertionError: If the fallback behaviour is incorrect.
         """
-        # Mock ImageFont.truetype to raise an OSError
-        with patch('PIL.ImageFont.truetype', side_effect=OSError):
-            # Call get_font, which should fall back to the default font
+        # Force reset to ensure the fallback logic is triggered
+        DrawingManager.default_font = None
+
+        # Save the reference to the original `truetype` function
+        # from PIL.ImageFont
+        original_truetype = ImageFont.truetype
+
+        # Define a custom side effect
+        # to simulate a loading failure for specific paths
+        def my_side_effect(font_path: str, size: int, *args, **kwargs):
+            """
+            Simulates a failure when attempting to load a specific custom font.
+
+            Args:
+                font_path (str): The path to the font file.
+                size (int): The font size to be loaded.
+
+            Returns:
+                Any: The font object if loading succeeds.
+
+            Raises:
+                OSError: If the font path matches a specific failing condition.
+            """
+            # Simulate an error for a specific font path
+            if font_path == 'assets/fonts/NotoSansTC-VariableFont_wght.ttf':
+                raise OSError('Simulated font load error')
+
+            # For all other paths (e.g., those used by `load_default`),
+            # call the original `truetype`
+            return original_truetype(font_path, size, *args, **kwargs)
+
+        # Patch `PIL.ImageFont.truetype` with the custom side effect
+        with patch('PIL.ImageFont.truetype', side_effect=my_side_effect):
+            # Attempt to retrieve the font,
+            # expecting a fallback to the default font
             fallback_font = self.drawer.get_font('en')
 
-            # Check that the returned font is the default font
-            self.assertIs(
-                fallback_font, DrawingManager.default_font,
-                'Should fall back to the default font when loading fails',
-            )
-
-            # Ensure that the default font is not None
+            # Ensure that the default font has been set
             self.assertIsNotNone(
                 DrawingManager.default_font,
-                'Default font should be loaded and cached',
+                'Default font should be initialised after fallback',
+            )
+
+            # Verify that the fallback font is the same as the default font
+            self.assertIs(
+                fallback_font,
+                DrawingManager.default_font,
+                'Should fall back to the default font when loading fails',
             )
 
     def test_draw_detections_on_frame_with_thai_language(self) -> None:

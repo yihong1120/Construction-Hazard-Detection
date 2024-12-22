@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 
-from flask import abort
-from flask import Flask
-from flask import request
+from fastapi import FastAPI
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi.responses import PlainTextResponse
 from linebot import LineBotApi
 from linebot import WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -13,58 +14,78 @@ from linebot.models import MessageEvent
 from linebot.models import TextMessage
 from linebot.models import TextSendMessage
 
-app: Flask = Flask(__name__)
+# Create a FastAPI application instance
+app = FastAPI()
 
 # Initialise the LINE Bot API and WebhookHandler with access token and secret
 line_bot_api: LineBotApi = LineBotApi('YOUR_LINE_CHANNEL_ACCESS_TOKEN')
 handler: WebhookHandler = WebhookHandler('YOUR_LINE_CHANNEL_SECRET')
 
 
-@app.route('/webhook', methods=['POST'])
-def callback() -> str:
+@app.post('/webhook', response_class=PlainTextResponse)
+async def callback(request: Request) -> str:
     """
-    Handle the incoming webhook requests from LINE.
+    Handle incoming webhook requests from LINE.
+
+    Args:
+        request (Request): The HTTP request object
+            containing the webhook data.
 
     Returns:
-        str: The response msg to indicate successful handling of the request.
+        str: A plain text response
+            indicating successful handling of the request.
+
+    Raises:
+        HTTPException: If the request is invalid
+            or an error occurs during processing.
     """
+    # Extract the signature and body from the request
     signature: str = request.headers.get('X-Line-Signature', '')
-    body: str = request.get_data(as_text=True)
+    body: bytes = await request.body()
+    body_text: str = body.decode('utf-8') if body else ''
 
     # Check if signature or body is missing
-    if not signature or not body:
-        logging.warning('Received invalid request')
-        abort(400)  # Bad Request
+    if not signature or not body_text:
+        logging.warning(
+            'Received invalid request: signature or body is missing',
+        )
+        raise HTTPException(status_code=400, detail='Bad Request')
 
     try:
-        # Handle the request with the provided body and signature
-        handler.handle(body, signature)
+        # Process the incoming message using the LINE handler
+        handler.handle(body_text, signature)
     except InvalidSignatureError:
-        # Log and abort if the signature is invalid
         logging.error('Invalid signature error')
-        abort(400)  # Bad Request
+        raise HTTPException(status_code=400, detail='Invalid Signature Error')
     except Exception as e:
-        # Log and abort if any other unexpected error occurs
         logging.error(f"Unexpected error: {e}")
-        abort(500)  # Internal Server Error
+        raise HTTPException(status_code=500, detail='Internal Server Error')
 
+    # Return success response
     return 'OK'
 
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event: MessageEvent) -> None:
     """
-    Handle the incoming text message event from the user.
+    Handle incoming text messages from users.
 
     Args:
-        event (MessageEvent): Event object containing details of the message.
+        event (MessageEvent): The LINE message event
+            containing the user's message.
+
+    Raises:
+        LineBotApiError: If an error occurs
+            while sending a reply message.
+        Exception: If an unexpected error occurs during processing.
 
     Returns:
         None
     """
+    # Extract the user's message
     user_message: str = event.message.text
 
-    # Check if the user's message is empty or contains only whitespace
+    # Check if the message is empty or contains only whitespace
     if not user_message.strip():
         logging.warning('Received empty user message')
         return
@@ -75,16 +96,17 @@ def handle_text_message(event: MessageEvent) -> None:
 
         # Send the response back to the user via LINE
         line_bot_api.reply_message(
-            event.reply_token, TextSendMessage(text=assistant_response),
+            event.reply_token,
+            TextSendMessage(text=assistant_response),
         )
     except LineBotApiError as e:
-        # Log the error if the LINE Bot API fails
         logging.error(f"Error responding to message: {e}")
     except Exception as e:
-        # Log any other unexpected errors
         logging.error(f"Unexpected error: {e}")
 
 
 if __name__ == '__main__':
-    # Run the Flask application on the specified host and port
-    app.run(host='0.0.0.0', port=8000)
+    import uvicorn
+
+    # Start the FastAPI application using uvicorn
+    uvicorn.run(app, host='127.0.0.1', port=8000)
