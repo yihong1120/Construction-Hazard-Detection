@@ -8,11 +8,17 @@ const formControls = document.getElementById("form-controls");
 let configData = [];
 let isEditing = false;
 
+// Fetch today's date in ISO format (YYYY-MM-DD)
+function getTodayDate() {
+    return new Date().toISOString().split("T")[0];
+}
+
 async function fetchConfig() {
     try {
         const response = await fetch("/api/config");
         if (!response.ok) throw new Error("Failed to fetch configuration.");
         const data = await response.json();
+
         // Transform notifications object to array
         configData = data.config.map(config => ({
             ...config,
@@ -34,43 +40,73 @@ function updateConfigDataFromForm() {
     configData = Array.from(configItems).map((container, index) => {
         const inputs = container.querySelectorAll("input, select");
         const config = { notifications: [], detection_items: {} };
+
         inputs.forEach((input) => {
-            if (input.name === "line_token" || input.name === "language") {
-                // Process notification items
+            const { name, type } = input;
+
+            // Process Notifications
+            if (name === "line_token" || name === "language") {
                 const notifIndex = input.getAttribute("data-notif-index");
                 if (!config.notifications[notifIndex]) {
                     config.notifications[notifIndex] = { token: "", language: "en" };
                 }
-                if (input.name === "line_token") {
+                if (name === "line_token") {
                     config.notifications[notifIndex].token = input.value.trim();
-                } else if (input.name === "language") {
+                } else {
                     config.notifications[notifIndex].language = input.value;
                 }
-            } else if (input.name === "no_expire_date") {
-                // Process no_expire_date
-                config.no_expire_date = input.checked;
-                if (input.checked) {
-                    config.expire_date = "No Expire Date";
-                }
-            } else if (input.name === "expire_date") {
-                // Process expire_date
-                if (!config.expire_date && input.type === "date") {
-                    config.expire_date = input.value || new Date().toISOString().split('T')[0];
-                }
-                // Save the previous expire_date value
-                config.previous_expire_date = input.value;
-            } else if (input.name.startsWith("detect_")) {
-                // Process detection items and detect_with_server
-                if (input.name === "detect_with_server") {
-                    config.detect_with_server = input.checked;
-                } else {
-                    config.detection_items[input.name] = input.checked;
-                }
-            } else if (input.name) {
-                // Process other input fields
-                config[input.name] = input.value.trim();
+            }
+
+            // Process Expiry Date
+            else if (name === "expire_date") {
+                config.expire_date = input.value.trim();
+            }
+
+            // Process Checkboxes
+            else if (name === "detect_with_server") {
+                config.detect_with_server = input.checked;
+            }
+            else if (name === "store_in_redis") {
+                config.store_in_redis = input.checked;
+            }
+            else if (name.startsWith("detect_")) {
+                config.detection_items[name] = input.checked;
+            }
+
+            // Process Work Hours
+            else if (name === "work_start_hour") {
+                config.work_start_hour = parseInt(input.value, 10);
+            }
+            else if (name === "work_end_hour") {
+                config.work_end_hour = parseInt(input.value, 10);
+            }
+
+            // Process other fields
+            else if (name) {
+                // site, stream_name, video_url, model_key, etc.
+                config[name] = input.value.trim();
             }
         });
+
+        // Process "No Expire Date"
+        const noExpireDateCheckbox = container.querySelector("input[name='no_expire_date']");
+        if (noExpireDateCheckbox) {
+            if (noExpireDateCheckbox.checked) {
+                config.expire_date = "No Expire Date";
+            } else {
+                // If the expire_date is empty, set it to today
+                if (!config.expire_date || config.expire_date === "No Expire Date") {
+                    config.expire_date = getTodayDate();
+                }
+            }
+        }
+
+        // Remove empty notifications
+        config.notifications = config.notifications.filter(notif => notif.token);
+
+        // Ensure store_in_redis is a boolean
+        config.store_in_redis = !!config.store_in_redis;
+
         return config;
     });
 }
@@ -85,6 +121,7 @@ function renderConfigForm() {
         const container = configItemTemplate.content.cloneNode(true);
         const item = container.querySelector(".config-item");
 
+        // Fetch form elements
         const siteInput = item.querySelector("input[name='site']");
         const streamNameInput = item.querySelector("input[name='stream_name']");
         const videoUrlInput = item.querySelector("input[name='video_url']");
@@ -92,45 +129,49 @@ function renderConfigForm() {
         const expireDateInput = item.querySelector("input[name='expire_date']");
         const noExpireDateText = item.querySelector("input[type='text'][value='No Expire Date']");
         const detectWithServerCheckbox = item.querySelector("input[name='detect_with_server']");
-        const detectionItems = item.querySelectorAll("input[type='checkbox'][name^='detect_']:not([name='detect_with_server'])");
+        const storeInRedisCheckbox = item.querySelector("input[name='store_in_redis']");
+        const detectionItems = item.querySelectorAll("input[type='checkbox'][name^='detect_']:not([name='detect_with_server']):not([name='store_in_redis'])");
+        const workStartHourSelect = item.querySelector("select[name='work_start_hour']");
+        const workEndHourSelect = item.querySelector("select[name='work_end_hour']");
         const addNotificationBtn = item.querySelector(".add-notification");
         const deleteConfigBtn = item.querySelector(".delete-config-btn");
         const expireDateContainer = item.querySelector(".expire-date-container");
 
-        // Set values
+        // Default values
         siteInput.value = config.site || '';
         streamNameInput.value = config.stream_name || '';
         videoUrlInput.value = config.video_url || '';
-        if (modelKeySelect) {
-            modelKeySelect.value = config.model_key || 'yolo11n';
-        }
+        modelKeySelect.value = config.model_key || 'yolo11n';
 
-        // Process expire_date
-        let expireDateValue;
+        // Set Work Hours
+        workStartHourSelect.value = config.work_start_hour !== undefined ? config.work_start_hour : 7;
+        workEndHourSelect.value = config.work_end_hour !== undefined ? config.work_end_hour : 18;
+
+        // Set Expire Date
         if (config.expire_date === "No Expire Date") {
-            expireDateValue = "";
-        } else if (config.expire_date) {
-            expireDateValue = config.expire_date;
+            expireDateInput.value = "";
+            expireDateInput.style.display = "none";
+            noExpireDateText.style.display = "";
         } else {
-            expireDateValue = new Date().toISOString().split('T')[0];
-            config.expire_date = expireDateValue;
+            expireDateInput.value = config.expire_date || getTodayDate();
+            expireDateInput.style.display = "";
+            noExpireDateText.style.display = "none";
         }
 
-        expireDateInput.value = expireDateValue;
-
-        // Detect with server
+        // Set Detect with Server & Store in Redis
         detectWithServerCheckbox.checked = !!config.detect_with_server;
+        storeInRedisCheckbox.checked = !!config.store_in_redis;
 
-        // Detection Items
+        // Set Detection Items
         detectionItems.forEach((checkbox) => {
             const key = checkbox.name;
             checkbox.checked = !!config.detection_items[key];
-            // Update label text in case keys differ (optional)
+            // Update the label text, replacing underscores with spaces and capitalizing the first letter of each word
             const label = checkbox.parentElement;
             label.lastChild.textContent = formatDetectionItemName(key);
         });
 
-        // Notifications
+        // Set Notifications
         const notificationsContainer = item.querySelector(".notifications-container");
         notificationsContainer.innerHTML = "";
         config.notifications.forEach((notification, notifIndex) => {
@@ -145,7 +186,7 @@ function renderConfigForm() {
             lineTokenInput.setAttribute("data-notif-index", notifIndex);
             languageSelect.setAttribute("data-notif-index", notifIndex);
 
-            // Show/Hide delete notification button based on edit mode
+            // According to the edit mode, show/hide delete button
             if (isEditing) {
                 deleteNotifBtn.style.display = "block";
             } else {
@@ -155,19 +196,23 @@ function renderConfigForm() {
             notificationsContainer.appendChild(notifEl);
         });
 
-        // If in editing mode, add a no_expire_date checkbox
+        // If the expire_date is empty, set it to today
         if (isEditing) {
             const noExpireDateCheckbox = document.createElement("input");
             noExpireDateCheckbox.type = "checkbox";
             noExpireDateCheckbox.name = "no_expire_date";
             noExpireDateCheckbox.checked = config.expire_date === "No Expire Date";
-            expireDateContainer.appendChild(document.createElement("br"));
+            noExpireDateCheckbox.id = `no-expire-date-${index}`;
+
             const noExpireDateLabel = document.createElement("label");
+            noExpireDateLabel.htmlFor = `no-expire-date-${index}`;
             noExpireDateLabel.appendChild(noExpireDateCheckbox);
             noExpireDateLabel.appendChild(document.createTextNode(" No Expire Date"));
+
+            expireDateContainer.appendChild(document.createElement("br"));
             expireDateContainer.appendChild(noExpireDateLabel);
 
-            // Initialise the display of the expire date input and no expire date text
+            // Initial show/hide "No Expire Date" text
             if (noExpireDateCheckbox.checked) {
                 expireDateInput.style.display = "none";
                 noExpireDateText.style.display = "";
@@ -176,20 +221,24 @@ function renderConfigForm() {
                 noExpireDateText.style.display = "none";
             }
 
+            // Monitor "No Expire Date" checkbox changes
             noExpireDateCheckbox.addEventListener("change", () => {
                 if (noExpireDateCheckbox.checked) {
-                    config.previous_expire_date = expireDateInput.value;
+                    expireDateInput.value = "";
                     expireDateInput.style.display = "none";
                     noExpireDateText.style.display = "";
                 } else {
                     expireDateInput.style.display = "";
                     noExpireDateText.style.display = "none";
-                    // Restore the previous expire date value
-                    expireDateInput.value = config.previous_expire_date || new Date().toISOString().split('T')[0];
+                    // If the expire_date is empty, set it to today
+                    if (!config.expire_date || config.expire_date === "No Expire Date") {
+                        expireDateInput.value = getTodayDate();
+                        config.expire_date = getTodayDate();
+                    }
                 }
             });
         } else {
-            // Not in editing mode
+            // Show/hide "No Expire Date" text
             if (config.expire_date === "No Expire Date") {
                 expireDateInput.style.display = "none";
                 noExpireDateText.style.display = "";
@@ -199,7 +248,7 @@ function renderConfigForm() {
             }
         }
 
-        // Show/Hide delete config button and add notification button based on edit mode
+        // According to the edit mode, show/hide buttons
         if (isEditing) {
             deleteConfigBtn.style.display = "block";
             addNotificationBtn.style.display = "inline-block";
@@ -208,18 +257,20 @@ function renderConfigForm() {
             addNotificationBtn.style.display = "none";
         }
 
-        // Event: delete config
+        // Event: Delete Config
         deleteConfigBtn.addEventListener("click", () => {
             updateConfigDataFromForm();
             configData.splice(index, 1);
             renderConfigForm();
         });
 
-        // Event: delete notification
+        // Event: Delete Notification
         notificationsContainer.addEventListener("click", (event) => {
             if (event.target.closest(".delete-notification")) {
                 const notificationItem = event.target.closest(".notification-item");
-                const notifIndex = parseInt(notificationItem.querySelector("input[name='line_token']").getAttribute("data-notif-index"));
+                const notifIndex = parseInt(
+                    notificationItem.querySelector("input[name='line_token']").getAttribute("data-notif-index")
+                );
                 updateConfigDataFromForm();
                 const updatedConfig = configData[index];
                 updatedConfig.notifications.splice(notifIndex, 1);
@@ -227,20 +278,20 @@ function renderConfigForm() {
             }
         });
 
-        // Event: add notification
+        // Event: Add Notification
         addNotificationBtn.addEventListener("click", () => {
             updateConfigDataFromForm();
             configData[index].notifications.push({ token: "", language: "en" });
             renderConfigForm();
         });
 
-        // 根據isEditing狀態設定所有input,select的disabled狀態
-        const fields = item.querySelectorAll('input, select');
+        // According to the edit mode, enable/disable form fields
+        const fields = item.querySelectorAll("input, select");
         fields.forEach(f => {
             if (!isEditing) {
-                f.setAttribute('disabled', 'true');
+                f.setAttribute("disabled", "true");
             } else {
-                f.removeAttribute('disabled');
+                f.removeAttribute("disabled");
             }
         });
 
@@ -251,83 +302,115 @@ function renderConfigForm() {
 function toggleEditMode(enable) {
     isEditing = enable;
 
-    // Re-render the form
+    // Reset form data if exiting edit mode
     renderConfigForm();
 
-    // Toggle the visibility of the buttons and form controls
+    // Show/hide buttons and form controls
     editBtn.classList.toggle("hidden", enable);
     addConfigBtn.classList.toggle("hidden", !enable);
     formControls.classList.toggle("hidden", !enable);
 
     if (!enable) {
-        // If exiting edit mode, fetch the config again
+        // If exiting edit mode, fetch the latest config
         fetchConfig();
     }
 }
 
 async function saveConfig() {
-    // 清除之前的错误消息
+    // Erase previous error messages
     document.querySelectorAll(".error-message").forEach(el => el.remove());
     document.querySelectorAll(".error").forEach(el => el.classList.remove("error"));
 
     let isValid = true;
 
     try {
-        updateConfigDataFromForm(); // Update configData
+        updateConfigDataFromForm(); // Update configData with the latest form values
 
         const updatedConfig = configData.map((config, index) => {
             const container = configContainer.children[index];
 
-            // Validate required fields
+            // Validate required fields: site, stream_name, video_url
             ["site", "stream_name", "video_url"].forEach(field => {
                 if (!config[field]) {
                     isValid = false;
                     const input = container.querySelector(`input[name='${field}']`);
-                    input.classList.add("error");
-
-                    // Add an error message if it doesn't exist
-                    if (!input.previousElementSibling || !input.previousElementSibling.classList.contains("error-message")) {
-                        const errorMessage = document.createElement("div");
-                        errorMessage.className = "error-message";
-                        errorMessage.textContent = "This field is required.";
-                        input.parentNode.insertBefore(errorMessage, input);
+                    if (input) {
+                        input.classList.add("error");
+                        if (
+                            !input.previousElementSibling ||
+                            !input.previousElementSibling.classList.contains("error-message")
+                        ) {
+                            const errorMessage = document.createElement("div");
+                            errorMessage.className = "error-message";
+                            errorMessage.textContent = "This field is required.";
+                            input.parentNode.insertBefore(errorMessage, input);
+                        }
                     }
                 }
             });
 
-            // Filter out notifications with empty token
-            config.notifications = config.notifications.filter(notif => notif.token);
+            // Validate work_start_hour < work_end_hour
+            if (config.work_start_hour >= config.work_end_hour) {
+                isValid = false;
+                const workStartHourSelect = container.querySelector(`select[name='work_start_hour']`);
+                const workEndHourSelect = container.querySelector(`select[name='work_end_hour']`);
+                workStartHourSelect.classList.add("error");
+                workEndHourSelect.classList.add("error");
 
-            // Ensure that the expire_date is set if no_expire_date is not checked
-            if (!config.no_expire_date && !config.expire_date) {
-                config.expire_date = new Date().toISOString().split('T')[0];
+                if (
+                    !workEndHourSelect.previousElementSibling ||
+                    !workEndHourSelect.previousElementSibling.classList.contains("error-message")
+                ) {
+                    const errorMessage = document.createElement("div");
+                    errorMessage.className = "error-message";
+                    errorMessage.textContent =
+                        "Work Start Hour cannot be greater than or equal to Work End Hour.";
+                    workEndHourSelect.parentNode.insertBefore(errorMessage, workEndHourSelect);
+                }
             }
 
-            // Remove the previous_expire_date field
-            delete config.previous_expire_date;
+            // Validate Expiry Date
+            if (config.expire_date !== "No Expire Date" && !config.expire_date) {
+                config.expire_date = getTodayDate();
+            }
 
             return config;
         });
 
         if (!isValid) {
-            // Not to save the configuration if it's invalid
-            return;
+            return; // No need to proceed if there are validation errors
         }
 
-        // Transform notifications array to object
+        // Set notifications as an object
         const processedConfig = updatedConfig.map(config => {
             const notificationsObj = {};
             config.notifications.forEach(notif => {
                 notificationsObj[notif.token] = notif.language;
             });
-            return { ...config, notifications: notificationsObj };
+            return {
+                ...config,
+                notifications: notificationsObj,
+                // Remove the "No Expire Date" checkbox value
+                no_expire_date: undefined
+            };
         });
 
-        // Send the updated configuration to the server
+        // Remove undefined fields
+        const finalConfig = processedConfig.map(config => {
+            const cleanedConfig = { ...config };
+            Object.keys(cleanedConfig).forEach(key => {
+                if (cleanedConfig[key] === undefined) {
+                    delete cleanedConfig[key];
+                }
+            });
+            return cleanedConfig;
+        });
+
+        // Conduct the API request to save the configuration
         const response = await fetch("/api/config", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ config: processedConfig }),
+            body: JSON.stringify({ config: finalConfig })
         });
 
         if (!response.ok) throw new Error("Failed to save configuration.");
@@ -338,27 +421,29 @@ async function saveConfig() {
     }
 }
 
-// 按鈕事件處理
+// Process Events
 editBtn.addEventListener("click", () => toggleEditMode(true));
 cancelBtn.addEventListener("click", () => toggleEditMode(false));
 saveBtn.addEventListener("click", saveConfig);
 addConfigBtn.addEventListener("click", () => {
     updateConfigDataFromForm();
-    // Add a new config item with default values
-    const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+    // Add a new empty config item
+    const today = getTodayDate();
     configData.push({
-        video_url: "",
         site: "",
         stream_name: "",
-        model_key: "yolo11n", // Default model key to yolo11n
-        notifications: [], // Empty notifications
-        expire_date: today,
-        no_expire_date: false,
-        detect_with_server: false, // Default detect_with_server to false
+        video_url: "",
+        model_key: "yolo11n",
+        expire_date: today, // Default to today
+        detect_with_server: false,
+        store_in_redis: false,
+        work_start_hour: 7,
+        work_end_hour: 18,
+        notifications: [],
         detection_items: {
-            "detect_no_safety_vest_or_helmet": false,
-            "detect_near_machinery_or_vehicle": false,
-            "detect_in_restricted_area": false
+            detect_no_safety_vest_or_helmet: false,
+            detect_near_machinery_or_vehicle: false,
+            detect_in_restricted_area: false
         }
     });
 
@@ -366,4 +451,5 @@ addConfigBtn.addEventListener("click", () => {
     toggleEditMode(true);
 });
 
+// Automatically fetch the configuration when the page loads
 document.addEventListener("DOMContentLoaded", fetchConfig);
