@@ -109,6 +109,20 @@ legend {
     color: #e60000;
 }
 
+/* Work hours block */
+.work-hours {
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+    margin-bottom: 15px;
+}
+
+.work-hours-label {
+    font-weight: bold;
+    display: flex;
+    flex-direction: column;
+}
+
 /* Notification styles */
 .notification-item {
     position: relative;
@@ -194,6 +208,10 @@ legend {
     .buttons, #form-controls {
         text-align: center;
     }
+
+    .work-hours {
+        flex-direction: column;
+    }
 }
 
 /* Error state styles */
@@ -201,7 +219,7 @@ legend {
     border: 1px solid red !important;
 }
 
-/* Filter effect styles */
+/* Transition effect styles */
 button, .delete-notification {
     transition: background-color 0.3s, color 0.3s;
 }
