@@ -260,58 +260,168 @@ Now, you could launch the hazard-detection system in Docker or Python env:
 
    To run the hazard detection system with Python, follow these steps:
 
-   1. Clone the repository to your local machine:
-      ```bash
-      git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
-      ```
+   ### **1. Clone the Repository to Your Local Machine**
 
-   2. Navigate to the cloned directory:
-      ```bash
-      cd Construction-Hazard-Detection
-      ```
+   Use the following command to clone the repository from GitHub:
 
-   3. Install required packages:
-      ```bash
-      pip install -r requirements.txt
-      ```
+   ```bash
+   git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+   ```
 
-   4. Install and launch MySQL service (if required):
+   ---
 
-      For Ubuntu users:
+   ### **2. Navigate to the Cloned Directory**
+
+   Change the directory to the newly cloned repository:
+
+   ```bash
+   cd Construction-Hazard-Detection
+   ```
+
+   ---
+
+   ### **3. Install Required Packages**
+
+   Run the following command to install the necessary Python packages:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+   ---
+
+   ### **4. Install and Launch MySQL Service (if Required)**
+
+   #### **For Ubuntu Users**
+
+   1. Open the terminal and execute the following commands to install and start the MySQL server:
+
       ```bash
+      sudo apt update
       sudo apt install mysql-server
       sudo systemctl start mysql.service
       ```
 
-      For others, you can download and install MySQL that works in your operation system in this [link](https://dev.mysql.com/downloads/).
+   #### **For Other Operating Systems**
 
-   5. Start user management API:
+   1. Download and install the appropriate version of MySQL for your operating system from the [MySQL Downloads](https://dev.mysql.com/downloads/) page.
+
+   ---
+
+   #### **Initialise the Database**
+
+   After installing MySQL, use the following command to initialise the `construction_hazard_detection` database and create the `users` table:
+
+   ```bash
+   mysql -u root -p < scripts/init.sql
+   ```
+
+   You will be prompted to enter the MySQL root password. Ensure that the `scripts/init.sql` file contains the necessary SQL commands to set up the database and tables as described earlier.
+
+   ---
+
+   ### **5. Set Up Redis Server (Required Only for Streaming Web)**
+
+   Redis is needed only when using the **Streaming Web** functionality. Follow the steps below to set up Redis.
+
+   #### **For Ubuntu Users**
+
+   1. **Install Redis**
+
+      Open the terminal and run the following commands:
+
       ```bash
-      gunicorn -w 1 -b 0.0.0.0:8000 "examples.user_management.app:user-managements-app"
+      sudo apt update
+      sudo apt install redis-server
       ```
 
-   6. Run object detection API:
+   2. **Configure Redis (Optional)**
+
+      If you need custom settings, edit the Redis configuration file:
+
       ```bash
-      uvicorn examples.YOLO_server.app:sio_app --host 0.0.0.0 --port 8001
+      sudo vim /etc/redis/redis.conf
       ```
 
-   7. Run the main application with a specific configuration file:
+      To enhance security, enable password protection by adding or modifying the following line:
+
+      ```conf
+      requirepass YourStrongPassword
+      ```
+
+      Replace `YourStrongPassword` with a secure password.
+
+   3. **Start and Enable Redis Service**
+
+      Start the Redis service:
+
       ```bash
-      python3 main.py --config config/configuration.json
+      sudo systemctl start redis.service
       ```
-      Replace `config/configuration.json` with the actual path to your configuration file.
 
-   8. Start the streaming web service:
+      Enable Redis to start automatically on boot:
 
-      For linux users:
       ```bash
-      uvicorn examples.streaming_web.app:sio_app --host 0.0.0.0 --port 8002
+      sudo systemctl enable redis.service
       ```
 
-      For windows users:
-      ```
-      waitress-serve --host=127.0.0.1 --port=8002 "examples.streaming_web.app:streaming-web-app"
-      ```
+   #### **For Other Operating Systems**
+
+   Refer to the official [Redis installation guide](https://redis.io/docs/getting-started/installation/) for instructions specific to your operating system.
+
+   ---
+
+   ### **6. Run the Object Detection API**
+
+   Start the object detection API with the following command:
+
+   ```bash
+   uvicorn examples.YOLO_server.backend.app:sio_app --host 0.0.0.0 --port 8001
+   ```
+
+   ---
+
+   ### **7. Run the Main Application with a Specific Configuration File**
+
+   Use the following command to run the main application and specify the configuration file:
+
+   ```bash
+   python3 main.py --config config/configuration.json
+   ```
+
+   Replace `config/configuration.json` with the actual path to your configuration file.
+
+   ---
+
+   ### **8. Start the Streaming Web Service**
+
+   #### **Launching the Backend**
+
+   ##### **For Linux Users**
+
+   Run the following command to start the backend service on a Linux system:
+
+   ```bash
+   uvicorn examples.streaming_web.backend.app:sio_app --host 127.0.0.1 --port 8002
+   ```
+
+   ##### **For Windows Users**
+
+   To start the backend service on a Windows system, use the following command:
+
+   ```cmd
+   waitress-serve --host=127.0.0.1 --port=8002 "examples.streaming_web.backend.app:streaming-web-app"
+   ```
+
+   ---
+
+   #### **Setting Up the Frontend**
+
+   Refer to the `examples/YOLO_server_api/frontend/nginx.conf` file for deployment instructions. Place the static web files in the following directory:
+
+   ```plaintext
+   examples/YOLO_server_api/frontend/dist
+   ```
 
 </details>
 

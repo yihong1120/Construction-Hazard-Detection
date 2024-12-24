@@ -254,59 +254,153 @@
 
    要在終端運行危險檢測系統，您需要在機器上安裝 Python。按照以下步驟來啟動系統：
 
-   1. 將存儲庫克隆到本地機器。
-      ```bash
-      git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
-      ```
+   ### 1. 將專案複製至本機
+   使用以下指令將專案從 GitHub 複製到本機：
 
-   2. 進入克隆的目錄。
-      ```bash
-      cd Construction-Hazard-Detection
-      ```
+   ```bash
+   git clone https://github.com/yihong1120/Construction-Hazard-Detection.git
+   ```
 
-   3. 安裝所需的軟體包：
-      ```bash
-      pip install -r requirements.txt
-      ```
+   ---
 
-   4. 安裝並啟動 MySQL 服務：
+   ### 2. 進入專案目錄
+   進入剛剛複製的專案目錄：
 
-      Linux 使用者：
+   ```bash
+   cd Construction-Hazard-Detection
+   ```
+
+   ---
+
+   ### 3. 安裝所需的套件
+   執行以下指令安裝專案所需的套件：
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+   ---
+
+   ### 4. 安裝並啟動 MySQL 服務（如需要）
+
+   #### Ubuntu 系統使用者：
+
+   1. 開啟終端機，執行以下指令安裝 MySQL：
       ```bash
+      sudo apt update
       sudo apt install mysql-server
+      ```
+
+   2. 安裝完成後，啟動 MySQL 服務：
+      ```bash
       sudo systemctl start mysql.service
       ```
 
-      對於其他人，您可以在此[連結](https://dev.mysql.com/downloads/)下載並安裝適用於您的作業系統的MySQL。
+   #### 其他作業系統使用者：
 
-   5. 設置用戶帳戶和密碼。使用以下命令啟動用戶管理 API：
+   請從 [MySQL 下載頁面](https://dev.mysql.com/downloads/)下載適合您作業系統的 MySQL 並完成安裝。
+
+   ---
+
+   #### 初始化資料庫：
+
+   完成 MySQL 安裝後，執行初始化腳本來建立 `construction_hazard_detection` 資料庫及 `users` 資料表：
+
+   ```bash
+   mysql -u root -p < scripts/init.sql
+   ```
+
+   執行指令後，系統會提示您輸入 MySQL 的 root 密碼。請確認 `scripts/init.sql` 檔案內已包含建立資料庫和資料表的 SQL 指令。
+
+   ---
+
+   ### 5. 設定 Redis 伺服器（僅限於 Streaming Web 功能）
+
+   Redis 僅在使用 **Streaming Web** 功能時需要。請依以下步驟安裝及設定 Redis：
+
+   #### Ubuntu 系統使用者：
+
+   1. **安裝 Redis**：
+      執行以下指令安裝 Redis：
       ```bash
-      gunicorn -w 1 -b 0.0.0.0:8000 "examples.user_management.app:user-managements-app"
+      sudo apt update
+      sudo apt install redis-server
       ```
-      建議使用 Postman 應用程式與 API 進行互動。
 
-   6. 要運行物體檢測 API，使用以下命令：
+   2. **設定 Redis（可選）**：
+      - 如果需要進一步設定，請編輯 Redis 設定檔案：
       ```bash
-      gunicorn -w 1 -b 0.0.0.0:8001 "examples.YOLO_server_api.app:YOLO-server-api-app"
+      sudo vim /etc/redis/redis.conf
       ```
+      - 如需啟用密碼保護，請找到以下行，取消註解並設置密碼：
+      ```conf
+      requirepass YourStrongPassword
+      ```
+      將 `YourStrongPassword` 替換為強密碼。
 
-   7. 使用特定的配置文件運行主應用程序，使用以下命令：
+   3. **啟動並設置 Redis 服務開機自動啟動**：
+      - 啟動 Redis 服務：
       ```bash
-      python3 main.py --config config/configuration.json
+      sudo systemctl start redis.service
       ```
-      將 `config/configuration.json` 替換為您的配置文件的實際路徑。
+      - 設置開機自動啟動：
+      ```bash
+      sudo systemctl enable redis.service
+      ```
 
-   8. 要啟動串流 Web 服務，執行以下命令：
+   #### 其他作業系統使用者：
 
-      對於 Linux 使用者：
-      ````bash
-      gunicorn -w 1 -k eventlet -b 127.0.0.1:8002 "examples.streaming_web.app:streaming-web-app"
-      ````
+   請參考官方文件：[Redis 安裝指南](https://redis.io/docs/getting-started/installation/)。
 
-      對於 Windows 使用者：
-      ````
-      waitress-serve --host=127.0.0.1 --port=8002 "examples.streaming_web.app:streaming-web-app"
-      ````
+   ---
+
+   ### 6. 啟動物件偵測 API
+   執行以下指令啟動物件偵測 API：
+
+   ```bash
+   uvicorn examples.YOLO_server.backend.app:sio_app --host 0.0.0.0 --port 8001
+   ```
+
+   ---
+
+   ### 7. 使用特定配置檔案執行主應用程式
+   執行以下指令啟動主應用程式，並指定配置檔案：
+
+   ```bash
+   python3 main.py --config config/configuration.json
+   ```
+
+   請將 `config/configuration.json` 替換為您的實際配置檔案路徑。
+
+   ---
+
+   ### 8. 啟動 Streaming Web 服務
+
+   #### 啟動後端服務
+
+   ##### Linux 系統使用者：
+   執行以下指令啟動後端服務：
+
+   ```bash
+   uvicorn examples.streaming_web.backend.app:sio_app --host 127.0.0.1 --port 8002
+   ```
+
+   ##### Windows 系統使用者：
+   使用以下 `waitress-serve` 指令啟動後端服務：
+
+   ```cmd
+   waitress-serve --host=127.0.0.1 --port=8002 "examples.streaming_web.backend.app:streaming-web-app"
+   ```
+
+   ---
+
+   #### 設定前端服務
+
+   請參考 `examples/YOLO_server_api/frontend/nginx.conf` 文件進行部署，並將靜態網頁檔案放置於以下目錄：
+
+   ```plaintext
+   examples/YOLO_server_api/frontend/dist
+   ```
 
 </details>
 
