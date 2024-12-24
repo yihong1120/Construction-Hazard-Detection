@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import patch
 
@@ -45,18 +46,18 @@ class TestLineBot(unittest.TestCase):
         """
         # Fake signature and body
         fake_signature: str = 'fake_signature'
-        fake_body: str = """{
-            "events": [
+        fake_body: dict = {
+            'events': [
                 {
-                    "replyToken": "reply_token",
-                    "type": "message",
-                    "message": {
-                        "type": "text",
-                        "text": "Hello"
-                    }
-                }
-            ]
-        }"""
+                    'replyToken': 'reply_token',
+                    'type': 'message',
+                    'message': {
+                        'type': 'text',
+                        'text': 'Hello',
+                    },
+                },
+            ],
+        }
 
         # Mock handler.handle to simulate no error
         self.mock_handler_handle.return_value = None
@@ -64,7 +65,7 @@ class TestLineBot(unittest.TestCase):
         # Send a POST request to the webhook endpoint
         response = self.client.post(
             '/webhook',
-            data=fake_body,
+            json=fake_body,
             headers={'X-Line-Signature': fake_signature},
         )
 
@@ -75,7 +76,7 @@ class TestLineBot(unittest.TestCase):
         # Ensure the handler.handle method
         # was called once with correct arguments
         self.mock_handler_handle.assert_called_once_with(
-            fake_body, fake_signature,
+            json.dumps(fake_body), fake_signature,
         )
 
     def test_callback_missing_signature(self) -> None:
@@ -83,12 +84,12 @@ class TestLineBot(unittest.TestCase):
         Test that the webhook endpoint returns 400 if no signature is provided.
         """
         # Fake body without signature
-        fake_body: str = '{"events":[]}'
+        fake_body: dict = {'events': []}
 
         # Send a POST request without a signature header
         response = self.client.post(
             '/webhook',
-            data=fake_body,
+            json=fake_body,
             headers={},  # Missing X-Line-Signature
         )
 
@@ -102,7 +103,7 @@ class TestLineBot(unittest.TestCase):
         from linebot.exceptions import InvalidSignatureError
 
         fake_signature: str = 'fake_signature'
-        fake_body: str = '{"events":[]}'
+        fake_body: dict = {'events': []}
 
         # Simulate an InvalidSignatureError being raised
         self.mock_handler_handle.side_effect = InvalidSignatureError
@@ -110,7 +111,7 @@ class TestLineBot(unittest.TestCase):
         # Send a POST request with an invalid signature
         response = self.client.post(
             '/webhook',
-            data=fake_body,
+            json=fake_body,
             headers={'X-Line-Signature': fake_signature},
         )
 
@@ -123,7 +124,7 @@ class TestLineBot(unittest.TestCase):
         for unexpected server errors.
         """
         fake_signature: str = 'fake_signature'
-        fake_body: str = '{"events":[]}'
+        fake_body: dict = {'events': []}
 
         # Simulate a generic exception being raised
         self.mock_handler_handle.side_effect = Exception('Some error')
@@ -131,7 +132,7 @@ class TestLineBot(unittest.TestCase):
         # Send a POST request
         response = self.client.post(
             '/webhook',
-            data=fake_body,
+            json=fake_body,
             headers={'X-Line-Signature': fake_signature},
         )
 
