@@ -29,26 +29,29 @@ class TestCOCOEvaluator(unittest.TestCase):
         del self.evaluator
 
     @patch(
-        'examples.YOLO_evaluation.evaluate_sahi_yolo.'
-        'AutoDetectionModel.from_pretrained',
+        'examples.YOLO_evaluation.evaluate_sahi_yolo.COCOeval',
     )
     @patch(
-        'examples.YOLO_evaluation.evaluate_sahi_yolo.'
-        'get_sliced_prediction',
+        'examples.YOLO_evaluation.evaluate_sahi_yolo.COCO',
     )
     @patch(
         'examples.YOLO_evaluation.evaluate_sahi_yolo.'
         'Coco.from_coco_dict_or_path',
     )
-    @patch('examples.YOLO_evaluation.evaluate_sahi_yolo.COCO')
-    @patch('examples.YOLO_evaluation.evaluate_sahi_yolo.COCOeval')
+    @patch(
+        'examples.YOLO_evaluation.evaluate_sahi_yolo.get_sliced_prediction',
+    )
+    @patch(
+        'examples.YOLO_evaluation.evaluate_sahi_yolo.'
+        'AutoDetectionModel.from_pretrained',
+    )
     def test_evaluate(
         self,
-        mock_cocoeval: MagicMock,
-        mock_coco: MagicMock,
-        mock_coco_from_path: MagicMock,
-        mock_get_sliced_prediction: MagicMock,
         mock_auto_model: MagicMock,
+        mock_get_sliced_prediction: MagicMock,
+        mock_coco_from_path: MagicMock,
+        mock_coco: MagicMock,
+        mock_cocoeval: MagicMock,
     ) -> None:
         """
         Test the evaluate method for computing COCO metrics.
@@ -59,10 +62,33 @@ class TestCOCOEvaluator(unittest.TestCase):
 
         # Mock COCO annotations and evaluation
         mock_coco_instance: MagicMock = MagicMock()
+
+        # Define mock categories with specific names and ids
+        mock_category1 = MagicMock()
+        mock_category1.name = 'Hardhat'
+        mock_category1.id = 1
+
+        mock_category2 = MagicMock()
+        mock_category2.name = 'Helmet'
+        mock_category2.id = 2
+
+        mock_coco_instance.categories = [mock_category1, mock_category2]
+
+        # Define mock images with specific ids and file names
+        mock_image1 = MagicMock()
+        mock_image1.id = 101
+        mock_image1.file_name = 'image1.jpg'
+
+        mock_image2 = MagicMock()
+        mock_image2.id = 102
+        mock_image2.file_name = 'image2.jpg'
+
+        mock_coco_instance.images = [mock_image1, mock_image2]
+
         mock_coco.return_value = mock_coco_instance
 
-        mock_coco_from_instance: MagicMock = MagicMock()
-        mock_coco_from_path.return_value = mock_coco_from_instance
+        # Mock the Coco.from_coco_dict_or_path to return the mock_coco_instance
+        mock_coco_from_path.return_value = mock_coco_instance
 
         mock_eval_instance: MagicMock = MagicMock()
         # Simulate the precision and recall values
@@ -72,13 +98,26 @@ class TestCOCOEvaluator(unittest.TestCase):
         }
         mock_cocoeval.return_value = mock_eval_instance
 
-        # Mock the predictions
+        # Mock the predictions with specific category names
+        mock_pred1 = MagicMock()
+        mock_pred1.category.name = 'Hardhat'
+        mock_pred1.bbox.minx = 10
+        mock_pred1.bbox.miny = 20
+        mock_pred1.bbox.maxx = 110
+        mock_pred1.bbox.maxy = 220
+        mock_pred1.score.value = 0.9
+
+        mock_pred2 = MagicMock()
+        mock_pred2.category.name = 'Helmet'
+        mock_pred2.bbox.minx = 15
+        mock_pred2.bbox.miny = 25
+        mock_pred2.bbox.maxx = 115
+        mock_pred2.bbox.maxy = 225
+        mock_pred2.score.value = 0.85
+
         mock_get_sliced_prediction.return_value.object_prediction_list = [
-            MagicMock(
-                category=MagicMock(name='Hardhat'),
-                bbox=MagicMock(minx=10, miny=20, maxx=110, maxy=220),
-                score=MagicMock(value=0.9),
-            ),
+            mock_pred1,
+            mock_pred2,
         ]
 
         # Run the evaluation
@@ -104,8 +143,7 @@ class TestCOCOEvaluator(unittest.TestCase):
         self.assertEqual(metrics, expected_metrics)
 
     @patch(
-        'examples.YOLO_evaluation.evaluate_sahi_yolo.'
-        'COCOEvaluator.evaluate',
+        'examples.YOLO_evaluation.evaluate_sahi_yolo.COCOEvaluator.evaluate',
     )
     @patch(
         'argparse.ArgumentParser.parse_args', return_value=argparse.Namespace(

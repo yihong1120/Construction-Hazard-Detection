@@ -4,6 +4,7 @@ import argparse
 import sys
 import time
 import unittest
+from typing import cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -155,11 +156,13 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         # First frame: Validate first frame
         # from `capture_generic_frames`.
         generic_frame_0, ts_0 = await gen.__anext__()
+        generic_frame_0 = cast(MagicMock, generic_frame_0)
         self.assertEqual(generic_frame_0.name, 'GenericFrame0')
 
         # Second frame: Validate subsequent
         # frame from `generic_frames`.
         generic_frame_1, ts_1 = await gen.__anext__()
+        generic_frame_1 = cast(MagicMock, generic_frame_1)
         self.assertEqual(generic_frame_1.name, 'GenericFrame1')
 
         # After `generic_frames` iteration completes,
@@ -426,8 +429,12 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self.assertEqual(self.stream_capture.capture_interval, 20)
 
     @patch('argparse.ArgumentParser.parse_args')
+    @patch('builtins.print')
+    @patch('gc.collect')
     async def test_main_function(
         self,
+        mock_gc_collect: MagicMock,
+        mock_print: MagicMock,
         mock_parse_args: MagicMock,
     ) -> None:
         """
@@ -435,25 +442,35 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         and executes StreamCapture.
 
         Args:
-            mock_parse_args (MagicMock):
-                Mock for argparse.ArgumentParser.parse_args.
+            mock_gc_collect (MagicMock): Mock for gc.collect function.
+            mock_print (MagicMock): Mock for print function.
+            mock_parse_args (MagicMock): Mock for
+                argparse.ArgumentParser.parse_args.
         """
-        # Mock command line argument parsing
+        # Mock parse_args method to return a stream URL
         mock_parse_args.return_value = argparse.Namespace(
             url='test_stream_url',
         )
 
-        # Mock command line argument parsing
-        mock_capture_instance = MagicMock()
-        with patch(
-            'src.stream_capture.StreamCapture',
-            return_value=mock_capture_instance,
+        # Mock frame and timestamp
+        mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        mock_timestamp = 1234567890.0
+
+        async def mock_execute_capture(self):
+            yield mock_frame, mock_timestamp
+
+        # Execute main function and verify print and gc.collect calls
+        with patch.object(
+            StreamCapture, 'execute_capture', mock_execute_capture,
         ):
             with patch.object(
                 sys, 'argv', ['stream_capture.py', '--url', 'test_stream_url'],
             ):
                 await stream_capture_main()
-            mock_capture_instance.execute_capture.assert_called_once()
+
+            # Verify print and gc.collect calls
+            mock_print.assert_any_call(f"Frame at {mock_timestamp} displayed")
+            mock_gc_collect.assert_called()
 
     @patch('cv2.VideoCapture')
     @patch('time.sleep', return_value=None)
