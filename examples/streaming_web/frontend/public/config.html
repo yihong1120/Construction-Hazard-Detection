@@ -70,9 +70,12 @@
                     <i class="fas fa-trash-alt"></i>
                 </button>
             </div>
+
             <label>
-                Video URL: <input type="text" name="video_url" value="" />
+                Video URL:
+                <input type="text" name="video_url" value="" />
             </label>
+
             <label class="model-key-label">
                 Model Key:
                 <select name="model_key">
@@ -83,15 +86,88 @@
                     <option value="yolo11x">yolo11x</option>
                 </select>
             </label>
+
             <label class="expire-date-container">
                 Expiry Date:
                 <input type="date" name="expire_date" />
                 <input type="text" value="No Expire Date" disabled style="display:none;">
             </label>
+
+            <!-- Detect with Server & Store in Redis -->
             <label>
                 <input type="checkbox" name="detect_with_server" />
                 Detect with Server
             </label>
+            <label>
+                <input type="checkbox" name="store_in_redis" />
+                Store in Redis
+            </label>
+
+            <!-- Work Hours -->
+            <div class="work-hours">
+                <label class="work-hours-label">
+                    Work Start Hour:
+                    <select name="work_start_hour">
+                        <!-- 0 ~ 23 -->
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                        <option value="11">11</option>
+                        <option value="12">12</option>
+                        <option value="13">13</option>
+                        <option value="14">14</option>
+                        <option value="15">15</option>
+                        <option value="16">16</option>
+                        <option value="17">17</option>
+                        <option value="18">18</option>
+                        <option value="19">19</option>
+                        <option value="20">20</option>
+                        <option value="21">21</option>
+                        <option value="22">22</option>
+                        <option value="23">23</option>
+                    </select>
+                </label>
+
+                <label class="work-hours-label">
+                    Work End Hour:
+                    <select name="work_end_hour">
+                        <!-- 1 ~ 24 -->
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                        <option value="11">11</option>
+                        <option value="12">12</option>
+                        <option value="13">13</option>
+                        <option value="14">14</option>
+                        <option value="15">15</option>
+                        <option value="16">16</option>
+                        <option value="17">17</option>
+                        <option value="18">18</option>
+                        <option value="19">19</option>
+                        <option value="20">20</option>
+                        <option value="21">21</option>
+                        <option value="22">22</option>
+                        <option value="23">23</option>
+                        <option value="24">24</option>
+                    </select>
+                </label>
+            </div>
+
             <fieldset>
                 <legend>Detection Items</legend>
                 <label>
@@ -107,10 +183,10 @@
                     In Restricted Area
                 </label>
             </fieldset>
+
             <fieldset>
                 <legend>Notifications</legend>
-                <div class="notifications-container">
-                </div>
+                <div class="notifications-container"></div>
                 <button type="button" class="add-notification" style="display:none;">
                     <i class="fas fa-plus"></i> Add Notification
                 </button>

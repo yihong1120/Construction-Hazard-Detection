@@ -15,9 +15,9 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
     <!-- Link to custom CSS for styling -->
     <!-- Link to JavaScript file with module support, loaded asynchronously -->
-  <script type="module" crossorigin src="/assets/config-Dm3IWCdK.js"></script>
+  <script type="module" crossorigin src="/assets/config-BheEa4pg.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/modulepreload-polyfill-B5Qt9EMX.js">
-  <link rel="stylesheet" crossorigin href="/assets/config-Bg4sgpja.css">
+  <link rel="stylesheet" crossorigin href="/assets/config-BrNUDwsF.css">
 </head>
 <body>
     <div class="container">
@@ -51,5 +51,172 @@
             </button>
         </div>
     </div>
+
+    <!-- Template for each configuration item -->
+    <template id="config-item-template">
+        <div class="config-item">
+            <div class="config-header">
+                <div class="site-stream">
+                    <label>
+                        Site:
+                        <input type="text" name="site" value="" />
+                    </label>
+                    <span>-</span>
+                    <label>
+                        Stream Name:
+                        <input type="text" name="stream_name" value="" />
+                    </label>
+                </div>
+                <button type="button" class="delete-config-btn" style="display:none;">
+                    <i class="fas fa-trash-alt"></i>
+                </button>
+            </div>
+
+            <label>
+                Video URL:
+                <input type="text" name="video_url" value="" />
+            </label>
+
+            <label class="model-key-label">
+                Model Key:
+                <select name="model_key">
+                    <option value="yolo11n">yolo11n</option>
+                    <option value="yolo11s">yolo11s</option>
+                    <option value="yolo11m">yolo11m</option>
+                    <option value="yolo11l">yolo11l</option>
+                    <option value="yolo11x">yolo11x</option>
+                </select>
+            </label>
+
+            <label class="expire-date-container">
+                Expiry Date:
+                <input type="date" name="expire_date" />
+                <input type="text" value="No Expire Date" disabled style="display:none;">
+            </label>
+
+            <!-- Detect with Server & Store in Redis -->
+            <label>
+                <input type="checkbox" name="detect_with_server" />
+                Detect with Server
+            </label>
+            <label>
+                <input type="checkbox" name="store_in_redis" />
+                Store in Redis
+            </label>
+
+            <!-- Work Hours -->
+            <div class="work-hours">
+                <label class="work-hours-label">
+                    Work Start Hour:
+                    <select name="work_start_hour">
+                        <!-- 0 ~ 23 -->
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                        <option value="11">11</option>
+                        <option value="12">12</option>
+                        <option value="13">13</option>
+                        <option value="14">14</option>
+                        <option value="15">15</option>
+                        <option value="16">16</option>
+                        <option value="17">17</option>
+                        <option value="18">18</option>
+                        <option value="19">19</option>
+                        <option value="20">20</option>
+                        <option value="21">21</option>
+                        <option value="22">22</option>
+                        <option value="23">23</option>
+                    </select>
+                </label>
+
+                <label class="work-hours-label">
+                    Work End Hour:
+                    <select name="work_end_hour">
+                        <!-- 1 ~ 24 -->
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                        <option value="11">11</option>
+                        <option value="12">12</option>
+                        <option value="13">13</option>
+                        <option value="14">14</option>
+                        <option value="15">15</option>
+                        <option value="16">16</option>
+                        <option value="17">17</option>
+                        <option value="18">18</option>
+                        <option value="19">19</option>
+                        <option value="20">20</option>
+                        <option value="21">21</option>
+                        <option value="22">22</option>
+                        <option value="23">23</option>
+                        <option value="24">24</option>
+                    </select>
+                </label>
+            </div>
+
+            <fieldset>
+                <legend>Detection Items</legend>
+                <label>
+                    <input type="checkbox" name="detect_no_safety_vest_or_helmet" />
+                    No Safety Vest Or Helmet
+                </label>
+                <label>
+                    <input type="checkbox" name="detect_near_machinery_or_vehicle" />
+                    Near Machinery Or Vehicle
+                </label>
+                <label>
+                    <input type="checkbox" name="detect_in_restricted_area" />
+                    In Restricted Area
+                </label>
+            </fieldset>
+
+            <fieldset>
+                <legend>Notifications</legend>
+                <div class="notifications-container"></div>
+                <button type="button" class="add-notification" style="display:none;">
+                    <i class="fas fa-plus"></i> Add Notification
+                </button>
+            </fieldset>
+        </div>
+    </template>
+
+    <!-- Template for notification item -->
+    <template id="notification-item-template">
+        <div class="notification-item">
+            <button type="button" class="delete-notification" style="display:none;"><i class="fas fa-times"></i></button>
+            <div class="notification-content">
+                <label>
+                    Token: <input type="text" name="line_token" value="" />
+                </label>
+                <label>
+                    Language:
+                    <select name="language">
+                        <option value="zh-TW">zh-TW</option>
+                        <option value="zh-CN">zh-CN</option>
+                        <option value="en">en</option>
+                        <option value="fr">fr</option>
+                        <option value="id">id</option>
+                        <option value="vt">vt</option>
+                        <option value="th">th</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+    </template>
 </body>
 </html>
