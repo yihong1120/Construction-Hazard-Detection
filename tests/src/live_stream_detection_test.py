@@ -59,8 +59,68 @@ class TestLiveStreamDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detector.model_key, self.model_key)
         self.assertEqual(detector.output_folder, self.output_folder)
         self.assertEqual(detector.detect_with_server, self.detect_with_server)
-        self.assertEqual(detector.access_token, None)
-        self.assertEqual(detector.token_expiry, 0.0)
+
+        # Assert the shared token is initialised correctly with default values
+        self.assertEqual(
+            detector.shared_token,
+            {'access_token': None, 'token_expiry': 0},
+        )
+
+    def test_initialisation_with_shared_token(self) -> None:
+        """
+        Test initialisation when shared_token is provided.
+        """
+        shared_token = {
+            'access_token': 'test_token',
+            'token_expiry': time.time() + 1000,
+        }
+        detector = LiveStreamDetector(
+            api_url=self.api_url,
+            model_key=self.model_key,
+            output_folder=self.output_folder,
+            detect_with_server=self.detect_with_server,
+            shared_token=shared_token,
+        )
+
+        self.assertEqual(detector.shared_token, shared_token)
+
+    def test_token_expired_with_no_expiry(self) -> None:
+        """
+        Test token_expired when token_expiry is None.
+        """
+        self.detector.shared_token['token_expiry'] = None
+        self.assertTrue(self.detector.token_expired())
+
+    async def test_ensure_authenticated_with_lock(self) -> None:
+        """
+        Test ensure_authenticated when shared_lock is used.
+        """
+        # Mock the shared lock to test the lock acquisition
+        shared_lock = MagicMock()
+
+        detector = LiveStreamDetector(
+            api_url=self.api_url,
+            model_key=self.model_key,
+            output_folder=self.output_folder,
+            detect_with_server=self.detect_with_server,
+            shared_token={'access_token': None, 'token_expiry': 0},
+            shared_lock=shared_lock,
+        )
+
+        # If token is expired, ensure_authenticated should acquire the lock
+        with patch.object(detector, 'token_expired', return_value=True):
+            # Mock authenticate method
+            with patch.object(
+                detector, 'authenticate', AsyncMock(),
+            ) as mock_auth:
+                await detector.ensure_authenticated()
+
+                # Validate the lock is acquired and released
+                shared_lock.acquire.assert_called_once()
+                shared_lock.release.assert_called_once()
+
+                # Validate the authenticate method is called
+                mock_auth.assert_called_once()
 
     @patch('src.live_stream_detection.cv2.VideoCapture')
     @patch('src.live_stream_detection.AutoDetectionModel.from_pretrained')
@@ -192,17 +252,22 @@ class TestLiveStreamDetector(unittest.IsolatedAsyncioTestCase):
 
         await self.detector.authenticate()
 
-        self.assertEqual(self.detector.access_token, 'fake_token')
-        self.assertGreater(self.detector.token_expiry, time.time())
+        # Validate the shared token data after authentication is successful
+        assert self.detector.shared_token['access_token'] == 'fake_token'
+        token_expiry = self.detector.shared_token['token_expiry']
+        assert token_expiry is not None
+        self.assertGreater(token_expiry, time.time())
 
     def test_token_expired(self) -> None:
         """
         Test the token_expired method.
         """
-        self.detector.token_expiry = time.time() - 1
+        # Test expired token
+        self.detector.shared_token['token_expiry'] = int(time.time() - 1)
         self.assertTrue(self.detector.token_expired())
 
-        self.detector.token_expiry = time.time() + 1000
+        # Test non-expired token
+        self.detector.shared_token['token_expiry'] = int(time.time() + 1000)
         self.assertFalse(self.detector.token_expired())
 
     async def test_ensure_authenticated(self) -> None:
@@ -678,6 +743,7 @@ class TestLiveStreamDetector(unittest.IsolatedAsyncioTestCase):
                 model_key='yolo11n',
                 output_folder=None,
                 detect_with_server=True,
+                shared_token={'access_token': None, 'token_expiry': 0},
             )
             mock_run_detection.assert_called_once_with(
                 'http://example.com/virtual_stream',

@@ -8,6 +8,7 @@ import logging
 import os
 import time
 from datetime import datetime
+from multiprocessing import Manager
 from multiprocessing import Process
 from typing import TypedDict
 
@@ -65,6 +66,15 @@ class MainApp:
         self.current_config_hashes: dict[str, str] = {}
         self.lock = asyncio.Lock()
         self.logger = LoggerConfig().get_logger()
+
+        manager = Manager()
+        # Build shared token for API access
+        self.shared_token = manager.dict()
+        self.shared_token['access_token'] = None
+        self.shared_token['token_expiry'] = 0
+
+        # Build shared lock for API access
+        self.shared_lock = manager.Lock()
 
     def compute_config_hash(self, config: dict) -> str:
         """
@@ -261,6 +271,9 @@ class MainApp:
             notifications (dict): Line tokens with their languages.
             detect_with_server (bool): Whether to use server for detection.
             detection_items (dict): Items to detect.
+            work_start_hour (int): Start hour for notifications.
+            work_end_hour (int): End hour for notifications.
+            store_in_redis (bool): Whether to store frames in Redis.
         """
         if store_in_redis:
             redis_manager = RedisManager()
@@ -274,6 +287,10 @@ class MainApp:
             model_key=model_key,
             output_folder=site,
             detect_with_server=detect_with_server,
+            # Pass shared token and lock for API access
+            shared_token=self.shared_token,
+            # Pass shared lock for API access
+            shared_lock=self.shared_lock,
         )
 
         # Initialise the drawing manager
@@ -405,9 +422,6 @@ class MainApp:
 
         Args:
             config (AppConfig): The configuration for the stream processing.
-
-        Returns:
-            None
         """
         try:
             # Check if 'notifications' field exists (new format)
@@ -453,6 +467,7 @@ class MainApp:
                 store_in_redis=store_in_redis,
             )
         finally:
+            # Clean up Redis storage if needed
             if config.get('store_in_redis', False):
                 redis_manager = RedisManager()
                 site = config.get('site') or 'default site'
@@ -475,12 +490,14 @@ class MainApp:
         Start a new process for processing a video stream.
 
         Args:
-            config (StreamConfig): The configuration for the stream processing.
+            config (AppConfig): The configuration for the stream processing.
 
         Returns:
             Process: The newly started process.
         """
-        p = Process(target=lambda: asyncio.run(self.process_streams(config)))
+        p = Process(
+            target=lambda: asyncio.run(self.process_streams(config)),
+        )
         p.start()
         return p
 
@@ -490,9 +507,6 @@ class MainApp:
 
         Args:
             process (Process): The process to be terminated.
-
-        Returns:
-            None
         """
         process.terminate()
         process.join()
@@ -537,6 +551,8 @@ async def process_single_image(
             api_url=os.getenv('API_URL', 'http://localhost:5000'),
             model_key=model_key,
             output_folder=output_folder,
+            # Shared token not needed for single image processing
+            shared_token={},
         )
 
         # Initialise the drawing manager
