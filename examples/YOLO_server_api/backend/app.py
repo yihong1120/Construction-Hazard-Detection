@@ -1,4 +1,3 @@
-# examples/YOLO_server_api/backend/app.py
 from __future__ import annotations
 
 import os
@@ -6,6 +5,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import socketio
+import uvicorn
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,7 +52,7 @@ scheduler.add_job(
 )
 scheduler.start()
 
-# Initialise Socket.IO server for real-time events
+# Socket.IO server (AsyncServer) + ASGI app
 sio = socketio.AsyncServer(async_mode='asgi')
 sio_app = socketio.ASGIApp(sio, app)
 
@@ -93,7 +93,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     Args:
         app (FastAPI): The FastAPI application instance.
     """
-    # Initialise Redis connection pool for rate limiting
+    # Initialise Redis connection
     redis_host = os.getenv('REDIS_HOST', '127.0.0.1')
     redis_port = os.getenv('REDIS_PORT', '6379')
     redis_password = os.getenv('REDIS_PASSWORD', '')
@@ -119,12 +119,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 # Assign lifespan context to the FastAPI app
 app.router.lifespan_context = lifespan
 
-# Main entry point for running the app
-if __name__ == '__main__':
-    import uvicorn
+# Run the FastAPI app with Uvicorn
+
+
+def run_uvicorn_app():
+    """
+    Wraps uvicorn.run(...) for easier patching in tests.
+    """
     uvicorn.run(
         sio_app,
         host='0.0.0.0',
         port=8000,
         workers=2,
     )
+
+
+if __name__ == '__main__':
+    run_uvicorn_app()
