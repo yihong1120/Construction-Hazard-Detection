@@ -62,14 +62,10 @@ class TestLineBot(unittest.TestCase):
         # Mock handler.handle to simulate no error
         self.mock_handler_handle.return_value = None
 
-        # Send a POST request to the webhook endpoint with compact JSON
+        # Send a POST request to the webhook endpoint
         response = self.client.post(
             '/webhook',
-            data=json.dumps(
-                fake_body, separators=(
-                    ',', ':',
-                ),
-            ),  # Use compact JSON
+            json=fake_body,
             headers={
                 'X-Line-Signature': fake_signature,
                 'Content-Type': 'application/json',
@@ -82,9 +78,9 @@ class TestLineBot(unittest.TestCase):
 
         # Ensure the handler.handle method
         # was called once with correct arguments
+        expected_body = json.dumps(fake_body)
         self.mock_handler_handle.assert_called_once_with(
-            json.dumps(fake_body, separators=(',', ':')),  # 使用相同的緊湊 JSON 序列化
-            fake_signature,
+            expected_body, fake_signature,
         )
 
     def test_callback_missing_signature(self) -> None:
