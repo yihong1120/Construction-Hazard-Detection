@@ -1,10 +1,10 @@
+# examples/YOLO_server_api/backend/app.py
 from __future__ import annotations
 
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-import redis.asyncio as redis
 import socketio
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
@@ -12,10 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_jwt import JwtAccessBearer
 from fastapi_limiter import FastAPILimiter
 
-from .auth import auth_router
 from .config import Settings
 from .models import Base
 from .models import engine
+from .redis_pool import RedisClient
+from .routers import auth_router
 from .routers import detection_router
 from .routers import model_management_router
 from .routers import user_management_router
@@ -55,7 +56,7 @@ scheduler.start()
 sio = socketio.AsyncServer(async_mode='asgi')
 sio_app = socketio.ASGIApp(sio, app)
 
-# Define Socket.IO events
+# Define Socket.IO events for real-time communication
 
 
 @sio.event
@@ -70,6 +71,7 @@ async def connect(sid: str, environ: dict) -> None:
     print('Client connected:', sid)
 
 
+# Define Socket.IO event for client disconnection from the server
 @sio.event
 async def disconnect(sid: str) -> None:
     """
@@ -98,13 +100,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/0"
 
-    # Initialise Redis connection pool for rate limiting
-    app.state.redis_pool = await redis.from_url(
-        redis_url,
-        encoding='utf-8',
-        decode_responses=True,
-    )
-    await FastAPILimiter.init(app.state.redis_pool)
+    app.state.redis_client = RedisClient(redis_url)
+    redis_conn = await app.state.redis_client.connect()
+    await FastAPILimiter.init(redis_conn)
 
     # Create database tables
     async with engine.begin() as conn:
@@ -116,7 +114,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Shutdown the scheduler and Redis connection pool
     # upon application termination
     scheduler.shutdown()
-    await app.state.redis_pool.close()
+    await app.state.redis_client.close()
 
 # Assign lifespan context to the FastAPI app
 app.router.lifespan_context = lifespan
@@ -124,4 +122,9 @@ app.router.lifespan_context = lifespan
 # Main entry point for running the app
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run(sio_app, host='0.0.0.0', port=5000)
+    uvicorn.run(
+        sio_app,
+        host='0.0.0.0',
+        port=8000,
+        workers=2,
+    )
