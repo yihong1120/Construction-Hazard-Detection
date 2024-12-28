@@ -6,6 +6,8 @@ import gc
 import os
 import time
 from pathlib import Path
+from typing import Any
+from typing import MutableMapping
 from typing import TypedDict
 
 import aiohttp
@@ -50,6 +52,8 @@ class LiveStreamDetector:
         model_key: str = 'yolo11n',
         output_folder: str | None = None,
         detect_with_server: bool = False,
+        shared_token: MutableMapping[Any, Any] | None = None,
+        shared_lock=None,
     ):
         """
         Initialises the LiveStreamDetector.
@@ -58,6 +62,11 @@ class LiveStreamDetector:
             api_url (str): The URL of the API for detection.
             model_key (str): The model key for detection.
             output_folder (Optional[str]): Folder for detected frames.
+            detect_with_server (bool): Whether to use server-based detection.
+            shared_token (Optional[dict]): A shared dictionary for
+                token storage.
+            shared_lock: A shared multiprocessing Lock to
+                avoid multiple logins simultaneously.
         """
         self.api_url: str = (
             api_url if api_url.startswith('http') else f"http://{api_url}"
@@ -65,9 +74,17 @@ class LiveStreamDetector:
         self.model_key: str = model_key
         self.output_folder: str | None = output_folder
         self.detect_with_server: bool = detect_with_server
+        if shared_token is None:
+            # If shared token is not provided, create a new one
+            self.shared_token:  MutableMapping[str, float | None] = {
+                'access_token': None,
+                'token_expiry': 0.0,
+            }
+        else:
+            self.shared_token = shared_token
+        # Lock for ensuring only one process logs in at a time
+        self.shared_lock = shared_lock
         self.model: AutoDetectionModel | None = None
-        self.access_token: str | None = None
-        self.token_expiry: float = 0
 
     @retry(
         stop=stop_after_attempt(3),
@@ -91,12 +108,15 @@ class LiveStreamDetector:
                 if 'msg' in token_data:
                     raise Exception(token_data['msg'])
                 elif 'access_token' in token_data:
-                    self.access_token = token_data['access_token']
+                    # Update the shared token with the new access token
+                    self.shared_token['access_token'] = (
+                        token_data['access_token']
+                    )
+                    self.shared_token['token_expiry'] = time.time() + 850
                 else:
                     raise Exception(
                         "Token data does not contain 'msg' or 'access_token'",
                     )
-                self.token_expiry = time.time() + 850
 
     def token_expired(self) -> bool:
         """
@@ -105,14 +125,36 @@ class LiveStreamDetector:
         Returns:
             bool: True if the token has expired, False otherwise.
         """
-        return time.time() >= self.token_expiry
+        # if (
+        #     'access_token' not in self.shared_token
+        #     or 'token_expiry' not in self.shared_token
+        # ):
+        #     return True
+        # return time.time() >= self.shared_token['token_expiry']
+        token_expiry = self.shared_token.get('token_expiry')
+        if token_expiry is None:  # 如果過期時間不存在，則認為過期
+            return True
+        return time.time() >= token_expiry
 
     async def ensure_authenticated(self) -> None:
         """
         Ensures that the access token is valid and not expired.
         """
-        if self.access_token is None or self.token_expired():
-            await self.authenticate()
+        if self.shared_lock:
+            # Ensure only one process logs in at a time
+            self.shared_lock.acquire()
+
+        try:
+            if (
+                'access_token' not in self.shared_token
+                or not self.shared_token['access_token']
+                or self.token_expired()
+            ):
+                # Authenticate if token is missing or expired
+                await self.authenticate()
+        finally:
+            if self.shared_lock:
+                self.shared_lock.release()
 
     @retry(
         stop=stop_after_attempt(2),
@@ -139,11 +181,15 @@ class LiveStreamDetector:
         timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
         filename = f"frame_{timestamp}.png"
 
-        headers = {'Authorization': f"Bearer {self.access_token}"}
+        headers = {
+            'Authorization': f"Bearer {self.shared_token['access_token']}",
+        }
         data = aiohttp.FormData()
         data.add_field(
-            'image', frame_encoded_bytes,
-            filename=filename, content_type='image/png',
+            'image',
+            frame_encoded_bytes,
+            filename=filename,
+            content_type='image/png',
         )
 
         async with aiohttp.ClientSession() as session:
@@ -153,6 +199,7 @@ class LiveStreamDetector:
                 params={'model': self.model_key},
                 headers=headers,
             ) as response:
+                # Check if the response is successful
                 response.raise_for_status()
                 detections = await response.json()
                 return detections
@@ -189,13 +236,10 @@ class LiveStreamDetector:
 
         # Compile detection data in YOLO format
         datas = []
-        for object_prediction in result.object_prediction_list:
-            label = int(object_prediction.category.id)
-            x1, y1, x2, y2 = (
-                int(x)
-                for x in object_prediction.bbox.to_voc_bbox()
-            )
-            confidence = float(object_prediction.score.value)
+        for obj in result.object_prediction_list:
+            label = int(obj.category.id)
+            x1, y1, x2, y2 = (int(x) for x in obj.bbox.to_voc_bbox())
+            confidence = float(obj.score.value)
             datas.append([x1, y1, x2, y2, confidence, label])
 
         # Remove overlapping labels for Hardhat and Safety Vest categories
@@ -216,11 +260,12 @@ class LiveStreamDetector:
         Returns:
             list: A list of detection data with overlapping labels removed.
         """
+        # Indices of Hardhat detections
         hardhat_indices = [
             i for i, d in enumerate(
                 datas,
             ) if d[5] == 0
-        ]  # Indices of Hardhat detections
+        ]
         # Indices of NO-Hardhat detections
         no_hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 2]
         # Indices of Safety Vest detections
@@ -307,13 +352,14 @@ class LiveStreamDetector:
         Returns:
             list: Detection data with fully contained labels removed.
         """
+        # Indices of Hardhat detections
         hardhat_indices = [
             i
             for i, d in enumerate(
                 datas,
             )
             if d[5] == 0
-        ]  # Indices of Hardhat detections
+        ]
 
         # Indices of NO-Hardhat detections
         no_hardhat_indices = [i for i, d in enumerate(datas) if d[5] == 2]
@@ -441,11 +487,19 @@ async def main():
     )
     args = parser.parse_args()
 
+    # Shared token for authentication
+    shared_token = {
+        'access_token': None,
+        'token_expiry': 0,
+    }
+
     detector = LiveStreamDetector(
         api_url=args.api_url,
         model_key=args.model_key,
         output_folder=args.output_folder,
         detect_with_server=args.detect_with_server,
+        # If you want to share token across threads, use Manager()
+        shared_token=shared_token,
     )
     await detector.run_detection(args.url)
 
