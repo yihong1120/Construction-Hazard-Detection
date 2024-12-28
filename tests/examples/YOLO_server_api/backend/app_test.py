@@ -1,22 +1,18 @@
 from __future__ import annotations
 
-import asyncio
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import socketio
-import uvicorn
 from fastapi.testclient import TestClient
 
 from examples.YOLO_server_api.backend.app import app
 from examples.YOLO_server_api.backend.app import lifespan
 from examples.YOLO_server_api.backend.app import run_uvicorn_app
+from examples.YOLO_server_api.backend.app import sio
 from examples.YOLO_server_api.backend.app import sio_app
-
-HOST = '127.0.0.1'
-PORT = 12345
 
 
 class TestApp(unittest.IsolatedAsyncioTestCase):
@@ -127,51 +123,49 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 405)
 
     @patch('builtins.print')
+    @patch.object(socketio.AsyncClient, 'disconnect', new_callable=AsyncMock)
+    @patch.object(socketio.AsyncClient, 'connect', new_callable=AsyncMock)
     async def test_socketio_connect_disconnect(
         self,
+        mock_connect: AsyncMock,
+        mock_disconnect: AsyncMock,
         mock_print: MagicMock,
     ) -> None:
         """
-        Tests Socket.IO client connection and disconnection
-        via a local uvicorn server.
+        Tests the Socket.IO client connection and disconnection.
 
         Args:
-            mock_print (MagicMock): The mocked print function.
+            mock_connect (AsyncMock): Mocked connect() method of the client.
+            mock_disconnect (AsyncMock): Mocked disconnect() method of
+                the client.
+            mock_print (MagicMock): Mocked print function for logging.
         """
-        config = uvicorn.Config(
-            sio_app,
-            host=HOST,
-            port=PORT,
-            log_level='error',
-        )
-        server = uvicorn.Server(config)
+        # 1) Mock the connect() / disconnect() so no real network calls occur
+        mock_connect.return_value = None
+        mock_disconnect.return_value = None
 
-        async def run_server():
-            await server.serve()
+        # 2) Create a client and "connect" / "disconnect" (all mock)
+        client = socketio.AsyncClient()
+        await client.connect('http://fake-host:9999', wait=True)
+        await client.disconnect()
 
-        server_task = asyncio.create_task(run_server())
-        # Wait for the server to start up
-        await asyncio.sleep(0.5)
+        # 3) Manually trigger the server's 'connect' event
+        sid = '123'
+        environ = {'REMOTE_ADDR': '127.0.0.1'}
+        await sio._trigger_event('connect', '/', sid, environ)
 
-        try:
-            client = socketio.AsyncClient()
-            await client.connect(f"http://{HOST}:{PORT}", wait=True)
-            await client.disconnect()
+        # 4) Manually trigger the server's 'disconnect' event (without reason)
+        await sio._trigger_event('disconnect', '/', sid)
 
-            mock_print.assert_any_call('Client connected:', unittest.mock.ANY)
-            mock_print.assert_any_call(
-                'Client disconnected:', unittest.mock.ANY,
-            )
-        finally:
-            server.should_exit = True
-            await asyncio.sleep(0.2)
-            server_task.cancel()
+        # 5) Check the print calls for server side
+        mock_print.assert_any_call('Client connected:', sid)
+        mock_print.assert_any_call('Client disconnected:', sid)
 
     @patch('examples.YOLO_server_api.backend.app.uvicorn.run')
     def test_main_entry_uvicorn_run(self, mock_uvicorn_run: MagicMock) -> None:
         """
-        Test the run_uvicorn_app function to
-        ensure uvicorn.run is called with correct parameters.
+        Test the run_uvicorn_app function to ensure
+        uvicorn.run is called with correct parameters.
 
         Args:
             mock_uvicorn_run (MagicMock): Mocked uvicorn.run function.

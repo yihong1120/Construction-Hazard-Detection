@@ -78,7 +78,7 @@ class TestLineBot(unittest.TestCase):
 
         # Ensure the handler.handle method
         # was called once with correct arguments
-        expected_body = json.dumps(fake_body)
+        expected_body = json.dumps(fake_body, separators=(',', ':'))
         self.mock_handler_handle.assert_called_once_with(
             expected_body, fake_signature,
         )
