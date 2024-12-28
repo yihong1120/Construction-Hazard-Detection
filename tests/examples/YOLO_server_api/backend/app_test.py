@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import socketio
+import uvicorn
 from fastapi.testclient import TestClient
 
 from examples.YOLO_server_api.backend.app import app
 from examples.YOLO_server_api.backend.app import lifespan
+from examples.YOLO_server_api.backend.app import run_uvicorn_app
+from examples.YOLO_server_api.backend.app import sio_app
+
+HOST = '127.0.0.1'
+PORT = 12345
 
 
 class TestApp(unittest.IsolatedAsyncioTestCase):
@@ -92,51 +99,90 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
 
     def test_routes_exist(self) -> None:
         """
-        Checks the existence of primary app routes.
+        Verifies the existence and behaviour of primary application routes.
         """
-        # Test main route endpoints
-        response = self.client.get('/auth/some_endpoint')
-        # Expecting either success or not found
-        self.assertIn(response.status_code, [200, 404])
-        response = self.client.get('/detect/some_endpoint')
-        self.assertIn(response.status_code, [200, 404])
-        response = self.client.get('/models/some_endpoint')
-        self.assertIn(response.status_code, [200, 404])
+        # Test the /api/token endpoint; it should
+        # return 405 (method not allowed for GET).
+        response = self.client.get('/api/token')
+        self.assertEqual(response.status_code, 405)
 
-    @patch('socketio.AsyncClient.emit', new_callable=AsyncMock)
+        # Test the /api/detect endpoint; it should
+        # return 405 (method not allowed for GET).
+        response = self.client.get('/api/detect')
+        self.assertEqual(response.status_code, 405)
+
+        # Test the /api/model_file_update endpoint; it should
+        # return 405 (method not allowed for GET).
+        response = self.client.get('/api/model_file_update')
+        self.assertEqual(response.status_code, 405)
+
+        # Test the /api/get_new_model endpoint; it should
+        # return 405 (method not allowed for GET).
+        response = self.client.get('/api/get_new_model')
+        self.assertEqual(response.status_code, 405)
+
+        # Test the /api/add_user endpoint; it should
+        # return 405 (method not allowed for GET).
+        response = self.client.get('/api/add_user')
+        self.assertEqual(response.status_code, 405)
+
+    @patch('builtins.print')
     async def test_socketio_connect_disconnect(
         self,
-        mock_client_emit: AsyncMock,
+        mock_print: MagicMock,
     ) -> None:
         """
-        Tests socket.io client connection and disconnection.
+        Tests Socket.IO client connection and disconnection
+        via a local uvicorn server.
 
         Args:
-            mock_client_emit (AsyncMock): Mock for client emit method.
+            mock_print (MagicMock): The mocked print function.
         """
-        sio = socketio.AsyncClient()
+        config = uvicorn.Config(
+            sio_app,
+            host=HOST,
+            port=PORT,
+            log_level='error',
+        )
+        server = uvicorn.Server(config)
 
-        @sio.event
-        async def connect() -> None:
-            print('Connected to server')
-            await sio.emit('connect_event', {'message': 'Hello'})
+        async def run_server():
+            await server.serve()
 
-        @sio.event
-        async def disconnect() -> None:
-            print('Disconnected from server')
+        server_task = asyncio.create_task(run_server())
+        # Wait for the server to start up
+        await asyncio.sleep(0.5)
 
-        async def socket_test() -> None:
-            """
-            Asynchronously tests connection and disconnection to socket server.
-            """
-            await sio.connect('http://0.0.0.0:8000')
-            # Expecting a connection event to be emitted
-            mock_client_emit.assert_called_once_with(
-                'connect_event', {'message': 'Hello'},
+        try:
+            client = socketio.AsyncClient()
+            await client.connect(f"http://{HOST}:{PORT}", wait=True)
+            await client.disconnect()
+
+            mock_print.assert_any_call('Client connected:', unittest.mock.ANY)
+            mock_print.assert_any_call(
+                'Client disconnected:', unittest.mock.ANY,
             )
-            await sio.disconnect()
+        finally:
+            server.should_exit = True
+            await asyncio.sleep(0.2)
+            server_task.cancel()
 
-        await socket_test()
+    @patch('examples.YOLO_server_api.backend.app.uvicorn.run')
+    def test_main_entry_uvicorn_run(self, mock_uvicorn_run: MagicMock) -> None:
+        """
+        Test the run_uvicorn_app function to
+        ensure uvicorn.run is called with correct parameters.
+
+        Args:
+            mock_uvicorn_run (MagicMock): Mocked uvicorn.run function.
+        """
+        run_uvicorn_app()
+        mock_uvicorn_run.assert_called_once_with(
+            sio_app,
+            host='0.0.0.0',
+            port=8000,
+            workers=2,
+        )
 
 
 if __name__ == '__main__':
