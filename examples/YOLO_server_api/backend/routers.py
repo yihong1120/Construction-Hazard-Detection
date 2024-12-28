@@ -14,9 +14,12 @@ from fastapi import HTTPException
 from fastapi import UploadFile
 from fastapi_jwt import JwtAuthorizationCredentials
 from pydantic import BaseModel
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from werkzeug.utils import secure_filename
 
+from .auth import create_token_logic
+from .auth import UserLogin
 from .cache import custom_rate_limiter
 from .cache import jwt_access
 from .detection import compile_detection_data
@@ -27,6 +30,7 @@ from .model_files import get_new_model_file
 from .model_files import update_model_file
 from .models import DetectionModelManager
 from .models import get_db
+from .redis_pool import get_redis_pool
 from .user_operation import add_user
 from .user_operation import delete_user
 from .user_operation import set_user_active_status
@@ -34,6 +38,7 @@ from .user_operation import update_password
 from .user_operation import update_username
 
 # Define routers for different functionalities
+auth_router = APIRouter()
 detection_router = APIRouter()
 user_management_router = APIRouter()
 model_management_router = APIRouter()
@@ -42,7 +47,28 @@ model_management_router = APIRouter()
 model_loader = DetectionModelManager()
 
 
+# Authentication APIs
+@auth_router.post('/api/token')
+async def create_token_endpoint(
+    user: UserLogin,
+    db: AsyncSession = Depends(get_db),
+    redis_pool: Redis = Depends(get_redis_pool),
+):
+    """
+    Endpoint to authenticate a user and generate an access token.
+    """
+    # Call the create_token_logic function to generate the token
+    return await create_token_logic(
+        user=user,
+        db=db,
+        redis_pool=redis_pool,
+        jwt_access=jwt_access,  # Use the jwt_access dependency
+        max_jti=2,  # Set the maximum number of JTI values
+    )
+
 # Detection APIs
+
+
 class DetectionRequest(BaseModel):
     """
     Represents the input format for the object detection endpoint.

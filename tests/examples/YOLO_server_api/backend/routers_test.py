@@ -6,12 +6,14 @@ import unittest
 from collections.abc import AsyncGenerator
 from contextlib import contextmanager
 from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from fastapi_jwt import JwtAuthorizationCredentials
 
+from examples.YOLO_server_api.backend.routers import auth_router
 from examples.YOLO_server_api.backend.routers import custom_rate_limiter
 from examples.YOLO_server_api.backend.routers import detection_router
 from examples.YOLO_server_api.backend.routers import get_db
@@ -34,9 +36,17 @@ class TestRouters(unittest.TestCase):
         Set up the FastAPI application and override dependencies.
         """
         app = FastAPI()
+        app.include_router(auth_router)
         app.include_router(detection_router)
         app.include_router(user_management_router)
         app.include_router(model_management_router)
+
+        # Mock RedisClient
+        mock_redis_client = MagicMock()
+        mock_redis_client.client = AsyncMock()
+
+        # Set redis_client to app state
+        app.state.redis_client = mock_redis_client
 
         def override_jwt_access() -> JwtAuthorizationCredentials:
             """
@@ -86,6 +96,27 @@ class TestRouters(unittest.TestCase):
                 self.app.dependency_overrides[jwt_access] = original_jwt_access
             else:
                 del self.app.dependency_overrides[jwt_access]
+
+    @patch(
+        'examples.YOLO_server_api.backend.routers.create_token_logic',
+        new_callable=AsyncMock,
+    )
+    def test_create_token_endpoint(self, mock_create_token_logic):
+        """
+        Test the create_token_endpoint with mocked create_token_logic.
+        """
+        # Mock the return value of create_token_logic
+        mock_create_token_logic.return_value = {'access_token': 'mock_token'}
+
+        # Define input data
+        user_data = {'username': 'testuser', 'password': 'testpassword'}
+
+        # Simulate a POST request to the /api/token endpoint
+        response = self.client.post('/api/token', json=user_data)
+
+        # Validate response
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'access_token': 'mock_token'})
 
     @patch(
         'examples.YOLO_server_api.backend.routers.process_labels',
