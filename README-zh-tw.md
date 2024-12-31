@@ -212,6 +212,43 @@
  「work_start_hour」和「work_end_hour」一起定義一天中的監控時段。對於 24 小時監控，請將“work_start_hour”設為“0”，將“work_end_hour”設為“24”。
 
 - `store_in_redis`：一個布林值，決定是否將處理後的幀和關聯的檢測資料儲存在 Redis 中。如果為“True”，系統會將資料儲存到 Redis 資料庫以供進一步使用，例如即時監控或與其他服務整合。如果為“False”，則 Redis 中不會保存任何資料。
+
+
+### 環境變數
+
+本應用程式需要特定的環境變數進行正確的配置。這些變數應定義在專案根目錄中的 `.env` 檔案中。以下是 `.env` 檔案的範例內容：
+
+```plaintext
+DATABASE_URL='mysql+asyncmy://username:password@mysql/construction_hazard_detection'
+API_USERNAME='user'
+API_PASSWORD='password'
+API_URL="http://yolo-server-api:6000"
+REDIS_HOST='redis'
+REDIS_PORT=6379
+REDIS_PASSWORD='password'
+LINE_CHANNEL_ACCESS_TOKEN='YOUR_LINE_CHANNEL_ACCESS_TOKEN'
+CLOUDINARY_CLOUD_NAME='YOUR_CLOUDINARY_CLOUD_NAME'
+CLOUDINARY_API_KEY='YOUR_CLOUD_API_KEY'
+CLOUDINARY_API_SECRET='YOUR_CLOUD_API_SECRET'
+```
+
+#### 變數說明：
+
+- `DATABASE_URL`：MySQL 資料庫的連線 URL。由 `server_api` 模組使用。
+- `API_USERNAME`：用於 API 認證的使用者名稱。由 `main.py` 使用。
+- `API_PASSWORD`：用於 API 認證的密碼。由 `main.py` 使用。
+- `API_URL`：YOLO 伺服器 API 的 URL。由 `main.py` 使用。
+- `REDIS_HOST`：Redis 伺服器的主機名稱。由 `main.py` 使用。
+- `REDIS_PORT`：Redis 伺服器的埠號。由 `main.py` 使用。
+- `REDIS_PASSWORD`：連線至 Redis 伺服器的密碼。由 `main.py` 使用。
+- `LINE_CHANNEL_ACCESS_TOKEN`：LINE Messaging API 的存取權杖。由 `src/notifiers/line_notifier_message_api.py` 使用。
+- `CLOUDINARY_CLOUD_NAME`：Cloudinary 的雲端名稱，用於媒體管理。由 `src/notifiers/line_notifier_message_api.py` 使用。
+- `CLOUDINARY_API_KEY`：存取 Cloudinary 服務的 API 金鑰。由 `src/notifiers/line_notifier_message_api.py` 使用。
+- `CLOUDINARY_API_SECRET`：存取 Cloudinary 服務的 API 秘鑰。由 `src/notifiers/line_notifier_message_api.py` 使用。
+
+> **注意**：請將範例中的佔位值替換為實際的憑證與配置詳細資訊，以確保應用程式的正常運作。
+
+
 <br>
 
 <details>
@@ -443,24 +480,18 @@
 
 我們的全面數據集確保模型能夠識別建築環境中常見的各種潛在危險。
 
+## 待辦事項
+
+- 新增對 WhatsApp 通知的支援。
+- 修正examples/YOLO server_api/frontend手機版的UI界面。
+
 ## 貢獻
+
 我們歡迎對此項目的貢獻。請按照以下步驟操作：
 1. 分叉存儲庫。
 2. 進行更改。
 3. 提交一個清晰描述您改進的拉取請求。
 
-## 開發路線圖
-- [x] 數據收集和預處理。
-- [x] 使用建築工地數據訓練 YOLO 模型。
-- [x] 開發後處理技術以提高準確性。
-- [x] 實施實時分析和警報系統。
-- [x] 在模擬環境中進行測試和驗證。
-- [x] 在實際建築工地進行現場測試。
-- [x] 根據用戶反饋進行持續維護和更新。
-
-## 待辦事項
-
-- 新增對 WhatsApp 通知的支援。
-
 ## 授權
+
 此項目根據 [AGPL-3.0](LICENSE.md) 授權。
