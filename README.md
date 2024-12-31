@@ -214,6 +214,41 @@ Each object in the array represents a video stream configuration with the follow
 - `store_in_redis`: A boolean value that determines whether to store processed frames and associated detection data in Redis. If `True`, the system will save the data to a Redis database for further use, such as real-time monitoring or integration with other services. If `False`, no data will be saved in Redis.
 
 
+### Environment Variables
+
+The application requires specific environment variables for proper configuration. These variables should be defined in a `.env` file located in the root directory of the project. Below is an example of the `.env` file:
+
+```plaintext
+DATABASE_URL='mysql+asyncmy://username:password@mysql/construction_hazard_detection'
+API_USERNAME='user'
+API_PASSWORD='password'
+API_URL="http://yolo-server-api:6000"
+REDIS_HOST='redis'
+REDIS_PORT=6379
+REDIS_PASSWORD='password'
+LINE_CHANNEL_ACCESS_TOKEN='YOUR_LINE_CHANNEL_ACCESS_TOKEN'
+CLOUDINARY_CLOUD_NAME='YOUR_CLOUDINARY_CLOUD_NAME'
+CLOUDINARY_API_KEY='YOUR_CLOUD_API_KEY'
+CLOUDINARY_API_SECRET='YOUR_CLOUD_API_SECRET'
+```
+
+#### Variable Descriptions:
+
+- `DATABASE_URL`: The connection URL for the MySQL database. Used by the `server_api` module.
+- `API_USERNAME`: The username for authenticating with the API. Used by `main.py`.
+- `API_PASSWORD`: The password for authenticating with the API. Used by `main.py`.
+- `API_URL`: The URL of the YOLO server API. Used by `main.py`.
+- `REDIS_HOST`: The hostname for the Redis server. Used by `main.py`.
+- `REDIS_PORT`: The port number for the Redis server. Used by `main.py`.
+- `REDIS_PASSWORD`: The password for connecting to the Redis server. Used by `main.py`.
+- `LINE_CHANNEL_ACCESS_TOKEN`: The access token for the LINE Messaging API. Used by `src/notifiers/line_notifier_message_api.py`.
+- `CLOUDINARY_CLOUD_NAME`: The Cloudinary cloud name for media management. Used by `src/notifiers/line_notifier_message_api.py`.
+- `CLOUDINARY_API_KEY`: The API key for accessing Cloudinary services. Used by `src/notifiers/line_notifier_message_api.py`.
+- `CLOUDINARY_API_SECRET`: The API secret for accessing Cloudinary services. Used by `src/notifiers/line_notifier_message_api.py`.
+
+> **Note**: Replace placeholder values with actual credentials and configuration details to ensure proper functionality.
+
+
 <br>
 
 Now, you could launch the hazard-detection system in Docker or Python env:
@@ -466,26 +501,17 @@ The primary dataset for training this model is the [Construction Site Safety Ima
 
 Our comprehensive dataset ensures that the model is well-equipped to identify a wide range of potential hazards commonly found in construction environments.
 
+## TODO
+
+- Add support for WhatsApp notifications.
+- Correct the UI interface of examples/YOLO server_api/frontend mobile version
+
 ## Contributing
 
 We welcome contributions to this project. Please follow these steps:
 1. Fork the repository.
 2. Make your changes.
 3. Submit a pull request with a clear description of your improvements.
-
-## Development Roadmap
-
-- [x] Data collection and preprocessing.
-- [x] Training YOLO model with construction site data.
-- [x] Developing post-processing techniques for enhanced accuracy.
-- [x] Implementing real-time analysis and alert system.
-- [x] Testing and validation in simulated environments.
-- [x] Deployment in actual construction sites for field testing.
-- [x] Ongoing maintenance and updates based on user feedback.
-
-## TODO
-
-- Add support for WhatsApp notifications.
 
 ## License
 
