@@ -11,52 +11,72 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
+/**
+ * Load the header content into the header container.
+ * @param {HTMLElement} headerContainer - The container to load the header into.
+ */
 async function loadHeader(headerContainer) {
   try {
-    const response = await fetch('/header.html');
-    const html = await response.text();
-    headerContainer.innerHTML = html;
-    bindHeaderEvents();
+    const response = await fetch('/header.html'); // Fetch the header HTML content
+    const html = await response.text(); // Parse the response as text
+    headerContainer.innerHTML = html; // Inject the HTML into the container
+    bindLogoutEvent(); // Bind the logout button event
+    bindMenuToggleEvent(); // Bind the menu toggle event
   } catch (err) {
-    console.error('Error loading header:', err);
+    console.error('Error loading header:', err); // Log any errors encountered
   }
 }
 
-function bindHeaderEvents() {
-  const logoutBtn = document.getElementById('logout-btn');
+/**
+ * Bind the logout button event.
+ */
+function bindLogoutEvent() {
+  const logoutBtn = document.getElementById('logout-btn'); // Reference the logout button
   if (logoutBtn) {
     import('/js/common.js').then(module => {
-      const { clearToken } = module;
+      const { clearToken } = module; // Import the clearToken function
       logoutBtn.addEventListener('click', () => {
-        clearToken();
-        window.location.href = '/login.html';
+        clearToken(); // Clear authentication tokens
+        window.location.href = '/login.html'; // Redirect to the login page
       });
     });
   }
+}
 
-  const menuToggle = document.getElementById('menu-toggle');
-  const navLinks = document.getElementById('nav-links');
+/**
+ * Bind the menu toggle event for mobile navigation.
+ */
+function bindMenuToggleEvent() {
+  const menuToggle = document.getElementById('menu-toggle'); // Reference the menu toggle button
+  const navLinks = document.getElementById('nav-links'); // Reference the navigation links container
   if (menuToggle && navLinks) {
     menuToggle.addEventListener('click', () => {
-      navLinks.classList.toggle('expanded');
+      navLinks.classList.toggle('expanded'); // Toggle the expanded class
     });
   }
 }
 
+/**
+ * Load the footer content into the footer container.
+ * @param {HTMLElement} footerContainer - The container to load the footer into.
+ */
 async function loadFooter(footerContainer) {
   try {
-    const response = await fetch('/footer.html');
-    const html = await response.text();
-    footerContainer.innerHTML = html;
-    updateFooterYear();
+    const response = await fetch('/footer.html'); // Fetch the footer HTML content
+    const html = await response.text(); // Parse the response as text
+    footerContainer.innerHTML = html; // Inject the HTML into the container
+    updateFooterYear(); // Update the footer with the current year
   } catch (err) {
-    console.error('Error loading footer:', err);
+    console.error('Error loading footer:', err); // Log any errors encountered
   }
 }
 
+/**
+ * Update the footer with the current year.
+ */
 function updateFooterYear() {
-  const yearSpan = document.getElementById('current-year');
+  const yearSpan = document.getElementById('current-year'); // Reference the year span
   if (yearSpan) {
-    yearSpan.textContent = new Date().getFullYear();
+    yearSpan.textContent = new Date().getFullYear(); // Set the text content to the current year
   }
 }
