@@ -2,20 +2,17 @@ let socket; // Define the WebSocket globally to manage the connection throughout
 
 // Execute when the document's DOM is fully loaded
 document.addEventListener('DOMContentLoaded', () => {
-    const labelTitle = document.getElementById('label-title'); // Reference to the label title element
-    const loadingMessage = document.getElementById('loading-message'); // Reference to the loading message element
-    const urlParams = new URLSearchParams(window.location.search); // Extract query parameters from the URL
-    const label = urlParams.get('label'); // Retrieve the 'label' parameter
+    const labelTitle = document.getElementById('label-title');
+    const loadingMessage = document.getElementById('loading-message');
+    const urlParams = new URLSearchParams(window.location.search);
+    const label = urlParams.get('label');
 
-    // Validate and initialise the label
     if (!validateLabel(label)) return;
 
-    // Set the page's title to the label name
     labelTitle.textContent = label;
     loadingMessage.style.display = 'block'; // Show the loading message
     initializeWebSocket(label);
 
-    // Ensure the WebSocket connection is closed when the page is unloaded
     window.addEventListener('beforeunload', closeWebSocket);
 });
 
@@ -45,8 +42,8 @@ function initializeWebSocket(label) {
 
     socket.onopen = setupWebSocketHeartbeat;
     socket.onmessage = (event) => handleUpdate(JSON.parse(event.data), label);
-    socket.onerror = () => handleWebSocketError();
-    socket.onclose = () => handleWebSocketClose();
+    socket.onerror = handleWebSocketError;
+    socket.onclose = handleWebSocketClose;
 }
 
 /**
@@ -56,7 +53,7 @@ function setupWebSocketHeartbeat() {
     logInfo('WebSocket connected');
     setInterval(() => {
         if (socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ type: 'ping' })); // Send a ping message every 30 seconds
+            socket.send(JSON.stringify({ type: 'ping' }));
         }
     }, 30000);
 }
@@ -73,7 +70,7 @@ function closeWebSocket() {
  */
 function handleWebSocketError() {
     logError('WebSocket error occurred');
-    window.location.href = 'index.html'; // Redirect to index.html on error
+    window.location.href = 'index.html';
 }
 
 /**
@@ -93,10 +90,10 @@ function handleUpdate(data, currentLabel) {
     const loadingMessage = document.getElementById('loading-message');
     if (data.label === currentLabel && data.images?.length > 0) {
         renderCameraGrid(data.images);
-        loadingMessage.style.display = 'none'; // Hide the loading message
+        loadingMessage.style.display = 'none';
     } else {
         logInfo('No data for the current label, redirecting to index.html');
-        window.location.href = 'index.html'; // Redirect to index.html if no images
+        window.location.href = 'index.html';
     }
 }
 
@@ -122,22 +119,57 @@ function renderCameraGrid(images) {
  * @returns {HTMLElement} The camera div element.
  */
 function createCameraDiv(key, image) {
-    const cameraDiv = document.createElement('div');
-    cameraDiv.className = 'camera'; // Add a class for styling
+    const cameraDiv = createElementWithClass('div', 'camera');
     cameraDiv.dataset.key = key;
 
-    const title = document.createElement('h2');
-    title.textContent = key;
-
-    const img = document.createElement('img');
-    img.src = `data:image/png;base64,${image}`;
-    img.alt = `${key} image`;
+    const title = createElementWithText('h2', key);
+    const img = setupCameraImage(key, image);
 
     cameraDiv.appendChild(title);
     cameraDiv.appendChild(img);
 
     cameraDiv.addEventListener('click', () => redirectToCameraPage(key));
     return cameraDiv;
+}
+
+/**
+ * Create an element with a specific class name.
+ *
+ * @param {string} tagName - The HTML tag name.
+ * @param {string} className - The class name to assign.
+ * @returns {HTMLElement} The created element.
+ */
+function createElementWithClass(tagName, className) {
+    const element = document.createElement(tagName);
+    element.className = className;
+    return element;
+}
+
+/**
+ * Create an element with text content.
+ *
+ * @param {string} tagName - The HTML tag name.
+ * @param {string} text - The text content to assign.
+ * @returns {HTMLElement} The created element.
+ */
+function createElementWithText(tagName, text) {
+    const element = document.createElement(tagName);
+    element.textContent = text;
+    return element;
+}
+
+/**
+ * Set up the camera image element.
+ *
+ * @param {string} key - The unique key for the camera.
+ * @param {string} image - The base64-encoded image data.
+ * @returns {HTMLImageElement} The image element.
+ */
+function setupCameraImage(key, image) {
+    const img = document.createElement('img');
+    img.src = `data:image/png;base64,${image}`;
+    img.alt = `${key} image`;
+    return img;
 }
 
 /**
@@ -156,11 +188,11 @@ function redirectToCameraPage(key) {
  */
 
 function logInfo(message) {
-    // Replace with logging service or comment out for production
-    // console.log(message);
+    // Uncomment this for development or logging services
+    // console.log(`[INFO] ${message}`);
 }
 
 function logError(message) {
-    // Replace with logging service or comment out for production
-    // console.error(message);
+    // Uncomment this for development or logging services
+    // console.error(`[ERROR] ${message}`);
 }
