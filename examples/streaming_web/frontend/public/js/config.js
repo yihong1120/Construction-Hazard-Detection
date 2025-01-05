@@ -20,8 +20,18 @@ function getTodayDate() {
 }
 
 function formatDetectionItemName(key) {
-  // Replace underscores with spaces and capitalize the first letter of each word
+  // Replace underscores with spaces and capitalise each word's first letter
   return key.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+// Custom logging functions to avoid direct console usage
+function logError(message) {
+  // e.g. send error to external logging or remove for production
+  // console.error(message);
+}
+function logInfo(message) {
+  // e.g. console.log, or remove in production
+  // console.log(message);
 }
 
 /* ----------------------------------
@@ -30,18 +40,23 @@ function formatDetectionItemName(key) {
 async function fetchConfig() {
   try {
     const response = await fetch("/api/config");
-    if (!response.ok) throw new Error("Failed to fetch configuration.");
+    if (!response.ok) {
+      throw new Error("Failed to fetch configuration.");
+    }
     const data = await response.json();
 
     // Transform notifications object to array
     configData = data.config.map((cfg) => ({
       ...cfg,
-      notifications: Object.entries(cfg.notifications).map(([token, language]) => ({ token, language }))
+      notifications: Object.entries(cfg.notifications).map(([token, language]) => ({
+        token,
+        language
+      }))
     }));
 
     renderConfigForm();
   } catch (error) {
-    console.error(error);
+    logError(error); // Replaces console.error
   }
 }
 
@@ -51,9 +66,8 @@ async function fetchConfig() {
 function renderConfigForm() {
   configContainer.innerHTML = ""; // Clear existing config items
 
-  // Loop through configData and create each config item
-  configData.forEach((config, index) => {
-    const container = createConfigItem(config, index);
+  configData.forEach((config, idx) => {
+    const container = createConfigItem(config, idx);
     configContainer.appendChild(container);
   });
 }
@@ -66,55 +80,66 @@ function createConfigItem(config, index) {
   const container = configItemTemplate.content.cloneNode(true);
   const item = container.querySelector(".config-item");
 
-  // Initialize form fields
-  initFormFields(item, config, index);
-
-  // Handle notifications
+  // remove the unused index if you don't need it:
+  initFormFields(item, config);
   initNotifications(item, config, index);
-
-  // Handle No Expire Date checkbox (only visible in edit mode)
-  handleExpireDateEditMode(item, config, index);
-
-  // Show/hide delete & add-notification buttons based on edit mode
-  toggleEditButtons(item, index);
-
-  // Enable or disable fields based on isEditing
+  handleExpireDateEditMode(item, config);
+  toggleEditButtons(item);
   toggleFormFields(item);
 
   return container;
 }
 
+/* ----------------------------------
+   Form Field Initialisation
+------------------------------------- */
 /**
- * Initialize form fields with default or existing config values
+ * Initialise form fields with default or existing config values
+ * (Removed index if not used)
  */
-function initFormFields(item, config, index) {
+function initFormFields(item, config) {
+  setBasicFields(item, config);
+  setWorkHours(item, config);
+  setExpireDateUI(item, config);
+  setDetectAndRedisFlags(item, config);
+  setDetectionItemsUI(item, config);
+}
+
+/**
+ * Set basic text/select fields like site, stream_name, video_url, model_key
+ */
+function setBasicFields(item, config) {
   const siteInput = item.querySelector("input[name='site']");
   const streamNameInput = item.querySelector("input[name='stream_name']");
   const videoUrlInput = item.querySelector("input[name='video_url']");
   const modelKeySelect = item.querySelector("select[name='model_key']");
-  const expireDateInput = item.querySelector("input[name='expire_date']");
-  const noExpireDateText = item.querySelector("input[type='text'][value='No Expire Date']");
-  const detectWithServerCheckbox = item.querySelector("input[name='detect_with_server']");
-  const storeInRedisCheckbox = item.querySelector("input[name='store_in_redis']");
-  const detectionItems = item.querySelectorAll(
-    "input[type='checkbox'][name^='detect_']:not([name='detect_with_server']):not([name='store_in_redis'])"
-  );
-  const workStartHourSelect = item.querySelector("select[name='work_start_hour']");
-  const workEndHourSelect = item.querySelector("select[name='work_end_hour']");
 
-  // Default values
   siteInput.value = config.site || "";
   streamNameInput.value = config.stream_name || "";
   videoUrlInput.value = config.video_url || "";
   modelKeySelect.value = config.model_key || "yolo11n";
+}
 
-  // Work Hours
+/**
+ * Set work hours (start/end)
+ */
+function setWorkHours(item, config) {
+  const workStartHourSelect = item.querySelector("select[name='work_start_hour']");
+  const workEndHourSelect = item.querySelector("select[name='work_end_hour']");
+
   workStartHourSelect.value =
     config.work_start_hour !== undefined ? config.work_start_hour : 7;
   workEndHourSelect.value =
     config.work_end_hour !== undefined ? config.work_end_hour : 18;
+}
 
-  // Expire Date
+/**
+ * Set expire date UI (text input vs. "No Expire Date" text)
+ */
+function setExpireDateUI(item, config) {
+  const expireDateInput = item.querySelector("input[name='expire_date']");
+  const noExpireDateText = item.querySelector("input[type='text'][value='No Expire Date']");
+
   if (config.expire_date === "No Expire Date") {
     expireDateInput.value = "";
     expireDateInput.style.display = "none";
@@ -124,24 +149,38 @@ function initFormFields(item, config, index) {
     expireDateInput.style.display = "";
     noExpireDateText.style.display = "none";
   }
-
-  // Detect with Server & Store in Redis
-  detectWithServerCheckbox.checked = !!config.detect_with_server;
-  storeInRedisCheckbox.checked = !!config.store_in_redis;
-
-  // Detection items
-  detectionItems.forEach((checkbox) => {
-    const key = checkbox.name;
-    checkbox.checked = !!config.detection_items[key];
-    // Update label text
-    const label = checkbox.parentElement;
-    label.lastChild.textContent = formatDetectionItemName(key);
-  });
 }
 
 /**
- * Initialize the notifications part of a config item
+ * Set detect_with_server & store_in_redis checkboxes
  */
+function setDetectAndRedisFlags(item, config) {
+  const detectWithServerCheckbox = item.querySelector("input[name='detect_with_server']");
+  const storeInRedisCheckbox = item.querySelector("input[name='store_in_redis']");
+
+  detectWithServerCheckbox.checked = !!config.detect_with_server;
+  storeInRedisCheckbox.checked = !!config.store_in_redis;
+}
+
+/**
+ * Set detection items (checkboxes + label)
+ */
+function setDetectionItemsUI(item, config) {
+  const detectionItems = item.querySelectorAll(
+    "input[type='checkbox'][name^='detect_']:not([name='detect_with_server']):not([name='store_in_redis'])"
+  );
+
+  detectionItems.forEach((checkbox) => {
+    checkbox.checked = !!config.detection_items[checkbox.name];
+    // Update label text
+    const label = checkbox.parentElement;
+    label.lastChild.textContent = formatDetectionItemName(checkbox.name);
+  });
+}
+
+/* ----------------------------------
+   Notifications
+------------------------------------- */
 function initNotifications(item, config, index) {
   const notificationItemTemplate = document.getElementById("notification-item-template");
   const notificationsContainer = item.querySelector(".notifications-container");
@@ -157,18 +196,14 @@ function initNotifications(item, config, index) {
 
     lineTokenInput.value = notification.token;
     languageSelect.value = notification.language;
-
-    // Store notifIndex in data-attribute for later retrieval
     lineTokenInput.setAttribute("data-notif-index", notifIndex);
     languageSelect.setAttribute("data-notif-index", notifIndex);
 
-    // Show or hide delete button based on edit mode
     deleteNotifBtn.style.display = isEditing ? "block" : "none";
-
     notificationsContainer.appendChild(notifEl);
   });
 
-  // Add click listener for delete notification
+  // Delete notification event
   notificationsContainer.addEventListener("click", (event) => {
     if (event.target.closest(".delete-notification")) {
       const notificationItem = event.target.closest(".notification-item");
@@ -177,13 +212,12 @@ function initNotifications(item, config, index) {
         10
       );
       updateConfigDataFromForm();
-      const updatedConfig = configData[index];
-      updatedConfig.notifications.splice(notifIndex, 1);
+      configData[index].notifications.splice(notifIndex, 1);
       renderConfigForm();
     }
   });
 
-  // Handle add notification button
+  // Add notification event
   const addNotificationBtn = item.querySelector(".add-notification");
   addNotificationBtn.addEventListener("click", () => {
     updateConfigDataFromForm();
@@ -192,68 +226,76 @@ function initNotifications(item, config, index) {
   });
 }
 
-/**
- * Handle "No Expire Date" checkbox in edit mode
- */
-function handleExpireDateEditMode(item, config, index) {
-  const expireDateContainer = item.querySelector(".expire-date-container");
-  const expireDateInput = item.querySelector("input[name='expire_date']");
-  const noExpireDateText = item.querySelector("input[type='text'][value='No Expire Date']");
-
+/* ----------------------------------
+   Expire Date Edit Mode
+------------------------------------- */
+function handleExpireDateEditMode(item, config) {
   if (isEditing) {
-    const noExpireDateCheckbox = document.createElement("input");
-    noExpireDateCheckbox.type = "checkbox";
-    noExpireDateCheckbox.name = "no_expire_date";
-    noExpireDateCheckbox.checked = config.expire_date === "No Expire Date";
-    noExpireDateCheckbox.id = `no-expire-date-${index}`;
-
-    const noExpireDateLabel = document.createElement("label");
-    noExpireDateLabel.htmlFor = `no-expire-date-${index}`;
-    noExpireDateLabel.appendChild(noExpireDateCheckbox);
-    noExpireDateLabel.appendChild(document.createTextNode(" No Expire Date"));
-
-    expireDateContainer.appendChild(document.createElement("br"));
-    expireDateContainer.appendChild(noExpireDateLabel);
-
-    // Initial state
-    if (noExpireDateCheckbox.checked) {
-      expireDateInput.style.display = "none";
-      noExpireDateText.style.display = "";
-    } else {
-      expireDateInput.style.display = "";
-      noExpireDateText.style.display = "none";
-    }
-
-    noExpireDateCheckbox.addEventListener("change", () => {
-      if (noExpireDateCheckbox.checked) {
-        expireDateInput.value = "";
-        expireDateInput.style.display = "none";
-        noExpireDateText.style.display = "";
-      } else {
-        expireDateInput.style.display = "";
-        noExpireDateText.style.display = "none";
-        // If expire_date is empty, set it to today
-        if (!config.expire_date || config.expire_date === "No Expire Date") {
-          expireDateInput.value = getTodayDate();
-          config.expire_date = getTodayDate();
-        }
-      }
-    });
+    createNoExpireDateCheckbox(item, config);
   } else {
-    // Show/hide "No Expire Date" text for non-edit mode
-    if (config.expire_date === "No Expire Date") {
-      expireDateInput.style.display = "none";
-      noExpireDateText.style.display = "";
-    } else {
-      expireDateInput.style.display = "";
-      noExpireDateText.style.display = "none";
-    }
+    handleNonEditExpireDate(item, config);
   }
 }
 
 /**
- * Show or hide the delete config & add notification buttons
+ * Create & handle "No Expire Date" checkbox in edit mode
  */
+function createNoExpireDateCheckbox(item, config) {
+  const expireDateContainer = item.querySelector(".expire-date-container");
+  const expireDateInput = item.querySelector("input[name='expire_date']");
+  const noExpireDateText = item.querySelector("input[type='text'][value='No Expire Date']");
+
+  const noExpireDateCheckbox = document.createElement("input");
+  noExpireDateCheckbox.type = "checkbox";
+  noExpireDateCheckbox.name = "no_expire_date";
+  noExpireDateCheckbox.checked = config.expire_date === "No Expire Date";
+  noExpireDateCheckbox.id = `no-expire-date-${Math.random()}`; // or other unique ID
+
+  const noExpireDateLabel = document.createElement("label");
+  noExpireDateLabel.htmlFor = noExpireDateCheckbox.id;
+  noExpireDateLabel.appendChild(noExpireDateCheckbox);
+  noExpireDateLabel.appendChild(document.createTextNode(" No Expire Date"));
+
+  expireDateContainer.appendChild(document.createElement("br"));
+  expireDateContainer.appendChild(noExpireDateLabel);
+
+  // Initial state
+  toggleNoExpireDate(expireDateInput, noExpireDateText, noExpireDateCheckbox.checked);
+
+  noExpireDateCheckbox.addEventListener("change", () => {
+    toggleNoExpireDate(expireDateInput, noExpireDateText, noExpireDateCheckbox.checked);
+    // If the expire_date is empty, set it to today
+    if (!config.expire_date || config.expire_date === "No Expire Date") {
+      expireDateInput.value = getTodayDate();
+      config.expire_date = getTodayDate();
+    }
+  });
+}
+
+function toggleNoExpireDate(expireDateInput, noExpireDateText, isNoExpire) {
+  if (isNoExpire) {
+    expireDateInput.value = "";
+    expireDateInput.style.display = "none";
+    noExpireDateText.style.display = "";
+  } else {
+    expireDateInput.style.display = "";
+    noExpireDateText.style.display = "none";
+  }
+}
+
+/**
+ * Show/hide "No Expire Date" text for non-edit mode
+ */
+function handleNonEditExpireDate(item, config) {
+  const expireDateInput = item.querySelector("input[name='expire_date']");
+  const noExpireDateText = item.querySelector("input[type='text'][value='No Expire Date']");
+
+  toggleNoExpireDate(expireDateInput, noExpireDateText, config.expire_date === "No Expire Date");
+}
+
+/* ----------------------------------
+   Buttons & Edit Mode
+------------------------------------- */
 function toggleEditButtons(item) {
   const deleteConfigBtn = item.querySelector(".delete-config-btn");
   const addNotificationBtn = item.querySelector(".add-notification");
@@ -266,22 +308,19 @@ function toggleEditButtons(item) {
     addNotificationBtn.style.display = "none";
   }
 
-  // Delete config event
-  deleteConfigBtn.addEventListener("click", handleDeleteConfig);
+  deleteConfigBtn.addEventListener("click", () => handleDeleteConfig(item));
 }
 
 /**
- * Handle delete config button
+ * Handle delete config
  */
-function handleDeleteConfig(event) {
+function handleDeleteConfig(item) {
   updateConfigDataFromForm();
-  // Find which index was clicked
-  const item = event.currentTarget.closest(".config-item");
   const containerItems = Array.from(configContainer.children);
-  const index = containerItems.indexOf(item);
+  const idx = containerItems.indexOf(item);
 
-  if (index >= 0) {
-    configData.splice(index, 1);
+  if (idx >= 0) {
+    configData.splice(idx, 1);
     renderConfigForm();
   }
 }
@@ -303,74 +342,89 @@ function toggleFormFields(item) {
 /* ----------------------------------
    Update & Validation
 ------------------------------------- */
-/**
- * Update configData from the DOM form
- */
 function updateConfigDataFromForm() {
   const configItems = configContainer.children;
 
-  configData = Array.from(configItems).map((container) => {
-    const inputs = container.querySelectorAll("input, select");
-    const cfg = { notifications: [], detection_items: {} };
+  configData = Array.from(configItems).map((container) =>
+    buildSingleConfigFromDOM(container)
+  );
+}
 
-    inputs.forEach((input) => {
-      const { name } = input;
+/**
+ * Build a single config object from DOM elements
+ */
+function buildSingleConfigFromDOM(container) {
+  const inputs = container.querySelectorAll("input, select");
+  const cfg = {
+    notifications: [],
+    detection_items: {}
+  };
 
-      // Notifications
-      if (name === "line_token" || name === "language") {
-        const notifIndex = input.getAttribute("data-notif-index");
-        if (!cfg.notifications[notifIndex]) {
-          cfg.notifications[notifIndex] = { token: "", language: "en" };
-        }
-        if (name === "line_token") {
-          cfg.notifications[notifIndex].token = input.value.trim();
-        } else {
-          cfg.notifications[notifIndex].language = input.value;
-        }
-      }
-      // Expire Date
-      else if (name === "expire_date") {
-        cfg.expire_date = input.value.trim();
-      }
-      // Checkboxes
-      else if (name === "detect_with_server") {
-        cfg.detect_with_server = input.checked;
-      } else if (name === "store_in_redis") {
-        cfg.store_in_redis = input.checked;
-      } else if (name.startsWith("detect_")) {
-        cfg.detection_items[name] = input.checked;
-      }
-      // Work Hours
-      else if (name === "work_start_hour") {
-        cfg.work_start_hour = parseInt(input.value, 10);
-      } else if (name === "work_end_hour") {
-        cfg.work_end_hour = parseInt(input.value, 10);
-      }
-      // Other fields (site, stream_name, video_url, model_key, etc.)
-      else if (name) {
-        cfg[name] = input.value.trim();
-      }
-    });
+  inputs.forEach((input) => processInputField(input, cfg));
+  handleNoExpireCheckbox(container, cfg);
 
-    // Handle "No Expire Date" checkbox
-    const noExpireDateCheckbox = container.querySelector("input[name='no_expire_date']");
-    if (noExpireDateCheckbox) {
-      if (noExpireDateCheckbox.checked) {
-        cfg.expire_date = "No Expire Date";
-      } else if (!cfg.expire_date || cfg.expire_date === "No Expire Date") {
-        // If the expire_date is empty, set it to today
-        cfg.expire_date = getTodayDate();
-      }
+  // Remove empty notifications
+  cfg.notifications = cfg.notifications.filter((notif) => notif.token);
+  // Ensure store_in_redis is boolean
+  cfg.store_in_redis = !!cfg.store_in_redis;
+
+  return cfg;
+}
+
+/**
+ * Process each input/select field
+ */
+function processInputField(input, cfg) {
+  const { name } = input;
+  if (!name) return;
+
+  if (name === "line_token" || name === "language") {
+    updateNotificationField(input, cfg);
+  } else if (name === "expire_date") {
+    cfg.expire_date = input.value.trim();
+  } else if (name === "detect_with_server") {
+    cfg.detect_with_server = input.checked;
+  } else if (name === "store_in_redis") {
+    cfg.store_in_redis = input.checked;
+  } else if (name.startsWith("detect_")) {
+    cfg.detection_items[name] = input.checked;
+  } else if (name === "work_start_hour") {
+    cfg.work_start_hour = parseInt(input.value, 10);
+  } else if (name === "work_end_hour") {
+    cfg.work_end_hour = parseInt(input.value, 10);
+  } else {
+    // site, stream_name, video_url, model_key, etc.
+    cfg[name] = input.value.trim();
+  }
+}
+
+/**
+ * Update notifications array (line_token / language)
+ */
+function updateNotificationField(input, cfg) {
+  const notifIndex = input.getAttribute("data-notif-index");
+  if (!cfg.notifications[notifIndex]) {
+    cfg.notifications[notifIndex] = { token: "", language: "en" };
+  }
+  if (input.name === "line_token") {
+    cfg.notifications[notifIndex].token = input.value.trim();
+  } else {
+    cfg.notifications[notifIndex].language = input.value;
+  }
+}
+
+/**
+ * Handle "No Expire Date" checkbox
+ */
+function handleNoExpireCheckbox(container, cfg) {
+  const noExpireDateCheckbox = container.querySelector("input[name='no_expire_date']");
+  if (noExpireDateCheckbox) {
+    if (noExpireDateCheckbox.checked) {
+      cfg.expire_date = "No Expire Date";
+    } else if (!cfg.expire_date || cfg.expire_date === "No Expire Date") {
+      cfg.expire_date = getTodayDate();
     }
-
-    // Remove empty notifications
-    cfg.notifications = cfg.notifications.filter((notif) => notif.token);
-
-    // Ensure store_in_redis is a boolean
-    cfg.store_in_redis = !!cfg.store_in_redis;
-
-    return cfg;
-  });
+  }
 }
 
 /**
@@ -382,7 +436,6 @@ function validateAndProcessUpdatedConfig() {
   const updatedConfig = configData.map((cfg, idx) => {
     const container = configContainer.children[idx];
 
-    // Validate required fields: site, stream_name, video_url
     ["site", "stream_name", "video_url"].forEach((field) => {
       if (!cfg[field]) {
         isValid = false;
@@ -390,13 +443,11 @@ function validateAndProcessUpdatedConfig() {
       }
     });
 
-    // Validate work_start_hour < work_end_hour
     if (cfg.work_start_hour >= cfg.work_end_hour) {
       isValid = false;
       markWorkHourError(container, "Work Start Hour cannot be greater than or equal to Work End Hour.");
     }
 
-    // Validate Expiry Date
     if (cfg.expire_date !== "No Expire Date" && !cfg.expire_date) {
       cfg.expire_date = getTodayDate();
     }
@@ -412,15 +463,14 @@ function validateAndProcessUpdatedConfig() {
  */
 function markFieldError(container, fieldName, message) {
   const input = container.querySelector(`input[name='${fieldName}']`);
-  if (input) {
-    input.classList.add("error");
-    // Avoid duplicate error messages
-    if (!input.previousElementSibling || !input.previousElementSibling.classList.contains("error-message")) {
-      const errorMessage = document.createElement("div");
-      errorMessage.className = "error-message";
-      errorMessage.textContent = message;
-      input.parentNode.insertBefore(errorMessage, input);
-    }
+  if (!input) return;
+
+  input.classList.add("error");
+  if (!input.previousElementSibling || !input.previousElementSibling.classList.contains("error-message")) {
+    const errorMessage = document.createElement("div");
+    errorMessage.className = "error-message";
+    errorMessage.textContent = message;
+    input.parentNode.insertBefore(errorMessage, input);
   }
 }
 
@@ -444,9 +494,9 @@ function markWorkHourError(container, message) {
   }
 }
 
-/**
- * Transform configData to final format and POST to backend
- */
+/* ----------------------------------
+   Save Config
+------------------------------------- */
 async function saveConfig() {
   // Erase previous error messages
   document.querySelectorAll(".error-message").forEach((el) => el.remove());
@@ -460,27 +510,8 @@ async function saveConfig() {
       return; // Stop if validation fails
     }
 
-    // Convert notifications array to object
-    const finalConfig = updatedConfig.map((cfg) => {
-      const notificationsObj = {};
-      cfg.notifications.forEach((notif) => {
-        notificationsObj[notif.token] = notif.language;
-      });
-      return {
-        ...cfg,
-        notifications: notificationsObj,
-        no_expire_date: undefined // remove the "no_expire_date" from final JSON
-      };
-    });
-
-    // Remove undefined fields
-    finalConfig.forEach((cfg) => {
-      Object.keys(cfg).forEach((key) => {
-        if (cfg[key] === undefined) {
-          delete cfg[key];
-        }
-      });
-    });
+    const finalConfig = convertNotificationsArrayToObj(updatedConfig);
+    removeUndefinedFields(finalConfig);
 
     // Save to backend
     const response = await fetch("/api/config", {
@@ -492,8 +523,38 @@ async function saveConfig() {
     if (!response.ok) throw new Error("Failed to save configuration.");
     toggleEditMode(false);
   } catch (error) {
-    console.error(error);
+    logError(error); // Replaces console.error
   }
+}
+
+/**
+ * Convert notifications array to object for each config
+ */
+function convertNotificationsArrayToObj(configArray) {
+  return configArray.map((cfg) => {
+    const notificationsObj = {};
+    cfg.notifications.forEach((notif) => {
+      notificationsObj[notif.token] = notif.language;
+    });
+    return {
+      ...cfg,
+      notifications: notificationsObj,
+      no_expire_date: undefined // remove the "no_expire_date" from final JSON
+    };
+  });
+}
+
+/**
+ * Remove undefined fields from final config
+ */
+function removeUndefinedFields(finalConfig) {
+  finalConfig.forEach((cfg) => {
+    Object.keys(cfg).forEach((key) => {
+      if (cfg[key] === undefined) {
+        delete cfg[key];
+      }
+    });
+  });
 }
 
 /* ----------------------------------
@@ -503,14 +564,12 @@ function toggleEditMode(enable) {
   isEditing = enable;
   renderConfigForm();
 
-  // Show/hide buttons and form controls
   editBtn.classList.toggle("hidden", enable);
   addConfigBtn.classList.toggle("hidden", !enable);
   formControls.classList.toggle("hidden", !enable);
 
   if (!enable) {
-    // If exiting edit mode, re-fetch the latest config
-    fetchConfig();
+    fetchConfig(); // Re-fetch to ensure we have the latest data
   }
 }
 
@@ -522,7 +581,7 @@ cancelBtn.addEventListener("click", () => toggleEditMode(false));
 saveBtn.addEventListener("click", saveConfig);
 addConfigBtn.addEventListener("click", () => {
   updateConfigDataFromForm();
-  // Add a new empty config
+
   configData.push({
     site: "",
     stream_name: "",
