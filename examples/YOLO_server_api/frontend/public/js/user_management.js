@@ -36,19 +36,29 @@ function setupFormHandlers() {
  * Generic function to set up form submission handlers.
  */
 function setupFormHandler(formId, handlerFunction, errorElementId) {
+  // Retrieve the form and error element references
   const form = document.getElementById(formId);
   const errorElement = document.getElementById(errorElementId);
 
-  if (form) {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      errorElement.textContent = ''; // Clear any previous error messages
-      try {
-        await handlerFunction();
-      } catch (err) {
-        errorElement.textContent = 'An error occurred while processing the form.';
-      }
-    });
+  // Return early if the form does not exist to reduce nesting
+  if (!form) return;
+
+  // Attach the submit event listener
+  form.addEventListener('submit', handleSubmit);
+
+  /**
+   * Handle the form submission.
+   * Using a separate function helps keep nesting shallow.
+   */
+  async function handleSubmit(e) {
+    e.preventDefault();
+    errorElement.textContent = ''; // Clear any previous error messages
+
+    try {
+      await handlerFunction();
+    } catch (err) {
+      errorElement.textContent = 'An error occurred while processing the form.';
+    }
   }
 }
 

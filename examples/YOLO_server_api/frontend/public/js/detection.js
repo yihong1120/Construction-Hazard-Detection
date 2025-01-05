@@ -4,7 +4,11 @@ const API_URL = '/api'; // Base path for the backend API
 let originalImageWidth = 0;
 let originalImageHeight = 0;
 
-document.addEventListener('DOMContentLoaded', () => {
+/** Entry point after the DOM has loaded. */
+document.addEventListener('DOMContentLoaded', init);
+
+/** Initialisation function to separate setup logic from the DOMContentLoaded callback. */
+function init() {
   checkAccess([]);
   showAppropriateLinks();
 
@@ -22,8 +26,14 @@ document.addEventListener('DOMContentLoaded', () => {
   setupChooseFileButton(chooseFileBtn, imageInput);
   setupFileDrop(fileDropArea, imageInput);
   setupFileInputChange(imageInput, fileDropArea, removeImageBtn);
-  setupFormSubmission(form, imageInput, detectionError, detectionResult);
-});
+  // Pass fewer arguments by wrapping them in an object
+  setupFormSubmission({
+    form,
+    imageInput,
+    detectionError,
+    detectionResult
+  });
+}
 
 /** Set up the logout button event. */
 function setupLogoutButton(logoutBtn) {
@@ -54,34 +64,6 @@ function setupFileDrop(fileDropArea, imageInput) {
   fileDropArea.addEventListener('drop', (e) => handleFileDrop(e, fileDropArea, imageInput));
 }
 
-/** Set up file input change event. */
-function setupFileInputChange(imageInput, fileDropArea, removeImageBtn) {
-  imageInput.addEventListener('change', (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (file) {
-      showImagePreview(file, fileDropArea, removeImageBtn);
-    }
-  });
-}
-
-/** Set up form submission for detection. */
-function setupFormSubmission(form, imageInput, detectionError, detectionResult) {
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    clearMessages(detectionError, detectionResult);
-
-    const model = document.getElementById('model-select').value;
-    const file = imageInput.files[0];
-
-    if (!file) {
-      detectionError.textContent = 'Please select an image.';
-      return;
-    }
-
-    await performDetection(file, model, detectionError, detectionResult);
-  });
-}
-
 /** Handle drag over event. */
 function handleDragOver(e) {
   e.preventDefault();
@@ -103,6 +85,47 @@ function handleFileDrop(e, fileDropArea, imageInput) {
     const removeImageBtn = document.getElementById('remove-image-btn');
     showImagePreview(file, fileDropArea, removeImageBtn);
   }
+}
+
+/** Set up file input change event. */
+function setupFileInputChange(imageInput, fileDropArea, removeImageBtn) {
+  imageInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) {
+      showImagePreview(file, fileDropArea, removeImageBtn);
+    }
+  });
+}
+
+/**
+ * Set up form submission for detection.
+ * Reduced to a single parameter object to avoid multiple arguments.
+ */
+function setupFormSubmission({
+  form,
+  imageInput,
+  detectionError,
+  detectionResult
+}) {
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearMessages(detectionError, detectionResult);
+
+    const model = document.getElementById('model-select').value;
+    const file = imageInput.files[0];
+
+    if (!file) {
+      detectionError.textContent = 'Please select an image.';
+      return;
+    }
+
+    await performDetection({
+      file,
+      model,
+      detectionError,
+      detectionResult
+    });
+  });
 }
 
 /** Clear error and result messages. */
@@ -153,7 +176,12 @@ function drawScaledImage(img, fileDropArea) {
   const canvas = document.getElementById('image-canvas');
   const ctx = canvas.getContext('2d');
 
-  const { width, height } = calculateScaledDimensions(img, fileDropArea);
+  const { width, height } = scaleDimension({
+    width: img.width,
+    height: img.height,
+    maxWidth: fileDropArea.clientWidth - 40,
+    maxHeight: fileDropArea.clientHeight - 40
+  });
   canvas.width = width;
   canvas.height = height;
 
@@ -161,33 +189,33 @@ function drawScaledImage(img, fileDropArea) {
   ctx.drawImage(img, 0, 0, width, height);
 }
 
-/** Calculate scaled dimensions for the image to fit the drop area. */
-function calculateScaledDimensions(img, fileDropArea) {
-  const maxWidth = fileDropArea.clientWidth - 40;
-  const maxHeight = fileDropArea.clientHeight - 40;
-  let { width, height } = img;
+/**
+ * Scale dimensions to maintain aspect ratio within maxWidth and maxHeight.
+ * Wrapped into an object to reduce the function argument count.
+ */
+function scaleDimension({ width, height, maxWidth, maxHeight }) {
+  let scaledWidth = width;
+  let scaledHeight = height;
 
-  ({ width, height } = scaleDimension(width, height, maxWidth, maxHeight));
-  return { width, height };
+  if (scaledWidth > maxWidth) {
+    const ratio = maxWidth / scaledWidth;
+    scaledWidth = maxWidth;
+    scaledHeight *= ratio;
+  }
+  if (scaledHeight > maxHeight) {
+    const ratio = maxHeight / scaledHeight;
+    scaledHeight = maxHeight;
+    scaledWidth *= ratio;
+  }
+
+  return { width: scaledWidth, height: scaledHeight };
 }
 
-/** Scale dimensions to maintain aspect ratio within maxWidth and maxHeight. */
-function scaleDimension(width, height, maxWidth, maxHeight) {
-  if (width > maxWidth) {
-    const ratio = maxWidth / width;
-    width = maxWidth;
-    height *= ratio;
-  }
-  if (height > maxHeight) {
-    const ratio = maxHeight / height;
-    height = maxHeight;
-    width *= ratio;
-  }
-  return { width, height };
-}
-
-/** Perform the detection request to the backend. */
-async function performDetection(file, model, detectionError, detectionResult) {
+/**
+ * Perform the detection request to the backend.
+ * Merged arguments into a single object for readability.
+ */
+async function performDetection({ file, model, detectionError, detectionResult }) {
   const formData = new FormData();
   formData.append('image', file);
   formData.append('model', model);
@@ -207,7 +235,7 @@ async function performDetection(file, model, detectionError, detectionResult) {
 
     const results = await response.json();
     drawDetectionResults(results);
-    displayObjectCounts(results, detectionResult);
+    displayObjectCounts({ results, detectionResult });
   } catch (err) {
     console.error(err);
     detectionError.textContent = 'Error performing detection.';
@@ -219,12 +247,25 @@ function drawDetectionResults(results) {
   const canvas = document.getElementById('image-canvas');
   const ctx = canvas.getContext('2d');
 
-  results.forEach((detection) => drawSingleDetection(ctx, detection, canvas));
+  results.forEach((detection) => {
+    drawSingleDetection({ ctx, detection, canvas });
+  });
 }
 
 /** Draw a single detection result. */
-function drawSingleDetection(ctx, detection, canvas) {
-  const names = ['Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest', 'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle'];
+function drawSingleDetection({ ctx, detection, canvas }) {
+  const names = [
+    'Hardhat',
+    'Mask',
+    'NO-Hardhat',
+    'NO-Mask',
+    'NO-Safety Vest',
+    'Person',
+    'Safety Cone',
+    'Safety Vest',
+    'machinery',
+    'vehicle'
+  ];
   const colors = {
     'Hardhat': 'green',
     'Safety Vest': 'green',
@@ -236,18 +277,34 @@ function drawSingleDetection(ctx, detection, canvas) {
     'Safety Cone': 'pink'
   };
 
-  const [x1, y1, x2, y2, confidence, classId] = detection;
+  const [x1, y1, x2, y2, , classId] = detection;
   const label = names[classId];
   const color = colors[label] || 'blue';
 
-  const { scaledX1, scaledY1, scaledX2, scaledY2 } = scaleCoordinates(x1, y1, x2, y2, canvas);
+  const { scaledX1, scaledY1, scaledX2, scaledY2 } = scaleCoordinates({
+    x1,
+    y1,
+    x2,
+    y2,
+    canvas
+  });
 
-  drawBoundingBox(ctx, scaledX1, scaledY1, scaledX2, scaledY2, color);
-  drawLabel(ctx, label, scaledX1, scaledY1, color);
+  drawBoundingBox({
+    ctx,
+    coords: { x1: scaledX1, y1: scaledY1, x2: scaledX2, y2: scaledY2 },
+    color
+  });
+  drawLabel({
+    ctx,
+    label,
+    x: scaledX1,
+    y: scaledY1,
+    color
+  });
 }
 
 /** Scale coordinates to fit the canvas. */
-function scaleCoordinates(x1, y1, x2, y2, canvas) {
+function scaleCoordinates({ x1, y1, x2, y2, canvas }) {
   const scaleX = canvas.width / originalImageWidth;
   const scaleY = canvas.height / originalImageHeight;
 
@@ -260,31 +317,44 @@ function scaleCoordinates(x1, y1, x2, y2, canvas) {
 }
 
 /** Draw bounding box around the detected object. */
-function drawBoundingBox(ctx, x1, y1, x2, y2, color) {
+function drawBoundingBox({ ctx, coords, color }) {
+  const { x1, y1, x2, y2 } = coords;
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 }
 
 /** Draw label above the bounding box. */
-function drawLabel(ctx, label, x1, y1, color) {
+function drawLabel({ ctx, label, x, y, color }) {
   ctx.fillStyle = color;
-  ctx.fillRect(x1, y1 - 20, ctx.measureText(label).width + 10, 20);
+  ctx.fillRect(x, y - 20, ctx.measureText(label).width + 10, 20);
 
   ctx.fillStyle = 'black';
   ctx.font = '14px Arial';
-  ctx.fillText(label, x1 + 5, y1 - 5);
+  ctx.fillText(label, x + 5, y - 5);
 }
 
 /** Display counts of detected objects. */
-function displayObjectCounts(results, detectionResult) {
-  const names = ['Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest', 'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle'];
+function displayObjectCounts({ results, detectionResult }) {
+  const names = [
+    'Hardhat',
+    'Mask',
+    'NO-Hardhat',
+    'NO-Mask',
+    'NO-Safety Vest',
+    'Person',
+    'Safety Cone',
+    'Safety Vest',
+    'machinery',
+    'vehicle'
+  ];
   const counts = initializeCounts(names);
+
   countDetections(results, names, counts);
-  showCounts(detectionResult, counts);
+  showCounts({ detectionResult, counts });
 }
 
-/** Initialize counts for each label. */
+/** Initialise counts for each label. */
 function initializeCounts(names) {
   const counts = {};
   names.forEach(name => counts[name] = 0);
@@ -295,12 +365,14 @@ function initializeCounts(names) {
 function countDetections(results, names, counts) {
   results.forEach(([, , , , , classId]) => {
     const label = names[classId];
-    if (label) counts[label] += 1;
+    if (label) {
+      counts[label] += 1;
+    }
   });
 }
 
 /** Show counts in the detection result area. */
-function showCounts(detectionResult, counts) {
+function showCounts({ detectionResult, counts }) {
   detectionResult.textContent = Object.entries(counts)
     .filter(([_, count]) => count > 0)
     .map(([name, count]) => `${name}: ${count}`)
