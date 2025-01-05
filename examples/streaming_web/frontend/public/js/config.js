@@ -24,14 +24,10 @@ function formatDetectionItemName(key) {
   return key.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-// Custom logging functions to avoid direct console usage
-function logError(message) {
-  // e.g. send error to external logging or remove for production
-  // console.error(message);
-}
-function logInfo(message) {
-  // e.g. console.log, or remove in production
-  // console.log(message);
+// Custom logging function to avoid direct console usage
+function logError(error) {
+  // Example: Send error to external logging service or remove for production
+  // console.error(error);
 }
 
 /* ----------------------------------
@@ -80,7 +76,6 @@ function createConfigItem(config, index) {
   const container = configItemTemplate.content.cloneNode(true);
   const item = container.querySelector(".config-item");
 
-  // remove the unused index if you don't need it:
   initFormFields(item, config);
   initNotifications(item, config, index);
   handleExpireDateEditMode(item, config);
@@ -95,7 +90,6 @@ function createConfigItem(config, index) {
 ------------------------------------- */
 /**
  * Initialise form fields with default or existing config values
- * (Removed index if not used)
  */
 function initFormFields(item, config) {
   setBasicFields(item, config);
@@ -203,6 +197,16 @@ function initNotifications(item, config, index) {
     notificationsContainer.appendChild(notifEl);
   });
 
+  setupNotificationEvents(notificationsContainer, index);
+}
+
+/**
+ * Set up notification event listeners
+ *
+ * @param {HTMLElement} notificationsContainer - The container for notifications.
+ * @param {number} configIndex - The index of the config in configData.
+ */
+function setupNotificationEvents(notificationsContainer, configIndex) {
   // Delete notification event
   notificationsContainer.addEventListener("click", (event) => {
     if (event.target.closest(".delete-notification")) {
@@ -211,19 +215,38 @@ function initNotifications(item, config, index) {
         notificationItem.querySelector("input[name='line_token']").getAttribute("data-notif-index"),
         10
       );
-      updateConfigDataFromForm();
-      configData[index].notifications.splice(notifIndex, 1);
-      renderConfigForm();
+      removeNotification(configIndex, notifIndex);
     }
   });
 
   // Add notification event
-  const addNotificationBtn = item.querySelector(".add-notification");
+  const addNotificationBtn = notificationsContainer.parentElement.querySelector(".add-notification");
   addNotificationBtn.addEventListener("click", () => {
-    updateConfigDataFromForm();
-    configData[index].notifications.push({ token: "", language: "en" });
-    renderConfigForm();
+    addNotification(configIndex);
   });
+}
+
+/**
+ * Add a new notification
+ *
+ * @param {number} configIndex - The index of the config in configData.
+ */
+function addNotification(configIndex) {
+  updateConfigDataFromForm();
+  configData[configIndex].notifications.push({ token: "", language: "en" });
+  renderConfigForm();
+}
+
+/**
+ * Remove a notification
+ *
+ * @param {number} configIndex - The index of the config in configData.
+ * @param {number} notifIndex - The index of the notification to remove.
+ */
+function removeNotification(configIndex, notifIndex) {
+  updateConfigDataFromForm();
+  configData[configIndex].notifications.splice(notifIndex, 1);
+  renderConfigForm();
 }
 
 /* ----------------------------------
@@ -272,6 +295,13 @@ function createNoExpireDateCheckbox(item, config) {
   });
 }
 
+/**
+ * Toggle visibility of expire date input and "No Expire Date" text
+ *
+ * @param {HTMLInputElement} expireDateInput - The expire date input field.
+ * @param {HTMLInputElement} noExpireDateText - The "No Expire Date" text input.
+ * @param {boolean} isNoExpire - Whether "No Expire Date" is selected.
+ */
 function toggleNoExpireDate(expireDateInput, noExpireDateText, isNoExpire) {
   if (isNoExpire) {
     expireDateInput.value = "";
@@ -378,23 +408,31 @@ function processInputField(input, cfg) {
   const { name } = input;
   if (!name) return;
 
-  if (name === "line_token" || name === "language") {
-    updateNotificationField(input, cfg);
-  } else if (name === "expire_date") {
-    cfg.expire_date = input.value.trim();
-  } else if (name === "detect_with_server") {
-    cfg.detect_with_server = input.checked;
-  } else if (name === "store_in_redis") {
-    cfg.store_in_redis = input.checked;
-  } else if (name.startsWith("detect_")) {
-    cfg.detection_items[name] = input.checked;
-  } else if (name === "work_start_hour") {
-    cfg.work_start_hour = parseInt(input.value, 10);
-  } else if (name === "work_end_hour") {
-    cfg.work_end_hour = parseInt(input.value, 10);
-  } else {
-    // site, stream_name, video_url, model_key, etc.
-    cfg[name] = input.value.trim();
+  switch (name) {
+    case "line_token":
+    case "language":
+      updateNotificationField(input, cfg);
+      break;
+    case "expire_date":
+      cfg.expire_date = input.value.trim();
+      break;
+    case "detect_with_server":
+      cfg.detect_with_server = input.checked;
+      break;
+    case "store_in_redis":
+      cfg.store_in_redis = input.checked;
+      break;
+    default:
+      if (name.startsWith("detect_")) {
+        cfg.detection_items[name] = input.checked;
+      } else if (name === "work_start_hour") {
+        cfg.work_start_hour = parseInt(input.value, 10);
+      } else if (name === "work_end_hour") {
+        cfg.work_end_hour = parseInt(input.value, 10);
+      } else {
+        // site, stream_name, video_url, model_key, etc.
+        cfg[name] = input.value.trim();
+      }
   }
 }
 
@@ -433,29 +471,37 @@ function handleNoExpireCheckbox(container, cfg) {
 function validateAndProcessUpdatedConfig() {
   let isValid = true;
 
-  const updatedConfig = configData.map((cfg, idx) => {
-    const container = configContainer.children[idx];
-
-    ["site", "stream_name", "video_url"].forEach((field) => {
+  function validateRequiredFields(container, cfg, requiredFields) {
+    requiredFields.forEach((field) => {
       if (!cfg[field]) {
         isValid = false;
         markFieldError(container, field, "This field is required.");
       }
     });
+  }
 
+  function validateWorkHours(container, cfg) {
     if (cfg.work_start_hour >= cfg.work_end_hour) {
       isValid = false;
       markWorkHourError(container, "Work Start Hour cannot be greater than or equal to Work End Hour.");
     }
+  }
 
+  function setDefaultExpireDate(cfg) {
     if (cfg.expire_date !== "No Expire Date" && !cfg.expire_date) {
       cfg.expire_date = getTodayDate();
     }
+  }
 
-    return cfg;
+  configData.forEach((cfg, idx) => {
+    const container = configContainer.children[idx];
+
+    validateRequiredFields(container, cfg, ["site", "stream_name", "video_url"]);
+    validateWorkHours(container, cfg);
+    setDefaultExpireDate(cfg);
   });
 
-  return { updatedConfig, isValid };
+  return { updatedConfig: configData, isValid };
 }
 
 /**
@@ -548,13 +594,13 @@ function convertNotificationsArrayToObj(configArray) {
  * Remove undefined fields from final config
  */
 function removeUndefinedFields(finalConfig) {
-  finalConfig.forEach((cfg) => {
-    Object.keys(cfg).forEach((key) => {
+  for (const cfg of finalConfig) {
+    for (const key in cfg) {
       if (cfg[key] === undefined) {
         delete cfg[key];
       }
-    });
-  });
+    }
+  }
 }
 
 /* ----------------------------------
@@ -594,9 +640,9 @@ addConfigBtn.addEventListener("click", () => {
     work_end_hour: 18,
     notifications: [],
     detection_items: {
-      detect_no_safety_vest_or_helmet: false,
-      detect_near_machinery_or_vehicle: false,
-      detect_in_restricted_area: false
+      detect_no_safety_vest_or_helmet: true,
+      detect_near_machinery_or_vehicle: true,
+      detect_in_restricted_area: true
     }
   });
 

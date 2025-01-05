@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const labels = await fetchLabels(); // Fetch the list of labels from the backend
         renderLabels(cameraGrid, labels); // Render the fetched labels onto the page
     } catch (error) {
-        logError('Error fetching labels:', error); // Use a custom logging function to avoid direct console use
+        logError('Error fetching labels', error); // Log errors with additional context
     }
 });
 
@@ -70,6 +70,8 @@ function createDescriptionElement(text) {
 
 // Custom logging function to replace direct console usage
 function logError(message, error) {
-    // Here, you can send errors to a logging service or simply comment out this line for production
-    // console.error(`${message} ${error}`);
+    const errorMessage = `${message}: ${error.message || error}`;
+    // Send this error to a logging service or output for debugging
+    // console.error(errorMessage);
+    return errorMessage; // Optionally return the formatted error for further use
 }
