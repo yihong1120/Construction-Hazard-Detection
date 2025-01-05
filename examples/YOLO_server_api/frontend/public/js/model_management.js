@@ -26,7 +26,8 @@ function setupModelFileUpdate() {
       await sendModelFileUpdateRequest(formData, modelUpdateError);
     } catch (err) {
       modelUpdateError.textContent = 'Error updating model file.';
-      logError(err);
+      // Removed logError call
+      // Optionally handle the error here, e.g., display a message to the user
     }
   });
 }
@@ -84,7 +85,8 @@ function setupGetNewModel() {
       await sendGetNewModelRequest(requestData, getNewModelError, modelFileContent);
     } catch (err) {
       getNewModelError.textContent = 'Error retrieving model file.';
-      logError(err);
+      // Removed logError call
+      // Optionally handle the error here, e.g., display a message to the user
     }
   });
 }
@@ -147,7 +149,4 @@ function setupLogoutButton() {
    Logging Utility Functions
 ------------------------------------- */
 /** Custom error logging function to avoid direct console usage. */
-function logError(_error) {
-  // Example: Send error to external logging service or remove for production
-  // console.error('An error occurred:', error);
-}
+// Removed logError function

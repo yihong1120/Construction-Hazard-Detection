@@ -22,7 +22,8 @@ async function loadHeader(headerContainer) {
     headerContainer.innerHTML = html; // Inject the HTML into the container
     await initialiseHeader(); // Initialise header-specific behaviours
   } catch (err) {
-    logError('Error loading header:', err);
+    // Removed logError call
+    // Optionally handle the error here, e.g., display a message to the user
   }
 }
 
@@ -49,7 +50,8 @@ async function bindLogoutEvent() {
       window.location.href = '/login.html'; // Redirect to the login page
     });
   } catch (err) {
-    logError('Error binding logout event:', err);
+    // Removed logError call
+    // Optionally handle the error here, e.g., display a message to the user
   }
 }
 
@@ -77,7 +79,8 @@ async function loadFooter(footerContainer) {
     footerContainer.innerHTML = html; // Inject the HTML into the container
     updateFooterYear(); // Update the footer with the current year
   } catch (err) {
-    logError('Error loading footer:', err);
+    // Removed logError call
+    // Optionally handle the error here, e.g., display a message to the user
   }
 }
 
@@ -89,14 +92,4 @@ function updateFooterYear() {
   if (yearSpan) {
     yearSpan.textContent = new Date().getFullYear(); // Set the text content to the current year
   }
-}
-
-/**
- * Custom error logging function to avoid direct console usage.
- * @param {string} _message - The error message.
- * @param {Error} [_error] - The optional error object.
- */
-function logError(_message, _error) {
-  // Example: Send errors to a logging service or use conditionally
-  // console.error(message, error);
 }

@@ -21,7 +21,7 @@ function isTokenExpired(token) {
     const now = Math.floor(Date.now() / 1000); // Current timestamp in seconds
     return payload.exp && payload.exp < now; // Compare the expiration time with the current time
   } catch (e) {
-    logError('Error parsing token:', e); // Use custom logging
+    // Removed logError call
     return true; // Assume expired if there's a parsing error
   }
 }
@@ -36,7 +36,7 @@ export function getUserRoleFromToken() {
     // Ensure the payload structure is correct and retrieve the role
     return payload?.subject?.role || null;
   } catch (e) {
-    logError('Error parsing token payload:', e); // Use custom logging
+    // Removed logError call
     return null;
   }
 }
@@ -51,7 +51,7 @@ export function getUsernameFromToken() {
     // Ensure the payload structure is correct and retrieve the username
     return payload?.subject?.username || null;
   } catch (e) {
-    logError('Error parsing token payload:', e); // Use custom logging
+    // Removed logError call
     return null;
   }
 }
@@ -107,15 +107,4 @@ export function showAppropriateLinks() {
       el.style.display = 'none';
     });
   }
-}
-
-/**
- * Custom error logging function.
- * Logs messages only in development environments.
- * @param {string} _message - The error message.
- * @param {Error} [_error] - The optional error object.
- */
-function logError(_message, _error) {
-  // Example: Send info to external logging service or remove for production
-  // console.error(_message, _error);
 }
