@@ -87,7 +87,12 @@ function setupChooseFileButton(chooseFileBtn, imageInput) {
 function setupFileDrop(fileDropArea, imageInput, removeImageBtn) {
   fileDropArea.addEventListener('dragover', handleDragOver);
   fileDropArea.addEventListener('dragleave', handleDragLeave);
-  fileDropArea.addEventListener('drop', (e) => handleFileDrop(e, fileDropArea, imageInput, removeImageBtn));
+  fileDropArea.addEventListener('drop', (e) => handleFileDrop({
+    event: e,
+    fileDropArea,
+    imageInput,
+    removeImageBtn
+  }));
 }
 
 /** Handle drag over event. */
@@ -102,13 +107,13 @@ function handleDragLeave(e) {
   e.currentTarget.classList.remove('dragover');
 }
 
-/** Handle file drop event. */
-function handleFileDrop(e, fileDropArea, imageInput, removeImageBtn) {
-  e.preventDefault();
+/** Handle file drop event with reduced parameters. */
+function handleFileDrop({ event, fileDropArea, imageInput, removeImageBtn }) {
+  event.preventDefault();
   fileDropArea.classList.remove('dragover');
-  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  const file = event.dataTransfer.files && event.dataTransfer.files[0];
   if (file) {
-    imageInput.files = e.dataTransfer.files;
+    imageInput.files = event.dataTransfer.files;
     showImagePreview(file, fileDropArea, removeImageBtn);
   }
 }
@@ -162,20 +167,47 @@ function clearMessages(detectionError, detectionResult) {
 
 /** Remove the currently uploaded image and clear related content. */
 function removeImage() {
+  clearCanvas();
+  resetImageInput();
+  clearDetectionMessages();
+  hideRemoveImageButton();
+}
+
+/** Clear the canvas content. */
+function clearCanvas() {
   const canvas = document.getElementById('image-canvas');
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (canvas) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+}
 
+/** Reset the image input field. */
+function resetImageInput() {
   const imageInput = document.getElementById('image-input');
-  imageInput.value = '';
+  if (imageInput) {
+    imageInput.value = '';
+  }
+}
 
+/** Clear detection result and error messages. */
+function clearDetectionMessages() {
   const detectionResult = document.getElementById('detection-result');
   const detectionError = document.getElementById('detection-error');
-  detectionResult.textContent = '';
-  detectionError.textContent = '';
+  if (detectionResult) {
+    detectionResult.textContent = '';
+  }
+  if (detectionError) {
+    detectionError.textContent = '';
+  }
+}
 
+/** Hide the remove image button. */
+function hideRemoveImageButton() {
   const removeImageBtn = document.getElementById('remove-image-btn');
-  removeImageBtn.style.display = 'none';
+  if (removeImageBtn) {
+    removeImageBtn.style.display = 'none';
+  }
 }
 
 /** Display a preview of the uploaded image on the canvas. */
@@ -192,7 +224,9 @@ function loadImagePreview(imageSrc, fileDropArea, removeImageBtn) {
     originalImageWidth = img.width;
     originalImageHeight = img.height;
     drawScaledImage(img, fileDropArea);
-    removeImageBtn.style.display = 'inline-block';
+    if (removeImageBtn) {
+      removeImageBtn.style.display = 'inline-block';
+    }
   };
   img.src = imageSrc;
 }
@@ -200,6 +234,7 @@ function loadImagePreview(imageSrc, fileDropArea, removeImageBtn) {
 /** Draw the scaled image on the canvas. */
 function drawScaledImage(img, fileDropArea) {
   const canvas = document.getElementById('image-canvas');
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
   const { width, height } = scaleDimension({
@@ -242,34 +277,55 @@ function scaleDimension({ width, height, maxWidth, maxHeight }) {
  * Merged arguments into a single object for readability.
  */
 async function performDetection({ file, model, detectionError, detectionResult }) {
+  const formData = createFormData(file, model);
+
+  try {
+    const response = await sendDetectionRequest(formData);
+    await handleDetectionResponse(response, detectionError, detectionResult);
+  } catch (err) {
+    handleDetectionError(detectionError);
+  }
+}
+
+/** Create FormData for detection request. */
+function createFormData(file, model) {
   const formData = new FormData();
   formData.append('image', file);
   formData.append('model', model);
+  return formData;
+}
 
-  try {
-    const response = await fetch(`${API_URL}/detect`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: formData
-    });
+/** Send the detection request to the backend. */
+async function sendDetectionRequest(formData) {
+  return await fetch(`${API_URL}/detect`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: formData
+  });
+}
 
-    if (!response.ok) {
-      const data = await response.json();
-      detectionError.textContent = data.detail || 'Detection failed.';
-      return;
-    }
-
-    const results = await response.json();
-    drawDetectionResults(results);
-    displayObjectCounts({ results, detectionResult });
-  } catch (err) {
-    detectionError.textContent = 'Error performing detection.';
+/** Handle the response from the detection request. */
+async function handleDetectionResponse(response, detectionError, detectionResult) {
+  if (!response.ok) {
+    const data = await response.json();
+    detectionError.textContent = data.detail || 'Detection failed.';
+    return;
   }
+
+  const results = await response.json();
+  drawDetectionResults(results);
+  displayObjectCounts({ results, detectionResult });
+}
+
+/** Handle errors during detection request. */
+function handleDetectionError(detectionError) {
+  detectionError.textContent = 'Error performing detection.';
 }
 
 /** Draw detection results on the canvas. */
 function drawDetectionResults(results) {
   const canvas = document.getElementById('image-canvas');
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
   results.forEach((detection) => {
