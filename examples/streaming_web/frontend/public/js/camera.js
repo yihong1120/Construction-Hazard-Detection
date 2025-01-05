@@ -1,25 +1,37 @@
+// Constants
+// A list of supported "no warnings" messages in various languages
+const NO_WARNINGS_MESSAGES = [
+    'No warning', // English
+    '無警告', // Traditional Chinese
+    '无警告', // Simplified Chinese
+    'Pas d\'avertissement', // French
+    'Không có cảnh báo', // Vietnamese
+    'Tidak ada peringatan', // Indonesian
+    'ไม่มีคำเตือน' // Thai
+];
+
+// WebSocket connection instance
 let socket;
 
-// Wait for the DOM content to fully load
 document.addEventListener('DOMContentLoaded', () => {
-    // Extract URL parameters to retrieve the label and key
+    // Retrieve URL parameters for label and key
     const urlParams = new URLSearchParams(window.location.search);
-    const label = urlParams.get('label'); // Retrieve the 'label' parameter
-    const key = urlParams.get('key'); // Retrieve the 'key' parameter
+    const label = urlParams.get('label');
+    const key = urlParams.get('key');
 
-    // If label or key is missing, redirect to the index page
+    // Redirect to index page if either label or key is missing
     if (!label || !key) {
-        console.error('Label or key parameter is missing'); // Log an error
-        window.location.href = 'index.html'; // Redirect to the index page
-        return; // Exit the function
+        console.error('Label or key parameter is missing');
+        window.location.href = 'index.html';
+        return;
     }
 
     // Retrieve DOM elements for dynamic updates
-    const cameraTitle = document.getElementById('camera-title'); // Camera title element
-    const streamImage = document.getElementById('stream-image'); // Live stream image
-    const loadingIndicator = document.getElementById('loading-indicator'); // Loading indicator
-    const streamMeta = document.getElementById('stream-meta'); // Metadata (e.g., last updated timestamp)
-    const warningsList = document.getElementById('warnings-ul'); // Warning messages list
+    const cameraTitle = document.getElementById('camera-title');
+    const streamImage = document.getElementById('stream-image');
+    const loadingIndicator = document.getElementById('loading-indicator');
+    const streamMeta = document.getElementById('stream-meta');
+    const warningsList = document.getElementById('warnings-ul');
 
     // Set the camera title to include the label and key
     cameraTitle.textContent = `${label} - ${key}`;
@@ -29,91 +41,100 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Ensure the WebSocket is properly closed when the page is unloaded
     window.addEventListener('beforeunload', () => {
-        if (socket) {
-            socket.close(); // Close the WebSocket connection
-        }
+        if (socket) socket.close();
     });
 });
 
 function initializeWebSocket(label, key, streamImage, loadingIndicator, streamMeta, warningsList) {
-    // Determine the correct WebSocket protocol based on the current page protocol
+    // Determine the appropriate WebSocket protocol based on the current page protocol
     const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const wsUrl = `${protocol}${window.location.host}/api/ws/stream/${encodeURIComponent(label)}/${encodeURIComponent(key)}`;
 
-    // Construct the WebSocket URL with the label and key parameters
-    socket = new WebSocket(`${protocol}${window.location.host}/api/ws/stream/${encodeURIComponent(label)}/${encodeURIComponent(key)}`);
+    // Create a new WebSocket connection
+    socket = new WebSocket(wsUrl);
 
-    // Define a list of supported "no warnings" strings in various languages
-    const noWarningsMessages = [
-        'No warning', // English
-        '無警告', // Traditional Chinese
-        '无警告', // Simplified Chinese
-        'Pas d\'avertissement', // French
-        'Không có cảnh báo', // Vietnamese
-        'Tidak ada peringatan', // Indonesian
-        'ไม่มีคำเตือน' // Thai
-    ];
+    // Define WebSocket event handlers
+    socket.onopen = handleWebSocketOpen;
+    socket.onmessage = (event) => handleWebSocketMessage(event, streamImage, loadingIndicator, streamMeta, warningsList);
+    socket.onerror = handleWebSocketError;
+    socket.onclose = handleWebSocketClose;
+}
 
-    // Handle the WebSocket 'open' event
-    socket.onopen = () => {
-        console.log('WebSocket connected!'); // Log the connection
-        // Send a 'ping' message every 30 seconds to keep the connection alive
-        setInterval(() => {
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ type: 'ping' }));
-            }
-        }, 30000);
-    };
-
-    // Handle incoming messages from the WebSocket
-    socket.onmessage = (event) => {
-        const data = JSON.parse(event.data); // Parse the received data as JSON
-
-        // If there is an error in the data, log it and redirect to the index page
-        if (data.error) {
-            console.error(data.error); // Log the error
-            window.location.href = 'index.html'; // Redirect to the index page
-        } else {
-            // Handle image updates
-            if (data.image) {
-                loadingIndicator.style.display = 'none'; // Hide the loading indicator
-                streamImage.style.display = 'block'; // Display the live stream image
-                streamImage.src = `data:image/png;base64,${data.image}`; // Update the image source with the base64 data
-                const timestamp = new Date().toLocaleString(); // Get the current timestamp
-                streamMeta.textContent = `Last updated: ${timestamp}`; // Update the metadata
-            }
-
-            // Handle warning messages
-            const warnings = data.warnings ? data.warnings.split('\n') : ['No warnings']; // Split warnings into an array
-            warningsList.innerHTML = ''; // Clear any previous warnings
-
-            // Check if there are no warnings
-            if (warnings.length === 1 && noWarningsMessages.includes(warnings[0])) {
-                warningsList.className = 'no-warnings'; // Apply the green background class for "no warnings"
-                const p = document.createElement('p'); // Create a new paragraph element
-                p.textContent = warnings[0]; // Set the text content to "no warnings"
-                p.classList.add('warning-item', 'no-warning'); // Apply individual styles for green warnings
-                warningsList.appendChild(p); // Append the paragraph to the warnings list
-            } else {
-                // If there are warnings, apply the red background class
-                warningsList.className = 'warnings'; // Apply the red background class for warnings
-                warnings.forEach((warning) => {
-                    const p = document.createElement('p'); // Create a new paragraph for each warning
-                    p.textContent = warning; // Set the warning text
-                    p.classList.add('warning-item'); // Apply individual styles for red warnings
-                    warningsList.appendChild(p); // Append the paragraph to the warnings list
-                });
-            }
+function handleWebSocketOpen() {
+    console.log('WebSocket connected!');
+    // Keep the WebSocket connection alive by sending a ping message every 30 seconds
+    setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'ping' }));
         }
-    };
+    }, 30000);
+}
 
-    // Handle WebSocket 'error' events
-    socket.onerror = (error) => {
-        console.error('WebSocket error:', error); // Log the error
-        window.location.href = 'index.html'; // Redirect to the index page
-    };
+function handleWebSocketMessage(event, streamImage, loadingIndicator, streamMeta, warningsList) {
+    // Parse the incoming message as JSON
+    const data = JSON.parse(event.data);
 
-    // Handle WebSocket 'close' events
-    socket.onclose = () => {
-        console.log('WebSocket closed'); // Log the closure
-    };
+    // Handle error messages from the server
+    if (data.error) {
+        console.error(data.error);
+        window.location.href = 'index.html';
+        return;
+    }
+
+    // Update the live stream image if provided
+    if (data.image) {
+        updateStreamImage(streamImage, loadingIndicator, streamMeta, data.image);
+    }
+
+    // Update the warnings list if warnings are provided
+    if (data.warnings) {
+        updateWarningsList(warningsList, data.warnings);
+    }
+}
+
+function handleWebSocketError(error) {
+    // Log WebSocket errors and redirect to the index page
+    console.error('WebSocket error:', error);
+    window.location.href = 'index.html';
+}
+
+function handleWebSocketClose() {
+    // Log when the WebSocket connection is closed
+    console.log('WebSocket closed');
+}
+
+function updateStreamImage(streamImage, loadingIndicator, streamMeta, imageData) {
+    // Hide the loading indicator and display the live stream image
+    loadingIndicator.style.display = 'none';
+    streamImage.style.display = 'block';
+    // Set the image source to the received base64 data
+    streamImage.src = `data:image/png;base64,${imageData}`;
+    // Update the metadata with the current timestamp
+    streamMeta.textContent = `Last updated: ${new Date().toLocaleString()}`;
+}
+
+function updateWarningsList(warningsList, warningsData) {
+    // Split warnings data into an array of warnings
+    const warnings = warningsData.split('\n');
+    // Clear the existing warnings list
+    warningsList.innerHTML = '';
+
+    // Check if there are no warnings and update the list accordingly
+    if (warnings.length === 1 && NO_WARNINGS_MESSAGES.includes(warnings[0])) {
+        warningsList.className = 'no-warnings';
+        appendWarningItem(warningsList, warnings[0], ['no-warning']);
+    } else {
+        warningsList.className = 'warnings';
+        warnings.forEach(warning => appendWarningItem(warningsList, warning));
+    }
+}
+
+function appendWarningItem(warningsList, warningText, additionalClasses = []) {
+    // Create a new paragraph element for the warning
+    const p = document.createElement('p');
+    p.textContent = warningText;
+    // Add classes for styling
+    p.classList.add('warning-item', ...additionalClasses);
+    // Append the warning to the warnings list
+    warningsList.appendChild(p);
 }

@@ -39,16 +39,7 @@ function initializeWebSocket(label) {
     socket = new WebSocket(`${protocol}${window.location.host}/api/ws/labels/${encodeURIComponent(label)}`);
 
     // Handle WebSocket connection establishment
-    socket.onopen = () => {
-        console.log('WebSocket connected!');
-
-        // Set up a heartbeat mechanism to keep the connection alive
-        setInterval(() => {
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ type: 'ping' })); // Send a ping message every 30 seconds
-            }
-        }, 30000);
-    };
+    socket.onopen = setupWebSocketHeartbeat;
 
     // Handle incoming messages from the WebSocket server
     socket.onmessage = (event) => {
@@ -57,15 +48,39 @@ function initializeWebSocket(label) {
     };
 
     // Handle WebSocket errors
-    socket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        window.location.href = 'index.html'; // Redirect to index.html on error
-    };
+    socket.onerror = handleWebSocketError;
 
     // Handle WebSocket closure
-    socket.onclose = () => {
-        console.log('WebSocket closed');
-    };
+    socket.onclose = handleWebSocketClose;
+}
+
+/**
+ * Set up a heartbeat mechanism to keep the WebSocket connection alive.
+ */
+function setupWebSocketHeartbeat() {
+    console.log('WebSocket connected!');
+    setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'ping' })); // Send a ping message every 30 seconds
+        }
+    }, 30000);
+}
+
+/**
+ * Handle WebSocket errors by logging the error and redirecting to the index page.
+ *
+ * @param {Event} error - The WebSocket error event.
+ */
+function handleWebSocketError(error) {
+    console.error('WebSocket error:', error);
+    window.location.href = 'index.html'; // Redirect to index.html on error
+}
+
+/**
+ * Handle WebSocket closure by logging a message to the console.
+ */
+function handleWebSocketClose() {
+    console.log('WebSocket closed');
 }
 
 /**
@@ -78,7 +93,7 @@ function handleUpdate(data, currentLabel) {
     const loadingMessage = document.getElementById('loading-message');
     if (data.label === currentLabel && data.images.length > 0) {
         console.log('Received update for current label:', data.label);
-        updateCameraGrid(data.images); // Update the camera grid with new images
+        renderCameraGrid(data.images); // Update the camera grid with new images
         loadingMessage.style.display = 'none'; // Hide the loading message
     } else {
         console.log('No data for the current label, redirecting to index.html');
@@ -87,48 +102,62 @@ function handleUpdate(data, currentLabel) {
 }
 
 /**
- * Update the camera grid with new images.
+ * Render the camera grid with new images.
  *
  * @param {Array} images - An array of image data, each containing a key and base64-encoded image.
  */
-function updateCameraGrid(images) {
+function renderCameraGrid(images) {
     const cameraGrid = document.getElementById('camera-grid'); // Reference to the camera grid container
     cameraGrid.innerHTML = ''; // Clear existing content in the grid
     images.forEach(({ key, image }) => {
-        // Check if a camera div for the given key already exists
-        const existingCameraDiv = document.querySelector(`.camera[data-key="${key}"]`);
-        if (existingCameraDiv) {
-            // Update the existing image source
-            const img = existingCameraDiv.querySelector('img');
-            img.src = `data:image/png;base64,${image}`;
-        } else {
-            // Create a new camera div if it doesn't exist
-            const cameraDiv = document.createElement('div');
-            cameraDiv.className = 'camera'; // Add a class for styling
-            cameraDiv.dataset.key = key; // Set a custom data attribute with the key
-
-            // Create a title for the camera
-            const title = document.createElement('h2');
-            title.textContent = key; // Display the key directly
-
-            // Create an image element for the camera
-            const img = document.createElement('img');
-            img.src = `data:image/png;base64,${image}`; // Set the base64-encoded image as the source
-            img.alt = `${key} image`; // Add an alternative text for accessibility
-
-            // Append the title and image to the camera div
-            cameraDiv.appendChild(title);
-            cameraDiv.appendChild(img);
-
-            // Append the camera div to the grid
-            cameraGrid.appendChild(cameraDiv);
-
-            // Add a click event listener to the camera div
-            cameraDiv.addEventListener('click', () => {
-                const urlParams = new URLSearchParams(window.location.search);
-                const label = urlParams.get('label'); // Retrieve the 'label' parameter
-                window.location.href = `/camera.html?label=${encodeURIComponent(label)}&key=${encodeURIComponent(key)}`; // Redirect to the camera page
-            });
-        }
+        const cameraDiv = createOrUpdateCameraDiv(key, image); // Create or update the camera div
+        cameraGrid.appendChild(cameraDiv); // Append the camera div to the grid
     });
+}
+
+/**
+ * Create or update a camera div for the given key and image.
+ *
+ * @param {string} key - The unique key for the camera.
+ * @param {string} image - The base64-encoded image data.
+ * @returns {HTMLElement} The camera div element.
+ */
+function createOrUpdateCameraDiv(key, image) {
+    const existingCameraDiv = document.querySelector(`.camera[data-key="${key}"]`);
+    if (existingCameraDiv) {
+        const img = existingCameraDiv.querySelector('img');
+        img.src = `data:image/png;base64,${image}`; // Update the image source
+        return existingCameraDiv;
+    } else {
+        const cameraDiv = document.createElement('div');
+        cameraDiv.className = 'camera'; // Add a class for styling
+        cameraDiv.dataset.key = key; // Set a custom data attribute with the key
+
+        const title = document.createElement('h2');
+        title.textContent = key; // Display the key directly
+
+        const img = document.createElement('img');
+        img.src = `data:image/png;base64,${image}`; // Set the base64-encoded image as the source
+        img.alt = `${key} image`; // Add an alternative text for accessibility
+
+        cameraDiv.appendChild(title); // Append the title to the div
+        cameraDiv.appendChild(img); // Append the image to the div
+
+        cameraDiv.addEventListener('click', () => {
+            redirectToCameraPage(key); // Redirect to the camera page on click
+        });
+
+        return cameraDiv;
+    }
+}
+
+/**
+ * Redirect the user to the camera page for the specified key.
+ *
+ * @param {string} key - The unique key for the camera.
+ */
+function redirectToCameraPage(key) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const label = urlParams.get('label'); // Retrieve the 'label' parameter
+    window.location.href = `/camera.html?label=${encodeURIComponent(label)}&key=${encodeURIComponent(key)}`; // Redirect to the camera page
 }
