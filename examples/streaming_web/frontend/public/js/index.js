@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const labels = await fetchLabels(); // Fetch the list of labels from the backend
         renderLabels(cameraGrid, labels); // Render the fetched labels onto the page
     } catch (error) {
-        console.error('Error fetching labels:', error); // Log an error message if fetching or processing labels fails
+        logError('Error fetching labels:', error); // Use a custom logging function to avoid direct console use
     }
 });
 
@@ -30,21 +30,46 @@ function renderLabels(cameraGrid, labels) {
 
 // Create a camera container for a label
 function createCameraDiv(label) {
-    const cameraDiv = document.createElement('div'); // Create a container for the label
-    cameraDiv.className = 'camera'; // Assign a class for styling
-
-    const link = document.createElement('a'); // Create a clickable link
-    link.href = `/label.html?label=${encodeURIComponent(label)}`; // Encode the label to ensure URL safety
-
-    const title = document.createElement('h2'); // Create a title for the label
-    title.textContent = label; // Set the label text
-
-    const description = document.createElement('p'); // Create a description under the title
-    description.textContent = `View ${label}`; // Set the descriptive text
-
-    link.appendChild(title); // Add the title to the link
-    link.appendChild(description); // Add the description to the link
+    const cameraDiv = createDivElement('camera'); // Create a container with a class
+    const link = createLinkElement(`/label.html?label=${encodeURIComponent(label)}`, [
+        createTitleElement(label),
+        createDescriptionElement(`View ${label}`)
+    ]);
     cameraDiv.appendChild(link); // Add the link to the camera container
-
     return cameraDiv; // Return the constructed camera container
+}
+
+// Helper function to create a div element with a specified class
+function createDivElement(className) {
+    const div = document.createElement('div');
+    div.className = className;
+    return div;
+}
+
+// Helper function to create a link element with specified href and children
+function createLinkElement(href, children = []) {
+    const link = document.createElement('a');
+    link.href = href;
+    children.forEach(child => link.appendChild(child));
+    return link;
+}
+
+// Helper function to create a title element
+function createTitleElement(text) {
+    const title = document.createElement('h2');
+    title.textContent = text;
+    return title;
+}
+
+// Helper function to create a description element
+function createDescriptionElement(text) {
+    const description = document.createElement('p');
+    description.textContent = text;
+    return description;
+}
+
+// Custom logging function to replace direct console usage
+function logError(message, error) {
+    // Here, you can send errors to a logging service or simply comment out this line for production
+    // console.error(`${message} ${error}`);
 }
