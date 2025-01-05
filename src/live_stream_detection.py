@@ -1,28 +1,19 @@
 from __future__ import annotations
 
 import argparse
-import datetime
+import asyncio
 import gc
+import logging
 import os
-import time
 from pathlib import Path
-from typing import Any
 from typing import MutableMapping
 from typing import TypedDict
 
 import aiohttp
-import anyio
 import cv2
 import numpy as np
-from dotenv import load_dotenv
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
-from tenacity import retry
-from tenacity import retry_if_exception_type
-from tenacity import stop_after_attempt
-from tenacity import wait_fixed
-
-load_dotenv()
 
 
 class InputData(TypedDict):
@@ -52,7 +43,7 @@ class LiveStreamDetector:
         model_key: str = 'yolo11n',
         output_folder: str | None = None,
         detect_with_server: bool = False,
-        shared_token: MutableMapping[Any, Any] | None = None,
+        shared_token: MutableMapping[str, str] | None = None,
         shared_lock=None,
     ):
         """
@@ -74,93 +65,80 @@ class LiveStreamDetector:
         self.model_key: str = model_key
         self.output_folder: str | None = output_folder
         self.detect_with_server: bool = detect_with_server
-        if shared_token is None:
-            # If shared token is not provided, create a new one
-            self.shared_token:  MutableMapping[str, float | None] = {
-                'access_token': None,
-                'token_expiry': 0.0,
-            }
-        else:
-            self.shared_token = shared_token
-        # Lock for ensuring only one process logs in at a time
+        self.shared_token: MutableMapping[str, str] = shared_token or dict(
+            access_token='',
+        )
         self.shared_lock = shared_lock
         self.model: AutoDetectionModel | None = None
+        self.logger = logging.getLogger(__name__)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_fixed(2),
-        retry=retry_if_exception_type(aiohttp.ClientError),
-    )
-    async def authenticate(self) -> None:
+    #######################################################################
+    # Authentication functions
+    #######################################################################
+
+    def acquire_shared_lock(self):
         """
-        Authenticates with the API and retrieves the access token.
+        Acquires the shared lock for authentication.
         """
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.api_url}/api/token",
-                json={
-                    'username': os.getenv('API_USERNAME'),
-                    'password': os.getenv('API_PASSWORD'),
-                },
-            ) as response:
-                response.raise_for_status()
-                token_data = await response.json()
-                if 'msg' in token_data:
-                    raise Exception(token_data['msg'])
-                elif 'access_token' in token_data:
-                    # Update the shared token with the new access token
+        if self.shared_lock:
+            self.shared_lock.acquire()
+
+    def release_shared_lock(self):
+        """
+        Releases the shared lock for authentication.
+        """
+        if self.shared_lock:
+            self.shared_lock.release()
+
+    async def authenticate(self, force: bool = False) -> None:
+        """
+        Ensures that the user is authenticated, re-authenticates if needed.
+
+        Args:
+            force (bool): Whether to force re-authentication.
+
+        Raises:
+            aiohttp.ClientResponseError: If the authentication fails.
+            ValueError: If credentials are missing.
+        """
+        username = os.getenv('API_USERNAME')
+        password = os.getenv('API_PASSWORD')
+
+        if not username or not password:
+            raise ValueError(
+                'Missing API_USERNAME '
+                'or API_PASSWORD in environment variables',
+            )
+
+        # Check if re-authentication is needed
+        if not force and self.shared_token.get('access_token'):
+            return
+
+        self.acquire_shared_lock()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_url}/api/token",
+                    json={
+                        'username': username,
+                        'password': password,
+                    },
+                ) as response:
+                    response.raise_for_status()
+                    token_data = await response.json()
                     self.shared_token['access_token'] = (
                         token_data['access_token']
                     )
-                    self.shared_token['token_expiry'] = time.time() + 850
-                else:
-                    raise Exception(
-                        "Token data does not contain 'msg' or 'access_token'",
+                    self.logger.info(
+                        'Successfully authenticated and retrieved token.',
                     )
-
-    def token_expired(self) -> bool:
-        """
-        Checks if the access token has expired.
-
-        Returns:
-            bool: True if the token has expired, False otherwise.
-        """
-        # if (
-        #     'access_token' not in self.shared_token
-        #     or 'token_expiry' not in self.shared_token
-        # ):
-        #     return True
-        # return time.time() >= self.shared_token['token_expiry']
-        token_expiry = self.shared_token.get('token_expiry')
-        if token_expiry is None:  # 如果過期時間不存在，則認為過期
-            return True
-        return time.time() >= token_expiry
-
-    async def ensure_authenticated(self) -> None:
-        """
-        Ensures that the access token is valid and not expired.
-        """
-        if self.shared_lock:
-            # Ensure only one process logs in at a time
-            self.shared_lock.acquire()
-
-        try:
-            if (
-                'access_token' not in self.shared_token
-                or not self.shared_token['access_token']
-                or self.token_expired()
-            ):
-                # Authenticate if token is missing or expired
-                await self.authenticate()
         finally:
-            if self.shared_lock:
-                self.shared_lock.release()
+            self.release_shared_lock()
 
-    @retry(
-        stop=stop_after_attempt(2),
-        wait=wait_fixed(3),
-        retry=retry_if_exception_type(aiohttp.ClientError),
-    )
+    #######################################################################
+    # Detection functions
+    #######################################################################
+
     async def generate_detections_cloud(
         self,
         frame: np.ndarray,
@@ -169,40 +147,55 @@ class LiveStreamDetector:
         Sends the frame to the API for detection and retrieves the detections.
 
         Args:
-            frame (cv2.Mat): The frame to send for detection.
+            frame (np.ndarray): The frame to send for detection.
 
         Returns:
-            List[List[float]]: The detection data.
+            list[list[float]]: The detection data.
         """
-        await self.ensure_authenticated()
+        # Encode frame as PNG bytes
+        success, frame_encoded = cv2.imencode('.png', frame)
+        if not success:
+            raise ValueError('Failed to encode frame as PNG bytes.')
+        frame_bytes = frame_encoded.tobytes()
 
-        _, frame_encoded = cv2.imencode('.png', frame)
-        frame_encoded_bytes = frame_encoded.tobytes()
-        timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
-        filename = f"frame_{timestamp}.png"
+        # Ensure authenticated
+        await self.authenticate()
 
-        headers = {
-            'Authorization': f"Bearer {self.shared_token['access_token']}",
-        }
-        data = aiohttp.FormData()
-        data.add_field(
-            'image',
-            frame_encoded_bytes,
-            filename=filename,
-            content_type='image/png',
-        )
+        # Send detection request
+        try:
+            headers = {
+                'Authorization': f"Bearer {self.shared_token['access_token']}",
+            }
+            data = aiohttp.FormData()
+            data.add_field(
+                'image',
+                frame_bytes,
+                filename='frame.png',
+                content_type='image/png',
+            )
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.api_url}/api/detect",
-                data=data,
-                params={'model': self.model_key},
-                headers=headers,
-            ) as response:
-                # Check if the response is successful
-                response.raise_for_status()
-                detections = await response.json()
-                return detections
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_url}/api/detect",
+                    data=data,
+                    params={'model': self.model_key},
+                    headers=headers,
+                ) as response:
+                    # Token expired or invalid
+                    if response.status in (401, 403):
+                        self.logger.warning(
+                            'Token expired or invalid. Re-authenticating...',
+                        )
+                        # Re-authenticate and retry detection request
+                        await self.authenticate(force=True)
+
+                        # Retry detection request
+                        return await self.generate_detections_cloud(frame)
+                    response.raise_for_status()
+                    return await response.json()
+        except aiohttp.ClientResponseError as exc:
+            self.logger.error(f"Failed to send detection request: {exc}")
+            raise
 
     async def generate_detections_local(
         self,
@@ -215,7 +208,7 @@ class LiveStreamDetector:
             frame (np.ndarray): The frame to send for detection.
 
         Returns:
-            List[List[float]]: The detection data.
+            list[list[float]]: The detection data.
         """
         if self.model is None:
             model_path = Path('models/pt/') / f"best_{self.model_key}.pt"
@@ -249,6 +242,58 @@ class LiveStreamDetector:
         datas = self.remove_completely_contained_labels(datas)
 
         return datas
+
+    async def generate_detections(
+        self, frame: np.ndarray,
+    ) -> tuple[list[list[float]], np.ndarray]:
+        """
+        Generates detections with local model or cloud API as configured.
+
+        Args:
+            frame (np.ndarray): The frame to send for detection.
+
+        Returns:
+            Tuple[List[List[float]], np.ndarray]:
+                Detections and original frame.
+        """
+        if self.detect_with_server:
+            datas = await self.generate_detections_cloud(frame)
+        else:
+            datas = await self.generate_detections_local(frame)
+        return datas, frame
+
+    async def run_detection(self, stream_url: str) -> None:
+        """
+        Runs detection on the live stream.
+
+        Args:
+            stream_url (str): The URL of the live stream.
+        """
+        cap = cv2.VideoCapture(stream_url)
+        if not cap.isOpened():
+            raise ValueError('Failed to open stream.')
+
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print('Failed to read frame from the stream. Retrying...')
+                    continue
+
+                # Perform detection
+                datas, frame = await self.generate_detections(frame)
+                print(datas)  # You can replace this with actual processing
+
+                cv2.imshow('Frame', frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
+
+    #######################################################################
+    # Post-processing functions
+    #######################################################################
 
     def remove_overlapping_labels(self, datas):
         """
@@ -404,54 +449,6 @@ class LiveStreamDetector:
 
         return datas
 
-    async def generate_detections(
-        self, frame: np.ndarray,
-    ) -> tuple[list[list[float]], np.ndarray]:
-        """
-        Generates detections with local model or cloud API as configured.
-
-        Args:
-            frame (np.ndarray): The frame to send for detection.
-
-        Returns:
-            Tuple[List[List[float]], np.ndarray]:
-                Detections and original frame.
-        """
-        if self.detect_with_server:
-            datas = await self.generate_detections_cloud(frame)
-        else:
-            datas = await self.generate_detections_local(frame)
-        return datas, frame
-
-    async def run_detection(self, stream_url: str) -> None:
-        """
-        Runs detection on the live stream.
-
-        Args:
-            stream_url (str): The URL of the live stream.
-        """
-        cap = cv2.VideoCapture(stream_url)
-        if not cap.isOpened():
-            raise ValueError('Failed to open stream.')
-
-        try:
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    print('Failed to read frame from the stream. Retrying...')
-                    continue
-
-                # Perform detection
-                datas, frame = await self.generate_detections(frame)
-                print(datas)  # You can replace this with actual processing
-
-                cv2.imshow('Frame', frame)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-        finally:
-            cap.release()
-            cv2.destroyAllWindows()
-
 
 async def main():
     parser = argparse.ArgumentParser(
@@ -489,8 +486,7 @@ async def main():
 
     # Shared token for authentication
     shared_token = {
-        'access_token': None,
-        'token_expiry': 0,
+        'access_token': '',
     }
 
     detector = LiveStreamDetector(
@@ -505,4 +501,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    anyio.run(main)
+    asyncio.run(main())
