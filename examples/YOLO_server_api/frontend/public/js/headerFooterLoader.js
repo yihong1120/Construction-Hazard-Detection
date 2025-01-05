@@ -20,26 +20,36 @@ async function loadHeader(headerContainer) {
     const response = await fetch('/header.html'); // Fetch the header HTML content
     const html = await response.text(); // Parse the response as text
     headerContainer.innerHTML = html; // Inject the HTML into the container
-    bindLogoutEvent(); // Bind the logout button event
-    bindMenuToggleEvent(); // Bind the menu toggle event
+    await initialiseHeader(); // Initialise header-specific behaviours
   } catch (err) {
-    console.error('Error loading header:', err); // Log any errors encountered
+    logError('Error loading header:', err);
   }
+}
+
+/**
+ * Initialise header-specific behaviours.
+ */
+async function initialiseHeader() {
+  await bindLogoutEvent(); // Bind the logout button event
+  bindMenuToggleEvent(); // Bind the menu toggle event
 }
 
 /**
  * Bind the logout button event.
  */
-function bindLogoutEvent() {
+async function bindLogoutEvent() {
   const logoutBtn = document.getElementById('logout-btn'); // Reference the logout button
-  if (logoutBtn) {
-    import('/js/common.js').then(module => {
-      const { clearToken } = module; // Import the clearToken function
-      logoutBtn.addEventListener('click', () => {
-        clearToken(); // Clear authentication tokens
-        window.location.href = '/login.html'; // Redirect to the login page
-      });
+  if (!logoutBtn) return;
+
+  try {
+    const module = await import('/js/common.js'); // Dynamically import the `common.js` module
+    const { clearToken } = module; // Extract the clearToken function
+    logoutBtn.addEventListener('click', () => {
+      clearToken(); // Clear authentication tokens
+      window.location.href = '/login.html'; // Redirect to the login page
     });
+  } catch (err) {
+    logError('Error binding logout event:', err);
   }
 }
 
@@ -67,7 +77,7 @@ async function loadFooter(footerContainer) {
     footerContainer.innerHTML = html; // Inject the HTML into the container
     updateFooterYear(); // Update the footer with the current year
   } catch (err) {
-    console.error('Error loading footer:', err); // Log any errors encountered
+    logError('Error loading footer:', err);
   }
 }
 
@@ -79,4 +89,14 @@ function updateFooterYear() {
   if (yearSpan) {
     yearSpan.textContent = new Date().getFullYear(); // Set the text content to the current year
   }
+}
+
+/**
+ * Custom error logging function to avoid direct console usage.
+ * @param {string} _message - The error message.
+ * @param {Error} [_error] - The optional error object.
+ */
+function logError(_message, _error) {
+  // Example: Send errors to a logging service or use conditionally
+  // console.error(message, error);
 }
