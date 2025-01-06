@@ -9,24 +9,47 @@ document.addEventListener('DOMContentLoaded', init);
 
 /** Initialisation function to separate setup logic from the DOMContentLoaded callback. */
 function init() {
+  initializeAccessAndLinks();
+  const elements = retrieveDOMElements();
+  setupEventHandlers(elements);
+}
+
+/** Initialize access control and display appropriate links. */
+function initializeAccessAndLinks() {
   checkAccess([]);
   showAppropriateLinks();
+}
 
-  const logoutBtn = document.getElementById('logout-btn');
-  const form = document.getElementById('detection-form');
-  const detectionError = document.getElementById('detection-error');
-  const detectionResult = document.getElementById('detection-result');
-  const fileDropArea = document.getElementById('file-drop-area');
-  const imageInput = document.getElementById('image-input');
-  const removeImageBtn = document.getElementById('remove-image-btn');
-  const chooseFileBtn = document.querySelector('.choose-file-btn');
+/** Retrieve necessary DOM elements and return them as an object. */
+function retrieveDOMElements() {
+  return {
+    logoutBtn: document.getElementById('logout-btn'),
+    form: document.getElementById('detection-form'),
+    detectionError: document.getElementById('detection-error'),
+    detectionResult: document.getElementById('detection-result'),
+    fileDropArea: document.getElementById('file-drop-area'),
+    imageInput: document.getElementById('image-input'),
+    removeImageBtn: document.getElementById('remove-image-btn'),
+    chooseFileBtn: document.querySelector('.choose-file-btn')
+  };
+}
 
+/** Set up all event handlers using the retrieved DOM elements. */
+function setupEventHandlers({
+  logoutBtn,
+  form,
+  detectionError,
+  detectionResult,
+  fileDropArea,
+  imageInput,
+  removeImageBtn,
+  chooseFileBtn
+}) {
   setupLogoutButton(logoutBtn);
   setupRemoveImageButton(removeImageBtn);
   setupChooseFileButton(chooseFileBtn, imageInput);
-  setupFileDrop(fileDropArea, imageInput);
+  setupFileDrop(fileDropArea, imageInput, removeImageBtn);
   setupFileInputChange(imageInput, fileDropArea, removeImageBtn);
-  // Pass fewer arguments by wrapping them in an object
   setupFormSubmission({
     form,
     imageInput,
@@ -45,7 +68,10 @@ function setupLogoutButton(logoutBtn) {
 
 /** Set up the remove image button event. */
 function setupRemoveImageButton(removeImageBtn) {
-  removeImageBtn.addEventListener('click', removeImage);
+  if (!removeImageBtn) return;
+  removeImageBtn.addEventListener('click', () => {
+    removeImage();
+  });
 }
 
 /** Set up the choose file button to trigger file input. */
@@ -58,10 +84,15 @@ function setupChooseFileButton(chooseFileBtn, imageInput) {
 }
 
 /** Set up drag-and-drop file handling. */
-function setupFileDrop(fileDropArea, imageInput) {
+function setupFileDrop(fileDropArea, imageInput, removeImageBtn) {
   fileDropArea.addEventListener('dragover', handleDragOver);
   fileDropArea.addEventListener('dragleave', handleDragLeave);
-  fileDropArea.addEventListener('drop', (e) => handleFileDrop(e, fileDropArea, imageInput));
+  fileDropArea.addEventListener('drop', (e) => handleFileDrop({
+    event: e,
+    fileDropArea,
+    imageInput,
+    removeImageBtn
+  }));
 }
 
 /** Handle drag over event. */
@@ -72,17 +103,17 @@ function handleDragOver(e) {
 
 /** Handle drag leave event. */
 function handleDragLeave(e) {
+  e.preventDefault();
   e.currentTarget.classList.remove('dragover');
 }
 
-/** Handle file drop event. */
-function handleFileDrop(e, fileDropArea, imageInput) {
-  e.preventDefault();
+/** Handle file drop event with reduced parameters. */
+function handleFileDrop({ event, fileDropArea, imageInput, removeImageBtn }) {
+  event.preventDefault();
   fileDropArea.classList.remove('dragover');
-  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  const file = event.dataTransfer.files && event.dataTransfer.files[0];
   if (file) {
-    imageInput.files = e.dataTransfer.files;
-    const removeImageBtn = document.getElementById('remove-image-btn');
+    imageInput.files = event.dataTransfer.files;
     showImagePreview(file, fileDropArea, removeImageBtn);
   }
 }
@@ -136,20 +167,47 @@ function clearMessages(detectionError, detectionResult) {
 
 /** Remove the currently uploaded image and clear related content. */
 function removeImage() {
+  clearCanvas();
+  resetImageInput();
+  clearDetectionMessages();
+  hideRemoveImageButton();
+}
+
+/** Clear the canvas content. */
+function clearCanvas() {
   const canvas = document.getElementById('image-canvas');
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (canvas) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+}
 
+/** Reset the image input field. */
+function resetImageInput() {
   const imageInput = document.getElementById('image-input');
-  imageInput.value = '';
+  if (imageInput) {
+    imageInput.value = '';
+  }
+}
 
+/** Clear detection result and error messages. */
+function clearDetectionMessages() {
   const detectionResult = document.getElementById('detection-result');
   const detectionError = document.getElementById('detection-error');
-  detectionResult.textContent = '';
-  detectionError.textContent = '';
+  if (detectionResult) {
+    detectionResult.textContent = '';
+  }
+  if (detectionError) {
+    detectionError.textContent = '';
+  }
+}
 
+/** Hide the remove image button. */
+function hideRemoveImageButton() {
   const removeImageBtn = document.getElementById('remove-image-btn');
-  removeImageBtn.style.display = 'none';
+  if (removeImageBtn) {
+    removeImageBtn.style.display = 'none';
+  }
 }
 
 /** Display a preview of the uploaded image on the canvas. */
@@ -166,7 +224,9 @@ function loadImagePreview(imageSrc, fileDropArea, removeImageBtn) {
     originalImageWidth = img.width;
     originalImageHeight = img.height;
     drawScaledImage(img, fileDropArea);
-    removeImageBtn.style.display = 'inline-block';
+    if (removeImageBtn) {
+      removeImageBtn.style.display = 'inline-block';
+    }
   };
   img.src = imageSrc;
 }
@@ -174,6 +234,7 @@ function loadImagePreview(imageSrc, fileDropArea, removeImageBtn) {
 /** Draw the scaled image on the canvas. */
 function drawScaledImage(img, fileDropArea) {
   const canvas = document.getElementById('image-canvas');
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
   const { width, height } = scaleDimension({
@@ -216,35 +277,55 @@ function scaleDimension({ width, height, maxWidth, maxHeight }) {
  * Merged arguments into a single object for readability.
  */
 async function performDetection({ file, model, detectionError, detectionResult }) {
+  const formData = createFormData(file, model);
+
+  try {
+    const response = await sendDetectionRequest(formData);
+    await handleDetectionResponse(response, detectionError, detectionResult);
+  } catch (err) {
+    handleDetectionError(detectionError);
+  }
+}
+
+/** Create FormData for detection request. */
+function createFormData(file, model) {
   const formData = new FormData();
   formData.append('image', file);
   formData.append('model', model);
+  return formData;
+}
 
-  try {
-    const response = await fetch(`${API_URL}/detect`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: formData
-    });
+/** Send the detection request to the backend. */
+async function sendDetectionRequest(formData) {
+  return await fetch(`${API_URL}/detect`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: formData
+  });
+}
 
-    if (!response.ok) {
-      const data = await response.json();
-      detectionError.textContent = data.detail || 'Detection failed.';
-      return;
-    }
-
-    const results = await response.json();
-    drawDetectionResults(results);
-    displayObjectCounts({ results, detectionResult });
-  } catch (err) {
-    console.error(err);
-    detectionError.textContent = 'Error performing detection.';
+/** Handle the response from the detection request. */
+async function handleDetectionResponse(response, detectionError, detectionResult) {
+  if (!response.ok) {
+    const data = await response.json();
+    detectionError.textContent = data.detail || 'Detection failed.';
+    return;
   }
+
+  const results = await response.json();
+  drawDetectionResults(results);
+  displayObjectCounts({ results, detectionResult });
+}
+
+/** Handle errors during detection request. */
+function handleDetectionError(detectionError) {
+  detectionError.textContent = 'Error performing detection.';
 }
 
 /** Draw detection results on the canvas. */
 function drawDetectionResults(results) {
   const canvas = document.getElementById('image-canvas');
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
   results.forEach((detection) => {
@@ -252,8 +333,24 @@ function drawDetectionResults(results) {
   });
 }
 
-/** Draw a single detection result. */
+/** Draw a single detection result. Refactored to reduce function length and complexity. */
 function drawSingleDetection({ ctx, detection, canvas }) {
+  const label = getLabelFromDetection(detection);
+  const color = getColorForLabel(label);
+  const scaledCoords = getScaledCoordinates(detection, canvas);
+
+  drawBoundingBox(ctx, scaledCoords, color);
+  drawLabel({
+    ctx,
+    label,
+    x: scaledCoords.scaledX1,
+    y: scaledCoords.scaledY1,
+    color
+  });
+}
+
+/** Get the label from detection data. */
+function getLabelFromDetection(detection) {
   const names = [
     'Hardhat',
     'Mask',
@@ -266,7 +363,13 @@ function drawSingleDetection({ ctx, detection, canvas }) {
     'machinery',
     'vehicle'
   ];
-  const colors = {
+  const classId = detection[5];
+  return names[classId] || 'Unknown';
+}
+
+/** Get the colour for a given label. */
+function getColorForLabel(label) {
+  const colours = {
     'Hardhat': 'green',
     'Safety Vest': 'green',
     'machinery': 'yellow',
@@ -276,35 +379,12 @@ function drawSingleDetection({ ctx, detection, canvas }) {
     'Person': 'orange',
     'Safety Cone': 'pink'
   };
-
-  const [x1, y1, x2, y2, , classId] = detection;
-  const label = names[classId];
-  const color = colors[label] || 'blue';
-
-  const { scaledX1, scaledY1, scaledX2, scaledY2 } = scaleCoordinates({
-    x1,
-    y1,
-    x2,
-    y2,
-    canvas
-  });
-
-  drawBoundingBox({
-    ctx,
-    coords: { x1: scaledX1, y1: scaledY1, x2: scaledX2, y2: scaledY2 },
-    color
-  });
-  drawLabel({
-    ctx,
-    label,
-    x: scaledX1,
-    y: scaledY1,
-    color
-  });
+  return colours[label] || 'blue';
 }
 
-/** Scale coordinates to fit the canvas. */
-function scaleCoordinates({ x1, y1, x2, y2, canvas }) {
+/** Get scaled coordinates based on the original image dimensions and canvas size. */
+function getScaledCoordinates(detection, canvas) {
+  const [x1, y1, x2, y2] = detection;
   const scaleX = canvas.width / originalImageWidth;
   const scaleY = canvas.height / originalImageHeight;
 
@@ -317,17 +397,18 @@ function scaleCoordinates({ x1, y1, x2, y2, canvas }) {
 }
 
 /** Draw bounding box around the detected object. */
-function drawBoundingBox({ ctx, coords, color }) {
-  const { x1, y1, x2, y2 } = coords;
-  ctx.strokeStyle = color;
+function drawBoundingBox(ctx, coords, colour) {
+  const { scaledX1, scaledY1, scaledX2, scaledY2 } = coords;
+  ctx.strokeStyle = colour;
   ctx.lineWidth = 2;
-  ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  ctx.strokeRect(scaledX1, scaledY1, scaledX2 - scaledX1, scaledY2 - scaledY1);
 }
 
 /** Draw label above the bounding box. */
 function drawLabel({ ctx, label, x, y, color }) {
+  const textWidth = ctx.measureText(label).width;
   ctx.fillStyle = color;
-  ctx.fillRect(x, y - 20, ctx.measureText(label).width + 10, 20);
+  ctx.fillRect(x, y - 20, textWidth + 10, 20);
 
   ctx.fillStyle = 'black';
   ctx.font = '14px Arial';
@@ -356,9 +437,10 @@ function displayObjectCounts({ results, detectionResult }) {
 
 /** Initialise counts for each label. */
 function initializeCounts(names) {
-  const counts = {};
-  names.forEach(name => counts[name] = 0);
-  return counts;
+  return names.reduce((acc, name) => {
+    acc[name] = 0;
+    return acc;
+  }, {});
 }
 
 /** Count detections per label. */
@@ -373,8 +455,10 @@ function countDetections(results, names, counts) {
 
 /** Show counts in the detection result area. */
 function showCounts({ detectionResult, counts }) {
-  detectionResult.textContent = Object.entries(counts)
+  const displayText = Object.entries(counts)
     .filter(([_, count]) => count > 0)
     .map(([name, count]) => `${name}: ${count}`)
     .join('\n');
+
+  detectionResult.textContent = displayText || 'No objects detected.';
 }
