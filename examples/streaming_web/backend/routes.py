@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter
@@ -10,9 +11,11 @@ from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi_limiter.depends import RateLimiter
+from linebot import LineBotApi
 
 from .utils import RedisManager
 from .utils import Utils
+from .utils import WebhookHandler
 # from pathlib import Path
 # from fastapi import UploadFile
 
@@ -20,6 +23,10 @@ redis_manager = RedisManager()
 
 # Create an API router for defining routes
 router = APIRouter()
+line_bot_api = LineBotApi(
+    os.getenv('LINE_CHANNEL_ACCESS_TOKEN'),
+)
+webhook_handler = WebhookHandler(line_bot_api)
 
 CONFIG_PATH = 'config/configuration.json'  # Path to the configuration file
 
@@ -187,11 +194,35 @@ async def webhook(request: Request) -> JSONResponse:
     Returns:
         JSONResponse: A JSON response indicating the status of the request.
     """
-    # Retrieve and log the webhook request body
-    body = await request.json()
-    print(body)
-    # Respond with a JSON status message
-    return JSONResponse(content={'status': 'ok'})
+    try:
+        # Retrieve the request body
+        body = await request.json()
+        responses = await webhook_handler.process_webhook_events(body)
+
+        # If all events were skipped, return a success response
+        if all(resp.get('status') == 'skipped' for resp in responses):
+            return JSONResponse(
+                content={
+                    'status': 'skipped',
+                    'message': 'All events skipped.',
+                },
+                status_code=200,
+            )
+
+        # If any event failed, return a partial error response
+        if any(resp['status'] == 'error' for resp in responses):
+            return JSONResponse(
+                content={'status': 'partial_error', 'responses': responses},
+                status_code=207,  # 207 Multi-Status
+            )
+
+        return JSONResponse(content={'status': 'ok', 'responses': responses})
+
+    except Exception as e:
+        print(f"Unexpected error while processing webhook: {e}")
+        raise HTTPException(
+            status_code=500, detail='Webhook processing failed',
+        )
 
 
 @router.get('/api/config')

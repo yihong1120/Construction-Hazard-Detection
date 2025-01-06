@@ -11,9 +11,12 @@ from unittest.mock import patch
 import redis
 from fastapi import HTTPException
 from fastapi import WebSocket
+from linebot import LineBotApi
+from linebot.models import TextSendMessage
 
 from examples.streaming_web.backend.utils import RedisManager
 from examples.streaming_web.backend.utils import Utils
+from examples.streaming_web.backend.utils import WebhookHandler
 
 
 class TestRedisManager(unittest.IsolatedAsyncioTestCase):
@@ -533,6 +536,143 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
         # Check the expected result
         self.assertEqual(result, {})
+
+
+class TestWebhookHandler(unittest.IsolatedAsyncioTestCase):
+    """
+    Test suite for the WebhookHandler class.
+    """
+
+    def setUp(self):
+        """
+        Set up the test environment before each test.
+        """
+        # Mock LineBotApi instance
+        self.line_bot_api_mock = MagicMock(spec=LineBotApi)
+        self.webhook_handler = WebhookHandler(
+            line_bot_api=self.line_bot_api_mock,
+        )
+
+    async def test_process_webhook_events_success_group(self):
+        """
+        Test process_webhook_events with a group message containing 'token'.
+        """
+        body = {
+            'events': [
+                {
+                    'type': 'message',
+                    'message': {'type': 'text', 'text': 'token'},
+                    'replyToken': 'test_reply_token',
+                    'source': {
+                        'type': 'group',
+                        'groupId': 'test_group_id',
+                        'userId': 'test_user_id',
+                    },
+                },
+            ],
+        }
+
+        # Call the method under test
+        responses = await self.webhook_handler.process_webhook_events(body)
+
+        # Verify the push_message call
+        self.line_bot_api_mock.push_message.assert_called_once_with(
+            'test_group_id',
+            TextSendMessage(
+                text='group ID: test_group_id\nuser ID: test_user_id',
+            ),
+        )
+
+        # Verify the response
+        expected_responses = [
+            {'status': 'success', 'target_id': 'test_group_id'},
+        ]
+        self.assertEqual(responses, expected_responses)
+
+    async def test_process_webhook_events_success_user(self):
+        """
+        Test process_webhook_events with a user message containing 'token'.
+        """
+        body = {
+            'events': [
+                {
+                    'type': 'message',
+                    'message': {'type': 'text', 'text': 'token'},
+                    'replyToken': 'test_reply_token',
+                    'source': {'type': 'user', 'userId': 'test_user_id'},
+                },
+            ],
+        }
+
+        # Call the method under test
+        responses = await self.webhook_handler.process_webhook_events(body)
+
+        # Verify the push_message call
+        self.line_bot_api_mock.push_message.assert_called_once_with(
+            'test_user_id',
+            TextSendMessage(
+                text='group ID: not provided\nuser ID: test_user_id',
+            ),
+        )
+
+        # Verify the response
+        expected_responses = [
+            {'status': 'success', 'target_id': 'test_user_id'},
+        ]
+        self.assertEqual(responses, expected_responses)
+
+    async def test_process_webhook_events_redelivery(self):
+        """
+        Test process_webhook_events skips redelivery events.
+        """
+        body = {
+            'events': [
+                {
+                    'type': 'message',
+                    'deliveryContext': {'isRedelivery': True},
+                    'message': {'type': 'text', 'text': 'token'},
+                },
+            ],
+        }
+
+        # Call the method under test
+        responses = await self.webhook_handler.process_webhook_events(body)
+
+        # Verify no push_message call
+        self.line_bot_api_mock.push_message.assert_not_called()
+
+        # Verify the response
+        expected_responses = [{'status': 'skipped', 'reason': 'Redelivery'}]
+        self.assertEqual(responses, expected_responses)
+
+    async def test_process_webhook_events_unexpected_error(self):
+        """
+        Test process_webhook_events handles unexpected exceptions.
+        """
+        body = {
+            'events': [
+                {
+                    'type': 'message',
+                    'message': {'type': 'text', 'text': 'token'},
+                    'replyToken': 'test_reply_token',
+                    'source': {'type': 'user', 'userId': 'test_user_id'},
+                },
+            ],
+        }
+
+        # Simulate an unexpected error
+        self.line_bot_api_mock.push_message.side_effect = Exception(
+            'Unexpected error',
+        )
+
+        # Call the method under test
+        responses = await self.webhook_handler.process_webhook_events(body)
+
+        # Verify the response
+        expected_responses = [
+            {'status': 'error', 'message': 'Unexpected error'},
+        ]
+        self.assertEqual(responses, expected_responses)
 
 
 if __name__ == '__main__':
