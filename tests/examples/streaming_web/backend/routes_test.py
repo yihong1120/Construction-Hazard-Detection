@@ -153,14 +153,134 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
 
-    def test_webhook(self):
+    @patch(
+        'examples.streaming_web.backend.utils.'
+        'WebhookHandler.process_webhook_events',
+        new_callable=AsyncMock,
+    )
+    def test_webhook_all_skipped(
+        self,
+        mock_process_webhook_events: AsyncMock,
+    ):
         """
-        Test the webhook route to ensure it returns a successful response.
+        Test the webhook route when all events are skipped.
+
+        Args:
+            mock_process_webhook_events: Mock of
+                the process_webhook_events method
         """
-        body = {'event': 'test_event'}
+        # Mock process_webhook_events to return all skipped responses
+        mock_process_webhook_events.return_value = [
+            {'status': 'skipped'},
+            {'status': 'skipped'},
+        ]
+
+        body = {'events': ['event1', 'event2']}
         response = self.client.post('/api/webhook', json=body)
+
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {'status': 'ok'})
+        self.assertEqual(
+            response.json(),
+            {'status': 'skipped', 'message': 'All events skipped.'},
+        )
+
+    @patch(
+        'examples.streaming_web.backend.utils.'
+        'WebhookHandler.process_webhook_events',
+        new_callable=AsyncMock,
+    )
+    def test_webhook_partial_error(
+        self,
+        mock_process_webhook_events: AsyncMock,
+    ):
+        """
+        Test the webhook route when some events fail.
+
+        Args:
+            mock_process_webhook_events: Mock of
+                the process_webhook_events method
+        """
+        # Mock process_webhook_events to return mixed responses
+        mock_process_webhook_events.return_value = [
+            {'status': 'ok'},
+            {'status': 'error'},
+        ]
+
+        body = {'events': ['event1', 'event2']}
+        response = self.client.post('/api/webhook', json=body)
+
+        self.assertEqual(response.status_code, 207)
+        self.assertEqual(
+            response.json(),
+            {
+                'status': 'partial_error',
+                'responses': [
+                    {'status': 'ok'},
+                    {'status': 'error'},
+                ],
+            },
+        )
+
+    @patch(
+        'examples.streaming_web.backend.utils.'
+        'WebhookHandler.process_webhook_events',
+        new_callable=AsyncMock,
+    )
+    def test_webhook_success(
+        self,
+        mock_process_webhook_events: AsyncMock,
+    ):
+        """
+        Test the webhook route when all events are successfully processed.
+
+        Args:
+            mock_process_webhook_events: Mock of
+                the process_webhook_events method
+        """
+        # Mock process_webhook_events to return all successful responses
+        mock_process_webhook_events.return_value = [
+            {'status': 'ok'},
+            {'status': 'ok'},
+        ]
+
+        body = {'events': ['event1', 'event2']}
+        response = self.client.post('/api/webhook', json=body)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                'status': 'ok', 'responses': [
+                    {'status': 'ok'},
+                    {'status': 'ok'},
+                ],
+            },
+        )
+
+    @patch(
+        'examples.streaming_web.backend.utils.'
+        'WebhookHandler.process_webhook_events',
+        new_callable=AsyncMock,
+    )
+    def test_webhook_internal_error(
+        self,
+        mock_process_webhook_events: AsyncMock,
+    ):
+        """
+        Test the webhook route when an exception occurs during processing.
+
+        Args:
+            mock_process_webhook_events: Mock of
+                the process_webhook_events method.
+        """
+        # Mock process_webhook_events to raise an exception
+        mock_process_webhook_events.side_effect = Exception('Unexpected error')
+
+        body = {'events': ['event1', 'event2']}
+        response = self.client.post('/api/webhook', json=body)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertIn('Webhook processing failed', response.text)
 
     @patch('examples.streaming_web.backend.utils.Utils.verify_localhost')
     @patch('examples.streaming_web.backend.utils.Utils.load_configuration')

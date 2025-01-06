@@ -11,6 +11,9 @@ from dotenv import load_dotenv
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi import WebSocket
+from linebot import LineBotApi
+from linebot.exceptions import LineBotApiError
+from linebot.models import TextSendMessage
 
 # Load environment variables
 load_dotenv()
@@ -378,7 +381,7 @@ class Utils:
 
         Args:
             config_path (str): The path to the JSON configuration file.
-            new_config (list[dict]): The new configuration data to add.
+            new_config (list[dict]): The new configuration data to update.
 
         Returns:
             list[dict]: The updated configuration data.
@@ -394,11 +397,24 @@ class Utils:
                 'Invalid configuration format. Expected a list in JSON file.',
             )
 
+        # Find items that should be removed
+        current_urls = {item['video_url'] for item in current_config}
+        new_urls = {item['video_url'] for item in new_config}
+        urls_to_remove = current_urls - new_urls
+
+        # Remove items that are not in the new configuration
+        updated_config = [
+            item
+            for item in current_config
+            if item['video_url'] not in urls_to_remove
+        ]
+
+        # Update or add new items
         for new_item in new_config:
             # Check if the item already exists in the configuration
             existing_item = next(
                 (
-                    item for item in current_config if item['video_url']
+                    item for item in updated_config if item['video_url']
                     == new_item['video_url']
                 ),
                 None,
@@ -408,8 +424,94 @@ class Utils:
                 existing_item.update(new_item)
             else:
                 # If the item does not exist, add it to the configuration
-                current_config.append(new_item)
+                updated_config.append(new_item)
 
         # Save the updated configuration to the file
-        Utils.save_configuration(config_path, current_config)
-        return current_config
+        Utils.save_configuration(config_path, updated_config)
+        return updated_config
+
+
+class WebhookHandler:
+    """
+    Handles LINE webhook events and sends responses to users.
+    """
+
+    def __init__(self, line_bot_api: LineBotApi):
+        """
+        Initialises the WebhookHandler with a LineBotApi instance.
+
+        Args:
+            line_bot_api (LineBotApi): The LineBotApi instance to use.
+        """
+        self.line_bot_api = line_bot_api
+
+    async def process_webhook_events(self, body: dict) -> list[dict]:
+        """
+        Process LINE webhook events and send a response.
+
+        Args:
+            body (dict): The request body containing LINE events.
+
+        Returns:
+            list[dict]: A list of responses for each event.
+        """
+        responses = []
+
+        for event in body.get('events', []):
+            # Ignore redelivery events
+            if event.get('deliveryContext', {}).get('isRedelivery', False):
+                print(f"Skipped redelivery event: {event}")
+                responses.append({'status': 'skipped', 'reason': 'Redelivery'})
+                continue
+
+            try:
+                # Process text messages and extract user/group IDs
+                if (
+                    event['type'] == 'message'
+                    and event['message']['type'] == 'text'
+                ):
+                    text = event['message']['text']
+                    source = event['source']
+                    user_id = source.get('userId', 'not provided')
+                    group_id = source.get('groupId', 'not provided')
+
+                    if 'token' in text.lower():
+                        response_message = (
+                            f"group ID: {group_id}\n"
+                            f"user ID: {user_id}"
+                        )
+
+                        # Send a response message to the user or group
+                        target_id = (
+                            group_id
+                            if group_id != 'not provided'
+                            else user_id
+                        )
+                        self.line_bot_api.push_message(
+                            target_id, TextSendMessage(text=response_message),
+                        )
+                        responses.append(
+                            {'status': 'success', 'target_id': target_id},
+                        )
+
+            except LineBotApiError as e:
+                # Fetch LINE API errors
+                print(f"LineBotApiError: {e.message}")
+                details_data = getattr(e.error, 'details', [])
+                if isinstance(details_data, list):
+                    details = json.dumps(details_data)
+                else:
+                    details = str(details_data)
+                responses.append(
+                    {
+                        'status': 'error',
+                        'message': e.message,
+                        'details': details,
+                    },
+                )
+            except Exception as e:
+                # Catch and log unexpected errors
+                print(f"Unexpected error: {e}")
+                responses.append({'status': 'error', 'message': str(e)})
+
+        return responses
