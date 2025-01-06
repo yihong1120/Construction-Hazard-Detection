@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkAccess(['admin', 'model_manager']); // Restrict access to specific roles
   setupModelFileUpdate();
   setupGetNewModel();
+  setupLogoutButton(); // Initialise logout button
 });
 
 /** Setup for model file update form submission */
@@ -25,6 +26,8 @@ function setupModelFileUpdate() {
       await sendModelFileUpdateRequest(formData, modelUpdateError);
     } catch (err) {
       modelUpdateError.textContent = 'Error updating model file.';
+      // Removed logError call
+      // Optionally handle the error here, e.g., display a message to the user
     }
   });
 }
@@ -82,6 +85,8 @@ function setupGetNewModel() {
       await sendGetNewModelRequest(requestData, getNewModelError, modelFileContent);
     } catch (err) {
       getNewModelError.textContent = 'Error retrieving model file.';
+      // Removed logError call
+      // Optionally handle the error here, e.g., display a message to the user
     }
   });
 }
@@ -128,3 +133,20 @@ function displayModelFileContent(data, contentElement) {
     contentElement.textContent = data.message || 'No model file available.';
   }
 }
+
+/** Setup the logout button event. */
+function setupLogoutButton() {
+  const logoutBtn = document.getElementById('logout-btn');
+  if (!logoutBtn) return;
+
+  logoutBtn.addEventListener('click', () => {
+    clearToken(); // Clear authentication token
+    window.location.href = '/login.html';
+  });
+}
+
+/* ----------------------------------
+   Logging Utility Functions
+------------------------------------- */
+/** Custom error logging function to avoid direct console usage. */
+// Removed logError function
