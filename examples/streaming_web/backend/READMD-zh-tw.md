@@ -1,101 +1,152 @@
 
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
-# Streaming Web 後端範例
+# 串流 Web 後端
 
-本節提供了一個 Streaming Web 後端應用程式的範例實作，旨在促進即時攝影機畫面和更新。此指南提供了如何使用、配置和理解此應用程式功能的資訊。
+此目錄包含一個以 FastAPI 建立的串流網頁應用程式之後端邏輯，使用者可以上傳影格（圖片），並透過 WebSocket 即時取得這些影格。
 
-## 使用方法
+下文將概述 `examples/streaming_web/backend/` 中的每個檔案，說明如何執行此應用程式，並提供在正式環境使用時的最佳實踐與建議。
 
-1. **啟動伺服器：**
-    ```sh
-    python app.py
-    ```
+## 目錄結構
 
-    或
+```
+examples/streaming_web/backend/
+├── __init__.py
+├── app.py
+├── redis_service.py
+├── routers.py
+├── schemas.py
+└── utils.py
+```
 
-    ```sh
-    uvicorn examples.streaming_web.backend.app:sio_app --host 127.0.0.1 --port 8000
-    ```
+### `app.py`
+- **用途**：定義並配置主要的 FastAPI 應用程式。
+- **重點**：
+  - 使用自訂的 lifespan（`global_lifespan`）建立 `FastAPI` 實例，以管理應用程式的啟動與關閉流程（請參考 `examples.auth.lifespan`）。
+  - 設置 CORS 中介軟體（middleware），允許跨來源的請求（在正式環境中應適度限制）。
+  - 引入下列路由（routers）：
+    - **身份驗證**（`auth_router`）
+    - **使用者管理**（`user_management_router`）
+    - **串流網頁服務**（`streaming_web_router`）
+  - 提供一個 `main()` 函式，並使用 `uvicorn.run()` 啟動應用程式。
 
-2. **打開您的網頁瀏覽器並導航至：**
-    ```sh
-    http://localhost:8000
-    ```
+**使用方式**：
 
-## 功能
+```bash
+uvicorn examples.streaming_web.backend.app:app --host 127.0.0.1 --port 8000
+```
 
-- **即時串流**：顯示即時攝影機畫面並自動更新。
-- **WebSocket 整合**：利用 WebSocket 進行高效的即時通訊。
-- **動態內容加載**：自動更新攝影機圖像而無需刷新頁面。
-- **響應式設計**：適應各種螢幕尺寸，提供無縫的使用者體驗。
-- **可自訂佈局**：使用 CSS 調整佈局和樣式。
-- **速率限制**：實施速率限制以防止 API 濫用。
-- **錯誤處理**：全面的錯誤處理，應對各種異常情況。
-- **靜態文件服務**：提供 HTML、CSS 和 JavaScript 等靜態文件服務。
+或直接呼叫 `main()` 函式：
 
-## 配置
+```bash
+python examples/streaming_web/backend/app.py
+```
 
-應用程式可以通過以下文件進行配置：
+### `redis_service.py`
+- **用途**：與 Redis 互動，處理影格與其中繼資料的儲存與讀取。
+- **主要函式**：
+  1. `scan_for_labels(rds)`：掃描 Redis 中的鍵，找出不同的標籤（label）。標籤使用 base64 編碼儲存在鍵值中，並會被解碼。若標籤字串包含 `'test'`，則不納入。
+  2. `get_keys_for_label(rds, label)`：取得與指定 label 對應的所有 Redis 鍵。
+  3. `fetch_latest_frames(rds, last_ids)`：為 `last_ids` 中每個鍵擷取最新影格；若發現新影格，就回傳影格與相關中繼資料。
+  4. `fetch_latest_frame_for_key(rds, redis_key, last_id)`：與上類似，但僅針對單一鍵（key）抓取最近的影格，忽略比 `last_id` 更舊的影格。
+  5. `store_to_redis(rds, site, stream_name, frame_bytes, warnings_json, cone_polygons_json, ...)`：將上傳的影格及其中繼資料存入 Redis（使用 Redis Streams 的 `xadd`）。
 
-- **app.py**：啟動伺服器並定義路由、中介軟體和 WebSocket 整合的主應用程式文件。
-- **routes.py**：定義網頁路由及其相應的處理程序，包括獲取標籤、處理 WebSocket 連接和處理 webhook 的 API 端點。
-- **sockets.py**：管理 WebSocket 連接，處理連接、斷開和更新等事件。還包括更新圖像的背景任務。
-- **utils.py**：應用程式的實用函數，包括編碼/解碼值和通過 WebSocket 發送畫面數據。
-- **.env**：配置環境變數，例如 Redis 連接詳情。
+**注意事項**：
+- 透過 base64（`Utils.encode()`）編碼與解碼標籤與串流名稱。
+- 使用 Redis Streams 時，`maxlen=10`，代表若同一串流超過 10 筆資料，舊資料會被裁剪。
+- 定義了 `DELIMITER = b'--IMG--'` 作為在 WebSocket 傳輸時，JSON 中繼資料與二進位影格的分隔符。
 
-## 文件概述
+### `routers.py`
+- **用途**：定義提供上傳影格（`POST /frames`）、讀取標籤（`GET /labels`）以及 WebSocket 串流影格的 FastAPI 路由。
+- **端點**：
+  1. `GET /labels`：每分鐘限 60 次呼叫，透過 `scan_for_labels` 從 Redis 取得所有標籤。
+  2. `POST /frames`：經過 JWT 驗證之後才能呼叫，允許使用者上傳圖片檔案及相關 JSON 資料（警告、標註多邊形等），並儲存在 Redis。
+  3. `WebSocket /ws/labels/{label}`：針對單一 label 下的 **所有**串流鍵提供近即時影格推送。
+  4. `WebSocket /ws/stream/{label}/{key}`：採用 **拉式**機制（pull-based）的串流；前端以 `{"action": "pull"}` 指令向伺服器索取最新影格，也支援 `{"action": "ping"}` 做 keepalive。
 
-### app.py
-應用程式的主要入口，啟動伺服器並設置路由、中介軟體和 WebSocket 整合。
+**WebSocket 互動方式**：
+- **`/ws/labels/{label}`**：
+  - 透過定期檢查 Redis，找出此 label 相關的所有鍵（keys），並持續發送最新影格給用戶端。
+  - 影格的中繼資料會以 JSON 表示；原始影格則以二進位送出，並以 `DELIMITER` 作為分隔符。
+  - 若找不到任何鍵，則回傳錯誤訊息並關閉連線。
 
-- **生命週期管理**：使用 `@asynccontextmanager` 管理應用程式啟動和關閉任務，例如初始化和關閉 Redis 連接。
-- **CORS 中介軟體**：配置 CORS 以允許跨域請求。
-- **靜態文件**：從指定目錄提供靜態文件服務。
-- **Socket.IO 整合**：初始化並配置 Socket.IO 伺服器以進行即時通訊。
+- **`/ws/stream/{label}/{key}`**：
+  - 透過 JSON 命令進行互動：
+    - `ping` → 回傳 `pong`。
+    - `pull` → 取出 Redis 中最新影格，若存在則送回給用戶端。
+    - 任何未知指令 → 回傳錯誤訊息。
 
-### routes.py
-定義各種網頁路由及其相應的請求處理程序。
+### `schemas.py`
+- **用途**：使用 Pydantic 模型定義結構化的請求與回應格式。
+- **主要模型**：
+  1. `LabelListResponse`：回傳一個 JSON 格式的標籤清單。
+  2. `FramePostResponse`：表示上傳影格的結果（例如 `"ok"`）與文字訊息。
 
-- **API 端點**：
-  - `/api/labels`：從 Redis 獲取可用標籤。
-  - `/api/ws/labels/{label}`：WebSocket 端點，用於串流特定標籤的更新畫面。
-  - `/api/ws/stream/{label}/{key}`：WebSocket 端點，用於串流單個攝影機的數據。
-  - `/api/webhook`：處理傳入的 webhook 請求。
-  - `/api/upload`：處理文件上傳並將其保存到指定文件夾。
+藉由這些模型，路由可確保回傳格式一致並有明確的類型定義。
 
-### sockets.py
-管理 WebSocket 連接，處理連接、斷開和更新等事件。還包括更新圖像的背景任務。
+### `utils.py`
+- **用途**：提供雜項的輔助函式，包括 base64 編碼、解碼，以及（未在主要路由中使用但可擴充）透過 WebSocket 傳送影格資料的函式。
+- **主要函式**：
+  - `encode(value)`：將字串做 URL-safe Base64 編碼。
+  - `is_base64(value)`：檢查字串是否符合 URL-safe Base64 格式。
+  - `decode(value)`：若字串為有效的 Base64，則解碼；否則回傳原字串。
+  - `send_frames(websocket, label, updated_data)`：將已結構化的資料以 JSON 形式透過 `WebSocket` 傳送給用戶端，並包含一個標籤欄位以便識別。
 
-- **Socket.IO 事件**：
-  - `connect`：處理新客戶端連接。
-  - `disconnect`：處理客戶端斷開連接。
-  - `error`：處理 WebSocket 通訊過程中的錯誤。
-- **背景任務**：
-  - `update_images`：定期獲取並向連接的客戶端發送更新的圖像。
+## 執行應用程式
 
-### utils.py
-包含應用程式中使用的各種實用函數。
+1. **安裝依賴套件**
+   確保已安裝 FastAPI、Uvicorn、Redis（或 Python Redis 客戶端如 `redis-py`）以及其他必需的套件：
+   ```bash
+   pip install fastapi uvicorn redis fastapi-limiter
+   ```
 
-- **RedisManager**：管理異步 Redis 操作，用於獲取標籤、鍵和圖像數據。
-  - `get_labels`：從 Redis 鍵中獲取唯一的標籤和流名稱組合。
-  - `get_keys_for_label`：檢索與給定標籤-流名稱模式匹配的 Redis 鍵。
-  - `fetch_latest_frames`：獲取每個 Redis 流的最新畫面。
-  - `fetch_latest_frame_for_key`：獲取特定 Redis 鍵的最新畫面和警告。
-- **Utils**：包含靜態方法，用於編碼/解碼值和通過 WebSocket 發送畫面數據。
-  - `encode`：將值編碼為 URL 安全的 Base64 字符串。
-  - `decode`：解碼 URL 安全的 Base64 字符串。
-  - `send_frames`：將最新的畫面發送給 WebSocket 客戶端。
+2. **啟動 Redis**
+   您需要在本機或可連線的地方執行 Redis 伺服器，例如：
+   ```bash
+   redis-server
+   ```
+   或使用 Docker：
+   ```bash
+   docker run -p 6379:6379 redis
+   ```
 
-### .env
-包含配置 Redis 連接的環境變數，例如 `REDIS_HOST`、`REDIS_PORT` 和 `REDIS_PASSWORD`。
+3. **啟動 FastAPI 應用程式**
+   在專案根目錄下，執行：
+   ```bash
+   uvicorn examples.streaming_web.backend.app:app --host 127.0.0.1 --port 8000
+   ```
+   然後可在瀏覽器中開啟 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) 查看自動生成的 OpenAPI 文件。
 
-## 環境變數
+## 測試
 
-應用程式使用以下環境變數進行配置：
+單元測試與整合測試位於 `tests/` 目錄中，例如：
 
-- `REDIS_HOST`：Redis 伺服器的主機名（默認：`127.0.0.1`）。
-- `REDIS_PORT`：Redis 伺服器的端口（默認：`6379`）。
-- `REDIS_PASSWORD`：Redis 伺服器的密碼（默認：空）。
+```bash
+pytest --cov=examples.streaming_web.backend --cov-report=term-missing
+```
 
-請確保檢查並調整相應文件中的配置設置，以適應您的具體需求。
+主要測試檔：
+- **`redis_service_test.py`**：驗證影格在 Redis 中存取的正確性。
+- **`routers_test.py`**：檢驗各端點與 WebSocket 功能，使用 FastAPI 的 `TestClient`。
+
+## 正式環境注意事項
+
+1. **CORS 限制**：
+   正式部署時，建議用特定網域取代 `allow_origins=['*']` 以加強安全性。
+
+2. **速率限制（Rate Limiting）**：
+   透過 FastAPI-Limiter 對部份端點進行限制。請檢視與調整次數/秒數等參數，避免效能瓶頸或資源耗用過高。
+
+3. **身份驗證**：
+   例如 `POST /frames` 這類端點使用自 `examples.auth.jwt_config` 匯入的 `jwt_access` 進行 JWT 驗證。若在正式環境使用，需確保金鑰與驗證流程更安全。
+
+4. **安全連線**：
+   若要將服務暴露在網際網路上，請配置 TLS/SSL，以確保 API 呼叫與 WebSocket 連線不易被竊聽或篡改。
+
+5. **水平擴充**：
+   - 若要提供更高吞吐量，可使用 Gunicorn + Uvicorn workers 並搭配負載平衡器。
+   - 若影像量龐大，可使用 Redis Streams 分散式叢集來擴充負載能力。
+
+## 聯繫與更多資訊
+
+若想進一步瞭解身份驗證流程（`examples/auth`）、使用者管理，或進階的串流技術（如 WebRTC 或分段串流），請參考完整的程式庫或與開發團隊聯繫。
