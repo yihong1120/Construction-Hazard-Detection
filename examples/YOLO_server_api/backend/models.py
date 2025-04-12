@@ -1,103 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 import threading
-from collections.abc import AsyncGenerator
-from datetime import datetime
-from datetime import timezone
 from pathlib import Path
 
 from sahi.predict import AutoDetectionModel
-from sqlalchemy import Boolean
-from sqlalchemy import DateTime
-from sqlalchemy import Integer
-from sqlalchemy import String
-from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.orm import Mapped
-from sqlalchemy.orm import mapped_column
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
-from werkzeug.security import check_password_hash
-from werkzeug.security import generate_password_hash
-
-from .config import Settings
-
-# Load settings
-settings = Settings()
-
-# Set up SQLAlchemy async engine and session
-engine = create_async_engine(
-    settings.sqlalchemy_database_uri.replace('mysql://', 'mysql+asyncmy://'),
-)
-AsyncSessionLocal = async_sessionmaker(
-    engine, class_=AsyncSession, expire_on_commit=False,
-)
-
-# Base for SQLAlchemy ORM models
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-async def get_db() -> AsyncGenerator[AsyncSession]:
-    """
-    Provides a database session generator, ensuring that the session is
-    closed after use.
-    """
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
-class User(Base):
-    """
-    Represents a user entity in the database
-    with password hashing for security.
-    """
-
-    __tablename__ = 'users'
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    username: Mapped[str] = mapped_column(
-        String(80), unique=True, nullable=False,
-    )
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(
-        String(20), default='user', nullable=False,
-    )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now(timezone.utc), nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
-        nullable=False,
-    )
-
-    def set_password(self, password: str) -> None:
-        self.password_hash = generate_password_hash(password)
-
-    async def check_password(self, password: str) -> bool:
-        return await asyncio.to_thread(
-            check_password_hash, str(self.password_hash), password,
-        )
-
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'username': self.username,
-            'role': self.role,
-            'is_active': self.is_active,
-            'created_at': self.created_at,
-            'updated_at': self.updated_at,
-        }
 
 
 class ModelFileChangeHandler(FileSystemEventHandler):

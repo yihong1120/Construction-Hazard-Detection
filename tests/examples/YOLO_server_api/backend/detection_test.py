@@ -58,8 +58,10 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         and OpenCV methods.
 
         Args:
-            mock_imdecode (MagicMock): Mocked image decoding method.
-            mock_frombuffer (MagicMock): Mocked buffer conversion method.
+            mock_imdecode (MagicMock):
+                A mock for OpenCV's imdecode function.
+            mock_frombuffer (MagicMock):
+                A mock for numpy's frombuffer function.
         """
         mock_frombuffer.return_value = MagicMock()
         mock_imdecode.return_value = MagicMock()
@@ -72,14 +74,15 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.YOLO_server_api.backend.detection.get_sliced_prediction')
     async def test_get_prediction_result(
-        self, mock_get_sliced_prediction: MagicMock,
+        self,
+        mock_get_sliced_prediction: MagicMock,
     ) -> None:
         """
         Tests obtaining a prediction result by mocking the prediction method.
 
         Args:
-            mock_get_sliced_prediction (MagicMock): Mocked sliced
-                prediction method.
+            mock_get_sliced_prediction (MagicMock):
+                A mock for the prediction function.
         """
         mock_get_sliced_prediction.return_value = MagicMock(
             object_prediction_list=[],
@@ -129,10 +132,10 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         Tests label processing by applying overlapping and containment checks.
 
         Args:
-            mock_remove_completely_contained_labels (AsyncMock): Mocked
-                containment removal method.
-            mock_remove_overlapping_labels (AsyncMock): Mocked overlapping
-                removal method.
+            mock_remove_completely_contained_labels (AsyncMock):
+                A mock for removing completely contained labels.
+            mock_remove_overlapping_labels (AsyncMock):
+                A mock for removing overlapping labels.
         """
         mock_remove_overlapping_labels.side_effect = lambda datas: datas
         mock_remove_completely_contained_labels.side_effect = (
@@ -146,27 +149,79 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         mock_remove_overlapping_labels.assert_called()
         mock_remove_completely_contained_labels.assert_called()
 
-    async def test_remove_overlapping_labels(self) -> None:
+    #
+    # ---------------------------
+    # Tests for remove_overlapping_labels
+    # ---------------------------
+    #
+    async def test_remove_overlapping_labels_single_pair(self) -> None:
         """
-        Tests removal of overlapping labels.
+        Tests removal of overlapping labels with only one overlapping pair
+        (hardhat vs. no_hardhat).
+        This ensures basic coverage but might not trigger line 134 fully.
         """
-        datas = [[0, 0, 50, 50, 0.9, 1], [10, 10, 60, 60, 0.85, 2]]
-        result = await remove_overlapping_labels(datas)
-        self.assertIsInstance(result, list)
+        # bounding boxes: each is [x1, y1, x2, y2, confidence, label_id]
+        datas = [
+            [0, 0, 100, 100, 0.9, 0],   # 'hardhat'  (label_id=0)
+            [10, 10, 90, 90, 0.8, 2],   # 'no_hardhat' (label_id=2), overlaps
+            [200, 200, 300, 300, 0.85, 7],  # 'safety_vest' (label_id=7)
+            # 'no_safety_vest' (label_id=4), but no overlap with the above
+            [310, 310, 400, 400, 0.7, 4],
+        ]
+        result = await remove_overlapping_labels(datas.copy())
+        # We expect the overlapping pair (0 vs 2) to remove the second item
+        # but "safety_vest" vs "no_safety_vest" does NOT overlap => remains
+        # So final length should be 3
+        self.assertEqual(len(result), 3)
 
+    async def test_remove_overlapping_labels_both_pairs(self) -> None:
+        """
+        Tests removal of overlapping labels for BOTH:
+         - 'hardhat' (0) vs 'no_hardhat' (2)
+         - 'safety_vest' (7) vs 'no_safety_vest' (4)
+        This scenario triggers line 134, ensuring we fully cover the
+        double update to `to_remove` and subsequent .pop() calls.
+        """
+        datas = [
+            [0, 0, 100, 100, 0.9, 0],   # 'hardhat'
+            [10, 10, 90, 90, 0.8, 2],   # 'no_hardhat' => overlaps with above
+            [200, 200, 300, 300, 0.85, 7],  # 'safety_vest'
+            [210, 210, 290, 290, 0.7, 4],   # 'no_safety_vest' => overlaps
+        ]
+        result = await remove_overlapping_labels(datas.copy())
+        # Expect that both "no_hardhat" and "no_safety_vest" get removed
+        # => final length should be 2
+        remaining_labels = [item[5] for item in result]
+        self.assertEqual(len(result), 2)
+        self.assertListEqual(remaining_labels, [0, 7])
+
+    #
+    # ---------------------------
+    # Tests for remove_completely_contained_labels
+    # ---------------------------
+    #
     async def test_remove_completely_contained_labels(self) -> None:
         """
         Tests removal of completely contained labels.
         """
-        datas = [[0, 0, 50, 50, 0.9, 1], [10, 10, 40, 40, 0.85, 2]]
+        datas = [
+            [0, 0, 50, 50, 0.9, 1],
+            [10, 10, 40, 40, 0.85, 2],
+        ]
         result = await remove_completely_contained_labels(datas)
         self.assertIsInstance(result, list)
 
+    #
+    # The rest are mostly coverage for smaller utility functions
+    #
     def test_get_category_indices(self) -> None:
         """
         Tests retrieval of category indices for different labels.
         """
-        datas = [[10, 20, 30, 40, 0.9, 0], [50, 60, 70, 80, 0.85, 7]]
+        datas = [
+            [10, 20, 30, 40, 0.9, 0],
+            [50, 60, 70, 80, 0.85, 7],
+        ]
         indices = get_category_indices(datas)
         self.assertIsInstance(indices, dict)
 
@@ -194,7 +249,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         x1, y1, x2, y2 = 0, 0, 50, 50
         area = calculate_area(x1, y1, x2, y2)
-        self.assertEqual(area, 2601)
+        self.assertEqual(area, 2601)  # 51 * 51 = 2601
 
     def test_is_contained(self) -> None:
         """
@@ -211,7 +266,10 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         indices1 = [0]
         indices2 = [1]
-        datas = [[0, 0, 50, 50, 0.9, 1], [25, 25, 75, 75, 0.85, 2]]
+        datas = [
+            [0, 0, 50, 50, 0.9, 1],
+            [25, 25, 75, 75, 0.85, 2],
+        ]
         result = await find_overlaps(indices1, indices2, datas, 0.5)
         self.assertIsInstance(result, set)
 
@@ -221,7 +279,10 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         indices1 = [0]
         indices2 = [1]
-        datas = [[0, 0, 50, 50, 0.9, 1], [10, 10, 40, 40, 0.85, 2]]
+        datas = [
+            [0, 0, 50, 50, 0.9, 1],
+            [10, 10, 40, 40, 0.85, 2],
+        ]
         result = await find_contained_labels(indices1, indices2, datas)
         self.assertIsInstance(result, set)
 
@@ -231,7 +292,10 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         index1 = 0
         indices2 = [1]
-        datas = [[0, 0, 50, 50, 0.9, 1], [25, 25, 75, 75, 0.85, 2]]
+        datas = [
+            [0, 0, 50, 50, 0.9, 1],
+            [25, 25, 75, 75, 0.85, 2],
+        ]
         result = await find_overlapping_indices(index1, indices2, datas, 0.5)
         self.assertIsInstance(result, set)
 
@@ -241,7 +305,10 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         index1 = 0
         indices2 = [1]
-        datas = [[0, 0, 50, 50, 0.9, 1], [10, 10, 40, 40, 0.85, 2]]
+        datas = [
+            [0, 0, 50, 50, 0.9, 1],
+            [10, 10, 40, 40, 0.85, 2],
+        ]
         result = await find_contained_indices(index1, indices2, datas)
         self.assertIsInstance(result, set)
 
@@ -251,7 +318,10 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         index1 = 0
         index2 = 1
-        datas = [[0, 0, 50, 50, 0.9, 1], [10, 10, 40, 40, 0.85, 2]]
+        datas = [
+            [0, 0, 50, 50, 0.9, 1],
+            [10, 10, 40, 40, 0.85, 2],
+        ]
         result = await check_containment(index1, index2, datas)
         self.assertIsInstance(result, set)
 
@@ -260,62 +330,41 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         Test the `remove_completely_contained_labels` function to ensure it
         removes labels that are completely contained within another label.
         """
-        # Test data representing bounding boxes and their corresponding labels
         datas = [
-            [50, 50, 150, 150, 0.9, 0],   # 'hardhat' label
-            # 'no_hardhat' label, fully contained within 'hardhat'
-            [70, 70, 130, 130, 0.8, 2],
-            [200, 200, 300, 300, 0.85, 7],  # 'safety_vest' label
-            # 'no_safety_vest' label, fully contained within 'safety_vest'
-            [220, 220, 280, 280, 0.7, 4],
+            [50, 50, 150, 150, 0.9, 0],    # 'hardhat'
+            [70, 70, 130, 130, 0.8, 2],    # 'no_hardhat', fully contained
+            [200, 200, 300, 300, 0.85, 7],  # 'safety_vest'
+            [220, 220, 280, 280, 0.7, 4],  # 'no_safety_vest', fully contained
         ]
-
-        # Call the function and pass a copy of the data
         result = await remove_completely_contained_labels(datas.copy())
-
-        # Assert the length of the resulting list is as expected
         self.assertEqual(len(result), 2)
-
-        # Extract remaining labels and verify they match the expected values
         remaining_labels = [d[5] for d in result]
         self.assertListEqual(remaining_labels, [0, 7])
 
     async def test_check_containment_elif_condition(self) -> None:
         """
         Test the `check_containment` function's `elif` condition to ensure
-        that the appropriate lines of code are covered.
-
-        This test simulates a scenario where one bounding box
-        (`index1`) is completely contained within another bounding box
-        (`index2`). The function should correctly identify that
-        `index1` is contained and return the set containing `index1`.
-
-        Args:
-            None
-
-        Returns:
-            None
+        that code lines are covered when index1 is contained by index2.
         """
-        # Define the indices of the bounding boxes to test
         index1: int = 0
         index2: int = 1
-
-        # Define the test data representing bounding boxes
         datas: list[list[float | int]] = [
-            [70, 70, 130, 130, 0.9, 1],  # Bounding box for index1
-            [50, 50, 150, 150, 0.85, 2],  # Bounding box for index2
+            [70, 70, 130, 130, 0.9, 1],   # bounding box for index1
+            [50, 50, 150, 150, 0.85, 2],  # bounding box for index2
         ]
-
-        # Call the `check_containment` function with the test data
         result: set[int] = await check_containment(index1, index2, datas)
-
-        # Assert that the result matches the expected output
-        # In this case, `index1` is contained within `index2`
         self.assertSetEqual(
-            result, {0},
-            'The function did not correctly identify containment.',
+            result, {0}, 'Should identify index1 is contained.',
         )
 
 
 if __name__ == '__main__':
     unittest.main()
+
+
+'''
+pytest \
+    --cov=examples.YOLO_server_api.backend.detection \
+    --cov-report=term-missing \
+    tests/examples/YOLO_server_api/backend/detection_test.py
+'''

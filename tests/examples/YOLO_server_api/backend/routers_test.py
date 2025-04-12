@@ -3,8 +3,7 @@ from __future__ import annotations
 import base64
 import datetime
 import unittest
-from collections.abc import AsyncGenerator
-from contextlib import contextmanager
+from typing import ClassVar
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -13,556 +12,422 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from fastapi_jwt import JwtAuthorizationCredentials
 
-from examples.YOLO_server_api.backend.routers import auth_router
 from examples.YOLO_server_api.backend.routers import custom_rate_limiter
 from examples.YOLO_server_api.backend.routers import detection_router
-from examples.YOLO_server_api.backend.routers import get_db
 from examples.YOLO_server_api.backend.routers import jwt_access
+from examples.YOLO_server_api.backend.routers import model_loader
 from examples.YOLO_server_api.backend.routers import model_management_router
-from examples.YOLO_server_api.backend.routers import user_management_router
-# from fastapi import UploadFile
 
 
 class TestRouters(unittest.TestCase):
     """
-    Tests for the routers of the YOLO server API.
+    Tests the detection and model management endpoints in routers.py,
+    ensuring 100% coverage of success, error, and role-based conditions.
     """
-    app: FastAPI  # Type hint for the app attribute
-    client: TestClient  # Type hint for the client attribute
+    app: ClassVar[FastAPI]
+    client: ClassVar[TestClient]
 
     @classmethod
     def setUpClass(cls) -> None:
         """
-        Set up the FastAPI application and override dependencies.
+        Sets up the FastAPI application and test client for testing.
         """
-        app = FastAPI()
-        app.include_router(auth_router)
-        app.include_router(detection_router)
-        app.include_router(user_management_router)
-        app.include_router(model_management_router)
+        cls.app = FastAPI()
 
-        # Mock RedisClient
-        mock_redis_client = MagicMock()
-        mock_redis_client.client = AsyncMock()
-
-        # Set redis_client to app state
-        app.state.redis_client = mock_redis_client
+        # Include the detection and model management routers under /api prefix
+        cls.app.include_router(detection_router, prefix='/api')
+        cls.app.include_router(model_management_router, prefix='/api')
 
         def override_jwt_access() -> JwtAuthorizationCredentials:
             """
-            Override JWT access for testing with admin credentials.
+            Provides default 'admin' role in JWT credentials.
             """
             return JwtAuthorizationCredentials(
-                subject={'role': 'admin', 'id': 1},
+                subject={
+                    'username': 'test_admin',
+                    'role': 'admin',
+                    'jti': 'some_jti',
+                },
             )
 
         def override_custom_rate_limiter() -> int:
             """
-            Override the rate limiter for testing purposes.
+            Returns a fixed integer for rate-limiting checks.
             """
-            return 10  # Or any other value you wish
+            return 10
 
-        async def override_get_db() -> AsyncGenerator[str]:
-            """
-            Simulate a database session for testing.
-            """
-            yield 'mock_db_session'
-
-        app.dependency_overrides[jwt_access] = override_jwt_access
-        app.dependency_overrides[custom_rate_limiter] = (
+        # Override the original dependencies
+        cls.app.dependency_overrides[jwt_access] = override_jwt_access
+        cls.app.dependency_overrides[custom_rate_limiter] = (
             override_custom_rate_limiter
         )
-        app.dependency_overrides[get_db] = override_get_db
 
-        cls.app = app
-        cls.client = TestClient(app)
+        # Create a TestClient for making HTTP requests
+        cls.client = TestClient(cls.app)
 
-    @contextmanager
-    def override_jwt_credentials(self, subject: dict):
+    def override_jwt_role(self, role: str):
         """
-        Context manager to temporarily override JWT credentials
-        during tests.
+        Returns a function to override jwt_access with a specific role.
+
+        Args:
+            role (str): The user role to inject into JWT credentials.
+
+        Returns:
+            function: A function that returns JwtAuthorizationCredentials
+                with the specified role.
         """
-        original_jwt_access = self.app.dependency_overrides.get(jwt_access)
-        self.app.dependency_overrides[jwt_access] = (
-            lambda: JwtAuthorizationCredentials(
-                subject=subject,
+        def _override() -> JwtAuthorizationCredentials:
+            return JwtAuthorizationCredentials(
+                subject={
+                    'username': 'test_user',
+                    'role': role,
+                    'jti': 'some_jti',
+                },
             )
-        )
-        try:
-            yield
-        finally:
-            if original_jwt_access is not None:
-                self.app.dependency_overrides[jwt_access] = original_jwt_access
-            else:
-                del self.app.dependency_overrides[jwt_access]
+        return _override
 
-    @patch(
-        'examples.YOLO_server_api.backend.routers.create_token_logic',
-        new_callable=AsyncMock,
-    )
-    def test_create_token_endpoint(self, mock_create_token_logic):
-        """
-        Test the create_token_endpoint with mocked create_token_logic.
-        """
-        # Mock the return value of create_token_logic
-        mock_create_token_logic.return_value = {'access_token': 'mock_token'}
-
-        # Define input data
-        user_data = {'username': 'testuser', 'password': 'testpassword'}
-
-        # Simulate a POST request to the /api/token endpoint
-        response = self.client.post('/api/token', json=user_data)
-
-        # Validate response
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {'access_token': 'mock_token'})
-
-    @patch(
-        'examples.YOLO_server_api.backend.routers.process_labels',
-        new_callable=AsyncMock,
-    )
-    @patch('examples.YOLO_server_api.backend.routers.compile_detection_data')
-    @patch(
-        'examples.YOLO_server_api.backend.routers.get_prediction_result',
-        new_callable=AsyncMock,
-    )
+    # ------------------------------------------------------------------------
+    # TEST: /api/detect
+    # ------------------------------------------------------------------------
+    @patch.object(model_loader, 'get_model')
     @patch(
         'examples.YOLO_server_api.backend.routers.convert_to_image',
         new_callable=AsyncMock,
     )
-    @patch('examples.YOLO_server_api.backend.routers.model_loader.get_model')
-    def test_detect_endpoint(
+    @patch(
+        'examples.YOLO_server_api.backend.routers.get_prediction_result',
+        new_callable=AsyncMock,
+    )
+    @patch('examples.YOLO_server_api.backend.routers.compile_detection_data')
+    @patch(
+        'examples.YOLO_server_api.backend.routers.process_labels',
+        new_callable=AsyncMock,
+    )
+    def test_detect_endpoint_success(
         self,
-        mock_get_model,
-        mock_convert_to_image,
-        mock_get_prediction_result,
-        mock_compile_detection_data,
-        mock_process_labels,
-    ):
+        mock_process_labels: AsyncMock,
+        mock_compile_detection_data: MagicMock,
+        mock_get_prediction_result: AsyncMock,
+        mock_convert_to_image: AsyncMock,
+        mock_get_model: MagicMock,
+    ) -> None:
         """
-        Test the detection endpoint with mocked dependencies.
+        Verifies /api/detect returns 200 and the detection results
+        when a valid model and image are provided.
+
+        Args:
+            mock_process_labels (AsyncMock):
+                Mock for the process_labels function to simulate processing.
+            mock_compile_detection_data (MagicMock):
+                Mock for the compile_detection_data function to simulate
+                data compilation.
+            mock_get_prediction_result (AsyncMock):
+                Mock for the get_prediction_result function to simulate
+                prediction results.
+            mock_convert_to_image (AsyncMock):
+                Mock for the convert_to_image function to simulate image
+                conversion.
+            mock_get_model (MagicMock):
+                Mock for the get_model function to simulate model retrieval.
         """
-        # Mock dependencies
         mock_get_model.return_value = 'mock_model_instance'
         mock_convert_to_image.return_value = 'mock_image'
         mock_get_prediction_result.return_value = 'mock_result'
-        mock_compile_detection_data.return_value = [
-            [1.0, 2.0, 3.0, 4.0],
-        ]  # Return a list of the expected type
-        # Return a list of the expected type
+        mock_compile_detection_data.return_value = [[1.0, 2.0, 3.0, 4.0]]
         mock_process_labels.return_value = [[1.0, 2.0, 3.0, 4.0]]
 
-        # Create a test image file
-        image_content = b'test_image_data'
-        files = {'image': ('test_image.jpg', image_content, 'image/jpeg')}
+        files = {'image': ('test.jpg', b'fake_image_data', 'image/jpeg')}
         data = {'model': 'yolo11n'}
 
-        # Successful case
-        response = self.client.post('/api/detect', data=data, files=files)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), [[1.0, 2.0, 3.0, 4.0]])
+        resp = self.client.post('/api/detect', data=data, files=files)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), [[1.0, 2.0, 3.0, 4.0]])
 
-        # Model not found case
-        mock_get_model.return_value = None
-        response = self.client.post('/api/detect', data=data, files=files)
-        self.assertEqual(response.status_code, 404)
-
-    @patch(
-        'examples.YOLO_server_api.backend.routers.add_user',
-        new_callable=AsyncMock,
-    )
-    @patch('examples.YOLO_server_api.backend.routers.logger')
-    def test_add_user(self, mock_logger, mock_add_user):
+    @patch.object(model_loader, 'get_model', return_value=None)
+    def test_detect_endpoint_model_not_found(self, _) -> None:
         """
-        Test adding a user with mocked add_user function.
+        Verifies /api/detect returns 404 if the specified model is not found.
         """
-        mock_add_user.return_value = {'success': True, 'message': 'User added'}
+        files = {'image': ('test.jpg', b'fake_image_data', 'image/jpeg')}
+        data = {'model': 'unknown_model'}
 
-        user_data = {
-            'username': 'testuser',
-            'password': 'testpassword',
-            'role': 'user',
-        }
+        resp = self.client.post('/api/detect', data=data, files=files)
+        self.assertEqual(resp.status_code, 404)
+        self.assertIn('Model not found', resp.text)
 
-        response = self.client.post('/api/add_user', json=user_data)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(), {
-                'message': 'User added successfully.',
-            },
-        )
-        mock_logger.info.assert_called_with('User added')
-
-        # Non-admin role
-        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
-            response = self.client.post('/api/add_user', json=user_data)
-            self.assertEqual(response.status_code, 400)
-
-        # IntegrityError case
-        mock_add_user.return_value = {
-            'success': False,
-            'error': 'IntegrityError',
-            'message': 'Duplicate',
-        }
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.post('/api/add_user', json=user_data)
-            self.assertEqual(response.status_code, 400)
-
-    @patch(
-        'examples.YOLO_server_api.backend.routers.delete_user',
-        new_callable=AsyncMock,
-    )
-    @patch('examples.YOLO_server_api.backend.routers.logger')
-    def test_delete_user(self, mock_logger, mock_delete_user):
-        """
-        Test deleting a user with mocked delete_user function.
-        """
-        mock_delete_user.return_value = {
-            'success': True, 'message': 'User deleted',
-        }
-
-        user_data = {'username': 'testuser'}
-
-        response = self.client.post('/api/delete_user', json=user_data)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(), {
-                'message': 'User deleted successfully.',
-            },
-        )
-        mock_logger.info.assert_called_with('User deleted')
-
-        # NotFound case
-        mock_delete_user.return_value = {
-            'success': False, 'error': 'NotFound', 'message': 'No user',
-        }
-        response = self.client.post('/api/delete_user', json=user_data)
-        self.assertEqual(response.status_code, 404)
-
-        # Other error case
-        mock_delete_user.return_value = {
-            'success': False, 'error': 'Other', 'message': 'Error',
-        }
-        response = self.client.post('/api/delete_user', json=user_data)
-        self.assertEqual(response.status_code, 500)
-
-        # Non-admin role
-        self.app.dependency_overrides[jwt_access] = (
-            lambda: JwtAuthorizationCredentials(
-                subject={'role': 'user', 'id': 1},
-            )
-        )
-        response = self.client.post('/api/delete_user', json=user_data)
-        self.assertEqual(response.status_code, 403)
-
-    @patch(
-        'examples.YOLO_server_api.backend.routers.update_username',
-        new_callable=AsyncMock,
-    )
-    @patch('examples.YOLO_server_api.backend.routers.logger')
-    def test_update_username(self, mock_logger, mock_update_username):
-        """
-        Test updating a username with mocked update_username function.
-        """
-        async def success_func(old_username, new_username, db):
-            return {'success': True, 'message': 'Username updated'}
-        mock_update_username.side_effect = success_func
-
-        user_data = {'old_username': 'olduser', 'new_username': 'newuser'}
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.put('/api/update_username', json=user_data)
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(
-                response.json(), {
-                    'message': 'Username updated successfully.',
-                },
-            )
-            mock_logger.info.assert_called_with('Username updated')
-
-        # IntegrityError
-        async def integrity_error_func(old_username, new_username, db):
-            return {
-                'success': False,
-                'error': 'IntegrityError',
-                'message': 'Duplicate',
-            }
-        mock_update_username.side_effect = integrity_error_func
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.put('/api/update_username', json=user_data)
-            self.assertEqual(response.status_code, 400)
-
-        # NotFound
-        async def not_found_func(old_username, new_username, db):
-            return {
-                'success': False,
-                'error': 'NotFound',
-                'message': 'Not found',
-            }
-        mock_update_username.side_effect = not_found_func
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.put('/api/update_username', json=user_data)
-            self.assertEqual(response.status_code, 404)
-
-        # Non-admin role
-        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
-            response = self.client.put('/api/update_username', json=user_data)
-            self.assertEqual(response.status_code, 400)
-
-    @patch(
-        'examples.YOLO_server_api.backend.routers.update_password',
-        new_callable=AsyncMock,
-    )
-    @patch('examples.YOLO_server_api.backend.routers.logger')
-    def test_update_password(self, mock_logger, mock_update_password):
-        """
-        Test updating a password with mocked update_password function.
-        """
-        async def success_func(username, new_password, db):
-            return {'success': True, 'message': 'Password updated'}
-        mock_update_password.side_effect = success_func
-
-        user_data = {'username': 'testuser', 'new_password': 'newpassword'}
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.put('/api/update_password', json=user_data)
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(
-                response.json(), {
-                    'message': 'Password updated successfully.',
-                },
-            )
-            mock_logger.info.assert_called_with('Password updated')
-
-        # NotFound
-        async def not_found_func(username, new_password, db):
-            return {
-                'success': False,
-                'error': 'NotFound',
-                'message': 'No user',
-            }
-        mock_update_password.side_effect = not_found_func
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.put('/api/update_password', json=user_data)
-            self.assertEqual(response.status_code, 404)
-
-        # Other error
-        async def other_error_func(username, new_password, db):
-            return {'success': False, 'error': 'Other', 'message': 'Error'}
-        mock_update_password.side_effect = other_error_func
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.put('/api/update_password', json=user_data)
-            self.assertEqual(response.status_code, 500)
-
-        # Non-admin role
-        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
-            response = self.client.put('/api/update_password', json=user_data)
-            self.assertEqual(response.status_code, 400)
-
-    @patch(
-        'examples.YOLO_server_api.backend.routers.set_user_active_status',
-        new_callable=AsyncMock,
-    )
-    @patch('examples.YOLO_server_api.backend.routers.logger')
-    def test_set_user_active_status(
-        self,
-        mock_logger,
-        mock_set_user_active_status,
-    ):
-        """
-        Test setting a user's active status
-        with mocked set_user_active_status function.
-        """
-        async def success_func(username, is_active, db):
-            return {'success': True, 'message': 'Status updated'}
-        mock_set_user_active_status.side_effect = success_func
-
-        user_data = {'username': 'testuser', 'is_active': True}
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.put(
-                '/api/set_user_active_status', json=user_data,
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(
-                response.json(), {
-                    'message': 'User active status updated successfully.',
-                },
-            )
-            mock_logger.info.assert_called_with('Status updated')
-
-        # NotFound
-        async def not_found_func(username, is_active, db):
-            return {
-                'success': False,
-                'error': 'NotFound',
-                'message': 'No user',
-            }
-        mock_set_user_active_status.side_effect = not_found_func
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.put(
-                '/api/set_user_active_status', json=user_data,
-            )
-            self.assertEqual(response.status_code, 404)
-
-        # Other error
-        async def other_error_func(username, is_active, db):
-            return {'success': False, 'error': 'Other', 'message': 'Error'}
-        mock_set_user_active_status.side_effect = other_error_func
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.put(
-                '/api/set_user_active_status', json=user_data,
-            )
-            self.assertEqual(response.status_code, 500)
-
-        # Non-admin role
-        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
-            response = self.client.put(
-                '/api/set_user_active_status', json=user_data,
-            )
-            self.assertEqual(response.status_code, 403)
-
+    # ------------------------------------------------------------------------
+    # TEST: /api/model_file_update
+    # ------------------------------------------------------------------------
     @patch(
         'examples.YOLO_server_api.backend.routers.update_model_file',
         new_callable=AsyncMock,
     )
     @patch('examples.YOLO_server_api.backend.routers.logger')
-    def test_model_file_update(self, mock_logger, mock_update_model_file):
+    def test_model_file_update_success(
+        self,
+        mock_logger: MagicMock,
+        mock_update_func: AsyncMock,
+    ) -> None:
         """
-        Test updating a model file with mocked update_model_file function.
-        """
-        # Simulate successful execution
-        async def mock_update_model_file_func(model, temp_path):
-            pass
-        mock_update_model_file.side_effect = mock_update_model_file_func
+        Verifies /api/model_file_update returns 200 for an admin user
+        and that the model is updated successfully.
 
-        model_file_content = b'model file content'
+        Args:
+            mock_logger (MagicMock):
+                Mock for the logger to capture info messages.
+            mock_update_func (AsyncMock):
+                Mock for the update_model_file function to simulate success.
+        """
+        mock_update_func.return_value = None  # simulate success
+
+        files = {
+            'file': ('model.pt', b'model content', 'application/octet-stream'),
+        }
+        data = {'model': 'yolo11n'}
+
+        resp = self.client.post(
+            '/api/model_file_update', data=data, files=files,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('yolo11n updated successfully', resp.text)
+        mock_logger.info.assert_any_call('Model yolo11n updated successfully.')
+
+    def test_model_file_update_forbidden_role(self) -> None:
+        """
+        Verifies /api/model_file_update => 403 if the role is neither
+        'admin' nor 'model_manage'.
+        """
+        self.app.dependency_overrides[jwt_access] = self.override_jwt_role(
+            'user',
+        )
+
         files = {
             'file': (
-                'model.pt', model_file_content,
+                'model.pt', b'model content',
                 'application/octet-stream',
             ),
         }
         data = {'model': 'yolo11n'}
 
-        # Admin role success
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.post(
-                '/api/model_file_update', data=data, files=files,
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(
-                response.json(), {
-                    'message': 'Model yolo11n updated successfully.',
-                },
-            )
-            mock_logger.info.assert_called_with(
-                'Model yolo11n updated successfully.',
-            )
+        resp = self.client.post(
+            '/api/model_file_update', data=data, files=files,
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Need 'admin' or 'model_manage' role", resp.text)
 
-        # Non-admin or model_manage role
-        with self.override_jwt_credentials({'role': 'user', 'id': 1}):
-            response = self.client.post(
-                '/api/model_file_update', data=data, files=files,
-            )
-            self.assertEqual(response.status_code, 403)
-
-        # Invalid file path scenario (ValueError)
-        with patch(
-            'examples.YOLO_server_api.backend.routers.secure_filename',
-            return_value='../model.pt',
-        ):
-            with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-                response = self.client.post(
-                    '/api/model_file_update', data=data, files=files,
-                )
-                self.assertEqual(response.status_code, 400)
-                mock_logger.error.assert_called()
-
-        # Simulate ValueError in update_model_file
-        async def mock_update_model_file_raise_value_error(model, temp_path):
-            raise ValueError('Invalid model')
-        mock_update_model_file.side_effect = (
-            mock_update_model_file_raise_value_error
+        # revert to admin
+        self.app.dependency_overrides[jwt_access] = self.override_jwt_role(
+            'admin',
         )
 
-        with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-            response = self.client.post(
+    @patch(
+        'examples.YOLO_server_api.backend.routers.update_model_file',
+        side_effect=ValueError('Invalid model'),
+    )
+    @patch('examples.YOLO_server_api.backend.routers.logger')
+    def test_model_file_update_value_error(
+        self,
+        mock_logger: MagicMock, _,
+    ) -> None:
+        """
+        Verifies /api/model_file_update => 400 if a ValueError occurs
+        during model update.
+
+        Args:
+            mock_logger (MagicMock):
+                Mock for the logger to capture error messages.
+        """
+        files = {
+            'file': (
+                'model.pt', b'model content',
+                'application/octet-stream',
+            ),
+        }
+        data = {'model': 'yolo11n'}
+
+        resp = self.client.post(
+            '/api/model_file_update', data=data, files=files,
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('Invalid model', resp.text)
+        mock_logger.error.assert_any_call(
+            'Model update validation error: Invalid model',
+        )
+
+    @patch('examples.YOLO_server_api.backend.routers.update_model_file')
+    @patch('examples.YOLO_server_api.backend.routers.logger')
+    def test_model_file_update_os_error(
+        self, mock_logger: MagicMock,
+        mock_update_func: MagicMock,
+    ) -> None:
+        """
+        Verifies /api/model_file_update => 500 if an OSError occurs
+        during file writing.
+
+        Args:
+            mock_logger (MagicMock):
+                Mock for the logger to capture error messages.
+            mock_update_func (MagicMock):
+                Mock for the update_model_file function to simulate an OSError.
+        """
+        mock_update_func.return_value = None
+        with patch('pathlib.Path.open', side_effect=OSError('Disk error')):
+            files = {
+                'file': (
+                    'model.pt', b'model content',
+                    'application/octet-stream',
+                ),
+            }
+            data = {'model': 'yolo11n'}
+
+            resp = self.client.post(
                 '/api/model_file_update', data=data, files=files,
             )
-            self.assertEqual(response.status_code, 400)
-            self.assertEqual(response.json()['detail'], 'Invalid model')
-            mock_logger.error.assert_called_with(
-                'Model update validation error: Invalid model',
+            self.assertEqual(resp.status_code, 500)
+            self.assertIn('Disk error', resp.text)
+            mock_logger.error.assert_any_call(
+                'Model update I/O error: Disk error',
             )
 
-        # Simulate OSError during file operation
-        with patch('pathlib.Path.open', side_effect=OSError('Disk error')):
-            mock_update_model_file.side_effect = mock_update_model_file_func
-            with self.override_jwt_credentials({'role': 'admin', 'id': 1}):
-                response = self.client.post(
-                    '/api/model_file_update', data=data, files=files,
-                )
-                self.assertEqual(response.status_code, 500)
-                self.assertEqual(response.json()['detail'], 'Disk error')
-                mock_logger.error.assert_called_with(
-                    'Model update I/O error: Disk error',
-                )
-
-    @patch('examples.YOLO_server_api.backend.routers.get_new_model_file')
+    # ------------------------------------------------------------------------
+    # TEST: /api/get_new_model
+    # ------------------------------------------------------------------------
+    @patch(
+        'examples.YOLO_server_api.backend.routers.get_new_model_file',
+        new_callable=AsyncMock,
+    )
     @patch('examples.YOLO_server_api.backend.routers.logger')
-    def test_get_new_model(self, mock_logger, mock_get_new_model_file):
+    def test_get_new_model_updated(
+        self,
+        mock_logger: MagicMock,
+        mock_get_file: AsyncMock,
+    ) -> None:
         """
-        Test retrieving a new model file
-        with mocked get_new_model_file function.
-        """
-        async def mock_get_new_model_file_func(model, user_last_update):
-            return b'new model content'  # Assume a new model is available
-        mock_get_new_model_file.side_effect = mock_get_new_model_file_func
+        Verifies /api/get_new_model => 200 if a newer model file is available,
+        returning a base64-encoded model_file.
 
-        request_data = {
+        Args:
+            mock_logger (MagicMock):
+                Mock for the logger to capture info messages.
+            mock_get_file (AsyncMock):
+                Mock for the get_new_model_file function to
+                simulate a new file.
+        """
+        mock_get_file.return_value = b'new_model_content'
+
+        payload = {
             'model': 'yolo11n',
             'last_update_time': datetime.datetime.now().isoformat(),
         }
+        resp = self.client.post('/api/get_new_model', json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('Model yolo11n is updated.', data['message'])
+        decoded = base64.b64decode(data['model_file'].encode())
+        self.assertEqual(decoded, b'new_model_content')
 
-        response = self.client.post('/api/get_new_model', json=request_data)
-        self.assertEqual(response.status_code, 200)
-        expected_response = {
-            'message': 'Model yolo11n is updated.',
-            'model_file': base64.b64encode(b'new model content').decode(),
-        }
-        self.assertEqual(response.json(), expected_response)
-        mock_logger.info.assert_called_with(
+        mock_logger.info.assert_any_call(
             'Newer model file for yolo11n retrieved.',
         )
 
-        # No new model available
-        async def mock_no_update(model, user_last_update):
-            return None
-        mock_get_new_model_file.side_effect = mock_no_update
-        response = self.client.post('/api/get_new_model', json=request_data)
-        self.assertEqual(response.status_code, 200)
-        expected_response = {'message': 'Model yolo11n is up to date.'}
-        self.assertEqual(response.json(), expected_response)
-        mock_logger.info.assert_called_with(
+    @patch(
+        'examples.YOLO_server_api.backend.routers.get_new_model_file',
+        new_callable=AsyncMock,
+    )
+    @patch('examples.YOLO_server_api.backend.routers.logger')
+    def test_get_new_model_up_to_date(
+        self,
+        mock_logger: MagicMock,
+        mock_get_file: AsyncMock,
+    ) -> None:
+        """
+        Verifies /api/get_new_model => 200 (no new file) if the server's model
+        is not newer than the client's.
+
+        Args:
+            mock_logger (MagicMock):
+                Mock for the logger to capture info messages.
+            mock_get_file (AsyncMock):
+                Mock for the get_new_model_file function to simulate no update.
+        """
+        mock_get_file.return_value = None
+
+        payload = {
+            'model': 'yolo11n',
+            'last_update_time': datetime.datetime.now().isoformat(),
+        }
+        resp = self.client.post('/api/get_new_model', json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('up to date', data['message'])
+
+        mock_logger.info.assert_any_call(
             'No update required for model yolo11n.',
         )
 
-        # Invalid datetime format
-        invalid_request_data = {
+    def test_get_new_model_invalid_datetime(self) -> None:
+        """
+        Verifies /api/get_new_model => 400 if `last_update_time` is invalid.
+        """
+        payload = {
             'model': 'yolo11n',
             'last_update_time': 'invalid_datetime',
         }
-        response = self.client.post(
-            '/api/get_new_model', json=invalid_request_data,
-        )
-        self.assertEqual(response.status_code, 400)
+        resp = self.client.post('/api/get_new_model', json=payload)
+        self.assertEqual(resp.status_code, 400)
 
-        # Exception scenario
-        async def mock_exception(model, user_last_update):
-            raise Exception('Some error')
-        mock_get_new_model_file.side_effect = mock_exception
-        response = self.client.post('/api/get_new_model', json=request_data)
-        self.assertEqual(response.status_code, 500)
+    @patch(
+        'examples.YOLO_server_api.backend.routers.get_new_model_file',
+        side_effect=Exception('Some error'),
+    )
+    @patch('examples.YOLO_server_api.backend.routers.logger')
+    def test_get_new_model_exception(self, mock_logger: MagicMock, _) -> None:
+        """
+        Verifies /api/get_new_model => 500 if an unexpected exception occurs
+        during file retrieval.
+
+        Args:
+            mock_logger (MagicMock):
+                Mock for the logger to capture error messages.
+        """
+        payload = {
+            'model': 'yolo11n',
+            'last_update_time': datetime.datetime.now().isoformat(),
+        }
+        resp = self.client.post('/api/get_new_model', json=payload)
+        self.assertEqual(resp.status_code, 500)
+        self.assertIn('Failed to retrieve model', resp.text)
+        mock_logger.error.assert_any_call('Error retrieving model: Some error')
+
+    def test_get_new_model_forbidden_guest(self) -> None:
+        """
+        Verifies /api/get_new_model => 403 if the user role is 'guest'.
+        This triggers the 'guest' in the endpoints' role check.
+        """
+        self.app.dependency_overrides[jwt_access] = self.override_jwt_role(
+            'guest',
+        )
+
+        payload = {
+            'model': 'yolo11n',
+            'last_update_time': '2023-10-01T12:30:00',
+        }
+        resp = self.client.post('/api/get_new_model', json=payload)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Need 'admin' or 'model_manage' role", resp.text)
+
+        # Revert role to admin to avoid affecting other tests
+        self.app.dependency_overrides[jwt_access] = self.override_jwt_role(
+            'admin',
+        )
 
 
 if __name__ == '__main__':
     unittest.main()
+
+'''
+pytest \
+    --cov=examples.YOLO_server_api.backend.routers \
+    --cov-report=term-missing \
+    tests/examples/YOLO_server_api/backend/routers_test.py
+'''
