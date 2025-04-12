@@ -8,447 +8,132 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi import Body
 from fastapi import Depends
-from fastapi import File
-from fastapi import Form
 from fastapi import HTTPException
-from fastapi import UploadFile
 from fastapi_jwt import JwtAuthorizationCredentials
-from pydantic import BaseModel
-from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
 from werkzeug.utils import secure_filename
 
-from .auth import create_token_logic
-from .auth import UserLogin
-from .cache import custom_rate_limiter
-from .cache import jwt_access
-from .detection import compile_detection_data
-from .detection import convert_to_image
-from .detection import get_prediction_result
-from .detection import process_labels
-from .model_files import get_new_model_file
-from .model_files import update_model_file
-from .models import DetectionModelManager
-from .models import get_db
-from .redis_pool import get_redis_pool
-from .user_operation import add_user
-from .user_operation import delete_user
-from .user_operation import set_user_active_status
-from .user_operation import update_password
-from .user_operation import update_username
+from examples.auth.cache import custom_rate_limiter
+from examples.auth.jwt_config import jwt_access
+from examples.YOLO_server_api.backend.detection import compile_detection_data
+from examples.YOLO_server_api.backend.detection import convert_to_image
+from examples.YOLO_server_api.backend.detection import get_prediction_result
+from examples.YOLO_server_api.backend.detection import process_labels
+from examples.YOLO_server_api.backend.model_files import get_new_model_file
+from examples.YOLO_server_api.backend.model_files import update_model_file
+from examples.YOLO_server_api.backend.models import DetectionModelManager
+from examples.YOLO_server_api.backend.schemas import DetectionRequest
+from examples.YOLO_server_api.backend.schemas import ModelFileUpdate
+from examples.YOLO_server_api.backend.schemas import UpdateModelRequest
 
-# Define routers for different functionalities
-auth_router = APIRouter()
+#: APIRouter for object detection endpoints.
 detection_router = APIRouter()
-user_management_router = APIRouter()
+
+#: APIRouter for model management endpoints.
 model_management_router = APIRouter()
 
-# Load detection models
+#: A manager for loading and retrieving detection models.
 model_loader = DetectionModelManager()
 
 
-# Authentication APIs
-@auth_router.post('/api/token')
-async def create_token_endpoint(
-    user: UserLogin,
-    db: AsyncSession = Depends(get_db),
-    redis_pool: Redis = Depends(get_redis_pool),
-):
-    """
-    Endpoint to authenticate a user and generate an access token.
-    """
-    # Call the create_token_logic function to generate the token
-    return await create_token_logic(
-        user=user,
-        db=db,
-        redis_pool=redis_pool,
-        jwt_access=jwt_access,  # Use the jwt_access dependency
-        max_jti=2,  # Set the maximum number of JTI values
-    )
-
-# Detection APIs
-
-
-class DetectionRequest(BaseModel):
-    """
-    Represents the input format for the object detection endpoint.
-    """
-    image: UploadFile
-    model: str
-
-
-@detection_router.post('/api/detect')
+@detection_router.post('/detect')
 async def detect(
-    image: UploadFile = File(...),
-    model: str = 'yolo11n',
+    detection_request: DetectionRequest = Depends(DetectionRequest.as_form),
     credentials: JwtAuthorizationCredentials = Depends(jwt_access),
     remaining_requests: int = Depends(custom_rate_limiter),
 ) -> list[list[float | int]]:
     """
-    Processes the uploaded image to detect objects based on
-    the specified model.
+    Perform object detection on an uploaded image using a specified model.
 
     Args:
-        image (UploadFile): The uploaded image file for object detection.
-        model (str): The model name to be used for detection
-             (default is 'yolo11n').
-        credentials (JwtAuthorizationCredentials): The JWT credentials for
-            authorisation.
-        remaining_requests (int): The remaining number of allowed requests.
+        image (UploadFile):
+            The uploaded image file to be processed.
+        model (str, optional):
+            The name of the model to use for detection. Defaults to 'yolo11n'.
+        credentials (JwtAuthorizationCredentials):
+            JWT credentials to verify the user. Injected by FastAPI.
+        remaining_requests (int):
+            The remaining rate limit for the user. Injected by FastAPI.
 
     Returns:
-        List[List[float | int]]: A list containing detection data including
-        bounding boxes, confidence scores, and labels.
+        list[list[float | int]]: A list of detection results, where each
+            sub-list may include bounding box coordinates, confidence scores,
+            classification IDs, etc.
+
+    Raises:
+        HTTPException: If the specified model is not found (404).
     """
+    # Log user info and remaining requests
     print(f"Authenticated user: {credentials.subject}")
     print(f"Remaining requests: {remaining_requests}")
 
-    # Retrieve image data and convert to OpenCV format
-    data: bytes = await image.read()
+    # Read image data and convert to a format compatible with the model
+    data: bytes = await detection_request.image.read()
     img = await convert_to_image(data)
 
-    # Load the specified model for detection
-    model_instance = model_loader.get_model(model)
-
+    # Retrieve the specified model
+    model_instance = model_loader.get_model(detection_request.model)
     if model_instance is None:
         raise HTTPException(status_code=404, detail='Model not found')
 
-    # Perform object detection on the uploaded image
+    # Perform detection
     result = await get_prediction_result(img, model_instance)
 
-    # Compile and process the detection results
+    # Compile and post-process detection data
     datas = compile_detection_data(result)
     datas = await process_labels(datas)
     return datas
 
 
-# User Management APIs
-class UserCreate(BaseModel):
-    """
-    Represents the data required to create a user.
-    """
-    username: str
-    password: str
-    role: str = 'user'
-
-
-@user_management_router.post('/api/add_user')
-async def add_user_route(
-    user: UserCreate,
-    db: AsyncSession = Depends(get_db),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
-) -> dict:
-    """
-    Endpoint to add a new user to the system.
-
-    Args:
-        user (UserCreate): The data required to create the user.
-        db (AsyncSession): The database session dependency.
-
-    Returns:
-        dict: A success message if the operation is successful.
-
-    Raises:
-        HTTPException: If user creation fails.
-    """
-    print(f"UserCreate: {user}")
-
-    if credentials.subject['role'] not in ['admin']:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                'Invalid role. Must be one of: '
-                'admin, model_manage, user, guest.'
-            ),
-        )
-    result = await add_user(user.username, user.password, user.role, db)
-    if result['success']:
-        logger.info(result['message'])
-        return {'message': 'User added successfully.'}
-    logger.error(f"Add User Error: {result['message']}")
-    raise HTTPException(
-        status_code=400 if result['error'] == 'IntegrityError' else 500,
-        detail='Failed to add user.',
-    )
-
-
-class DeleteUser(BaseModel):
-    """
-    Represents the data required to delete a user.
-    """
-    username: str
-
-
-@user_management_router.post('/api/delete_user')
-async def delete_user_route(
-    user: DeleteUser,
-    db: AsyncSession = Depends(get_db),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
-) -> dict:
-    """
-    Endpoint to delete a user.
-
-    Args:
-        user (DeleteUser): The data required to delete the user.
-        db (AsyncSession): The database session dependency.
-        credentials (JwtAuthorizationCredentials): The JWT credentials
-        for authorisation.
-
-    Returns:
-        dict: A success message if the operation is successful.
-
-    Raises:
-        HTTPException: If user deletion fails.
-    """
-    if credentials.subject['role'] not in ['admin']:
-        raise HTTPException(
-            status_code=403,
-            detail='Permission denied. Admin role required.',
-        )
-
-    result = await delete_user(user.username, db)
-    if result['success']:
-        logger.info(result['message'])
-        return {'message': 'User deleted successfully.'}
-
-    logger.error(f"Delete User Error: {result['message']}")
-    raise HTTPException(
-        status_code=404 if result['error'] == 'NotFound' else 500,
-        detail='Failed to delete user.',
-    )
-
-
-class UpdateUsername(BaseModel):
-    """
-    Represents the data required to update a user's username.
-    """
-    old_username: str
-    new_username: str
-
-
-@user_management_router.put('/api/update_username')
-async def update_username_route(
-    update_data: UpdateUsername,
-    db: AsyncSession = Depends(get_db),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
-) -> dict:
-    """
-    Endpoint to update a user's username.
-
-    Args:
-        update_data (UpdateUsername): The data required for the update.
-        db (AsyncSession): The database session dependency.
-
-    Returns:
-        dict: A success message if the operation is successful.
-
-    Raises:
-        HTTPException: If the username update fails.
-    """
-    if credentials.subject['role'] not in ['admin']:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                'Invalid role. Must be one of: '
-                'admin, model_manage, user, guest.'
-            ),
-        )
-
-    result = await update_username(
-        update_data.old_username, update_data.new_username, db,
-    )
-    if result['success']:
-        logger.info(result['message'])
-        return {'message': 'Username updated successfully.'}
-    logger.error(f"Update Username Error: {result['message']}")
-    raise HTTPException(
-        status_code=400 if result['error'] == 'IntegrityError' else 404,
-        detail='Failed to update username.',
-
-    )
-
-
-class UpdatePassword(BaseModel):
-    """
-    Represents the data required to update a user's password.
-    """
-    username: str
-    new_password: str
-    role: str = 'user'
-
-
-@user_management_router.put('/api/update_password')
-async def update_password_route(
-    update_data: UpdatePassword,
-    db: AsyncSession = Depends(get_db),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
-) -> dict:
-    """
-    Endpoint to update a user's password.
-
-    Args:
-        update_data (UpdatePassword): The data required for the update.
-        db (AsyncSession): The database session dependency.
-
-    Returns:
-        dict: A success message if the operation is successful.
-
-    Raises:
-        HTTPException: If the password update fails.
-    """
-    if credentials.subject['role'] not in ['admin']:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                'Invalid role. Must be one of: '
-                'admin, model_manage, user, guest.'
-            ),
-        )
-
-    result = await update_password(
-        update_data.username, update_data.new_password, db,
-    )
-    if result['success']:
-        logger.info(result['message'])
-        return {'message': 'Password updated successfully.'}
-    logger.error(f"Update Password Error: {result['message']}")
-    raise HTTPException(
-        status_code=404 if result['error'] == 'NotFound' else 500,
-        detail='Failed to update password.',
-    )
-
-
-class SetUserActiveStatus(BaseModel):
-    """
-    Represents the data required to update a user's active status.
-
-    Attributes:
-        username (str): The username of the user.
-        is_active (bool): The new active status to set.
-    """
-    username: str
-    is_active: bool
-
-
-@user_management_router.put('/api/set_user_active_status')
-async def set_user_active_status_route(
-    user_status: SetUserActiveStatus,  # 使用請求正文接收數據
-    db: AsyncSession = Depends(get_db),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
-) -> dict:
-    """
-    Endpoint to update a user's active status.
-
-    Args:
-        user_status (SetUserActiveStatus): The data containing username
-            and active status to update.
-        db (AsyncSession): The database session dependency.
-        credentials (JwtAuthorizationCredentials): The JWT credentials
-        for authorisation.
-
-    Returns:
-        dict: A success message if the operation is successful.
-
-    Raises:
-        HTTPException: If the status update fails or permissions are invalid.
-    """
-    if credentials.subject['role'] != 'admin':
-        raise HTTPException(
-            status_code=403,
-            detail='Admin privileges are required to update user status.',
-        )
-
-    result = await set_user_active_status(
-        username=user_status.username,
-        is_active=user_status.is_active,
-        db=db,
-    )
-    if result['success']:
-        logger.info(result['message'])
-        return {'message': 'User active status updated successfully.'}
-    logger.error(f"Set Active Status Error: {result['message']}")
-    raise HTTPException(
-        status_code=404 if result['error'] == 'NotFound' else 500,
-        detail='Failed to update active status.',
-    )
-
-
-# Model Management APIs
-class ModelFileUpdate(BaseModel):
-    """
-    Represents the data required to update a model file.
-    """
-    model: str
-    file: UploadFile
-
-    @classmethod
-    def as_form(
-        cls,
-        model: str = Form(...),
-        file: UploadFile = File(...),
-    ) -> ModelFileUpdate:
-        """
-        Enables the use of ModelFileUpdate as a FastAPI dependency
-        with form inputs.
-
-        Args:
-            model (str): The name of the model.
-            file (UploadFile): The file to upload.
-
-        Returns:
-            ModelFileUpdate: An instance of ModelFileUpdate populated
-            with the inputs.
-        """
-        return cls(model=model, file=file)
-
-
-@model_management_router.post('/api/model_file_update')
+@model_management_router.post('/model_file_update')
 async def model_file_update(
     data: ModelFileUpdate = Depends(ModelFileUpdate.as_form),
     credentials: JwtAuthorizationCredentials = Depends(jwt_access),
-) -> dict:
+) -> dict[str, str]:
     """
-    Endpoint to update a model file.
+    Upload and update a model file on the server.
 
     Args:
-        data (ModelFileUpdate): The data required to update the model file.
-        credentials (JwtAuthorizationCredentials): The JWT credentials
-        for authorisation.
+        data (ModelFileUpdate):
+            Contains the model identifier and the uploaded file.
+        credentials (JwtAuthorizationCredentials):
+            JWT credentials used to verify the user's role.
 
     Returns:
-        dict: A success message if the operation is successful.
+        dict[str, str]: A confirmation message on successful update.
+
+    Raises:
+        HTTPException: 403 if the user lacks the required role.
+        HTTPException: 400 if there is a validation error.
+        HTTPException: 500 if there is an I/O error.
     """
-    if credentials.subject['role'] not in ['admin', 'model_manage']:
+    role = credentials.subject.get('role', '')
+    if role not in ['admin', 'model_manage']:
         raise HTTPException(
             status_code=403,
-            detail=(
-                "Permission denied. Role must be 'admin' "
-                "or 'model_manage'."
-            ),
+            detail="Permission denied. Need 'admin' or 'model_manage' role.",
         )
 
+    # Prepare temporary path
+    temp_path = Path('/tmp/default_model_name')
+
     try:
-        # Ensure the filename is secure
+        # Obtain a secure filename
         filename = data.file.filename or 'default_model_name'
         secure_file_name = secure_filename(filename)
         temp_dir = Path('/tmp')
+        temp_dir.mkdir(parents=True, exist_ok=True)
         temp_path = temp_dir / secure_file_name
 
-        # Check if the path is within the intended directory
-        if not temp_path.resolve().parent == temp_dir:
-            logger.error(f"Invalid file path detected: {temp_path}")
-            raise HTTPException(status_code=400, detail='Invalid file path.')
-
-        # Write file to disk
+        # Write the uploaded file to a temporary location
         with temp_path.open('wb') as temp_file:
             temp_file.write(await data.file.read())
 
-        # Update the model file
+        # Update the actual model file
         await update_model_file(data.model, temp_path)
 
-        # Log and return success
         logger.info(f"Model {data.model} updated successfully.")
         return {'message': f'Model {data.model} updated successfully.'}
+
     except ValueError as e:
         logger.error(f"Model update validation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -456,48 +141,47 @@ async def model_file_update(
         logger.error(f"Model update I/O error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Clean up temporary file
+        # Remove the temporary file
         if temp_path.exists():
             temp_path.unlink()
 
 
-class UpdateModelRequest(BaseModel):
-    """
-    Represents the data required to retrieve a new model file.
-
-    Attributes:
-        model (str): The name of the model.
-        last_update_time (str): The last update time of the model file
-        in ISO format.
-    """
-    model: str
-    last_update_time: str
-
-
-@model_management_router.post('/api/get_new_model')
+@model_management_router.post('/get_new_model')
 async def get_new_model(
     update_request: UpdateModelRequest = Body(...),
-) -> dict:
+    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+) -> dict[str, str]:
     """
-    Endpoint to retrieve the new model file for a specific model.
+    Check for a newer model file on the server and return it if available.
 
     Args:
-        update_request (UpdateModelRequest): The request data containing
-        model name and last update time.
+        update_request (UpdateModelRequest):
+            Contains the model identifier and the user's last update time.
+        credentials (JwtAuthorizationCredentials):
+            JWT credentials to verify user roles.
 
     Returns:
-        dict: The new model file if available
-        or a message indicating no update.
+        dict[str, str]: A dictionary containing a status message and,
+            if updated, the base64-encoded model file.
+
+    Raises:
+        HTTPException: 403 if the user does not have permission.
+        HTTPException: 400 if there is a validation error.
+        HTTPException: 500 if retrieval fails for other reasons.
     """
+    role = credentials.subject.get('role', '')
+    if role in ['guest']:
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied. Need 'admin' or 'model_manage' role.",
+        )
+
     try:
-        # Extract data from the request
         model = update_request.model
         last_update_time = update_request.last_update_time
-
-        # Parse the last update time provided by the user
         user_last_update = datetime.datetime.fromisoformat(last_update_time)
 
-        # Check for a new model file
+        # Check if a newer model file is available
         model_file_content = await get_new_model_file(model, user_last_update)
         if model_file_content:
             logger.info(f"Newer model file for {model} retrieved.")
@@ -506,14 +190,15 @@ async def get_new_model(
                 'model_file': base64.b64encode(model_file_content).decode(),
             }
 
-        # No update required
         logger.info(f"No update required for model {model}.")
         return {'message': f"Model {model} is up to date."}
+
     except ValueError as e:
         logger.error(f"Validation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error retrieving model: {e}")
         raise HTTPException(
-            status_code=500, detail='Failed to retrieve model.',
+            status_code=500,
+            detail='Failed to retrieve model.',
         )

@@ -1,186 +1,190 @@
 
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
-# YOLO Server API with User and Models Management
+# YOLO Server API (Backend)
 
-This project provides a complete implementation of a YOLO Server API integrated with a User Management System and a Models Management System. The server facilitates object detection using the YOLO model while providing robust user and model management capabilities.
+This directory contains a FastAPI-based backend for performing object detection with YOLO models, along with optional model file management and integration points for user authentication/authorisation (via `examples.auth`).
 
----
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Features](#features)
+3. [Folder Structure](#folder-structure)
+4. [Setup & Installation](#setup--installation)
+5. [Running the Server](#running-the-server)
+6. [Endpoints](#endpoints)
+   - [Detection Endpoint](#detection-endpoint)
+   - [Model Management Endpoints](#model-management-endpoints)
+7. [Authentication & User Management Integration](#authentication--user-management-integration)
+   - [Token Retrieval & Refresh](#token-retrieval--refresh)
+8. [Additional Notes](#additional-notes)
+
+## Overview
+
+This backend provides:
+
+- **Object Detection** using YOLO models (see [`detection.py`](./detection.py)).
+- **Model Management** for uploading and updating YOLO `.pt` files at runtime (see [`model_files.py`](./model_files.py) and [`models.py`](./models.py)).
+- **FastAPI Routers** for cleanly organised endpoints (see [`routers.py`](./routers.py)).
+- References external modules in `examples.auth` for:
+  - **JWT-based authentication**
+  - **Role-based authorisation**
+  - **Custom rate limiting**
 
 ## Features
 
-### YOLO Server API
-- **Object Detection**: Perform object detection on uploaded images using YOLO models.
-- **Caching**: Improve performance by caching detection results.
-- **Error Handling**: Robust error handling for seamless user experience.
-- **Authentication**: Secures the API with role-based JWT authentication.
+- **Multiple YOLO Models**: Dynamically manage different YOLO model weights (`yolo11n`, `yolo11s`, etc.).
+- **Watchdog Monitoring**: Automatic model reloading if a `.pt` file is modified on disk.
+- **Async Detection Pipeline**: Efficient handling of uploaded images and detection results.
+- **Selective Overlap Removal**: Post-processing to remove overlapping or contained bounding boxes.
 
-### User Management System
-- **User Creation**: Add new user accounts with assigned roles.
-- **User Deletion**: Remove users from the system.
-- **User Updates**: Update user credentials like usernames and passwords.
-- **Active Status Management**: Enable or disable user accounts.
-- **Role Management**: Supports role-based permissions (`admin`, `model_manage`, `user`, `guest`).
+## Folder Structure
 
-### Models Management System
-- **Model Uploads**: Upload and update YOLO models dynamically.
-- **Model Retrieval**: Retrieve the latest version of a YOLO model.
-- **Versioning**: Track model updates with timestamp comparisons.
-- **Validation**: Ensure uploaded models meet system requirements.
-
----
-
-## Quick Start
-
-### 1. Install Dependencies
-Ensure you have Python installed, and then install the required dependencies:
-```sh
-pip install -r requirements.txt
+```
+examples/YOLO_server_api/backend/
+├── app.py            # Main FastAPI application
+├── detection.py      # Core detection logic (processing images, bounding box filtering)
+├── model_files.py    # Logic for updating/retrieving .pt model files
+├── models.py         # DetectionModelManager & Watchdog-based auto-reload
+├── routers.py        # FastAPI routers for detection & model management
+└── README.md         # You're here
 ```
 
-### 2. Configure the Application
-Update the configuration in `config.py` or `.env`:
-- Set the database connection URI (e.g., SQLite or PostgreSQL).
-- Configure the JWT secret key and other environment variables.
+## Setup & Installation
 
-### 3. Run the Server
-You can start the server with:
-```sh
-uvicorn examples.YOLO_server_api.backend.app:sio_app --host 127.0.0.1 --port 8000
-```
+1. **Install Dependencies**
+   Make sure you have installed all requirements (including `fastapi`, `uvicorn`, `watchdog`, `sahi`, and YOLO dependencies). If you are using the larger repository’s `requirements.txt`, ensure you have:
 
-### 4. Send Requests
-Use tools like `curl`, Postman, or your browser to interact with the API.
+   ```bash
+   pip install -r requirements.txt
+   ```
 
----
+2. **Model Files**
+   - By default, `.pt` files are expected in `models/pt/` (relative to the current working directory).
+   - The [`DetectionModelManager`](./models.py) will watch for changes in this directory.
 
-## Endpoints Overview
+3. **Optional**: Configure environment variables or `.env` if you use them (for Redis, database, or JWT secret—handled by `examples.auth`, not this folder).
 
-### YOLO Server API Endpoints
+## Running the Server
 
-- **`POST /api/detect`**: Perform object detection on an uploaded image.
-  - **Parameters**:
-    - `file` (image): The image file for detection.
-    - `model` (str): The YOLO model to use (default: `yolo11n`).
-  - **Example**:
-    ```sh
-    curl -X POST -F "file=@path/to/image.jpg" -F "model=yolo11n" http://localhost:8000/detect
-    ```
+1. **Navigate** to the repository root or a suitable project directory.
+2. **Start** the application:
 
----
+   ```bash
+   python examples/YOLO_server_api/backend/app.py
+   ```
+   or
+   ```bash
+   uvicorn examples.YOLO_server_api.backend.app:app --host 127.0.0.1 --port 8000
+   ```
 
-### User Management Endpoints
+3. **Check** that the server is running on <http://127.0.0.1:8000>.
 
-- **`POST /api/add_user`**: Add a new user.
-  - **Parameters**:
-    - `username` (str): The username.
-    - `password` (str): The password.
-    - `role` (str): Role (`admin`, `model_manage`, `user`, `guest`).
-  - **Example**:
-    ```sh
-    curl -X POST -H "Content-Type: application/json" \
-         -d '{"username":"admin","password":"securepassword","role":"admin"}' \
-         http://localhost:8000/add_user
-    ```
+## Endpoints
 
-- **`DELETE /api/delete_user/<username>`**: Delete a user.
-  - **Parameters**:
-    - `username` (str): The username to delete.
-  - **Example**:
-    ```sh
-    curl -X DELETE http://localhost:8000/delete_user/admin
-    ```
+All main endpoints are defined in [`routers.py`](./routers.py). Below are a few highlights:
 
-- **`PUT /api/update_username`**: Update a user's username.
-  - **Parameters**:
-    - `old_username` (str): Existing username.
-    - `new_username` (str): New username.
-  - **Example**:
-    ```sh
-    curl -X PUT -H "Content-Type: application/json" \
-         -d '{"old_username":"admin","new_username":"superadmin"}' \
-         http://localhost:8000/update_username
-    ```
+### Detection Endpoint
 
-- **`PUT /api/update_password`**: Update a user's password.
-  - **Parameters**:
-    - `username` (str): The username.
-    - `new_password` (str): The new password.
-  - **Example**:
-    ```sh
-    curl -X PUT -H "Content-Type: application/json" \
-         -d '{"username":"admin","new_password":"newsecurepassword"}' \
-         http://localhost:8000/update_password
-    ```
+- **`POST /detect`**
+  Upload an image for YOLO-based object detection.
 
-- **`PUT /api/set_user_active_status`**: Set a user's active status.
-  - **Parameters**:
-    - `username` (str): The username.
-    - `is_active` (bool): Active status (`true` or `false`).
-  - **Example**:
-    ```sh
-    curl -X PUT -H "Content-Type: application/json" \
-         -d '{"username":"admin","is_active":false}' \
-         http://localhost:8000/set_user_active_status
-    ```
+  **Example cURL**:
+  ```bash
+  curl -X POST "http://127.0.0.1:8000/detect" \
+       -H "Authorization: Bearer <ACCESS_TOKEN>" \
+       -F "image=@/path/to/image.jpg" \
+       -F "model=yolo11n"
+  ```
+  **Response**: A JSON array of bounding-box data, each item is `[x1, y1, x2, y2, confidence, label_id]`.
 
----
+### Model Management Endpoints
 
-### Models Management Endpoints
+- **`POST /model_file_update`**
+  Upload a new `.pt` file to replace a specific YOLO model.
 
-- **`POST /api/model_file_update`**: Update a YOLO model file.
-  - **Parameters**:
-    - `model` (str): Model name.
-    - `file` (file): Model file to upload.
-  - **Example**:
-    ```sh
-    curl -X POST -F "model=yolo11n" -F "file=@path/to/model.pt" http://localhost:8000/model_file_update
-    ```
+  **Example cURL**:
+  ```bash
+  curl -X POST "http://127.0.0.1:8000/model_file_update" \
+       -H "Authorization: Bearer <ACCESS_TOKEN_WITH_ADMIN_OR_MODEL_MANAGE_ROLE>" \
+       -F "model=yolo11n" \
+       -F "file=@/path/to/new_best_yolo11n.pt"
+  ```
 
-- **`POST /api/get_new_model`**: Retrieve an updated YOLO model file if available.
-  - **Parameters**:
-    - `model` (str): Model name.
-    - `last_update_time` (ISO 8601 string): Last update time.
-  - **Example**:
-    ```sh
-    curl -X POST -H "Content-Type: application/json" \
-         -d '{"model":"yolo11n", "last_update_time":"2023-01-01T00:00:00"}' \
-         http://localhost:8000/get_new_model
-    ```
+- **`POST /get_new_model`**
+  Retrieve a model file (Base64-encoded) if it’s updated after a specified timestamp.
 
----
+  **Example cURL**:
+  ```bash
+  curl -X POST "http://127.0.0.1:8000/get_new_model" \
+       -H "Content-Type: application/json" \
+       -d '{
+            "model": "yolo11n",
+            "last_update_time": "2025-01-01T00:00:00"
+           }'
+  ```
 
-## Configuration Options
+## Authentication & User Management Integration
 
-### YOLO Server Settings
-Defined in `config.py`:
-- `MODEL_PATH`: Path to YOLO model files.
-- `CONFIDENCE_THRESHOLD`: Minimum confidence for detection results.
-- `CACHE_ENABLED`: Enable/disable caching of detection results.
-- `AUTH_ENABLED`: Enable/disable JWT authentication.
+- **Authentication**: This backend references `examples.auth.jwt_config.jwt_access` for JWT verification.
+- **Role-based checks**: Some endpoints (e.g., model uploads) require `admin` or `model_manage` roles, enforced via `examples.auth.jwt_config` and FastAPI dependencies.
+- **Rate limiting**: The detection endpoint uses `custom_rate_limiter` from `examples.auth.cache`.
 
-### Database Configuration
-Set the `SQLALCHEMY_DATABASE_URI` in `app.py` to match your database:
-```python
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///your_database.db'
-```
+If you wish to disable authentication or rate limiting, you can remove those dependencies from `routers.py` or replace them with your own logic.
 
----
+### Token Retrieval & Refresh
 
-## File Structure
+1. **Login**: To obtain your `ACCESS_TOKEN` and `REFRESH_TOKEN`, send a `POST` request to:
+   ```
+   POST http://127.0.0.1:8000/login
+   ```
+   **Request Body** (JSON):
+   ```json
+   {
+     "username": "your_username",
+     "password": "your_password"
+   }
+   ```
+   **Response** (example):
+   ```json
+   {
+     "access_token": "<JWT_ACCESS_TOKEN>",
+     "refresh_token": "<JWT_REFRESH_TOKEN>",
+     "role": "user",
+     "username": "your_username",
+     "user_id": 1
+   }
+   ```
 
-- **`app.py`**: Main server application.
-- **`routers.py`**: Defines endpoints for YOLO Server, User Management, and Model Management.
-- **`auth.py`**: Handles JWT-based authentication.
-- **`cache.py`**: Implements caching for improved performance.
-- **`detection.py`**: Performs object detection with YOLO models.
-- **`user_operation.py`**: Handles user management operations.
-- **`model_files.py`**: Handles model file updates and retrievals.
-- **`config.py`**: Central configuration file for the application.
+2. **Use the Access Token**: For subsequent requests (e.g., `/detect`), include:
+   ```
+   Authorization: Bearer <ACCESS_TOKEN>
+   ```
+   in the request header.
 
----
+3. **Refresh Token**: If your `ACCESS_TOKEN` expires, send a `POST` request to:
+   ```
+   POST http://127.0.0.1:8000/refresh
+   ```
+   **Request Body** (JSON):
+   ```json
+   {
+     "refresh_token": "<YOUR_REFRESH_TOKEN>"
+   }
+   ```
+   **Response** (example):
+   ```json
+   {
+     "access_token": "<NEW_JWT_ACCESS_TOKEN>",
+     "refresh_token": "<NEW_JWT_REFRESH_TOKEN>",
+     "message": "Token refreshed successfully."
+   }
+   ```
+   Use the new `ACCESS_TOKEN` in your `Authorization` header and (optionally) replace the old `REFRESH_TOKEN` locally if you wish.
 
-## Notes
+## Additional Notes
 
-- **Security**: Ensure that sensitive credentials (e.g., JWT secret, database passwords) are securely stored using environment variables.
-- **Testing**: Use unit tests provided in `tests/` to validate your implementation.
+- **Model Reloading**: [`DetectionModelManager`](./models.py) uses Watchdog to watch `.pt` files. When a file changes (e.g., replaced with a new version), the corresponding model is automatically reloaded in memory.
+- **Bounding Box Filtering**: [`detection.py`](./detection.py) demonstrates removing overlapping or fully contained bounding boxes for categories like `hardhat` vs. `no_hardhat`.
+- **Performance**: For high-throughput scenarios, consider optimising concurrency settings and GPU usage. The code uses `device='cuda:0'` by default if available.
+- **Deployment**: You can deploy via Docker, behind an Nginx reverse proxy, or any standard ASGI hosting environment. Make sure to handle volumes for the `models/pt/` directory if you rely on file-based updates.

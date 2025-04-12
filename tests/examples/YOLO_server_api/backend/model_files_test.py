@@ -18,7 +18,7 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         """
-        Set up variables for testing.
+        Set up common variables for testing.
         """
         self.valid_model = 'yolo11n'
         self.invalid_model = 'yolo_invalid'
@@ -39,12 +39,22 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """
         Test updating a valid model file with virtual files.
+
+        Args:
+            mock_suffix (MagicMock):
+                Mock for the file suffix check.
+            mock_is_file (MagicMock):
+                Mock for checking if the file exists.
+            mock_rename (MagicMock):
+                Mock for renaming the file.
+            mock_torch_jit_load (MagicMock):
+                Mock for loading the PyTorch model.
         """
         mock_torch_jit_load.return_value = True
 
         await update_model_file(self.valid_model, self.model_file)
-        mock_torch_jit_load.assert_called_once_with(str(self.model_file))
 
+        mock_torch_jit_load.assert_called_once_with(str(self.model_file))
         expected_destination_path = self.destination_path.resolve()
         mock_rename.assert_called_once_with(expected_destination_path)
 
@@ -79,6 +89,14 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """
         Test updating with an invalid `.pt` file.
+
+        Args:
+            mock_suffix (MagicMock):
+                Mock for the file suffix check.
+            mock_is_file (MagicMock):
+                Mock for checking if the file exists.
+            mock_torch_load (MagicMock):
+                Mock for loading the PyTorch model.
         """
         with self.assertRaises(ValueError) as context:
             await update_model_file(self.valid_model, self.model_file)
@@ -86,10 +104,15 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
 
     @patch('pathlib.Path.is_file', return_value=False)
     async def test_get_new_model_file_no_file(
-        self, mock_is_file: MagicMock,
+        self,
+        mock_is_file: MagicMock,
     ) -> None:
         """
-        Test retrieving a model file when it doesn't exist.
+        Test retrieving a model file when it does not exist.
+
+        Args:
+            mock_is_file (MagicMock):
+                Mock for checking if the file exists.
         """
         result = await get_new_model_file(self.valid_model, self.updated_time)
         self.assertIsNone(result)
@@ -109,23 +132,40 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """
         Test retrieving an updated model file.
+
+        Args:
+            mock_open (MagicMock):
+                Mock for opening the file.
+            mock_is_file (MagicMock):
+                Mock for checking if the file exists.
+            mock_stat (MagicMock):
+                Mock for getting file status.
         """
         mock_stat.return_value.st_mtime = (
             self.updated_time + datetime.timedelta(days=1)
         ).timestamp()
 
         result = await get_new_model_file(self.valid_model, self.updated_time)
+
         self.assertIsInstance(result, bytes)
         self.assertEqual(result, b'model_data')
-        mock_open.assert_called_once_with('rb')  # 修正呼叫模式
+        mock_open.assert_called_once_with('rb')
 
     @patch('pathlib.Path.stat')
     @patch('pathlib.Path.is_file', return_value=True)
     async def test_get_new_model_file_not_updated(
-        self, mock_is_file: MagicMock, mock_stat: MagicMock,
+        self,
+        mock_is_file: MagicMock,
+        mock_stat: MagicMock,
     ) -> None:
         """
         Test retrieving a model file that has not been updated.
+
+        Args:
+            mock_is_file (MagicMock):
+                Mock for checking if the file exists.
+            mock_stat (MagicMock):
+                Mock for getting file status.
         """
         mock_stat.return_value.st_mtime = self.updated_time.timestamp()
 
@@ -138,15 +178,66 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
     )
     @patch('pathlib.Path.is_file', return_value=True)
     async def test_get_new_model_file_read_error(
-        self, mock_is_file: MagicMock, mock_open: MagicMock,
+        self,
+        mock_is_file: MagicMock,
+        mock_open: MagicMock,
     ) -> None:
         """
         Test error while reading the model file.
+
+        Args:
+            mock_is_file (MagicMock):
+                Mock for checking if the file exists.
+            mock_open (MagicMock):
+                Mock for opening the file.
         """
         with self.assertRaises(OSError) as context:
             await get_new_model_file(self.valid_model, self.updated_time)
         self.assertIn('No such file or directory', str(context.exception))
 
+    @patch('pathlib.Path.is_file', return_value=True)
+    @patch('pathlib.Path.suffix', new_callable=MagicMock(return_value='.pt'))
+    @patch('torch.jit.load', return_value=True)
+    @patch('pathlib.Path.rename', side_effect=OSError('Cannot rename file'))
+    async def test_update_model_file_rename_oserror(
+        self,
+        mock_rename: MagicMock,
+        mock_torch_jit_load: MagicMock,
+        mock_suffix: MagicMock,
+        mock_is_file: MagicMock,
+    ) -> None:
+        """
+        Test rename operation raising OSError.
+
+        Args:
+            mock_rename (MagicMock):
+                Mock for renaming the file.
+            mock_torch_jit_load (MagicMock):
+                Mock for loading the PyTorch model.
+            mock_suffix (MagicMock):
+                Mock for the file suffix check.
+            mock_is_file (MagicMock):
+                Mock for checking if the file exists.
+        """
+        with self.assertRaises(OSError) as context:
+            await update_model_file(self.valid_model, self.model_file)
+        self.assertIn('Failed to update model file', str(context.exception))
+
+    async def test_get_new_model_file_invalid_model(self) -> None:
+        """
+        Test invalid model key when retrieving new model file.
+        """
+        with self.assertRaises(ValueError) as context:
+            await get_new_model_file(self.invalid_model, self.updated_time)
+        self.assertIn('Invalid model key', str(context.exception))
+
 
 if __name__ == '__main__':
     unittest.main()
+
+'''
+pytest \
+    --cov=examples.YOLO_server_api.backend.model_files \
+    --cov-report=term-missing \
+    tests/examples/YOLO_server_api/backend/model_files_test.py
+'''
