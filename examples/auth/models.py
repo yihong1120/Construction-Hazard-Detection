@@ -12,6 +12,8 @@ from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import Table
 from sqlalchemy import Text
+from sqlalchemy import text
+from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
@@ -19,6 +21,155 @@ from werkzeug.security import check_password_hash
 from werkzeug.security import generate_password_hash
 
 from examples.auth.database import Base
+
+# -------------------------------------------------------
+#  Feature Model
+# -------------------------------------------------------
+
+
+class Feature(Base):
+    """
+    Represents a feature in the system, such as safety detection
+    capabilities. This model is linked to the Group model
+    through a many-to-many relationship.
+
+    Attributes:
+        id (int): Primary key.
+        feature_name (str): Unique name of the feature.
+        description (str | None): Description of the feature.
+        created_at (datetime): Timestamp of creation.
+        updated_at (datetime): Timestamp of last update.
+        groups (list[Group]): Groups that have access to this feature.
+
+    Methods:
+        __repr__(): String representation of the Feature object.
+    """
+
+    __tablename__ = 'features'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    feature_name: Mapped[str] = mapped_column(
+        String(50), unique=True, nullable=False,
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=text('CURRENT_TIMESTAMP'),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=text(
+            'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
+        ),
+    )
+
+    # Many-to-many relationship to Group
+    # related to this feature
+    groups: Mapped[list[Group]] = relationship(
+        'Group',
+        secondary='group_features',
+        back_populates='features',
+        lazy='joined',
+    )
+
+    def __repr__(self) -> str:
+        return f"<Feature id={self.id} name={self.feature_name}>"
+
+
+# -------------------------------------------------------
+#  group_features
+# -------------------------------------------------------
+group_features_table: Table = Table(
+    'group_features',
+    Base.metadata,
+    Column(
+        'group_id', ForeignKey(
+            'group_info.id',
+            ondelete='CASCADE',
+        ), primary_key=True,
+    ),
+    Column(
+        'feature_id', ForeignKey(
+            'features.id',
+            ondelete='CASCADE',
+        ), primary_key=True,
+    ),
+    Column('created_at', DateTime, server_default=text('CURRENT_TIMESTAMP')),
+)
+
+# -------------------------------------------------------
+#  Group Model
+# -------------------------------------------------------
+
+
+class Group(Base):
+    """
+    Represents a group of users, including their access
+    permissions and associated construction sites.
+
+    Attributes:
+        id (int): Primary key.
+        name (str): Name of the group.
+        uniform_number (str): Unique identifier for the group.
+        max_allowed_streams (int): Maximum number of streams allowed.
+        created_at (datetime): Timestamp of creation.
+        updated_at (datetime): Timestamp of last update.
+        sites (list[Site]): Sites associated with this group.
+        users (list[User]): Users belonging to this group.
+        features (list[Feature]): Features available to this group.
+
+    Methods:
+        __repr__(): String representation of the Group object.
+    """
+
+    __tablename__ = 'group_info'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    uniform_number: Mapped[str] = mapped_column(
+        String(8), unique=True, nullable=False, comment='統一編號',
+    )
+
+    max_allowed_streams: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=8,
+    )
+
+    sites: Mapped[list[Site]] = relationship(
+        'Site',
+        back_populates='group',
+        lazy='joined',
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=text('CURRENT_TIMESTAMP'),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=text(
+            'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
+        ),
+    )
+
+    # One-to-many relationship to User
+    users: Mapped[list[User]] = relationship(
+        'User',
+        back_populates='group',
+    )
+
+    # Many-to-many relationship to Feature
+    features: Mapped[list[Feature]] = relationship(
+        'Feature',
+        secondary=group_features_table,
+        back_populates='groups',
+        lazy='joined',
+    )
+
+    stream_configs: Mapped[list[StreamConfig]] = relationship(
+        'StreamConfig', back_populates='group', cascade='all, delete-orphan',
+    )
+
+    def __repr__(self) -> str:
+        return f"<Group id={self.id} name={self.name}>"
+
 
 # -------------------------------------------------------
 #  Association Table: Many-to-Many Relationship between User and Site
@@ -74,7 +225,22 @@ class User(Base):
         onupdate=datetime.now(timezone.utc),
     )
 
-    # Many-to-many: User <-> Sites
+    # group_info.id
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey('group_info.id', ondelete='SET NULL'),
+        nullable=True,
+    )
+
+    # One-to-many relationship to Group
+    # This is a foreign key to the group_info table
+    group: Mapped[Group | None] = relationship(
+        'Group',
+        back_populates='users',
+        lazy='joined',
+    )
+
+    # Many-to-many relationship to Site
+    # This is an association table linking users to sites
     sites: Mapped[list[Site]] = relationship(
         'Site', secondary=user_sites_table, back_populates='users',
     )
@@ -145,6 +311,16 @@ class Site(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
 
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey('group_info.id', ondelete='SET NULL'),
+        nullable=True,
+    )
+    group: Mapped[Group | None] = relationship(
+        'Group',
+        back_populates='sites',
+        lazy='joined',
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.now(timezone.utc),
     )
@@ -155,16 +331,118 @@ class Site(Base):
         onupdate=datetime.now(timezone.utc),
     )
 
-    # Many-to-many: Site <-> Users
+    # Many-to-many relationship to User
+    # This is an association table linking users to sites
     users: Mapped[list[User]] = relationship(
         'User', secondary=user_sites_table, back_populates='sites',
     )
 
-    # One-to-many: Site -> Violations (linked by site name)
+    # One-to-many relationship to Violation
+    # This is a foreign key to the violations table
     violations: Mapped[list[Violation]] = relationship(
         'Violation',
         primaryjoin='Site.name == foreign(Violation.site)',
         back_populates='site_obj',
+    )
+
+    stream_configs: Mapped[list[StreamConfig]] = relationship(
+        'StreamConfig', back_populates='site', cascade='all, delete-orphan',
+    )
+
+
+# -------------------------------------------------------
+#  StreamConfig
+# -------------------------------------------------------
+class StreamConfig(Base):
+    """
+    Represents the configuration for a video stream, including
+    detection capabilities and scheduling.
+
+    Attributes:
+        id (int): Primary key.
+        group_id (int): Foreign key to the group_info table.
+        site_id (int): Foreign key to the sites table.
+        stream_name (str): Name of the video stream.
+        video_url (str): URL of the video stream.
+        model_key (str): Key for the detection model.
+        detect_no_safety_vest_or_helmet (bool): Detection capability.
+        detect_near_machinery_or_vehicle (bool): Detection capability.
+        detect_in_restricted_area (bool): Detection capability.
+        detect_in_utility_pole_restricted_area (bool): Detection capability.
+        detect_machinery_close_to_pole (bool): Detection capability.
+        detect_with_server (bool): Whether to use server-side detection.
+        expire_date (datetime | None): Expiration date for the configuration.
+        work_start_hour (int): Start hour for work scheduling.
+        work_end_hour (int): End hour for work scheduling.
+        store_in_redis (bool): Whether to store data in Redis.
+        created_at (datetime): Timestamp of creation.
+        updated_at (datetime): Timestamp of last update.
+    """
+    __tablename__ = 'stream_configs'
+
+    id:          Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True,
+    )
+    group_id:    Mapped[int] = mapped_column(
+        ForeignKey('group_info.id', ondelete='CASCADE'), nullable=False,
+    )
+    site_id:     Mapped[int] = mapped_column(
+        ForeignKey('sites.id', ondelete='CASCADE'), nullable=False,
+    )
+
+    stream_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    video_url:   Mapped[str] = mapped_column(String(255), nullable=False)
+    model_key:   Mapped[str] = mapped_column(String(80), nullable=False)
+
+    # Detection capabilities
+    # These fields are used to determine the types of violations
+    detect_no_safety_vest_or_helmet:        Mapped[bool] = mapped_column(
+        Boolean, default=False,
+    )
+    detect_near_machinery_or_vehicle:       Mapped[bool] = mapped_column(
+        Boolean, default=False,
+    )
+    detect_in_restricted_area:              Mapped[bool] = mapped_column(
+        Boolean, default=False,
+    )
+    detect_in_utility_pole_restricted_area: Mapped[bool] = mapped_column(
+        Boolean, default=False,
+    )
+    detect_machinery_close_to_pole:         Mapped[bool] = mapped_column(
+        Boolean, default=False,
+    )
+
+    detect_with_server: Mapped[bool] = mapped_column(Boolean, default=True)
+    expire_date:        Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True,
+    )
+
+    work_start_hour: Mapped[int] = mapped_column(Integer)
+    work_end_hour:   Mapped[int] = mapped_column(Integer)
+
+    store_in_redis: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=text('CURRENT_TIMESTAMP'),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=text(
+            'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
+        ),
+    )
+
+    # Foreign key to the group_info table
+    group: Mapped[Group] = relationship(
+        'Group', back_populates='stream_configs',
+    )
+    site:  Mapped[Site] = relationship(
+        'Site',  back_populates='stream_configs',
+    )
+
+    __table_args__ = (
+        # Ensure that the combination of site_id and stream_name is unique
+        # across the table to prevent duplicate stream configurations
+        UniqueConstraint('site_id', 'stream_name', name='uq_site_stream'),
     )
 
 
