@@ -41,7 +41,7 @@ sqlalchemy[asyncio]==2.0.41
 streamlink==7.3.0
 streamlit==1.45.1
 tenacity==9.1.2
-torch==2.7.0
+torch==2.7.1
 torchvision==0.22.0
 twilio==9.6.1
 ultralytics==8.3.138
