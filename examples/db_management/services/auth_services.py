@@ -174,6 +174,7 @@ async def login_user(
     access_token = jwt_access.create_access_token(
         subject={
             'username': user.username,
+            'user_id': user.id,
             'role': user.role,
             'jti': new_jti,
             'features': feature_names,
@@ -282,6 +283,7 @@ async def refresh_tokens(
     access_token = jwt_access.create_access_token(
         subject={
             'username': username,
+            'user_id': cache['db_user']['id'],
             'role': cache['db_user']['role'],
             'jti': new_jti,
             'features': cache.get('feature_names', []),

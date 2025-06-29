@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from examples.auth.models import User
+from examples.auth.models import UserProfile
 
 
 async def create_user(
@@ -14,6 +17,7 @@ async def create_user(
     role: str,
     group_id: int | None,
     db: AsyncSession,
+    profile: dict[str, Any] | None = None,
 ) -> User:
     """Create a new user in the database.
 
@@ -31,30 +35,38 @@ async def create_user(
         HTTPException: If the username already exists
             or a database error occurs.
     """
-    # Initialise new user with provided details
-    new_user = User(
-        username=username,
-        role=role,
-        group_id=group_id,
-        is_active=True,
-    )
-    new_user.set_password(password)  # Securely hash and store user's password
-    db.add(new_user)  # Add user to the current database session
-
     try:
-        await db.commit()  # Commit transaction to database
-        await db.refresh(new_user)  # Refresh instance to load generated fields
+        new_user = User(
+            username=username,
+            role=role,
+            group_id=group_id,
+            is_active=True,
+        )
+        new_user.set_password(password)
+        db.add(new_user)
+
+        # ＜重點①＞先 flush 取得 new_user.id（還沒 commit）
+        await db.flush()
+
+        # ＜重點②＞如有 profile → 帶 user_id
+        if profile:
+            prof = UserProfile(user_id=new_user.id, **profile)
+            db.add(prof)
+
+        # 一次 commit
+        await db.commit()
+
+        # 刷最新狀態，含 profile
+        await db.refresh(new_user, attribute_names=['profile', 'group'])
         return new_user
-    except IntegrityError:
-        await db.rollback()  # Rollback transaction if username already exists
-        raise HTTPException(
-            status_code=400, detail='Username already exists.',
-        )
+
+    except IntegrityError as e:
+        await db.rollback()
+        # username / email duplicate … 都可能在這炸出
+        raise HTTPException(400, 'Username or e-mail already exists.') from e
     except Exception as e:
-        await db.rollback()  # Rollback on unexpected errors
-        raise HTTPException(
-            status_code=500, detail=f'Database error: {e}',
-        )
+        await db.rollback()
+        raise HTTPException(500, f"Database error: {e}") from e
 
 
 async def list_users(db: AsyncSession) -> list[User]:
@@ -198,3 +210,37 @@ async def set_active_status(
         raise HTTPException(
             status_code=500, detail=f'Database error: {e}',
         )
+
+
+async def create_or_update_profile(
+    user: User,
+    data: dict[str, Any],
+    db:   AsyncSession,
+    create_if_missing: bool = False,
+) -> None:
+    """
+    若 user.profile 不存在且 create_if_missing==True → 建新檔，
+    否則僅更新有傳入的欄位。
+    """
+    profile = user.profile
+    if not profile:
+        if not create_if_missing:
+            raise HTTPException(404, 'Profile not found.')
+        profile = UserProfile(user_id=user.id)
+        db.add(profile)
+
+    for key, val in data.items():
+        if val is not None and hasattr(profile, key):
+            setattr(profile, key, val)
+
+    try:
+        await db.commit()
+        await db.refresh(user, attribute_names=['profile'])
+    except IntegrityError:
+        await db.rollback()
+        # email / mobile 皆設 UNIQUE → 捕捉重覆
+        msg = 'Duplicate email or mobile number.'
+        raise HTTPException(400, msg)
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(500, f'Database error: {e}')

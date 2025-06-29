@@ -35,6 +35,6 @@ class SiteRead(BaseModel):
 
     id: int
     name: str
-    group_id: int
+    group_id: int | None = None
     group_name: str | None = None
     user_ids: list[int]

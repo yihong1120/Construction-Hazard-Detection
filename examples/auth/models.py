@@ -57,9 +57,10 @@ class Feature(Base):
         DateTime, server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text(
-            'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
-        ),
+        DateTime,
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc),
+        nullable=False,
     )
 
     # Many-to-many relationship to Group
@@ -144,9 +145,10 @@ class Group(Base):
         DateTime, server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text(
-            'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
-        ),
+        DateTime,
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc),
+        nullable=False,
     )
 
     # One-to-many relationship to User
@@ -185,6 +187,36 @@ user_sites_table: Table = Table(
 # -------------------------------------------------------
 #  User Model
 # -------------------------------------------------------
+class UserProfile(Base):
+    __tablename__ = 'user_profiles'
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey('users.id', ondelete='CASCADE'), primary_key=True,
+    )
+    family_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    middle_name: Mapped[str | None] = mapped_column(String(50))
+    given_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    email: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False,
+    )
+    mobile_number: Mapped[str | None] = mapped_column(String(20), unique=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=text('CURRENT_TIMESTAMP'),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    # 一對一
+    user: Mapped[User] = relationship(
+        'User', back_populates='profile', uselist=False,
+    )
+
+
 class User(Base):
     """
     Represents a user in the system, including login credentials,
@@ -243,6 +275,15 @@ class User(Base):
     # This is an association table linking users to sites
     sites: Mapped[list[Site]] = relationship(
         'Site', secondary=user_sites_table, back_populates='users',
+    )
+
+    profile: Mapped[UserProfile] = relationship(
+        'UserProfile',
+        back_populates='user',
+        uselist=False,
+        lazy='selectin',
+        cascade='all, delete-orphan',
+        passive_deletes=True,
     )
 
     def set_password(self, password: str) -> None:
@@ -426,9 +467,10 @@ class StreamConfig(Base):
         DateTime, server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text(
-            'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
-        ),
+        DateTime,
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc),
+        nullable=False,
     )
 
     # Foreign key to the group_info table

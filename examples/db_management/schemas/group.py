@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel
+from pydantic import ConfigDict
 
 
 class GroupCreate(BaseModel):
@@ -30,9 +31,7 @@ class GroupRead(BaseModel):
     id: int
     name: str
     uniform_number: str
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class GroupFeatureRead(BaseModel):

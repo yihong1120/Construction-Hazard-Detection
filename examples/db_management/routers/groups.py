@@ -13,10 +13,10 @@ from examples.db_management.schemas.group import GroupCreate
 from examples.db_management.schemas.group import GroupDelete
 from examples.db_management.schemas.group import GroupRead
 from examples.db_management.schemas.group import GroupUpdate
-from examples.db_management.services.group_service import create_group
-from examples.db_management.services.group_service import delete_group
-from examples.db_management.services.group_service import list_groups
-from examples.db_management.services.group_service import update_group
+from examples.db_management.services.group_services import create_group
+from examples.db_management.services.group_services import delete_group
+from examples.db_management.services.group_services import list_groups
+from examples.db_management.services.group_services import update_group
 
 router = APIRouter(tags=['group-mgmt'])
 

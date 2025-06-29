@@ -12,9 +12,9 @@ from examples.db_management.schemas.auth import LogoutRequest
 from examples.db_management.schemas.auth import RefreshRequest
 from examples.db_management.schemas.auth import TokenPair
 from examples.db_management.schemas.auth import UserLogin
-from examples.db_management.services.auth_service import login_user
-from examples.db_management.services.auth_service import logout_user
-from examples.db_management.services.auth_service import refresh_tokens
+from examples.db_management.services.auth_services import login_user
+from examples.db_management.services.auth_services import logout_user
+from examples.db_management.services.auth_services import refresh_tokens
 
 router = APIRouter(tags=['auth'])
 

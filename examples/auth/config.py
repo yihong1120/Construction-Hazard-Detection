@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     )
     sqlalchemy_track_modifications: bool = False
 
+    ALGORITHM: str = 'HS256'
+
     def __init__(self) -> None:
         """
         Construct the Settings object.

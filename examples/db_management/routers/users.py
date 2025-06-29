@@ -25,13 +25,17 @@ from examples.db_management.schemas.user import UpdateUsername
 from examples.db_management.schemas.user import UpdateUsernameById
 from examples.db_management.schemas.user import UpdateUserRole
 from examples.db_management.schemas.user import UserCreate
+from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
-from examples.db_management.services.user_service import create_user
-from examples.db_management.services.user_service import delete_user
-from examples.db_management.services.user_service import get_user_by_id
-from examples.db_management.services.user_service import set_active_status
-from examples.db_management.services.user_service import update_password
-from examples.db_management.services.user_service import update_username
+from examples.db_management.services.user_services import (
+    create_or_update_profile,
+)
+from examples.db_management.services.user_services import create_user
+from examples.db_management.services.user_services import delete_user
+from examples.db_management.services.user_services import get_user_by_id
+from examples.db_management.services.user_services import set_active_status
+from examples.db_management.services.user_services import update_password
+from examples.db_management.services.user_services import update_username
 
 router = APIRouter(tags=['user-mgmt'])
 
@@ -44,7 +48,7 @@ router = APIRouter(tags=['user-mgmt'])
 async def add_user(
     payload: UserCreate,
     db: AsyncSession = Depends(get_db),
-    me: User = Depends(get_current_user),
+    me: UserRead = Depends(get_current_user),
 ) -> UserRead:
     """Create a new user.
 
@@ -56,24 +60,32 @@ async def add_user(
     Returns:
         Newly created user's details.
     """
-    user = await create_user(
+    new_user = await create_user(
         username=payload.username,
         password=payload.password,
         role=payload.role,
         group_id=payload.group_id or me.group_id,
         db=db,
+        profile=payload.profile.model_dump() if payload.profile else None,
     )
-    return UserRead.from_orm(user)
+    # 重新查一次，把 group + profile 完整帶出
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.group),
+            selectinload(User.profile),
+        )
+        .where(User.id == new_user.id),
+    )
+    user_full = result.scalar_one()
+    return UserRead.model_validate(user_full)
 
 
 @router.get(
-    '/list_users',
-    response_model=list[UserRead],
+    '/list_users', response_model=list[UserRead],
     dependencies=[Depends(require_admin)],
 )
-async def list_users(
-    db: AsyncSession = Depends(get_db),
-) -> list[UserRead]:
+async def list_users(db: AsyncSession = Depends(get_db)) -> list[UserRead]:
     """List all users with group information.
 
     Args:
@@ -82,7 +94,12 @@ async def list_users(
     Returns:
         List of user details.
     """
-    result = await db.execute(select(User).options(selectinload(User.group)))
+    result = await db.execute(
+        select(User).options(
+            selectinload(User.group),
+            selectinload(User.profile),
+        ),
+    )
     users = result.scalars().all()
     return [UserRead.model_validate(u) for u in users]
 
@@ -299,3 +316,18 @@ async def change_group(
     user.group_id = payload.new_group_id
     await db.commit()
     return {'message': 'User group updated successfully.'}
+
+
+@router.put('/update_user_profile', dependencies=[Depends(require_admin)])
+async def update_profile(
+    payload: UserProfileUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    user = await get_user_by_id(payload.user_id, db)
+    ensure_not_super(user)
+    await create_or_update_profile(
+        user,
+        data=payload.model_dump(exclude={'user_id'}, exclude_none=True),
+        db=db,
+    )
+    return {'message': 'User profile updated successfully.'}

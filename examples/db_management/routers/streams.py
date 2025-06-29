@@ -16,19 +16,19 @@ from examples.db_management.deps import require_admin
 from examples.db_management.schemas.stream_config import StreamConfigCreate
 from examples.db_management.schemas.stream_config import StreamConfigRead
 from examples.db_management.schemas.stream_config import StreamConfigUpdate
-from examples.db_management.services.stream_config_service import (
+from examples.db_management.services.stream_config_services import (
     create_stream_config,
 )
-from examples.db_management.services.stream_config_service import (
+from examples.db_management.services.stream_config_services import (
     delete_stream_config,
 )
-from examples.db_management.services.stream_config_service import (
+from examples.db_management.services.stream_config_services import (
     get_group_stream_limit,
 )
-from examples.db_management.services.stream_config_service import (
+from examples.db_management.services.stream_config_services import (
     list_stream_configs,
 )
-from examples.db_management.services.stream_config_service import (
+from examples.db_management.services.stream_config_services import (
     update_stream_config,
 )
 
@@ -77,11 +77,11 @@ async def endpoint_list_stream_configs(
             work_end_hour=c.work_end_hour,
             detect_no_safety_vest_or_helmet=c.detect_no_safety_vest_or_helmet,
             detect_near_machinery_or_vehicle=(
-                c.detect_near_machinery_or_vehicle,
+                c.detect_near_machinery_or_vehicle
             ),
             detect_in_restricted_area=c.detect_in_restricted_area,
             detect_in_utility_pole_restricted_area=(
-                c.detect_in_utility_pole_restricted_area,
+                c.detect_in_utility_pole_restricted_area
             ),
             detect_machinery_close_to_pole=c.detect_machinery_close_to_pole,
             expire_date=c.expire_date,
