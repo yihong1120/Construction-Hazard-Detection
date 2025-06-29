@@ -4,17 +4,48 @@ from datetime import datetime
 
 from pydantic import BaseModel
 from pydantic import computed_field
+from pydantic import ConfigDict
+from pydantic import EmailStr
 
 from examples.db_management.schemas.group import GroupRead
+
+
+# ──────────────────────────────────────────────────────────
+#  共用：User-Profile Schemas
+# ──────────────────────────────────────────────────────────
+class UserProfileBase(BaseModel):
+    family_name:   str
+    middle_name:   str | None = None
+    given_name:    str
+    email:         EmailStr
+    mobile_number: str | None = None
+
+
+class UserProfileRead(UserProfileBase):
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserProfileUpdate(BaseModel):
+    user_id:       int
+    family_name:   str | None = None
+    middle_name:   str | None = None
+    given_name:    str | None = None
+    email:         EmailStr | None = None
+    mobile_number: str | None = None
 
 
 class UserCreate(BaseModel):
     """Schema representing user creation details."""
 
-    username: str
-    password: str
-    role: str = 'user'
-    group_id: int | None
+    username:  str
+    password:  str
+    role:      str = 'user'
+    group_id:  int | None
+    # 新增：可直接帶 profile 建檔（選填）
+    profile:   UserProfileBase | None = None
 
 
 class UserRead(BaseModel):
@@ -26,6 +57,7 @@ class UserRead(BaseModel):
     is_active: bool
     group_id: int | None
     group: GroupRead | None
+    profile:    UserProfileRead | None
     created_at: datetime
     updated_at: datetime
 
@@ -38,8 +70,7 @@ class UserRead(BaseModel):
         """
         return self.group.name if self.group else None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UpdateUsername(BaseModel):

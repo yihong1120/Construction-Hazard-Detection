@@ -47,7 +47,7 @@ async def create_stream_config(
     Raises:
         HTTPException: If a database error occurs during creation.
     """
-    cfg = StreamConfig(**payload)
+    cfg = StreamConfig(**payload.model_dump())
     db.add(cfg)
 
     try:
@@ -75,7 +75,7 @@ async def update_stream_config(
         HTTPException: If a database error occurs during updating.
     """
     # Apply updates to the configuration object
-    for key, value in updates.items():
+    for key, value in updates.model_dump(exclude_unset=True).items():
         setattr(cfg, key, value)
 
     try:

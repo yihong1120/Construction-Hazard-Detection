@@ -19,12 +19,12 @@ from examples.db_management.schemas.site import SiteDelete
 from examples.db_management.schemas.site import SiteRead
 from examples.db_management.schemas.site import SiteUpdate
 from examples.db_management.schemas.site import SiteUserOp
-from examples.db_management.services.site_service import add_user_to_site
-from examples.db_management.services.site_service import create_site
-from examples.db_management.services.site_service import delete_site
-from examples.db_management.services.site_service import list_sites
-from examples.db_management.services.site_service import remove_user_from_site
-from examples.db_management.services.site_service import update_site
+from examples.db_management.services.site_services import add_user_to_site
+from examples.db_management.services.site_services import create_site
+from examples.db_management.services.site_services import delete_site
+from examples.db_management.services.site_services import list_sites
+from examples.db_management.services.site_services import remove_user_from_site
+from examples.db_management.services.site_services import update_site
 
 router = APIRouter(tags=['site-mgmt'])
 
@@ -169,7 +169,7 @@ async def endpoint_delete_site(
         await db.execute(
             select(Site).where(Site.id == payload.site_id),
         )
-    ).scalar_one_or_none()
+    ).unique().scalar_one_or_none()
 
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')
@@ -207,7 +207,7 @@ async def endpoint_add_user_to_site(
         await db.execute(
             select(Site).where(Site.id == payload.site_id),
         )
-    ).scalar_one_or_none()
+    ).unique().scalar_one_or_none()
 
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')
@@ -219,7 +219,7 @@ async def endpoint_add_user_to_site(
         await db.execute(
             select(User).where(User.id == payload.user_id),
         )
-    ).scalar_one_or_none()
+    ).unique().scalar_one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail='User not found.')
@@ -266,7 +266,7 @@ async def endpoint_remove_user_from_site(
         await db.execute(
             select(Site).where(Site.id == payload.site_id),
         )
-    ).scalar_one_or_none()
+    ).unique().scalar_one_or_none()
 
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')

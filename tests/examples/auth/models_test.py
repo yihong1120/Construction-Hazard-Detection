@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import sessionmaker
 
 from examples.auth.models import Base
+from examples.auth.models import Feature
+from examples.auth.models import Group
 from examples.auth.models import User
 
 # Define the in-memory database URI for testing
@@ -75,6 +77,19 @@ class TestUserModel(unittest.TestCase):
         self.assertTrue(user_dict['is_active'])
         self.assertIn('created_at', user_dict)
         self.assertIn('updated_at', user_dict)
+
+    def test_feature_repr(self):
+        feature = Feature(id=1, feature_name='test_feature')
+        self.assertIn('Feature', repr(feature))
+        self.assertIn('test_feature', repr(feature))
+
+    def test_group_repr(self):
+        group = Group(
+            id=1, name='test_group',
+            uniform_number='12345678', max_allowed_streams=1,
+        )
+        self.assertIn('Group', repr(group))
+        self.assertIn('test_group', repr(group))
 
 
 if __name__ == '__main__':

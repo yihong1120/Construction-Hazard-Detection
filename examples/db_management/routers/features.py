@@ -18,12 +18,14 @@ from examples.db_management.schemas.feature import FeatureRead
 from examples.db_management.schemas.feature import FeatureUpdate
 from examples.db_management.schemas.feature import GroupFeatureUpdate
 from examples.db_management.schemas.group import GroupFeatureRead
-from examples.db_management.services.feature_service import create_feature
-from examples.db_management.services.feature_service import delete_feature
-from examples.db_management.services.feature_service import list_features
-from examples.db_management.services.feature_service import list_group_features
-from examples.db_management.services.feature_service import update_feature
-from examples.db_management.services.feature_service import (
+from examples.db_management.services.feature_services import create_feature
+from examples.db_management.services.feature_services import delete_feature
+from examples.db_management.services.feature_services import list_features
+from examples.db_management.services.feature_services import (
+    list_group_features,
+)
+from examples.db_management.services.feature_services import update_feature
+from examples.db_management.services.feature_services import (
     update_group_features,
 )
 

@@ -46,7 +46,7 @@ async def list_sites(
 
 async def create_site(
     name: str,
-    group_id: int,
+    group_id: int | None,
     db: AsyncSession,
 ) -> Site:
     """Create a new site with the specified name and group identifier.
@@ -65,6 +65,9 @@ async def create_site(
     Raises:
         HTTPException: If a database error occurs during creation.
     """
+    if group_id is None:
+        raise HTTPException(400, 'group_id is required for new site')
+
     site = Site(name=name, group_id=group_id)
     db.add(site)
 
