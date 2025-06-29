@@ -23,6 +23,7 @@ opencv_python_headless==4.10.0.84
 Pillow==11.2.1
 pre-commit==4.2.0
 pycocotools==2.0.8
+pydantic[email]==2.11.7
 pydantic_settings==2.9.1
 pytest==8.4.1
 pytest-cov==6.2.1
