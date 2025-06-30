@@ -113,9 +113,13 @@ class TestLocalNotificationServer(unittest.TestCase):
                     'firebase_admin.initialize_app',
                     return_value=MagicMock(),
                 ):
-                    # Using TestClient triggers the lifespan context
-                    with TestClient(app):
-                        pass
+                    with patch(
+                        'examples.auth.redis_pool.get_redis_pool',
+                        return_value=MagicMock(),
+                    ):
+                        # Using TestClient triggers the lifespan context
+                        with TestClient(app):
+                            pass
 
         self.assertTrue(
             flag, 'Database initialisation logic was not triggered.',
