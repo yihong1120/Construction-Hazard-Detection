@@ -25,10 +25,6 @@ def init_firebase_app() -> None:
         )
 
 
-# Initialise Firebase Admin when the module is first loaded
-init_firebase_app()
-
-
 async def send_fcm_notification_service(
     device_tokens: list[str],
     title: str,
