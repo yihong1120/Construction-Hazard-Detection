@@ -5,8 +5,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from examples.auth.lifespan import global_lifespan
-from examples.auth.routers import auth_router
-from examples.auth.routers import user_management_router
 from examples.streaming_web.backend.routers import (
     router as streaming_web_router,
 )
@@ -25,8 +23,6 @@ app.add_middleware(
 
 # Include routers for authentication and user management
 # and streaming web services
-app.include_router(auth_router)
-app.include_router(user_management_router)
 app.include_router(streaming_web_router)
 
 
@@ -43,5 +39,6 @@ if __name__ == '__main__':
     main()
 
 '''
-uvicorn examples.streaming_web.backend.app:app --host 127.0.0.1 --port 8800
+uvicorn examples.streaming_web.backend.app:app \
+    --host 127.0.0.1 --port 8800 --workers 4
 '''

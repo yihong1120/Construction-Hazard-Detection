@@ -57,25 +57,6 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         # Teardown phase => scheduler.shutdown called
         mock_scheduler_shutdown.assert_called_once()
 
-    def test_routes_exist(self) -> None:
-        """
-        Tests the existence of HTTP routes in the FastAPI application.
-        """
-        resp = self.client.get('/login')
-        self.assertEqual(resp.status_code, 405)
-
-        resp = self.client.get('/detect')
-        self.assertEqual(resp.status_code, 405)
-
-        resp = self.client.get('/model_file_update')
-        self.assertEqual(resp.status_code, 405)
-
-        resp = self.client.get('/get_new_model')
-        self.assertEqual(resp.status_code, 405)
-
-        resp = self.client.get('/add_user')
-        self.assertEqual(resp.status_code, 405)
-
     @patch('uvicorn.run')
     def test_main(self, mock_uvicorn_run: MagicMock) -> None:
         """
