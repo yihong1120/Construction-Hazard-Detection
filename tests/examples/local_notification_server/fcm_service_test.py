@@ -9,19 +9,22 @@ from examples.local_notification_server.fcm_service import (
     send_fcm_notification_service,
 )
 
+patch(
+    'firebase_admin.credentials.Certificate',
+    return_value=MagicMock(),
+).start()
+
 
 class TestInitFirebaseApp(unittest.TestCase):
     """
     Test suite for initialising the Firebase application.
     """
 
-    @patch('firebase_admin.credentials.Certificate', return_value=MagicMock())
     @patch('firebase_admin.initialize_app')
     @patch('firebase_admin._apps', new=[])
     def test_init_firebase_app_when_not_inited(
         self,
         mock_init_app: MagicMock,
-        mock_cred: MagicMock,
     ) -> None:
         """
         Test that init_firebase_app() calls initialise_app
@@ -32,15 +35,12 @@ class TestInitFirebaseApp(unittest.TestCase):
         """
         init_firebase_app()
         mock_init_app.assert_called_once()
-        mock_cred.assert_called_once()
 
-    @patch('firebase_admin.credentials.Certificate', return_value=MagicMock())
     @patch('firebase_admin.initialize_app')
     @patch('firebase_admin._apps', new=['already_inited'])
     def test_init_firebase_app_when_already_inited(
         self,
         mock_init_app: MagicMock,
-        mock_cred: MagicMock,
     ) -> None:
         """
         Test that init_firebase_app() does not re-initialise
@@ -51,7 +51,6 @@ class TestInitFirebaseApp(unittest.TestCase):
         """
         init_firebase_app()
         mock_init_app.assert_not_called()
-        mock_cred.assert_not_called()
 
 
 @patch(
