@@ -31,8 +31,18 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         new_callable=MagicMock,
     )
     @patch('fastapi_limiter.FastAPILimiter.init', new_callable=AsyncMock)
+    @patch(
+        'examples.YOLO_server_api.backend.app.AsyncSession',
+        new_callable=MagicMock,
+    )
+    @patch(
+        'examples.YOLO_server_api.backend.app.engine',
+        new_callable=MagicMock,
+    )
     async def test_lifespan_context(
         self,
+        mock_engine: MagicMock,
+        mock_async_session: MagicMock,
         mock_limiter_init: AsyncMock,
         mock_scheduler_shutdown: MagicMock,
         mock_redis_connect: AsyncMock,
@@ -41,6 +51,8 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         Tests the lifespan context of the FastAPI application.
 
         Args:
+            mock_engine (MagicMock): Mocked SQLAlchemy engine.
+            mock_async_session (MagicMock): Mocked AsyncSession.
             mock_limiter_init (AsyncMock):
                 A mock for FastAPILimiter's init method.
             mock_scheduler_shutdown (MagicMock):
