@@ -16,6 +16,7 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
     ensuring startup and shutdown logic is executed correctly.
     """
 
+    @patch('examples.auth.lifespan.engine')
     @patch('examples.auth.lifespan.start_jwt_scheduler')
     @patch('examples.auth.lifespan.FastAPILimiter.init')
     @patch('examples.auth.lifespan.RedisClient')
@@ -24,6 +25,7 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
         mock_redis_client_cls: MagicMock,
         mock_limiter_init: MagicMock,
         mock_start_scheduler: MagicMock,
+        mock_engine_obj: MagicMock,
     ) -> None:
         """
         Test the global_lifespan async context manager.
@@ -45,10 +47,18 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
         mock_redis_client.close = AsyncMock()
         mock_redis_client_cls.return_value = mock_redis_client
 
-        # (C) Instantiate a FastAPI app to pass into global_lifespan.
+        # Mock engine.begin() async context manager and run_sync
+        mock_conn_ctx = AsyncMock()
+        mock_conn = MagicMock()
+        mock_conn.run_sync = AsyncMock()
+        mock_conn_ctx.__aenter__.return_value = mock_conn
+        mock_engine_obj.begin.return_value = mock_conn_ctx
+        mock_engine_obj.dispose = AsyncMock()
+
+        # (D) Instantiate a FastAPI app to pass into global_lifespan.
         app: FastAPI = FastAPI()
 
-        # (D) Enter the async context manager.
+        # Enter the async context manager.
         async with global_lifespan(app):
             # "Startup" logic should have completed by now.
             mock_redis_client.connect.assert_awaited_once()
@@ -71,9 +81,11 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
             # while we are in the context.
             mock_scheduler.shutdown.assert_not_called()
 
+            mock_conn.run_sync.assert_awaited_once()
         # Once we exit the context => "shutdown" logic runs.
         mock_scheduler.shutdown.assert_called_once()
         mock_redis_client.close.assert_awaited_once()
+        mock_engine_obj.dispose.assert_awaited_once()
 
 
 if __name__ == '__main__':
