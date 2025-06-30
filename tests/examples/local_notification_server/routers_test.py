@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import AsyncIterator
-from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -16,7 +15,7 @@ from examples.auth.redis_pool import get_redis_pool
 from examples.local_notification_server.routers import router
 
 
-async def mock_jwt_access() -> MagicMock:
+def mock_jwt_access() -> MagicMock:
     """
     Mock JWT credentials to avoid the need for a real token in tests.
 
@@ -36,30 +35,34 @@ class TestLocalNotificationServer(unittest.TestCase):
         Set up a FastAPI app, test client,
         and mock dependencies before each test.
         """
-        self.app = FastAPI()
-        # Include the router at prefix="/fcm" to match the tested route paths
+        self.app: FastAPI = FastAPI()
         self.app.include_router(router, prefix='/fcm')
+        self.client: TestClient = TestClient(self.app)
+        self.mock_session: AsyncMock = AsyncMock()
 
-        # Create the test client
-        self.client = TestClient(self.app)
-
-        # Mock the asynchronous DB session
-        self.mock_session = AsyncMock()
-
-        # Mock the Redis connection
-        self.mock_redis = AsyncMock()
+        # Redis mock: use MagicMock for correct pipeline chain
+        self.mock_redis: MagicMock = MagicMock()
+        self.mock_redis.hset = AsyncMock()
+        self.mock_redis.hdel = AsyncMock()
+        # pipeline mock will be set in each test as needed
 
         async def override_get_db() -> AsyncIterator[AsyncMock]:
             """
             Override dependency for database session,
             returning a mock session object.
+
+            Yields:
+                AsyncMock: The mocked database session.
             """
             yield self.mock_session
 
-        async def override_get_redis_pool() -> AsyncMock:
+        async def override_get_redis_pool() -> MagicMock:
             """
             Override dependency for Redis connection,
             returning a mock Redis object.
+
+            Returns:
+                MagicMock: The mocked Redis connection.
             """
             return self.mock_redis
 
@@ -82,9 +85,10 @@ class TestLocalNotificationServer(unittest.TestCase):
         Simulate a scenario where the queried user is not found
         in the database.
         """
-        result = AsyncMock()
-        result.scalar_one_or_none = MagicMock(return_value=None)
-        self.mock_session.execute.return_value = result
+        result: MagicMock = MagicMock()
+        result.unique.return_value = result
+        result.scalar_one_or_none.return_value = None
+        self.mock_session.execute = AsyncMock(return_value=result)
 
     def mock_user_in_db(self, user_id: int) -> MagicMock:
         """
@@ -96,12 +100,13 @@ class TestLocalNotificationServer(unittest.TestCase):
         Returns:
             MagicMock: The mocked user object.
         """
-        mock_user = MagicMock()
+        mock_user: MagicMock = MagicMock()
         mock_user.id = user_id
 
-        result = AsyncMock()
-        result.scalar_one_or_none = MagicMock(return_value=mock_user)
-        self.mock_session.execute.return_value = result
+        result: MagicMock = MagicMock()
+        result.unique.return_value = result
+        result.scalar_one_or_none.return_value = mock_user
+        self.mock_session.execute = AsyncMock(return_value=result)
         return mock_user
 
     def mock_site_in_db(
@@ -124,13 +129,14 @@ class TestLocalNotificationServer(unittest.TestCase):
         if users is None:
             users = []
 
-        mock_site = MagicMock()
+        mock_site: MagicMock = MagicMock()
         mock_site.name = site_name
         mock_site.users = users
 
-        result = AsyncMock()
-        result.scalar_one_or_none = MagicMock(return_value=mock_site)
-        self.mock_session.execute.return_value = result
+        result: MagicMock = MagicMock()
+        result.unique.return_value = result
+        result.scalar_one_or_none.return_value = mock_site
+        self.mock_session.execute = AsyncMock(return_value=result)
         return mock_site
 
     # ------------------------------------------------------------------------
@@ -142,7 +148,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         Expect a 404 error response.
         """
         self.mock_no_user_in_db()
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'user_id': 999,
             'device_token': 'test-token-999',
         }
@@ -154,7 +160,7 @@ class TestLocalNotificationServer(unittest.TestCase):
     def test_store_fcm_token_success(self) -> None:
         """Test successful token storage for an existing user."""
         self.mock_user_in_db(user_id=123)
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'user_id': 123,
             'device_token': 'my-test-token',
         }
@@ -175,7 +181,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         Test token storage with a specific device language specified.
         """
         self.mock_user_in_db(user_id=123)
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'user_id': 123, 'device_token': 'test-token', 'device_lang': 'zh',
         }
         response = self.client.post('/fcm/store_token', json=data)
@@ -199,7 +205,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         The route returns 200 with a message indicating the user is not found.
         """
         self.mock_no_user_in_db()
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'user_id': 999,
             'device_token': 'unknown-token',
         }
@@ -217,7 +223,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.mock_user_in_db(user_id=10)
         self.mock_redis.hdel.return_value = 0  # Zero indicates no deletion
 
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'user_id': 10,
             'device_token': 'non-existent-token',
         }
@@ -242,7 +248,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.mock_user_in_db(user_id=10)
         self.mock_redis.hdel.return_value = 1
 
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'user_id': 10,
             'device_token': 'existing-token',
         }
@@ -265,18 +271,19 @@ class TestLocalNotificationServer(unittest.TestCase):
         Expects a 200 response with success=False and a specific message.
         """
         # Simulate a DB query that returns no Site
-        result = AsyncMock()
-        result.scalar_one_or_none = MagicMock(return_value=None)
-        self.mock_session.execute.return_value = result
+        result: MagicMock = MagicMock()
+        result.unique.return_value = result
+        result.scalar_one_or_none.return_value = None
+        self.mock_session.execute = AsyncMock(return_value=result)
 
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'site': 'MissingSite',
             'stream_name': 'TestStream',
             'image_path': None,
             'violation_id': None,
-            'body': {},
+            'body': {'en': {'helmet': 1}},  # <-- valid schema
         }
-        headers = {'Authorization': 'Bearer dummy-token'}
+        headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
             '/fcm/send_fcm_notification', json=data, headers=headers,
         )
@@ -285,7 +292,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(
             response.json(), {
                 'success': False,
-                'message': "Site 'MissingSite' not found.",
+                'message': "Site 'MissingSite' not found or has no users.",
             },
         )
 
@@ -296,14 +303,14 @@ class TestLocalNotificationServer(unittest.TestCase):
         """
         self.mock_site_in_db('EmptySite', [])
 
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'site': 'EmptySite',
             'stream_name': 'EmptyStream',
             'image_path': None,
             'violation_id': None,
-            'body': {},
+            'body': {'en': {'helmet': 1}},  # <-- valid schema
         }
-        headers = {'Authorization': 'Bearer dummy-token'}
+        headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
             '/fcm/send_fcm_notification', json=data, headers=headers,
         )
@@ -312,7 +319,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(
             response.json(), {
                 'success': False,
-                'message': "Site 'EmptySite' has no users.",
+                'message': "Site 'EmptySite' not found or has no users.",
             },
         )
 
@@ -321,21 +328,24 @@ class TestLocalNotificationServer(unittest.TestCase):
         Test sending a notification where users exist,
         but none have tokens in Redis.
         """
-        user1 = MagicMock(id=1)
-        user2 = MagicMock(id=2)
+        user1: MagicMock = MagicMock(id=1)
+        user2: MagicMock = MagicMock(id=2)
         self.mock_site_in_db('SiteWithNoTokens', [user1, user2])
 
-        # Redis returns an empty dictionary for tokens
-        self.mock_redis.hgetall.return_value = {}
+        # Redis pipeline mock
+        pipe_mock: MagicMock = MagicMock()
+        pipe_mock.hgetall = MagicMock()
+        pipe_mock.execute = AsyncMock(return_value=[{}, {}])
+        self.mock_redis.pipeline.return_value = pipe_mock
 
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'site': 'SiteWithNoTokens',
             'stream_name': 'SiteStream',
             'image_path': None,
             'violation_id': None,
-            'body': {},
+            'body': {'en': {'helmet': 1}},
         }
-        headers = {'Authorization': 'Bearer dummy-token'}
+        headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
             '/fcm/send_fcm_notification', json=data, headers=headers,
         )
@@ -344,9 +354,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(
             response.json(), {
                 'success': False,
-                'message': (
-                    "Site 'SiteWithNoTokens' has no user tokens in Redis."
-                ),
+                'message': "Site 'SiteWithNoTokens' has no device tokens.",
             },
         )
 
@@ -366,26 +374,26 @@ class TestLocalNotificationServer(unittest.TestCase):
         Args:
             mock_send_fcm (AsyncMock): Mocked FCM notification sending service.
         """
-        user = MagicMock(id=42)
+        user: MagicMock = MagicMock(id=42)
         self.mock_site_in_db('MySite', [user])
 
-        # Redis has tokens in two languages
-        self.mock_redis.hgetall.return_value = {
-            b'tokenA': b'en',
-            b'tokenB': b'zh',
-        }
+        pipe_mock: MagicMock = MagicMock()
+        pipe_mock.hgetall = MagicMock()
+        pipe_mock.execute = AsyncMock(
+            return_value=[{b'tokenA': b'en', b'tokenB': b'zh'}],
+        )
+        self.mock_redis.pipeline.return_value = pipe_mock
 
-        # Mock successful sending
         mock_send_fcm.return_value = True
 
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'site': 'MySite',
             'stream_name': 'MainStream',
             'image_path': None,
             'violation_id': 999,
-            'body': {},
+            'body': {'en': {'helmet': 1}},
         }
-        headers = {'Authorization': 'Bearer dummy-token'}
+        headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
             '/fcm/send_fcm_notification', json=data, headers=headers,
         )
@@ -397,7 +405,6 @@ class TestLocalNotificationServer(unittest.TestCase):
                 'message': 'FCM notification has been processed.',
             },
         )
-        # Expect two calls, one for each language
         self.assertEqual(
             mock_send_fcm.await_count,
             2,
@@ -420,25 +427,25 @@ class TestLocalNotificationServer(unittest.TestCase):
         Args:
             mock_send_fcm (AsyncMock): Mocked FCM notification sending service.
         """
-        user = MagicMock(id=99)
+        user: MagicMock = MagicMock(id=99)
         self.mock_site_in_db('MySite', [user])
 
-        # Redis tokens for two different languages
-        self.mock_redis.hgetall.return_value = {
-            b'tA': b'en',
-            b'tB': b'zh',
-        }
+        pipe_mock: MagicMock = MagicMock()
+        pipe_mock.hgetall = MagicMock()
+        pipe_mock.execute = AsyncMock(
+            return_value=[{b'tA': b'en', b'tB': b'zh'}],
+        )
+        self.mock_redis.pipeline.return_value = pipe_mock
 
-        # Simulate sending failure for all tokens
         mock_send_fcm.return_value = False
 
-        data: dict[str, Any] = {
+        data: dict[str, object] = {
             'site': 'MySite',
             'stream_name': 'FailStream',
             'violation_id': 123,
-            'body': {},
+            'body': {'en': {'helmet': 1}},
         }
-        headers = {'Authorization': 'Bearer dummy-token'}
+        headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
             '/fcm/send_fcm_notification', json=data, headers=headers,
         )
@@ -450,8 +457,32 @@ class TestLocalNotificationServer(unittest.TestCase):
                 'message': 'FCM notification has been processed.',
             },
         )
-        # Expect two calls, one for each language token
         self.assertEqual(mock_send_fcm.await_count, 2)
+
+    def test_send_fcm_notification_body_empty(self) -> None:
+        """
+        Test sending a notification with an empty body.
+        Expects a 200 response with success=False and a specific message.
+        """
+        data: dict[str, object] = {
+            'site': 'AnySite',
+            'stream_name': 'AnyStream',
+            'image_path': None,
+            'violation_id': None,
+            'body': {},  # Empty dict
+        }
+        headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
+        response = self.client.post(
+            '/fcm/send_fcm_notification', json=data, headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(), {
+                'success': False,
+                'message': 'Body is empty, nothing to send.',
+            },
+        )
 
 
 if __name__ == '__main__':
