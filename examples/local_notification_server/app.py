@@ -5,8 +5,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from examples.auth.lifespan import global_lifespan
-from examples.auth.routers import auth_router
-from examples.auth.routers import user_management_router
 from examples.local_notification_server.routers import (
     router as notification_router,
 )
@@ -23,10 +21,7 @@ app.add_middleware(
     allow_headers=['*'],  # Allow all headers
 )
 
-# Include routers for authentication and user management
-# and notification services
-app.include_router(auth_router)
-app.include_router(user_management_router)
+# Include routers for  notification services
 app.include_router(notification_router)
 
 
@@ -41,5 +36,8 @@ if __name__ == '__main__':
     main()
 
 """
-uvicorn examples.local_notification_server.app:app --host 127.0.0.1 --port 8003
+uvicorn examples.local_notification_server.app:app\
+    --host 127.0.0.1 \
+    --port 8003 \
+    --workers 4
 """
