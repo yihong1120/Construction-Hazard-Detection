@@ -38,7 +38,7 @@ from examples.violation_records.violation_manager import ViolationManager
 violation_manager: ViolationManager = ViolationManager(base_dir='static')
 
 # Create a global SearchUtils instance for expanding synonyms in query filters.
-search_util: SearchUtils = SearchUtils(device=0)
+search_util: SearchUtils = SearchUtils(device=-1)
 
 # Create a FastAPI router for violations-related endpoints.
 router: APIRouter = APIRouter()

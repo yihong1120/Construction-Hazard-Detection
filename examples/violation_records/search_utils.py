@@ -117,7 +117,7 @@ class SearchUtils:
     synonym expansion, and building Elasticsearch queries.
     """
 
-    def __init__(self, device: int = 0):
+    def __init__(self, device: int = -1):
         """
         Initialise the CKIP word segmenter.
 
