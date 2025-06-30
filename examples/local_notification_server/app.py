@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from examples.auth.lifespan import global_lifespan
+from examples.local_notification_server.fcm_service import init_firebase_app
 from examples.local_notification_server.routers import (
     router as notification_router,
 )
 
-# Initialise the FastAPI app with a custom lifespan handler
-app: FastAPI = FastAPI(lifespan=global_lifespan)
+
+@asynccontextmanager
+async def notification_lifespan(app: FastAPI):
+    """
+    Lifespan event handler for FastAPI app.
+    Initialise global resources (DB/Redis) and Firebase Admin SDK at startup.
+    """
+    async with global_lifespan(app):
+        init_firebase_app()
+        yield
+
+app: FastAPI = FastAPI(lifespan=notification_lifespan)
 
 # Add Cross-Origin Resource Sharing (CORS) middleware
 app.add_middleware(

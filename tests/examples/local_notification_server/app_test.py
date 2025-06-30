@@ -81,6 +81,7 @@ class TestLocalNotificationServer(unittest.TestCase):
     def test_lifespan_init(self) -> None:
         """
         Test the lifespan logic to ensure database initialisation is triggered.
+        Patch Firebase credential and init to avoid real file access.
         """
         flag = False
 
@@ -103,11 +104,18 @@ class TestLocalNotificationServer(unittest.TestCase):
         fake_engine.begin = lambda: FakeConn()
         fake_engine.dispose = AsyncMock()  # Make dispose awaitable
 
-        # Patch the engine object imported within the lifespan module
         with patch('examples.auth.lifespan.engine', fake_engine):
-            # Using TestClient triggers the lifespan context
-            with TestClient(app):
-                pass
+            with patch(
+                'firebase_admin.credentials.Certificate',
+                return_value=MagicMock(),
+            ):
+                with patch(
+                    'firebase_admin.initialize_app',
+                    return_value=MagicMock(),
+                ):
+                    # Using TestClient triggers the lifespan context
+                    with TestClient(app):
+                        pass
 
         self.assertTrue(
             flag, 'Database initialisation logic was not triggered.',
