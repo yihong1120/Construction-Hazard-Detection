@@ -5,8 +5,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from examples.auth.lifespan import global_lifespan
-from examples.auth.routers import auth_router
-from examples.auth.routers import user_management_router
 from examples.violation_records.routers import router as violation_router
 
 # Initialise the FastAPI app with a custom lifespan handler
@@ -21,10 +19,7 @@ app.add_middleware(
     allow_headers=['*'],  # Allow all headers
 )
 
-# Include routers for authentication and user management
-# and violation records
-app.include_router(auth_router)
-app.include_router(user_management_router)
+# Include routers for violation records
 app.include_router(violation_router)
 
 
@@ -42,3 +37,9 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
+"""
+uvicorn examples.violation_records.app:app\
+    --host 127.0.0.1\
+    --port 8002 --workers 4
+"""
