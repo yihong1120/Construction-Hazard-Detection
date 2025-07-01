@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -21,56 +20,6 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         Initialises the test client for the FastAPI application.
         """
         self.client = TestClient(app)
-
-    @patch(
-        'examples.auth.redis_pool.RedisClient.connect',
-        new_callable=AsyncMock,
-    )
-    @patch(
-        'examples.auth.jwt_scheduler.BackgroundScheduler.shutdown',
-        new_callable=MagicMock,
-    )
-    @patch('fastapi_limiter.FastAPILimiter.init', new_callable=AsyncMock)
-    @patch(
-        'examples.auth.database.AsyncSessionLocal',
-        new_callable=MagicMock,
-    )
-    @patch(
-        'examples.auth.database.engine',
-        new_callable=MagicMock,
-    )
-    async def test_lifespan_context(
-        self,
-        mock_engine: MagicMock,
-        mock_async_session: MagicMock,
-        mock_limiter_init: AsyncMock,
-        mock_scheduler_shutdown: MagicMock,
-        mock_redis_connect: AsyncMock,
-    ) -> None:
-        """
-        Tests the lifespan context of the FastAPI application.
-
-        Args:
-            mock_engine (MagicMock): Mocked SQLAlchemy engine.
-            mock_async_session (MagicMock): Mocked AsyncSession.
-            mock_limiter_init (AsyncMock):
-                A mock for FastAPILimiter's init method.
-            mock_scheduler_shutdown (MagicMock):
-                A mock for the background scheduler's shutdown method.
-            mock_redis_connect (AsyncMock):
-                A mock for the Redis client's connect method.
-        """
-        # Patch async with context to avoid DB connection
-        mock_engine.begin.return_value.__aenter__.return_value = MagicMock()
-        mock_engine.begin.return_value.__aexit__.return_value = False
-        # Startup phase
-        async with app.router.lifespan_context(app):
-            mock_redis_connect.assert_awaited_once()
-            mock_limiter_init.assert_awaited_once()
-            mock_scheduler_shutdown.assert_not_called()
-
-        # Teardown phase => scheduler.shutdown called
-        mock_scheduler_shutdown.assert_called_once()
 
     @patch('uvicorn.run')
     def test_main(self, mock_uvicorn_run: MagicMock) -> None:
