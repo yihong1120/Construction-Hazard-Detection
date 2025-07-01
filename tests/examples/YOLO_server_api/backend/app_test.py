@@ -62,6 +62,7 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         """
         # Patch async with context to avoid DB connection
         mock_engine.begin.return_value.__aenter__.return_value = MagicMock()
+        mock_engine.begin.return_value.__aexit__.return_value = False
         # Startup phase
         async with app.router.lifespan_context(app):
             mock_redis_connect.assert_awaited_once()
