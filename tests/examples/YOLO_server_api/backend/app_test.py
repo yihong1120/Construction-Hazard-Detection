@@ -32,11 +32,11 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
     )
     @patch('fastapi_limiter.FastAPILimiter.init', new_callable=AsyncMock)
     @patch(
-        'examples.YOLO_server_api.backend.app.AsyncSession',
+        'examples.auth.database.AsyncSessionLocal',
         new_callable=MagicMock,
     )
     @patch(
-        'examples.YOLO_server_api.backend.app.engine',
+        'examples.auth.database.engine',
         new_callable=MagicMock,
     )
     async def test_lifespan_context(

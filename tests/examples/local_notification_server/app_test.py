@@ -114,8 +114,8 @@ class TestLocalNotificationServer(unittest.TestCase):
                     return_value=MagicMock(),
                 ):
                     with patch(
-                        'examples.auth.redis_pool.get_redis_pool',
-                        return_value=MagicMock(),
+                        'examples.auth.redis_pool.RedisClient.connect',
+                        new_callable=AsyncMock,
                     ):
                         # Using TestClient triggers the lifespan context
                         with TestClient(app):

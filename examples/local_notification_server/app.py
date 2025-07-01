@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,6 +13,7 @@ from examples.local_notification_server.fcm_service import init_firebase_app
 from examples.local_notification_server.routers import (
     router as notification_router,
 )
+load_dotenv()
 
 
 @asynccontextmanager
@@ -19,8 +22,14 @@ async def notification_lifespan(app: FastAPI):
     Lifespan event handler for FastAPI app.
     Initialise global resources (DB/Redis) and Firebase Admin SDK at startup.
     """
+    cred_path = os.getenv(
+        'FIREBASE_CRED_PATH',
+        'path/to/your/firebase/credentials.json',
+    )
+    project_id = os.getenv('FIREBASE_PROJECT_ID', 'your-firebase-project-id')
+
     async with global_lifespan(app):
-        init_firebase_app()
+        init_firebase_app(cred_path=cred_path, project_id=project_id)
         yield
 
 app: FastAPI = FastAPI(lifespan=notification_lifespan)
