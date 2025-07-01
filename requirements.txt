@@ -20,7 +20,7 @@ numpy==2.1.1
 onnx==1.18.0
 opencv_python==4.10.0.84
 opencv_python_headless==4.10.0.84
-Pillow==11.2.1
+Pillow==11.3.0
 pre-commit==4.2.0
 pycocotools==2.0.8
 pydantic[email]==2.11.7
