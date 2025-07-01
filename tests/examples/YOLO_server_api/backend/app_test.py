@@ -60,6 +60,8 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
             mock_redis_connect (AsyncMock):
                 A mock for the Redis client's connect method.
         """
+        # Patch async with context to avoid DB connection
+        mock_engine.begin.return_value.__aenter__.return_value = MagicMock()
         # Startup phase
         async with app.router.lifespan_context(app):
             mock_redis_connect.assert_awaited_once()
