@@ -20,11 +20,13 @@ class TestInitFirebaseApp(unittest.TestCase):
     Test suite for initialising the Firebase application.
     """
 
+    @patch('firebase_admin.credentials.Certificate', return_value=MagicMock())
     @patch('firebase_admin.initialize_app')
     @patch('firebase_admin._apps', new=[])
     def test_init_firebase_app_when_not_inited(
         self,
         mock_init_app: MagicMock,
+        mock_cred: MagicMock,
     ) -> None:
         """
         Test that init_firebase_app() calls initialise_app
@@ -32,15 +34,19 @@ class TestInitFirebaseApp(unittest.TestCase):
 
         Args:
             mock_init_app (MagicMock): Mocked initialise_app function.
+            mock_cred (MagicMock): Mocked Certificate constructor.
         """
         init_firebase_app('dummy/path.json', 'dummy-project')
         mock_init_app.assert_called_once()
+        mock_cred.assert_called_once()
 
+    @patch('firebase_admin.credentials.Certificate', return_value=MagicMock())
     @patch('firebase_admin.initialize_app')
     @patch('firebase_admin._apps', new=['already_inited'])
     def test_init_firebase_app_when_already_inited(
         self,
         mock_init_app: MagicMock,
+        mock_cred: MagicMock,
     ) -> None:
         """
         Test that init_firebase_app() does not re-initialise
@@ -48,9 +54,11 @@ class TestInitFirebaseApp(unittest.TestCase):
 
         Args:
             mock_init_app (MagicMock): Mocked initialise_app function.
+            mock_cred (MagicMock): Mocked Certificate constructor.
         """
         init_firebase_app('dummy/path.json', 'dummy-project')
         mock_init_app.assert_not_called()
+        mock_cred.assert_not_called()
 
     def test_init_firebase_app_empty_cred_path(self) -> None:
         """
