@@ -33,7 +33,7 @@ class TestInitFirebaseApp(unittest.TestCase):
         Args:
             mock_init_app (MagicMock): Mocked initialise_app function.
         """
-        init_firebase_app()
+        init_firebase_app('dummy/path.json', 'dummy-project')
         mock_init_app.assert_called_once()
 
     @patch('firebase_admin.initialize_app')
@@ -49,8 +49,24 @@ class TestInitFirebaseApp(unittest.TestCase):
         Args:
             mock_init_app (MagicMock): Mocked initialise_app function.
         """
-        init_firebase_app()
+        init_firebase_app('dummy/path.json', 'dummy-project')
         mock_init_app.assert_not_called()
+
+    def test_init_firebase_app_empty_cred_path(self) -> None:
+        """
+        Test that init_firebase_app raises ValueError if cred_path is empty.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            init_firebase_app('', 'dummy-project')
+        self.assertIn('cred_path', str(ctx.exception))
+
+    def test_init_firebase_app_empty_project_id(self) -> None:
+        """
+        Test that init_firebase_app raises ValueError if project_id is empty.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            init_firebase_app('dummy/path.json', '')
+        self.assertIn('project_id', str(ctx.exception))
 
 
 @patch(
