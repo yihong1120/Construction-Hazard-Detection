@@ -16,6 +16,7 @@ class AppIntegrationTest(unittest.TestCase):
     """
     app: FastAPI
     client: TestClient
+    _patchers: list = []
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -23,32 +24,36 @@ class AppIntegrationTest(unittest.TestCase):
         Set up the test class by patching global dependencies
         and initialising the app and client.
         """
-        # Patch database and Redis dependencies to return None
-        # This avoids 422 errors due to missing dependencies
-        patch('examples.auth.database.get_db', new=lambda: None).start()
-        patch(
-            'examples.auth.redis_pool.get_redis_pool',
-            new=lambda: None,
-        ).start()
-
-        # Patch all authorisation dependencies to return None,
-        # avoiding 422 errors
-        patch(
-            'examples.db_management.deps.require_admin',
-            new=lambda: None,
-        ).start()
-        patch(
-            'examples.db_management.deps.require_super_admin',
-            new=lambda: None,
-        ).start()
-        patch(
-            'examples.db_management.deps.get_current_user',
-            new=lambda: None,
-        ).start()
-
+        # Store patchers so they can be stopped later
+        cls._patchers = [
+            patch('examples.auth.database.get_db', new=lambda *a, **kw: None),
+            patch(
+                'examples.auth.redis_pool.get_redis_pool',
+                new=lambda *a, **kw: None,
+            ),
+            patch(
+                'examples.db_management.deps.require_admin',
+                new=lambda *a, **kw: None,
+            ),
+            patch(
+                'examples.db_management.deps.require_super_admin',
+                new=lambda *a, **kw: None,
+            ),
+            patch(
+                'examples.db_management.deps.get_current_user',
+                new=lambda *a, **kw: None,
+            ),
+        ]
+        for p in cls._patchers:
+            p.start()
         # Use the FastAPI app instance from the imported module
         cls.app = app_module.app
         cls.client = TestClient(cls.app)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        for p in getattr(cls, '_patchers', []):
+            p.stop()
 
     # ---------- Tests ----------
 
