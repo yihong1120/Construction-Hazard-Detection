@@ -24,10 +24,14 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
     """
 
     def setUp(self) -> None:
-        """Set up common mock objects for each test."""
+        """Set up common mock objects for each test.
+
+        This method initialises mock database and configuration objects
+        for use in each test case.
+        """
         self.db: AsyncMock = AsyncMock()
         self.cfg: MagicMock = MagicMock()
-        self.cfg.id = 1
+        self.cfg.id = 1  # type: ignore[attr-defined]
         self.site_id: int = 123
         self.group_id: int = 456
 
@@ -45,7 +49,11 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_list_stream_configs(self) -> None:
-        """Test listing stream configurations for a given site."""
+        """Test listing stream configurations for a given site.
+
+        Ensures that the list_stream_configs function returns the correct
+        list of configurations for a specified site ID.
+        """
         mock_result: MagicMock = MagicMock()
         mock_result.scalars.return_value.all.return_value = ['cfg1', 'cfg2']
         self.db.execute = AsyncMock(return_value=mock_result)
@@ -58,7 +66,11 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(configs, ['cfg1', 'cfg2'])
 
     async def test_create_stream_config_success(self) -> None:
-        """Test successful creation of a stream configuration."""
+        """Test successful creation of a stream configuration.
+
+        Verifies that a new stream configuration is created and committed
+        to the database without error.
+        """
         self.db.commit = AsyncMock()
         self.db.refresh = AsyncMock()
         self.db.add = MagicMock()
@@ -83,7 +95,11 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
             self.db.refresh.assert_awaited_with(mock_cfg)
 
     async def test_create_stream_config_exception(self) -> None:
-        """Test stream configuration creation handling database exception."""
+        """Test stream configuration creation handling database exception.
+
+        Ensures that an HTTPException is raised and rollback is called
+        if the database commit fails during creation.
+        """
         self.db.commit = AsyncMock(side_effect=Exception('Database failure'))
         self.db.rollback = AsyncMock()
         self.db.add = MagicMock()
@@ -105,7 +121,11 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
             self.db.rollback.assert_awaited()
 
     async def test_update_stream_config_success(self) -> None:
-        """Test successful update of a stream configuration."""
+        """Test successful update of a stream configuration.
+
+        Verifies that the update_stream_config function correctly updates
+        the configuration and commits the changes.
+        """
         self.db.commit = AsyncMock()
 
         await stream_config_services.update_stream_config(
@@ -120,7 +140,11 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.cfg.video_url, 'http://test/updated')
 
     async def test_update_stream_config_exception(self) -> None:
-        """Test stream configuration update handling database exception."""
+        """Test stream configuration update handling database exception.
+
+        Ensures that an HTTPException is raised and rollback is called
+        if the database commit fails during update.
+        """
         self.db.commit = AsyncMock(side_effect=Exception('Database failure'))
         self.db.rollback = AsyncMock()
 
@@ -137,7 +161,11 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_delete_stream_config_success(self) -> None:
-        """Test successful deletion of a stream configuration."""
+        """Test successful deletion of a stream configuration.
+
+        Verifies that the delete_stream_config function deletes the
+        configuration and commits the transaction.
+        """
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock()
 
@@ -150,7 +178,11 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_delete_stream_config_exception(self) -> None:
-        """Test stream configuration deletion handling database exception."""
+        """Test stream configuration deletion handling database exception.
+
+        Ensures that an HTTPException is raised and rollback is called
+        if the database commit fails during deletion.
+        """
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock(side_effect=Exception('Database failure'))
         self.db.rollback = AsyncMock()
@@ -165,12 +197,18 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_get_group_stream_limit_success(self) -> None:
-        """Test retrieving stream limits for a specific group successfully."""
+        """Test retrieving stream limits for a specific group successfully.
+
+        Ensures that the correct current and maximum stream limits are
+        returned for a given group ID.
+        """
         mock_group: MagicMock = MagicMock()
         mock_group.max_allowed_streams = 5
         self.db.get = AsyncMock(return_value=mock_group)
         self.db.scalar = AsyncMock(return_value=3)
 
+        current_streams: int
+        max_streams: int
         current_streams, max_streams = (
             await stream_config_services.get_group_stream_limit(
                 group_id=self.group_id,
@@ -182,8 +220,10 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(max_streams, 5)
 
     async def test_get_group_stream_limit_group_not_found(self) -> None:
-        """
-        Test handling when group is not found in retrieving stream limits.
+        """Test handling when group is not found in retrieving stream limits.
+
+        Ensures that an HTTPException with status 404 is raised if the
+        group is not found in the database.
         """
         self.db.get = AsyncMock(return_value=None)
 
@@ -198,3 +238,9 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+'''
+pytest --cov=examples.db_management.services.stream_config_services\
+    --cov-report=term-missing\
+        tests/examples/db_management/services/stream_config_services_test.py
+'''

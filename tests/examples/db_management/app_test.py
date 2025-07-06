@@ -1,24 +1,38 @@
-# tests/examples/db_management/app_test.py
 from __future__ import annotations
 
 import unittest
 from unittest.mock import patch
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.middleware.cors import CORSMiddleware
 
+from examples.db_management import app as app_module
+
 
 class AppIntegrationTest(unittest.TestCase):
+    """
+    Integration tests for the FastAPI app in db_management.
+    """
+    app: FastAPI
+    client: TestClient
+
     @classmethod
-    def setUpClass(cls):
-        # ---- 預先 mock 全域依賴，避免真 DB / Redis 連線 ----
+    def setUpClass(cls) -> None:
+        """
+        Set up the test class by patching global dependencies
+        and initialising the app and client.
+        """
+        # Patch database and Redis dependencies to return None
+        # This avoids 422 errors due to missing dependencies
         patch('examples.auth.database.get_db', new=lambda: None).start()
         patch(
             'examples.auth.redis_pool.get_redis_pool',
             new=lambda: None,
         ).start()
 
-        # 以下權限相關依賴統一回傳 None，避免 422
+        # Patch all authorisation dependencies to return None,
+        # avoiding 422 errors
         patch(
             'examples.db_management.deps.require_admin',
             new=lambda: None,
@@ -32,22 +46,25 @@ class AppIntegrationTest(unittest.TestCase):
             new=lambda: None,
         ).start()
 
-        # 匯入 app（在所有依賴都被 patch 之後）
-        from examples.db_management.app import app  # noqa: WPS433
-
-        cls.app = app
-        cls.client = TestClient(app)
+        # Use the FastAPI app instance from the imported module
+        cls.app = app_module.app
+        cls.client = TestClient(cls.app)
 
     # ---------- Tests ----------
 
-    def test_cors_middleware_present(self):
-        """應用程式應加載 CORSMiddleware，且允許所有 Origin。"""
+    def test_cors_middleware_present(self) -> None:
+        """
+        The application should load CORSMiddleware and allow all origins.
+
+        This test checks that CORSMiddleware is present in the app's middleware
+        stack and that CORS headers are set correctly for OPTIONS requests.
+        """
         cors = [
             m for m in self.app.user_middleware if m.cls is CORSMiddleware
         ]
         self.assertTrue(cors, msg='CORSMiddleware not found on app')
 
-        # 簡單驗證 CORS headers
+        # Simple check for CORS headers
         resp = self.client.options(
             '/openapi.json',
             headers={
@@ -62,14 +79,17 @@ class AppIntegrationTest(unittest.TestCase):
             ), 'http://example.com',
         )
 
-    def test_openapi_available(self):
-        """OpenAPI schema endpoint 應該能回 200 並包含 title 與 paths。"""
+    def test_openapi_available(self) -> None:
+        """
+        The OpenAPI schema endpoint should return 200
+        and contain title and paths.
+        """
         resp = self.client.get('/openapi.json')
         self.assertEqual(resp.status_code, 200)
-        data = resp.json()
+        data: dict = resp.json()
         self.assertIn('paths', data)
-        # 大致檢查幾個 router 的經典路徑是否存在
-        expected_paths = [
+        # Roughly check that several classic router paths exist
+        expected_paths: list[str] = [
             '/list_features',
             '/list_groups',
             '/list_sites',
@@ -79,16 +99,29 @@ class AppIntegrationTest(unittest.TestCase):
         for p in expected_paths:
             self.assertIn(p, data['paths'])
 
-    def test_docs_ui_accessible(self):
-        """Swagger UI (/docs) 應能正常回 200。"""
+    def test_docs_ui_accessible(self) -> None:
+        """
+        Swagger UI (/docs) should return 200 and HTML content.
+
+        This test checks that the Swagger UI documentation endpoint is
+        accessible and returns HTML content.
+        """
         resp = self.client.get('/docs')
         self.assertEqual(resp.status_code, 200)
         self.assertIn('text/html', resp.headers['content-type'])
 
-    def test_router_tags_registered(self):
-        """確認 app 中已註冊所有預期的 tag。"""
-        tags = {r.tags[0] for r in self.app.routes if getattr(r, 'tags', None)}
-        expected = {
+    def test_router_tags_registered(self) -> None:
+        """
+        Confirm all expected router tags are registered in the app.
+
+        This test verifies that all expected router tags are present in
+        the application's route definitions.
+        """
+        tags: set[str] = {
+            r.tags[0]
+            for r in self.app.routes if getattr(r, 'tags', None)
+        }
+        expected: set[str] = {
             'auth',
             'user-mgmt',
             'site-mgmt',
@@ -101,6 +134,23 @@ class AppIntegrationTest(unittest.TestCase):
             msg=f"Missing router tag(s): {expected - tags}",
         )
 
+    def test_main_calls_uvicorn_run(self) -> None:
+        """
+        Test that the main() function calls uvicorn.run.
+
+        This test patches uvicorn.run and checks that it is called when
+        the app's main() function is invoked.
+        """
+        with patch('examples.db_management.app.uvicorn.run') as mock_run:
+            app_module.main()
+            mock_run.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
+
+'''
+pytest --cov=examples.db_management.app\
+    --cov-report=term-missing\
+        tests/examples/db_management/app_test.py
+'''

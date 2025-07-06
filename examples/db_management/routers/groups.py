@@ -78,7 +78,7 @@ async def endpoint_create_group(
     )
 
     # Return the newly created group's details
-    return GroupRead.from_orm(group)
+    return GroupRead.model_validate(group)
 
 
 @router.put(

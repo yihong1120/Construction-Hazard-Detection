@@ -35,8 +35,10 @@ async def list_sites(
     Returns:
         List[Site]: A list of retrieved Site objects.
     """
+    # Construct the query to select all sites, including their users
     query = select(Site).options(selectinload(Site.users))
 
+    # If a group_id is provided, filter the sites accordingly
     if group_id is not None:
         query = query.where(Site.group_id == group_id)
 
@@ -56,7 +58,8 @@ async def create_site(
 
     Args:
         name (str): The name of the new site.
-        group_id (int): The group identifier that the site belongs to.
+        group_id (Optional[int]): The group identifier
+            that the site belongs to.
         db (AsyncSession): The asynchronous database session.
 
     Returns:
@@ -68,29 +71,36 @@ async def create_site(
     if group_id is None:
         raise HTTPException(400, 'group_id is required for new site')
 
-    site = Site(name=name, group_id=group_id)
+    site: Site = Site(name=name, group_id=group_id)
     db.add(site)
 
     try:
         await db.commit()
-        await db.refresh(site)
 
-        # Grant site access to super admin user ('ChangDar')
-        super_admin = (
+        # Automatically grant the super admin (ChangDar) access to the new site
+        super_admin: User | None = (
             await db.execute(
                 select(User).where(User.username == SUPER_ADMIN_NAME),
             )
-        ).scalar_one_or_none()
-
+        ).unique().scalar_one_or_none()
         if super_admin:
             await db.execute(
-                user_sites_table.insert()
-                .prefix_with('IGNORE')  # Avoid duplicates
-                .values(user_id=super_admin.id, site_id=site.id),
+                user_sites_table.insert().prefix_with('IGNORE').values(
+                    user_id=super_admin.id, site_id=site.id,
+                ),
             )
-            await db.commit()
 
-        return site
+        # Refresh the site object and load its users
+        refreshed_site: Site = (
+            await db.execute(
+                select(Site)
+                .options(selectinload(Site.users))
+                .where(Site.id == site.id),
+            )
+        ).unique().scalar_one()
+
+        await db.commit()
+        return refreshed_site
 
     except Exception as e:
         await db.rollback()
@@ -112,6 +122,7 @@ async def update_site(
     Raises:
         HTTPException: If a database error occurs during the update.
     """
+    # Update the site's name
     site.name = new_name
 
     try:
@@ -143,7 +154,7 @@ async def delete_site(
         HTTPException: If a database error occurs during deletion.
     """
     # Step 1: Delete violation image files associated with the site
-    image_paths = (
+    image_paths: list[str] = (
         await db.execute(
             select(Violation.image_path).where(Violation.site == site.name),
         )
@@ -151,7 +162,8 @@ async def delete_site(
 
     for path_str in image_paths:
         if path_str:
-            image_path = Path(path_str)
+            image_path: Path = Path(path_str)
+            # Remove the file if it exists
             if image_path.is_file():
                 image_path.unlink(missing_ok=True)
 
@@ -182,6 +194,7 @@ async def add_user_to_site(
         site_id (int): The identifier of the site to grant access to.
         db (AsyncSession): The asynchronous database session.
     """
+    # Insert a new record to grant the user access to the site
     await db.execute(
         user_sites_table.insert()
         .prefix_with('IGNORE')  # Prevent duplicate entries
@@ -202,6 +215,7 @@ async def remove_user_from_site(
         site_id (int): The identifier of the site from which to revoke access.
         db (AsyncSession): The asynchronous database session.
     """
+    # Delete the record that grants the user access to the site
     await db.execute(
         user_sites_table.delete().where(
             user_sites_table.c.user_id == user_id,

@@ -74,4 +74,4 @@ async def refresh(
         TokenPair: Newly issued access and refresh tokens.
     """
     result = await refresh_tokens(payload, redis)
-    return TokenPair(**result)  # 🔥 明確轉換為 Pydantic 模型
+    return TokenPair(**result)

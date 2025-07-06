@@ -14,11 +14,8 @@ from examples.db_management.schemas.stream_config import StreamConfigUpdate
 
 
 class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
-    """Unit tests for stream configuration router endpoints.
-
-    This test class covers all key branches and exceptions for the FastAPI
-    stream configuration endpoints, using unittest and mock. All tests use
-    British English spelling and Google style docstrings.
+    """
+    Unit tests for stream configuration router endpoints.
     """
 
     def setUp(self) -> None:

@@ -23,11 +23,8 @@ from examples.db_management.schemas.site import SiteUserOp
 
 
 class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
-    """Test suite for site management router endpoints.
-
-    All tests use unittest.mock for isolation. Type hints and Google style
-    docstrings are provided. British English spelling is used for all comments
-    and docstrings.
+    """
+    Test suite for site management router endpoints.
     """
 
     def setUp(self) -> None:
@@ -149,12 +146,25 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_result.unique.return_value = mock_result
         mock_result.scalar_one_or_none.return_value = site
         self.db.execute.return_value = mock_result
+
+        # Mock redis object
+        mock_redis = MagicMock()
+        mock_redis.keys = AsyncMock(return_value=[b'key1', b'key2'])
+        mock_redis.delete = AsyncMock()
+
         payload = SiteDelete(site_id=1)
-        result = await endpoint_delete_site(payload, self.db, self.user)
+        result = await endpoint_delete_site(
+            payload,
+            self.db,
+            self.user,
+            mock_redis,
+        )
         self.assertEqual(
             result['message'],
             'Site and related data deleted successfully.',
         )
+        mock_redis.keys.assert_called_once()
+        mock_redis.delete.assert_called_once_with(b'key1', b'key2')
 
     async def test_delete_site_not_found(self) -> None:
         """Test delete_site when site not found."""
@@ -169,7 +179,8 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.routers.sites.add_user_to_site')
     async def test_endpoint_add_user_to_site_success(
-        self, mock_add_user: MagicMock,
+        self,
+        mock_add_user: MagicMock,
     ) -> None:
         """Test successful addition of user to site.
 

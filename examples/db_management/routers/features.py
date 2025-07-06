@@ -84,7 +84,7 @@ async def endpoint_create_feature(
         payload.description,
         db,
     )
-    return FeatureRead.from_orm(feature)
+    return FeatureRead.model_validate(feature)
 
 
 @router.put(

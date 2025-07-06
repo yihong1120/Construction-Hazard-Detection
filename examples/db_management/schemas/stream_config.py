@@ -24,6 +24,7 @@ class StreamConfigCreate(BaseModel):
 
     store_in_redis: bool = False
     expire_date: datetime | None = None
+    group_id: int | None = None
 
 
 class StreamConfigUpdate(BaseModel):

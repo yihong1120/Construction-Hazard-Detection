@@ -128,9 +128,8 @@ async def endpoint_create_stream_config(
             status_code=403, detail='Stream limit reached for group.',
         )
 
-    data = payload.model_dump()
-    data['group_id'] = site.group_id
-    cfg = await create_stream_config(data, db)
+    payload_with_group = payload.model_copy(update={'group_id': site.group_id})
+    cfg = await create_stream_config(payload_with_group, db)
 
     return {
         'id': cfg.id,
@@ -184,8 +183,7 @@ async def endpoint_update_stream_config(
                 status_code=400, detail='Stream name already exists in site.',
             )
 
-    updates = payload.model_dump(exclude_none=True)
-    await update_stream_config(cfg, updates, db)
+    await update_stream_config(cfg, payload, db)
 
     return {'message': 'Stream configuration updated successfully.'}
 
