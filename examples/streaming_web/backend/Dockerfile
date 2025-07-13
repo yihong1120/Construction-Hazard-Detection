@@ -16,4 +16,4 @@ ENV REDIS_PORT=6379
 ENV REDIS_PASSWORD='password'
 
 # Define the default command to run the application
-CMD ["uvicorn", "examples.streaming_web.backend.app:sio_app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "examples.streaming_web.backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
