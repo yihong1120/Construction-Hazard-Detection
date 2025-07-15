@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 from typing import Any
 
+import aiohttp
 import cv2
 import numpy as np
 import redis.asyncio as redis
@@ -16,7 +17,193 @@ from shapely.geometry import Polygon
 from sklearn.cluster import HDBSCAN
 from watchdog.events import FileSystemEventHandler
 
-from src.lang_config import Translator
+
+class TokenManager:
+    """
+    Manages authentication and token refreshing for API requests.
+    """
+
+    def __init__(
+        self,
+        api_url: str | None = None,
+        shared_token: dict[str, str | bool] | None = None,
+    ) -> None:
+        """
+        Initialises the TokenManager instance.
+
+        Args:
+            api_url (str | None): The base API URL for authentication.
+            shared_token (dict[str, str | bool] | None):
+                Shared token dictionary for storing access and refresh tokens.
+        """
+        # API endpoint for authentication;
+        # defaults to environment variable or local address.
+        self.api_url: str = api_url or os.getenv(
+            'DB_MANAGEMENT_API_URL',
+        ) or 'http://127.0.0.1:8005'
+        # Shared token dictionary for access/refresh tokens and refresh state.
+        self.shared_token: dict[str, str | bool] = shared_token or {
+            'access_token': '',
+            'refresh_token': '',
+            'is_refreshing': False,
+        }
+        self.logger: logging.Logger = logging.getLogger(__name__)
+
+        # Maximum retries for token refresh attempts.
+        self.max_retries: int = 3
+
+    async def authenticate(self, force: bool = False) -> None:
+        """
+        Authenticates with the API and retrieves access/refresh tokens.
+
+        Args:
+            force (bool):
+                If True, forces re-authentication even if a token exists.
+
+        Raises:
+            ValueError: If username or password is missing.
+            RuntimeError: If authentication fails.
+        """
+        # Load credentials from environment variables (supports .env)
+        username: str = os.getenv('API_USERNAME', '')
+        password: str = os.getenv('API_PASSWORD', '')
+
+        if not username or not password:
+            raise ValueError('Missing API_USERNAME or API_PASSWORD')
+
+        # If token exists and not forced, skip authentication.
+        if self.shared_token.get('access_token') and not force:
+            return
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                resp: aiohttp.ClientResponse = await session.post(
+                    f"{self.api_url}/login",
+                    json={'username': username, 'password': password},
+                )
+                if resp.status != 200:
+                    msg: str = f"Authenticate failed with status {resp.status}"
+                    self.logger.error(msg)
+                    raise RuntimeError(msg)
+                data: dict = await resp.json()
+                self.shared_token['access_token'] = data['access_token']
+                self.shared_token['refresh_token'] = data.get(
+                    'refresh_token', '',
+                )
+                self.logger.info(
+                    'Successfully authenticated and retrieved token.',
+                )
+        except Exception as e:
+            self.logger.error(f"Authentication error: {e}")
+            raise
+
+    async def refresh_token(self) -> None:
+        """
+        Refreshes the access token using the refresh token.
+
+        Raises:
+            RuntimeError:
+                If refresh fails repeatedly or returns unexpected status.
+        """
+        # If another refresh is in progress, wait up to 10 seconds.
+        if self.shared_token.get('is_refreshing'):
+            wait_time: float = 0.0
+            while self.shared_token.get('is_refreshing'):
+                await asyncio.sleep(0.1)
+                wait_time += 0.1
+                if wait_time >= 10:
+                    self.logger.warning(
+                        'Waited 10s for refresh to finish, giving up.',
+                    )
+                    return
+            return
+
+        refresh_token: str = str(self.shared_token.get('refresh_token', ''))
+        if not refresh_token:
+            # No refresh token available; force re-authentication.
+            await self.authenticate(force=True)
+            return
+
+        try:
+            # Double check for token changes during wait.
+            if self.shared_token.get('refresh_token') != refresh_token:
+                return
+
+            self.shared_token['is_refreshing'] = True
+            self.logger.warning('Token expired. Attempting to refresh...')
+
+            async with aiohttp.ClientSession() as session:
+                resp: aiohttp.ClientResponse = await session.post(
+                    f"{self.api_url}/refresh",
+                    json={'refresh_token': refresh_token},
+                    headers={
+                        'Authorization': (
+                            f"Bearer {self.shared_token['access_token']}"
+                        ),
+                    },
+                )
+                if resp.status == 401:
+                    # Retry without header if 401 returned.
+                    resp = await session.post(
+                        f"{self.api_url}/refresh",
+                        json={'refresh_token': refresh_token},
+                    )
+
+                if resp.status == 200:
+                    data: dict = await resp.json()
+                    self.shared_token['access_token'] = data['access_token']
+                    self.shared_token['refresh_token'] = data['refresh_token']
+                    self.logger.info('Token refreshed successfully.')
+                else:
+                    self.logger.warning(f"Refresh failed: {resp.status}")
+                    if resp.status in (401, 403):
+                        await self.authenticate(force=True)
+                    else:
+                        raise RuntimeError(
+                            f"Refresh failed with status {resp.status}",
+                        )
+        finally:
+            self.shared_token['is_refreshing'] = False
+
+    async def ensure_token_valid(self, retry_count: int = 0) -> None:
+        """
+        Ensures a valid access token is present, authenticating if necessary.
+
+        Args:
+            retry_count (int): Number of previous retries.
+
+        Raises:
+            RuntimeError: If maximum retries exceeded.
+        """
+        if retry_count > self.max_retries:
+            raise RuntimeError(
+                'Exceeded max_retries in ensure_token_valid, aborting...',
+            )
+
+        if not self.shared_token.get('access_token'):
+            await self.authenticate(force=True)
+
+    async def handle_401(self, retry_count: int = 0) -> None:
+        """
+        Handles HTTP 401 errors by attempting to refresh the token,
+        then re-authenticating if needed.
+
+        Args:
+            retry_count (int): Number of previous retries.
+
+        Raises:
+            RuntimeError: If maximum retries reached.
+        """
+        if retry_count > self.max_retries:
+            raise RuntimeError('Repeated 401 errors, max_retries reached.')
+
+        try:
+            await self.refresh_token()
+        except Exception as e:
+            self.logger.warning(
+                f"refresh_token() error: {e}, re-authenticate.",
+            )
+            await self.authenticate(force=True)
 
 
 class Utils:
