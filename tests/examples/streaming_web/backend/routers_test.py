@@ -109,6 +109,10 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_scan_for_labels (AsyncMock): Mock for scan_for_labels.
         """
+        # Ensure JWT subject is present
+        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
+            subject={'username': 'testuser'},
+        )
         # Arrange: Set the mock to return a known list of labels
         mock_scan_for_labels.return_value = ['label1', 'label2']
 
@@ -130,6 +134,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_scan_for_labels (AsyncMock): Mock for scan_for_labels.
         """
+        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
+            subject={'username': 'testuser'},
+        )
         mock_scan_for_labels.side_effect = ValueError('Invalid data')
         response = self.client.get('/api/labels')
         self.assertEqual(response.status_code, 500)
@@ -146,6 +153,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_scan_for_labels (AsyncMock): Mock for scan_for_labels.
         """
+        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
+            subject={'username': 'testuser'},
+        )
         mock_scan_for_labels.side_effect = KeyError('missing_key')
         response = self.client.get('/api/labels')
         self.assertEqual(response.status_code, 500)
@@ -165,6 +175,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_scan_for_labels (AsyncMock): Mock for scan_for_labels.
         """
+        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
+            subject={'username': 'testuser'},
+        )
         mock_scan_for_labels.side_effect = ConnectionError(
             'DB connection failed',
         )
@@ -183,6 +196,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_scan_for_labels (AsyncMock): Mock for scan_for_labels.
         """
+        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
+            subject={'username': 'testuser'},
+        )
         mock_scan_for_labels.side_effect = TimeoutError('Timeout!')
         response = self.client.get('/api/labels')
         self.assertEqual(response.status_code, 500)
@@ -199,6 +215,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_scan_for_labels (AsyncMock): Mock for scan_for_labels.
         """
+        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
+            subject={'username': 'testuser'},
+        )
         mock_scan_for_labels.side_effect = Exception('Unknown error')
         response = self.client.get('/api/labels')
         self.assertEqual(response.status_code, 500)
