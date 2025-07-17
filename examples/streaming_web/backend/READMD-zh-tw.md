@@ -23,12 +23,10 @@ examples/streaming_web/backend/
 - **用途**：定義並配置主要的 FastAPI 應用程式。
 - **重點**：
   - 使用自訂的 lifespan（`global_lifespan`）建立 `FastAPI` 實例，以管理應用程式的啟動與關閉流程（請參考 `examples.auth.lifespan`）。
-  - 設置 CORS 中介軟體（middleware），允許跨來源的請求（在正式環境中應適度限制）。
-  - 引入下列路由（routers）：
-    - **身份驗證**（`auth_router`）
-    - **使用者管理**（`user_management_router`）
-    - **串流網頁服務**（`streaming_web_router`）
-  - 提供一個 `main()` 函式，並使用 `uvicorn.run()` 啟動應用程式。
+  - 設置 CORS 中介軟體，允許跨來源的請求（正式環境應適度限制）。
+  - 僅引入串流網頁服務（`streaming_web_router`）。
+  - 提供 `main()` 函式，使用 `uvicorn.run()` 啟動應用程式。
+  - 所有程式皆有型別註解與 Google-style docstring，並採英式英文註解。
 
 **使用方式**：
 
@@ -45,52 +43,62 @@ python examples/streaming_web/backend/app.py
 ### `redis_service.py`
 - **用途**：與 Redis 互動，處理影格與其中繼資料的儲存與讀取。
 - **主要函式**：
-  1. `scan_for_labels(rds)`：掃描 Redis 中的鍵，找出不同的標籤（label）。標籤使用 base64 編碼儲存在鍵值中，並會被解碼。若標籤字串包含 `'test'`，則不納入。
-  2. `get_keys_for_label(rds, label)`：取得與指定 label 對應的所有 Redis 鍵。
-  3. `fetch_latest_frames(rds, last_ids)`：為 `last_ids` 中每個鍵擷取最新影格；若發現新影格，就回傳影格與相關中繼資料。
-  4. `fetch_latest_frame_for_key(rds, redis_key, last_id)`：與上類似，但僅針對單一鍵（key）抓取最近的影格，忽略比 `last_id` 更舊的影格。
-  5. `store_to_redis(rds, site, stream_name, frame_bytes, warnings_json, cone_polygons_json, ...)`：將上傳的影格及其中繼資料存入 Redis（使用 Redis Streams 的 `xadd`）。
+  1. `scan_for_labels(rds: redis.Redis) -> list[str]`：掃描 Redis 鍵找出不同標籤（key 以 base64 編碼，回傳時解碼），排除含 'test'。
+  2. `get_keys_for_label(rds: redis.Redis, label: str) -> list[str]`：取得指定 label 對應的所有 Redis 鍵。
+  3. `fetch_latest_frames(rds: redis.Redis, last_ids: dict[str, str]) -> list[dict[str, str | bytes | int]]`：為 `last_ids` 中每個鍵擷取最新影格，回傳中繼資料與原始影格 bytes。
+  4. `fetch_latest_frame_for_key(rds: redis.Redis, redis_key: str, last_id: str) -> dict[str, str | bytes | int] | None`：僅針對單一鍵抓取最新影格，忽略比 `last_id` 更舊者。
+  5. `store_to_redis(...) -> None`：將上傳影格及中繼資料存入 Redis Streams（`xadd`）。
 
 **注意事項**：
 - 透過 base64（`Utils.encode()`）編碼與解碼標籤與串流名稱。
-- 使用 Redis Streams 時，`maxlen=10`，代表若同一串流超過 10 筆資料，舊資料會被裁剪。
-- 定義了 `DELIMITER = b'--IMG--'` 作為在 WebSocket 傳輸時，JSON 中繼資料與二進位影格的分隔符。
+- Redis Streams 單一串流最多保留 10 筆資料（`maxlen=10`）。
+- 定義 `DELIMITER = b'--IMG--'` 作為 WebSocket 傳輸時 JSON 與影格 bytes 的分隔符。
+- 所有函式皆有型別註解與 Google-style docstring，並採英式英文註解。
 
 ### `routers.py`
 - **用途**：定義提供上傳影格（`POST /frames`）、讀取標籤（`GET /labels`）以及 WebSocket 串流影格的 FastAPI 路由。
 - **端點**：
-  1. `GET /labels`：每分鐘限 60 次呼叫，透過 `scan_for_labels` 從 Redis 取得所有標籤。
-  2. `POST /frames`：經過 JWT 驗證之後才能呼叫，允許使用者上傳圖片檔案及相關 JSON 資料（警告、標註多邊形等），並儲存在 Redis。
-  3. `WebSocket /ws/labels/{label}`：針對單一 label 下的 **所有**串流鍵提供近即時影格推送。
-  4. `WebSocket /ws/stream/{label}/{key}`：採用 **拉式**機制（pull-based）的串流；前端以 `{"action": "pull"}` 指令向伺服器索取最新影格，也支援 `{"action": "ping"}` 做 keepalive。
+  1. `GET /labels`：每分鐘限 60 次呼叫，透過 `scan_for_labels` 取得所有標籤，回傳 `LabelListResponse`。
+  2. `POST /frames`：JWT 保護，允許上傳影格與中繼資料，回傳 `FramePostResponse`。
+  3. `WebSocket /ws/labels/{label}`：推送該 label 下所有串流的最新影格（header + DELIMITER + frame bytes，二進位格式）。
+  4. `WebSocket /ws/stream/{label}/{key}`：拉式串流，前端以 `{"action": "pull"}` 取得最新影格，或 `{"action": "ping"}` 保持連線。
+  5. `WebSocket /ws/frames`：允許已驗證用戶透過 WebSocket 上傳影格與中繼資料。
 
 **WebSocket 互動方式**：
 - **`/ws/labels/{label}`**：
-  - 透過定期檢查 Redis，找出此 label 相關的所有鍵（keys），並持續發送最新影格給用戶端。
-  - 影格的中繼資料會以 JSON 表示；原始影格則以二進位送出，並以 `DELIMITER` 作為分隔符。
-  - 若找不到任何鍵，則回傳錯誤訊息並關閉連線。
+  - 持續推送該 label 下所有串流的最新影格。
+  - 若無任何鍵，回傳錯誤並關閉連線。
+  - 影格以二進位格式傳送：JSON header + DELIMITER + frame bytes。
 
 - **`/ws/stream/{label}/{key}`**：
-  - 透過 JSON 命令進行互動：
-    - `ping` → 回傳 `pong`。
-    - `pull` → 取出 Redis 中最新影格，若存在則送回給用戶端。
-    - 任何未知指令 → 回傳錯誤訊息。
+  - 僅接受 JSON 指令：`{"action": "pull"}` 或 `{"action": "ping"}`。
+  - `pull` 送出最新影格（header + DELIMITER + frame bytes，二進位）。
+  - `ping` 回傳 JSON `{ "action": "pong" }`。
+  - 其他未知指令回傳 JSON 錯誤。
+
+- **`/ws/frames`**：
+  - 已驗證端點，允許用戶透過 WebSocket 上傳影格與中繼資料。
+  - 僅接受二進位訊息：JSON header + DELIMITER + frame bytes。
+  - 回傳 JSON 狀態訊息（成功或錯誤）。
+
+所有端點與 WebSocket handler 皆有型別註解與 Google-style docstring，並採英式英文註解。
 
 ### `schemas.py`
 - **用途**：使用 Pydantic 模型定義結構化的請求與回應格式。
 - **主要模型**：
-  1. `LabelListResponse`：回傳一個 JSON 格式的標籤清單。
-  2. `FramePostResponse`：表示上傳影格的結果（例如 `"ok"`）與文字訊息。
+  1. `LabelListResponse`：回傳 JSON 格式標籤清單，完整型別註解與說明。
+  2. `FramePostResponse`：回傳上傳影格結果（如 `"ok"`）與訊息，完整型別註解與說明。
 
-藉由這些模型，路由可確保回傳格式一致並有明確的類型定義。
+這些模型確保所有端點回傳格式一致且型別明確。
 
 ### `utils.py`
-- **用途**：提供雜項的輔助函式，包括 base64 編碼、解碼，以及（未在主要路由中使用但可擴充）透過 WebSocket 傳送影格資料的函式。
+- **用途**：以完整型別提示與 Google-style docstring 提供 base64 編碼/解碼與 WebSocket 傳送影格等輔助函式。
 - **主要函式**：
-  - `encode(value)`：將字串做 URL-safe Base64 編碼。
-  - `is_base64(value)`：檢查字串是否符合 URL-safe Base64 格式。
-  - `decode(value)`：若字串為有效的 Base64，則解碼；否則回傳原字串。
-  - `send_frames(websocket, label, updated_data)`：將已結構化的資料以 JSON 形式透過 `WebSocket` 傳送給用戶端，並包含一個標籤欄位以便識別。
+  - `encode(value: str) -> str`：將字串做 URL-safe Base64 編碼。
+  - `is_base64(value: str) -> bool`：檢查字串是否為合法 URL-safe Base64。
+  - `decode(value: str) -> str`：若為合法 Base64 則解碼，否則回傳原字串。
+  - `send_frames(websocket: WebSocket, label: str, updated_data: list[dict[str, str | bytes | int]]) -> None`：將資料以 JSON 形式透過 WebSocket 傳送。
+
 
 ## 執行應用程式
 
@@ -119,7 +127,7 @@ python examples/streaming_web/backend/app.py
 
 ## 測試
 
-單元測試與整合測試位於 `tests/` 目錄中，例如：
+所有單元與整合測試皆位於 `tests/` 目錄，並全面採用型別提示、Google-style docstring 與英式註解，易於維護與閱讀。
 
 ```bash
 pytest --cov=examples.streaming_web.backend --cov-report=term-missing
@@ -127,7 +135,7 @@ pytest --cov=examples.streaming_web.backend --cov-report=term-missing
 
 主要測試檔：
 - **`redis_service_test.py`**：驗證影格在 Redis 中存取的正確性。
-- **`routers_test.py`**：檢驗各端點與 WebSocket 功能，使用 FastAPI 的 `TestClient`。
+- **`routers_test.py`**：檢驗各端點與 WebSocket 功能，使用 FastAPI 的 `TestClient`，所有測試皆有型別註解與說明。
 
 ## 正式環境注意事項
 
