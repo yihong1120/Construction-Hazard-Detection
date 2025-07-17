@@ -31,7 +31,7 @@ async def scan_for_labels(rds: Any) -> list[str]:
         for key in keys:
             decoded_key: str = key.decode('utf-8', errors='ignore')
             match = re.match(
-                r'stream_frame:([\w\-_]+)\|([\w\-_]+)',
+                r'stream_frame:([A-Za-z0-9\-_]+=*)\|([A-Za-z0-9\-_]+=*)',
                 decoded_key,
             )
             if not match:
