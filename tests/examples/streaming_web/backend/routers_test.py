@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -11,7 +12,9 @@ from fastapi import FastAPI
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from fastapi_limiter import FastAPILimiter
+from jwt import InvalidTokenError
 
+from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
 from examples.auth.redis_pool import get_redis_pool
 from examples.auth.redis_pool import get_redis_pool_ws
@@ -26,35 +29,70 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     Test suite for FastAPI routers.
     """
 
+    app: FastAPI
+    fake_redis: AsyncMock
+    mock_db_session: AsyncMock
+    client: TestClient
+
     def setUp(self) -> None:
         """
-        Set up the FastAPI application and mock dependencies.
+        Set up the FastAPI app and mock dependencies for testing.
         """
-        self.app = FastAPI()
+        self.app: FastAPI = FastAPI()
         self.app.include_router(router, prefix='/api')
 
-        async def mock_rate_limiter():
+        async def mock_rate_limiter() -> None:
+            """Mock rate limiter that does nothing."""
             pass
 
-        # Override rate-limiters
+        # Override rate-limiters to avoid actual rate limiting during tests
         self.app.dependency_overrides[rate_limiter_index] = mock_rate_limiter
         self.app.dependency_overrides[rate_limiter_label] = mock_rate_limiter
 
-        # Override Redis dependencies with a mock/async mock
-        self.fake_redis = AsyncMock()
+        # Override Redis dependencies with an async mock
+        self.fake_redis: AsyncMock = AsyncMock()
         self.app.dependency_overrides[get_redis_pool] = lambda: self.fake_redis
         self.app.dependency_overrides[get_redis_pool_ws] = (
             lambda: self.fake_redis
         )
 
-        # Bypass JWT auth
-        self.app.dependency_overrides[jwt_access] = lambda: None
+        # Bypass JWT authentication with a mock credentials object
+        mock_credentials: SimpleNamespace = SimpleNamespace(
+            subject={'username': 'testuser'},
+        )
+        self.app.dependency_overrides[jwt_access] = lambda: mock_credentials
 
-        # Initialise FastAPILimiter with a mock
+        # Mock the database session
+        self.mock_db_session: AsyncMock = AsyncMock()
+        self.app.dependency_overrides[get_db] = lambda: self.mock_db_session
+
+        # Set up default mock user and result for database queries
+        self.setup_default_db_mocks()
+
+        # Initialise FastAPILimiter with a mock to avoid Redis dependency
         asyncio.run(FastAPILimiter.init(AsyncMock()))
-        self.client = TestClient(self.app)
+        self.client: TestClient = TestClient(self.app)
+
+    def setup_default_db_mocks(self) -> None:
+        """
+        Set up default mock user and site for database queries.
+        """
+        # Create default mock site and user
+        mock_site: MagicMock = MagicMock()
+        mock_site.name = 'label1'
+        mock_user: MagicMock = MagicMock()
+        mock_user.role = 'admin'
+        mock_user.sites = [mock_site]
+
+        # Create mock result for database query
+        mock_result: MagicMock = MagicMock()
+        mock_result.scalars.return_value.first.return_value = mock_user
+
+        # Configure the mock session to return this result
+        self.mock_db_session.execute.return_value = mock_result
 
     def tearDown(self) -> None:
+        """Clear all dependency overrides after each test."""
         self.app.dependency_overrides.clear()
 
     # -----------------------------
@@ -64,15 +102,20 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         'examples.streaming_web.backend.routers.scan_for_labels',
         new_callable=AsyncMock,
     )
-    def test_get_labels_success(self, mock_scan_for_labels: AsyncMock):
+    def test_get_labels_success(self, mock_scan_for_labels: AsyncMock) -> None:
         """
         Tests the GET /api/labels endpoint for successful label retrieval.
 
         Args:
             mock_scan_for_labels (AsyncMock): Mock for scan_for_labels.
         """
+        # Arrange: Set the mock to return a known list of labels
         mock_scan_for_labels.return_value = ['label1', 'label2']
+
+        # Act: Make a GET request to the endpoint
         response = self.client.get('/api/labels')
+
+        # Assert: Check the response status and content
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
 
@@ -160,6 +203,73 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         response = self.client.get('/api/labels')
         self.assertEqual(response.status_code, 500)
         self.assertIn('Unknown error', response.text)
+
+    @patch(
+        'examples.streaming_web.backend.routers.scan_for_labels',
+        new_callable=AsyncMock,
+    )
+    def test_get_labels_non_admin_filtering(
+        self, mock_scan_for_labels: AsyncMock,
+    ):
+        """
+        Tests /api/labels for non-admin user only getting allowed sites.
+
+        Args:
+            mock_scan_for_labels (AsyncMock): Mock for scan_for_labels.
+        """
+        # Setup user as non-admin with two sites
+        mock_site1 = MagicMock()
+        mock_site1.name = 'label1'
+        mock_site2 = MagicMock()
+        mock_site2.name = 'label2'
+        mock_user = MagicMock()
+        mock_user.role = 'user'
+        mock_user.sites = [mock_site1, mock_site2]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = mock_user
+
+        # Override the default mock for this test
+        self.mock_db_session.execute.return_value = mock_result
+
+        mock_scan_for_labels.return_value = ['label1', 'label2', 'label3']
+        response = self.client.get('/api/labels')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
+
+    def test_get_labels_jwt_subject_missing(self):
+        """
+        Tests /api/labels for missing JWT subject.
+        """
+        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
+            subject={
+            },
+        )
+        with patch(
+            'examples.streaming_web.backend.routers.scan_for_labels',
+            new_callable=AsyncMock,
+        ) as mock_scan:
+            mock_scan.return_value = ['label1']
+            response = self.client.get('/api/labels')
+            self.assertEqual(response.status_code, 500)
+            self.assertIn('Invalid token', response.text)
+
+    def test_get_labels_user_not_found(self):
+        """
+        Tests /api/labels for user not found in DB.
+        """
+        # Override the default mock to return None (user not found)
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+        self.mock_db_session.execute.return_value = mock_result
+
+        with patch(
+            'examples.streaming_web.backend.routers.scan_for_labels',
+            new_callable=AsyncMock,
+        ) as mock_scan:
+            mock_scan.return_value = ['label1']
+            response = self.client.get('/api/labels')
+            self.assertEqual(response.status_code, 500)
+            self.assertIn('Invalid user', response.text)
 
     # -----------------------------
     # Test POST /api/frames
@@ -375,7 +485,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             websocket.send_text(json.dumps({'action': 'pull'}))
             message_bytes = websocket.receive_bytes()
 
-            from examples.streaming_web.backend.redis_service import DELIMITER
             header_json, frame_bytes = message_bytes.split(DELIMITER, 1)
             header = json.loads(header_json.decode('utf-8'))
 
@@ -457,6 +566,365 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             ) as websocket:
                 websocket.send_text(json.dumps({'action': 'pull'}))
                 websocket.receive_text()
+
+    def test_websocket_frames_jwt_header_missing(self):
+        with self.client.websocket_connect('/api/ws/frames') as websocket:
+            websocket.send_bytes(b'test')
+            with self.assertRaises(WebSocketDisconnect) as exc:
+                websocket.receive_bytes()
+            self.assertEqual(exc.exception.code, 1008)
+
+    @patch(
+        'examples.streaming_web.backend.routers.get_user_data',
+        new_callable=AsyncMock,
+    )
+    def test_websocket_frames_jti_invalid(self, mock_get_user_data):
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode',
+            return_value={
+                'subject': {'username': 'testuser', 'jti': 'badjti'},
+                'username': 'testuser',
+                'jti': 'badjti',
+            },
+        ):
+            mock_get_user_data.return_value = {'jti_list': ['goodjti']}
+            headers = {'authorization': 'Bearer faketoken'}
+            with self.client.websocket_connect(
+                '/api/ws/frames', headers=headers,
+            ) as websocket:
+                websocket.send_bytes(b'test')
+                with self.assertRaises(WebSocketDisconnect) as exc:
+                    websocket.receive_bytes()
+                self.assertEqual(exc.exception.code, 1008)
+
+    @patch(
+        'examples.streaming_web.backend.routers.get_keys_for_label',
+        new_callable=AsyncMock,
+    )
+    @patch(
+        'examples.streaming_web.backend.routers.fetch_latest_frames',
+        new_callable=AsyncMock,
+    )
+    def test_websocket_label_stream_asyncio_sleep(
+        self, mock_fetch_frames, mock_get_keys,
+    ):
+        """
+        Tests that asyncio.sleep is called in the websocket label stream loop.
+        """
+        mock_get_keys.return_value = ['stream_frame:label1_Cam0']
+        mock_fetch_frames.side_effect = [[], WebSocketDisconnect()]
+
+        with patch(
+            'examples.streaming_web.backend.routers.asyncio.sleep',
+            new_callable=AsyncMock,
+        ) as mock_sleep:
+            try:
+                with self.client.websocket_connect(
+                    '/api/ws/labels/label1',
+                ) as _:
+                    # This should trigger the loop that calls asyncio.sleep
+                    pass
+            except WebSocketDisconnect:
+                pass
+            # Verify asyncio.sleep was called
+            mock_sleep.assert_called_with(0.1)
+
+    def test_websocket_frames_jwt_token_invalid(self):
+        """
+        Tests /ws/frames for invalid JWT token.
+        """
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode',
+            side_effect=InvalidTokenError('Invalid token'),
+        ):
+            headers = {'authorization': 'Bearer invalidtoken'}
+            with self.client.websocket_connect(
+                '/api/ws/frames', headers=headers,
+            ) as websocket:
+                websocket.send_bytes(b'test')
+                with self.assertRaises(WebSocketDisconnect) as exc:
+                    websocket.receive_bytes()
+                self.assertEqual(exc.exception.code, 1008)
+
+    def test_websocket_frames_jwt_payload_empty(self):
+        """
+        Tests /ws/frames for empty JWT payload.
+        """
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode',
+            return_value=None,
+        ):
+            headers = {'authorization': 'Bearer faketoken'}
+            with self.client.websocket_connect(
+                '/api/ws/frames', headers=headers,
+            ) as websocket:
+                websocket.send_bytes(b'test')
+                with self.assertRaises(WebSocketDisconnect) as exc:
+                    websocket.receive_bytes()
+                self.assertEqual(exc.exception.code, 1008)
+
+    def test_websocket_frames_jwt_missing_username_or_jti(self):
+        """
+        Tests /ws/frames for missing username or JTI in JWT payload.
+        """
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode', return_value={
+                'subject': {}, 'username': None, 'jti': None,
+            },
+        ):
+            headers = {'authorization': 'Bearer faketoken'}
+            with self.client.websocket_connect(
+                '/api/ws/frames', headers=headers,
+            ) as websocket:
+                websocket.send_bytes(b'test')
+                with self.assertRaises(WebSocketDisconnect) as exc:
+                    websocket.receive_bytes()
+                self.assertEqual(exc.exception.code, 1008)
+
+    @patch(
+        'examples.streaming_web.backend.routers.get_user_data',
+        new_callable=AsyncMock,
+    )
+    @patch(
+        'examples.streaming_web.backend.routers.store_to_redis',
+        new_callable=AsyncMock,
+    )
+    def test_websocket_frames_successful_frame_upload(
+        self, mock_store_to_redis, mock_get_user_data,
+    ):
+        """
+        Tests successful frame upload via WebSocket.
+        """
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode',
+            return_value={
+                'subject': {'username': 'testuser', 'jti': 'validjti'},
+                'username': 'testuser',
+                'jti': 'validjti',
+            },
+        ):
+            mock_get_user_data.return_value = {'jti_list': ['validjti']}
+            headers = {'authorization': 'Bearer validtoken'}
+
+            # Create test frame data
+            header_data = {
+                'label': 'test_label',
+                'key': 'test_key',
+                'warnings_json': '',
+                'cone_polygons_json': '',
+                'pole_polygons_json': '',
+                'detection_items_json': '',
+                'width': 640,
+                'height': 480,
+            }
+            header_bytes = json.dumps(header_data).encode('utf-8')
+            frame_bytes = b'test_frame_data'
+            message = header_bytes + DELIMITER + frame_bytes
+
+            with self.client.websocket_connect(
+                '/api/ws/frames', headers=headers,
+            ) as websocket:
+                websocket.send_bytes(message)
+                response = websocket.receive_json()
+                self.assertEqual(response['status'], 'ok')
+                self.assertEqual(
+                    response['message'],
+                    'Frame stored successfully.',
+                )
+                mock_store_to_redis.assert_called_once()
+
+    @patch(
+        'examples.streaming_web.backend.routers.get_user_data',
+        new_callable=AsyncMock,
+    )
+    @patch(
+        'examples.streaming_web.backend.routers.store_to_redis',
+        new_callable=AsyncMock,
+    )
+    def test_websocket_frames_store_error(
+        self, mock_store_to_redis, mock_get_user_data,
+    ):
+        """
+        Tests error handling in frame upload when store_to_redis fails.
+        """
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode',
+            return_value={
+                'subject': {'username': 'testuser', 'jti': 'validjti'},
+                'username': 'testuser',
+                'jti': 'validjti',
+            },
+        ):
+            mock_get_user_data.return_value = {'jti_list': ['validjti']}
+            mock_store_to_redis.side_effect = Exception('Store failed')
+            headers = {'authorization': 'Bearer validtoken'}
+
+            # Create test frame data
+            header_data = {
+                'label': 'test_label',
+                'key': 'test_key',
+                'warnings_json': '',
+                'cone_polygons_json': '',
+                'pole_polygons_json': '',
+                'detection_items_json': '',
+                'width': 640,
+                'height': 480,
+            }
+            header_bytes = json.dumps(header_data).encode('utf-8')
+            frame_bytes = b'test_frame_data'
+            message = header_bytes + DELIMITER + frame_bytes
+
+            with self.client.websocket_connect(
+                '/api/ws/frames', headers=headers,
+            ) as websocket:
+                websocket.send_bytes(message)
+                response = websocket.receive_json()
+                self.assertEqual(response['status'], 'error')
+                self.assertIn('Store failed', response['message'])
+
+    @patch(
+        'examples.streaming_web.backend.routers.get_user_data',
+        new_callable=AsyncMock,
+    )
+    def test_websocket_frames_invalid_data_format(self, mock_get_user_data):
+        """
+        Tests error handling when frame data format is invalid.
+        """
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode',
+            return_value={
+                'subject': {'username': 'testuser', 'jti': 'validjti'},
+                'username': 'testuser',
+                'jti': 'validjti',
+            },
+        ):
+            mock_get_user_data.return_value = {'jti_list': ['validjti']}
+            headers = {'authorization': 'Bearer validtoken'}
+
+            # Send invalid data without DELIMITER
+            invalid_data = b'invalid_data_without_delimiter'
+
+            with self.client.websocket_connect(
+                '/api/ws/frames', headers=headers,
+            ) as websocket:
+                websocket.send_bytes(invalid_data)
+                response = websocket.receive_json()
+                self.assertEqual(response['status'], 'error')
+                self.assertIn('Failed to store frame', response['message'])
+
+    @patch(
+        'examples.streaming_web.backend.routers.get_user_data',
+        new_callable=AsyncMock,
+    )
+    def test_websocket_frames_websocket_disconnect(self, mock_get_user_data):
+        """
+        Tests WebSocketDisconnect handling in /ws/frames endpoint.
+        """
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode',
+            return_value={
+                'subject': {'username': 'testuser', 'jti': 'validjti'},
+                'username': 'testuser',
+                'jti': 'validjti',
+            },
+        ):
+            mock_get_user_data.return_value = {'jti_list': ['validjti']}
+            headers = {'authorization': 'Bearer validtoken'}
+
+            with self.client.websocket_connect(
+                '/api/ws/frames', headers=headers,
+            ) as websocket:
+                # Close the websocket to trigger WebSocketDisconnect
+                websocket.close()
+                # The WebSocketDisconnect should be handled internally
+
+    @patch(
+        'examples.streaming_web.backend.routers.get_user_data',
+        new_callable=AsyncMock,
+    )
+    @patch(
+        'examples.streaming_web.backend.routers.store_to_redis',
+        new_callable=AsyncMock,
+    )
+    def test_websocket_frames_outer_exception(
+        self, mock_store_to_redis, mock_get_user_data,
+    ):
+        """
+        Tests outer exception handling in /ws/frames endpoint.
+        """
+        mock_get_user_data.return_value = {'jti_list': ['validjti']}
+
+        # Make store_to_redis raise an exception
+        # that's not caught by inner try-except
+        mock_store_to_redis.side_effect = RuntimeError('Outer exception')
+
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode',
+            return_value={
+                'subject': {'username': 'testuser', 'jti': 'validjti'},
+                'username': 'testuser',
+                'jti': 'validjti',
+            },
+        ):
+            headers = {'authorization': 'Bearer validtoken'}
+
+            # Create a mock WebSocket that will raise an exception during
+            # the main loop
+            with patch(
+                'fastapi.WebSocket.receive_bytes',
+                new_callable=AsyncMock,
+            ) as mock_receive:
+                # First call succeeds,
+                # second call raises RuntimeError to trigger outer exception
+                mock_receive.side_effect = [
+                    b'{"label":"test","key":"test"}' +
+                    DELIMITER + b'framedata',
+                    RuntimeError('Outer exception in receive_bytes'),
+                ]
+
+                with self.client.websocket_connect(
+                    '/api/ws/frames', headers=headers,
+                ) as websocket:
+                    # This should trigger the outer exception handler
+                    try:
+                        websocket.receive_json()  # This might timeout or raise
+                    except Exception:
+                        pass  # Connection may be closed due to the exception
+
+    @patch(
+        'examples.streaming_web.backend.routers.get_user_data',
+        new_callable=AsyncMock,
+    )
+    def test_websocket_frames_websocket_disconnect_outer(
+        self, mock_get_user_data,
+    ):
+        """
+        Tests WebSocketDisconnect handling in the outer
+        exception handler of /ws/frames endpoint.
+        """
+        with patch(
+            'examples.streaming_web.backend.routers.jwt.decode',
+            return_value={
+                'subject': {'username': 'testuser', 'jti': 'validjti'},
+                'username': 'testuser',
+                'jti': 'validjti',
+            },
+        ):
+            mock_get_user_data.return_value = {'jti_list': ['validjti']}
+            headers = {'authorization': 'Bearer validtoken'}
+
+            # Mock the entire while loop to raise WebSocketDisconnect
+            with patch(
+                'fastapi.WebSocket.receive_bytes', new_callable=AsyncMock,
+            ) as mock_receive:
+                mock_receive.side_effect = WebSocketDisconnect()
+
+                with self.client.websocket_connect(
+                    '/api/ws/frames', headers=headers,
+                ):
+                    # The WebSocketDisconnect should be handled by the outer
+                    # exception handler
+                    pass
 
 
 if __name__ == '__main__':
