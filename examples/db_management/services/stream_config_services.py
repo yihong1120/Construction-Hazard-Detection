@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import timezone
+
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -77,6 +80,9 @@ async def update_stream_config(
     # Apply updates to the configuration object
     for key, value in updates.model_dump(exclude_unset=True).items():
         setattr(cfg, key, value)
+
+    # Update the timestamp to the current time
+    cfg.updated_at = datetime.now(timezone.utc)
 
     try:
         await db.commit()
