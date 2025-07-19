@@ -3,17 +3,20 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import math
 import os
 from datetime import datetime
-from typing import Any
 
 import aiohttp
 import cv2
+import networkx as nx
 import numpy as np
 import redis.asyncio as redis
+from shapely.geometry import LineString
 from shapely.geometry import MultiPoint
 from shapely.geometry import Point
 from shapely.geometry import Polygon
+from shapely.ops import unary_union
 from sklearn.cluster import HDBSCAN
 from watchdog.events import FileSystemEventHandler
 
@@ -248,59 +251,84 @@ class Utils:
         ).decode('utf-8')
 
     @staticmethod
-    def encode_frame(frame: Any) -> bytes | None:
+    def encode_frame(frame: np.ndarray) -> bytes:
+        """
+        Encodes an image frame (NumPy array) into PNG format as bytes.
+
+        Args:
+            frame (np.ndarray): The image frame to encode. Should be a valid
+                NumPy array representing an image, typically in BGR format
+                as used by OpenCV.
+
+        Returns:
+            bytes: The encoded PNG image as bytes. Returns an empty bytes
+                object if encoding fails.
+
+        Raises:
+            None: All exceptions are caught and logged; function returns
+                b'' on error.
+        """
+        # Attempt to encode the frame as PNG using OpenCV. If encoding fails,
+        # log the error and return empty bytes.
         try:
+            # OpenCV expects a NumPy array; imencode returns a tuple
+            # (success flag, buffer)
             _, buffer = cv2.imencode('.png', frame)
             return buffer.tobytes()
         except Exception as e:
+            # Log the error for debugging and return empty bytes to
+            # indicate failure
             logging.error(f"Error encoding frame: {e}")
-            return None
+            return b''
 
     @staticmethod
-    def generate_message(
-        stream_name: str,
-        detection_time: datetime,
-        warnings: list[str],
-        controlled_zone_warning: list[str],
-        language: str,
+    def filter_warnings_by_working_hour(
+        warnings: dict[str, dict[str, int]],
         is_working_hour: bool,
-    ) -> str | None:
+    ) -> dict[str, dict[str, int]]:
         """
-        Generate a message to send to the notification service.
+        Filters the warnings dictionary according to working hours.
 
         Args:
-            stream_name (str): The name of the stream.
-            detection_time (datetime): The time of detection.
-            warnings (list[str]): The list of warnings.
-            controlled_zone_warning (list[str]):
-                The list of controlled zone warnings.
-            language (str): The language for the warnings.
-            is_working_hour (bool): Whether it is working hours.
+            warnings (dict[str, dict[str, int]]):
+                Dictionary of warning types and their parameters, e.g.:
+                {
+                    "warning_people_in_controlled_area": {"count": 3},
+                    "warning_no_safety_vest": {},
+                    ...
+                }
+            is_working_hour (bool):
+                Whether the current time is within working hours.
 
         Returns:
-            str | None: The message to send, or None if no message to send.
+            dict[str, dict[str, int]]:
+                Filtered warnings dictionary, containing only relevant warnings
+                according to the working hour status.
+
+        Notes:
+            - During working hours, all warnings are returned.
+            - Outside working hours, only 'warning_people_in_controlled_area'
+              is retained.
+            - If no warnings are present, returns an empty dictionary.
         """
-        if is_working_hour and warnings:
-            translated_warnings = Translator.translate_warning(
-                tuple(warnings), language,
-            )
-            return (
-                f"{stream_name}\n[{detection_time}]\n"
-                + '\n'.join(translated_warnings)
-            )
+        # If no warnings exist, return an empty dictionary immediately.
+        if not warnings:
+            return {}
 
-        if not is_working_hour and controlled_zone_warning:
-            translated_controlled_zone_warning = (
-                Translator.translate_warning(
-                    tuple(controlled_zone_warning), language,
-                )
-            )
-            return (
-                f"{stream_name}\n[{detection_time}]\n"
-                + '\n'.join(translated_controlled_zone_warning)
-            )
+        # During working hours, return all warnings without filtering.
+        if is_working_hour:
+            return warnings
 
-        return None
+        # Outside working hours, retain only warnings related to controlled
+        # areas.
+        filtered: dict[str, dict[str, int]] = {}
+        for key, params in warnings.items():
+            # Only keep 'warning_people_in_controlled_area' for
+            # notification/storage.
+            if key == 'warning_people_in_controlled_area':
+                filtered[key] = params
+
+        return filtered
 
     @staticmethod
     def should_notify(
@@ -469,7 +497,8 @@ class Utils:
         danger_distance_horizontal = 5 * person_width
         danger_distance_vertical = 1.5 * person_height
 
-        # Calculate min horizontal/vertical distance between person and vehicle
+        # Calculate min horizontal/vertical distance between person and
+        # vehicle
         horizontal_distance = min(
             abs(person_bbox[2] - vehicle_bbox[0]),
             abs(person_bbox[0] - vehicle_bbox[2]),
@@ -481,8 +510,8 @@ class Utils:
 
         # Determine if the person is dangerously close
         return (
-            horizontal_distance <= danger_distance_horizontal
-            and vertical_distance <= danger_distance_vertical
+            horizontal_distance <= danger_distance_horizontal and
+            vertical_distance <= danger_distance_vertical
         )
 
     @staticmethod
@@ -575,6 +604,285 @@ class Utils:
                         break  # No need to check other polygons
 
         return len(unique_people)
+
+    @staticmethod
+    def build_utility_pole_union(
+        datas: list[list[float]],
+        clusterer: HDBSCAN,
+    ) -> Polygon:
+        """
+        Builds a union Polygon representing the controlled area for utility
+        poles.
+
+        This method clusters detected utility poles, constructs minimum
+        spanning trees (MST), calculates outer tangents, and unions the
+        resulting polygons to form the final controlled area.
+
+        Args:
+            datas (list[list[float]]): Detection data, each entry is a list
+                of floats representing bounding box and class info.
+            clusterer (HDBSCAN): Clustering algorithm instance for grouping
+                utility poles.
+
+        Returns:
+            Polygon: The union of all utility pole controlled areas. May be
+                empty if no poles are detected.
+
+        Notes:
+            - If only one utility pole is detected, returns a single buffered
+              circle.
+            - If the number of poles is less than clusterer.min_samples,
+              unions all circles directly.
+            - Otherwise, clusters poles, builds MSTs, and unions circles and
+              tangents.
+        """
+        # Collect utility pole centres and radii
+        utility_poles: list[tuple[float, float, float]] = []
+        for d in datas:
+            if d[5] == 9:  # class == 9 => utility pole
+                left, top, right, bottom, *_ = d
+                cx: float = (left + right) / 2.0
+                cy: float = bottom
+                height: float = bottom - top
+                radius: float = 0.35 * height
+                if radius > 0:
+                    utility_poles.append((cx, cy, radius))
+
+        if not utility_poles:
+            return Polygon()
+
+        # If only one utility pole, return its buffered circle
+        if len(utility_poles) == 1:
+            cx, cy, r = utility_poles[0]
+            return Point(cx, cy).buffer(r, quad_segs=64)
+
+        # If too few poles for clustering, union all circles directly
+        if len(utility_poles) < clusterer.min_samples:
+            circle_polys: list[Polygon] = [
+                Point(cx, cy).buffer(r, quad_segs=64)
+                for (cx, cy, r) in utility_poles
+            ]
+            return unary_union(circle_polys)
+
+        # Otherwise, cluster utility poles
+        coords: np.ndarray = np.array([
+            (p[0], p[1]) for p in utility_poles
+        ])
+        labels: np.ndarray = clusterer.fit_predict(coords)
+
+        clusters: dict[str | int, list[tuple[float, float, float]]] = {}
+        for circle, label in zip(utility_poles, labels):
+            if label == -1:
+                key: str = f"noise_{id(circle)}"
+                clusters.setdefault(key, []).append(circle)
+            else:
+                clusters.setdefault(label, []).append(circle)
+
+        cluster_polys: list[Polygon] = []
+        for _, circles_in_cluster in clusters.items():
+            if len(circles_in_cluster) == 1:
+                cx, cy, r = circles_in_cluster[0]
+                circle_poly: Polygon = Point(cx, cy).buffer(r, quad_segs=64)
+                cluster_polys.append(circle_poly)
+            else:
+                # Multiple poles: build MST and outer tangents
+                circle_polys_: list[Polygon] = [
+                    Point(cx, cy).buffer(r, quad_segs=64)
+                    for (cx, cy, r) in circles_in_cluster
+                ]
+                mst_edges: list[tuple[int, int]] = Utils.build_mst_pairs(
+                    circles_in_cluster,
+                )
+                lines: list[LineString] = []
+                for (u, v) in mst_edges:
+                    cx1, cy1, r1 = circles_in_cluster[u]
+                    cx2, cy2, r2 = circles_in_cluster[v]
+                    lines.extend(
+                        Utils.get_outer_tangents(
+                            cx1, cy1, r1, cx2, cy2, r2,
+                        ),
+                    )
+
+                line_polys: list[Polygon] = [
+                    ls.buffer(0.05, quad_segs=32)
+                    for ls in lines
+                ]
+                union_poly: Polygon = unary_union(circle_polys_ + line_polys)
+                cluster_polys.append(union_poly)
+
+        final_union: Polygon = unary_union(cluster_polys)
+        return final_union
+
+    @staticmethod
+    def build_mst_pairs(
+        poles: list[tuple[float, float, float]],
+    ) -> list[tuple[int, int]]:
+        """
+        Builds a minimum spanning tree (MST) for a set of utility poles.
+
+        Args:
+            poles (list[tuple[float, float, float]]): List of utility pole
+                centres and radii (cx, cy, r).
+
+        Returns:
+            list[tuple[int, int]]: List of MST edges as index pairs.
+
+        Notes:
+            - Uses Euclidean distance minus radii as edge weights.
+            - Returns edges as index pairs for use in tangent calculation.
+        """
+        G: nx.Graph = nx.Graph()
+        for i, (cx, cy, r) in enumerate(poles):
+            G.add_node(i, pos=(cx, cy), radius=r)
+
+        n: int = len(poles)
+        for i in range(n):
+            cx1, cy1, r1 = poles[i]
+            for j in range(i + 1, n):
+                cx2, cy2, r2 = poles[j]
+                dist_centers: float = math.dist((cx1, cy1), (cx2, cy2))
+                weight: float = max(0, dist_centers - (r1 + r2))
+                G.add_edge(i, j, weight=weight)
+
+        mst: nx.Graph = nx.minimum_spanning_tree(G, weight='weight')
+        return list(mst.edges())
+
+    @staticmethod
+    def get_outer_tangents(
+        cx1: float,
+        cy1: float,
+        r1: float,
+        cx2: float,
+        cy2: float,
+        r2: float,
+        eps: float = 1e-9,
+    ) -> list[LineString]:
+        """
+        Calculates the outer tangents between two circles.
+
+        Args:
+            cx1 (float): Centre x-coordinate of the first circle.
+            cy1 (float): Centre y-coordinate of the first circle.
+            r1 (float): Radius of the first circle.
+            cx2 (float): Centre x-coordinate of the second circle.
+            cy2 (float): Centre y-coordinate of the second circle.
+            r2 (float): Radius of the second circle.
+            eps (float): Small epsilon to avoid division by zero.
+
+        Returns:
+            list[LineString]: List of LineString objects representing outer
+                tangents.
+
+        Notes:
+            - Returns empty list if circles overlap or are coincident.
+            - Ensures r1 >= r2 for calculation stability.
+        """
+        dx: float = cx2 - cx1
+        dy: float = cy2 - cy1
+        d2: float = dx * dx + dy * dy
+        d: float = math.sqrt(d2)
+        if d < abs(r1 - r2):
+            return []  # Circles overlap, no outer tangents
+        if d < eps:
+            return []  # Circles are coincident
+
+        # Ensure r1 >= r2 for calculation stability
+        if r2 > r1:
+            cx1, cx2 = cx2, cx1
+            cy1, cy2 = cy2, cy1
+            r1, r2 = r2, r1
+            dx, dy = -dx, -dy
+
+        d2 = (cx2 - cx1) ** 2 + (cy2 - cy1) ** 2
+        d = math.sqrt(d2)
+        rdiff: float = r1 - r2
+        if d < rdiff:
+            return []  # Circles overlap
+
+        alpha: float = math.acos(rdiff / d)
+        theta: float = math.atan2((cy2 - cy1), (cx2 - cx1))
+
+        lines: list[LineString] = []
+        for sign in [1, -1]:
+            phi: float = theta + sign * alpha
+            x1t: float = cx1 + r1 * math.cos(phi)
+            y1t: float = cy1 + r1 * math.sin(phi)
+            x2t: float = cx2 + r2 * math.cos(phi)
+            y2t: float = cy2 + r2 * math.sin(phi)
+            ls: LineString = LineString([
+                (x1t, y1t),
+                (x2t, y2t),
+            ])
+            lines.append(ls)
+
+        return lines
+
+    @staticmethod
+    def count_people_in_polygon(
+        poly: Polygon,
+        datas: list[list[float]],
+    ) -> int:
+        """
+        Counts the number of people within a specified polygon.
+
+        Args:
+            poly (Polygon): The polygon representing the area of interest.
+            datas (list[list[float]]): Detection data, each entry is a list
+                of floats representing bounding box and class info.
+
+        Returns:
+            int: The number of unique people found within the polygon.
+
+        Notes:
+            - Only considers entries with class == 5 (person).
+            - Uses centre point of bounding box for inclusion test.
+        """
+        persons: list[list[float]] = [d for d in datas if d[5] == 5]
+        found_people: set[tuple[float, float]] = set()
+        for p in persons:
+            left, top, right, bottom, *_ = p
+            px: float = (left + right) / 2.0
+            py: float = (top + bottom) / 2.0
+            if poly.contains(Point(px, py)):
+                found_people.add((px, py))
+        return len(found_people)
+
+    @staticmethod
+    def polygons_to_coords(polygons: list[Polygon]) -> list[list[list[float]]]:
+        """
+        Converts Polygon or MultiPolygon objects to a list of lists of
+        [x, y] coordinates.
+
+        Args:
+            polygons (list[Polygon]): List of Polygon or MultiPolygon objects.
+
+        Returns:
+            list[list[list[float]]]: List of coordinate lists for each
+                polygon.
+
+        Notes:
+            - Skips empty polygons.
+            - For MultiPolygon, extracts coordinates from each sub-polygon.
+        """
+        coords_list: list[list[list[float]]] = []
+        for poly in polygons:
+            if poly.is_empty:
+                continue  # Skip empty polygons
+            if poly.geom_type == 'Polygon':
+                coords_list.append([
+                    list(pt) for pt in poly.exterior.coords
+                ])
+            elif poly.geom_type == 'MultiPolygon':
+                for subpoly in poly.geoms:
+                    if (
+                        not subpoly.is_empty and
+                        subpoly.geom_type == 'Polygon'
+                    ):
+                        coords_list.append([
+                            list(pt)
+                            for pt in subpoly.exterior.coords
+                        ])
+        return coords_list
 
 
 class FileEventHandler(FileSystemEventHandler):
@@ -685,65 +993,6 @@ class RedisManager:
         except Exception as e:
             logging.error(f"Error deleting Redis key {key}: {str(e)}")
 
-    async def add_to_stream(
-        self,
-        stream_name: str,
-        data: dict,
-        maxlen: int = 10,
-    ) -> None:
-        """
-        Add data to a Redis stream with a maximum length.
-
-        Args:
-            stream_name (str): The name of the Redis stream.
-            data (dict): The data to add to the stream.
-            maxlen (int): The maximum length of the stream.
-        """
-        try:
-            await self.redis.xadd(stream_name, data, maxlen=maxlen)
-        except Exception as e:
-            logging.error(
-                f"Error adding to Redis stream {stream_name}: {str(e)}",
-            )
-
-    async def read_from_stream(
-        self,
-        stream_name: str,
-        last_id: str = '0',
-    ) -> list:
-        """
-        Read data from a Redis stream.
-
-        Args:
-            stream_name (str): The name of the Redis stream.
-            last_id (str): The ID of the last read message.
-
-        Returns:
-            list: A list of messages from the stream.
-        """
-        try:
-            return await self.redis.xread({stream_name: last_id})
-        except Exception as e:
-            logging.error(
-                f"Error reading from Redis stream {stream_name}: {str(e)}",
-            )
-            return []
-
-    async def delete_stream(self, stream_name: str) -> None:
-        """
-        Delete a Redis stream.
-
-        Args:
-            stream_name (str): The name of the Redis stream to delete.
-        """
-        try:
-            await self.redis.delete(stream_name)
-            logging.info(f"Deleted Redis stream: {stream_name}")
-        except Exception as e:
-            logging.error(
-                f"Error deleting Redis stream {stream_name}: {str(e)}",
-            )
-
     async def close_connection(self) -> None:
         """
         Close the Redis connection.
@@ -753,44 +1002,3 @@ class RedisManager:
             logging.info('[INFO] Redis connection successfully closed.')
         except Exception as e:
             logging.error(f"[ERROR] Failed to close Redis connection: {e}")
-
-    async def store_to_redis(
-        self,
-        site: str,
-        stream_name: str,
-        frame_bytes: bytes | None,
-        warnings: list[str],
-        language: str = 'en',
-    ) -> None:
-        """
-        Store frame and warnings to a Redis stream.
-
-        Args:
-            site (str): Site name.
-            stream_name (str): Stream name.
-            frame_bytes (optional[bytes]): Encoded frame bytes.
-            warnings (list[str]): List of warnings.
-            language (str): Language for the warnings.
-        """
-        # Check if frame is None
-        if not frame_bytes:
-            return
-
-        # Generate the Redis key
-        key = f"stream_frame:{Utils.encode(site)}|{Utils.encode(stream_name)}"
-
-        # Translate warnings to the specified language
-        warnings_to_translate = warnings if warnings else ['No warning']
-        translated_warnings = Translator.translate_warning(
-            tuple(warnings_to_translate), language,
-        )
-        warnings_str = '\n'.join(translated_warnings)
-
-        try:
-            await self.add_to_stream(
-                key,
-                {'frame': frame_bytes, 'warnings': warnings_str},
-                maxlen=10,
-            )
-        except Exception as e:
-            logging.error(f"Error storing data to Redis: {e}")
