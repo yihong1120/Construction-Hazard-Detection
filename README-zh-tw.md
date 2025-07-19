@@ -3,7 +3,10 @@
 <img width="100%" src="./assets/images/project_graphics/banner.gif" alt="AI-Driven Construction Safety Banner">
 
 <div align="center">
-   <a href="examples/YOLO_server_api">模型伺服器</a> |
+   <a href="examples/YOLO_server_api">模型辨識伺服器</a> |
+   <a href="examples/local_notification_server">FCM 通知管理伺服器</a>|
+   <a href="examples/violation_records">違規記錄伺服器</a>|
+   <a href="examples/db_management">資料管理伺服器</a>|
    <a href="examples/streaming_web">串流網頁</a> |
    <a href="examples/YOLO_data_augmentation">YOLO 數據增強</a> |
    <a href="examples/YOLO_evaluation">YOLO 評估</a> |
@@ -83,10 +86,12 @@
 
 <br>
 
-## 內容
+## 目錄
 
-- [危險偵測範例](#hazard-detection-examples)
+- [危險偵測範例](#危險偵測範例)
 - [操作說明](#操作說明)
+- [資料庫設定與管理](#資料庫設定與管理)
+- [環境變數](#環境變數)
 - [附加信息](#附加信息)
 - [數據集信息](#數據集信息)
 - [貢獻](#貢獻)
@@ -214,9 +219,10 @@
 - `store_in_redis`：一個布林值，決定是否將處理後的幀和關聯的檢測資料儲存在 Redis 中。如果為“True”，系統會將資料儲存到 Redis 資料庫以供進一步使用，例如即時監控或與其他服務整合。如果為“False”，則 Redis 中不會保存任何資料。
 
 
+
 ### 環境變數
 
-本應用程式需要特定的環境變數進行正確的配置。這些變數應定義在專案根目錄中的 `.env` 檔案中。以下是 `.env` 檔案的範例內容：
+本系統需要在專案根目錄建立 `.env` 檔案，設定下列環境變數：
 
 ```plaintext
 DATABASE_URL='mysql+asyncmy://username:password@mysql/construction_hazard_detection'
@@ -230,23 +236,82 @@ LINE_CHANNEL_ACCESS_TOKEN='YOUR_LINE_CHANNEL_ACCESS_TOKEN'
 CLOUDINARY_CLOUD_NAME='YOUR_CLOUDINARY_CLOUD_NAME'
 CLOUDINARY_API_KEY='YOUR_CLOUD_API_KEY'
 CLOUDINARY_API_SECRET='YOUR_CLOUD_API_SECRET'
+FIREBASE_CRED_PATH='YOUR_FIREBASE_CREDENTIALS_JSON_PATH'
+FIREBASE_PROJECT_ID='YOUR_FIREBASE_PROJECT_ID'
 ```
 
 #### 變數說明：
 
-- `DATABASE_URL`：MySQL 資料庫的連線 URL。由 `server_api` 模組使用。
-- `API_USERNAME`：用於 API 認證的使用者名稱。由 `main.py` 使用。
-- `API_PASSWORD`：用於 API 認證的密碼。由 `main.py` 使用。
-- `API_URL`：YOLO 伺服器 API 的 URL。由 `main.py` 使用。
-- `REDIS_HOST`：Redis 伺服器的主機名稱。由 `main.py` 使用。
-- `REDIS_PORT`：Redis 伺服器的埠號。由 `main.py` 使用。
-- `REDIS_PASSWORD`：連線至 Redis 伺服器的密碼。由 `main.py` 使用。
-- `LINE_CHANNEL_ACCESS_TOKEN`：LINE Messaging API 的存取權杖。由 `src/notifiers/line_notifier_message_api.py` 使用。
-- `CLOUDINARY_CLOUD_NAME`：Cloudinary 的雲端名稱，用於媒體管理。由 `src/notifiers/line_notifier_message_api.py` 使用。
-- `CLOUDINARY_API_KEY`：存取 Cloudinary 服務的 API 金鑰。由 `src/notifiers/line_notifier_message_api.py` 使用。
-- `CLOUDINARY_API_SECRET`：存取 Cloudinary 服務的 API 秘鑰。由 `src/notifiers/line_notifier_message_api.py` 使用。
+- `DATABASE_URL`：MySQL 資料庫連線字串，格式為 `mysql+asyncmy://使用者:密碼@主機/資料庫名稱`。供資料庫模式使用。
+- `API_USERNAME`、`API_PASSWORD`：API 認證用戶名與密碼。
+- `API_URL`：YOLO 伺服器 API 的網址。
+- `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`：Redis 伺服器設定。
+- `LINE_CHANNEL_ACCESS_TOKEN`：LINE Messaging API 權杖。
+- `CLOUDINARY_CLOUD_NAME`、`CLOUDINARY_API_KEY`、`CLOUDINARY_API_SECRET`：Cloudinary 媒體管理設定。
+- `FIREBASE_CRED_PATH`：Firebase 認證 JSON 檔案的路徑。
+- `FIREBASE_PROJECT_ID`：Firebase 專案 ID。
 
-> **注意**：請將範例中的佔位值替換為實際的憑證與配置詳細資訊，以確保應用程式的正常運作。
+> **注意**：請將範例中的佔位值替換為實際憑證與設定。
+## 資料庫設定與管理
+
+本系統支援以 MySQL 資料庫儲存與管理所有串流、工地、違規、使用者等設定資料。建議使用資料庫模式以提升擴充性與管理效率。
+
+### 資料庫結構
+
+資料庫名稱：`construction_hazard_detection`
+
+主要表格：
+
+- `stream_configs`：串流設定，包括串流網址、工地、模型、通知、偵測項目、工作時段等。
+- `sites`：工地資訊。
+- `users`：系統使用者。
+- `violations`：違規記錄。
+
+詳細 SQL 結構請參考 `scripts/init.sql`。
+
+#### 初始化資料庫
+
+安裝 MySQL 後，執行以下指令初始化資料庫與表格：
+
+```bash
+mysql -u root -p < scripts/init.sql
+```
+
+執行時請輸入 MySQL root 密碼。
+
+### 資料庫模式與 JSON 配置模式比較
+
+| 模式         | 優點                         | 適用情境           |
+|--------------|------------------------------|--------------------|
+| 資料庫模式   | 易於擴充、集中管理、支援多用戶 | 正式部署、大型專案 |
+| JSON 配置模式| 設定簡單、快速測試            | 小型專案、測試     |
+
+主程式 `main.py` 支援兩種模式：
+
+- 資料庫模式：自動從資料庫載入所有串流設定，動態監控。
+- JSON 配置模式：從指定 JSON 檔案載入串流設定。
+
+建議正式環境採用資料庫模式。
+
+### 以資料庫模式執行主程式
+
+確保 `.env` 已正確設定資料庫連線，並完成資料庫初始化。
+
+執行主程式：
+
+```bash
+python3 main.py --db
+```
+
+主程式將自動從資料庫載入所有串流設定並啟動監控。
+
+如需指定 JSON 配置檔案，則：
+
+```bash
+python3 main.py --config config/configuration.json
+```
+
+請依需求選擇合適模式。
 
 
 <br>

@@ -4,6 +4,9 @@
 
 <div align="center">
    <a href="examples/YOLO_server_api">Server-API</a> |
+   <a href="examples/local_notification_server">FCM Notification Management Server</a>|
+   <a href="examples/violation_records">Violation Records Server</a>|
+   <a href="examples/db_management">Data Management Server</a>|
    <a href="examples/streaming_web">Streaming-Web</a> |
    <a href="examples/YOLO_data_augmentation">Data-Augmentation</a> |
    <a href="examples/YOLO_evaluation">Evaluation</a> |
@@ -87,6 +90,8 @@ This multi-language support makes the system accessible to a global audience, im
 
 - [Hazard Detection Examples](#hazard-detection-examples)
 - [Usage](#usage)
+- [Database Configuration and Management](#database-configuration-and-management)
+- [Environment Variables](#environment-variables)
 - [Additional Information](#additional-information)
 - [Dataset Information](#dataset-information)
 - [Contributing](#contributing)
@@ -213,20 +218,142 @@ Each object in the array represents a video stream configuration with the follow
 
 - `store_in_redis`: A boolean value that determines whether to store processed frames and associated detection data in Redis. If `True`, the system will save the data to a Redis database for further use, such as real-time monitoring or integration with other services. If `False`, no data will be saved in Redis.
 
+## Database Configuration and Management
+
+The Construction Hazard Detection system supports two operational modes:
+
+1. **JSON Configuration Mode**: Uses a static JSON file for stream configurations
+2. **Database Mode**: Dynamically loads and manages stream configurations from a MySQL database
+
+### Database Schema Overview
+
+The system utilises a comprehensive database schema designed to manage users, sites, stream configurations, and violation records. Key tables include:
+
+#### Core Tables
+
+- **`sites`**: Manages construction site information
+- **`stream_configs`**: Stores video stream configurations and detection settings
+- **`violations`**: Records safety violation incidents with images and detection data
+- **`users`** and **`user_profiles`**: User management and authentication
+- **`group_info`**: Organises users into groups with permission controls
+- **`features`**: Defines available system features
+
+#### Stream Configuration Table Structure
+
+The `stream_configs` table contains the following key fields:
+
+```sql
+CREATE TABLE stream_configs (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    group_id INT NOT NULL,
+    site_id INT NOT NULL,
+    stream_name VARCHAR(80) NOT NULL,
+    video_url VARCHAR(255) NOT NULL,
+    model_key VARCHAR(80) NOT NULL,
+    detect_no_safety_vest_or_helmet BOOLEAN DEFAULT FALSE,
+    detect_near_machinery_or_vehicle BOOLEAN DEFAULT FALSE,
+    detect_in_restricted_area BOOLEAN DEFAULT FALSE,
+    detect_in_utility_pole_restricted_area BOOLEAN DEFAULT FALSE,
+    detect_machinery_close_to_pole BOOLEAN DEFAULT FALSE,
+    detect_with_server BOOLEAN DEFAULT TRUE,
+    expire_date DATETIME,
+    work_start_hour INT,
+    work_end_hour INT,
+    store_in_redis BOOLEAN DEFAULT FALSE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+```
+
+### Running with Database Mode
+
+When no `--config` parameter is provided, the system automatically enters database mode:
+
+```bash
+python main.py --poll 10
+```
+
+#### Database Mode Features
+
+- **Dynamic Configuration Loading**: The system polls the database every `--poll` seconds (default: 10) for configuration changes
+- **Automatic Process Management**: Automatically starts new stream processes when configurations are added
+- **Configuration Change Detection**: Restarts stream processes when configurations are modified (based on `updated_at` timestamp)
+- **Expired Configuration Cleanup**: Automatically stops processes for expired or deleted configurations
+- **Process Lifecycle Management**: Graceful startup and shutdown of child processes
+
+#### Database Connection Requirements
+
+Ensure your `.env` file contains the correct database connection URL:
+
+```bash
+DATABASE_URL='mysql+asyncmy://username:password@localhost/construction_hazard_detection'
+```
+
+The system uses:
+- **asyncmy**: Asynchronous MySQL driver for Python
+- **Connection Pooling**: Maintains 1-5 concurrent database connections
+- **Automatic Reconnection**: Handles database connection failures gracefully
+
+### JSON Configuration Mode vs Database Mode
+
+| Feature | JSON Mode | Database Mode |
+|---------|-----------|---------------|
+| Configuration Source | Static JSON file | MySQL database |
+| Dynamic Updates | Requires restart | Automatic polling |
+| Process Management | Manual | Automatic |
+| Multi-user Support | No | Yes (with user groups) |
+| Violation Tracking | Limited | Full database logging |
+| Configuration History | No | Yes (with timestamps) |
+| Scalability | Limited | High |
+
+### Database Initialisation
+
+To set up the database schema, run the provided SQL script:
+
+```bash
+mysql -u root -p < scripts/init.sql
+```
+
+This script creates all necessary tables with proper relationships and constraints.
+
+### Working with Database Configurations
+
+When using database mode, stream configurations are managed through the database rather than JSON files. The system automatically:
+
+1. **Polls** the database for changes every few seconds
+2. **Compares** configuration timestamps to detect modifications
+3. **Starts** new stream processes for added configurations
+4. **Restarts** processes when configurations are updated
+5. **Stops** processes for expired or deleted configurations
+
+This approach enables real-time configuration management without manual intervention.
+
 
 ### Environment Variables
 
 The application requires specific environment variables for proper configuration. These variables should be defined in a `.env` file located in the root directory of the project. Below is an example of the `.env` file:
 
 ```plaintext
+# Database Configuration (Required for Database Mode)
 DATABASE_URL='mysql+asyncmy://username:password@mysql/construction_hazard_detection'
+
+# API Configuration
 API_USERNAME='user'
 API_PASSWORD='password'
-API_URL="http://yolo-server-api:6000"
+DETECT_API_URL="http://yolo-server-api:6000/api/detect"
+FCM_API_URL="http://fcm-server:8000/api/fcm"
+VIOLATION_RECORD_API_URL="http://violation-server:8001/api/violations"
+STREAMING_API_URL="http://streaming-server:8002/api/streaming_web"
+
+# Redis Configuration (Optional - for streaming web functionality)
 REDIS_HOST='redis'
 REDIS_PORT=6379
 REDIS_PASSWORD='password'
+
+# LINE Messaging API (Optional - for notifications)
 LINE_CHANNEL_ACCESS_TOKEN='YOUR_LINE_CHANNEL_ACCESS_TOKEN'
+
+# Cloudinary Configuration (Optional - for image storage)
 CLOUDINARY_CLOUD_NAME='YOUR_CLOUDINARY_CLOUD_NAME'
 CLOUDINARY_API_KEY='YOUR_CLOUD_API_KEY'
 CLOUDINARY_API_SECRET='YOUR_CLOUD_API_SECRET'
@@ -234,19 +361,58 @@ CLOUDINARY_API_SECRET='YOUR_CLOUD_API_SECRET'
 
 #### Variable Descriptions:
 
-- `DATABASE_URL`: The connection URL for the MySQL database. Used by the `server_api` module.
-- `API_USERNAME`: The username for authenticating with the API. Used by `main.py`.
-- `API_PASSWORD`: The password for authenticating with the API. Used by `main.py`.
-- `API_URL`: The URL of the YOLO server API. Used by `main.py`.
-- `REDIS_HOST`: The hostname for the Redis server. Used by `main.py`.
-- `REDIS_PORT`: The port number for the Redis server. Used by `main.py`.
-- `REDIS_PASSWORD`: The password for connecting to the Redis server. Used by `main.py`.
-- `LINE_CHANNEL_ACCESS_TOKEN`: The access token for the LINE Messaging API. Used by `src/notifiers/line_notifier_message_api.py`.
-- `CLOUDINARY_CLOUD_NAME`: The Cloudinary cloud name for media management. Used by `src/notifiers/line_notifier_message_api.py`.
-- `CLOUDINARY_API_KEY`: The API key for accessing Cloudinary services. Used by `src/notifiers/line_notifier_message_api.py`.
-- `CLOUDINARY_API_SECRET`: The API secret for accessing Cloudinary services. Used by `src/notifiers/line_notifier_message_api.py`.
+**Database Configuration:**
+- `DATABASE_URL`: The connection URL for the MySQL database. **Required for database mode operation**. Format: `mysql+asyncmy://username:password@host:port/database_name`. The system uses this to:
+  - Load stream configurations dynamically
+  - Store violation records
+  - Manage user authentication and permissions
+  - Track configuration changes via timestamps
 
-> **Note**: Replace placeholder values with actual credentials and configuration details to ensure proper functionality.
+**API Configuration:**
+- `API_USERNAME`: The username for authenticating with the detection API. Used by `main.py`.
+- `API_PASSWORD`: The password for authenticating with the detection API. Used by `main.py`.
+- `DETECT_API_URL`: The URL of the YOLO detection server API. Used for server-side object detection.
+- `FCM_API_URL`: The URL of the FCM notification server API. Used for push notifications.
+- `VIOLATION_RECORD_API_URL`: The URL of the violation recording server API. Used to store safety violations.
+- `STREAMING_API_URL`: The URL of the streaming web server API. Used for real-time video streaming.
+
+**Redis Configuration (Optional):**
+- `REDIS_HOST`: The hostname for the Redis server. Required only if `store_in_redis` is enabled.
+- `REDIS_PORT`: The port number for the Redis server. Default: 6379.
+- `REDIS_PASSWORD`: The password for connecting to the Redis server. Leave empty if no authentication is required.
+
+**Notification Services (Optional):**
+- `LINE_CHANNEL_ACCESS_TOKEN`: The access token for the LINE Messaging API. Required for LINE notifications.
+- `CLOUDINARY_CLOUD_NAME`: The Cloudinary cloud name for media management. Used for storing violation images.
+- `CLOUDINARY_API_KEY`: The API key for accessing Cloudinary services.
+- `CLOUDINARY_API_SECRET`: The API secret for accessing Cloudinary services.
+
+**Firebase Configuration (Optional):**
+- `FIREBASE_CRED_PATH`: Path to your Firebase Admin SDK credentials JSON file. Required for FCM notification management.
+- `FIREBASE_PROJECT_ID`: Your Firebase project ID.
+
+#### Configuration Modes:
+
+**For Database Mode (Recommended for Production):**
+```bash
+# Minimal configuration for database mode
+DATABASE_URL='mysql+asyncmy://user:pass@localhost/construction_hazard_detection'
+DETECT_API_URL="http://localhost:6000/api/detect"
+
+# Run with database configuration
+python main.py --poll 10
+```
+
+**For JSON Configuration Mode:**
+```bash
+# No DATABASE_URL required for JSON mode
+DETECT_API_URL="http://localhost:6000/api/detect"
+
+# Run with JSON file
+python main.py --config config/configuration.json
+```
+
+> **Note**: Replace placeholder values with actual credentials and configuration details to ensure proper functionality. The `DATABASE_URL` is only required when running in database mode (without the `--config` parameter).
 
 
 <br>
@@ -411,20 +577,50 @@ Now, you could launch the hazard-detection system in Docker or Python env:
    Start the object detection API with the following command:
 
    ```bash
-   uvicorn examples.YOLO_server.backend.app:sio_app --host 0.0.0.0 --port 8001
+   uvicorn examples.YOLO_server_api.backend.app:sio_app --host 0.0.0.0 --port 8001
    ```
 
    ---
 
-   ### **7. Run the Main Application with a Specific Configuration File**
+   ### **7. Run the Main Application**
 
-   Use the following command to run the main application and specify the configuration file:
+   The system supports two operation modes:
+
+   #### **Option A: Database Mode (Recommended for Production)**
+
+   Run the application using database configurations for dynamic stream management:
+
+   ```bash
+   python3 main.py --poll 10
+   ```
+
+   **Database Mode Features:**
+   - Dynamic configuration loading from MySQL database
+   - Automatic detection of configuration changes
+   - Real-time process management (start/stop/restart streams)
+   - Multi-user support with authentication
+   - Comprehensive violation logging
+
+   **Parameters:**
+   - `--poll`: Database polling interval in seconds (default: 10)
+
+   #### **Option B: JSON Configuration Mode**
+
+   Run the application using a static JSON configuration file:
 
    ```bash
    python3 main.py --config config/configuration.json
    ```
 
-   Replace `config/configuration.json` with the actual path to your configuration file.
+   **JSON Mode Features:**
+   - Simple setup with configuration file
+   - Suitable for single-user deployments
+   - Manual process management
+
+   **Parameters:**
+   - `--config`: Path to JSON configuration file
+
+   > **Note**: Replace `config/configuration.json` with the actual path to your configuration file. If no `--config` parameter is provided, the system automatically switches to database mode.
 
    ---
 
