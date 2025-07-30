@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -42,6 +43,53 @@ search_util: SearchUtils = SearchUtils(device=-1)
 
 # Create a FastAPI router for violations-related endpoints.
 router: APIRouter = APIRouter()
+
+# Cache mechanism for storing user site information
+_user_sites_cache: dict[str, tuple[list[str], float]] = {}
+_cache_ttl: int = 300  # Cache time-to-live in seconds (5 minutes)
+
+
+async def get_user_sites_cached(
+    username: str,
+    db: AsyncSession,
+) -> list[str]:
+    """
+    Retrieve the list of sites accessible by a user, with caching support.
+
+    Args:
+        username (str): The username of the user.
+        db (AsyncSession): The database session.
+
+    Returns:
+        list[str]: A list of site names accessible by the user.
+
+    Raises:
+        HTTPException: If the user is not found in the database.
+    """
+    current_time: float = time.time()
+
+    # Check the cache for user site information
+    if username in _user_sites_cache:
+        site_names, cached_time = _user_sites_cache[username]
+        if current_time - cached_time < _cache_ttl:
+            return site_names
+
+    # Query the database for user site information
+    stmt_user = (
+        select(User)
+        .where(User.username == username)
+        .options(selectinload(User.sites))
+    )
+    user_obj: User | None = (await db.execute(stmt_user)).scalar()
+    if not user_obj:
+        raise HTTPException(status_code=404, detail='User not found')
+
+    site_names: list[str] = [site.name for site in user_obj.sites]
+
+    # Update the cache with the retrieved site information
+    _user_sites_cache[username] = (site_names, current_time)
+
+    return site_names
 
 
 @router.get(
@@ -112,30 +160,23 @@ async def get_violations(
     offset: int = Query(0, ge=0, description='Starting record offset'),
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Depends(jwt_access),
-) -> dict:
+) -> ViolationList:
     """
     Retrieve a paginated list of violation records.
 
     Args:
-        site_id (int | None):
-            The ID of the site to filter violations by.
-        keyword (str | None):
-            A keyword to search for in violation records.
-        start_time (datetime | None):
-            The start of the detection time range.
-        end_time (datetime | None):
-            The end of the detection time range.
-        limit (int):
-            The maximum number of records to return (default is 20).
-        offset (int):
-            The starting record offset (default is 0).
-        db (AsyncSession):
-            The SQLAlchemy async session.
+        site_id (int | None): The ID of the site to filter violations by.
+        keyword (str | None): A keyword to search for in violation records.
+        start_time (datetime | None): The start of the detection time range.
+        end_time (datetime | None): The end of the detection time range.
+        limit (int): The maximum number of records to return (default is 20).
+        offset (int): The starting record offset (default is 0).
+        db (AsyncSession): The SQLAlchemy async session.
         credentials (JwtAuthorizationCredentials):
             The JWT credentials from the request.
 
     Returns:
-        dict: A dictionary with:
+        ViolationList: A dictionary with:
             - 'total': the total count of matching violations,
             - 'items': a list of violation records (paginated).
 
@@ -148,32 +189,23 @@ async def get_violations(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    stmt_user = (
-        select(User)
-        .where(User.username == username)
-        .options(selectinload(User.sites))
-    )
-    user_obj: User | None = (await db.execute(stmt_user)).scalar()
-    if not user_obj:
-        raise HTTPException(status_code=404, detail='User not found')
-
-    site_names: list[str] = [site.name for site in user_obj.sites]
+    # Retrieve user sites using the cache
+    site_names: list[str] = await get_user_sites_cached(username, db)
     if not site_names:
         return ViolationList(total=0, items=[])
 
-    conditions = [Violation.site.in_(site_names)]
+    conditions: list = [Violation.site.in_(site_names)]
 
     if site_id is not None:
         site_stmt = select(Site).where(Site.id == site_id)
         site_obj: Site | None = (await db.execute(site_stmt)).scalar()
         if not site_obj or site_obj.name not in site_names:
-            print(f"[get_violations] No access to site_id {site_id}")
             raise HTTPException(status_code=403, detail='No access to site_id')
         conditions.append(Violation.site == site_obj.name)
 
     if keyword:
-        synonyms = search_util.expand_synonyms(keyword)
-        or_list = []
+        synonyms: list[str] = search_util.expand_synonyms(keyword)
+        or_list: list = []
         for syn in synonyms:
             or_list.append(Violation.stream_name.ilike(f"%{syn}%"))
             or_list.append(Violation.warnings_json.ilike(f"%{syn}%"))
@@ -185,38 +217,45 @@ async def get_violations(
     if end_time:
         conditions.append(Violation.detection_time <= end_time)
 
-    total_stmt = (
+    # Execute count and query tasks in parallel for performance
+    count_task = db.execute(
         select(func.count())
         .select_from(Violation)
-        .where(and_(*conditions))
+        .where(and_(*conditions)),
     )
-    total: int = (await db.execute(total_stmt)).scalar()
 
-    stmt = (
+    violations_task = db.scalars(
         select(Violation)
         .where(and_(*conditions))
         .order_by(Violation.detection_time.desc())
         .offset(offset)
-        .limit(limit)
+        .limit(limit),
     )
-    violations: list[Violation] = (await db.scalars(stmt)).all()
 
-    items = []
-    for v in violations:
-        items.append(
-            ViolationItem(
-                id=v.id,
-                site_name=v.site,
-                stream_name=v.stream_name,
-                detection_time=v.detection_time,
-                image_path=v.image_path,
-                created_at=v.created_at,
-                detection_items=v.detections_json,
-                warnings=v.warnings_json,
-                cone_polygons=v.cone_polygon_json,
-                pole_polygons=v.pole_polygon_json,
-            ),
+    import asyncio
+    total_result, violations_result = await asyncio.gather(
+        count_task, violations_task,
+    )
+
+    total: int = total_result.scalar()
+    violations: list[Violation] = violations_result.all()
+
+    # Construct response items in batch
+    items: list[ViolationItem] = [
+        ViolationItem(
+            id=v.id,
+            site_name=v.site,
+            stream_name=v.stream_name,
+            detection_time=v.detection_time,
+            image_path=v.image_path,
+            created_at=v.created_at,
+            detection_items=v.detections_json,
+            warnings=v.warnings_json,
+            cone_polygons=v.cone_polygon_json,
+            pole_polygons=v.pole_polygon_json,
         )
+        for v in violations
+    ]
 
     return ViolationList(total=total, items=items)
 
@@ -265,16 +304,9 @@ async def get_single_violation(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    stmt_user = (
-        select(User)
-        .where(User.username == username)
-        .options(selectinload(User.sites))
-    )
-    user_obj: User | None = (await db.execute(stmt_user)).scalar()
-    if not user_obj:
-        raise HTTPException(status_code=404, detail='User not found')
+    # Retrieve user sites using the cache
+    site_names: list[str] = await get_user_sites_cached(username, db)
 
-    site_names: list[str] = [site.name for site in user_obj.sites]
     stmt_violation = select(Violation).where(Violation.id == violation_id)
     violation: Violation | None = (await db.execute(stmt_violation)).scalar()
 
