@@ -255,6 +255,126 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.fake_db.scalars.return_value = FakeScalarsResult(items)
 
     ###################################################
+    # Cache function tests
+    ###################################################
+    async def test_get_user_sites_cached_user_not_found(self) -> None:
+        """
+        Test get_user_sites_cached function when user is not found.
+        """
+        from examples.violation_records.routers import get_user_sites_cached
+        from fastapi import HTTPException
+
+        # Mock database to return None for user
+        self.fake_db.execute.return_value = FakeExecuteResult(
+            scalar_result=None,
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            await get_user_sites_cached('nonexistent_user', self.fake_db)
+
+        self.assertEqual(context.exception.status_code, 404)
+        self.assertEqual(context.exception.detail, 'User not found')
+
+    async def test_get_user_sites_cached_success(self) -> None:
+        """
+        Test get_user_sites_cached function with successful user retrieval.
+        """
+        from examples.violation_records.routers import get_user_sites_cached
+        from examples.violation_records.routers import _user_sites_cache
+
+        # Clear cache first
+        _user_sites_cache.clear()
+
+        # Create mock user with sites
+        siteA = MockSite(1, 'SiteA')
+        siteB = MockSite(2, 'SiteB')
+        user = MockUser('test_user', [siteA, siteB])
+
+        # Mock database to return user
+        self.fake_db.execute.return_value = FakeExecuteResult(
+            scalar_result=user,
+        )
+
+        # Call function
+        result = await get_user_sites_cached('test_user', self.fake_db)
+
+        # Verify result
+        self.assertEqual(result, ['SiteA', 'SiteB'])
+
+        # Verify cache was populated
+        self.assertIn('test_user', _user_sites_cache)
+
+    async def test_get_user_sites_cached_cache_hit(self) -> None:
+        """
+        Test get_user_sites_cached function returns cached result.
+        """
+        from examples.violation_records.routers import get_user_sites_cached
+        from examples.violation_records.routers import _user_sites_cache
+        import time
+
+        # Pre-populate cache
+        current_time = time.time()
+        _user_sites_cache['cached_user'] = (['CachedSite'], current_time)
+
+        # This should return cached result without calling DB
+        result = await get_user_sites_cached('cached_user', self.fake_db)
+
+        # Verify cached result returned
+        self.assertEqual(result, ['CachedSite'])
+
+        # Verify DB was not called (execute should not have been called)
+        self.fake_db.execute.assert_not_called()
+
+    async def test_get_user_sites_cached_cache_expired(self) -> None:
+        """
+        Test get_user_sites_cached function refreshes expired cache.
+        """
+        from examples.violation_records.routers import get_user_sites_cached
+        from examples.violation_records.routers import _user_sites_cache
+        from examples.violation_records.routers import _cache_ttl
+        import time
+
+        # Pre-populate cache with expired entry
+        old_time = time.time() - _cache_ttl - 10  # expired
+        _user_sites_cache['expired_user'] = (['OldSite'], old_time)
+
+        # Create new mock user with different sites
+        siteA = MockSite(1, 'NewSite')
+        user = MockUser('expired_user', [siteA])
+
+        # Mock database to return updated user
+        self.fake_db.execute.return_value = FakeExecuteResult(
+            scalar_result=user,
+        )
+
+        # Call function
+        result = await get_user_sites_cached('expired_user', self.fake_db)
+
+        # Verify new result returned (not cached)
+        self.assertEqual(result, ['NewSite'])
+
+        # Verify cache was updated with new values
+        self.assertEqual(_user_sites_cache['expired_user'][0], ['NewSite'])
+
+    async def test_get_my_sites_integration_cache(self) -> None:
+        """
+        Integration test for get_my_sites endpoint.
+        """
+        # Create mock user with sites
+        siteA = MockSite(1, 'SiteA')
+        user = MockUser('test_user', [siteA])
+
+        # Mock the database query
+        self.simulate_user_query(user)
+        resp1 = self.client.get('/api/my_sites')
+        self.assertEqual(resp1.status_code, 200)
+
+        # Verify response content
+        data = resp1.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['name'], 'SiteA')
+
+    ###################################################
     # /api/my_sites Tests
     ###################################################
     async def test_get_my_sites_user_not_found(self) -> None:
@@ -401,49 +521,64 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     # /api/violations Tests
     ###################################################
-    async def test_get_violations_user_not_found(self) -> None:
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_user_not_found(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
         """
         If no user is found in the DB, return 404.
         """
-        self.simulate_user_query(None)
+        # Mock get_user_sites_cached to raise 404 when user not found
+        from fastapi import HTTPException
+        mock_get_user_sites.side_effect = HTTPException(
+            status_code=404, detail='User not found',
+        )
         resp = self.client.get('/api/violations')
         self.assertEqual(resp.status_code, 404)
 
-    async def test_get_violations_no_sites(self) -> None:
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_no_sites(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
         """
         If the user has no sites, return total=0 and items=[].
         """
-        user = MockUser('test_user', [])
-        self.simulate_user_query(user)
+        mock_get_user_sites.return_value = []
         resp = self.client.get('/api/violations')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {'total': 0, 'items': []})
 
-    async def test_get_violations_site_id_403(self) -> None:
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_site_id_403(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
         """
         If the user tries to access a site ID that does not match their site,
         return 403.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
-        self.fake_db.execute.side_effect = [
-            FakeExecuteResult(scalar_result=user),
-            FakeExecuteResult(scalar_result=MockSite(2, 'SiteB')),
-        ]
+        mock_get_user_sites.return_value = ['SiteA']
+        # Mock site query to return a different site
+        self.fake_db.execute.return_value = FakeExecuteResult(
+            scalar_result=MockSite(2, 'SiteB'),
+        )
         resp = self.client.get('/api/violations?site_id=2')
         self.assertEqual(resp.status_code, 403)
 
-    async def test_get_violations_with_filters(self) -> None:
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_with_filters(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
         """
         If keyword, start_time, end_time, limit, and offset are provided,
         verify the response returns the expected data.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
-        self.fake_db.execute.side_effect = [
-            FakeExecuteResult(scalar_result=user),
-            FakeExecuteResult(scalar_result=2),  # total count
-        ]
+        mock_get_user_sites.return_value = ['SiteA']
+        # Mock count query and violations query
+        self.fake_db.execute.return_value = FakeExecuteResult(scalar_result=2)
         v1 = MockViolation(123, 'SiteA')
         v2 = MockViolation(456, 'SiteA')
         self.fake_db.scalars.return_value = FakeScalarsResult([v1, v2])
@@ -461,17 +596,23 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['total'], 2)
         self.assertEqual(len(data['items']), 2)
 
-    async def test_get_violations_success(self) -> None:
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_success(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
         """
         If the user and site are valid, and there's 1 violation, return it.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
-        # user, siteObj, count=1
+        mock_get_user_sites.return_value = ['SiteA']
+        # Mock site query and count query
         self.fake_db.execute.side_effect = [
-            FakeExecuteResult(scalar_result=user),
-            FakeExecuteResult(scalar_result=siteA),
-            FakeExecuteResult(scalar_result=1),
+            FakeExecuteResult(
+                scalar_result=MockSite(
+                    1, 'SiteA',
+                ),
+            ),  # site query
+            FakeExecuteResult(scalar_result=1),  # count query
         ]
         viol = MockViolation(101, 'SiteA')
         self.fake_db.scalars.return_value = FakeScalarsResult([viol])
@@ -486,55 +627,68 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     # /api/violations/{violation_id} Tests
     ###################################################
-    async def test_get_single_violation_user_not_found(self) -> None:
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_single_violation_user_not_found(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
         """
         If there's no user, return 404.
         """
-        self.simulate_user_query(None)
+        from fastapi import HTTPException
+        mock_get_user_sites.side_effect = HTTPException(
+            status_code=404, detail='User not found',
+        )
         resp = self.client.get('/api/violations/9999')
         self.assertEqual(resp.status_code, 404)
 
-    async def test_get_single_violation_forbidden_violation_none(self) -> None:
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_single_violation_forbidden_violation_none(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
         """
         If the DB returns None for the violation, respond with 403 because it's
         not accessible.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
-        self.fake_db.execute.side_effect = [
-            FakeExecuteResult(scalar_result=user),
-            FakeExecuteResult(scalar_result=None),
-        ]
+        mock_get_user_sites.return_value = ['SiteA']
+        self.fake_db.execute.return_value = FakeExecuteResult(
+            scalar_result=None,
+        )
         resp = self.client.get('/api/violations/1234')
         self.assertEqual(resp.status_code, 403)
 
-    async def test_get_single_violation_forbidden_site_mismatch(self) -> None:
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_single_violation_forbidden_site_mismatch(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
         """
         If the violation's site doesn't match the user's site,
         respond with 403.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
+        mock_get_user_sites.return_value = ['SiteA']
         viol = MockViolation(88, 'SiteB')
-        self.fake_db.execute.side_effect = [
-            FakeExecuteResult(scalar_result=user),
-            FakeExecuteResult(scalar_result=viol),
-        ]
+        self.fake_db.execute.return_value = FakeExecuteResult(
+            scalar_result=viol,
+        )
         resp = self.client.get('/api/violations/88')
         self.assertEqual(resp.status_code, 403)
 
-    async def test_get_single_violation_success(self) -> None:
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_single_violation_success(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
         """
         If the violation matches the user's site,
         return 200 with violation data.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
+        mock_get_user_sites.return_value = ['SiteA']
         viol = MockViolation(77, 'SiteA')
-        self.fake_db.execute.side_effect = [
-            FakeExecuteResult(scalar_result=user),
-            FakeExecuteResult(scalar_result=viol),
-        ]
+        self.fake_db.execute.return_value = FakeExecuteResult(
+            scalar_result=viol,
+        )
         resp = self.client.get('/api/violations/77')
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
@@ -693,7 +847,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         If the user can only access "SiteA" but requests "SiteB", return 403.
 
         Args:
-
+            mock_file_cls (MagicMock): Mocked UploadFile class.
         """
         siteA = MockSite(1, 'SiteA')
         user = MockUser('test_user', [siteA])
