@@ -15,6 +15,8 @@ LANGUAGES = {
         'warning_people_in_utility_pole_controlled_area':
             'Warning: {count} people have entered the utility pole '
             'restricted area!',
+        'detect_machinery_close_to_pole':
+            'Warning: {count} machineries are too close to the utility pole!',
 
         'no_warning': 'No warning',
         'machinery': 'machinery',
@@ -44,6 +46,8 @@ LANGUAGES = {
             '警告: 有{count}人過於靠近車輛!',
         'warning_people_in_utility_pole_controlled_area':
             '警告: 有{count}人進入電桿管制區!',
+        'detect_machinery_close_to_pole':
+            '警告: 有{count}個機具過於靠近電桿!',
 
         'no_warning': '無警告',
         'machinery': '機具',
@@ -73,6 +77,8 @@ LANGUAGES = {
             '警告: 有{count}人过于靠近车辆!',
         'warning_people_in_utility_pole_controlled_area':
             '警告: 有{count}人进入电桿管制区!',
+        'detect_machinery_close_to_pole':
+            '警告: 有{count}个机械过于靠近电桿!',
 
         'no_warning': '无警告',
         'machinery': '机械',
@@ -107,6 +113,9 @@ LANGUAGES = {
         'warning_people_in_utility_pole_controlled_area':
             'Avertissement: {count} personnes sont entrées dans la zone '
             'de poteau électrique!',
+        'detect_machinery_close_to_pole':
+            'Avertissement: {count} machines sont trop proches du poteau '
+            'électrique!',
 
         'no_warning': "Pas d'avertissement",
         'machinery': 'machinerie',
@@ -136,6 +145,8 @@ LANGUAGES = {
             'Cảnh báo: Có {count} người quá gần phương tiện!',
         'warning_people_in_utility_pole_controlled_area':
             'Cảnh báo: Có {count} người đã vào khu vực cột điện!',
+        'detect_machinery_close_to_pole':
+            'Cảnh báo: Có {count} máy móc quá gần cột điện!',
 
         'no_warning': 'Không có cảnh báo',
         'machinery': 'máy móc',
@@ -166,6 +177,9 @@ LANGUAGES = {
             'Peringatan: Ada {count} orang terlalu dekat dengan kendaraan!',
         'warning_people_in_utility_pole_controlled_area':
             'Peringatan: Ada {count} orang memasuki area tiang listrik!',
+        'detect_machinery_close_to_pole':
+            'Peringatan: Ada {count} mesin terlalu dekat dengan '
+            'tiang listrik!',
 
         'no_warning': 'Tidak ada peringatan',
         'machinery': 'mesin',
@@ -195,6 +209,8 @@ LANGUAGES = {
             'คำเตือน: มี {count} คนอยู่ใกล้ยานพาหนะมากเกินไป!',
         'warning_people_in_utility_pole_controlled_area':
             'คำเตือน: มี {count} คนได้เข้ามาในพื้นที่เสาไฟฟ้า!',
+        'detect_machinery_close_to_pole':
+            'คำเตือน: มี {count} เครื่องจักรอยู่ใกล้เสาไฟฟ้ามากเกินไป!',
 
         'no_warning': 'ไม่มีคำเตือน',
         'machinery': 'เครื่องจักร',
