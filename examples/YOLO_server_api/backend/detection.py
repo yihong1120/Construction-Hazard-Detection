@@ -2,48 +2,59 @@ from __future__ import annotations
 
 import gc
 from typing import Any
+from typing import Callable
 
 import cv2
 import numpy as np
 from sahi.predict import get_sliced_prediction
 
-from .models import DetectionModelManager
-
-model_loader = DetectionModelManager()
+from examples.YOLO_server_api.backend.config import USE_TENSORRT
 
 
-async def convert_to_image(data: bytes) -> np.ndarray:
-    """
-    Converts raw image bytes into an OpenCV image format.
+def convert_to_image(data: bytes) -> np.ndarray:
+    """Convert raw bytes data to OpenCV BGR image array.
 
     Args:
-        data (bytes): The image data in bytes.
+        data: Raw image bytes data to be decoded.
 
     Returns:
-        np.ndarray: The decoded image in OpenCV format.
+        Decoded image as OpenCV BGR numpy array.
+
+    Raises:
+        cv2.error: If the image data cannot be decoded.
     """
-    # Convert image bytes to a NumPy array
+    # Convert bytes to numpy array for image decoding
     npimg = np.frombuffer(data, np.uint8)
-    # Decode the NumPy array into an OpenCV image
-    img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
-    return img
+    return cv2.imdecode(npimg, cv2.IMREAD_COLOR)
 
 
-async def get_prediction_result(
-    img: np.ndarray,
-    model: DetectionModelManager,
-) -> Any:
+async def get_prediction_result(img: np.ndarray, model: Any) -> Any:
     """
-    Generates sliced predictions for an image using the specified model.
+    Generate prediction results using either TensorRT or SAHI inference.
 
     Args:
-        img (np.ndarray): The image in OpenCV format.
-        model (DetectionModelManager): The object detection model instance.
+        img: Input image as numpy array in BGR format.
+        model: Loaded YOLO model (either Ultralytics or SAHI compatible).
 
     Returns:
-        Any: The prediction result from the model.
+        Prediction results from the model. Format varies based on inference
+        method:
+        - TensorRT: Ultralytics Results object
+        - SAHI: SlicedPrediction object with object_prediction_list
+
+    Raises:
+        cv2.error: If the image cannot be processed or model inference fails.
+
+    Note:
+        This function is designed to be wrapped with asyncio.to_thread for
+        non-blocking execution in async contexts.
     """
-    # Use the SAHI library's get_sliced_prediction function for detection
+    if USE_TENSORRT:  # Ultralytics (TensorRT) inference path
+        # Ultralytics returns list[Results], we only need the first result
+        # for single image
+        return model.predict(source=img, verbose=False)[0]
+
+    # SAHI sliced inference path for better small object detection
     return get_sliced_prediction(
         img,
         model,
@@ -56,22 +67,38 @@ async def get_prediction_result(
 
 def compile_detection_data(result: Any) -> list[list[float | int]]:
     """
-    Compiles detection data from the model's prediction results.
+    Standardise detection results from SAHI and Ultralytics
+    into uniform format.
 
     Args:
-        result (Any): The result of the model prediction.
+        result:
+            Detection result object from either SAHI or Ultralytics inference.
 
     Returns:
-        list[list[float | int]]: Detection data including bounding boxes,
-        confidence, and label IDs.
+        List of detections in format [x1, y1, x2, y2, confidence, label_id].
+
+    Note:
+        - SAHI results have 'object_prediction_list' attribute
+        - Ultralytics results have 'boxes' attribute
     """
-    datas = []
-    # Extract bounding box, confidence, and label ID for each prediction
-    for object_prediction in result.object_prediction_list:
-        label = int(object_prediction.category.id)
-        x1, y1, x2, y2 = (int(x) for x in object_prediction.bbox.to_voc_bbox())
-        confidence = float(object_prediction.score.value)
-        datas.append([x1, y1, x2, y2, confidence, label])
+    datas: list[list[float | int]] = []
+
+    # Handle SAHI prediction results
+    if hasattr(result, 'object_prediction_list'):
+        for obj in result.object_prediction_list:
+            label = int(obj.category.id)
+            x1, y1, x2, y2 = (int(x) for x in obj.bbox.to_voc_bbox())
+            conf = float(obj.score.value)
+            datas.append([x1, y1, x2, y2, conf, label])
+        return datas
+
+    # Handle Ultralytics prediction results
+    boxes = result.boxes
+    for i in range(len(boxes)):
+        x1, y1, x2, y2 = map(int, boxes.xyxy[i].tolist())
+        conf = float(boxes.conf[i].item())
+        label = int(boxes.cls[i].item())
+        datas.append([x1, y1, x2, y2, conf, label])
     return datas
 
 
@@ -79,79 +106,53 @@ async def process_labels(
     datas: list[list[float | int]],
 ) -> list[list[float | int]]:
     """
-    Processes detection data to remove overlapping and contained labels.
+    Process detection labels by removing overlapping and contained detections.
+
+    Applies a multi-stage filtering process to clean up detection results:
+    1. Remove overlapping labels (e.g., hardhat vs no_hardhat conflicts)
+    2. Remove completely contained labels (nested detections)
+    3. Re-run overlap removal to catch any new conflicts
 
     Args:
-        datas (list[list[float | int]]): The detection data to process.
+        datas: List of detection data in format [x1, y1, x2, y2, conf, label].
 
     Returns:
-        list[list[float | int]]: The processed detection data.
+        Cleaned detection data with conflicts resolved.
+
+    Note:
+        The double overlap removal ensures that removing contained labels
+        doesn't create new overlapping conflicts.
     """
-    # Remove overlapping and completely contained labels
+    # First pass: remove overlapping detections
     datas = await remove_overlapping_labels(datas)
+    # Remove completely contained detections
     datas = await remove_completely_contained_labels(datas)
+    # Final pass: clean up any remaining overlaps
     datas = await remove_overlapping_labels(datas)
-    return datas
-
-
-async def remove_overlapping_labels(
-    datas: list[list[float | int]],
-) -> list[list[float | int]]:
-    """
-    Removes overlapping labels based on predefined thresholds.
-
-    Args:
-        datas (list[list[float | int]]): The detection data to process.
-
-    Returns:
-        list[list[float | int]]: The detection data
-        with overlapping labels removed.
-    """
-    # Organise data by category indices for efficient processing
-    category_indices = get_category_indices(datas)
-
-    # Identify overlapping labels to remove
-    to_remove = set()
-    to_remove.update(
-        await find_overlaps(
-            category_indices['hardhat'],
-            category_indices['no_hardhat'],
-            datas,
-            0.5,
-        ),
-    )
-    to_remove.update(
-        await find_overlaps(
-            category_indices['safety_vest'],
-            category_indices['no_safety_vest'],
-            datas,
-            0.5,
-        ),
-    )
-
-    # Remove overlapping entries from the data list
-    for index in sorted(to_remove, reverse=True):
-        datas.pop(index)
-
-    # Run garbage collection to free memory
-    gc.collect()
     return datas
 
 
 def get_category_indices(
     datas: list[list[float | int]],
 ) -> dict[str, list[int]]:
-    """
-    Organises detection data by category indices for quicker access.
+    """Generate category indices for safety equipment detection filtering.
+
+    Creates index mappings for different safety equipment categories to enable
+    efficient conflict resolution between positive and negative detections.
 
     Args:
-        datas (list[list[float | int]]): The detection data.
+        datas: List of detection data in format [x1, y1, x2, y2, conf, label].
 
     Returns:
-        dict[str, list[int]]:
-            A dictionary mapping category names to lists of indices.
+        Dictionary mapping category names to lists of detection indices:
+        - 'hardhat': Indices of hard hat detections (label 0)
+        - 'no_hardhat': Indices of no hard hat detections (label 2)
+        - 'safety_vest': Indices of safety vest detections (label 7)
+        - 'no_safety_vest': Indices of no safety vest detections (label 4)
+
+    Note:
+        Label IDs are based on the trained model's class definitions.
     """
-    # Create a dictionary with lists of indices for each category
     return {
         'hardhat': [i for i, d in enumerate(datas) if d[5] == 0],
         'no_hardhat': [i for i, d in enumerate(datas) if d[5] == 2],
@@ -160,260 +161,262 @@ def get_category_indices(
     }
 
 
-async def find_overlaps(
-    indices1: list[int],
-    indices2: list[int],
+async def _calc_and_filter(
+    idxs1: list[int],
+    idxs2: list[int],
     datas: list[list[float | int]],
-    threshold: float,
+    fn: Callable,
 ) -> set[int]:
-    """
-    Finds overlaps between two sets of category indices.
+    """Apply filtering function to calculate conflicting detection indices.
+
+    Helper function that applies a conflict detection function between two sets
+    of detection indices and accumulates the results.
 
     Args:
-        indices1 (list[int]): The first set of indices.
-        indices2 (list[int]): The second set of indices.
-        datas (list[list[float | int]]): The detection data.
-        threshold (float): The overlap threshold.
+        idxs1: Indices of the first detection category.
+        idxs2: Indices of the second detection category.
+        datas: Complete detection data list.
+        fn: Filtering function to apply (e.g., find_overlaps, find_contained).
 
     Returns:
-        set[int]: Indices of overlapping labels to be removed.
+        Set of detection indices that should be removed due to conflicts.
+
+    Note:
+        This function enables efficient batch processing of conflict detection
+        between different category pairs.
     """
-    to_remove = set()
-    # Check for overlaps between two sets of indices
-    for index1 in indices1:
-        to_remove.update(
-            await find_overlapping_indices(
-                index1, indices2, datas, threshold,
-            ),
-        )
-    return to_remove
+    bad: set[int] = set()
+    for idx1 in idxs1:
+        bad |= await fn(idx1, idxs2, datas)
+    return bad
 
 
-async def find_overlapping_indices(
-    index1: int,
-    indices2: list[int],
-    datas: list[list[float | int]], threshold: float,
-) -> set[int]:
+async def remove_overlapping_labels(
+    datas: list[list[float | int]],
+) -> list[list[float | int]]:
     """
-    Finds overlapping indices for a single detection index.
+    Remove overlapping detections
+    between conflicting safety equipment categories.
 
     Args:
-        index1 (int): The index of the first detection.
-        indices2 (list[int]): The indices of potential overlapping detections.
-        datas (list[list[float | int]]): The detection data.
-        threshold (float): The overlap threshold.
+        datas: List of detection data in format [x1, y1, x2, y2, conf, label].
 
     Returns:
-        set[int]: Indices of overlapping labels.
+        Filtered detection data with overlapping conflicts removed.
+
+    Note:
+        Uses intersection over union (IoU) threshold to determine overlaps.
+        Memory cleanup with gc.collect() is performed after removal operations.
     """
-    # Calculate overlaps for a specific detection
-    # and return those exceeding the threshold
+    ci = get_category_indices(datas)
+    bad = set()
+
+    # Find overlaps between hardhat and no_hardhat detections
+    bad |= await _calc_and_filter(
+        ci['hardhat'], ci['no_hardhat'], datas, find_overlaps,
+    )
+    # Find overlaps between safety_vest and no_safety_vest detections
+    bad |= await _calc_and_filter(
+        ci['safety_vest'], ci['no_safety_vest'], datas, find_overlaps,
+    )
+
+    # Remove conflicting detections in reverse order to maintain indices
+    for i in sorted(bad, reverse=True):
+        datas.pop(i)
+
+    # Force garbage collection to free memory from removed detections
+    gc.collect()
+    return datas
+
+
+async def find_overlaps(
+    i1: int,
+    idxs2: list[int],
+    datas: list[list[float | int]],
+    thr: float = 0.5,
+) -> set[int]:
+    """Find detections that overlap with a reference detection above threshold.
+
+    Compares a reference detection against a list of candidate detections to
+    identify those with overlap ratios exceeding the specified threshold.
+
+    Args:
+        i1: Index of the reference detection.
+        idxs2: List of candidate detection indices to compare against.
+        datas: Complete detection data list.
+        thr: Overlap ratio threshold (default 0.5, meaning 50% overlap).
+
+    Returns:
+        Set of detection indices that overlap significantly with the reference.
+
+    Note:
+        Uses intersection over union (IoU) calculation
+            for overlap determination.
+    """
     return {
-        index2 for index2 in indices2
-        if calculate_overlap(
-            [int(x) for x in datas[index1][:4]],
-            [int(x) for x in datas[index2][:4]],
-        ) > threshold
+        i2
+        for i2 in idxs2
+        if overlap_ratio(datas[i1][:4], datas[i2][:4]) > thr
     }
 
 
-def calculate_overlap(bbox1: list[int], bbox2: list[int]) -> float:
+def overlap_ratio(
+    b1: list[float | int],
+    b2: list[float | int],
+) -> float:
     """
-    Calculates the overlap between two bounding boxes.
+    Calculate intersection over union (IoU) ratio between two bounding boxes.
 
     Args:
-        bbox1 (list[int]): The first bounding box.
-        bbox2 (list[int]): The second bounding box.
+        b1: First bounding box as [x1, y1, x2, y2].
+        b2: Second bounding box as [x1, y1, x2, y2].
 
     Returns:
-        float: The overlap percentage.
+        IoU ratio as float between 0.0 (no overlap) and 1.0 (complete overlap).
+
+    Note:
+        Uses the intersection area divided by union area formula.
+        Handles edge cases where boxes don't overlap (returns 0.0).
     """
-    # Calculate intersection coordinates and area
-    x1, y1, x2, y2 = calculate_intersection(bbox1, bbox2)
-    intersection_area = calculate_area(x1, y1, x2, y2)
-    # Calculate area of each bounding box
-    bbox1_area = calculate_area(*bbox1)
-    bbox2_area = calculate_area(*bbox2)
-
-    # Calculate the overlap percentage
-    overlap_percentage = intersection_area / \
-        float(bbox1_area + bbox2_area - intersection_area)
-    gc.collect()
-    return overlap_percentage
-
-
-def calculate_intersection(
-    bbox1: list[int],
-    bbox2: list[int],
-) -> tuple[int, int, int, int]:
-    """
-    Calculates the intersection coordinates of two bounding boxes.
-
-    Args:
-        bbox1 (list[int]): The first bounding box.
-        bbox2 (list[int]): The second bounding box.
-
-    Returns:
-        tuple[int, int, int, int]: The intersection coordinates.
-    """
-    # Determine the coordinates for the intersection area
-    x1 = max(bbox1[0], bbox2[0])
-    y1 = max(bbox1[1], bbox2[1])
-    x2 = min(bbox1[2], bbox2[2])
-    y2 = min(bbox1[3], bbox2[3])
-    return x1, y1, x2, y2
-
-
-def calculate_area(x1: int, y1: int, x2: int, y2: int) -> int:
-    """
-    Calculates the area of a bounding box.
-
-    Args:
-        x1 (int): The x-coordinate of the top-left corner.
-        y1 (int): The y-coordinate of the top-left corner.
-        x2 (int): The x-coordinate of the bottom-right corner.
-        y2 (int): The y-coordinate of the bottom-right corner.
-
-    Returns:
-        int: The area of the bounding box.
-    """
-    # Calculate area, ensuring no negative dimensions
-    return max(0, x2 - x1 + 1) * max(0, y2 - y1 + 1)
-
-
-def is_contained(inner_bbox: list[int], outer_bbox: list[int]) -> bool:
-    """
-    Checks if one bounding box is fully contained within another.
-
-    Args:
-        inner_bbox (list[int]): The inner bounding box.
-        outer_bbox (list[int]): The outer bounding box.
-
-    Returns:
-        bool: True if the inner bounding box is fully contained in
-        the outer bounding box.
-    """
-    # Verify if each coordinate of inner_bbox is within outer_bbox
-    return (
-        inner_bbox[0] >= outer_bbox[0]
-        and inner_bbox[2] <= outer_bbox[2]
-        and inner_bbox[1] >= outer_bbox[1]
-        and inner_bbox[3] <= outer_bbox[3]
+    # Calculate intersection boundaries
+    x1, y1, x2, y2 = (
+        max(b1[0], b2[0]),  # Left edge of intersection
+        max(b1[1], b2[1]),  # Top edge of intersection
+        min(b1[2], b2[2]),  # Right edge of intersection
+        min(b1[3], b2[3]),  # Bottom edge of intersection
     )
+
+    # Calculate intersection area
+    inter = area(x1, y1, x2, y2)
+
+    # Calculate union area (area of both boxes minus intersection)
+    union_area = area(*b1) + area(*b2) - inter
+
+    # Return IoU ratio (handle division by zero)
+    return inter / float(union_area) if union_area > 0 else 0.0
+
+
+def area(
+    x1: float | int, y1: float | int,
+    x2: float | int, y2: float | int,
+) -> int:
+    """Calculate the area of a bounding box defined by corner coordinates.
+
+    Computes the area of a rectangular bounding box, handling edge cases where
+    the coordinates may result in invalid (negative) dimensions.
+
+    Args:
+        x1: Left coordinate of the bounding box.
+        y1: Top coordinate of the bounding box.
+        x2: Right coordinate of the bounding box.
+        y2: Bottom coordinate of the bounding box.
+
+    Returns:
+        Area as integer. Returns 0 for invalid bounding boxes.
+
+    Note:
+        Uses max(0, dimension + 1) to handle pixel-perfect area calculation
+        and prevent negative areas from invalid coordinates.
+    """
+    # Calculate width and height, ensuring non-negative values
+    width = max(0, x2 - x1 + 1)
+    height = max(0, y2 - y1 + 1)
+    return width * height
 
 
 async def remove_completely_contained_labels(
     datas: list[list[float | int]],
 ) -> list[list[float | int]]:
     """
-    Removes labels that are fully contained within other labels.
+    Remove detections that are completely contained within other detections.
 
     Args:
-        datas (list[list[float | int]]): The detection data.
+        datas: List of detection data in format [x1, y1, x2, y2, conf, label].
 
     Returns:
-        list[list[float | int]]: The detection data
-        with contained labels removed.
+        Filtered detection data with contained detections removed.
+
+    Note:
+        Processes conflicting categories (hardhat vs no_hardhat, safety_vest vs
+        no_safety_vest) to resolve containment conflicts between positive and
+        negative detections.
     """
-    # Get indices of each category for comparison
-    category_indices = get_category_indices(datas)
+    ci = get_category_indices(datas)
+    bad = set()
 
-    # Identify labels that are contained within others
-    to_remove = set()
-    to_remove.update(
-        await find_contained_labels(
-            category_indices['hardhat'],
-            category_indices['no_hardhat'],
-            datas,
-        ),
+    # Find contained detections between hardhat and no_hardhat categories
+    bad |= await _calc_and_filter(
+        ci['hardhat'], ci['no_hardhat'], datas, find_contained,
     )
-    to_remove.update(
-        await find_contained_labels(
-            category_indices['safety_vest'],
-            category_indices['no_safety_vest'],
-            datas,
-        ),
+    # Find contained detections between safety_vest
+    # and no_safety_vest categories
+    bad |= await _calc_and_filter(
+        ci['safety_vest'], ci['no_safety_vest'], datas, find_contained,
     )
 
-    # Remove fully contained labels
-    for index in sorted(to_remove, reverse=True):
-        datas.pop(index)
-
+    # Remove contained detections in reverse order to maintain indices
+    for i in sorted(bad, reverse=True):
+        datas.pop(i)
     return datas
 
 
-async def find_contained_labels(
-    indices1: list[int],
-    indices2: list[int],
+async def find_contained(
+    i1: int,
+    idxs2: list[int],
     datas: list[list[float | int]],
 ) -> set[int]:
     """
-    Finds labels that are fully contained within other labels.
+    Find detections that have containment relationships
+    with a reference detection.
 
     Args:
-        indices1 (list[int]): The indices of the first category.
-        indices2 (list[int]): The indices of the second category.
-        datas (list[list[float | int]]): The detection data.
+        i1: Index of the reference detection.
+        idxs2: List of candidate detection indices to compare against.
+        datas: Complete detection data list.
 
     Returns:
-        set[int]: Indices of contained labels to be removed.
+        Set of detection indices that have containment relationships (either
+        direction) with the reference detection.
+
+    Note:
+        Checks both directions: reference contained in candidate, and candidate
+        contained in reference, to identify all containment conflicts.
     """
-    to_remove = set()
-    # Check for containment of labels across two sets of indices
-    for index1 in indices1:
-        to_remove.update(await find_contained_indices(index1, indices2, datas))
-    return to_remove
+    res = set()
+    for i2 in idxs2:
+        # Check if candidate detection is contained within reference
+        if contained(datas[i2][:4], datas[i1][:4]):
+            res.add(i2)
+        # Check if reference detection is contained within candidate
+        elif contained(datas[i1][:4], datas[i2][:4]):
+            res.add(i1)
+    return res
 
 
-async def find_contained_indices(
-    index1: int,
-    indices2: list[int],
-    datas: list[list[float | int]],
-) -> set[int]:
-    """
-    Finds indices of detections that are fully contained within others.
+def contained(
+    inner: list[float | int],
+    outer: list[float | int],
+) -> bool:
+    """Check if one bounding box is completely contained within another.
+
+    Determines whether the inner bounding box is entirely enclosed by the outer
+    bounding box by comparing all four corner coordinates.
 
     Args:
-        index1 (int): The index of the first detection.
-        indices2 (list[int]): The indices of potential containing detections.
-        datas (list[list[float | int]]): The detection data.
+        inner: Inner bounding box as [x1, y1, x2, y2].
+        outer: Outer bounding box as [x1, y1, x2, y2].
 
     Returns:
-        set[int]: Indices of contained labels.
+        True if inner box is completely contained within outer box,
+            False otherwise.
+
+    Note:
+        Uses inclusive comparison (<=, >=) to handle edge cases where boxes
+        share boundary coordinates.
     """
-    to_remove = set()
-    # Determine if one detection is fully contained within another
-    for index2 in indices2:
-        to_remove.update(await check_containment(index1, index2, datas))
-    return to_remove
-
-
-async def check_containment(
-    index1: int,
-    index2: int,
-    datas: list[list[float | int]],
-) -> set[int]:
-    """
-    Checks if one detection is fully contained within another.
-
-    Args:
-        index1 (int): The index of the first detection.
-        index2 (int): The index of the second detection.
-        datas (list[list[float | int]]): The detection data.
-
-    Returns:
-        set[int]: Indices of contained labels.
-    """
-    to_remove = set()
-    # Verify if either index1 or index2 is contained within the other
-    if is_contained(
-        [int(x) for x in datas[index2][:4]],
-        [int(x) for x in datas[index1][:4]],
-    ):
-        to_remove.add(index2)
-    elif is_contained(
-        [int(x) for x in datas[index1][:4]],
-        [int(x) for x in datas[index2][:4]],
-    ):
-        to_remove.add(index1)
-    return to_remove
+    return (
+        inner[0] >= outer[0]  # Inner left >= outer left
+        and inner[1] >= outer[1]  # Inner top >= outer top
+        and inner[2] <= outer[2]  # Inner right <= outer right
+        and inner[3] <= outer[3]  # Inner bottom <= outer bottom
+    )
