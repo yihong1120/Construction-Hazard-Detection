@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def init_firebase_app(cred_path: str, project_id: str) -> None:
     """
-    Initialise the Firebase Admin SDK application.
+    Initialises the Firebase Admin SDK application.
 
     Args:
         cred_path (str): Path to the Firebase service account key JSON file.
@@ -19,19 +19,49 @@ def init_firebase_app(cred_path: str, project_id: str) -> None:
 
     Raises:
         ValueError: If cred_path or project_id is empty.
+
+    Returns:
+        None
+
+    Note:
+        This function will only initialise the Firebase app if it has not
+        already been initialised.
     """
     # Validate input parameters
     if not cred_path:
         raise ValueError('cred_path must be a non-empty string.')
     if not project_id:
         raise ValueError('project_id must be a non-empty string.')
-    # Only initialise if not already done
+    # Initialise only if not already done
     if not firebase_admin._apps:
-        cred = credentials.Certificate(cred_path)
+        cred: credentials.Certificate = credentials.Certificate(cred_path)
         firebase_admin.initialize_app(
             cred,
             {'projectId': project_id},
         )
+
+
+ANDROID_CFG: messaging.AndroidConfig = messaging.AndroidConfig(
+    priority='high',
+    notification=messaging.AndroidNotification(
+        # Must match the Flutter side
+        channel_id='high_importance_channel',
+        sound='default',
+        default_vibrate_timings=True,
+    ),
+)
+
+APNS_CFG: messaging.APNSConfig = messaging.APNSConfig(
+    # General alert; for Critical use 5 + CriticalSound
+    headers={'apns-priority': '10'},
+    payload=messaging.APNSPayload(
+        aps=messaging.Aps(
+            # iOS plays default sound
+            sound='default',
+            badge=1,
+        ),
+    ),
+)
 
 
 async def send_fcm_notification_service(
@@ -42,7 +72,7 @@ async def send_fcm_notification_service(
     data: dict[str, str] | None = None,
 ) -> bool:
     """
-    Send FCM notifications to a list of device tokens.
+    Sends FCM notifications to a list of device tokens.
 
     Args:
         device_tokens (list[str]):
@@ -61,21 +91,28 @@ async def send_fcm_notification_service(
             Defaults to None.
 
     Returns:
-        bool: True if all notifications were sent successfully;
-            otherwise False.
+        bool: True if all notifications were sent successfully; otherwise,
+        False.
 
     Raises:
-        None explicitly, but any exceptions during sending will be caught,
+        None explicitly. Any exceptions during sending will be caught,
         logged, and the function will return False.
+
+    Notes:
+        This function uses the Firebase Admin SDK to send notifications to
+        multiple devices. Android and iOS configurations are set for high
+        priority and default sounds.
     """
-    # Early return if no device tokens are provided
+    # Return early if no device tokens are provided
     if not device_tokens:
         logger.error('No device tokens provided.')
         return False
 
     # Construct FCM messages for each device token
-    messages: list[messaging.Message] = [
-        messaging.Message(
+    messages: list[messaging.Message] = []
+    for token in device_tokens:
+        # Create a message for each device
+        msg: messaging.Message = messaging.Message(
             token=token,
             notification=messaging.Notification(
                 title=title,
@@ -83,13 +120,14 @@ async def send_fcm_notification_service(
                 image=image_path,
             ),
             data=data or {},
+            android=ANDROID_CFG,
+            apns=APNS_CFG,
         )
-        for token in device_tokens
-    ]
+        messages.append(msg)
 
     try:
         # Send all messages using Firebase Admin SDK
-        response = messaging.send_each(messages)
+        response: messaging.BatchResponse = messaging.send_each(messages)
         for idx, res in enumerate(response.responses):
             if not res.success:
                 logger.error(
@@ -97,6 +135,7 @@ async def send_fcm_notification_service(
                     messages[idx].token,
                     res.exception,
                 )
+        # Return True only if all messages succeeded
         return response.failure_count == 0
     except Exception as exc:
         logger.error('FCM sending failed: %s', exc)

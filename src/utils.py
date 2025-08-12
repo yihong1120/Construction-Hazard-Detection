@@ -5,10 +5,12 @@ import base64
 import logging
 import math
 import os
+import time
 from datetime import datetime
 
 import aiohttp
 import cv2
+import jwt
 import networkx as nx
 import numpy as np
 import redis.asyncio as redis
@@ -67,6 +69,10 @@ class TokenManager:
             ValueError: If username or password is missing.
             RuntimeError: If authentication fails.
         """
+        # If token exists and not forced, skip authentication.
+        if not force and self.shared_token.get('access_token'):
+            return
+
         # Load credentials from environment variables (supports .env)
         username: str = os.getenv('API_USERNAME', '')
         password: str = os.getenv('API_PASSWORD', '')
@@ -74,20 +80,23 @@ class TokenManager:
         if not username or not password:
             raise ValueError('Missing API_USERNAME or API_PASSWORD')
 
-        # If token exists and not forced, skip authentication.
-        if self.shared_token.get('access_token') and not force:
-            return
-
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as session:
                 resp: aiohttp.ClientResponse = await session.post(
                     f"{self.api_url}/login",
                     json={'username': username, 'password': password},
                 )
                 if resp.status != 200:
-                    msg: str = f"Authenticate failed with status {resp.status}"
+                    error_text = await resp.text()
+                    msg: str = (
+                        f"Authenticate failed with status {resp.status}: "
+                        f"{error_text}"
+                    )
                     self.logger.error(msg)
                     raise RuntimeError(msg)
+
                 data: dict = await resp.json()
                 self.shared_token['access_token'] = data['access_token']
                 self.shared_token['refresh_token'] = data.get(
@@ -96,6 +105,12 @@ class TokenManager:
                 self.logger.info(
                     'Successfully authenticated and retrieved token.',
                 )
+
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network error during authentication: {e}")
+            raise RuntimeError(
+                f"Authentication failed due to network error: {e}",
+            )
         except Exception as e:
             self.logger.error(f"Authentication error: {e}")
             raise
@@ -110,15 +125,7 @@ class TokenManager:
         """
         # If another refresh is in progress, wait up to 10 seconds.
         if self.shared_token.get('is_refreshing'):
-            wait_time: float = 0.0
-            while self.shared_token.get('is_refreshing'):
-                await asyncio.sleep(0.1)
-                wait_time += 0.1
-                if wait_time >= 10:
-                    self.logger.warning(
-                        'Waited 10s for refresh to finish, giving up.',
-                    )
-                    return
+            await self._wait_for_refresh_completion()
             return
 
         refresh_token: str = str(self.shared_token.get('refresh_token', ''))
@@ -135,21 +142,18 @@ class TokenManager:
             self.shared_token['is_refreshing'] = True
             self.logger.warning('Token expired. Attempting to refresh...')
 
-            async with aiohttp.ClientSession() as session:
-                resp: aiohttp.ClientResponse = await session.post(
-                    f"{self.api_url}/refresh",
-                    json={'refresh_token': refresh_token},
-                    headers={
-                        'Authorization': (
-                            f"Bearer {self.shared_token['access_token']}"
-                        ),
-                    },
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as session:
+                # First attempt with Authorization header
+                resp = await self._attempt_token_refresh(
+                    session, refresh_token, with_auth=True,
                 )
+
+                # Retry without header if 401 returned.
                 if resp.status == 401:
-                    # Retry without header if 401 returned.
-                    resp = await session.post(
-                        f"{self.api_url}/refresh",
-                        json={'refresh_token': refresh_token},
+                    resp = await self._attempt_token_refresh(
+                        session, refresh_token, with_auth=False,
                     )
 
                 if resp.status == 200:
@@ -162,11 +166,44 @@ class TokenManager:
                     if resp.status in (401, 403):
                         await self.authenticate(force=True)
                     else:
+                        error_text = await resp.text()
                         raise RuntimeError(
-                            f"Refresh failed with status {resp.status}",
+                            f"Refresh failed with status {resp.status}: "
+                            f"{error_text}",
                         )
         finally:
             self.shared_token['is_refreshing'] = False
+
+    async def _wait_for_refresh_completion(self) -> None:
+        """Wait for another refresh operation to complete."""
+        wait_time: float = 0.0
+        while self.shared_token.get('is_refreshing'):
+            await asyncio.sleep(0.1)
+            wait_time += 0.1
+            if wait_time >= 10:
+                self.logger.warning(
+                    'Waited 10s for refresh to finish, giving up.',
+                )
+                return
+
+    async def _attempt_token_refresh(
+        self,
+        session: aiohttp.ClientSession,
+        refresh_token: str,
+        with_auth: bool = True,
+    ) -> aiohttp.ClientResponse:
+        """Attempt to refresh token with or without Authorization header."""
+        headers = {}
+        if with_auth:
+            headers['Authorization'] = (
+                f"Bearer {self.shared_token['access_token']}"
+            )
+
+        return await session.post(
+            f"{self.api_url}/refresh",
+            json={'refresh_token': refresh_token},
+            headers=headers,
+        )
 
     async def ensure_token_valid(self, retry_count: int = 0) -> None:
         """
@@ -183,8 +220,25 @@ class TokenManager:
                 'Exceeded max_retries in ensure_token_valid, aborting...',
             )
 
-        if not self.shared_token.get('access_token'):
-            await self.authenticate(force=True)
+        # Check if token is valid or expired
+        if not self.is_token_valid() or self.is_token_expired():
+            try:
+                if self.shared_token.get('refresh_token'):
+                    self.logger.info(
+                        'Token expired or missing, attempting refresh...',
+                    )
+                    await self.refresh_token()
+                else:
+                    self.logger.info(
+                        'No refresh token available, re-authenticating...',
+                    )
+                    await self.authenticate(force=True)
+            except Exception as e:
+                self.logger.error(f"Token refresh/authentication failed: {e}")
+                if retry_count < self.max_retries:
+                    await self.ensure_token_valid(retry_count + 1)
+                else:
+                    raise
 
     async def handle_401(self, retry_count: int = 0) -> None:
         """
@@ -207,6 +261,74 @@ class TokenManager:
                 f"refresh_token() error: {e}, re-authenticate.",
             )
             await self.authenticate(force=True)
+
+    def is_token_valid(self) -> bool:
+        """
+        Check if current access token exists and is not empty.
+
+        Returns:
+            bool: True if token exists and is not empty, False otherwise.
+        """
+        return bool(self.shared_token.get('access_token'))
+
+    def is_token_expired(self) -> bool:
+        """
+        Check if current access token is expired or will expire soon.
+
+        Returns:
+            bool:
+                True if token is expired or will expire within 60 seconds,
+                False otherwise.
+        """
+        token = self.shared_token.get('access_token')
+        if not token:
+            return True
+
+        try:
+            # Decode JWT token without verifying signature
+            # (since we only need to check expiry)
+            decoded = jwt.decode(
+                str(token), options={
+                    'verify_signature': False,
+                },
+            )
+            exp = decoded.get('exp')
+            if exp:
+                # Check if token is expiring within 60 seconds
+                current_time = time.time()
+                return current_time >= (exp - 60)  # Refresh 60 seconds early
+            return False
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to decode token for expiry check: {e}",
+            )
+            return True  # 如果無法解碼，假設已過期
+
+    async def get_valid_token(self) -> str:
+        """
+        Get a valid access token, refreshing or authenticating if necessary.
+
+        Returns:
+            str: A valid access token.
+
+        Raises:
+            RuntimeError: If unable to obtain a valid token.
+        """
+        # Check if token is valid or expired
+        if not self.is_token_valid() or self.is_token_expired():
+            try:
+                if self.shared_token.get('refresh_token'):
+                    await self.refresh_token()
+                else:
+                    await self.authenticate(force=True)
+            except Exception as e:
+                self.logger.error(f"Failed to refresh/authenticate token: {e}")
+                await self.authenticate(force=True)
+
+        token = self.shared_token.get('access_token', '')
+        if not token:
+            raise RuntimeError('Unable to obtain valid access token')
+        return str(token)
 
 
 class Utils:
@@ -251,35 +373,121 @@ class Utils:
         ).decode('utf-8')
 
     @staticmethod
-    def encode_frame(frame: np.ndarray) -> bytes:
+    def encode_frame(
+        frame: np.ndarray, format: str = 'jpeg', quality: int = 85,
+    ) -> bytes:
         """
-        Encodes an image frame (NumPy array) into PNG format as bytes.
+        Encodes an image frame (NumPy array) into specified format as bytes
+        with compression.
 
         Args:
             frame (np.ndarray): The image frame to encode. Should be a valid
                 NumPy array representing an image, typically in BGR format
                 as used by OpenCV.
+            format (str): Image format ('jpeg' or 'png'). JPEG is recommended
+                for video streams.
+            quality (int): For JPEG: quality level (0-100), for PNG:
+                compression level (0-9).
 
         Returns:
-            bytes: The encoded PNG image as bytes. Returns an empty bytes
+            bytes: The encoded image as bytes. Returns an empty bytes
                 object if encoding fails.
 
         Raises:
             None: All exceptions are caught and logged; function returns
                 b'' on error.
         """
-        # Attempt to encode the frame as PNG using OpenCV. If encoding fails,
-        # log the error and return empty bytes.
         try:
-            # OpenCV expects a NumPy array; imencode returns a tuple
-            # (success flag, buffer)
-            _, buffer = cv2.imencode('.png', frame)
+            if format.lower() == 'jpeg':
+                # JPEG compression - much smaller file size for video streams
+                encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+                success, buffer = cv2.imencode('.jpg', frame, encode_params)
+            else:
+                # PNG compression - lossless but larger
+                encode_params = [
+                    cv2.IMWRITE_PNG_COMPRESSION, min(quality // 10, 9),
+                ]
+                success, buffer = cv2.imencode('.png', frame, encode_params)
+
+            if not success:
+                logging.error(
+                    f"Failed to encode frame - OpenCV imencode returned False "
+                    f"for {format}",
+                )
+                return b''
             return buffer.tobytes()
         except Exception as e:
-            # Log the error for debugging and return empty bytes to
-            # indicate failure
-            logging.error(f"Error encoding frame: {e}")
+            logging.error(f"Error encoding frame as {format}: {e}")
             return b''
+
+    @staticmethod
+    def create_h264_encoder(
+        width: int,
+        height: int,
+        fps: int = 30,
+        bitrate: int = 2000000,
+    ) -> cv2.VideoWriter | None:
+        """
+        Create an H.264 video encoder for streaming.
+
+        Args:
+            width (int): Frame width
+            height (int): Frame height
+            fps (int): Frames per second
+            bitrate (int): Target bitrate in bits per second
+
+        Returns:
+            cv2.VideoWriter | None: Video writer instance or None if failed
+        """
+        try:
+            # H.264 codec with hardware acceleration if available
+            fourcc = cv2.VideoWriter_fourcc(*'H264')
+
+            # Create video writer for H.264 stream
+            gst_pipeline = (
+                'appsrc ! videoconvert ! x264enc bitrate={} '
+                'speed-preset=ultrafast tune=zerolatency ! h264parse ! '
+                'rtph264pay config-interval=1 pt=96 ! '
+                'udpsink host=127.0.0.1 port=5000'
+            ).format(bitrate // 1000)
+
+            writer = cv2.VideoWriter(
+                gst_pipeline,
+                fourcc,
+                fps,
+                (width, height),
+            )
+
+            if writer.isOpened():
+                return writer
+            else:
+                logging.error('Failed to initialize H.264 encoder')
+                return None
+
+        except Exception as e:
+            logging.error(f"Error creating H.264 encoder: {e}")
+            return None
+
+    @staticmethod
+    def encode_frame_h264(frame: np.ndarray, encoder: cv2.VideoWriter) -> bool:
+        """
+        Encode and write a frame using H.264 encoder.
+
+        Args:
+            frame (np.ndarray): Frame to encode
+            encoder (cv2.VideoWriter): H.264 encoder instance
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if encoder and encoder.isOpened():
+                encoder.write(frame)
+                return True
+            return False
+        except Exception as e:
+            logging.error(f"Error encoding H.264 frame: {e}")
+            return False
 
     @staticmethod
     def filter_warnings_by_working_hour(
