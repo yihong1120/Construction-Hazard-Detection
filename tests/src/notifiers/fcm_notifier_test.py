@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from collections.abc import MutableMapping
 from unittest.mock import AsyncMock
@@ -49,27 +50,147 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         self.image_path: str = 'http://example.com/image.jpg'
         self.violation_id: int = 123
 
-    @patch.object(TokenManager, 'authenticate', new_callable=AsyncMock)
+    async def asyncTearDown(self) -> None:
+        """
+        Clean up resources after each test.
+        """
+        if hasattr(self.sender, '_client') and self.sender._client:
+            await self.sender.close()
+
+    def test_fcm_sender_init_with_none_api_url(self) -> None:
+        """
+        Test FCMSender initialization when api_url is None.
+        Should use environment variable or default.
+        """
+        # Test with environment variable not set
+        with patch.dict(os.environ, {}, clear=True):
+            sender = FCMSender(api_url=None)
+            self.assertEqual(sender.api_url, 'http://127.0.0.1:8003')
+
+        # Test with environment variable set
+        with patch.dict(
+            os.environ, {'FCM_API_URL': 'http://test.com'}, clear=True,
+        ):
+            sender = FCMSender(api_url=None)
+            self.assertEqual(sender.api_url, 'http://test.com')
+
+    async def test_close_method(self) -> None:
+        """
+        Test the close method properly closes the HTTP client.
+        """
+        # Create a client first
+        client = await self.sender._get_client()
+        self.assertIsNotNone(client)
+        self.assertFalse(client.is_closed)
+
+        # Close the client
+        await self.sender.close()
+
+        # Verify the client is closed and set to None
+        self.assertTrue(client.is_closed)
+        self.assertIsNone(self.sender._client)
+
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
+    async def test_send_fcm_no_access_token_returns_false(
+        self: TestFCMSender,
+        mock_get_valid_token: AsyncMock,
+    ) -> None:
+        """
+        Test that if get_valid_token returns empty string,
+        the method returns False immediately.
+
+        Args:
+            mock_get_valid_token (AsyncMock):
+                Mocked get_valid_token method of TokenManager.
+
+        Returns:
+            None
+        """
+        # Mock get_valid_token to return empty string
+        mock_get_valid_token.return_value = ''
+
+        # Attempt to send FCM message, expecting immediate failure
+        result: bool = await self.sender.send_fcm_message_to_site(
+            site=self.site,
+            stream_name=self.stream_name,
+            message=self.mock_message,
+        )
+
+        self.assertFalse(
+            result,
+            'Expected False when access_token is empty.',
+        )
+        mock_get_valid_token.assert_awaited_once()
+
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
+    @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
+    async def test_send_fcm_all_retries_exhausted(
+        self: TestFCMSender,
+        mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
+    ) -> None:
+        """
+        Test that when all retries are exhausted with non-401 errors,
+        the method returns False.
+
+        Args:
+            mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
+            mock_get_valid_token (AsyncMock):
+                Mocked get_valid_token method of TokenManager.
+
+        Returns:
+            None
+        """
+        self.sender.shared_token['access_token'] = 'valid_token'
+        mock_get_valid_token.return_value = 'valid_token'
+
+        # Simulate consistent 500 errors (non-401)
+        mock_response: MagicMock = MagicMock(status_code=500)
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            'Internal Server Error',
+            request=MagicMock(),
+            response=mock_response,
+        )
+        mock_post.return_value = mock_response
+
+        # Attempt to send FCM message, expecting failure after all retries
+        result: bool = await self.sender.send_fcm_message_to_site(
+            site=self.site,
+            stream_name=self.stream_name,
+            message=self.mock_message,
+        )
+
+        self.assertFalse(
+            result,
+            'Expected False when all retries are exhausted.',
+        )
+        # Should attempt max_retries + 1 times (initial + retries)
+        self.assertEqual(mock_post.await_count, 3)
+
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_fcm_no_token_triggers_authenticate(
         self: TestFCMSender,
         mock_post: AsyncMock,
-        mock_authenticate: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
         """
         Test that if no token is present,
-        FCMSender calls authenticate before sending.
+        FCMSender calls get_valid_token before sending.
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
-            mock_authenticate (AsyncMock):
-                Mocked authenticate method of TokenManager.
+            mock_get_valid_token (AsyncMock):
+                Mocked get_valid_token method of TokenManager.
 
         Returns:
             None
         """
         # Clear the shared token to simulate no existing token.
         self.sender.shared_token.clear()
+
+        # Mock get_valid_token to return a valid token
+        mock_get_valid_token.return_value = 'valid_token'
 
         # Mock a successful 200 response with JSON data indicating success.
         mock_response: MagicMock = MagicMock(status_code=200)
@@ -91,19 +212,17 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
             'Expected True when the request is successful.',
         )
 
-        # Verify authenticate was awaited once,
+        # Verify get_valid_token was awaited once,
         # since no token was present initially.
-        mock_authenticate.assert_awaited_once()
+        mock_get_valid_token.assert_awaited_once()
         mock_post.assert_awaited_once()
 
-    @patch.object(TokenManager, 'authenticate', new_callable=AsyncMock)
-    @patch.object(TokenManager, 'handle_401', new_callable=AsyncMock)
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_fcm_success_true(
         self: TestFCMSender,
         mock_post: AsyncMock,
-        mock_handle_401: AsyncMock,
-        mock_authenticate: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
         """
         Test that if the API returns 200 with {"success": True},
@@ -111,16 +230,15 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
-            mock_handle_401 (AsyncMock):
-                Mocked handle_401 method of TokenManager.
-            mock_authenticate (AsyncMock):
-                Mocked authenticate method of TokenManager.
+            mock_get_valid_token (AsyncMock):
+                Mocked get_valid_token method of TokenManager.
 
         Returns:
             None
         """
         # Simulate a valid token.
         self.sender.shared_token['access_token'] = 'valid_token'
+        mock_get_valid_token.return_value = 'valid_token'
 
         # Mock a 200 response with success.
         mock_response: MagicMock = MagicMock(status_code=200)
@@ -138,18 +256,15 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
             result,
             'Expected True when the API indicates success.',
         )
-        mock_authenticate.assert_not_awaited()
-        mock_handle_401.assert_not_awaited()
+        mock_get_valid_token.assert_awaited_once()
         mock_post.assert_awaited_once()
 
-    @patch.object(TokenManager, 'authenticate', new_callable=AsyncMock)
-    @patch.object(TokenManager, 'handle_401', new_callable=AsyncMock)
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_fcm_success_false(
         self: TestFCMSender,
         mock_post: AsyncMock,
-        mock_handle_401: AsyncMock,
-        mock_authenticate: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
         """
         Test that if the API returns 200 but {"success": False},
@@ -157,15 +272,15 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
-            mock_handle_401 (AsyncMock):
-                Mocked handle_401 method of TokenManager.
-            mock_authenticate (AsyncMock):
-                Mocked authenticate method of TokenManager.
+            mock_get_valid_token (AsyncMock):
+                Mocked get_valid_token method of TokenManager.
 
         Returns:
             None
         """
         self.sender.shared_token['access_token'] = 'valid_token'
+        mock_get_valid_token.return_value = 'valid_token'
+
         # The API returns 200 but no 'success' key in JSON.
         mock_response: MagicMock = MagicMock(status_code=200)
         mock_response.json.return_value = {'not_success_field': 123}
@@ -183,12 +298,14 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
             "Expected False when the response lacks {'success': True}.",
         )
 
-    @patch.object(TokenManager, 'handle_401', new_callable=AsyncMock)
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
+    @patch.object(TokenManager, 'refresh_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_fcm_401_refresh_token_and_retry_once(
         self: TestFCMSender,
         mock_post: AsyncMock,
-        mock_handle_401: AsyncMock,
+        mock_refresh_token: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
         """
         Test that if the API returns 401,
@@ -196,13 +313,18 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
-            mock_handle_401 (AsyncMock):
-                Mocked handle_401 method of TokenManager.
+            mock_refresh_token (AsyncMock):
+                Mocked refresh_token method of TokenManager.
+            mock_get_valid_token (AsyncMock):
+                Mocked get_valid_token method of TokenManager.
 
         Returns:
             None
         """
         self.sender.shared_token['access_token'] = 'expired_token'
+
+        # Mock get_valid_token to return tokens for both calls
+        mock_get_valid_token.side_effect = ['expired_token', 'new_token']
 
         # First call => 401
         mock_response_1: MagicMock = MagicMock(status_code=401)
@@ -229,14 +351,16 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
             2,
             'Expected two POST calls.',
         )
-        mock_handle_401.assert_awaited_once()
+        mock_refresh_token.assert_awaited_once()
 
-    @patch.object(TokenManager, 'handle_401', new_callable=AsyncMock)
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
+    @patch.object(TokenManager, 'refresh_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_fcm_401_exceed_max_retries(
         self: TestFCMSender,
         mock_post: AsyncMock,
-        mock_handle_401: AsyncMock,
+        mock_refresh_token: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
         """
         Test that if the API keeps returning 401 even after max_retries,
@@ -244,13 +368,18 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
-            mock_handle_401 (AsyncMock):
-                Mocked handle_401 method of TokenManager.
+            mock_refresh_token (AsyncMock):
+                Mocked refresh_token method of TokenManager.
+            mock_get_valid_token (AsyncMock):
+                Mocked get_valid_token method of TokenManager.
 
         Returns:
             None
         """
         self.sender.shared_token['access_token'] = 'always_expired'
+
+        # Mock get_valid_token to always return the same expired token
+        mock_get_valid_token.return_value = 'always_expired'
 
         # Suppose all attempts return 401, exceeding max_retries.
         mock_response: MagicMock = MagicMock(status_code=401)
@@ -275,15 +404,17 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
             'Expected repeated attempts.',
         )
         self.assertGreaterEqual(
-            mock_handle_401.await_count,
+            mock_refresh_token.await_count,
             2,
-            'Expected multiple handle_401 calls.',
+            'Expected multiple refresh_token calls.',
         )
 
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_fcm_request_error(
         self: TestFCMSender,
         mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
         """
         Test that if an httpx.RequestError occurs (e.g. network issues),
@@ -291,11 +422,15 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
+            mock_get_valid_token (AsyncMock):
+                Mocked get_valid_token method of TokenManager.
 
         Returns:
             None
         """
         self.sender.shared_token['access_token'] = 'valid_token'
+        mock_get_valid_token.return_value = 'valid_token'
+
         # Simulate network error by raising RequestError.
         mock_post.side_effect = httpx.RequestError('Network error')
 
@@ -310,10 +445,12 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
             'Expected False when a RequestError is raised by httpx.',
         )
 
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_fcm_http_status_error(
         self: TestFCMSender,
         mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
         """
         Test that if an httpx.HTTPStatusError occurs (e.g. 403 Forbidden),
@@ -321,11 +458,14 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
+            mock_get_valid_token (AsyncMock):
+                Mocked get_valid_token method of TokenManager.
 
         Returns:
             None
         """
         self.sender.shared_token['access_token'] = 'valid_token'
+        mock_get_valid_token.return_value = 'valid_token'
 
         # Simulate a 403 Forbidden or similar scenario.
         mock_response: MagicMock = MagicMock(

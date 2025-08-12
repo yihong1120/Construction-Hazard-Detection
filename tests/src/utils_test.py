@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import time
 import unittest
 from datetime import datetime
 from datetime import timedelta
-from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import jwt
 import numpy as np
 from shapely.geometry import MultiPolygon
 from shapely.geometry import Polygon
@@ -215,7 +216,52 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         self.shared_token['access_token'] = 'EXIST'
         with patch('aiohttp.ClientSession') as mock_sess:
             await self.tm.authenticate(force=False)
-        mock_sess.assert_not_called()
+            mock_sess.assert_not_called()
+
+    @patch.dict(
+        os.environ,
+        {'API_USERNAME': 'test_user', 'API_PASSWORD': 'test_pass'},
+    )
+    @patch('aiohttp.ClientSession')
+    async def test_authenticate_network_error(
+        self, m_session: AsyncMock,
+    ) -> None:
+        """
+        Test authentication with network error.
+        """
+        # Mock aiohttp.ClientError
+        import aiohttp
+        session_manager = AsyncMock()
+        session_manager.post.side_effect = aiohttp.ClientError('Network error')
+        m_session.return_value.__aenter__.return_value = session_manager
+
+        with self.assertRaises(RuntimeError) as ctx:
+            await self.tm.authenticate()
+
+        self.assertIn(
+            'Authentication failed due to network error',
+            str(ctx.exception),
+        )
+
+    @patch.dict(
+        os.environ,
+        {'API_USERNAME': 'test_user', 'API_PASSWORD': 'test_pass'},
+    )
+    @patch('aiohttp.ClientSession')
+    async def test_authenticate_general_exception(
+        self, m_session: AsyncMock,
+    ) -> None:
+        """
+        Test authentication with general exception.
+        """
+        session_manager = AsyncMock()
+        session_manager.post.side_effect = Exception('General error')
+        m_session.return_value.__aenter__.return_value = session_manager
+
+        with self.assertRaises(Exception) as ctx:
+            await self.tm.authenticate()
+
+        self.assertIn('General error', str(ctx.exception))
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_refresh_token_no_refresh_token(self) -> None:
@@ -360,14 +406,18 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_ensure_token_valid_has_token(self) -> None:
         """
-        Skip authentication if access_token exists.
+        Skip authentication if access_token exists and is not expired.
         """
         self.shared_token['access_token'] = 'EXIST'
         with patch.object(
             self.tm,
             'authenticate',
             new_callable=AsyncMock,
-        ) as m_auth:
+        ) as m_auth, patch.object(
+            self.tm,
+            'is_token_expired',
+            return_value=False,
+        ):
             await self.tm.ensure_token_valid()
             m_auth.assert_not_awaited()
 
@@ -421,6 +471,183 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             'Exceeded max_retries in ensure_token_valid',
             str(ctx.exception),
         )
+
+    def test_is_token_valid_true(self) -> None:
+        """
+        Test is_token_valid returns True when token exists.
+        """
+        self.shared_token['access_token'] = 'test_token'
+        self.assertTrue(self.tm.is_token_valid())
+
+    def test_is_token_valid_false(self) -> None:
+        """
+        Test is_token_valid returns False when token is empty.
+        """
+        self.shared_token['access_token'] = ''
+        self.assertFalse(self.tm.is_token_valid())
+
+    def test_is_token_expired_no_token(self) -> None:
+        """
+        Test is_token_expired returns True when no token exists.
+        """
+        self.shared_token['access_token'] = ''
+        self.assertTrue(self.tm.is_token_expired())
+
+    def test_is_token_expired_valid_token(self) -> None:
+        """
+        Test is_token_expired with a valid JWT token that's not expired.
+        """
+        # Create a valid JWT token that expires in 2 hours
+        exp = int(time.time()) + 7200  # 2 hours from now
+        payload = {'exp': exp, 'user': 'test'}
+        token = jwt.encode(payload, 'secret', algorithm='HS256')
+        self.shared_token['access_token'] = token
+        self.assertFalse(self.tm.is_token_expired())
+
+    def test_is_token_expired_expired_token(self) -> None:
+        """
+        Test is_token_expired with a JWT token that's expired.
+        """
+        # Create a JWT token that expired 1 hour ago
+        exp = int(time.time()) - 3600  # 1 hour ago
+        payload = {'exp': exp, 'user': 'test'}
+        token = jwt.encode(payload, 'secret', algorithm='HS256')
+        self.shared_token['access_token'] = token
+        self.assertTrue(self.tm.is_token_expired())
+
+    def test_is_token_expired_soon_to_expire(self) -> None:
+        """
+        Test is_token_expired with a JWT token that expires in 30 seconds.
+        """
+        # Create a JWT token that expires in 30 seconds
+        # (less than 60 second threshold)
+        exp = int(time.time()) + 30
+        payload = {'exp': exp, 'user': 'test'}
+        token = jwt.encode(payload, 'secret', algorithm='HS256')
+        self.shared_token['access_token'] = token
+        self.assertTrue(self.tm.is_token_expired())
+
+    def test_is_token_expired_no_exp_field(self) -> None:
+        """
+        Test is_token_expired with a JWT token that has no exp field.
+        """
+        payload = {'user': 'test'}  # No exp field
+        token = jwt.encode(payload, 'secret', algorithm='HS256')
+        self.shared_token['access_token'] = token
+        self.assertFalse(self.tm.is_token_expired())
+
+    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
+    async def test_get_valid_token_success(self) -> None:
+        """
+        Test get_valid_token returns token when valid.
+        """
+        # Create a valid JWT token
+        exp = int(time.time()) + 7200  # 2 hours from now
+        payload = {'exp': exp, 'user': 'test'}
+        token = jwt.encode(payload, 'secret', algorithm='HS256')
+        self.shared_token['access_token'] = token
+
+        result = await self.tm.get_valid_token()
+        self.assertEqual(result, token)
+
+    async def test_get_valid_token_no_token_after_refresh(self) -> None:
+        """
+        Test get_valid_token raises error
+        when no token available after refresh.
+        """
+        self.shared_token['access_token'] = ''
+        self.shared_token['refresh_token'] = ''
+
+        with patch.object(self.tm, 'authenticate', new_callable=AsyncMock):
+            with self.assertRaises(RuntimeError) as ctx:
+                await self.tm.get_valid_token()
+            self.assertIn(
+                'Unable to obtain valid access token',
+                str(ctx.exception),
+            )
+
+    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
+    @patch('aiohttp.ClientSession')
+    async def test_get_valid_token_fallback_authenticate(
+        self, m_session: AsyncMock,
+    ) -> None:
+        """
+        Test get_valid_token falls back to authenticate when refresh fails.
+        """
+        self.shared_token['access_token'] = ''
+        self.shared_token['refresh_token'] = 'bad_refresh'
+
+        # Mock refresh to fail, then auth to succeed
+        auth_response = AsyncMock()
+        auth_response.status = 200
+        auth_response.json.return_value = {
+            'access_token': 'authenticated_token',
+            'refresh_token': 'new_refresh',
+        }
+
+        session_context = m_session.return_value.__aenter__.return_value
+        session_context.post.side_effect = [
+            Exception('Refresh failed'),  # refresh fails
+            auth_response.__aenter__.return_value,  # auth succeeds
+        ]
+
+        with patch.object(
+            self.tm,
+            'authenticate',
+            new_callable=AsyncMock,
+        ) as mock_auth:
+            mock_auth.return_value = None
+            self.shared_token['access_token'] = 'authenticated_token'
+            result = await self.tm.get_valid_token()
+            self.assertEqual(result, 'authenticated_token')
+
+    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
+    async def test_ensure_token_valid_exception_retry(self) -> None:
+        """
+        Test ensure_token_valid retries on exception.
+        """
+        self.shared_token['access_token'] = ''
+        self.shared_token['refresh_token'] = 'test_refresh'
+
+        with patch.object(
+            self.tm,
+            'refresh_token',
+            new_callable=AsyncMock,
+        ) as mock_refresh:
+            # First call fails, second call succeeds
+            mock_refresh.side_effect = [Exception('First attempt fails'), None]
+            with patch.object(self.tm, 'authenticate', new_callable=AsyncMock):
+                await self.tm.ensure_token_valid()
+                # Should have been called only once,
+                # then recursive call happens
+                self.assertEqual(mock_refresh.call_count, 2)
+
+    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
+    async def test_ensure_token_valid_exception_max_retries(self) -> None:
+        """
+        Test ensure_token_valid raises exception when max retries reached.
+        """
+        self.shared_token['access_token'] = ''
+        self.shared_token['refresh_token'] = 'test_refresh'
+
+        with patch.object(
+            self.tm,
+            'refresh_token',
+            new_callable=AsyncMock,
+        ) as mock_refresh:
+            # Always fail
+            mock_refresh.side_effect = Exception('Always fails')
+            with patch.object(
+                self.tm,
+                'authenticate',
+                new_callable=AsyncMock,
+            ) as mock_auth:
+                mock_auth.side_effect = Exception('Auth also fails')
+
+                with self.assertRaises(Exception) as ctx:
+                    await self.tm.ensure_token_valid()
+
+                self.assertIn('Always fails', str(ctx.exception))
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
@@ -502,8 +729,11 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             '/tmp/testfile', callback, loop,
         )
 
-        # Simulate event with matching path
-        event: Any = MagicMock()
+        # Simulate event with matching path using a precise event type
+        class _DummyEvent:
+            src_path: str
+
+        event: _DummyEvent = _DummyEvent()
         event.src_path = '/tmp/testfile'
 
         # Patch asyncio.run_coroutine_threadsafe to avoid actual scheduling
@@ -1350,6 +1580,142 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             lines, [], 'Expected empty list when d < abs(r1 - r2).',
         )
+
+    def test_encode_frame_png_success(self) -> None:
+        """
+        Test encoding frame as PNG format.
+        """
+        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
+        encoded_frame: bytes = Utils.encode_frame(
+            frame, format='png', quality=50,
+        )
+        self.assertIsNotNone(encoded_frame)
+        self.assertGreater(len(encoded_frame), 0)
+
+    @patch('cv2.imencode')
+    def test_encode_frame_encode_failure(
+        self, mock_imencode: MagicMock,
+    ) -> None:
+        """
+        Test encode_frame when cv2.imencode returns False.
+        """
+        mock_imencode.return_value = (False, None)
+        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
+        encoded_frame: bytes = Utils.encode_frame(frame)
+        self.assertEqual(encoded_frame, b'')
+
+    @patch('cv2.VideoWriter')
+    def test_create_h264_encoder_success(self, mock_writer: MagicMock) -> None:
+        """
+        Test create_h264_encoder success case.
+        """
+        mock_instance = MagicMock()
+        mock_instance.isOpened.return_value = True
+        mock_writer.return_value = mock_instance
+
+        result = Utils.create_h264_encoder(640, 480, 30, 2000000)
+        self.assertIsNotNone(result)
+
+    @patch('cv2.VideoWriter')
+    def test_create_h264_encoder_failure(self, mock_writer: MagicMock) -> None:
+        """
+        Test create_h264_encoder when writer fails to open.
+        """
+        mock_instance = MagicMock()
+        mock_instance.isOpened.return_value = False
+        mock_writer.return_value = mock_instance
+
+        result = Utils.create_h264_encoder(640, 480, 30, 2000000)
+        self.assertIsNone(result)
+
+    @patch('cv2.VideoWriter')
+    def test_create_h264_encoder_exception(
+        self, mock_writer: MagicMock,
+    ) -> None:
+        """
+        Test create_h264_encoder when exception occurs.
+        """
+        mock_writer.side_effect = Exception('Creation failed')
+
+        result = Utils.create_h264_encoder(640, 480, 30, 2000000)
+        self.assertIsNone(result)
+
+    def test_encode_frame_h264_success(self) -> None:
+        """
+        Test encode_frame_h264 success case.
+        """
+        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
+        mock_encoder = MagicMock()
+        mock_encoder.isOpened.return_value = True
+
+        result = Utils.encode_frame_h264(frame, mock_encoder)
+        self.assertTrue(result)
+        mock_encoder.write.assert_called_once_with(frame)
+
+    def test_encode_frame_h264_encoder_not_opened(self) -> None:
+        """
+        Test encode_frame_h264 when encoder is not opened.
+        """
+        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
+        mock_encoder = MagicMock()
+        mock_encoder.isOpened.return_value = False
+
+        result = Utils.encode_frame_h264(frame, mock_encoder)
+        self.assertFalse(result)
+
+    def test_encode_frame_h264_none_encoder(self) -> None:
+        """
+        Test encode_frame_h264 with None encoder.
+        """
+        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        result = Utils.encode_frame_h264(frame, None)
+        self.assertFalse(result)
+
+    def test_encode_frame_h264_exception(self) -> None:
+        """
+        Test encode_frame_h264 when exception occurs.
+        """
+        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
+        mock_encoder = MagicMock()
+        mock_encoder.isOpened.return_value = True
+        mock_encoder.write.side_effect = Exception('Write failed')
+
+        result = Utils.encode_frame_h264(frame, mock_encoder)
+        self.assertFalse(result)
+
+    def test_filter_warnings_non_working_hours_with_controlled_area(
+            self,
+    ) -> None:
+        """
+        Test filter_warnings_by_working_hour during non-working hours with
+        controlled area warning.
+        """
+        warnings: dict[str, dict[str, int]] = {
+            'warning_people_in_controlled_area': {'count': 2},
+            'warning_no_safety_vest': {'count': 1},
+        }
+        is_working_hour: bool = False
+
+        result = Utils.filter_warnings_by_working_hour(
+            warnings, is_working_hour,
+        )
+
+        # Should only contain controlled area warning
+        self.assertIn('warning_people_in_controlled_area', result)
+        self.assertNotIn('warning_no_safety_vest', result)
+        self.assertEqual(
+            result['warning_people_in_controlled_area']['count'], 2,
+        )
+
+    def test_is_expired_with_exception(self) -> None:
+        """
+        Test is_expired with date string that causes parsing exception.
+        """
+        # Test with a string that can't be parsed
+        invalid_date = 'not-a-date'
+        result = Utils.is_expired(invalid_date)
+        self.assertFalse(result)  # Should return False on parsing error
 
 
 class TestRedisManager(unittest.IsolatedAsyncioTestCase):
