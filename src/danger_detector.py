@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from shapely.geometry import LineString
+from shapely.geometry import Point
 from shapely.geometry import Polygon
 from sklearn.cluster import HDBSCAN
 
-from .utils import Utils
+from src.utils import Utils
 
 
 class DangerDetector:
@@ -18,39 +20,30 @@ class DangerDetector:
         Args:
             detection_items (Dict[str, bool]): A dictionary of detection items
                 to enable/disable specific safety checks. The keys are:
-                - 'detect_no_safety_vest_or_helmet': Detect if workers are not
-                  wearing hardhats or safety vests.
-                - 'detect_near_machinery_or_vehicle': Detect if workers are
-                  dangerously close to machinery or vehicles.
-                - 'detect_in_restricted_area': Detect if workers are entering
-                  restricted areas.
-
-        Raises:
-            ValueError: If the detection_items is not a dictionary or if any
-                of the keys are not strings or values are not booleans.
-
-        Examples:
-            >>> detector = DangerDetector({
-            ...     'detect_no_safety_vest_or_helmet': True,
-            ...     'detect_near_machinery_or_vehicle': True,
-            ...     'detect_in_restricted_area': True,
-            ... })
+                - 'detect_no_safety_vest_or_helmet'
+                - 'detect_near_machinery_or_vehicle'
+                - 'detect_in_restricted_area'
+                - 'detect_in_utility_pole_restricted_area'
+                - 'detect_machinery_close_to_pole'
         """
-        # Initialise the HDBSCAN clusterer
         self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
 
-        # Define required keys
         required_keys = {
             'detect_no_safety_vest_or_helmet',
             'detect_near_machinery_or_vehicle',
             'detect_in_restricted_area',
+            'detect_in_utility_pole_restricted_area',
+            'detect_machinery_close_to_pole',
         }
 
-        # Validate detection_items type and content
-        if isinstance(detection_items, dict) and all(
-            isinstance(k, str) and isinstance(v, bool)
-            for k, v in detection_items.items()
-        ) and required_keys.issubset(detection_items.keys()):
+        if (
+            isinstance(detection_items, dict)
+            and all(
+                isinstance(k, str) and isinstance(v, bool)
+                for k, v in detection_items.items()
+            )
+            and required_keys.issubset(detection_items.keys())
+        ):
             self.detection_items = detection_items
         else:
             self.detection_items = {}
@@ -58,173 +51,328 @@ class DangerDetector:
     def detect_danger(
         self,
         datas: list[list[float]],
-    ) -> tuple[list[str], list[Polygon]]:
+    ) -> tuple[dict[str, dict[str, int]], list[Polygon], list[Polygon]]:
         """
         Detects potential safety violations in a construction site.
 
-        This function checks for two types of safety violations:
-        1. Workers entering the controlled area.
-        2. Workers not wearing hardhats or safety vests.
-        3. Workers dangerously close to machinery or vehicles.
-
-        Args:
-            datas (List[List[float]]): A list of detections which includes
-                bounding box coordinates, confidence score, and class label.
-
         Returns:
-            Tuple[Set[str], List[Polygon]]: Warnings and polygons list.
+            Tuple[
+                dict[str, dict[str, int]],  # warnings
+                list[Polygon],              # cone_polygons
+                list[Polygon],              # pole_polygons
+            ]
         """
-        # Initialise the list to store warning messages
-        warnings: set[str] = set()
+        # 0. Filter static machinery / vehicles
+        datas = self._filter_static_machinery(datas)
 
-        # Normalise data
+        # 1. Normalize bounding box data
         datas = Utils.normalise_data(datas)
+        warnings: dict[str, dict[str, int]] = {}
 
-        polygons: list[Polygon] = []
+        # 2. Collect polygons
+        cone_polygons_raw: list[Polygon] = []
+        pole_polygons_raw: list[Polygon] = []
 
-        ############################################################
-        # Check if detection is enabled or no specific detection items are set
-        ############################################################
+        # (A) detect_in_restricted_area:
+        # Check if personnel enter the controlled area
+        # formed by the safety cone
         if (
-            not self.detection_items or
-            self.detection_items.get('detect_in_restricted_area', False)
+            not self.detection_items
+            or self.detection_items.get('detect_in_restricted_area', False)
         ):
-            self.check_restricted_area(datas, warnings, polygons)
+            self.check_cone_restricted_area(datas, warnings, cone_polygons_raw)
 
-        ############################################################
-        # Classify detected objects into different categories
-        ############################################################
-
-        # Persons
+        # (B) Classify data
         persons = [d for d in datas if d[5] == 5]
-
-        # No hardhat
         hardhat_violations = [d for d in datas if d[5] == 2]
+        safety_vest_violations = [d for d in datas if d[5] == 4]
+        machinery_vehicles = [d for d in datas if d[5] in [8, 10]]
 
-        # No safety vest
-        safety_vest_violations = [
-            d for d in datas if d[5] == 4
-        ]
-
-        # Machinery and vehicles
-        machinery_vehicles = [
-            d for d in datas if d[5]
-            in [8, 9]
-        ]
-
-        # Filter out persons who are likely drivers
+        # Filter out potential drivers
         if machinery_vehicles:
-            non_drivers = [
-                p for p in persons if not any(
+            persons = [
+                p for p in persons
+                if not any(
                     Utils.is_driver(p[:4], mv[:4]) for mv in machinery_vehicles
                 )
             ]
-            persons = non_drivers
 
-        ############################################################
-        # Check if people are not wearing hardhats or safety vests
-        ############################################################
+        # (C) detect_no_safety_vest_or_helmet
         if (
-            not self.detection_items or
-                self.detection_items.get(
-                    'detect_no_safety_vest_or_helmet', False,
-                )
+            not self.detection_items
+            or self.detection_items.get(
+                'detect_no_safety_vest_or_helmet', False,
+            )
         ):
             self.check_safety_violations(
-                persons, hardhat_violations,
-                safety_vest_violations, warnings,
+                persons, hardhat_violations, safety_vest_violations, warnings,
             )
 
-        ############################################################
-        # Check if people are dangerously close to machinery or vehicles
-        ############################################################
+        # (D) detect_near_machinery_or_vehicle
         if (
-            not self.detection_items or
-            self.detection_items.get('detect_near_machinery_or_vehicle', False)
+            not self.detection_items
+            or self.detection_items.get(
+                'detect_near_machinery_or_vehicle', False,
+            )
         ):
             self.check_proximity_violations(
                 persons, machinery_vehicles, warnings,
             )
 
-        return list(warnings), polygons
+        # (E) detect_machinery_close_to_pole
+        if (
+            self.detection_items
+            and self.detection_items.get(
+                'detect_machinery_close_to_pole', False,
+            )
+        ):
+            self.check_machinery_near_utility_pole(
+                datas, warnings, circle_ratio=0.35,
+            )
 
-    def check_restricted_area(
+        # (F) detect_in_utility_pole_restricted_area:
+        # Check if personnel enter the controlled area
+        # formed by the utility pole
+        if (
+            self.detection_items
+            and self.detection_items.get(
+                'detect_in_utility_pole_restricted_area', False,
+            )
+        ):
+            self.check_pole_restricted_area(datas, warnings, pole_polygons_raw)
+
+        # 3. Convert polygon coordinates (for front-end visualization)
+        cone_polygons_coords = Utils.polygons_to_coords(cone_polygons_raw)
+        pole_polygons_coords = Utils.polygons_to_coords(pole_polygons_raw)
+
+        return warnings, cone_polygons_coords, pole_polygons_coords
+
+    # Checks if personnel enter the controlled area formed by the safety cone
+    def check_cone_restricted_area(
         self,
         datas: list[list[float]],
-        warnings: set[str],
+        warnings: dict[str, dict[str, int]],
         polygons: list[Polygon],
     ) -> None:
         """
-        Check if people are entering the controlled area.
+        Checks if personnel enter the controlled area
+        formed by the safety cone.
 
-        Args:
-            datas (List[List[float]]): A list of detections.
-            warnings (set[str]): A set to store warning messages.
-            polygons (list[Polygon]): A list to store detected polygons.
+        Arg:
+            datas: The input data containing personnel information.
+            warnings: A dictionary to store warning messages.
+            polygons: A list to store the detected polygon areas.
         """
-        polygons.extend(Utils.detect_polygon_from_cones(datas, self.clusterer))
+        new_polygons = Utils.detect_polygon_from_cones(datas, self.clusterer)
+        polygons.extend(new_polygons)
+
         people_count = Utils.calculate_people_in_controlled_area(
-            polygons, datas,
+            new_polygons, datas,
         )
         if people_count > 0:
-            warnings.add(
-                f"Warning: {people_count} people have "
-                'entered the controlled area!',
+            warnings['warning_people_in_controlled_area'] = {
+                'count': people_count,
+            }
+
+    def check_pole_restricted_area(
+        self,
+        datas: list[list[float]],
+        warnings: dict[str, dict[str, int]],
+        pole_polygons: list[Polygon],
+    ) -> None:
+        """
+        Checks if personnel enter the controlled area
+        formed by the utility pole.
+
+        Arg:
+            datas: The input data containing personnel information.
+            warnings: A dictionary to store warning messages.
+            pole_polygons: A list to store the detected polygon areas.
+        """
+        pole_union_poly = Utils.build_utility_pole_union(datas, self.clusterer)
+        if not pole_union_poly.is_empty:
+            pole_polygons.append(pole_union_poly)
+
+            # Count people in the utility pole controlled area
+            count_in_pole_area = Utils.count_people_in_polygon(
+                pole_union_poly, datas,
             )
+            if count_in_pole_area > 0:
+                warnings['warning_people_in_utility_pole_controlled_area'] = {
+                    'count': count_in_pole_area,
+                }
+
+    # -------------------------------------------------------------------------
+    # Checks if personnel enter the controlled area formed by the utility pole
+    # -------------------------------------------------------------------------
+    # def check_safety_violations(
+    #     self,
+    #     persons: list[list[float]],
+    #     hardhat_violations: list[list[float]],
+    #     safety_vest_violations: list[list[float]],
+    #     warnings: dict[str, dict[str, int]],
+    # ) -> None:
+    #     count_no_hardhat = 0
+    #     count_no_vest = 0
+
+    #     for violation in hardhat_violations:
+    #         # overlap_percentage > 0.5 視為缺安全帽
+    #         if any(
+    #             Utils.overlap_percentage(violation[:4], p[:4]) > 0.5
+    #             for p in persons
+    #         ):
+    #             count_no_hardhat += 1
+
+    #     for violation in safety_vest_violations:
+    #         # overlap_percentage > 0.5 視為缺背心
+    #         if any(
+    #             Utils.overlap_percentage(violation[:4], p[:4]) > 0.5
+    #             for p in persons
+    #         ):
+    #             count_no_vest += 1
+
+    #     if count_no_hardhat > 0:
+    #         warnings['warning_no_hardhat'] = {'count': count_no_hardhat}
+
+    #     if count_no_vest > 0:
+    #         warnings['warning_no_safety_vest'] = {'count': count_no_vest}
 
     def check_safety_violations(
-        self, persons: list[list[float]],
+        self,
+        persons: list[list[float]],
         hardhat_violations: list[list[float]],
         safety_vest_violations: list[list[float]],
-        warnings: set[str],
+        warnings: dict[str, dict[str, int]],
     ) -> None:
         """
-        Check for hardhat and safety vest violations.
+        Checks for safety violations among personnel.
 
-        Args:
-            persons (List[List[float]]): A list of person detections.
-            hardhat_violations (List[List[float]]):
-                A list of hardhat violations.
-            safety_vest_violations (List[List[float]]):
-                A list of safety vest violations.
-            warnings (set[str]): A set to store warning messages.
+        Arg:
+            datas: The input data containing personnel information.
+            warnings: A dictionary to store warning messages.
+            polygons: A list to store the detected polygon areas.
         """
-        for violation in hardhat_violations + safety_vest_violations:
-            label = 'NO-Hardhat' if violation[5] == 2 else 'NO-Safety Vest'
-            if not any(
-                Utils.overlap_percentage(violation[:4], p[:4]) > 0.5
-                for p in persons
-            ):
-                warning_msg = (
-                    'Warning: Someone is not wearing a hardhat!'
-                    if label == 'NO-Hardhat'
-                    else 'Warning: Someone is not wearing a safety vest!'
-                )
-                warnings.add(warning_msg)
+        # 1. Count violations
+        count_no_hardhat = len(hardhat_violations)
+        count_no_vest = len(safety_vest_violations)
 
+        # 2. Write warnings
+        if count_no_hardhat > 0:
+            warnings['warning_no_hardhat'] = {'count': count_no_hardhat}
+
+        if count_no_vest > 0:
+            warnings['warning_no_safety_vest'] = {'count': count_no_vest}
+
+    # Checks if personnel are dangerously close to machinery/vehicles
     def check_proximity_violations(
-        self, persons: list[list[float]],
+        self,
+        persons: list[list[float]],
         machinery_vehicles: list[list[float]],
-        warnings: set[str],
+        warnings: dict[str, dict[str, int]],
     ) -> None:
-        """
-        Check if anyone is dangerously close to machinery or vehicles.
+        count_machinery = 0
+        count_vehicle = 0
 
-        Args:
-            persons (List[List[float]]): A list of person detections.
-            machinery_vehicles (List[List[float]]): A list of machinery
-                and vehicle detections.
-            warnings (set[str]): A set to store warning messages.
-        """
         for person in persons:
             for mv in machinery_vehicles:
                 label = 'machinery' if mv[5] == 8 else 'vehicle'
                 if Utils.is_dangerously_close(person[:4], mv[:4], label):
-                    warning_msg = (
-                        f"Warning: Someone is too close to {label}!"
-                    )
-                    warnings.add(warning_msg)
-                    break
+                    if label == 'machinery':
+                        count_machinery += 1
+                    else:
+                        count_vehicle += 1
+
+        if count_machinery > 0:
+            warnings['warning_close_to_machinery'] = {'count': count_machinery}
+
+        if count_vehicle > 0:
+            warnings['warning_close_to_vehicle'] = {'count': count_vehicle}
+
+    def check_machinery_near_utility_pole(
+        self,
+        datas: list[list[float]],
+        warnings: dict[str, dict[str, int]],
+        circle_ratio: float = 3.5,
+    ) -> None:
+        """
+        Checks if machinery/vehicles are near the utility pole.
+
+        Args:
+            datas: The input data containing personnel information.
+            warnings: A dictionary to store warning messages.
+            circle_ratio: The ratio to define the radius of the circle at the
+                bottom of the utility pole (default 3.5).
+        """
+        # 1. Count violations
+        poles = [d for d in datas if d[5] == 9]
+        machinery_vehicles = [
+            d for d in datas if d[5]
+            in [8, 10]
+        ]
+
+        if not poles or not machinery_vehicles:
+            return
+
+        # 2. Count intersections
+        intersect_count = 0
+
+        for pole in poles:
+            px1, py1, px2, py2, *_ = pole
+            pole_height = (py2 - py1)
+            if pole_height <= 0:
+                continue
+
+            # Compute 2/3 height position
+            two_thirds_y = py1 + (2.0/3.0) * pole_height
+
+            # Create the circle at the bottom of the utility pole
+            circle_radius = circle_ratio * pole_height
+            circle_center = ((px1 + px2) / 2.0, py2)
+
+            # 2. Check if machinery/vehicles meet both conditions
+            for mv in machinery_vehicles:
+                mx1, my1, mx2, my2, *_ = mv
+                # Top of the machinery must be within [pole_top, 2/3 height]
+                if not (py1 <= my1 <= two_thirds_y):
+                    continue
+
+                # Create the bottom line of the machinery
+                bottom_line = LineString([(mx1, my2), (mx2, my2)])
+
+                # Create the circle at the bottom of the utility pole
+                pole_circle = Point(circle_center).buffer(circle_radius)
+                dist_to_circle = bottom_line.distance(pole_circle)
+
+                if dist_to_circle <= 0:
+                    # Machinery/vehicle is close to the utility pole
+                    intersect_count += 1
+
+        if intersect_count > 0:
+            warnings['detect_machinery_close_to_pole'] = {
+                'count': intersect_count,
+            }
+
+    # Filter static machinery/vehicles
+    @staticmethod
+    def _filter_static_machinery(
+        datas: list[list[float]],
+    ) -> list[list[float]]:
+        """
+        Filter static machinery/vehicles from the input data.
+
+        Args:
+            datas: The input data containing machinery/vehicle information.
+
+        Returns:
+            A list of filtered machinery/vehicle data.
+        """
+        return [
+            d for d in datas
+            if (
+                (d[5] in (8, 10) and (d[6] != -1 or d[7] == 1))
+                or (d[5] not in (8, 10))
+            )
+        ]
 
 
 def main() -> None:
@@ -253,11 +401,16 @@ def main() -> None:
         [750, 750, 770, 770, 0.78, 6],  # Safety cone
         [800, 800, 820, 820, 0.76, 6],  # Safety cone
         [850, 850, 870, 870, 0.74, 6],  # Safety cone
+
+        [100, 100, 120, 200, 0.9, 9],   # pole
+        [200, 180, 230, 210, 0.85, 8],  # machinery
+        [180, 190, 195, 205, 0.88, 8],  # machinery
     ]
 
-    warnings, polygons = detector.detect_danger(data)
+    warnings, cone_polygons, pole_polygons = detector.detect_danger(data)
     print(f"Warnings: {warnings}")
-    print(f"Polygons: {polygons}")
+    print(f"cone_polygons: {cone_polygons}")
+    print(f"pole_polygons: {pole_polygons}")
 
 
 if __name__ == '__main__':
