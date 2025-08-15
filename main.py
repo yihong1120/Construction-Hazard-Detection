@@ -8,6 +8,7 @@ import math
 import multiprocessing
 import os
 import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from multiprocessing import Process
 from typing import TypedDict
@@ -70,6 +71,10 @@ class MainApp:
         self.lock = asyncio.Lock()  # Prevent overlapping reloads
         self.db_pool = None  # Will hold MySQL connection pool
 
+        # Process pool management to improve performance
+        self.max_workers = min(multiprocessing.cpu_count(), 8)
+        self.process_executor: ProcessPoolExecutor | None = None
+
     async def _ensure_db_pool(self) -> None:
         """
         Ensure a connection pool to the database is
@@ -88,9 +93,11 @@ class MainApp:
                 user=url.username,
                 password=url.password,
                 db=url.database,
-                minsize=1,
-                maxsize=5,
+                minsize=2,  # Minimum connections
+                maxsize=10,  # Maximum connections
+                pool_recycle=3600,  # 1 hour connection recycling
                 autocommit=True,
+                echo=False,  # Disable SQL logging for performance
             )
 
     async def fetch_stream_configs(self) -> list[StreamConfig]:
@@ -272,14 +279,48 @@ class MainApp:
         Args:
             proc (Process): The process to be terminated.
         """
-        proc.terminate()
-        proc.join()
+        try:
+            # Attempt graceful termination
+            proc.terminate()
+            proc.join(timeout=10)  # Wait for up to 10 seconds
+
+            if proc.is_alive():
+                # If still alive, force kill
+                proc.kill()
+                proc.join()
+        except Exception as e:
+            self.logger.error(f"Error stopping process: {e}")
+
+    async def cleanup_resources(self) -> None:
+        """
+        Clean up all resources
+        """
+        # Stop all processes
+        for info in self.running_processes.values():
+            self.stop_process(info['process'])
+        self.running_processes.clear()
+
+        # Close process pool
+        if self.process_executor:
+            self.process_executor.shutdown(wait=True)
+
+        # Close database connection pool
+        if self.db_pool:
+            self.db_pool.close()
+            await self.db_pool.wait_closed()
 
     async def run(self) -> None:
         """
         Start the application loop that continuously checks the stream configs.
         """
-        await self.poll_and_reload()
+        try:
+            await self.poll_and_reload()
+        except KeyboardInterrupt:
+            self.logger.info('Received keyboard interrupt, shutting down...')
+        except Exception as e:
+            self.logger.error(f"Unexpected error in main loop: {e}")
+        finally:
+            await self.cleanup_resources()
 
 
 async def main() -> None:
@@ -370,6 +411,9 @@ def process_single_stream(cfg: StreamConfig) -> None:
         )
         frame_sender = BackendFrameSender(
             api_url=os.getenv('STREAMING_API_URL') or '',
+            max_retries=3,
+            timeout=30,  # Increase timeout
+            reconnect_backoff=2.0,  # Moderate backoff time
         )
 
         last_notification_time: int = 0
@@ -387,7 +431,7 @@ def process_single_stream(cfg: StreamConfig) -> None:
                     work_start_hour <= detection_time.hour < work_end_hour
                 )
 
-                datas, track_data, _ = (
+                datas, track_data = (
                     await live_stream_detector.generate_detections(
                         frame,
                     )
@@ -400,21 +444,37 @@ def process_single_stream(cfg: StreamConfig) -> None:
                 warnings = Utils.filter_warnings_by_working_hour(
                     warnings, is_working,
                 )
-                frame_bytes = Utils.encode_frame(frame)
 
-                # Optionally stream result to backend (via WebSocket)
+                # Use optimized frame encoding (JPEG for better compression)
+                frame_bytes = Utils.encode_frame(frame, 'jpeg', 85)
+
+                # Optionally stream result to backend
+                # using optimised transmission
                 if store_in_redis:
-                    await frame_sender.send_frame_ws(
-                        site=site,
-                        stream_name=stream_name,
-                        frame_bytes=frame_bytes,
-                        warnings_json=json.dumps(warnings),
-                        cone_polygons_json=json.dumps(cone_polys),
-                        pole_polygons_json=json.dumps(pole_polys),
-                        detection_items_json=json.dumps(datas),
-                        width=frame.shape[1],
-                        height=frame.shape[0],
-                    )
+                    try:
+                        result = await frame_sender.send_optimized_frame(
+                            frame=frame,
+                            site=site,
+                            stream_name=stream_name,
+                            encoding_format='jpeg',
+                            jpeg_quality=85,
+                            use_websocket=True,
+                            warnings_json=json.dumps(warnings),
+                            cone_polygons_json=json.dumps(cone_polys),
+                            pole_polygons_json=json.dumps(pole_polys),
+                            detection_items_json=json.dumps(datas),
+                        )
+
+                        # Check send result
+                        if result.get('status') != 'ok':
+                            print(
+                                f"[{site}:{stream_name}] Frame send failed: "
+                                f"{result}",
+                            )
+
+                    except Exception as e:
+                        # Handle frame send error
+                        print(f"[{site}:{stream_name}] Frame send error: {e}")
 
                 # Send violation record + FCM push if needed
                 if (
@@ -461,6 +521,7 @@ def process_single_stream(cfg: StreamConfig) -> None:
             # Ensure cleanup
             await live_stream_detector.close()
             await streaming_capture.release_resources()
+            await frame_sender.close()  # Ensure WebSocket connection is closed
             if store_in_redis:
                 try:
                     await redis_manager.delete(redis_key)

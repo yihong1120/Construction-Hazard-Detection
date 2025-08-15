@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from types import SimpleNamespace
+from typing import cast
 from typing import TypedDict
 
 import aiohttp
@@ -20,8 +20,6 @@ from dotenv import load_dotenv
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 from ultralytics import YOLO
-from ultralytics.trackers.bot_sort import BOTSORT
-from ultralytics.utils.ops import xyxy2xywh
 
 from src.utils import TokenManager
 
@@ -61,6 +59,12 @@ class DetectionData(TypedDict):
     label: int
 
 
+class SharedToken(TypedDict, total=False):
+    access_token: str
+    refresh_token: str
+    is_refreshing: bool
+
+
 class LiveStreamDetector:
     """
     A class to perform live stream detection and tracking
@@ -73,128 +77,102 @@ class LiveStreamDetector:
         model_key: str = 'yolo11n',
         output_folder: str | None = None,
         detect_with_server: bool = False,
-        shared_token: dict[str, object] | None = None,
+        shared_token: SharedToken | None = None,
         use_ultralytics: bool = True,
         movement_thr: float = 40.0,
         fps: int = 1,
         max_id_keep: int = 10,
         ws_frame_size: tuple[int, int] | None = None,
         use_jpeg_ws: bool = True,
+        remote_tracker: str = 'centroid',
+        remote_cost_threshold: float = 0.7,
     ) -> None:
         """Initialise the LiveStreamDetector with specified configuration.
 
         Args:
-            api_url: Base URL for the detection API server. If None, reads
-                from environment variable DETECT_API_URL or uses default.
-            model_key: YOLO model identifier (e.g., 'yolo11n', 'yolo11s').
-            output_folder: Optional directory path for saving detection
-                results.
-            detect_with_server: If True, uses WebSocket server for inference;
-                otherwise performs local inference.
-            shared_token: Shared authentication token dictionary containing
-                access_token, refresh_token, and is_refreshing fields.
-            use_ultralytics: If True, uses Ultralytics YOLO for local
-                inference; otherwise uses SAHI AutoDetectionModel.
-            movement_thr: Movement threshold in pixels for object tracking.
-            fps: Target frames per second for tracking calculations.
-            max_id_keep: Maximum number of frames to retain inactive
-                tracking IDs.
-            ws_frame_size: Optional tuple (width, height) for WebSocket
-                frame resizing.
-            use_jpeg_ws: If True, uses JPEG encoding for WebSocket
-                transmission; otherwise uses PNG encoding.
-
-        Raises:
-            FileNotFoundError: If local model files are not found when
-                using local inference.
-            ValueError: If invalid configuration parameters are provided.
+            api_url: Base URL for the detection API server
+                (env DETECT_API_URL if None).
+            model_key: YOLO model identifier.
+            output_folder: Optional directory for saving outputs.
+            detect_with_server: Use remote WebSocket service if True.
+            shared_token: Shared token dict for auth.
+            use_ultralytics: Use Ultralytics engine (else SAHI slicing).
+            movement_thr: Pixel movement threshold (centroid distance).
+            fps: Target FPS (reserved for future time-based logic).
+            max_id_keep: Frames to retain inactive track IDs.
+            ws_frame_size: Optional (w,h) resize before WS send.
+            use_jpeg_ws: JPEG (True) or PNG (False) for WS transmission.
+            remote_tracker: 'centroid' or 'hungarian' for remote tracking.
+            remote_cost_threshold: Cost cutoff (0-1) for Hungarian match.
         """
-        # Read API URL from environment variable if not provided, use
-        # default otherwise
+        # Resolve API URL
         if api_url is None:
             api_url = os.getenv(
                 'DETECT_API_URL', 'https://changdar-server.mooo.com/api',
             )
+        self.api_url = api_url.rstrip('/')
+        self.model_key = model_key
+        self.output_folder = output_folder
+        self.detect_with_server = detect_with_server
+        self.use_ultralytics = use_ultralytics
 
-        # Core configuration attributes
-        self.api_url: str = api_url.rstrip('/')
-        self.model_key: str = model_key
-        self.output_folder: str | None = output_folder
-        self.detect_with_server: bool = detect_with_server
-        self.use_ultralytics: bool = use_ultralytics
-
-        # Authentication token management
-        self.shared_token: dict[str, object] = shared_token or {
-            'access_token': '', 'refresh_token': '',
-            'is_refreshing': False,
-        }
-        self.token_manager: TokenManager = TokenManager(
-            shared_token=self.shared_token,
+        # Tokens
+        self.shared_token: SharedToken = shared_token or SharedToken(
+            access_token='', refresh_token='', is_refreshing=False,
+        )
+        # Cast to the TokenManager expected type (dict[str, str | bool])
+        self.token_manager = TokenManager(
+            shared_token=cast('dict[str, str | bool]', self.shared_token),
         )
 
-        # Load models for local inference only
+        # Models (local inference path)
         if not detect_with_server:
             if self.use_ultralytics:
-                self.ultralytics_model: YOLO = YOLO(
+                self.ultralytics_model = YOLO(
                     f"models/int8_engine/best_{self.model_key}.engine",
                 )
             else:
-                self.model: AutoDetectionModel = (
-                    AutoDetectionModel.from_pretrained(
-                        'yolo11',
-                        model_path=str(
-                            Path('models/int8_engine') /
-                            f"best_{self.model_key}.engine",
-                        ),
-                        device='cuda:0',
-                    )
+                self.model = AutoDetectionModel.from_pretrained(
+                    'yolo11',
+                    model_path=str(
+                        Path('models/int8_engine') /
+                        f"best_{self.model_key}.engine",
+                    ),
+                    device='cuda:0',
                 )
 
-        # WebSocket connection management
+        # Network handles
         self._session: ClientSession | None = None
         self._ws: ClientWebSocketResponse | None = None
-        self._logger: logging.Logger = logging.getLogger(__name__)
+        self._logger = logging.getLogger(__name__)
 
-        # Object tracking initialisation
-        self.prev_frame: np.ndarray | None = None
-        bot_args = argparse.Namespace(
-            track_high_thresh=0.3, track_low_thresh=0.1,
-            new_track_thresh=0.30, match_thresh=0.65,
-            track_buffer=60, mot20=False, gmc_method='sparseOptFlow',
-            with_reid=False, model='auto',
-            proximity_thresh=0.7, appearance_thresh=0.5, fuse_score=False,
-        )
-        self.tracker: BOTSORT = BOTSORT(bot_args, frame_rate=fps)
-
-        # Tracking state management
-        # track_id: (center_x, center_y)
+        # Tracking state stores
+        self.remote_tracks: dict[int, dict] = {}
+        self.next_remote_id = 0
         self.prev_centers: dict[int, tuple[float, float]] = {}
-        # track_id: last_seen_frame_number
         self.prev_centers_last_seen: dict[int, int] = {}
-        self.movement_thr: float = movement_thr
-        # Pre-computed square for efficiency
-        self.movement_thr_sq: float = (
-            movement_thr * movement_thr
-        )
-        self.frame_count: int = 0
-        self.max_id_keep: int = max_id_keep
+        self.movement_thr = movement_thr
+        self.movement_thr_sq = movement_thr * movement_thr
+        self.frame_count = 0
+        self.max_id_keep = max_id_keep
 
-        # WebSocket transmission configuration
-        # Frame resize for WebSocket
-        self.ws_frame_size: tuple[int, int] | None = ws_frame_size
-        # WebSocket encoding format selection
-        self.use_jpeg_ws: bool = use_jpeg_ws
+        # WS transmission config
+        self.ws_frame_size = ws_frame_size
+        self.use_jpeg_ws = use_jpeg_ws
+
+        # Remote tracking configuration
+        self.remote_tracker = remote_tracker
+        self.remote_cost_threshold = remote_cost_threshold
 
     async def _ensure_ws_connection(self) -> ClientWebSocketResponse:
-        """
-        Ensure a valid WebSocket connection is established.
+        """Ensure a valid WebSocket connection is established.
 
         Returns:
             Active WebSocket connection ready for communication.
 
         Raises:
-            ConnectionError: If all connection attempts fail after maximum
-                retries.
+            ConnectionError:
+                If all connection attempts fail after maximum retries.
         """
         # Reduced retry count for faster failure detection
         max_retries: int = 3
@@ -382,6 +360,7 @@ class LiveStreamDetector:
                     'Timeout waiting for configuration confirmation',
                 )
                 return False
+            return False
 
         except Exception as e:
             self._logger.warning(f"Header method failed: {e}")
@@ -474,6 +453,7 @@ class LiveStreamDetector:
                     'Timeout waiting for configuration confirmation',
                 )
                 return False
+            return False
 
         except Exception as e:
             self._logger.warning(f"First message method failed: {e}")
@@ -564,6 +544,7 @@ class LiveStreamDetector:
                     'Legacy method successful (no config confirmation)',
                 )
                 return True
+            return False
 
         except Exception as e:
             self._logger.warning(f"Legacy method failed: {e}")
@@ -884,7 +865,7 @@ class LiveStreamDetector:
         self.frame_count += 1
         if self.detect_with_server:
             datas = await self._detect_cloud_ws(frame)
-            tracked = self._track(datas, frame)
+            tracked = self._track_remote(datas)
         else:
             # Batch process detection results to improve efficiency
             results = self.ultralytics_model.track(
@@ -960,81 +941,343 @@ class LiveStreamDetector:
                 self.prev_centers.pop(tid, None)
                 self.prev_centers_last_seen.pop(tid, None)
 
-    def _track(
-        self, dets: list[list[float]], curr_frame: np.ndarray,
+    def _track_remote(self, dets: list[list[float]]) -> list[list[float]]:
+        """Dispatch to the configured remote tracker implementation."""
+        if self.remote_tracker == 'hungarian':
+            return self._track_remote_hungarian(dets)
+        # Default / fallback
+        return self._track_remote_centroid(dets)
+
+    # ------------------------------------------------------------------
+    # Centroid tracker (original simple implementation)
+    # ------------------------------------------------------------------
+    def _track_remote_centroid(
+        self, dets: list[list[float]],
     ) -> list[list[float]]:
-        """
-        Track object detections and determine movement status.
+        """Simple centroid-based tracker for remote detections.
 
         Args:
-            dets: List of detections from server inference.
-            curr_frame: Current frame for tracking context.
+            dets: List of detections [x1, y1, x2, y2, conf, cls].
 
         Returns:
-            List of tracked detections with movement information
-            [x1, y1, x2, y2, conf, class_id, track_id, is_moving].
+            List with tracking info [x1, y1, x2, y2, conf, cls, track_id,
+            is_moving].
         """
-        # Only used for API inference
         if not dets:
+            if self.frame_count % 10 == 0:
+                self._prune_remote_tracks()
             return []
 
-        det_arr = np.asarray(dets, dtype=np.float32)
-        results_like = SimpleNamespace(
-            xyxy=det_arr[:, :4],
-            xywh=xyxy2xywh(det_arr[:, :4]),
-            conf=det_arr[:, 4],
-            cls=det_arr[:, 5],
-        )
-        if self.prev_frame is None:
-            self.prev_frame = curr_frame
-        self.tracker.update(results_like, self.prev_frame, curr_frame)
-        online = self.tracker.tracked_stracks
+        assigned_tracks: list[list[float]] = []
+        used_track_ids: set[int] = set()
+        track_items = list(self.remote_tracks.items())
+        track_centers = [info['center'] for _, info in track_items]
+        track_cls = [info['cls'] for _, info in track_items]
 
-        tracked: dict[tuple[int, int, int, int], list[float]] = {}
-        for t in online:
-            # Try tlbr first
-            if hasattr(t, 'tlbr'):
-                coords = t.tlbr() if callable(t.tlbr) else t.tlbr
-            elif hasattr(t, 'tlwh'):
-                tl = t.tlwh() if callable(t.tlwh) else t.tlwh
-                x1, y1, w, h = tl
-                coords = (x1, y1, x1 + w, y1 + h)
-            elif hasattr(t, 'bbox'):
-                coords = t.bbox() if callable(t.bbox) else t.bbox
-            else:
-                continue
-
-            x1, y1, x2, y2 = map(float, coords)
-            conf = float(getattr(t, 'score', 1.0))
-            cls_id = int(getattr(t, 'cls', -1))
-            tid = int(getattr(t, 'track_id', -1))
-
+        for det in dets:
+            x1, y1, x2, y2, conf, cls_id = det
             cx, cy = (x1 + x2) * 0.5, (y1 + y2) * 0.5
-            prev_c = self.prev_centers.get(tid)
-            moving = 0
-            if prev_c:
-                # Use pre-computed square distance comparison
-                distance_sq = (
-                    (cx - prev_c[0]) ** 2 + (cy - prev_c[1]) ** 2
-                )
-                moving = 1 if distance_sq > self.movement_thr_sq else 0
-
-            self.prev_centers[tid] = (cx, cy)
-            self.prev_centers_last_seen[tid] = self.frame_count
-
-            key = (
-                int(round(x1)), int(round(y1)),
-                int(round(x2)), int(round(y2)),
+            best_tid = None
+            best_dist_sq = float('inf')
+            for (tid, _), (tcx, tcy), tcls in zip(
+                track_items, track_centers, track_cls,
+            ):
+                if tid in used_track_ids or tcls != cls_id:
+                    continue
+                dx = cx - tcx
+                dy = cy - tcy
+                dist_sq = dx * dx + dy * dy
+                if (
+                    dist_sq < best_dist_sq and
+                    dist_sq < (self.movement_thr_sq * 4)
+                ):
+                    best_dist_sq = dist_sq
+                    best_tid = tid
+            if best_tid is None:
+                tid = self.next_remote_id
+                self.next_remote_id += 1
+                moving_flag = 0
+            else:
+                tid = best_tid
+                used_track_ids.add(tid)
+                prev_center = self.remote_tracks[tid]['center']
+                dx = cx - prev_center[0]
+                dy = cy - prev_center[1]
+                dist_sq_move = dx * dx + dy * dy
+                moving_flag = 1 if dist_sq_move > self.movement_thr_sq else 0
+            self.remote_tracks[tid] = {
+                'bbox': (x1, y1, x2, y2),
+                'center': (cx, cy),
+                'last_seen': self.frame_count,
+                'cls': cls_id,
+            }
+            assigned_tracks.append(
+                [x1, y1, x2, y2, conf, cls_id, tid, moving_flag],
             )
-            tracked[key] = [x1, y1, x2, y2, conf, cls_id, tid, moving]
+        if self.frame_count % 10 == 0:
+            self._prune_remote_tracks()
+        return assigned_tracks
 
-        final: list[list[float]] = []
-        for d in dets:
-            key = (int(d[0]), int(d[1]), int(d[2]), int(d[3]))
-            # If tracking ID not found, set ID to -1 and is_moving to 0
-            final.append(tracked.get(key, [*d, -1, 0]))
-        self.prev_frame = curr_frame
-        return final
+    # ------------------------------------------------------------------
+    # Hungarian (global) assignment tracker
+    # ------------------------------------------------------------------
+    def _track_remote_hungarian(
+        self, dets: list[list[float]],
+    ) -> list[list[float]]:
+        """
+        Global assignment tracker using Hungarian algorithm.
+
+        Args:
+            dets: List of detections [x1, y1, x2, y2, conf, cls].
+
+        Returns:
+            List with tracking info [x1, y1, x2, y2, conf, cls, track_id,
+            is_moving].
+        """
+        if not dets:
+            if self.frame_count % 10 == 0:
+                self._prune_remote_tracks()
+            return []
+
+        # Build arrays for existing tracks
+        track_items = list(self.remote_tracks.items())  # (tid, info)
+        num_tracks = len(track_items)
+        num_dets = len(dets)
+
+        # If no existing tracks, create new ones directly
+        if num_tracks == 0:
+            assigned = []
+            for det in dets:
+                x1, y1, x2, y2, conf, cls_id = det
+                cx, cy = (x1 + x2) * 0.5, (y1 + y2) * 0.5
+                tid = self.next_remote_id
+                self.next_remote_id += 1
+                self.remote_tracks[tid] = {
+                    'bbox': (x1, y1, x2, y2),
+                    'center': (cx, cy),
+                    'last_seen': self.frame_count,
+                    'cls': cls_id,
+                }
+                assigned.append([x1, y1, x2, y2, conf, cls_id, tid, 0])
+            return assigned
+
+        # Prepare cost matrix (num_dets x num_tracks)
+        cost_matrix = np.full(
+            (num_dets, num_tracks),
+            fill_value=1e6, dtype=float,
+        )
+
+        for d_idx, det in enumerate(dets):
+            x1, y1, x2, y2, conf, cls_id = det
+            cx = (x1 + x2) * 0.5
+            cy = (y1 + y2) * 0.5
+            for t_idx, (tid, info) in enumerate(track_items):
+                if info['cls'] != cls_id:
+                    continue  # leave large cost
+                tx1, ty1, tx2, ty2 = info['bbox']
+                tcx, tcy = info['center']
+                # IoU
+                inter_x1 = max(x1, tx1)
+                inter_y1 = max(y1, ty1)
+                inter_x2 = min(x2, tx2)
+                inter_y2 = min(y2, ty2)
+                if inter_x2 > inter_x1 and inter_y2 > inter_y1:
+                    inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+                else:
+                    inter_area = 0.0
+                area_det = (x2 - x1) * (y2 - y1)
+                area_trk = (tx2 - tx1) * (ty2 - ty1)
+                union = area_det + area_trk - inter_area
+                iou = inter_area / union if union > 0 else 0.0
+                dx = cx - tcx
+                dy = cy - tcy
+                dist_sq = dx * dx + dy * dy
+                dist_norm = min(dist_sq / (self.movement_thr_sq * 4), 1.0)
+                cost = 0.5 * (1 - iou) + 0.5 * dist_norm
+                cost_matrix[d_idx, t_idx] = cost
+
+        # Solve assignment
+        matches, unmatched_dets, unmatched_tracks = self._hungarian_assign(
+            cost_matrix, self.remote_cost_threshold,
+        )
+
+        assigned = []
+        used_track_ids: set[int] = set()
+
+        # Update matched tracks
+        for d_idx, t_idx in matches:
+            det = dets[d_idx]
+            x1, y1, x2, y2, conf, cls_id = det
+            tid, info = track_items[t_idx]
+            cx, cy = (x1 + x2) * 0.5, (y1 + y2) * 0.5
+            prev_center = info['center']
+            dx = cx - prev_center[0]
+            dy = cy - prev_center[1]
+            dist_sq_move = dx * dx + dy * dy
+            moving_flag = 1 if dist_sq_move > self.movement_thr_sq else 0
+            self.remote_tracks[tid] = {
+                'bbox': (x1, y1, x2, y2),
+                'center': (cx, cy),
+                'last_seen': self.frame_count,
+                'cls': cls_id,
+            }
+            assigned.append([x1, y1, x2, y2, conf, cls_id, tid, moving_flag])
+            used_track_ids.add(tid)
+
+        # Create new tracks for unmatched detections
+        for d_idx in unmatched_dets:
+            x1, y1, x2, y2, conf, cls_id = dets[d_idx]
+            cx, cy = (x1 + x2) * 0.5, (y1 + y2) * 0.5
+            tid = self.next_remote_id
+            self.next_remote_id += 1
+            self.remote_tracks[tid] = {
+                'bbox': (x1, y1, x2, y2),
+                'center': (cx, cy),
+                'last_seen': self.frame_count,
+                'cls': cls_id,
+            }
+            assigned.append([x1, y1, x2, y2, conf, cls_id, tid, 0])
+
+        # (Optionally) we could retire unmatched tracks after grace period;
+        # pruning handles this
+        if self.frame_count % 10 == 0:
+            self._prune_remote_tracks()
+        return assigned
+
+    # Hungarian assignment helper
+    def _hungarian_assign(
+        self, cost: np.ndarray, cost_threshold: float,
+    ) -> tuple[list[tuple[int, int]], list[int], list[int]]:
+        """Apply Hungarian algorithm on cost matrix and filter by threshold.
+
+        Returns:
+            (matches, unmatched_rows, unmatched_cols)
+        """
+        # Copy to avoid modifying original
+        cost_matrix = cost.copy()
+        num_rows, num_cols = cost_matrix.shape
+        # Pad to square if needed
+        n = max(num_rows, num_cols)
+        if num_rows != num_cols:
+            padded = np.full((n, n), 1e6, dtype=float)
+            padded[:num_rows, :num_cols] = cost_matrix
+            cost_matrix = padded
+        else:
+            n = num_rows
+
+        # Step 1: row reduction
+        cost_matrix -= cost_matrix.min(axis=1, keepdims=True)
+        # Step 2: col reduction
+        cost_matrix -= cost_matrix.min(axis=0, keepdims=True)
+
+        # Helper to cover zeros
+        def cover_zeros(mat: np.ndarray):
+            n_local = mat.shape[0]
+            covered_rows = set()
+            covered_cols = set()
+            # Greedy initial marking
+            zero_locs = [
+                (r, c) for r in range(n_local)
+                for c in range(n_local) if abs(mat[r, c]) < 1e-12
+            ]
+            row_zero_count = {r: 0 for r in range(n_local)}
+            col_zero_count = {c: 0 for c in range(n_local)}
+            for r, c in zero_locs:
+                row_zero_count[r] += 1
+                col_zero_count[c] += 1
+            # Simple heuristic: cover rows or cols with most zeros iteratively
+            while zero_locs:
+                # Count remaining zeros per row/col
+                row_counts = {r: 0 for r in range(n_local)}
+                col_counts = {c: 0 for c in range(n_local)}
+                for (r, c) in zero_locs:
+                    if r not in covered_rows and c not in covered_cols:
+                        row_counts[r] += 1
+                        col_counts[c] += 1
+                if not row_counts and not col_counts:
+                    break
+                # Choose to cover row or col with max zeros
+                if (
+                    row_counts and
+                    (
+                        not col_counts or
+                        max(row_counts.values()) >= max(col_counts.values())
+                    )
+                ):
+                    r_sel = max(row_counts, key=lambda k: row_counts[k])
+                    covered_rows.add(r_sel)
+                else:
+                    c_sel = max(col_counts, key=lambda k: col_counts[k])
+                    covered_cols.add(c_sel)
+                zero_locs = [
+                    zc for zc in zero_locs if zc[0]
+                    not in covered_rows and zc[1] not in covered_cols
+                ]
+            return covered_rows, covered_cols
+
+        while True:
+            covered_rows, covered_cols = cover_zeros(cost_matrix)
+            lines = len(covered_rows) + len(covered_cols)
+            if lines >= n:
+                break
+            # Adjust matrix
+            uncovered = [
+                cost_matrix[r, c] for r in range(n)
+                if r not in covered_rows for c in range(n)
+                if c not in covered_cols
+            ]
+            if not uncovered:
+                break
+            m = min(uncovered)
+            for r in range(n):
+                for c in range(n):
+                    if r not in covered_rows and c not in covered_cols:
+                        cost_matrix[r, c] -= m
+                    elif r in covered_rows and c in covered_cols:
+                        cost_matrix[r, c] += m
+
+        # Extract assignment greedily from zeros (since matrix reduced)
+        assigned_cols = set()
+        matches_all: list[tuple[int, int]] = []
+        for r in range(n):
+            zero_cols = [
+                c for c in range(n) if abs(
+                    cost_matrix[r, c],
+                ) < 1e-12 and c not in assigned_cols
+            ]
+            if zero_cols:
+                c_sel = zero_cols[0]
+                assigned_cols.add(c_sel)
+                matches_all.append((r, c_sel))
+
+        # Filter to original matrix size and cost threshold
+        matches: list[tuple[int, int]] = []
+        used_rows = set()
+        used_cols = set()
+        for r, c in matches_all:
+            if r < num_rows and c < num_cols:
+                original_cost = cost[r, c]
+                if original_cost <= cost_threshold:
+                    matches.append((r, c))
+                    used_rows.add(r)
+                    used_cols.add(c)
+
+        unmatched_rows = [r for r in range(num_rows) if r not in used_rows]
+        unmatched_cols = [c for c in range(num_cols) if c not in used_cols]
+        return matches, unmatched_rows, unmatched_cols
+
+    def _prune_remote_tracks(self) -> None:
+        """
+        Remove remote tracks that have not been updated
+        within max_id_keep frames.
+        """
+        threshold = self.frame_count - self.max_id_keep
+        stale = [
+            tid for tid, info in self.remote_tracks.items()
+            if info['last_seen'] < threshold
+        ]
+        for tid in stale:
+            self.remote_tracks.pop(tid, None)
 
     async def run_detection(self, stream_url: str) -> None:
         """Run continuous object detection on a video stream.
@@ -1294,11 +1537,9 @@ async def main() -> None:
     args = parser.parse_args()
 
     # Initialise shared token dictionary for authentication
-    shared_token: dict[str, object] = {
-        'access_token': '',
-        'refresh_token': '',
-        'is_refreshing': False,
-    }
+    shared_token: SharedToken = SharedToken(
+        access_token='', refresh_token='', is_refreshing=False,
+    )
 
     # Create detector instance with parsed arguments
     detector = LiveStreamDetector(
