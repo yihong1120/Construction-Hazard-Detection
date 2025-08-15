@@ -1,122 +1,187 @@
-
 -- =============================================
 -- Construction-Hazard-Detection Database Schema
--- Generated from SQLAlchemy models.py
+-- Compatible with MySQL 8.0/8.4/9.x (fixed order/FKs)
+-- violations.site -> FK to sites(name)
 -- =============================================
 
--- This schema covers all major entities:
---   - features: System features (e.g., detection capabilities)
---   - group_info: User groups and permissions
---   - group_features: Many-to-many between groups and features
---   - sites: Construction sites
---   - user_profiles: User profile details
---   - users: System users and credentials
---   - user_sites: Many-to-many between users and sites
---   - stream_configs: Video stream configuration
---   - violations: Safety violation records
+SET NAMES utf8mb4;
+SET time_zone = '+00:00';
 
+CREATE DATABASE IF NOT EXISTS construction_hazard_detection
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE construction_hazard_detection;
+
+-- Avoid FK conflicts during import; re-enable at the end
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- Safe for repeated imports: drop child tables before parent tables
+DROP TABLE IF EXISTS group_features;
+DROP TABLE IF EXISTS user_sites;
+DROP TABLE IF EXISTS stream_configs;
+DROP TABLE IF EXISTS violations;
+DROP TABLE IF EXISTS user_profiles;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS sites;
+DROP TABLE IF EXISTS features;
+DROP TABLE IF EXISTS group_info;
+
+-- ========== Parent Tables ==========
+CREATE TABLE group_info (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    uniform_number VARCHAR(8) UNIQUE NOT NULL COMMENT 'Unified Business Number',
+    max_allowed_streams INT NOT NULL DEFAULT 8,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE features (
-    id INT PRIMARY KEY AUTO_INCREMENT, -- Feature ID
-    feature_name VARCHAR(50) UNIQUE NOT NULL, -- Unique feature name
-    description TEXT, -- Feature description
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- Creation timestamp
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP -- Last update timestamp
-);
-
-CREATE TABLE group_info (
-    id INT PRIMARY KEY AUTO_INCREMENT, -- Group ID
-    name VARCHAR(100) NOT NULL, -- Group name
-    uniform_number VARCHAR(8) UNIQUE NOT NULL COMMENT '統一編號', -- Unique identifier
-    max_allowed_streams INT NOT NULL DEFAULT 8, -- Max allowed streams per group
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- Creation timestamp
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP -- Last update timestamp
-);
-
-CREATE TABLE group_features (
-    group_id INT NOT NULL, -- FK to group_info
-    feature_id INT NOT NULL, -- FK to features
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- Link creation timestamp
-    PRIMARY KEY (group_id, feature_id), -- Composite PK
-    FOREIGN KEY (group_id) REFERENCES group_info(id) ON DELETE CASCADE, -- Cascade delete
-    FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE CASCADE -- Cascade delete
-);
-
-CREATE TABLE sites (
-    id INT PRIMARY KEY AUTO_INCREMENT, -- Site ID
-    name VARCHAR(80) NOT NULL, -- Site name
-    group_id INT, -- FK to group_info
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Creation timestamp
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, -- Last update timestamp
-    FOREIGN KEY (group_id) REFERENCES group_info(id) ON DELETE SET NULL -- Set group_id to NULL on group delete
-);
-
-CREATE TABLE user_profiles (
-    user_id INT PRIMARY KEY, -- FK to users
-    family_name VARCHAR(50) NOT NULL, -- Family name
-    middle_name VARCHAR(50), -- Middle name (optional)
-    given_name VARCHAR(50) NOT NULL, -- Given name
-    email VARCHAR(255) UNIQUE NOT NULL, -- Unique email
-    mobile_number VARCHAR(20) UNIQUE, -- Unique mobile number
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- Creation timestamp
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, -- Last update timestamp
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE -- Cascade delete
-);
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    feature_name VARCHAR(50) UNIQUE NOT NULL,
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE users (
-    id INT PRIMARY KEY AUTO_INCREMENT, -- User ID
-    username VARCHAR(80) UNIQUE NOT NULL, -- Unique username
-    password_hash VARCHAR(255) NOT NULL, -- Hashed password
-    role VARCHAR(20) NOT NULL DEFAULT 'user', -- User role
-    is_active BOOLEAN NOT NULL DEFAULT TRUE, -- Active status
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Creation timestamp
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, -- Last update timestamp
-    group_id INT, -- FK to group_info
-    FOREIGN KEY (group_id) REFERENCES group_info(id) ON DELETE SET NULL -- Set group_id to NULL on group delete
-);
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    username VARCHAR(80) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'user',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    group_id INT,
+    CONSTRAINT fk_users_group
+        FOREIGN KEY (group_id) REFERENCES group_info(id)
+        ON DELETE SET NULL,
+    INDEX idx_users_group (group_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE sites (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(80) NOT NULL,
+    group_id INT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_sites_group
+        FOREIGN KEY (group_id) REFERENCES group_info(id)
+        ON DELETE SET NULL,
+    -- To allow violations.site to be an FK, name must be unique
+    UNIQUE KEY uq_sites_name (name),
+    INDEX idx_sites_group (group_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ========== Relationship/Detail Tables ==========
+CREATE TABLE group_features (
+    group_id INT NOT NULL,
+    feature_id INT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, feature_id),
+    CONSTRAINT fk_gf_group FOREIGN KEY (group_id) REFERENCES group_info(id) ON DELETE CASCADE,
+    CONSTRAINT fk_gf_feature FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE CASCADE,
+    INDEX idx_gf_group (group_id),
+    INDEX idx_gf_feature (feature_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE user_profiles (
+    user_id INT PRIMARY KEY,
+    family_name VARCHAR(50) NOT NULL,
+    middle_name VARCHAR(50),
+    given_name VARCHAR(50) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    mobile_number VARCHAR(20) UNIQUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_up_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE user_sites (
-    user_id INT NOT NULL, -- FK to users
-    site_id INT NOT NULL, -- FK to sites
-    PRIMARY KEY (user_id, site_id), -- Composite PK
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, -- Cascade delete
-    FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE -- Cascade delete
-);
+    user_id INT NOT NULL,
+    site_id INT NOT NULL,
+    PRIMARY KEY (user_id, site_id),
+    CONSTRAINT fk_us_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_us_site FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE,
+    INDEX idx_us_user (user_id),
+    INDEX idx_us_site (site_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE stream_configs (
-    id INT PRIMARY KEY AUTO_INCREMENT, -- Stream config ID
-    group_id INT NOT NULL, -- FK to group_info
-    site_id INT NOT NULL, -- FK to sites
-    stream_name VARCHAR(80) NOT NULL, -- Stream name
-    video_url VARCHAR(255) NOT NULL, -- Video stream URL
-    model_key VARCHAR(80) NOT NULL, -- Detection model key
-    detect_no_safety_vest_or_helmet BOOLEAN DEFAULT FALSE, -- Detect vest/helmet
-    detect_near_machinery_or_vehicle BOOLEAN DEFAULT FALSE, -- Detect near machinery/vehicle
-    detect_in_restricted_area BOOLEAN DEFAULT FALSE, -- Detect in restricted area
-    detect_in_utility_pole_restricted_area BOOLEAN DEFAULT FALSE, -- Detect in utility pole area
-    detect_machinery_close_to_pole BOOLEAN DEFAULT FALSE, -- Detect machinery close to pole
-    detect_with_server BOOLEAN DEFAULT TRUE, -- Use server-side detection
-    expire_date DATETIME, -- Expiration date
-    work_start_hour INT, -- Work start hour
-    work_end_hour INT, -- Work end hour
-    store_in_redis BOOLEAN DEFAULT FALSE, -- Store in Redis
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- Creation timestamp
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, -- Last update timestamp
-    FOREIGN KEY (group_id) REFERENCES group_info(id) ON DELETE CASCADE, -- Cascade delete
-    FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE, -- Cascade delete
-    UNIQUE (site_id, stream_name) -- Unique constraint for site/stream
-);
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    group_id INT NOT NULL,
+    site_id INT NOT NULL,
+    stream_name VARCHAR(80) NOT NULL,
+    video_url VARCHAR(255) NOT NULL,
+    model_key VARCHAR(80) NOT NULL,
+    detect_no_safety_vest_or_helmet BOOLEAN DEFAULT FALSE,
+    detect_near_machinery_or_vehicle BOOLEAN DEFAULT FALSE,
+    detect_in_restricted_area BOOLEAN DEFAULT FALSE,
+    detect_in_utility_pole_restricted_area BOOLEAN DEFAULT FALSE,
+    detect_machinery_close_to_pole BOOLEAN DEFAULT FALSE,
+    detect_with_server BOOLEAN DEFAULT TRUE,
+    expire_date DATETIME,
+    work_start_hour INT,
+    work_end_hour INT,
+    store_in_redis BOOLEAN DEFAULT FALSE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_sc_group FOREIGN KEY (group_id) REFERENCES group_info(id) ON DELETE CASCADE,
+    CONSTRAINT fk_sc_site  FOREIGN KEY (site_id)  REFERENCES sites(id)      ON DELETE CASCADE,
+    UNIQUE KEY uq_sc_site_stream (site_id, stream_name),
+    INDEX idx_sc_group (group_id),
+    INDEX idx_sc_site (site_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- === Key point: violations.site (VARCHAR) FK to sites(name) ===
 CREATE TABLE violations (
-    id INT PRIMARY KEY AUTO_INCREMENT, -- Violation ID
-    stream_name VARCHAR(80) NOT NULL, -- Stream/camera name
-    detection_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Detection timestamp
-    image_path VARCHAR(255) NOT NULL, -- Path to violation image
-    detections_json TEXT, -- JSON of detected objects
-    cone_polygon_json TEXT, -- JSON of cone polygons
-    pole_polygon_json TEXT, -- JSON of pole polygons
-    warnings_json TEXT, -- JSON of warning content
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- Record creation timestamp
-    site VARCHAR(80) NOT NULL, -- Site name (FK to sites)
-    FOREIGN KEY (site) REFERENCES sites(name) -- Link to sites table
-);
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    stream_name VARCHAR(80) NOT NULL,
+    detection_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    image_path VARCHAR(255) NOT NULL,
+    detections_json TEXT,
+    cone_polygon_json TEXT,
+    pole_polygon_json TEXT,
+    warnings_json TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    site VARCHAR(80) NOT NULL,
+    CONSTRAINT fk_vio_site_name FOREIGN KEY (site) REFERENCES sites(name) ON DELETE CASCADE,
+    INDEX idx_vio_site_name (site),
+    INDEX idx_vio_time (detection_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- ========== Seed Data ==========
+-- Default group (ensure id=1 exists)
+INSERT INTO group_info (id, name, uniform_number, max_allowed_streams)
+VALUES (1, 'Default Group', '00000001', 8)
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    max_allowed_streams = VALUES(max_allowed_streams);
+
+-- Ensure yolo_api exists in features (update description if already present)
+INSERT INTO features (feature_name, description)
+VALUES ('yolo_api', 'Utilising YOLO for real-time object detection.')
+ON DUPLICATE KEY UPDATE
+    description = VALUES(description);
+
+-- Guest admin user (update if already present)
+INSERT INTO users (username, password_hash, role, is_active, group_id)
+VALUES (
+    'user',
+    'scrypt:32768:8:1$HP2pOGl5dSjKGax9$9a46ec70ddd6cca8400e712487fa30f005ae5d21786847d6f71bf3afeda3a8a5f68c7ea9a3f1cbd74c2b934f21110d071389b085aa1941e2db7b59304ef8f88f',
+    'admin',
+    TRUE,
+    1
+)
+ON DUPLICATE KEY UPDATE
+    password_hash = VALUES(password_hash),
+    role = VALUES(role),
+    is_active = VALUES(is_active),
+    group_id = VALUES(group_id);
+
+-- Enable yolo_api for default group (map by name to avoid hard-coded ID)
+INSERT IGNORE INTO group_features (group_id, feature_id)
+SELECT 1, f.id
+FROM features f
+WHERE f.feature_name = 'yolo_api';
