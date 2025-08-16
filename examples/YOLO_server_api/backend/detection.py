@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from sahi.predict import get_sliced_prediction
 
-from examples.YOLO_server_api.backend.config import USE_TENSORRT
+from examples.YOLO_server_api.backend.config import USE_SAHI
 
 
 def convert_to_image(data: bytes) -> np.ndarray:
@@ -30,7 +30,8 @@ def convert_to_image(data: bytes) -> np.ndarray:
 
 async def get_prediction_result(img: np.ndarray, model: Any) -> Any:
     """
-    Generate prediction results using either TensorRT or SAHI inference.
+    Generate prediction results using TensorRT, SAHI, or standard YOLO
+    inference.
 
     Args:
         img: Input image as numpy array in BGR format.
@@ -41,6 +42,7 @@ async def get_prediction_result(img: np.ndarray, model: Any) -> Any:
         method:
         - TensorRT: Ultralytics Results object
         - SAHI: SlicedPrediction object with object_prediction_list
+        - Standard: Ultralytics Results object
 
     Raises:
         cv2.error: If the image cannot be processed or model inference fails.
@@ -49,20 +51,20 @@ async def get_prediction_result(img: np.ndarray, model: Any) -> Any:
         This function is designed to be wrapped with asyncio.to_thread for
         non-blocking execution in async contexts.
     """
-    if USE_TENSORRT:  # Ultralytics (TensorRT) inference path
+    # SAHI sliced inference path for better small object detection
+    if USE_SAHI:
+        return get_sliced_prediction(
+            img,
+            model,
+            slice_height=370,
+            slice_width=370,
+            overlap_height_ratio=0.3,
+            overlap_width_ratio=0.3,
+        )
+    else:  # Ultralytics (TensorRT or standard) inference path
         # Ultralytics returns list[Results], we only need the first result
         # for single image
         return model.predict(source=img, verbose=False)[0]
-
-    # SAHI sliced inference path for better small object detection
-    return get_sliced_prediction(
-        img,
-        model,
-        slice_height=370,
-        slice_width=370,
-        overlap_height_ratio=0.3,
-        overlap_width_ratio=0.3,
-    )
 
 
 def compile_detection_data(result: Any) -> list[list[float | int]]:
@@ -321,7 +323,8 @@ def area(
     # Calculate width and height, ensuring non-negative values
     width = max(0, x2 - x1 + 1)
     height = max(0, y2 - y1 + 1)
-    return width * height
+    # Ensure the return type is explicitly an integer
+    return int(width * height)
 
 
 async def remove_completely_contained_labels(
