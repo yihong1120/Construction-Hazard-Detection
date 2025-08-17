@@ -38,3 +38,7 @@ app copy.py
 examples/streaming_web/frontend/node_modules/**
 examples/streaming_web/frontend/dist/**
 !examples/streaming_web/frontend/package.json
+
+.history
+.history/**
+.history/**/*
