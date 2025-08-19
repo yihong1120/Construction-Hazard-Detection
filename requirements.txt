@@ -12,6 +12,7 @@ fastapi==0.115.14
 fastapi_jwt==0.3.0
 fastapi_limiter==0.1.6
 firebase_admin==6.9.0
+huggingface_hub==0.34.4
 imagecorruptions==1.1.2
 imageio==2.37.0
 imgaug==0.4.0

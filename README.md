@@ -52,6 +52,9 @@
    <a href="https://universe.roboflow.com/object-detection-qn97p/construction-hazard-detection">
       <img src="https://app.roboflow.com/images/download-dataset-badge.svg" alt="Download Dataset from Roboflow">
    </a>
+   <a href="https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO11">
+      <img src="https://img.shields.io/badge/HuggingFace-Model%20Repo-yellow?logo=huggingface" alt="Hugging Face Model Repo">
+   </a>
 </div>
 
 <br>
@@ -201,7 +204,35 @@ Before running the application, prepare your stream configuration file `config/c
    pip install -r requirements.txt
    ```
 
-6. **Start Each API (from project root, use separate terminals for each)**
+6. **Download YOLO11 weights from Hugging Face (to models/pt):**
+
+- CLI (places files under `./models/pt`):
+
+   Hugging Face model repo: https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO11
+
+   ```bash
+   hf download \
+      yihong1120/Construction-Hazard-Detection-YOLO11 \
+      --repo-type model \
+      --include "models/pt/*.pt" \
+      --local-dir .
+   ```
+
+- Python (same effect):
+
+   ```python
+   from huggingface_hub import snapshot_download
+
+   snapshot_download(
+       repo_id="yihong1120/Construction-Hazard-Detection-YOLO11",
+       repo_type="model",
+       local_dir=".",
+       local_dir_use_symlinks=False,
+       allow_patterns=["models/pt/*.pt"],
+   )
+   ```
+
+7. **Start Each API (from project root, use separate terminals for each)**
 
 * Data Management (DB Management)
 
@@ -233,7 +264,7 @@ Before running the application, prepare your stream configuration file `config/c
    uvicorn examples.YOLO_server_api.backend.app:app --host 127.0.0.1 --port 8000 --workers 2
    ```
 
-7. **Start the Main Program (Two Modes)**
+8. **Start the Main Program (Two Modes)**
 
 * **Database Mode (Default)**
   `main.py` will poll the `stream_configs` table and dynamically start/restart/stop stream subprocesses.
@@ -254,7 +285,7 @@ Before running the application, prepare your stream configuration file `config/c
 > To stop: Press `Ctrl + C` to gracefully terminate all subprocesses and release resources.
 > `.env` will be loaded automatically at startup (`python-dotenv`).
 
-8. **Frontend Page (Cloud Demo)**
+9. **Frontend Page (Cloud Demo)**
    Open: [https://visionnaire-cda17.web.app](https://visionnaire-cda17.web.app)
    Login: `user` / `password`
 

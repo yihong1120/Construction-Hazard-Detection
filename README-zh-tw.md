@@ -27,7 +27,7 @@
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
    </a>
    <a href="https://fastapi.tiangolo.com/">
-      <img src="https://img.shields.io/badge/fastapi-0.115.4-blue?logo=fastapi" alt="FastAPI 0.115.4">
+   <img src="https://img.shields.io/badge/fastapi-0.115.5-blue?logo=fastapi" alt="FastAPI 0.115.5">
    </a>
    <a href="https://redis.io/">
       <img src="https://img.shields.io/badge/Redis-7.0.15-red?logo=redis" alt="Redis 7.0.15">
@@ -52,6 +52,9 @@
    </a>
    <a href="https://universe.roboflow.com/object-detection-qn97p/construction-hazard-detection">
       <img src="https://app.roboflow.com/images/download-dataset-badge.svg" alt="Download Dataset from Roboflow">
+   </a>
+   <a href="https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO11">
+      <img src="https://img.shields.io/badge/HuggingFace-Model%20Repo-yellow?logo=huggingface" alt="Hugging Face Model Repo">
    </a>
 </div>
 
@@ -191,7 +194,35 @@
    pip install -r requirements.txt
    ```
 
-6. **啟動各 API（於專案根目錄執行，建議使用獨立終端分別啟動）**
+6. **從 Hugging Face 下載 YOLO11 權重（存到 models/pt）**
+
+- CLI（下載到 `./models/pt`）
+
+    Hugging Face 模型庫：https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO11
+
+   ```bash
+   hf download \
+     yihong1120/Construction-Hazard-Detection-YOLO11 \
+     --repo-type model \
+     --include "models/pt/*.pt" \
+       --local-dir .
+   ```
+
+- Python（效果相同）
+
+   ```python
+   from huggingface_hub import snapshot_download
+
+   snapshot_download(
+       repo_id="yihong1120/Construction-Hazard-Detection-YOLO11",
+       repo_type="model",
+       local_dir=".",
+       local_dir_use_symlinks=False,
+       allow_patterns=["models/pt/*.pt"],
+   )
+   ```
+
+7. **啟動各 API（於專案根目錄執行，建議使用獨立終端分別啟動）**
 
 * 資料管理（DB Management）
 
@@ -223,7 +254,7 @@
    uvicorn examples.YOLO_server_api.backend.app:app --host 127.0.0.1 --port 8000 --workers 2
    ```
 
-7. **啟動主程式（兩種模式）**
+8. **啟動主程式（兩種模式）**
 
 * **資料庫模式（預設）**
   `main.py` 會每隔固定秒數輪詢資料庫的 `stream_configs`，並動態啟動/重啟/停止各串流的子行程。
@@ -244,7 +275,7 @@
 > 停止程式：按下 `Ctrl + C` 會優雅地結束所有子行程並釋放資源。
 > `.env` 會在啟動時自動載入（`python-dotenv`）。
 
-8. **前端頁面（雲端 Demo）**
+9. **前端頁面（雲端 Demo）**
    開啟：[https://visionnaire-cda17.web.app](https://visionnaire-cda17.web.app)
    登入帳密：`user` / `password`
 
