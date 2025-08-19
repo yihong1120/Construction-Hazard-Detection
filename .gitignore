@@ -22,19 +22,14 @@
 # examples
 !examples/YOLOv8-Fine-Tune/dataset/**
 !examples/Stream-Web/
-!models/yolov8n.pt
-!models/best_yolov8n.pt
+# Ignore all local model artifacts
+models/
 test.py
 __pycache__
 **/logs
 !assets/images/**
 configuration.json
 app copy.py
-!models/pt/best_yolo11x.pt
-!models/pt/best_yolo11l.pt
-!models/pt/best_yolo11m.pt
-!models/pt/best_yolo11s.pt
-!models/pt/best_yolo11n.pt
 examples/streaming_web/frontend/node_modules/**
 examples/streaming_web/frontend/dist/**
 !examples/streaming_web/frontend/package.json
