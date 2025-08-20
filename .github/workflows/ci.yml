@@ -24,6 +24,13 @@ jobs:
           sudo apt-get autoremove -y
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Download model weights (Hugging Face)
+        run: |
+          hf download \
+            yihong1120/Construction-Hazard-Detection-YOLO11 \
+            --repo-type model \
+            --include "models/pt/*.pt" \
+            --local-dir .
       - name: Run tests and collect coverage
         run: pytest --cov=main.py --cov=src --cov=examples tests/ -n auto
       - name: Upload coverage to Codecov
