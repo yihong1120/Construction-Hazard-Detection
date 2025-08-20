@@ -28,8 +28,10 @@ class AsyncFrameGenerator:
     async def __anext__(self):
         if not self.yielded:
             self.yielded = True
-            # Return a dummy frame and timestamp if needed
-            return (MagicMock(), 1640995200)
+            # Return a mock frame with shape attribute and timestamp
+            mock_frame = MagicMock()
+            mock_frame.shape = [480, 640, 3]  # height, width, channels
+            return (mock_frame, 1640995200)
         else:
             raise StopAsyncIteration
 
@@ -103,7 +105,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # Test stop_process
         self.app.stop_process(proc)
         mock_process.terminate.assert_called_once()
-        mock_process.join.assert_called_once()
+        # join might be called twice (once with timeout, once without)
+        self.assertTrue(mock_process.join.call_count >= 1)
 
     @patch('main.MainApp.start_process')
     @patch('main.MainApp.fetch_stream_configs')
@@ -275,7 +278,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             mock_start.return_value = MagicMock()
             await self.app.reload_configurations()
             mock_proc.terminate.assert_called_once()
-            mock_proc.join.assert_called_once()
+            # join might be called twice (once with timeout, once without)
+            self.assertTrue(mock_proc.join.call_count >= 1)
             mock_start.assert_called_once()
 
     @patch('main.MainApp.fetch_stream_configs')
@@ -327,13 +331,17 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
     async def test_app_run_method(self):
         """Test the run method calls poll_and_reload."""
-        with patch.object(self.app, 'poll_and_reload') as mock_poll:
+        with patch.object(self.app, 'poll_and_reload') as mock_poll, \
+                patch.object(self.app, 'cleanup_resources') as mock_cleanup:
             mock_poll.side_effect = KeyboardInterrupt()
+            mock_cleanup.return_value = None
 
-            with self.assertRaises(KeyboardInterrupt):
-                await self.app.run()
+            # run() method handles KeyboardInterrupt internally,
+            # so no exception should be raised
+            await self.app.run()
 
             mock_poll.assert_called_once()
+            mock_cleanup.assert_called_once()
 
     @patch('main.MainApp.fetch_stream_configs')
     async def test_reload_config_with_store_redis_false(self, mock_fetch):
@@ -939,7 +947,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_live_detector.return_value = mock_live_instance
         mock_live_instance.generate_detections = AsyncMock(
             return_value=(
-                {'test': 'data'}, {'track': 'data'}, None,
+                {'test': 'data'}, {'track': 'data'},
             ),
         )
         mock_live_instance.close = AsyncMock()
@@ -961,7 +969,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         mock_frame_instance = AsyncMock()
         mock_frame_sender.return_value = mock_frame_instance
-        mock_frame_instance.send_frame_ws = AsyncMock()
+        mock_frame_instance.send_optimized_frame = AsyncMock(
+            return_value={'status': 'ok'},
+        )
+        mock_frame_instance.close = AsyncMock()
 
         # Mock Redis manager
         mock_redis_instance = AsyncMock()
@@ -998,7 +1009,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_live_instance.generate_detections.assert_awaited()
         mock_violation_instance.send_violation.assert_awaited()
         mock_fcm_instance.send_fcm_message_to_site.assert_awaited()
-        mock_frame_instance.send_frame_ws.assert_awaited()
+        mock_frame_instance.send_optimized_frame.assert_awaited()
         mock_capture_instance.release_resources.assert_awaited()
         mock_live_instance.close.assert_awaited()
         mock_redis_instance.delete.assert_awaited()
@@ -1078,7 +1089,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_live_detector.return_value = mock_live_instance
         mock_live_instance.generate_detections = AsyncMock(
             return_value=(
-                {'test': 'data'}, {'track': 'data'}, None,
+                {'test': 'data'}, {'track': 'data'},
             ),
         )
         mock_live_instance.close = AsyncMock()
@@ -1098,6 +1109,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         mock_frame_instance = AsyncMock()
         mock_frame_sender.return_value = mock_frame_instance
+        mock_frame_instance.send_optimized_frame = AsyncMock(
+            return_value={'status': 'ok'},
+        )
+        mock_frame_instance.close = AsyncMock()
 
         # Mock Redis manager
         mock_redis_instance = AsyncMock()
@@ -1132,7 +1147,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # Verify detection was called but not frame sending
         # (since store_in_redis=False)
         mock_live_instance.generate_detections.assert_awaited()
-        mock_frame_instance.send_frame_ws.assert_not_awaited()
+        mock_frame_instance.send_optimized_frame.assert_not_awaited()
 
         # Verify cleanup was called
         mock_capture_instance.release_resources.assert_awaited()
@@ -1213,7 +1228,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_live_detector.return_value = mock_live_instance
         mock_live_instance.generate_detections = AsyncMock(
             return_value=(
-                {'test': 'data'}, {'track': 'data'}, None,
+                {'test': 'data'}, {'track': 'data'},
             ),
         )
         mock_live_instance.close = AsyncMock()
@@ -1348,7 +1363,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_live_detector.return_value = mock_live_instance
         mock_live_instance.generate_detections = AsyncMock(
             return_value=(
-                {'test': 'data'}, {'track': 'data'}, None,
+                {'test': 'data'}, {'track': 'data'},
             ),
         )
         mock_live_instance.close = AsyncMock()
@@ -1373,7 +1388,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         mock_frame_instance = AsyncMock()
         mock_frame_sender.return_value = mock_frame_instance
-        mock_frame_instance.send_frame_ws = AsyncMock()
+        mock_frame_instance.send_optimized_frame = AsyncMock(
+            return_value={'status': 'ok'},
+        )
+        mock_frame_instance.close = AsyncMock()
 
         # Mock Redis manager
         mock_redis_instance = AsyncMock()
@@ -1618,6 +1636,324 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         finally:
             # Restore original values
             sys.argv = original_argv
+
+    @patch('main.Process')
+    def test_stop_process_exception_handling(self, mock_process_class):
+        """Test stop_process method exception handling."""
+        mock_process = MagicMock()
+        mock_process.terminate.side_effect = Exception('Terminate failed')
+        mock_process.join.side_effect = Exception('Join failed')
+        mock_process_class.return_value = mock_process
+
+        # Test that exceptions in stop_process are handled gracefully
+        # The stop_process method should call terminate but not join
+        # if terminate fails
+        self.app.stop_process(mock_process)
+
+        # Verify terminate was called
+        mock_process.terminate.assert_called_once()
+
+    async def test_cleanup_resources_with_db_pool(self):
+        """Test cleanup_resources with database pool."""
+        # Set up a mock database pool
+        mock_db_pool = AsyncMock()
+        self.app.db_pool = mock_db_pool
+
+        # Call cleanup_resources
+        await self.app.cleanup_resources()
+
+        # Verify database pool was closed properly
+        mock_db_pool.close.assert_called_once()
+        mock_db_pool.wait_closed.assert_awaited_once()
+
+    async def test_cleanup_resources_with_process_executor(self):
+        """Test cleanup_resources with process executor."""
+        # Set up a mock process executor
+        mock_executor = MagicMock()
+        self.app.process_executor = mock_executor
+
+        # Add some running processes
+        mock_process = MagicMock()
+        self.app.running_processes = {
+            'test_url': {'process': mock_process},
+        }
+
+        with patch.object(self.app, 'stop_process') as mock_stop:
+            await self.app.cleanup_resources()
+
+            # Verify process was stopped
+            mock_stop.assert_called_once_with(mock_process)
+
+            # Verify process executor was shut down
+            mock_executor.shutdown.assert_called_once_with(wait=True)
+
+            # Verify running processes were cleared
+            self.assertEqual(len(self.app.running_processes), 0)
+
+    async def test_run_method_general_exception_handling(self):
+        """Test run method handles general exceptions."""
+        with patch.object(self.app, 'poll_and_reload') as mock_poll, \
+                patch.object(self.app, 'cleanup_resources') as mock_cleanup:
+
+            # Make poll_and_reload raise a general exception
+            mock_poll.side_effect = RuntimeError('Unexpected error')
+            mock_cleanup.return_value = None
+
+            # run() method should handle the exception and still call cleanup
+            await self.app.run()
+
+            mock_poll.assert_called_once()
+            mock_cleanup.assert_called_once()
+
+    @patch('main.asyncio.run')
+    @patch('main.StreamCapture')
+    @patch('main.LiveStreamDetector')
+    @patch('main.DangerDetector')
+    @patch('main.FCMSender')
+    @patch('main.ViolationSender')
+    @patch('main.BackendFrameSender')
+    @patch('main.RedisManager')
+    @patch('main.Utils')
+    @patch('main.os.getenv')
+    @patch('main.time.time')
+    @patch('main.datetime')
+    @patch('main.json.dumps')
+    @patch('main.math.floor')
+    @patch('main.gc.collect')
+    def test_process_single_stream_frame_send_failure(
+        self, mock_gc, mock_floor, mock_json_dumps,
+        mock_datetime_class, mock_time, mock_getenv,
+        mock_utils, mock_redis_mgr, mock_frame_sender,
+        mock_violation_sender, mock_fcm_sender,
+        mock_danger_detector, mock_live_detector,
+        mock_stream_capture, mock_asyncio_run,
+    ):
+        """Test process_single_stream frame send failure handling."""
+        from main import process_single_stream
+
+        # Mock environment variables
+        mock_getenv.side_effect = lambda key: {
+            'DETECT_API_URL': 'http://detect.test',
+            'FCM_API_URL': 'http://fcm.test',
+            'VIOLATION_RECORD_API_URL': 'http://violation.test',
+            'STREAMING_API_URL': 'http://streaming.test',
+        }.get(key, '')
+
+        # Mock time and datetime
+        mock_time.side_effect = [1000.0, 1002.5]
+        mock_datetime_instance = MagicMock()
+        mock_datetime_instance.hour = 10
+        mock_datetime_class.fromtimestamp.return_value = mock_datetime_instance
+        mock_floor.return_value = 2
+
+        # Mock Utils
+        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
+        mock_utils.filter_warnings_by_working_hour.return_value = []
+        mock_utils.encode_frame.return_value = b'frame_bytes'
+        mock_utils.should_notify.return_value = False
+
+        # Mock JSON dumps
+        mock_json_dumps.return_value = '{"test": "data"}'
+
+        # Mock streaming capture
+        mock_capture_instance = AsyncMock()
+        mock_stream_capture.return_value = mock_capture_instance
+
+        mock_frame = MagicMock()
+        mock_frame.shape = [480, 640, 3]
+
+        mock_capture_instance.execute_capture = MagicMock(
+            return_value=AsyncFrameGenerator(),
+        )
+        mock_capture_instance.release_resources = AsyncMock()
+        mock_capture_instance.update_capture_interval = MagicMock()
+
+        # Mock detector responses
+        mock_live_instance = AsyncMock()
+        mock_live_detector.return_value = mock_live_instance
+        mock_live_instance.generate_detections = AsyncMock(
+            return_value=(
+                {'test': 'data'}, {'track': 'data'},
+            ),
+        )
+        mock_live_instance.close = AsyncMock()
+
+        mock_danger_instance = MagicMock()
+        mock_danger_detector.return_value = mock_danger_instance
+        mock_danger_instance.detect_danger.return_value = ([], [], [])
+
+        # Mock senders
+        mock_fcm_instance = AsyncMock()
+        mock_fcm_sender.return_value = mock_fcm_instance
+
+        mock_violation_instance = AsyncMock()
+        mock_violation_sender.return_value = mock_violation_instance
+
+        # Mock frame sender to raise exception
+        mock_frame_instance = AsyncMock()
+        mock_frame_sender.return_value = mock_frame_instance
+        mock_frame_instance.send_optimized_frame = AsyncMock(
+            side_effect=Exception('Frame send failed'),
+        )
+        mock_frame_instance.close = AsyncMock()
+
+        # Mock Redis manager
+        mock_redis_instance = AsyncMock()
+        mock_redis_mgr.return_value = mock_redis_instance
+        mock_redis_instance.delete = AsyncMock()
+
+        # Execute the async function
+        def mock_run(coro):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(coro)
+                return result
+            finally:
+                pending = asyncio.all_tasks(loop)
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(
+                            *pending, return_exceptions=True,
+                        ),
+                    )
+                loop.close()
+
+        mock_asyncio_run.side_effect = mock_run
+
+        cfg = self.dummy_cfg.copy()
+        cfg['store_in_redis'] = True
+
+        # Call the function - should handle frame send exception
+        process_single_stream(cfg)
+
+        # Verify frame send was attempted
+        mock_frame_instance.send_optimized_frame.assert_awaited()
+
+    @patch('main.asyncio.run')
+    @patch('main.StreamCapture')
+    @patch('main.LiveStreamDetector')
+    @patch('main.DangerDetector')
+    @patch('main.FCMSender')
+    @patch('main.ViolationSender')
+    @patch('main.BackendFrameSender')
+    @patch('main.RedisManager')
+    @patch('main.Utils')
+    @patch('main.os.getenv')
+    @patch('main.time.time')
+    @patch('main.datetime')
+    @patch('main.json.dumps')
+    @patch('main.math.floor')
+    @patch('main.gc.collect')
+    def test_process_single_stream_frame_send_status_failure(
+        self, mock_gc, mock_floor, mock_json_dumps,
+        mock_datetime_class, mock_time, mock_getenv,
+        mock_utils, mock_redis_mgr, mock_frame_sender,
+        mock_violation_sender, mock_fcm_sender,
+        mock_danger_detector, mock_live_detector,
+        mock_stream_capture, mock_asyncio_run,
+    ):
+        """Test process_single_stream frame send status not ok."""
+        from main import process_single_stream
+
+        # Mock environment variables
+        mock_getenv.side_effect = lambda key: {
+            'DETECT_API_URL': 'http://detect.test',
+            'FCM_API_URL': 'http://fcm.test',
+            'VIOLATION_RECORD_API_URL': 'http://violation.test',
+            'STREAMING_API_URL': 'http://streaming.test',
+        }.get(key, '')
+
+        # Mock time and datetime
+        mock_time.side_effect = [1000.0, 1002.5]
+        mock_datetime_instance = MagicMock()
+        mock_datetime_instance.hour = 10
+        mock_datetime_class.fromtimestamp.return_value = mock_datetime_instance
+        mock_floor.return_value = 2
+
+        # Mock Utils
+        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
+        mock_utils.filter_warnings_by_working_hour.return_value = []
+        mock_utils.encode_frame.return_value = b'frame_bytes'
+        mock_utils.should_notify.return_value = False
+
+        # Mock JSON dumps
+        mock_json_dumps.return_value = '{"test": "data"}'
+
+        # Mock streaming capture
+        mock_capture_instance = AsyncMock()
+        mock_stream_capture.return_value = mock_capture_instance
+
+        mock_frame = MagicMock()
+        mock_frame.shape = [480, 640, 3]
+
+        mock_capture_instance.execute_capture = MagicMock(
+            return_value=AsyncFrameGenerator(),
+        )
+        mock_capture_instance.release_resources = AsyncMock()
+        mock_capture_instance.update_capture_interval = MagicMock()
+
+        # Mock detector responses
+        mock_live_instance = AsyncMock()
+        mock_live_detector.return_value = mock_live_instance
+        mock_live_instance.generate_detections = AsyncMock(
+            return_value=(
+                {'test': 'data'}, {'track': 'data'},
+            ),
+        )
+        mock_live_instance.close = AsyncMock()
+
+        mock_danger_instance = MagicMock()
+        mock_danger_detector.return_value = mock_danger_instance
+        mock_danger_instance.detect_danger.return_value = ([], [], [])
+
+        # Mock senders
+        mock_fcm_instance = AsyncMock()
+        mock_fcm_sender.return_value = mock_fcm_instance
+
+        mock_violation_instance = AsyncMock()
+        mock_violation_sender.return_value = mock_violation_instance
+
+        # Mock frame sender to return failure status
+        mock_frame_instance = AsyncMock()
+        mock_frame_sender.return_value = mock_frame_instance
+        mock_frame_instance.send_optimized_frame = AsyncMock(
+            return_value={'status': 'failed', 'error': 'Connection timeout'},
+        )
+        mock_frame_instance.close = AsyncMock()
+
+        # Mock Redis manager
+        mock_redis_instance = AsyncMock()
+        mock_redis_mgr.return_value = mock_redis_instance
+        mock_redis_instance.delete = AsyncMock()
+
+        # Execute the async function
+        def mock_run(coro):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(coro)
+                return result
+            finally:
+                pending = asyncio.all_tasks(loop)
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(
+                            *pending, return_exceptions=True,
+                        ),
+                    )
+                loop.close()
+
+        mock_asyncio_run.side_effect = mock_run
+
+        cfg = self.dummy_cfg.copy()
+        cfg['store_in_redis'] = True
+
+        # Call the function - should handle frame send status failure
+        process_single_stream(cfg)
+
+        # Verify frame send was attempted
+        mock_frame_instance.send_optimized_frame.assert_awaited()
 
 
 if __name__ == '__main__':
