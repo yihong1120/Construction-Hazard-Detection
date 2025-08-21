@@ -1,9 +1,3 @@
-"""Comprehensive test suite for YOLO model management functionality.
-
-This module provides extensive test coverage for the DetectionModelManager and
-ModelFileChangeHandler classes, ensuring robust model loading, hot-reloading,
-and lifecycle management functionality.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -67,7 +61,9 @@ class TestDetectionModelManager(unittest.TestCase):
         if not hasattr(examples.YOLO_server_api.backend.models, 'YOLO'):
             mock_yolo = Mock()
             mock_yolo.return_value = Mock()
-            examples.YOLO_server_api.backend.models.YOLO = mock_yolo
+            examples.YOLO_server_api.backend.models.YOLO = (
+                mock_yolo
+            )
 
         # Mock all the necessary components to prevent actual model loading
         self.mock_observer = patch(
@@ -94,16 +90,79 @@ class TestDetectionModelManager(unittest.TestCase):
         """
         Test loading a single model into the manager.
         """
-        # Get the mock from the module
-        mock_auto_detection = (
-            examples.YOLO_server_api.backend.models.AutoDetectionModel
-        )
-        # The call count might be higher due to multiple test runs,
-        # so we just check that it was called for yolo11n
-        mock_auto_detection.from_pretrained.assert_any_call(
-            'yolo11', model_path=str(Path('models/pt/best_yolo11n.pt')),
-            device='cuda:0',
-        )
+        # Test both SAHI and standard modes
+
+        # Test SAHI mode first
+        with (
+            patch.object(Path, 'exists', return_value=True),
+            patch('builtins.__import__') as mock_import,
+        ):
+            # Setup the mock for SAHI import
+            mock_sahi_module = Mock()
+            mock_auto_detection_class = Mock()
+            mock_model_instance = Mock()
+            mock_auto_detection_class.from_pretrained.return_value = (
+                mock_model_instance
+            )
+            mock_sahi_module.AutoDetectionModel = mock_auto_detection_class
+
+            def side_effect(name, *args, **kwargs):
+                if 'sahi.predict' in name:
+                    return mock_sahi_module
+                else:
+                    # Call the original import for other modules
+                    return __import__(name, *args, **kwargs)
+
+            mock_import.side_effect = side_effect
+
+            # Create a manager instance and test SAHI mode explicitly
+            manager = DetectionModelManager.__new__(DetectionModelManager)
+            manager.base_model_path = Path('models/pt/')
+            manager.extension = '.pt'
+
+            # Test SAHI mode by simulating it
+            with patch(
+                'examples.YOLO_server_api.backend.models.USE_SAHI', True,
+            ):
+                result = manager.load_single_model('yolo11n')
+
+                # Verify from_pretrained was called correctly
+                mock_auto_detection_class.from_pretrained.assert_called_with(
+                    'yolo11',
+                    model_path=str(Path('models/pt/best_yolo11n.pt')),
+                    device='cuda:0',
+                )
+                self.assertEqual(result, mock_model_instance)
+
+        # Test standard PyTorch mode
+        with (
+            patch.object(Path, 'exists', return_value=True),
+            patch('examples.YOLO_server_api.backend.models.YOLO') as mock_yolo,
+        ):
+            mock_yolo_instance = Mock()
+            mock_yolo.return_value = mock_yolo_instance
+
+            manager = DetectionModelManager.__new__(DetectionModelManager)
+            manager.base_model_path = Path('models/pt/')
+            manager.extension = '.pt'
+
+            # Test standard mode
+            with (
+                patch(
+                    'examples.YOLO_server_api.backend.models.USE_SAHI', False,
+                ),
+                patch(
+                    'examples.YOLO_server_api.backend.models.USE_TENSORRT',
+                    False,
+                ),
+            ):
+                result = manager.load_single_model('yolo11n')
+
+                # Verify YOLO was called correctly
+                mock_yolo.assert_called_with(
+                    str(Path('models/pt/best_yolo11n.pt')),
+                )
+                self.assertEqual(result, mock_yolo_instance)
 
     def test_get_model(self) -> None:
         """
@@ -139,9 +198,12 @@ class TestDetectionModelManager(unittest.TestCase):
             True,
         ):
             # Create a fresh mock for this test
-            with patch(
-                'examples.YOLO_server_api.backend.models.YOLO',
-            ) as mock_yolo_fresh:
+            with (
+                patch(
+                    'examples.YOLO_server_api.backend.models.YOLO',
+                ) as mock_yolo_fresh,
+                patch.object(Path, 'exists', return_value=True),
+            ):
                 mock_yolo_fresh.return_value = Mock()
 
                 # Create a manager instance and test load_single_model directly
@@ -172,7 +234,12 @@ class TestDetectionModelManager(unittest.TestCase):
             patch(
                 'examples.YOLO_server_api.backend.models.USE_TENSORRT', True,
             ),
+            patch(
+                'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS',
+                False,
+            ),
             patch('examples.YOLO_server_api.backend.models.YOLO') as mock_yolo,
+            patch.object(Path, 'exists', return_value=True),
         ):
 
             mock_yolo.return_value = Mock()
@@ -221,6 +288,92 @@ class TestDetectionModelManager(unittest.TestCase):
                 ),
             )
 
+    def test_sahi_import_failure(self) -> None:
+        """
+        Test SAHI import failure handling.
+        """
+        with (
+            patch.object(Path, 'exists', return_value=True),
+            patch('builtins.__import__') as mock_import,
+        ):
+            # Mock import to raise an exception for SAHI
+            def side_effect(name, *args, **kwargs):
+                if 'sahi.predict' in name:
+                    raise ImportError('SAHI not installed')
+                else:
+                    return __import__(name, *args, **kwargs)
+
+            mock_import.side_effect = side_effect
+
+            manager = DetectionModelManager.__new__(DetectionModelManager)
+            manager.base_model_path = Path('models/pt/')
+            manager.extension = '.pt'
+
+            # Test SAHI mode with import failure
+            with patch(
+                'examples.YOLO_server_api.backend.models.USE_SAHI', True,
+            ):
+                with self.assertRaises(RuntimeError) as cm:
+                    manager.load_single_model('yolo11n')
+
+                self.assertIn(
+                    'SAHI mode is enabled but the sahi package is not '
+                    'installed',
+                    str(cm.exception),
+                )
+
+    def test_file_not_found_errors(self) -> None:
+        """
+        Test FileNotFoundError handling for all model types.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.base_model_path = Path('models/pt/')
+        manager.extension = '.pt'
+
+        # Test SAHI mode with missing file
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_SAHI', True,
+            ),
+            patch.object(Path, 'exists', return_value=False),
+        ):
+            with self.assertRaises(FileNotFoundError) as cm:
+                manager.load_single_model('nonexistent')
+            self.assertIn('Model file not found', str(cm.exception))
+
+        # Test TensorRT mode with missing file
+        manager.base_model_path = Path('models/int8_engine/')
+        manager.extension = '.engine'
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_SAHI', False,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_TENSORRT', True,
+            ),
+            patch.object(Path, 'exists', return_value=False),
+        ):
+            with self.assertRaises(FileNotFoundError) as cm:
+                manager.load_single_model('nonexistent')
+            self.assertIn('Model file not found', str(cm.exception))
+
+        # Test standard mode with missing file
+        manager.base_model_path = Path('models/pt/')
+        manager.extension = '.pt'
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_SAHI', False,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_TENSORRT',
+                False,
+            ),
+            patch.object(Path, 'exists', return_value=False),
+        ):
+            with self.assertRaises(FileNotFoundError) as cm:
+                manager.load_single_model('nonexistent')
+            self.assertIn('Model file not found', str(cm.exception))
+
     def test_get_available_models(self) -> None:
         """
         Test getting available models with mixed loaded/failed models.
@@ -265,13 +418,14 @@ class TestDetectionModelManager(unittest.TestCase):
         """
         # Mock the load_single_model method
         mock_model = Mock()
-        self.model_manager.load_single_model = Mock(return_value=mock_model)
-
-        # Test successful reload
-        result = self.model_manager.reload_model('yolo11x')
-        self.assertTrue(result)
-        self.model_manager.load_single_model.assert_called_once_with('yolo11x')
-        self.assertEqual(self.model_manager.models['yolo11x'], mock_model)
+        with patch.object(
+            self.model_manager, 'load_single_model', return_value=mock_model,
+        ) as mock_load:
+            # Test successful reload
+            result = self.model_manager.reload_model('yolo11x')
+            self.assertTrue(result)
+            mock_load.assert_called_once_with('yolo11x')
+            self.assertEqual(self.model_manager.models['yolo11x'], mock_model)
 
     def test_reload_model_invalid_name(self) -> None:
         """
@@ -281,18 +435,127 @@ class TestDetectionModelManager(unittest.TestCase):
         result = self.model_manager.reload_model('invalid_model')
         self.assertFalse(result)
 
+    def test_safe_load_invalid_name(self) -> None:
+        """
+        Test _safe_load with invalid model name.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.model_names = ['valid_model']
+
+        # Test with invalid name - should return early
+        manager._safe_load('invalid_model')
+        # No assertion needed, just ensuring it doesn't crash
+
+    def test_safe_load_already_loaded(self) -> None:
+        """
+        Test _safe_load when model is already loaded.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.model_names = ['test_model']
+        manager.models = {'test_model': Mock()}
+        manager._lru_order = []
+
+        with patch.object(manager, '_touch_lru') as mock_touch:
+            # Test when model is already loaded
+            manager._safe_load('test_model')
+
+            # Should call _touch_lru but not load the model again
+            mock_touch.assert_called_once_with('test_model')
+
+    def test_safe_load_exception_handling(self) -> None:
+        """
+        Test _safe_load exception handling.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.model_names = ['test_model']
+        manager.base_model_path = Path('models/pt/')
+        manager.extension = '.pt'
+        manager.models = {'test_model': None}
+        manager._lru_order = []
+
+        with (
+            patch.object(
+                manager, 'load_single_model',
+                side_effect=Exception('Load failed'),
+            ),
+            patch.object(manager, '_touch_lru') as mock_touch,
+            patch.object(manager, '_enforce_lru_limit') as mock_enforce,
+        ):
+            # Call _safe_load
+            manager._safe_load('test_model')
+
+            # Verify model is set to None on failure
+            self.assertIsNone(manager.models['test_model'])
+            mock_touch.assert_not_called()
+            mock_enforce.assert_not_called()
+
     def test_reload_model_failure(self) -> None:
         """
         Test model reloading failure handling.
         """
-        # Mock load_single_model to raise an exception
-        self.model_manager.load_single_model = Mock(
+        with patch.object(
+            self.model_manager, 'load_single_model',
             side_effect=Exception('Model loading failed'),
-        )
+        ):
+            # Test reload failure
+            result = self.model_manager.reload_model('yolo11x')
+            self.assertFalse(result)
 
-        # Test reload failure
-        result = self.model_manager.reload_model('yolo11x')
-        self.assertFalse(result)
+    def test_no_lazy_load_mode(self) -> None:
+        """
+        Test _enforce_lru_limit when lazy loading is disabled.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.models = {'model1': Mock(), 'model2': Mock()}
+        manager._lru_order = ['model1', 'model2']
+
+        with patch(
+            'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS', False,
+        ):
+            # Should return early without doing anything
+            manager._enforce_lru_limit()
+
+            # Models should remain unchanged
+            self.assertIsNotNone(manager.models['model1'])
+            self.assertIsNotNone(manager.models['model2'])
+
+    def test_type_checking_import(self) -> None:
+        """
+        Test the TYPE_CHECKING import block for coverage.
+        """
+        # This is a bit tricky since TYPE_CHECKING is False at runtime
+        # We can at least verify the import structure is correct
+        import typing
+
+        with patch.object(typing, 'TYPE_CHECKING', True):
+            # Reload the module to trigger the TYPE_CHECKING block
+            import importlib
+            importlib.reload(examples.YOLO_server_api.backend.models)
+
+            # The module should still work
+            self.assertTrue(
+                hasattr(examples.YOLO_server_api.backend.models, 'ModelType'),
+            )
+
+    def test_get_model_lazy_loading(self) -> None:
+        """
+        Test get_model with lazy loading behavior.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.models = {'test_model': None}
+
+        with (
+            patch.object(manager, '_safe_load') as mock_safe_load,
+            patch.object(manager, '_touch_lru') as mock_touch,
+        ):
+            # Test when model is None - should trigger lazy loading
+            manager.get_model('test_model')
+            mock_safe_load.assert_called_once_with('test_model')
+
+            # Test when model exists - should update LRU
+            manager.models['test_model'] = Mock()
+            manager.get_model('test_model')
+            mock_touch.assert_called_with('test_model')
 
     def test_destructor_without_observer(self) -> None:
         """
@@ -359,12 +622,14 @@ class TestModelFileChangeHandler(unittest.TestCase):
         event.is_directory = False
         event.src_path = 'models/pt/best_yolo11n.pt'
 
+        # Mock the _safe_load method instead of load_single_model
+        self.model_manager._safe_load = Mock()
+
         # Trigger the file modification event
         self.handler.on_modified(event)
 
-        # Verify the model was reloaded
-        self.model_manager.load_single_model.assert_called_once_with('yolo11n')
-        self.assertEqual(self.model_manager.models['yolo11n'], 'dummy_model')
+        # Verify the _safe_load method was called
+        self.model_manager._safe_load.assert_called_once_with('yolo11n')
 
     def test_on_modified_with_wrong_extension(self) -> None:
         """
@@ -423,6 +688,310 @@ class TestDatabase(unittest.TestCase):
 
         # Close session to avoid resource leak
         asyncio.run(session.close())
+
+
+class TestLRUEviction(unittest.TestCase):
+    """Comprehensive test cases for LRU eviction logic.
+
+    Tests the complete LRU eviction workflow including edge cases,
+    error handling, and different configuration scenarios.
+    """
+
+    def test_lru_eviction_comprehensive(self) -> None:
+        """
+        Test comprehensive LRU eviction scenarios.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+
+        # Test single model eviction
+        manager.models = {'model1': Mock()}
+        manager._lru_order = ['model1']
+
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS',
+                True,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.MAX_LOADED_MODELS',
+                0,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_TENSORRT',
+                False,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.'
+                'models.EXPLICIT_CUDA_CLEANUP',
+                True,
+            ),
+            patch('torch.cuda.empty_cache') as m_c,
+        ):
+            manager._enforce_lru_limit()
+
+            # Verify eviction
+            self.assertIsNone(manager.models['model1'])
+            self.assertEqual(manager._lru_order, [])
+            m_c.assert_called()
+
+    def test_lru_multiple_evictions(self) -> None:
+        """
+        Test multiple model evictions.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+
+        # Setup multiple loaded models
+        manager.models = {
+            'model1': Mock(),
+            'model2': Mock(),
+            'model3': None,
+        }
+        manager._lru_order = ['model1', 'model2']
+
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS',
+                True,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.MAX_LOADED_MODELS',
+                1,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_TENSORRT',
+                False,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.'
+                'models.EXPLICIT_CUDA_CLEANUP',
+                True,
+            ),
+            patch('torch.cuda.empty_cache') as m_c,
+        ):
+            manager._enforce_lru_limit()
+
+            # Should evict oldest model (model1)
+            self.assertIsNone(manager.models['model1'])
+            self.assertIsNotNone(manager.models['model2'])
+            self.assertEqual(manager._lru_order, ['model2'])
+            m_c.assert_called()
+
+    def test_cuda_cleanup_exception_handling(self) -> None:
+        """
+        Test CUDA cleanup exception handling.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.models = {'model1': Mock()}
+        manager._lru_order = ['model1']
+
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS',
+                True,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.MAX_LOADED_MODELS',
+                0,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_TENSORRT',
+                False,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.'
+                'models.EXPLICIT_CUDA_CLEANUP',
+                True,
+            ),
+            patch(
+                'torch.cuda.empty_cache',
+                side_effect=Exception('CUDA error'),
+            ),
+        ):
+            # Should not raise exception
+            manager._enforce_lru_limit()
+
+            # Model should still be evicted despite CUDA cleanup failure
+            self.assertIsNone(manager.models['model1'])
+
+    def test_torch_import_failure(self) -> None:
+        """
+        Test torch import failure in CUDA cleanup.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.models = {'model1': Mock()}
+        manager._lru_order = ['model1']
+
+        # Mock torch module to raise ImportError
+        import sys
+        original_modules = sys.modules.copy()
+        if 'torch' in sys.modules:
+            del sys.modules['torch']
+
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS',
+                True,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.MAX_LOADED_MODELS',
+                0,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_TENSORRT',
+                False,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.'
+                'models.EXPLICIT_CUDA_CLEANUP',
+                True,
+            ),
+            patch.dict(
+                sys.modules, {'torch': None},
+            ),  # Make torch import fail
+        ):
+            # Should not raise exception even if torch import fails
+            manager._enforce_lru_limit()
+
+            # Model should still be evicted
+            self.assertIsNone(manager.models['model1'])
+
+        # Restore original modules
+        sys.modules.clear()
+        sys.modules.update(original_modules)
+
+    def test_eviction_with_tensorrt_mode(self) -> None:
+        """
+        Test eviction without CUDA cleanup in TensorRT mode.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.models = {'model1': Mock()}
+        manager._lru_order = ['model1']
+
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS',
+                True,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.MAX_LOADED_MODELS',
+                0,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_TENSORRT',
+                True,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.'
+                'models.EXPLICIT_CUDA_CLEANUP',
+                True,
+            ),
+            patch('torch.cuda.empty_cache') as m_c,
+        ):
+            manager._enforce_lru_limit()
+
+            # Verify eviction without CUDA cleanup
+            self.assertIsNone(manager.models['model1'])
+            m_c.assert_not_called()
+
+    def test_eviction_exception_handling(self) -> None:
+        """
+        Test exception handling during eviction process.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+
+        # Create a custom dict that fails on None assignment
+        class FailingDict(dict):
+            def __setitem__(self, key, value):
+                if value is None:
+                    raise Exception('Simulated failure')
+                super().__setitem__(key, value)
+
+        failing_dict = FailingDict({'model1': Mock()})
+        manager.models = failing_dict
+        manager._lru_order = ['model1']
+
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS',
+                True,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.MAX_LOADED_MODELS',
+                0,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_TENSORRT',
+                False,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.'
+                'models.EXPLICIT_CUDA_CLEANUP',
+                False,
+            ),
+        ):
+            # Should not raise exception due to outer try-except
+            manager._enforce_lru_limit()
+
+            # Verify model was not evicted due to exception
+            self.assertIsNotNone(manager.models['model1'])
+
+    def test_eviction_empty_lru_order(self) -> None:
+        """
+        Test eviction when LRU order is empty (safety check).
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.models = {'model1': Mock()}
+        manager._lru_order = []  # Empty LRU order
+
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS',
+                True,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.MAX_LOADED_MODELS',
+                0,
+            ),
+        ):
+            # Should not raise exception due to safety check
+            manager._enforce_lru_limit()
+
+            # Model should remain since LRU order is empty
+            self.assertIsNotNone(manager.models['model1'])
+
+    def test_eviction_cleanup_disabled(self) -> None:
+        """
+        Test eviction when CUDA cleanup is disabled.
+        """
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager.models = {'model1': Mock()}
+        manager._lru_order = ['model1']
+
+        with (
+            patch(
+                'examples.YOLO_server_api.backend.models.LAZY_LOAD_MODELS',
+                True,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.MAX_LOADED_MODELS',
+                0,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.models.USE_TENSORRT',
+                False,
+            ),
+            patch(
+                'examples.YOLO_server_api.backend.'
+                'models.EXPLICIT_CUDA_CLEANUP',
+                False,
+            ),
+            patch('torch.cuda.empty_cache') as m_c,
+        ):
+            manager._enforce_lru_limit()
+
+            # Verify eviction without CUDA cleanup
+            self.assertIsNone(manager.models['model1'])
+            m_c.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -127,16 +127,23 @@ class LiveStreamDetector:
 
         # Models (local inference path)
         if not detect_with_server:
+            # Uncomment for local inference using .engine files
+            # (quantised from .pt)
+            # if self.use_ultralytics:
+            #     self.ultralytics_model = YOLO(
+            #         f"models/int8_engine/best_{self.model_key}.engine",
+            #     )
+
             if self.use_ultralytics:
                 self.ultralytics_model = YOLO(
-                    f"models/int8_engine/best_{self.model_key}.engine",
+                    f"models/pt/best_{self.model_key}.pt",
                 )
             else:
                 self.model = AutoDetectionModel.from_pretrained(
                     'yolo11',
                     model_path=str(
-                        Path('models/int8_engine') /
-                        f"best_{self.model_key}.engine",
+                        Path('models/pt') /
+                        f"best_{self.model_key}.pt",
                     ),
                     device='cuda:0',
                 )
@@ -1551,7 +1558,7 @@ async def main() -> None:
     )
 
     # Run detection loop
-    asyncio.run(detector.run_detection(args.url))
+    asyncio.run(detector.run_detection(args.url))  # pragma: no cover
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(main())  # pragma: no cover

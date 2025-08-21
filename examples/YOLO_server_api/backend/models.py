@@ -1,14 +1,3 @@
-"""Model management for YOLO-based detectors.
-
-This module provides a detection model manager that supports:
-- Lazy loading of models
-- LRU-based eviction
-- Hot reloading on file changes
-- TensorRT engines and standard PyTorch (.pt) models
-- Optional SAHI slicing mode for .pt models
-
-All comments and docstrings use British English.
-"""
 from __future__ import annotations
 
 import threading
@@ -216,6 +205,8 @@ class DetectionModelManager:
         loaded_count = len([m for m in self.models.values() if m is not None])
         while loaded_count > MAX_LOADED_MODELS:
             # Remove the least recently used model
+            if not self._lru_order:  # Safety check
+                break
             evict_name = self._lru_order.pop(0)
             if self.models.get(evict_name) is not None:
                 try:
@@ -234,6 +225,9 @@ class DetectionModelManager:
                             pass
                 except Exception:
                     pass
+            # Recalculate loaded count after eviction
+            loaded_count = len(
+                [m for m in self.models.values() if m is not None])
 
     # =============== Public API ==================
     def get_model(self, key: str) -> ModelType | None:

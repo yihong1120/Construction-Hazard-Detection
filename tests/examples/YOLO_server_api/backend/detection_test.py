@@ -62,7 +62,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         mock_imdecode.assert_called_once()
         self.assertIsNotNone(img)
 
-    @patch('examples.YOLO_server_api.backend.detection.USE_TENSORRT', True)
+    @patch('examples.YOLO_server_api.backend.detection.USE_SAHI', False)
     async def test_get_prediction_result_tensorrt(self) -> None:
         """
         Tests obtaining a prediction result with TensorRT enabled.
@@ -76,7 +76,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         model.predict.assert_called_once_with(source=img, verbose=False)
         self.assertIsNotNone(result)
 
-    @patch('examples.YOLO_server_api.backend.detection.USE_TENSORRT', False)
+    @patch('examples.YOLO_server_api.backend.detection.USE_SAHI', True)
     @patch('examples.YOLO_server_api.backend.detection.get_sliced_prediction')
     async def test_get_prediction_result_sahi(
         self,
@@ -193,8 +193,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         Tests calculation of overlap ratio between two bounding boxes.
         """
-        bbox1 = [0, 0, 50, 50]
-        bbox2 = [25, 25, 75, 75]
+        bbox1: list[float] = [0, 0, 50, 50]
+        bbox2: list[float] = [25, 25, 75, 75]
         overlap = overlap_ratio(bbox1, bbox2)
         self.assertGreater(overlap, 0)
         self.assertLessEqual(overlap, 1)
@@ -203,8 +203,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         Tests overlap ratio with no overlapping boxes.
         """
-        bbox1 = [0, 0, 50, 50]
-        bbox2 = [100, 100, 150, 150]
+        bbox1: list[float] = [0, 0, 50, 50]
+        bbox2: list[float] = [100, 100, 150, 150]
         overlap = overlap_ratio(bbox1, bbox2)
         self.assertEqual(overlap, 0)
 
@@ -212,8 +212,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         Tests if one bounding box is contained within another.
         """
-        inner_bbox = [10, 10, 30, 30]
-        outer_bbox = [0, 0, 50, 50]
+        inner_bbox: list[float] = [10, 10, 30, 30]
+        outer_bbox: list[float] = [0, 0, 50, 50]
         result = contained(inner_bbox, outer_bbox)
         self.assertTrue(result)
 
@@ -221,8 +221,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         Tests if one bounding box is NOT contained within another.
         """
-        inner_bbox = [10, 10, 60, 60]
-        outer_bbox = [0, 0, 50, 50]
+        inner_bbox: list[float] = [10, 10, 60, 60]
+        outer_bbox: list[float] = [0, 0, 50, 50]
         result = contained(inner_bbox, outer_bbox)
         self.assertFalse(result)
 
@@ -357,7 +357,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         Tests functions with empty data lists.
         """
-        empty_datas = []
+        empty_datas: list[list[float]] = []
 
         # Test process_labels with empty data
         result = await process_labels(empty_datas.copy())
@@ -375,10 +375,10 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         Tests get_category_indices with empty data.
         """
-        datas = []
+        datas: list[list[float]] = []
         indices = get_category_indices(datas)
 
-        expected = {
+        expected: dict[str, list[int]] = {
             'hardhat': [],
             'no_hardhat': [],
             'safety_vest': [],
@@ -390,8 +390,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         Tests overlap ratio with identical bounding boxes.
         """
-        bbox1 = [0, 0, 50, 50]
-        bbox2 = [0, 0, 50, 50]
+        bbox1: list[float] = [0, 0, 50, 50]
+        bbox2: list[float] = [0, 0, 50, 50]
         overlap = overlap_ratio(bbox1, bbox2)
         self.assertEqual(overlap, 1.0)  # Should be 100% overlap
 
@@ -400,8 +400,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         Tests contained function with edge cases.
         """
         # Test identical boxes
-        bbox1 = [10, 10, 30, 30]
-        bbox2 = [10, 10, 30, 30]
+        bbox1: list[float] = [10, 10, 30, 30]
+        bbox2: list[float] = [10, 10, 30, 30]
         result = contained(bbox1, bbox2)
         self.assertTrue(result)  # Identical boxes are contained
 

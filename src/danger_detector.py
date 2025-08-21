@@ -369,7 +369,7 @@ class DangerDetector:
         return [
             d for d in datas
             if (
-                (d[5] in (8, 10) and (d[6] != -1 or d[7] == 1))
+                (d[5] in (8, 10) and len(d) > 7 and (d[6] != -1 or d[7] == 1))
                 or (d[5] not in (8, 10))
             )
         ]

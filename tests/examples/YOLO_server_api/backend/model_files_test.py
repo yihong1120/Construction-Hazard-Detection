@@ -231,6 +231,53 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
             await get_new_model_file(self.invalid_model, self.updated_time)
         self.assertIn('Invalid model key', str(context.exception))
 
+    @patch('pathlib.Path.resolve')
+    async def test_update_model_file_path_traversal(
+        self,
+        mock_resolve: MagicMock,
+    ) -> None:
+        """
+        Test path traversal security check in update_model_file.
+        """
+        # Mock the resolve method to return a path outside the base directory
+        mock_resolve.side_effect = [
+            Path('/safe/models/pt').resolve(),  # base_dir
+            Path('/unsafe/path/best_yolo11n.pt').resolve(),  # destination_path
+        ]
+
+        with patch('pathlib.Path.is_file', return_value=True):
+            with patch(
+                'pathlib.Path.suffix',
+                new_callable=MagicMock(return_value='.pt'),
+            ):
+                with patch('torch.jit.load', return_value=True):
+                    with self.assertRaises(ValueError) as context:
+                        await update_model_file(
+                            self.valid_model, self.model_file,
+                        )
+                    self.assertIn(
+                        'Attempted path traversal',
+                        str(context.exception),
+                    )
+
+    @patch('pathlib.Path.resolve')
+    async def test_get_new_model_file_path_traversal(
+        self,
+        mock_resolve: MagicMock,
+    ) -> None:
+        """
+        Test path traversal security check in get_new_model_file.
+        """
+        # Mock the resolve method to return a path outside the base directory
+        mock_resolve.side_effect = [
+            Path('/safe/models/pt').resolve(),  # base_dir
+            Path('/unsafe/path/best_yolo11n.pt').resolve(),  # destination_path
+        ]
+
+        with self.assertRaises(ValueError) as context:
+            await get_new_model_file(self.valid_model, self.updated_time)
+        self.assertIn('Attempted path traversal', str(context.exception))
+
 
 if __name__ == '__main__':
     unittest.main()
