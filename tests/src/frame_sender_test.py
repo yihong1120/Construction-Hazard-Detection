@@ -68,57 +68,35 @@ class TestBackendFrameSender(unittest.IsolatedAsyncioTestCase):
     @patch.object(TokenManager, 'is_token_valid', return_value=False)
     @patch.object(TokenManager, 'is_token_expired', return_value=True)
     @patch.object(TokenManager, 'authenticate', new_callable=AsyncMock)
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_frame_no_token_triggers_auth(
         self,
         mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
         mock_auth: AsyncMock,
         mock_is_expired: MagicMock,
         mock_is_valid: MagicMock,
     ) -> None:
-        """
-        Test that frame sending triggers authentication
-        when no token is present.
-
-        Test Flow:
-        1. Clear the shared token to simulate absence of authentication
-        2. Mock a successful HTTP response from the server
-        3. Attempt to send a frame with all optional parameters
-        4. Verify that authentication was triggered
-           and the frame was sent successfully
-
-        Args:
-            mock_post:
-                Mocked HTTP POST method from httpx.AsyncClient for intercepting
-                API calls to the backend server
-            mock_auth:
-                Mocked authenticate method from TokenManager for controlling
-                the authentication process during testing
-
-        Raises:
-            AssertionError:
-                If the authentication behaviour or response handling
-                does not match expected patterns
-        """
-        # Clear the shared token to simulate that no token is available
-        # This forces the sender to initiate the authentication process
+        """When no token exists, authenticate is triggered before POST."""
         self.sender.shared_token.clear()
 
-        # Mock authentication to provide a valid token after auth
+        # Force an auth flow: first token retrieval fails, then succeeds
+        mock_get_valid_token.side_effect = [
+            Exception('Token error'),
+            'new_valid_token',
+        ]
         mock_auth.side_effect = (
             lambda force=None: self.sender.shared_token.update(
                 {'access_token': 'new_valid_token'},
             )
         )
 
-        # Create a fake HTTP response with status 200 and JSON content
-        # This simulates a successful response from the backend server
         mock_response: MagicMock = MagicMock(status_code=200)
         mock_response.json.return_value = {'foo': 'bar'}
-        mock_response.raise_for_status.side_effect = None  # No HTTP errors
+        mock_response.raise_for_status.side_effect = None
         mock_post.return_value = mock_response
 
-        # Attempt to send a frame with all optional detection data
         result: dict[str, str] = await self.sender.send_frame(
             site=self.site,
             stream_name=self.stream_name,
@@ -129,193 +107,99 @@ class TestBackendFrameSender(unittest.IsolatedAsyncioTestCase):
             detection_items_json=self.detection_items_json,
         )
 
-        # Verify that the response matches expected structure
         self.assertEqual(result, {'foo': 'bar'})
-
-        # Verify that authentication was called at least once
-        # The exact count may vary based on token validation logic
-        self.assertGreaterEqual(mock_auth.await_count, 1)
-
-        # Verify that the HTTP POST was called exactly once
+        mock_auth.assert_called_once_with(force=True)
         mock_post.assert_awaited_once()
 
     @patch.object(TokenManager, 'is_token_valid', return_value=True)
     @patch.object(TokenManager, 'is_token_expired', return_value=False)
     @patch.object(TokenManager, 'authenticate', new_callable=AsyncMock)
     @patch.object(TokenManager, 'refresh_token', new_callable=AsyncMock)
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_frame_with_token_success(
         self,
         mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
         mock_refresh: AsyncMock,
         mock_auth: AsyncMock,
         mock_is_expired: MagicMock,
         mock_is_valid: MagicMock,
     ) -> None:
-        """
-        Test successful frame transmission with an existing valid token.
-
-        Test Flow:
-        1. Set up a valid access token in the shared token state
-        2. Mock a successful HTTP response from the backend
-        3. Send a frame with minimal required parameters
-        4. Verify that no authentication or token refresh was triggered
-        5. Confirm that the HTTP POST was executed successfully
-
-        Args:
-            mock_post:
-                Mocked HTTP POST method from httpx.AsyncClient for
-                intercepting API requests to the backend
-            mock_refresh:
-                Mocked refresh_token method from TokenManager for
-                verifying that token refresh is not called
-            mock_auth:
-                Mocked authenticate method from TokenManager for
-                verifying that authentication is not called
-
-        Raises:
-            AssertionError:
-                If authentication or refresh operations are triggered
-                unexpectedly, or if the response handling fails
-        """
-        # Set up a valid access token to simulate authenticated state
-        # This should allow the frame to be sent without additional auth steps
+        """With a valid token, no auth/refresh and POST succeeds."""
         self.sender.shared_token['access_token'] = 'valid_token'
+        mock_get_valid_token.return_value = 'valid_token'
 
-        # Mock a successful HTTP response from the backend server
         mock_response: MagicMock = MagicMock(status_code=200)
         mock_response.json.return_value = {'msg': 'ok'}
-        mock_response.raise_for_status.side_effect = None  # No HTTP errors
+        mock_response.raise_for_status.side_effect = None
         mock_post.return_value = mock_response
 
-        # Send a frame with only the required parameters
-        # (no optional detection data)
         result: dict[str, str] = await self.sender.send_frame(
             site=self.site,
             stream_name=self.stream_name,
             frame_bytes=self.frame_bytes,
         )
 
-        # Verify that the response contains the expected success message
         self.assertEqual(result, {'msg': 'ok'})
-
-        # Verify that no authentication was triggered (token already valid)
         mock_auth.assert_not_awaited()
-
-        # Verify that no token refresh was triggered (token still valid)
         mock_refresh.assert_not_awaited()
-
-        # Verify that exactly one HTTP POST request was made
         mock_post.assert_awaited_once()
 
     @patch.object(TokenManager, 'is_token_valid', return_value=False)
     @patch.object(TokenManager, 'is_token_expired', return_value=True)
     @patch.object(TokenManager, 'refresh_token', new_callable=AsyncMock)
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_frame_401_refresh_token_retry(
         self,
         mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
         mock_refresh: AsyncMock,
         mock_is_expired: MagicMock,
         mock_is_valid: MagicMock,
     ) -> None:
-        """
-        Test automatic token refresh and retry logic
-        on 401 Unauthorised response.
-
-        Test Flow:
-        1. Set up an expired access token in the shared state
-        2. Mock the first HTTP response to return 401 Unauthorised
-        3. Mock the second HTTP response to return 200 OK (after token refresh)
-        4. Configure token refresh to update the shared token
-        5. Attempt to send a frame
-        6. Verify that token refresh was triggered and retry succeeded
-
-        Args:
-            mock_post:
-                Mocked HTTP POST method from httpx.AsyncClient that will
-                return different responses on consecutive calls
-            mock_refresh:
-                Mocked refresh_token method from TokenManager that
-                simulates successful token renewal
-
-        Raises:
-            AssertionError: If the retry logic fails or token refresh is not
-                           triggered correctly
-        """
-        # Set up an expired token to trigger the 401 response scenario
+        """On 401, refresh token then retry succeeds."""
         self.sender.shared_token['access_token'] = 'expired_token'
 
-        # First response: 401 Unauthorised, triggering HTTPStatusError
-        # This simulates the backend rejecting the expired token
         mock_response_1: MagicMock = MagicMock(status_code=401)
         mock_response_1.json.return_value = {'detail': 'unauthorised'}
         mock_response_1.raise_for_status.side_effect = httpx.HTTPStatusError(
-            'Unauthorized', request=MagicMock(),
-            response=mock_response_1,
+            'Unauthorized', request=MagicMock(), response=mock_response_1,
         )
-
-        # Second response: 200 OK with successful result after token refresh
-        # This simulates successful frame transmission with the new token
         mock_response_2: MagicMock = MagicMock(status_code=200)
         mock_response_2.json.return_value = {'msg': 'after-refresh-ok'}
-        mock_response_2.raise_for_status.side_effect = None  # No HTTP errors
-
-        # Configure the mock to return different responses on consecutive calls
+        mock_response_2.raise_for_status.side_effect = None
         mock_post.side_effect = [mock_response_1, mock_response_2]
 
-        # Use lambda for token refresh side effect to update the shared token
         mock_refresh.side_effect = lambda: self.sender.shared_token.update(
             {'access_token': 'new_valid_token'},
         )
+        mock_get_valid_token.side_effect = [
+            'expired_token', 'new_valid_token',
+        ]
 
-        # Attempt to send a frame, which should trigger the retry logic
         result: dict[str, str] = await self.sender.send_frame(
             site=self.site,
             stream_name=self.stream_name,
             frame_bytes=self.frame_bytes,
         )
 
-        # Verify that the final result comes from the successful retry
         self.assertEqual(result, {'msg': 'after-refresh-ok'})
-
-        # Verify that exactly two HTTP POST requests were made
-        # (initial + retry)
         self.assertEqual(mock_post.await_count, 2)
-
-        # Verify that token refresh was triggered at least once
         self.assertGreaterEqual(mock_refresh.await_count, 1)
 
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_frame_connect_timeout_retry(
         self,
         mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test retry behaviour when connection timeouts occur
-        during frame transmission.
-
-        Test Flow:
-        1. Configure the HTTP POST mock to always raise ConnectTimeout
-        2. Attempt to send a frame
-        3. Verify that the timeout exception is eventually raised
-        4. Confirm that retry attempts were made up to the maximum limit
-
-        Args:
-            mock_post:
-                Mocked HTTP POST method from httpx.AsyncClient configured
-                to simulate persistent connection timeouts
-
-        Raises:
-            AssertionError:
-                If the retry count doesn't match expectations or
-                the timeout exception is not properly propagated
-        """
-        # Configure the mock to always raise a connection timeout
-        # This simulates persistent network connectivity issues
+        """Retries on connect timeout and then raises after max attempts."""
         mock_post.side_effect = httpx.ConnectTimeout('Timeout')
+        mock_get_valid_token.return_value = 'test_token'
 
-        # Attempt to send a frame, expecting it to fail after all retries
         with self.assertRaises(httpx.ConnectTimeout):
             await self.sender.send_frame(
                 site=self.site,
@@ -323,47 +207,25 @@ class TestBackendFrameSender(unittest.IsolatedAsyncioTestCase):
                 frame_bytes=self.frame_bytes,
             )
 
-        # Verify that the HTTP POST was attempted exactly max_retries times
-        # This confirms that the retry logic is working correctly
         self.assertEqual(mock_post.await_count, self.sender.max_retries)
 
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_frame_http_status_error_non_401(
         self,
         mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test handling of non-401 HTTP status errors without retry attempts.
-
-        Test Flow:
-        1. Mock the HTTP response to return a 403 Forbidden status
-        2. Configure the response to raise an HTTPStatusError
-        3. Attempt to send a frame
-        4. Verify that the 403 error is propagated without retry attempts
-
-        Args:
-            mock_post:
-                Mocked HTTP POST method from httpx.AsyncClient configured
-                to return a non-401 HTTP error status
-
-        Raises:
-            AssertionError:
-                If the error is not propagated correctly or if
-                unexpected retry attempts are made
-        """
-        # Mock a 403 Forbidden response to test non-401 error handling
-        # This simulates scenarios like insufficient permissions
-        # or resource restrictions
+        """Non-401 HTTP error is propagated without retry."""
         mock_response: MagicMock = MagicMock(
             status_code=403, reason_phrase='Forbidden',
         )
         mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            'Forbidden', request=MagicMock(),
-            response=mock_response,
+            'Forbidden', request=MagicMock(), response=mock_response,
         )
         mock_post.return_value = mock_response
+        mock_get_valid_token.return_value = 'test_token'
 
-        # Attempt to send a frame, expecting the 403 error to be raised
         with self.assertRaises(httpx.HTTPStatusError):
             await self.sender.send_frame(
                 site=self.site,
@@ -371,41 +233,19 @@ class TestBackendFrameSender(unittest.IsolatedAsyncioTestCase):
                 frame_bytes=self.frame_bytes,
             )
 
-        # Verify that only one HTTP POST attempt was made
-        # (no retries for non-401 errors)
         mock_post.assert_awaited_once()
 
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_frame_other_exception(
         self,
         mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test handling of unexpected exceptions during frame transmission.
-
-        Test Flow:
-        1. Configure the HTTP POST mock to raise an unexpected ValueError
-        2. Attempt to send a frame
-        3. Verify that the ValueError is propagated without modification
-        4. Confirm that only one attempt was made (no retries for
-            unexpected errors)
-
-        Args:
-            mock_post:
-                Mocked HTTP POST method from httpx.AsyncClient configured
-                to raise an unexpected exception
-
-        Raises:
-            AssertionError:
-                If the exception is not propagated correctly or if
-                unexpected retry attempts are made
-        """
-        # Configure the mock to raise an unexpected exception
-        # This simulates programming errors or unexpected system failures
+        """Unexpected exceptions are propagated without retry."""
         mock_post.side_effect = ValueError('Some unknown error')
+        mock_get_valid_token.return_value = 'test_token'
 
-        # Attempt to send a frame, expecting
-        # the ValueError to be raised unchanged
         with self.assertRaises(ValueError):
             await self.sender.send_frame(
                 site=self.site,
@@ -413,38 +253,19 @@ class TestBackendFrameSender(unittest.IsolatedAsyncioTestCase):
                 frame_bytes=self.frame_bytes,
             )
 
-        # Verify that only one attempt was made
-        # (no retries for unexpected exceptions)
         mock_post.assert_awaited_once()
 
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
     async def test_send_frame_all_attempts_exhausted(
         self,
         mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test behaviour when all retry attempts are exhausted without success.
-
-        Test Flow:
-        1. Set max_retries to 0 to force immediate failure
-        2. Attempt to send a frame with full detection data
-        3. Verify that a RuntimeError is raised with appropriate message
-        4. Confirm that the error message indicates exhausted attempts
-
-        Args:
-            mock_post: Mocked HTTP POST method from httpx.AsyncClient (not used
-                      in this test as max_retries is set to 0)
-
-        Raises:
-            AssertionError: If the RuntimeError is not raised or if the error
-                           message doesn't match expectations
-        """
-        # Set max_retries to 0 to simulate exhausted attempts immediately
-        # This forces the sender to fail without making any HTTP requests
+        """With max_retries=0, raise exhausted attempts error immediately."""
         self.sender.max_retries = 0
+        mock_get_valid_token.return_value = 'test_token'
 
-        # Attempt to send a frame with all optional parameters,
-        # expecting failure
         with self.assertRaises(RuntimeError) as context:
             await self.sender.send_frame(
                 site=self.site,
@@ -456,7 +277,6 @@ class TestBackendFrameSender(unittest.IsolatedAsyncioTestCase):
                 detection_items_json=self.detection_items_json,
             )
 
-        # Verify that the error message clearly indicates exhausted attempts
         self.assertIn(
             'All attempts have been exhausted; no success.',
             str(context.exception),
@@ -1738,10 +1558,8 @@ class TestBackendFrameSender(unittest.IsolatedAsyncioTestCase):
 
     @patch.object(BackendFrameSender, '_ensure_ws', new_callable=AsyncMock)
     @patch.object(BackendFrameSender, 'close', new_callable=AsyncMock)
-    @patch('asyncio.sleep', new_callable=AsyncMock)
     async def test_send_frame_ws_client_error(
         self,
-        mock_sleep: AsyncMock,
         mock_close: AsyncMock,
         mock_ensure_ws: AsyncMock,
     ) -> None:

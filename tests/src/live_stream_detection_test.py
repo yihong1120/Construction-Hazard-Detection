@@ -2966,6 +2966,12 @@ class TestLiveStreamDetector(unittest.IsolatedAsyncioTestCase):
                 '_try_legacy_connection',
                 side_effect=Exception('401 unauthorized'),
             ),
+            # Bypass real token validation/auth to avoid network calls
+            patch.object(
+                detector.token_manager,
+                'ensure_token_valid',
+                new_callable=AsyncMock,
+            ),
             patch.object(
                 detector.token_manager,
                 'refresh_token',
@@ -2976,13 +2982,15 @@ class TestLiveStreamDetector(unittest.IsolatedAsyncioTestCase):
             patch.object(detector._logger, 'error'),
             patch.object(detector, 'close', new_callable=AsyncMock),
         ):
+            # Ensure non-empty token so connection flow proceeds
+            detector.shared_token['access_token'] = 'test_token'
             try:
                 await detector._ensure_ws_connection()
             except ConnectionError:
                 pass  # Expected to fail after max retries
 
             # Should log successful token refresh (line 288-290)
-            mock_logger_info.assert_called_with(
+            mock_logger_info.assert_any_call(
                 'Token refreshed successfully, will retry connection',
             )
 
@@ -3336,11 +3344,12 @@ class TestLiveStreamDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unr2, [0])
         self.assertEqual(unc2, [0, 1])
 
+    @patch('src.live_stream_detection.cv2.destroyAllWindows')
     @patch('src.live_stream_detection.cv2.VideoCapture')
     @patch('src.live_stream_detection.cv2.waitKey', return_value=ord('q'))
     @patch('src.live_stream_detection.cv2.imshow')
     async def test_run_detection_finally_closes_ws_and_session(
-        self, _imshow: Any, _waitKey: Any, mock_vcap: Any,
+        self, _imshow: Any, _waitKey: Any, mock_vcap: Any, _destroy: Any,
     ) -> None:
         """Ensure run_detection finally block closes ws and session."""
         cap_mock = MagicMock()

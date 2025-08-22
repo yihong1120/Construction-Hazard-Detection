@@ -155,7 +155,6 @@ class TestConfig(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
-            cwd='/home/changdar/Documents/Construction-Hazard-Detection',
         )
 
         # Should have fallback value ['yolo11n']
@@ -183,7 +182,6 @@ class TestConfig(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
-            cwd='/home/changdar/Documents/Construction-Hazard-Detection',
         )
 
         # Should have warning in stderr
