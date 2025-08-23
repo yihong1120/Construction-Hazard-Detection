@@ -48,9 +48,11 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        # Use repo-wide coverage so root-level main.py is included
+        # Measure application code only (main, src, examples). Do not include tests in coverage sources
         pytest \
-          --cov=. \
+          --cov=main \
+          --cov=src \
+          --cov=examples \
           --cov-report=term-missing \
           -n auto \
           tests/
