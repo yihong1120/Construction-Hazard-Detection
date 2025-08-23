@@ -15,15 +15,6 @@ from fastapi.testclient import TestClient
 from fastapi_jwt import JwtAuthorizationCredentials
 from jwt import InvalidTokenError
 
-from examples.YOLO_server_api.backend.routers import (
-    _is_websocket_connected,
-)
-from examples.YOLO_server_api.backend.routers import (
-    _safe_websocket_receive_bytes,
-)
-from examples.YOLO_server_api.backend.routers import (
-    _safe_websocket_send_json,
-)
 from examples.YOLO_server_api.backend.routers import custom_rate_limiter
 from examples.YOLO_server_api.backend.routers import detection_router
 from examples.YOLO_server_api.backend.routers import jwt_access
@@ -434,188 +425,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
 
     # ------------------------------------------------------------------------
-    # TEST: Helper Functions
-    # ------------------------------------------------------------------------
-    def test_is_websocket_connected_valid(self) -> None:
-        """
-        Tests _is_websocket_connected returns True for valid connected
-        WebSocket.
-        """
-        mock_websocket = Mock()
-        # CONNECTED = 1
-        mock_websocket.client_state.value = 1
-        mock_websocket.client = Mock()
-
-        result = _is_websocket_connected(mock_websocket)
-        self.assertTrue(result)
-
-    def test_is_websocket_connected_exception_in_access(self) -> None:
-        """
-        Tests _is_websocket_connected returns False when attribute access
-        raises exception.
-        """
-        mock_websocket = Mock()
-        # Make accessing client_state raise an exception
-        type(mock_websocket).client_state = Mock(
-            side_effect=Exception('Access failed'),
-        )
-
-        result = _is_websocket_connected(mock_websocket)
-        self.assertFalse(result)  # This covers the except block
-
-    def test_is_websocket_connected_no_client_state(self) -> None:
-        """
-        Tests _is_websocket_connected returns False when no client_state
-        attribute.
-        """
-        mock_websocket = Mock()
-        delattr(mock_websocket, 'client_state')
-
-        result = _is_websocket_connected(mock_websocket)
-        self.assertFalse(result)
-
-    def test_is_websocket_connected_not_connected(self) -> None:
-        """
-        Tests _is_websocket_connected returns False when client_state != 1.
-        """
-        mock_websocket = Mock()
-        mock_websocket.client_state.value = 0  # Not connected
-        mock_websocket.client = Mock()
-
-        result = _is_websocket_connected(mock_websocket)
-        self.assertFalse(result)
-
-    def test_is_websocket_connected_no_client(self) -> None:
-        """
-        Tests _is_websocket_connected returns False when no client.
-        """
-        mock_websocket = Mock()
-        mock_websocket.client_state.value = 1
-        mock_websocket.client = None
-
-        result = _is_websocket_connected(mock_websocket)
-        self.assertFalse(result)
-
-    def test_is_websocket_connected_exception(self) -> None:
-        """
-        Tests _is_websocket_connected returns False when exception occurs.
-        """
-        mock_websocket = Mock()
-        # Make accessing client_state.value raise an exception
-        # to trigger except block
-        type(mock_websocket.client_state).value = property(
-            lambda self: exec('raise Exception("Test error")'),
-        )
-
-        result = _is_websocket_connected(mock_websocket)
-        # This covers line 62: return False in except block
-        self.assertFalse(result)
-
-    def test_is_websocket_connected_true_path(self) -> None:
-        """
-        Tests _is_websocket_connected returns True for fully valid WebSocket.
-        This ensures we cover the 'return True' line (line 61).
-        """
-        mock_websocket = Mock()
-        mock_websocket.client_state.value = 1  # CONNECTED = 1
-        mock_websocket.client = Mock()  # Valid client object
-
-        result = _is_websocket_connected(mock_websocket)
-        self.assertTrue(result)  # This covers line 61: return True
-
-    async def test_safe_websocket_send_json_success(self) -> None:
-        """
-        Tests _safe_websocket_send_json returns True on successful send.
-        """
-        mock_websocket = Mock()
-        mock_websocket.client_state.value = 1
-        mock_websocket.client = Mock()
-        mock_websocket.send_json = AsyncMock()
-
-        data = {'test': 'data'}
-        result = await _safe_websocket_send_json(mock_websocket, data)
-
-        self.assertTrue(result)
-        mock_websocket.send_json.assert_called_once_with(data)
-
-    async def test_safe_websocket_send_json_not_connected(self) -> None:
-        """
-        Tests _safe_websocket_send_json returns False when not connected.
-        """
-        mock_websocket = Mock()
-        mock_websocket.client_state.value = 0  # Not connected
-
-        data = {'test': 'data'}
-        result = await _safe_websocket_send_json(
-            mock_websocket, data, 'test_client',
-        )
-
-        self.assertFalse(result)
-
-    async def test_safe_websocket_send_json_exception(self) -> None:
-        """
-        Tests _safe_websocket_send_json returns False on exception.
-        """
-        mock_websocket = Mock()
-        mock_websocket.client_state.value = 1
-        mock_websocket.client = Mock()
-        mock_websocket.send_json = AsyncMock(
-            side_effect=Exception('Send failed'),
-        )
-
-        data = {'test': 'data'}
-        result = await _safe_websocket_send_json(
-            mock_websocket, data, 'test_client',
-        )
-
-        self.assertFalse(result)
-
-    async def test_safe_websocket_receive_bytes_success(self) -> None:
-        """
-        Tests _safe_websocket_receive_bytes returns bytes on success.
-        """
-        mock_websocket = Mock()
-        mock_websocket.client_state.value = 1
-        mock_websocket.client = Mock()
-        test_bytes = b'test_data'
-        mock_websocket.receive_bytes = AsyncMock(return_value=test_bytes)
-
-        result = await _safe_websocket_receive_bytes(mock_websocket)
-
-        self.assertEqual(result, test_bytes)
-        mock_websocket.receive_bytes.assert_called_once()
-
-    async def test_safe_websocket_receive_bytes_not_connected(self) -> None:
-        """
-        Tests _safe_websocket_receive_bytes returns None when not connected.
-        """
-        mock_websocket = Mock()
-        mock_websocket.client_state.value = 0  # Not connected
-
-        result = await _safe_websocket_receive_bytes(
-            mock_websocket, 'test_client',
-        )
-
-        self.assertIsNone(result)
-
-    async def test_safe_websocket_receive_bytes_exception(self) -> None:
-        """
-        Tests _safe_websocket_receive_bytes returns None on exception.
-        """
-        mock_websocket = Mock()
-        mock_websocket.client_state.value = 1
-        mock_websocket.client = Mock()
-        mock_websocket.receive_bytes = AsyncMock(
-            side_effect=Exception('Receive failed'),
-        )
-
-        result = await _safe_websocket_receive_bytes(
-            mock_websocket, 'test_client',
-        )
-
-        self.assertIsNone(result)
-
-    # ------------------------------------------------------------------------
     # TEST: WebSocket endpoint /ws/detect - Integration Tests
     # ------------------------------------------------------------------------
     async def test_websocket_no_client_header_integration(self) -> None:
@@ -705,12 +514,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value={},
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         mock_websocket.close.assert_called_with(
@@ -728,19 +533,17 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         mock_websocket.close = AsyncMock()
         mock_websocket.headers = {'authorization': 'Bearer valid_token'}
 
-        payload = {'subject': {}}  # Missing username and jti
+        payload: dict[str, object] = {  # Missing username and jti
+            'subject': {},
+        }
 
         with (
             patch(
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         mock_websocket.close.assert_called_with(
@@ -765,16 +568,12 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['other_jti']},
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         mock_websocket.close.assert_called_with(
@@ -800,17 +599,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
             ),
             patch.object(model_loader, 'get_model', return_value=None),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         mock_websocket.close.assert_called_with(
@@ -848,8 +643,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
@@ -884,9 +678,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock, return_value=[],
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             # This will test the main loop and cleanup
             await websocket_detect(mock_websocket, Mock())
 
@@ -922,8 +713,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
@@ -958,9 +748,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock, return_value=[],
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         # Verify connection was accepted (prediction is internal detail)
@@ -988,17 +775,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
             ),
             patch.object(model_loader, 'get_model', return_value=None),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         mock_websocket.close.assert_called_with(
@@ -1027,17 +810,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
             ),
             patch.object(model_loader, 'get_model', return_value=None),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         mock_websocket.close.assert_called_with(
@@ -1066,16 +845,12 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         mock_websocket.close.assert_called_with(
@@ -1104,16 +879,12 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         mock_websocket.close.assert_called_with(
@@ -1141,16 +912,12 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         mock_websocket.close.assert_called_with(
@@ -1177,8 +944,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
@@ -1195,9 +961,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 side_effect=WebSocketDisconnect,
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         # Should handle the disconnect gracefully
@@ -1223,8 +986,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
@@ -1241,9 +1003,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 side_effect=RuntimeError('Unexpected error'),
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         # Should handle the unexpected error
@@ -1275,8 +1034,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
@@ -1293,9 +1051,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 side_effect=RuntimeError('Unexpected error'),
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         # Handle the unexpected error and gracefully handle close failure
@@ -1325,8 +1080,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
@@ -1338,9 +1092,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 return_value=False,
             ),  # Fail
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         # Should return early due to failed configuration send (lines 272-273)
@@ -1377,8 +1128,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'examples.YOLO_server_api.backend.routers.jwt.decode',
                 return_value=payload,
             ),
-            patch('examples.YOLO_server_api.backend.routers.settings')
-            as mock_settings,
+            patch('examples.YOLO_server_api.backend.routers.settings'),
             patch(
                 'examples.YOLO_server_api.backend.routers.get_user_data',
                 return_value={'jti_list': ['test_jti']},
@@ -1413,9 +1163,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock, return_value=[],
             ),
         ):
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         # Should have processed 100 frames and hit the logging line (line 307)
@@ -1473,10 +1220,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             patches[5],
             patches[6],
         ):
-            mock_settings = patches[1]
-            mock_settings.authjwt_secret_key = 'test_secret'
-            mock_settings.ALGORITHM = 'HS256'
-
             await websocket_detect(mock_websocket, Mock())
 
         # Verify no prediction was made due to image decode failure

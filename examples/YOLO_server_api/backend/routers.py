@@ -19,7 +19,7 @@ from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import JSONResponse
 from fastapi_jwt import JwtAuthorizationCredentials
 from jwt import InvalidTokenError
 from werkzeug.utils import secure_filename
@@ -29,6 +29,8 @@ from examples.auth.cache import get_user_data
 from examples.auth.config import Settings
 from examples.auth.jwt_config import jwt_access
 from examples.auth.redis_pool import get_redis_pool_ws
+from examples.shared.ws_utils import _safe_websocket_receive_bytes
+from examples.shared.ws_utils import _safe_websocket_send_json
 from examples.YOLO_server_api.backend.detection import compile_detection_data
 from examples.YOLO_server_api.backend.detection import convert_to_image
 from examples.YOLO_server_api.backend.detection import get_prediction_result
@@ -57,123 +59,7 @@ INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(4)
 WS_INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(8)
 
 
-def _is_websocket_connected(websocket: WebSocket) -> bool:
-    """Check if a WebSocket connection is still active and valid.
-
-    This function verifies the WebSocket connection state by checking multiple
-    attributes to ensure the connection is properly built and operational.
-
-    Args:
-        websocket: The WebSocket connection to check.
-
-    Returns:
-        True if the WebSocket is connected and operational, False otherwise.
-
-    Note:
-        This function performs defensive checks to handle cases where
-        attributes might not exist or the connection state is invalid.
-    """
-    try:
-        # Check if the WebSocket has a client_state attribute
-        if not hasattr(websocket, 'client_state'):
-            return False
-
-        # Verify the connection state (1 = CONNECTED)
-        if websocket.client_state.value != 1:
-            return False
-
-        # Ensure the client object exists and is valid
-        if not hasattr(websocket, 'client') or not websocket.client:
-            return False
-
-        return True
-    except Exception:
-        # Return False for any unexpected errors during state checking
-        return False
-
-
-async def _safe_websocket_send_json(
-    websocket: WebSocket,
-    data: dict[str, Any],
-    client_info: str = '',
-) -> bool:
-    """Safely send JSON data through a WebSocket connection.
-
-    This function provides a safe wrapper around WebSocket JSON sending,
-    with connection state validation and error handling.
-
-    Args:
-        websocket: The WebSocket connection to send data through.
-        data: The dictionary data to send as JSON.
-        client_info: Optional client identification string for logging.
-
-    Returns:
-        True if the data was sent successfully, False otherwise.
-
-    Note:
-        This function checks connection state before attempting to send
-        and handles exceptions gracefully with optional logging.
-    """
-    # Verify the WebSocket connection is still active
-    if not _is_websocket_connected(websocket):
-        if client_info:
-            print(
-                f"[WebSocket] {client_info}: "
-                'Connection closed, skipping JSON send',
-            )
-        return False
-
-    try:
-        # Attempt to send the JSON data
-        await websocket.send_json(data)
-        return True
-    except Exception as e:
-        # Log the error if client info is provided
-        if client_info:
-            print(f"[WebSocket] {client_info}: Failed to send JSON: {e}")
-        return False
-
-
-async def _safe_websocket_receive_bytes(
-    websocket: WebSocket,
-    client_info: str = '',
-) -> bytes | None:
-    """Safely receive binary data from a WebSocket connection.
-
-    This function provides a safe wrapper around WebSocket byte receiving,
-    with connection state validation and error handling.
-
-    Args:
-        websocket: The WebSocket connection to receive data from.
-        client_info: Optional client identification string for logging.
-
-    Returns:
-        The received bytes data if successful, None if failed or disconnected.
-
-    Note:
-        This function checks connection state before attempting to receive
-        and handles exceptions gracefully with optional logging.
-    """
-    # Verify the WebSocket connection is still active
-    if not _is_websocket_connected(websocket):
-        if client_info:
-            print(
-                f"[WebSocket] {client_info}: "
-                'Connection closed, cannot receive bytes',
-            )
-        return None
-
-    try:
-        # Attempt to receive binary data
-        return await websocket.receive_bytes()
-    except Exception as e:
-        # Log the error if client info is provided
-        if client_info:
-            print(f"[WebSocket] {client_info}: Failed to receive bytes: {e}")
-        return None
-
-
-@detection_router.post('/detect', response_class=ORJSONResponse)
+@detection_router.post('/detect', response_class=JSONResponse)
 async def detect(
     detection_request: DetectionRequest = Depends(DetectionRequest.as_form),
     credentials: JwtAuthorizationCredentials = Depends(jwt_access),
