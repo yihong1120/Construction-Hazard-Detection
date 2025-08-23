@@ -32,7 +32,14 @@ jobs:
             --include "models/pt/*.pt" \
             --local-dir .
       - name: Run tests and collect coverage
-        run: pytest --cov=main.py --cov=src --cov=examples tests/ -n auto
+        run: |
+          # Include entire repo so root-level main.py is covered
+          pytest \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -n auto \
+            tests/
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:

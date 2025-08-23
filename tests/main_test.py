@@ -161,7 +161,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         asyncio.run(main_entry())
         self.assertTrue(asyncio_run_called)
 
-    async def asyncSetUp(self):
+    async def asyncSetUp(self) -> None:
         self.app = MainApp(poll_interval=1)
         self.mock_logger = MagicMock()
         self.app.logger = self.mock_logger

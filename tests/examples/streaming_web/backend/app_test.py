@@ -76,7 +76,6 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-
 '''
 pytest \
     --cov=examples.streaming_web.backend.app \

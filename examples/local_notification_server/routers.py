@@ -54,9 +54,9 @@ async def get_site_users_cached(
 
     # Check cache
     if site_name in _site_users_cache:
-        users, cached_time = _site_users_cache[site_name]
+        cached_users, cached_time = _site_users_cache[site_name]
         if current_time - cached_time < _cache_ttl:
-            return users
+            return cached_users
 
     # Query the database
     stmt = (
@@ -71,12 +71,12 @@ async def get_site_users_cached(
     if not site_obj:
         return None
 
-    users: list[User] = list(site_obj.users) if site_obj.users else []
+    site_users: list[User] = list(site_obj.users) if site_obj.users else []
 
     # Update cache
-    _site_users_cache[site_name] = (users, current_time)
+    _site_users_cache[site_name] = (site_users, current_time)
 
-    return users
+    return site_users
 
 
 @router.post('/store_token')

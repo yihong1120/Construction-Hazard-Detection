@@ -227,7 +227,8 @@ class DetectionModelManager:
                     pass
             # Recalculate loaded count after eviction
             loaded_count = len(
-                [m for m in self.models.values() if m is not None])
+                [m for m in self.models.values() if m is not None],
+            )
 
     # =============== Public API ==================
     def get_model(self, key: str) -> ModelType | None:

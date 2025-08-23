@@ -48,4 +48,9 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        pytest --cov=main.py --cov=src --cov=examples tests/ -n auto
+        # Use repo-wide coverage so root-level main.py is included
+        pytest \
+          --cov=. \
+          --cov-report=term-missing \
+          -n auto \
+          tests/

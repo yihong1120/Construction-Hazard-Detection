@@ -70,9 +70,9 @@ async def get_user_sites_cached(
 
     # Check the cache for user site information
     if username in _user_sites_cache:
-        site_names, cached_time = _user_sites_cache[username]
+        cached_names, cached_time = _user_sites_cache[username]
         if current_time - cached_time < _cache_ttl:
-            return site_names
+            return cached_names
 
     # Query the database for user site information
     stmt_user = (
