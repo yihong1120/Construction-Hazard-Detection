@@ -279,7 +279,7 @@
    開啟：[https://visionnaire-cda17.web.app](https://visionnaire-cda17.web.app)
    登入帳密：`user` / `password`
 
-> 進入後可在網頁設定頁修改 API 位址。
+> 使用前，請先開啟「網頁設定」並設定各 API 端點（如：DETECT_API_URL、STREAMING_API_URL、DB_MANAGEMENT_API_URL、FCM_API_URL）以符合你的環境，然後再進行登入與操作。
 
 
 ## 資料庫設定與管理

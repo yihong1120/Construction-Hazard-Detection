@@ -289,7 +289,7 @@ Before running the application, prepare your stream configuration file `config/c
    Open: [https://visionnaire-cda17.web.app](https://visionnaire-cda17.web.app)
    Login: `user` / `password`
 
-> After login, you can modify API endpoints in the web settings page.
+> Before using, please open the Web Settings and configure API endpoints first (e.g., DETECT_API_URL, STREAMING_API_URL, DB_MANAGEMENT_API_URL, FCM_API_URL) to match your environment; then proceed with login and operations.
 
 
 ## Database Configuration and Management
