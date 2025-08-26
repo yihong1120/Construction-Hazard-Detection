@@ -9,6 +9,7 @@ from ultralytics import YOLO
 from watchdog.events import FileSystemEvent
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+from werkzeug.utils import secure_filename
 
 from examples.YOLO_server_api.backend.config import EXPLICIT_CUDA_CLEANUP
 from examples.YOLO_server_api.backend.config import LAZY_LOAD_MODELS
@@ -57,7 +58,9 @@ class ModelFileChangeHandler(FileSystemEventHandler):
             return
         if not event.src_path.endswith(self.model_manager.extension):
             return
-        name = Path(event.src_path).stem.split('best_')[-1]
+        # Derive model name from filename and sanitise it to avoid unsafe chars
+        raw_name = Path(event.src_path).stem.split('best_')[-1]
+        name = secure_filename(raw_name)
         if name in self.model_manager.model_names:
             self.model_manager._safe_load(name)
             print(f'🟢  Model {name} hot-reloaded (watcher).')
@@ -126,6 +129,9 @@ class DetectionModelManager:
             FileNotFoundError: If the specified model file does not exist.
             RuntimeError: If a required dependency (e.g., SAHI) is missing.
         """
+        # Sanitize the provided model variant name defensively.
+        safe_name = secure_filename(name)
+
         if USE_SAHI:
             # SAHI mode: Use AutoDetectionModel with .pt files (slicing)
             try:
@@ -135,7 +141,7 @@ class DetectionModelManager:
                     'SAHI mode is enabled but the sahi package is not '
                     'installed.',
                 ) from exc
-            model_path = self.base_model_path / f'best_{name}.pt'
+            model_path = self.base_model_path / f'best_{safe_name}.pt'
             if not model_path.exists():
                 raise FileNotFoundError(f'Model file not found: {model_path}')
             return AutoDetectionModel.from_pretrained(
@@ -144,13 +150,13 @@ class DetectionModelManager:
 
         if USE_TENSORRT:
             # TensorRT mode: Use .engine files with YOLO
-            model_path = self.base_model_path / f'best_{name}.engine'
+            model_path = self.base_model_path / f'best_{safe_name}.engine'
             if not model_path.exists():
                 raise FileNotFoundError(f'Model file not found: {model_path}')
             return YOLO(str(model_path))
 
         # Standard mode: Use .pt files with YOLO
-        model_path = self.base_model_path / f'best_{name}.pt'
+        model_path = self.base_model_path / f'best_{safe_name}.pt'
         if not model_path.exists():
             raise FileNotFoundError(f'Model file not found: {model_path}')
         return YOLO(str(model_path))
@@ -244,13 +250,16 @@ class DetectionModelManager:
             The requested model instance if available; otherwise ``None``.
         """
         # Lazy load on demand
-        if key not in self.models:
+        # Sanitize the key defensively before lookup.
+        safe_key = secure_filename(key)
+
+        if safe_key not in self.models:
             return None
-        if self.models[key] is None:
-            self._safe_load(key)
+        if self.models[safe_key] is None:
+            self._safe_load(safe_key)
         else:
-            self._touch_lru(key)
-        return self.models.get(key)
+            self._touch_lru(safe_key)
+        return self.models.get(safe_key)
 
     def get_available_models(self) -> list[str]:
         """Return the list of currently loaded model names.
@@ -283,17 +292,18 @@ class DetectionModelManager:
         Returns:
             ``True`` if reloading succeeded; otherwise ``False``.
         """
-        if name not in self.model_names:
+        safe_name = secure_filename(name)
+        if safe_name not in self.model_names:
             return False
         # Force reload regardless of cache state
         try:
-            self.models[name] = self.load_single_model(name)
-            self._touch_lru(name)
+            self.models[safe_name] = self.load_single_model(safe_name)
+            self._touch_lru(safe_name)
             self._enforce_lru_limit()
-            print(f'🔄  Model {name} manually reloaded.')
+            print(f'🔄  Model {safe_name} manually reloaded.')
             return True
         except Exception as e:
-            print(f'❌  Failed to reload model {name}: {e}')
+            print(f'❌  Failed to reload model {safe_name}: {e}')
             return False
 
     # =============== Cleanup ==================
