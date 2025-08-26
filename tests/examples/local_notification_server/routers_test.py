@@ -403,7 +403,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         )
 
     @patch(
-        'examples.local_notification_server.routers.'
+        'examples.local_notification_server.services.'
         'send_fcm_notification_service',
         new_callable=AsyncMock,
     )
@@ -455,7 +455,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         )
 
     @patch(
-        'examples.local_notification_server.routers.'
+        'examples.local_notification_server.services.'
         'send_fcm_notification_service',
         new_callable=AsyncMock,
     )
@@ -500,7 +500,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(mock_send_fcm.await_count, 2)
 
     @patch(
-        'examples.local_notification_server.routers.'
+        'examples.local_notification_server.services.'
         'send_fcm_notification_service',
         new_callable=AsyncMock,
     )
@@ -533,7 +533,7 @@ class TestLocalNotificationServer(unittest.TestCase):
             self.assertIn('timed out', response.json()['message'])
 
     @patch(
-        'examples.local_notification_server.routers.'
+        'examples.local_notification_server.services.'
         'send_fcm_notification_service',
         new_callable=AsyncMock,
     )
@@ -564,7 +564,7 @@ class TestLocalNotificationServer(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertFalse(response.json()['success'])
             self.assertIn(
-                'Error sending FCM notifications',
+                'Failed to send FCM notifications.',
                 response.json()['message'],
             )
 
