@@ -157,7 +157,7 @@ class TestWeChatNotifier(unittest.TestCase):
             'WECHAT_AGENT_ID': '1000002',
         }.get(key, '')
 
-        # We switched to secure logging; verify logging.info is called
+        # Verify logging.info is called with a static, non-sensitive message
         with patch('src.notifiers.wechat_notifier.logging.info') as mock_log:
             main()
             mock_send_notification.assert_called_once()
@@ -167,17 +167,9 @@ class TestWeChatNotifier(unittest.TestCase):
             if len(args) > 2:
                 self.assertIsInstance(args[2], np.ndarray)
                 self.assertEqual(args[2].shape, (100, 100, 3))
-
-            # logging.info(msg, errcode, errmsg) is expected
-            mock_log.assert_called()
-            log_args, _ = mock_log.call_args
-            self.assertIsInstance(log_args[0], str)
-            # The format string should include placeholders for errcode/errmsg
-            self.assertIn('errcode=%s', log_args[0])
-            self.assertIn('errmsg=%s', log_args[0])
-            # And values should be provided as subsequent args
-            self.assertEqual(log_args[1], 0)
-            self.assertEqual(log_args[2], 'ok')
+            mock_log.assert_called_once_with(
+                'WeChat send_notification completed',
+            )
 
     @patch('requests.post')
     @patch.dict(
