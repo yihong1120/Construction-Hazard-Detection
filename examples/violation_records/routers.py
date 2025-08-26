@@ -21,6 +21,7 @@ from sqlalchemy import or_
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from werkzeug.utils import secure_filename
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
@@ -32,11 +33,12 @@ from examples.violation_records.schemas import UploadViolationResponse
 from examples.violation_records.schemas import ViolationItem
 from examples.violation_records.schemas import ViolationList
 from examples.violation_records.search_utils import SearchUtils
+from examples.violation_records.settings import STATIC_DIR
 from examples.violation_records.violation_manager import ViolationManager
 
 # Instantiate a global ViolationManager for handling image saving
 # and record creation.
-violation_manager: ViolationManager = ViolationManager(base_dir='static')
+violation_manager: ViolationManager = ViolationManager(base_dir=STATIC_DIR)
 
 # Create a global SearchUtils instance for expanding synonyms in query filters.
 search_util: SearchUtils = SearchUtils(device=-1)
@@ -362,12 +364,33 @@ async def get_violation_image(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    if '..' in Path(image_path).parts:
+    # Disallow absolute paths and traversal components
+    raw_path = Path(image_path)
+    if raw_path.is_absolute() or '..' in raw_path.parts:
         raise HTTPException(status_code=400, detail='Invalid path')
 
-    cleaned_path: str = image_path.lstrip('static/')
-    base_dir: Path = Path('static').resolve()
-    full_path: Path = base_dir / cleaned_path
+    # If the path starts with the static directory name, strip it to avoid
+    # duplicating 'static/static'. Do this via pathlib parts instead of
+    # string ops.
+    if raw_path.parts and raw_path.parts[0] == STATIC_DIR.name:
+        raw_path = Path(*raw_path.parts[1:])
+
+    # Sanitise each path segment using secure_filename while preserving
+    # directory structure. Reject if any segment becomes empty after
+    # sanitisation.
+    safe_parts: list[str] = []
+    for part in raw_path.parts:
+        if part in {'', '.', '..'}:
+            raise HTTPException(status_code=400, detail='Invalid path')
+        cleaned = secure_filename(part)
+        if not cleaned:
+            raise HTTPException(status_code=400, detail='Invalid path segment')
+        safe_parts.append(cleaned)
+    safe_rel_path = Path(*safe_parts) if safe_parts else Path()
+
+    # Resolve the final path and ensure it stays under static/
+    base_dir: Path = Path(STATIC_DIR).resolve()
+    full_path: Path = (base_dir / safe_rel_path).resolve()
     print(f'[DEBUG] full_path => {full_path}')
 
     try:
@@ -382,16 +405,20 @@ async def get_violation_image(
     if not full_path.exists():
         raise HTTPException(status_code=404, detail='Image not found')
 
-    media_type: str = (
-        'image/png'
-        if full_path.suffix.lower() == '.png'
-        else 'image/jpeg'
-    )
+    # Allow only specific image extensions
+    suffix = full_path.suffix.lower()
+    allowed_ext = {'.png', '.jpg', '.jpeg'}
+    if suffix not in allowed_ext:
+        raise HTTPException(status_code=400, detail='Unsupported file type')
+    media_type: str = 'image/png' if suffix == '.png' else 'image/jpeg'
+
     return FileResponse(
         path=full_path,
         media_type=media_type,
         headers={
-            'Content-Disposition': f'inline; filename="{full_path.name}"',
+            'Content-Disposition': (
+                f'inline; filename="{secure_filename(full_path.name)}"'
+            ),
         },
     )
 

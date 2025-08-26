@@ -10,6 +10,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from fastapi_jwt import JwtAuthorizationCredentials
+from werkzeug.utils import secure_filename
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
@@ -465,6 +466,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         path_mock.resolve.return_value = path_mock
         path_mock.__truediv__.return_value = path_mock
         path_mock.parts = ('some', 'path')
+        # Ensure it is treated as a relative path by the code under test
+        path_mock.is_absolute.return_value = False
         path_mock.relative_to.side_effect = ValueError('Not relative')
         path_mock.exists.return_value = True
         path_mock.suffix.lower.return_value = '.jpg'
@@ -483,6 +486,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         path_mock.resolve.return_value = path_mock
         path_mock.__truediv__.return_value = path_mock
         path_mock.parts = ('some', 'path')
+        # Ensure it is treated as a relative path by the code under test
+        path_mock.is_absolute.return_value = False
         path_mock.is_relative_to.return_value = True
         path_mock.exists.return_value = False
         path_mock.suffix.lower.return_value = '.jpg'
@@ -508,6 +513,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         path_mock.resolve.return_value = path_mock
         path_mock.__truediv__.return_value = path_mock
         path_mock.parts = ('valid', 'path')
+        # Ensure it is treated as a relative path by the code under test
+        path_mock.is_absolute.return_value = False
         path_mock.is_relative_to.return_value = True
         path_mock.exists.return_value = True
         path_mock.suffix.lower.return_value = '.png'
@@ -517,6 +524,123 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.get('/api/get_violation_image?image_path=image.png')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers['content-type'], 'image/png')
+
+    @patch('examples.violation_records.routers.Path')
+    def test_get_violation_image_success_jpeg_and_header_sanitised(
+        self,
+        mock_path: MagicMock,
+    ) -> None:
+        """
+        If the file exists with a .jpg/.jpeg, return 200 and ensure
+        content-type is image/jpeg and the Content-Disposition filename is
+        sanitised via secure_filename.
+
+        Args:
+            mock_path (MagicMock): Mocked Path class.
+        """
+        path_mock = MagicMock()
+        path_mock.resolve.return_value = path_mock
+        path_mock.__truediv__.return_value = path_mock
+        path_mock.parts = ('valid', 'path')
+        path_mock.is_absolute.return_value = False
+        path_mock.exists.return_value = True
+        path_mock.suffix.lower.return_value = '.jpg'
+        unsafe_name = 'my image(1).JPG'
+        path_mock.name = unsafe_name
+        mock_path.return_value = path_mock
+
+        resp = self.client.get('/api/get_violation_image?image_path=image.jpg')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers['content-type'], 'image/jpeg')
+        # Header should contain sanitized filename
+        self.assertIn(
+            f'filename="{secure_filename(unsafe_name)}"',
+            resp.headers['content-disposition'],
+        )
+
+    @patch('examples.violation_records.routers.Path')
+    def test_get_violation_image_unsupported_file_type(
+        self,
+        mock_path: MagicMock,
+    ) -> None:
+        """
+        If the file exists but has an unsupported extension, return 400.
+        """
+        path_mock = MagicMock()
+        # Simulate safe relative path resolution
+        path_mock.resolve.return_value = path_mock
+        path_mock.__truediv__.return_value = path_mock
+        path_mock.parts = ('valid', 'path')
+        path_mock.is_absolute.return_value = False
+        # Keep it under base_dir by not raising from relative_to
+        # and simulate that the file exists
+        path_mock.exists.return_value = True
+        # Unsupported extension
+        path_mock.suffix.lower.return_value = '.gif'
+        path_mock.name = 'image.gif'
+        mock_path.return_value = path_mock
+
+        resp = self.client.get('/api/get_violation_image?image_path=image.gif')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['detail'], 'Unsupported file type')
+
+    def test_get_violation_image_invalid_path_segment(self) -> None:
+        """
+        A path segment that sanitises to empty (e.g. '***') should return 400
+        with 'Invalid path segment'.
+        """
+        resp = self.client.get('/api/get_violation_image?image_path=***')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['detail'], 'Invalid path segment')
+
+    @patch('examples.violation_records.routers.Path')
+    def test_get_violation_image_leading_static_normalised(
+        self,
+        mock_path: MagicMock,
+    ) -> None:
+        """
+        If image_path starts with 'static/', it should be normalised to avoid
+        constructing 'static/static/...'. Expect success for valid PNG.
+        """
+        path_mock = MagicMock()
+        path_mock.resolve.return_value = path_mock
+        path_mock.__truediv__.return_value = path_mock
+        # Simulate parts starting with 'static' followed by valid subpath
+        path_mock.parts = ('static', '2025-01-01', 'img.png')
+        path_mock.is_absolute.return_value = False
+        # Keep under base_dir and existing file
+        path_mock.exists.return_value = True
+        path_mock.suffix.lower.return_value = '.png'
+        path_mock.name = 'img.png'
+        mock_path.return_value = path_mock
+
+        resp = self.client.get(
+            '/api/get_violation_image?image_path=static/2025-01-01/img.png',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers['content-type'], 'image/png')
+
+    @patch('examples.violation_records.routers.Path')
+    def test_get_violation_image_dot_segment_invalid(
+        self,
+        mock_path: MagicMock,
+    ) -> None:
+        """
+        If a path contains a '.' segment, the per-segment validation should
+        raise 400 'Invalid path' (covers the branch on line ~384).
+        """
+        path_mock = MagicMock()
+        # Force parts to include a '.' so it isn't normalised away
+        path_mock.parts = ('valid', '.', 'image.jpg')
+        path_mock.is_absolute.return_value = False
+        # No further attributes needed; it should fail before resolving
+        mock_path.return_value = path_mock
+
+        resp = self.client.get(
+            '/api/get_violation_image?image_path=valid/./image.jpg',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['detail'], 'Invalid path')
 
     ###################################################
     # /api/violations Tests

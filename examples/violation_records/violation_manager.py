@@ -7,8 +7,10 @@ from pathlib import Path
 
 import aiofiles
 from sqlalchemy.ext.asyncio import AsyncSession
+from werkzeug.utils import secure_filename
 
 from examples.auth.models import Violation
+from examples.violation_records.settings import STATIC_DIR
 
 
 class ViolationManager:
@@ -17,17 +19,18 @@ class ViolationManager:
     file system (for images) and the database via SQLAlchemy ORM.
     """
 
-    def __init__(self, base_dir: str = 'static') -> None:
+    def __init__(self, base_dir: str | Path | None = None) -> None:
         """
         Initialise the manager with a base directory for storing images.
 
         This creates the specified base directory if it does not already exist.
 
         Args:
-            base_dir (str, optional): The top-level folder for saving images.
-                Defaults to "static".
+            base_dir (str | Path | None, optional): The base directory path
+                where images will be stored. If None, defaults to STATIC_DIR
+                from settings. Defaults to None.
         """
-        self.base_dir: Path = Path(base_dir)
+        self.base_dir: Path = Path(base_dir or STATIC_DIR)
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     async def save_violation(
@@ -70,7 +73,7 @@ class ViolationManager:
             day_dir.mkdir(parents=True, exist_ok=True)
 
             # 2) Generate a unique filename using UUID (suffix: .png)
-            filename: str = f"{uuid.uuid4()}.png"
+            filename: str = secure_filename(f"{uuid.uuid4()}.png")
             image_path: Path = day_dir / filename
 
             # 3) Asynchronously write the file to disk
