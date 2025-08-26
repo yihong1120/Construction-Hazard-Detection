@@ -126,15 +126,10 @@ def main():
     user_id = 'your_user_id_here'
     message = 'Hello, WeChat!'
     image = np.zeros((100, 100, 3), dtype=np.uint8)  # Example image (black)
-    response = notifier.send_notification(user_id, message, image=image)
+    _ = notifier.send_notification(user_id, message, image=image)
 
-    # Log only non-sensitive fields to avoid leaking secrets
-    allowed_fields = {k: response.get(k) for k in ('errcode', 'errmsg')}
-    logging.info(
-        'WeChat send_notification completed: errcode=%s, errmsg=%s',
-        allowed_fields.get('errcode'),
-        allowed_fields.get('errmsg'),
-    )
+    # Log a static, non-sensitive message only
+    logging.info('WeChat send_notification completed')
 
 
 if __name__ == '__main__':
