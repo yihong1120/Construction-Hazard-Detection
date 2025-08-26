@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from io import BytesIO
 
@@ -127,14 +128,16 @@ def main():
     image = np.zeros((100, 100, 3), dtype=np.uint8)  # Example image (black)
     response = notifier.send_notification(user_id, message, image=image)
 
-    # Remove sensitive data from response before logging
-    sanitized_response = {
-        k: v for k, v in response.items() if k not in [
-            'access_token', 'corp_secret',
-        ]
-    }
-    print(sanitized_response)
+    # Log only non-sensitive fields to avoid leaking secrets
+    allowed_fields = {k: response.get(k) for k in ('errcode', 'errmsg')}
+    logging.info(
+        'WeChat send_notification completed: errcode=%s, errmsg=%s',
+        allowed_fields.get('errcode'),
+        allowed_fields.get('errmsg'),
+    )
 
 
 if __name__ == '__main__':
+    # Configure a basic logger only for direct execution
+    logging.basicConfig(level=logging.INFO)
     main()

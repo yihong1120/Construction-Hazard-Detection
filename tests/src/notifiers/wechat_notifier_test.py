@@ -157,7 +157,8 @@ class TestWeChatNotifier(unittest.TestCase):
             'WECHAT_AGENT_ID': '1000002',
         }.get(key, '')
 
-        with patch('builtins.print') as mock_print:
+        # We switched to secure logging; verify logging.info is called
+        with patch('src.notifiers.wechat_notifier.logging.info') as mock_log:
             main()
             mock_send_notification.assert_called_once()
             args, kwargs = mock_send_notification.call_args
@@ -166,10 +167,17 @@ class TestWeChatNotifier(unittest.TestCase):
             if len(args) > 2:
                 self.assertIsInstance(args[2], np.ndarray)
                 self.assertEqual(args[2].shape, (100, 100, 3))
-            mock_print.assert_called()
-            print_args, print_kwargs = mock_print.call_args
-            self.assertIn('errcode', print_args[0])
-            self.assertIn('errmsg', print_args[0])
+
+            # logging.info(msg, errcode, errmsg) is expected
+            mock_log.assert_called()
+            log_args, _ = mock_log.call_args
+            self.assertIsInstance(log_args[0], str)
+            # The format string should include placeholders for errcode/errmsg
+            self.assertIn('errcode=%s', log_args[0])
+            self.assertIn('errmsg=%s', log_args[0])
+            # And values should be provided as subsequent args
+            self.assertEqual(log_args[1], 0)
+            self.assertEqual(log_args[2], 'ok')
 
     @patch('requests.post')
     @patch.dict(
@@ -214,3 +222,10 @@ class TestWeChatNotifier(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+'''
+pytest \
+    --cov=src.notifiers.wechat_notifier \
+    --cov-report=term-missing \
+    tests/src/notifiers/wechat_notifier_test.py
+'''
