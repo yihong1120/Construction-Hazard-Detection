@@ -323,6 +323,165 @@ class MainApp:
             await self.cleanup_resources()
 
 
+async def _run_single_stream(cfg: StreamConfig) -> None:
+    """Run one stream processing coroutine for the given configuration."""
+    video_url = cfg['video_url']
+    model_key = cfg['model_key']
+    site = cfg['site']
+    stream_name = cfg['stream_name']
+    detect_with_server = cfg['detect_with_server']
+    detection_items = cfg['detection_items']
+    work_start_hour = cfg['work_start_hour']
+    work_end_hour = cfg['work_end_hour']
+    store_in_redis = cfg['store_in_redis']
+
+    # Initialise components
+    streaming_capture = StreamCapture(stream_url=video_url)
+    live_stream_detector = LiveStreamDetector(
+        api_url=os.getenv('DETECT_API_URL') or '',
+        model_key=model_key,
+        output_folder=site,
+        detect_with_server=detect_with_server,
+    )
+    danger_detector = DangerDetector(detection_items)
+    fcm_sender = FCMSender(api_url=os.getenv('FCM_API_URL') or '')
+    violation_sender = ViolationSender(
+        api_url=os.getenv('VIOLATION_RECORD_API_URL') or '',
+    )
+    frame_sender = BackendFrameSender(
+        api_url=os.getenv('STREAMING_API_URL') or '',
+        max_retries=3,
+        timeout=30,  # Increase timeout
+        reconnect_backoff=2.0,  # Moderate backoff time
+    )
+
+    last_notification_time: int = 0
+    redis_key = (
+        f"stream_frame:{Utils.encode(site)}|{Utils.encode(stream_name)}"
+    )
+    redis_manager = RedisManager()
+
+    try:
+        # Process each frame
+        async for frame, ts in streaming_capture.execute_capture():
+            start = time.time()
+            detection_time = datetime.fromtimestamp(int(ts))
+            is_working = (
+                work_start_hour <= detection_time.hour < work_end_hour
+            )
+
+            datas, track_data = (
+                await live_stream_detector.generate_detections(
+                    frame,
+                )
+            )
+            warnings, cone_polys, pole_polys = (
+                danger_detector.detect_danger(
+                    track_data,
+                )
+            )
+            warnings = Utils.filter_warnings_by_working_hour(
+                warnings, is_working,
+            )
+
+            # Use optimized frame encoding (JPEG for better compression)
+            frame_bytes = Utils.encode_frame(frame, 'jpeg', 85)
+
+            # Optionally stream result to backend using optimised transmission
+            if store_in_redis:
+                try:
+                    result = await frame_sender.send_optimized_frame(
+                        frame=frame,
+                        site=site,
+                        stream_name=stream_name,
+                        encoding_format='jpeg',
+                        jpeg_quality=85,
+                        use_websocket=True,
+                        warnings_json=json.dumps(warnings),
+                        cone_polygons_json=json.dumps(cone_polys),
+                        pole_polygons_json=json.dumps(pole_polys),
+                        detection_items_json=json.dumps(datas),
+                    )
+
+                    # Check send result
+                    if result.get('status') != 'ok':
+                        print(
+                            f"[{site}:{stream_name}] Frame send failed: "
+                            f"{result}",
+                        )
+
+                except Exception as e:
+                    # Handle frame send error
+                    print(f"[{site}:{stream_name}] Frame send error: {e}")
+
+            # Send violation record + FCM push if needed
+            if warnings and Utils.should_notify(
+                int(ts),
+                last_notification_time,
+            ):
+                violation_id_str = await violation_sender.send_violation(
+                    site=site,
+                    stream_name=stream_name,
+                    warnings_json=json.dumps(warnings),
+                    detection_time=detection_time,
+                    image_bytes=frame_bytes,
+                    detections_json=json.dumps(datas),
+                    cone_polygon_json=json.dumps(cone_polys),
+                    pole_polygon_json=json.dumps(pole_polys),
+                )
+                # Try to convert violation_id to int, else None
+                try:
+                    violation_id: int | None = (
+                        int(violation_id_str)
+                        if violation_id_str is not None
+                        else None
+                    )
+                except Exception:
+                    violation_id = None
+
+                await fcm_sender.send_fcm_message_to_site(
+                    site=site,
+                    stream_name=stream_name,
+                    message=warnings,
+                    image_path=None,
+                    violation_id=violation_id,
+                )
+                last_notification_time = int(ts)
+
+            # Dynamically adjust processing interval
+            proc_time = time.time() - start
+            streaming_capture.update_capture_interval(
+                int((math.floor(proc_time * 2) + 1) / 2),
+            )
+
+        await streaming_capture.release_resources()
+        gc.collect()
+
+    finally:
+        # Ensure cleanup
+        await live_stream_detector.close()
+        await streaming_capture.release_resources()
+        await frame_sender.close()  # Ensure WebSocket connection is closed
+        if store_in_redis:
+            try:
+                await redis_manager.delete(redis_key)
+            except Exception as e:
+                print(
+                    f"[WARN] Failed to delete redis key {redis_key}: {e}",
+                )
+
+
+def process_single_stream(cfg: StreamConfig) -> None:
+    """
+    Logic executed by each child process to capture frames, detect hazards,
+    and send results to backend or Redis.
+
+    Args:
+        cfg (StreamConfig): The configuration dict for this stream.
+    """
+    asyncio.run(_run_single_stream(cfg))
+
+
 async def main() -> None:
     """
     Parse command-line arguments and run the MainApp.
@@ -374,163 +533,6 @@ async def main() -> None:
             if app.db_pool:
                 app.db_pool.close()
                 await app.db_pool.wait_closed()
-
-
-def process_single_stream(cfg: StreamConfig) -> None:
-    """
-    Logic executed by each child process to capture frames, detect hazards,
-    and send results to backend or Redis.
-
-    Args:
-        cfg (StreamConfig): The configuration dict for this stream.
-    """
-
-    video_url = cfg['video_url']
-    model_key = cfg['model_key']
-    site = cfg['site']
-    stream_name = cfg['stream_name']
-    detect_with_server = cfg['detect_with_server']
-    detection_items = cfg['detection_items']
-    work_start_hour = cfg['work_start_hour']
-    work_end_hour = cfg['work_end_hour']
-    store_in_redis = cfg['store_in_redis']
-
-    async def _main() -> None:
-        # Initialise detection components
-        streaming_capture = StreamCapture(stream_url=video_url)
-        live_stream_detector = LiveStreamDetector(
-            api_url=os.getenv('DETECT_API_URL') or '',
-            model_key=model_key,
-            output_folder=site,
-            detect_with_server=detect_with_server,
-        )
-        danger_detector = DangerDetector(detection_items)
-        fcm_sender = FCMSender(api_url=os.getenv('FCM_API_URL') or '')
-        violation_sender = ViolationSender(
-            api_url=os.getenv('VIOLATION_RECORD_API_URL') or '',
-        )
-        frame_sender = BackendFrameSender(
-            api_url=os.getenv('STREAMING_API_URL') or '',
-            max_retries=3,
-            timeout=30,  # Increase timeout
-            reconnect_backoff=2.0,  # Moderate backoff time
-        )
-
-        last_notification_time: int = 0
-        redis_key = (
-            f"stream_frame:{Utils.encode(site)}|{Utils.encode(stream_name)}"
-        )
-        redis_manager = RedisManager()
-
-        try:
-            # Process each frame
-            async for frame, ts in streaming_capture.execute_capture():
-                start = time.time()
-                detection_time = datetime.fromtimestamp(int(ts))
-                is_working = (
-                    work_start_hour <= detection_time.hour < work_end_hour
-                )
-
-                datas, track_data = (
-                    await live_stream_detector.generate_detections(
-                        frame,
-                    )
-                )
-                warnings, cone_polys, pole_polys = (
-                    danger_detector.detect_danger(
-                        track_data,
-                    )
-                )
-                warnings = Utils.filter_warnings_by_working_hour(
-                    warnings, is_working,
-                )
-
-                # Use optimized frame encoding (JPEG for better compression)
-                frame_bytes = Utils.encode_frame(frame, 'jpeg', 85)
-
-                # Optionally stream result to backend
-                # using optimised transmission
-                if store_in_redis:
-                    try:
-                        result = await frame_sender.send_optimized_frame(
-                            frame=frame,
-                            site=site,
-                            stream_name=stream_name,
-                            encoding_format='jpeg',
-                            jpeg_quality=85,
-                            use_websocket=True,
-                            warnings_json=json.dumps(warnings),
-                            cone_polygons_json=json.dumps(cone_polys),
-                            pole_polygons_json=json.dumps(pole_polys),
-                            detection_items_json=json.dumps(datas),
-                        )
-
-                        # Check send result
-                        if result.get('status') != 'ok':
-                            print(
-                                f"[{site}:{stream_name}] Frame send failed: "
-                                f"{result}",
-                            )
-
-                    except Exception as e:
-                        # Handle frame send error
-                        print(f"[{site}:{stream_name}] Frame send error: {e}")
-
-                # Send violation record + FCM push if needed
-                if (
-                    warnings
-                    and Utils.should_notify(int(ts), last_notification_time)
-                ):
-                    violation_id_str = await violation_sender.send_violation(
-                        site=site,
-                        stream_name=stream_name,
-                        warnings_json=json.dumps(warnings),
-                        detection_time=detection_time,
-                        image_bytes=frame_bytes,
-                        detections_json=json.dumps(datas),
-                        cone_polygon_json=json.dumps(cone_polys),
-                        pole_polygon_json=json.dumps(pole_polys),
-                    )
-                    # Try to convert violation_id to int, else None
-                    try:
-                        violation_id: int | None = (
-                            int(violation_id_str)
-                            if violation_id_str is not None else None
-                        )
-                    except Exception:
-                        violation_id = None
-                    await fcm_sender.send_fcm_message_to_site(
-                        site=site,
-                        stream_name=stream_name,
-                        message=warnings,
-                        image_path=None,
-                        violation_id=violation_id,
-                    )
-                    last_notification_time = int(ts)
-
-                # Dynamically adjust processing interval
-                proc_time = time.time() - start
-                streaming_capture.update_capture_interval(
-                    int((math.floor(proc_time * 2) + 1) / 2),
-                )
-
-            await streaming_capture.release_resources()
-            gc.collect()
-
-        finally:
-            # Ensure cleanup
-            await live_stream_detector.close()
-            await streaming_capture.release_resources()
-            await frame_sender.close()  # Ensure WebSocket connection is closed
-            if store_in_redis:
-                try:
-                    await redis_manager.delete(redis_key)
-                except Exception as e:
-                    print(
-                        f"[WARN] Failed to delete redis key {redis_key}: {e}",
-                    )
-
-    asyncio.run(_main())
 
 
 if __name__ == '__main__':
