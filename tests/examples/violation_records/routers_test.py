@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import unittest
 from datetime import datetime
 from typing import ClassVar
@@ -14,6 +15,9 @@ from werkzeug.utils import secure_filename
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
+from examples.auth.user_service import _cache_ttl
+from examples.auth.user_service import _user_sites_cache
+from examples.violation_records.routers import get_user_sites_cached
 from examples.violation_records.routers import router
 
 
@@ -279,10 +283,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     async def test_get_user_sites_cached_success(self) -> None:
         """
         Test get_user_sites_cached function with successful user retrieval.
-        """
-        from examples.violation_records.routers import get_user_sites_cached
-        from examples.violation_records.routers import _user_sites_cache
-
+    """
         # Clear cache first
         _user_sites_cache.clear()
 
@@ -309,10 +310,6 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         Test get_user_sites_cached function returns cached result.
         """
-        from examples.violation_records.routers import get_user_sites_cached
-        from examples.violation_records.routers import _user_sites_cache
-        import time
-
         # Pre-populate cache
         current_time = time.time()
         _user_sites_cache['cached_user'] = (['CachedSite'], current_time)
@@ -330,11 +327,6 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         Test get_user_sites_cached function refreshes expired cache.
         """
-        from examples.violation_records.routers import get_user_sites_cached
-        from examples.violation_records.routers import _user_sites_cache
-        from examples.violation_records.routers import _cache_ttl
-        import time
-
         # Pre-populate cache with expired entry
         old_time = time.time() - _cache_ttl - 10  # expired
         _user_sites_cache['expired_user'] = (['OldSite'], old_time)

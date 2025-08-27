@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -23,11 +22,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from werkzeug.utils import secure_filename
 
+from examples.auth import user_service as _user_service
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
 from examples.auth.models import Site
 from examples.auth.models import User
 from examples.auth.models import Violation
+from examples.violation_records.path_utils import _determine_media_type
+from examples.violation_records.path_utils import _normalize_safe_rel_path
+from examples.violation_records.path_utils import _resolve_and_authorize
 from examples.violation_records.schemas import SiteOut
 from examples.violation_records.schemas import UploadViolationResponse
 from examples.violation_records.schemas import ViolationItem
@@ -35,6 +38,9 @@ from examples.violation_records.schemas import ViolationList
 from examples.violation_records.search_utils import SearchUtils
 from examples.violation_records.settings import STATIC_DIR
 from examples.violation_records.violation_manager import ViolationManager
+
+# Re-export for backward compatibility with tests
+get_user_sites_cached = _user_service.get_user_sites_cached
 
 # Instantiate a global ViolationManager for handling image saving
 # and record creation.
@@ -46,52 +52,7 @@ search_util: SearchUtils = SearchUtils(device=-1)
 # Create a FastAPI router for violations-related endpoints.
 router: APIRouter = APIRouter()
 
-# Cache mechanism for storing user site information
-_user_sites_cache: dict[str, tuple[list[str], float]] = {}
-_cache_ttl: int = 300  # Cache time-to-live in seconds (5 minutes)
-
-
-async def get_user_sites_cached(
-    username: str,
-    db: AsyncSession,
-) -> list[str]:
-    """
-    Retrieve the list of sites accessible by a user, with caching support.
-
-    Args:
-        username (str): The username of the user.
-        db (AsyncSession): The database session.
-
-    Returns:
-        list[str]: A list of site names accessible by the user.
-
-    Raises:
-        HTTPException: If the user is not found in the database.
-    """
-    current_time: float = time.time()
-
-    # Check the cache for user site information
-    if username in _user_sites_cache:
-        cached_names, cached_time = _user_sites_cache[username]
-        if current_time - cached_time < _cache_ttl:
-            return cached_names
-
-    # Query the database for user site information
-    stmt_user = (
-        select(User)
-        .where(User.username == username)
-        .options(selectinload(User.sites))
-    )
-    user_obj: User | None = (await db.execute(stmt_user)).scalar()
-    if not user_obj:
-        raise HTTPException(status_code=404, detail='User not found')
-
-    site_names: list[str] = [site.name for site in user_obj.sites]
-
-    # Update the cache with the retrieved site information
-    _user_sites_cache[username] = (site_names, current_time)
-
-    return site_names
+# Note: get_user_sites_cached is provided by examples.auth.user_service
 
 
 @router.get(
@@ -364,53 +325,18 @@ async def get_violation_image(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    # Disallow absolute paths and traversal components
-    raw_path = Path(image_path)
-    if raw_path.is_absolute() or '..' in raw_path.parts:
-        raise HTTPException(status_code=400, detail='Invalid path')
-
-    # If the path starts with the static directory name, strip it to avoid
-    # duplicating 'static/static'. Do this via pathlib parts instead of
-    # string ops.
-    if raw_path.parts and raw_path.parts[0] == STATIC_DIR.name:
-        raw_path = Path(*raw_path.parts[1:])
-
-    # Sanitise each path segment using secure_filename while preserving
-    # directory structure. Reject if any segment becomes empty after
-    # sanitisation.
-    safe_parts: list[str] = []
-    for part in raw_path.parts:
-        if part in {'', '.', '..'}:
-            raise HTTPException(status_code=400, detail='Invalid path')
-        cleaned = secure_filename(part)
-        if not cleaned:
-            raise HTTPException(status_code=400, detail='Invalid path segment')
-        safe_parts.append(cleaned)
-    safe_rel_path = Path(*safe_parts) if safe_parts else Path()
-
-    # Resolve the final path and ensure it stays under static/
+    # Normalize and authorize path
+    safe_rel_path = _normalize_safe_rel_path(image_path, path_cls=Path)
     base_dir: Path = Path(STATIC_DIR).resolve()
-    full_path: Path = (base_dir / safe_rel_path).resolve()
+    full_path: Path = _resolve_and_authorize(
+        base_dir, safe_rel_path, username, path_cls=Path,
+    )
     print(f'[DEBUG] full_path => {full_path}')
-
-    try:
-        full_path.relative_to(base_dir)
-    except ValueError:
-        print(
-            f"[get_violation_image] User {username} tried to "
-            'access outside of base_dir',
-        )
-        raise HTTPException(status_code=403, detail='Access denied')
 
     if not full_path.exists():
         raise HTTPException(status_code=404, detail='Image not found')
 
-    # Allow only specific image extensions
-    suffix = full_path.suffix.lower()
-    allowed_ext = {'.png', '.jpg', '.jpeg'}
-    if suffix not in allowed_ext:
-        raise HTTPException(status_code=400, detail='Unsupported file type')
-    media_type: str = 'image/png' if suffix == '.png' else 'image/jpeg'
+    media_type: str = _determine_media_type(full_path)
 
     return FileResponse(
         path=full_path,
