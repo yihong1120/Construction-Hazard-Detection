@@ -336,6 +336,12 @@ class Utils:
     A class to provide utility functions.
     """
 
+    # ---- Geometry/tuning constants for utility pole area construction ----
+    CIRCLE_BUFFER_SEGMENTS: int = 64
+    TANGENT_BUFFER_WIDTH: float = 0.05
+    TANGENT_BUFFER_SEGMENTS: int = 32
+    UTILITY_POLE_RADIUS_FACTOR: float = 0.35
+
     @staticmethod
     def is_expired(expire_date_str: str | None) -> bool:
         """
@@ -844,82 +850,161 @@ class Utils:
             - Otherwise, clusters poles, builds MSTs, and unions circles and
               tangents.
         """
-        # Collect utility pole centres and radii
-        utility_poles: list[tuple[float, float, float]] = []
+        # 1) Collect poles (centre-bottom and radius derived from bbox)
+        utility_poles = Utils._extract_utility_poles(datas)
+        if not utility_poles:
+            return Polygon()
+
+        # 2) Handle trivial cases
+        if len(utility_poles) == 1:
+            cx, cy, r = utility_poles[0]
+            return Point(cx, cy).buffer(r, quad_segs=64)
+
+        # 3) Too few poles for clustering → union all circles directly
+        if len(utility_poles) < clusterer.min_samples:
+            return Utils._union_circles(utility_poles)
+
+        # 4) Cluster poles and build per-cluster unions
+        clusters = Utils._cluster_utility_poles(utility_poles, clusterer)
+        cluster_polys: list[Polygon] = [
+            Utils._build_cluster_union(circles_in_cluster)
+            for circles_in_cluster in clusters.values()
+        ]
+        return unary_union(cluster_polys)
+
+    @staticmethod
+    def _extract_utility_poles(
+        datas: list[list[float]],
+    ) -> list[tuple[float, float, float]]:
+        """
+        Extract utility pole centre-bottom and radius from detections.
+
+        Args:
+            datas (list[list[float]]): Detection data, each entry is a list
+                of floats representing bounding box and class info.
+
+        Returns:
+            list[tuple[float, float, float]]: List of utility pole
+                centres and radii (cx, cy, r).
+        """
+        poles: list[tuple[float, float, float]] = []
         for d in datas:
             if d[5] == 9:  # class == 9 => utility pole
                 left, top, right, bottom, *_ = d
                 cx: float = (left + right) / 2.0
                 cy: float = bottom
                 height: float = bottom - top
-                radius: float = 0.35 * height
+                radius: float = Utils.UTILITY_POLE_RADIUS_FACTOR * height
                 if radius > 0:
-                    utility_poles.append((cx, cy, radius))
+                    poles.append((cx, cy, radius))
+        return poles
 
-        if not utility_poles:
-            return Polygon()
+    @staticmethod
+    def _union_circles(poles: list[tuple[float, float, float]]) -> Polygon:
+        """
+        Union buffered circles for all given poles.
 
-        # If only one utility pole, return its buffered circle
-        if len(utility_poles) == 1:
-            cx, cy, r = utility_poles[0]
-            return Point(cx, cy).buffer(r, quad_segs=64)
+        Args:
+            poles (list[tuple[float, float, float]]): List of utility pole
+                centres and radii (cx, cy, r).
 
-        # If too few poles for clustering, union all circles directly
-        if len(utility_poles) < clusterer.min_samples:
-            circle_polys: list[Polygon] = [
-                Point(cx, cy).buffer(r, quad_segs=64)
-                for (cx, cy, r) in utility_poles
-            ]
-            return unary_union(circle_polys)
+        Returns:
+            Polygon: The union polygon for the cluster.
+        """
+        circle_polys: list[Polygon] = [
+            Point(cx, cy).buffer(r, quad_segs=Utils.CIRCLE_BUFFER_SEGMENTS)
+            for (cx, cy, r) in poles
+        ]
+        return unary_union(circle_polys)
 
-        # Otherwise, cluster utility poles
-        coords: np.ndarray = np.array([
-            (p[0], p[1]) for p in utility_poles
-        ])
+    @staticmethod
+    def _cluster_utility_poles(
+        poles: list[tuple[float, float, float]],
+        clusterer: HDBSCAN,
+    ) -> dict[str | int, list[tuple[float, float, float]]]:
+        """
+        Cluster poles using HDBSCAN, grouping noise separately.
+
+        Args:
+            poles (list[tuple[float, float, float]]): List of utility pole
+                centres and radii (cx, cy, r).
+            clusterer (HDBSCAN): HDBSCAN clustering algorithm instance.
+
+        Returns:
+            dict[str | int, list[tuple[float, float, float]]]: Clusters of
+                utility poles, keyed by cluster label.
+        """
+        # Prepare data for clustering
+        coords: np.ndarray = np.array([(p[0], p[1]) for p in poles])
         labels: np.ndarray = clusterer.fit_predict(coords)
 
+        # Map labels to original poles
         clusters: dict[str | int, list[tuple[float, float, float]]] = {}
-        for circle, label in zip(utility_poles, labels):
+        for idx, (circle, label) in enumerate(zip(poles, labels)):
             if label == -1:
-                key: str = f"noise_{id(circle)}"
+                key: str = f"noise_{idx}"
                 clusters.setdefault(key, []).append(circle)
             else:
-                clusters.setdefault(label, []).append(circle)
+                clusters.setdefault(int(label), []).append(circle)
+        return clusters
 
-        cluster_polys: list[Polygon] = []
-        for _, circles_in_cluster in clusters.items():
-            if len(circles_in_cluster) == 1:
-                cx, cy, r = circles_in_cluster[0]
-                circle_poly: Polygon = Point(cx, cy).buffer(r, quad_segs=64)
-                cluster_polys.append(circle_poly)
-            else:
-                # Multiple poles: build MST and outer tangents
-                circle_polys_: list[Polygon] = [
-                    Point(cx, cy).buffer(r, quad_segs=64)
-                    for (cx, cy, r) in circles_in_cluster
-                ]
-                mst_edges: list[tuple[int, int]] = Utils.build_mst_pairs(
-                    circles_in_cluster,
-                )
-                lines: list[LineString] = []
-                for (u, v) in mst_edges:
-                    cx1, cy1, r1 = circles_in_cluster[u]
-                    cx2, cy2, r2 = circles_in_cluster[v]
-                    lines.extend(
-                        Utils.get_outer_tangents(
-                            cx1, cy1, r1, cx2, cy2, r2,
-                        ),
-                    )
+    @staticmethod
+    def _build_cluster_union(
+        circles_in_cluster: list[tuple[float, float, float]],
+    ) -> Polygon:
+        """
+        Build union polygon for a cluster of poles (circles + tangents).
 
-                line_polys: list[Polygon] = [
-                    ls.buffer(0.05, quad_segs=32)
-                    for ls in lines
-                ]
-                union_poly: Polygon = unary_union(circle_polys_ + line_polys)
-                cluster_polys.append(union_poly)
+        Args:
+            circles_in_cluster (list[tuple[float, float, float]]):
+                List of circles represented by (cx, cy, radius) tuples.
 
-        final_union: Polygon = unary_union(cluster_polys)
-        return final_union
+        Returns:
+            Polygon: The union polygon for the cluster.
+        """
+        # Single pole: just a buffered circle
+        if len(circles_in_cluster) == 1:
+            cx, cy, r = circles_in_cluster[0]
+            return Point(cx, cy).buffer(
+                r, quad_segs=Utils.CIRCLE_BUFFER_SEGMENTS,
+            )
+
+        # Multiple poles: circles + outer tangents along MST edges
+        circle_polys_: list[Polygon] = [
+            Point(cx, cy).buffer(r, quad_segs=Utils.CIRCLE_BUFFER_SEGMENTS)
+            for (cx, cy, r) in circles_in_cluster
+        ]
+        tangent_buffers = Utils._build_mst_tangent_buffers(circles_in_cluster)
+        return unary_union(circle_polys_ + tangent_buffers)
+
+    @staticmethod
+    def _build_mst_tangent_buffers(
+        circles_in_cluster: list[tuple[float, float, float]],
+    ) -> list[Polygon]:
+        """
+        Build buffered polygons from outer tangents along MST edges.
+
+        Args:
+            circles_in_cluster (list[tuple[float, float, float]]):
+                List of circles represented by (cx, cy, radius) tuples.
+
+        Returns:
+            list[Polygon]: List of buffered polygons.
+        """
+        mst_edges: list[tuple[int, int]] = Utils.build_mst_pairs(
+            circles_in_cluster,
+        )
+        lines: list[LineString] = []
+        for (u, v) in mst_edges:
+            cx1, cy1, r1 = circles_in_cluster[u]
+            cx2, cy2, r2 = circles_in_cluster[v]
+            lines.extend(Utils.get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2))
+        return [
+            ls.buffer(
+                Utils.TANGENT_BUFFER_WIDTH,
+                quad_segs=Utils.TANGENT_BUFFER_SEGMENTS,
+            ) for ls in lines
+        ]
 
     @staticmethod
     def build_mst_pairs(

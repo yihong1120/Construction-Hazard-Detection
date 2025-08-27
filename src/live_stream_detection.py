@@ -956,6 +956,122 @@ class LiveStreamDetector:
         return self._track_remote_centroid(dets)
 
     # ------------------------------------------------------------------
+    # Small utilities for tracking readability
+    # ------------------------------------------------------------------
+    # Centralized numeric constants for the Hungarian helpers
+    _LARGE_COST: float = 1e6
+    _ZERO_EPS: float = 1e-12
+
+    def _bbox_center(
+            self, x1: float, y1: float, x2: float, y2: float,
+    ) -> tuple[float, float]:
+        """
+        Return the center point (cx, cy) of a bbox.
+
+        Args:
+            x1: The x1 coordinate of the bbox.
+            y1: The y1 coordinate of the bbox.
+            x2: The x2 coordinate of the bbox.
+            y2: The y2 coordinate of the bbox.
+
+        Returns:
+            The center point (cx, cy) of the bbox.
+        """
+        return (x1 + x2) * 0.5, (y1 + y2) * 0.5
+
+    def _bbox_iou(
+        self,
+        a: tuple[float, float, float, float],
+        b: tuple[float, float, float, float],
+    ) -> float:
+        """
+        Compute IoU for two boxes (x1,y1,x2,y2).
+
+        Args:
+            a: The first box (x1, y1, x2, y2).
+            b: The second box (x1, y1, x2, y2).
+
+        Returns:
+            The IoU (Intersection over Union) of the two boxes.
+        """
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        inter_x1 = max(ax1, bx1)
+        inter_y1 = max(ay1, by1)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+        if inter_x2 > inter_x1 and inter_y2 > inter_y1:
+            inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+        else:
+            inter_area = 0.0
+        area_a = (ax2 - ax1) * (ay2 - ay1)
+        area_b = (bx2 - bx1) * (by2 - by1)
+        union = area_a + area_b - inter_area
+        return inter_area / union if union > 0 else 0.0
+
+    def _squared_distance(
+        self,
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+    ) -> float:
+        """
+        Return squared Euclidean distance between points p1 and p2.
+
+        Args:
+            p1: The first point (x, y).
+            p2: The second point (x, y).
+
+        Returns:
+            The squared Euclidean distance.
+        """
+        dx = p1[0] - p2[0]
+        dy = p1[1] - p2[1]
+        return dx * dx + dy * dy
+
+    def _set_remote_track(
+        self,
+        tid: int,
+        bbox: tuple[float, float, float, float],
+        cls_id: int,
+        center: tuple[float, float],
+    ) -> None:
+        """
+        Upsert a remote track's latest state.
+
+        Args:
+            tid: The track ID.
+            bbox: The bounding box (x1, y1, x2, y2).
+            cls_id: The class ID.
+            center: The center point (cx, cy).
+
+        Returns:
+            None
+        """
+        self.remote_tracks[tid] = {
+            'bbox': bbox,
+            'center': center,
+            'last_seen': self.frame_count,
+            'cls': cls_id,
+        }
+
+    def _new_track_for_det(self, det: list[float]) -> list[float]:
+        """
+        Create a new track entry for a single detection.
+
+        Args:
+            det: A single detection [x1, y1, x2, y2, conf, cls_id].
+
+        Returns:
+            A tracked row [x1, y1, x2, y2, conf, cls_id, track_id, is_moving].
+        """
+        x1, y1, x2, y2, conf, cls_id = det
+        cx, cy = self._bbox_center(x1, y1, x2, y2)
+        tid = self.next_remote_id
+        self.next_remote_id += 1
+        self._set_remote_track(tid, (x1, y1, x2, y2), int(cls_id), (cx, cy))
+        return [x1, y1, x2, y2, conf, cls_id, tid, 0]
+
+    # ------------------------------------------------------------------
     # Centroid tracker (original simple implementation)
     # ------------------------------------------------------------------
     def _track_remote_centroid(
@@ -983,7 +1099,7 @@ class LiveStreamDetector:
 
         for det in dets:
             x1, y1, x2, y2, conf, cls_id = det
-            cx, cy = (x1 + x2) * 0.5, (y1 + y2) * 0.5
+            cx, cy = self._bbox_center(x1, y1, x2, y2)
             best_tid = None
             best_dist_sq = float('inf')
             for (tid, _), (tcx, tcy), tcls in zip(
@@ -991,9 +1107,7 @@ class LiveStreamDetector:
             ):
                 if tid in used_track_ids or tcls != cls_id:
                     continue
-                dx = cx - tcx
-                dy = cy - tcy
-                dist_sq = dx * dx + dy * dy
+                dist_sq = self._squared_distance((cx, cy), (tcx, tcy))
                 if (
                     dist_sq < best_dist_sq and
                     dist_sq < (self.movement_thr_sq * 4)
@@ -1001,23 +1115,20 @@ class LiveStreamDetector:
                     best_dist_sq = dist_sq
                     best_tid = tid
             if best_tid is None:
-                tid = self.next_remote_id
-                self.next_remote_id += 1
-                moving_flag = 0
+                # new track
+                tracked_row = self._new_track_for_det(det)
+                assigned_tracks.append(tracked_row)
+                continue
             else:
                 tid = best_tid
                 used_track_ids.add(tid)
                 prev_center = self.remote_tracks[tid]['center']
-                dx = cx - prev_center[0]
-                dy = cy - prev_center[1]
-                dist_sq_move = dx * dx + dy * dy
+                dist_sq_move = self._squared_distance((cx, cy), prev_center)
                 moving_flag = 1 if dist_sq_move > self.movement_thr_sq else 0
-            self.remote_tracks[tid] = {
-                'bbox': (x1, y1, x2, y2),
-                'center': (cx, cy),
-                'last_seen': self.frame_count,
-                'cls': cls_id,
-            }
+            self._set_remote_track(
+                tid, (x1, y1, x2, y2),
+                int(cls_id), (cx, cy),
+            )
             assigned_tracks.append(
                 [x1, y1, x2, y2, conf, cls_id, tid, moving_flag],
             )
@@ -1049,101 +1160,21 @@ class LiveStreamDetector:
         # Build arrays for existing tracks
         track_items = list(self.remote_tracks.items())  # (tid, info)
         num_tracks = len(track_items)
-        num_dets = len(dets)
 
         # If no existing tracks, create new ones directly
         if num_tracks == 0:
-            assigned = []
-            for det in dets:
-                x1, y1, x2, y2, conf, cls_id = det
-                cx, cy = (x1 + x2) * 0.5, (y1 + y2) * 0.5
-                tid = self.next_remote_id
-                self.next_remote_id += 1
-                self.remote_tracks[tid] = {
-                    'bbox': (x1, y1, x2, y2),
-                    'center': (cx, cy),
-                    'last_seen': self.frame_count,
-                    'cls': cls_id,
-                }
-                assigned.append([x1, y1, x2, y2, conf, cls_id, tid, 0])
-            return assigned
+            return self._assign_new_tracks_for_all(dets)
 
-        # Prepare cost matrix (num_dets x num_tracks)
-        cost_matrix = np.full(
-            (num_dets, num_tracks),
-            fill_value=1e6, dtype=float,
-        )
-
-        for d_idx, det in enumerate(dets):
-            x1, y1, x2, y2, conf, cls_id = det
-            cx = (x1 + x2) * 0.5
-            cy = (y1 + y2) * 0.5
-            for t_idx, (tid, info) in enumerate(track_items):
-                if info['cls'] != cls_id:
-                    continue  # leave large cost
-                tx1, ty1, tx2, ty2 = info['bbox']
-                tcx, tcy = info['center']
-                # IoU
-                inter_x1 = max(x1, tx1)
-                inter_y1 = max(y1, ty1)
-                inter_x2 = min(x2, tx2)
-                inter_y2 = min(y2, ty2)
-                if inter_x2 > inter_x1 and inter_y2 > inter_y1:
-                    inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
-                else:
-                    inter_area = 0.0
-                area_det = (x2 - x1) * (y2 - y1)
-                area_trk = (tx2 - tx1) * (ty2 - ty1)
-                union = area_det + area_trk - inter_area
-                iou = inter_area / union if union > 0 else 0.0
-                dx = cx - tcx
-                dy = cy - tcy
-                dist_sq = dx * dx + dy * dy
-                dist_norm = min(dist_sq / (self.movement_thr_sq * 4), 1.0)
-                cost = 0.5 * (1 - iou) + 0.5 * dist_norm
-                cost_matrix[d_idx, t_idx] = cost
-
-        # Solve assignment
-        matches, unmatched_dets, unmatched_tracks = self._hungarian_assign(
+        # Prepare cost matrix and solve assignment
+        cost_matrix = self._build_cost_matrix(dets, track_items)
+        matches, unmatched_dets, _ = self._hungarian_assign(
             cost_matrix, self.remote_cost_threshold,
         )
 
-        assigned = []
-        used_track_ids: set[int] = set()
-
-        # Update matched tracks
-        for d_idx, t_idx in matches:
-            det = dets[d_idx]
-            x1, y1, x2, y2, conf, cls_id = det
-            tid, info = track_items[t_idx]
-            cx, cy = (x1 + x2) * 0.5, (y1 + y2) * 0.5
-            prev_center = info['center']
-            dx = cx - prev_center[0]
-            dy = cy - prev_center[1]
-            dist_sq_move = dx * dx + dy * dy
-            moving_flag = 1 if dist_sq_move > self.movement_thr_sq else 0
-            self.remote_tracks[tid] = {
-                'bbox': (x1, y1, x2, y2),
-                'center': (cx, cy),
-                'last_seen': self.frame_count,
-                'cls': cls_id,
-            }
-            assigned.append([x1, y1, x2, y2, conf, cls_id, tid, moving_flag])
-            used_track_ids.add(tid)
-
-        # Create new tracks for unmatched detections
-        for d_idx in unmatched_dets:
-            x1, y1, x2, y2, conf, cls_id = dets[d_idx]
-            cx, cy = (x1 + x2) * 0.5, (y1 + y2) * 0.5
-            tid = self.next_remote_id
-            self.next_remote_id += 1
-            self.remote_tracks[tid] = {
-                'bbox': (x1, y1, x2, y2),
-                'center': (cx, cy),
-                'last_seen': self.frame_count,
-                'cls': cls_id,
-            }
-            assigned.append([x1, y1, x2, y2, conf, cls_id, tid, 0])
+        assigned, used_track_ids = self._update_matched_tracks(
+            dets, track_items, matches,
+        )
+        assigned += self._create_tracks_for_unmatched(dets, unmatched_dets)
 
         # (Optionally) we could retire unmatched tracks after grace period;
         # pruning handles this
@@ -1151,106 +1182,174 @@ class LiveStreamDetector:
             self._prune_remote_tracks()
         return assigned
 
+    def _assign_new_tracks_for_all(
+        self, dets: list[list[float]],
+    ) -> list[list[float]]:
+        """
+        Create brand-new tracks for each detection when no tracks exist.
+
+        Args:
+            dets: List of detections [x1, y1, x2, y2, conf, cls].
+
+        Returns:
+            List with tracking info [x1, y1, x2, y2, conf, cls, track_id,
+            is_moving].
+        """
+        assigned: list[list[float]] = []
+        for det in dets:
+            assigned.append(self._new_track_for_det(det))
+        return assigned
+
+    def _build_cost_matrix(
+        self,
+        dets: list[list[float]],
+        track_items: list[tuple[int, dict]],
+    ) -> np.ndarray:
+        """
+        Compute the cost matrix for detections vs tracks.
+
+        Args:
+            dets: List of detections [x1, y1, x2, y2, conf, cls].
+            track_items: List of track items [(track_id, info), ...].
+
+        Returns:
+            Cost matrix as a NumPy array.
+        """
+        num_dets = len(dets)
+        num_tracks = len(track_items)
+        cost_matrix = np.full(
+            (num_dets, num_tracks),
+            self._LARGE_COST, dtype=float,
+        )
+
+        for d_idx, det in enumerate(dets):
+            for t_idx, (_tid, info) in enumerate(track_items):
+                cost_matrix[d_idx, t_idx] = self._compute_pair_cost(det, info)
+        return cost_matrix
+
+    def _compute_pair_cost(self, det: list[float], info: dict) -> float:
+        """
+        Compute combined IoU and distance based cost for a pair.
+
+        Args:
+            det: Detection [x1, y1, x2, y2, conf, cls].
+            info: Track info dictionary.
+
+        Returns:
+            Combined cost as a float.
+        """
+        x1, y1, x2, y2, _conf, cls_id = det
+        if info['cls'] != cls_id:
+            return self._LARGE_COST
+        tx1, ty1, tx2, ty2 = info['bbox']
+        tcx, tcy = info['center']
+        # IoU
+        iou = self._bbox_iou((x1, y1, x2, y2), (tx1, ty1, tx2, ty2))
+        # Distance normalised
+        cx, cy = self._bbox_center(x1, y1, x2, y2)
+        dist_sq = self._squared_distance((cx, cy), (tcx, tcy))
+        dist_norm = min(dist_sq / (self.movement_thr_sq * 4), 1.0)
+        return 0.5 * (1 - iou) + 0.5 * dist_norm
+
+    def _update_matched_tracks(
+        self,
+        dets: list[list[float]],
+        track_items: list[tuple[int, dict]],
+        matches: list[tuple[int, int]],
+    ) -> tuple[list[list[float]], set[int]]:
+        """
+        Update matched tracks and compute moving flags.
+
+        Args:
+            dets:
+                List of detections [x1, y1, x2, y2, conf, cls].
+            track_items:
+                List of track items [(track_id, info), ...].
+            matches:
+                List of matched pairs [(detection_index, track_index), ...].
+
+        Returns:
+            Tuple of (assigned_tracks, used_track_ids).
+        """
+        assigned: list[list[float]] = []
+        used_track_ids: set[int] = set()
+
+        # Update matched tracks
+        for d_idx, t_idx in matches:
+            x1, y1, x2, y2, conf, cls_id = dets[d_idx]
+            tid, info = track_items[t_idx]
+            cx, cy = self._bbox_center(x1, y1, x2, y2)
+            prev_center = info['center']
+            dist_sq_move = self._squared_distance((cx, cy), prev_center)
+            moving_flag = 1 if dist_sq_move > self.movement_thr_sq else 0
+            self._set_remote_track(
+                tid, (x1, y1, x2, y2),
+                int(cls_id), (cx, cy),
+            )
+            assigned.append([x1, y1, x2, y2, conf, cls_id, tid, moving_flag])
+            used_track_ids.add(tid)
+        return assigned, used_track_ids
+
+    def _create_tracks_for_unmatched(
+        self, dets: list[list[float]], unmatched_dets: list[int],
+    ) -> list[list[float]]:
+        """
+        Create tracks for unmatched detections.
+
+        Args:
+            dets: List of detections [x1, y1, x2, y2, conf, cls].
+            unmatched_dets: List of unmatched detection indices.
+
+        Returns:
+            List of new track representations.
+        """
+        assigned: list[list[float]] = []
+        for d_idx in unmatched_dets:
+            assigned.append(self._new_track_for_det(dets[d_idx]))
+        return assigned
+
     # Hungarian assignment helper
     def _hungarian_assign(
         self, cost: np.ndarray, cost_threshold: float,
     ) -> tuple[list[tuple[int, int]], list[int], list[int]]:
-        """Apply Hungarian algorithm on cost matrix and filter by threshold.
+        """
+        Apply Hungarian algorithm on cost matrix and filter by threshold.
+
+        Args:
+            cost: Cost matrix as a 2D numpy array.
+            cost_threshold: Cost threshold for filtering matches.
 
         Returns:
             (matches, unmatched_rows, unmatched_cols)
         """
-        # Copy to avoid modifying original
+        # Copy and square-pad
         cost_matrix = cost.copy()
         num_rows, num_cols = cost_matrix.shape
-        # Pad to square if needed
-        n = max(num_rows, num_cols)
-        if num_rows != num_cols:
-            padded = np.full((n, n), 1e6, dtype=float)
-            padded[:num_rows, :num_cols] = cost_matrix
-            cost_matrix = padded
-        else:
-            n = num_rows
+        cost_matrix, n = self._pad_to_square(cost_matrix)
 
-        # Step 1: row reduction
-        cost_matrix -= cost_matrix.min(axis=1, keepdims=True)
-        # Step 2: col reduction
-        cost_matrix -= cost_matrix.min(axis=0, keepdims=True)
+        # Reduce
+        self._row_col_reduce(cost_matrix)
 
-        # Helper to cover zeros
-        def cover_zeros(mat: np.ndarray):
-            n_local = mat.shape[0]
-            covered_rows = set()
-            covered_cols = set()
-            # Greedy initial marking
-            zero_locs = [
-                (r, c) for r in range(n_local)
-                for c in range(n_local) if abs(mat[r, c]) < 1e-12
-            ]
-            row_zero_count = {r: 0 for r in range(n_local)}
-            col_zero_count = {c: 0 for c in range(n_local)}
-            for r, c in zero_locs:
-                row_zero_count[r] += 1
-                col_zero_count[c] += 1
-            # Simple heuristic: cover rows or cols with most zeros iteratively
-            while zero_locs:
-                # Count remaining zeros per row/col
-                row_counts = {r: 0 for r in range(n_local)}
-                col_counts = {c: 0 for c in range(n_local)}
-                for (r, c) in zero_locs:
-                    if r not in covered_rows and c not in covered_cols:
-                        row_counts[r] += 1
-                        col_counts[c] += 1
-                if not row_counts and not col_counts:
-                    break
-                # Choose to cover row or col with max zeros
-                if (
-                    row_counts and
-                    (
-                        not col_counts or
-                        max(row_counts.values()) >= max(col_counts.values())
-                    )
-                ):
-                    r_sel = max(row_counts, key=lambda k: row_counts[k])
-                    covered_rows.add(r_sel)
-                else:
-                    c_sel = max(col_counts, key=lambda k: col_counts[k])
-                    covered_cols.add(c_sel)
-                zero_locs = [
-                    zc for zc in zero_locs if zc[0]
-                    not in covered_rows and zc[1] not in covered_cols
-                ]
-            return covered_rows, covered_cols
-
+        # Iteratively cover zeros and adjust
         while True:
-            covered_rows, covered_cols = cover_zeros(cost_matrix)
-            lines = len(covered_rows) + len(covered_cols)
-            if lines >= n:
+            covered_rows, covered_cols = self._cover_zeros(cost_matrix)
+            if len(covered_rows) + len(covered_cols) >= n:
                 break
-            # Adjust matrix
-            uncovered = [
-                cost_matrix[r, c] for r in range(n)
-                if r not in covered_rows for c in range(n)
-                if c not in covered_cols
-            ]
-            if not uncovered:
+            if not self._adjust_matrix_with_min(
+                cost_matrix, covered_rows, covered_cols,
+            ):
                 break
-            m = min(uncovered)
-            for r in range(n):
-                for c in range(n):
-                    if r not in covered_rows and c not in covered_cols:
-                        cost_matrix[r, c] -= m
-                    elif r in covered_rows and c in covered_cols:
-                        cost_matrix[r, c] += m
 
         # Extract assignment greedily from zeros (since matrix reduced)
         assigned_cols = set()
         matches_all: list[tuple[int, int]] = []
         for r in range(n):
             zero_cols = [
-                c for c in range(n) if abs(
-                    cost_matrix[r, c],
-                ) < 1e-12 and c not in assigned_cols
+                c for c in range(n)
+                if (
+                    abs(cost_matrix[r, c]) < self._ZERO_EPS
+                    and c not in assigned_cols
+                )
             ]
             if zero_cols:
                 c_sel = zero_cols[0]
@@ -1272,6 +1371,111 @@ class LiveStreamDetector:
         unmatched_rows = [r for r in range(num_rows) if r not in used_rows]
         unmatched_cols = [c for c in range(num_cols) if c not in used_cols]
         return matches, unmatched_rows, unmatched_cols
+
+    def _pad_to_square(self, mat: np.ndarray) -> tuple[np.ndarray, int]:
+        """
+        Pad a rectangular matrix to square by filling with large cost.
+
+        Args:
+            mat: Input matrix to pad.
+
+        Returns:
+            Tuple of (padded_matrix, new_size).
+        """
+        num_rows, num_cols = mat.shape
+        n = max(num_rows, num_cols)
+        if num_rows == num_cols:
+            return mat, n
+        padded = np.full((n, n), self._LARGE_COST, dtype=float)
+        padded[:num_rows, :num_cols] = mat
+        return padded, n
+
+    def _row_col_reduce(self, mat: np.ndarray) -> None:
+        """Perform row and column reduction in-place."""
+        mat -= mat.min(axis=1, keepdims=True)
+        mat -= mat.min(axis=0, keepdims=True)
+
+    def _cover_zeros(
+        self, mat: np.ndarray,
+    ) -> tuple[set[int], set[int]]:
+        """
+        Cover all zeros using minimum number of horizontal/vertical lines.
+
+        Args:
+            mat: Input matrix to cover zeros.
+
+        Returns:
+            Tuple of (covered_rows, covered_cols).
+        """
+        n_local = mat.shape[0]
+        covered_rows: set[int] = set()
+        covered_cols: set[int] = set()
+        zero_locs = [
+            (r, c) for r in range(n_local)
+            for c in range(n_local) if abs(mat[r, c]) < self._ZERO_EPS
+        ]
+        row_zero_count = {r: 0 for r in range(n_local)}
+        col_zero_count = {c: 0 for c in range(n_local)}
+        for r, c in zero_locs:
+            row_zero_count[r] += 1
+            col_zero_count[c] += 1
+        while zero_locs:
+            row_counts = {r: 0 for r in range(n_local)}
+            col_counts = {c: 0 for c in range(n_local)}
+            for (r, c) in zero_locs:
+                if r not in covered_rows and c not in covered_cols:
+                    row_counts[r] += 1
+                    col_counts[c] += 1
+            if not row_counts and not col_counts:
+                break
+            if (
+                row_counts and (
+                    not col_counts or
+                    max(row_counts.values()) >= max(col_counts.values())
+                )
+            ):
+                r_sel = max(row_counts, key=lambda k: row_counts[k])
+                covered_rows.add(r_sel)
+            else:
+                c_sel = max(col_counts, key=lambda k: col_counts[k])
+                covered_cols.add(c_sel)
+            zero_locs = [
+                zc for zc in zero_locs
+                if zc[0] not in covered_rows and zc[1] not in covered_cols
+            ]
+        return covered_rows, covered_cols
+
+    def _adjust_matrix_with_min(
+        self, mat: np.ndarray, covered_rows: set[int], covered_cols: set[int],
+    ) -> bool:
+        """
+        Adjust the matrix by subtracting the minimum value from uncovered
+        cells and adding it to the intersections of covered rows and columns.
+
+        Args:
+            mat: Input matrix to adjust.
+            covered_rows: Set of covered row indices.
+            covered_cols: Set of covered column indices.
+
+        Returns:
+            True if adjustment was applied, False otherwise.
+        """
+        n = mat.shape[0]
+        uncovered = [
+            mat[r, c] for r in range(n)
+            if r not in covered_rows for c in range(n)
+            if c not in covered_cols
+        ]
+        if not uncovered:
+            return False
+        m = min(uncovered)
+        for r in range(n):
+            for c in range(n):
+                if r not in covered_rows and c not in covered_cols:
+                    mat[r, c] -= m
+                elif r in covered_rows and c in covered_cols:
+                    mat[r, c] += m
+        return True
 
     def _prune_remote_tracks(self) -> None:
         """
