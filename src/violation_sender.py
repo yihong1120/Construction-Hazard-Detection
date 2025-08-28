@@ -123,36 +123,22 @@ class ViolationSender:
             RuntimeError:
                 If all retry attempts are exhausted or a critical error occurs.
         """
-        # Ensure authentication before sending
+        # Ensure authentication and prepare request payload
         access_token = await self.token_manager.get_valid_token()
         if not access_token:
             raise RuntimeError('Failed to obtain valid access token')
 
-        headers: dict[str, str] = {
-            'Authorization': f"Bearer {access_token}",
-        }
-
-        # Optimise image format - use JPEG to reduce file size
-        files: dict[str, tuple[str, bytes, str]] = {
-            'image': ('violation.jpg', image_bytes, 'image/jpeg'),
-        }
-
-        data: dict[str, str] = {
-            'site': site,
-            'stream_name': stream_name,
-        }
-        if detection_time:
-            data['detection_time'] = detection_time.isoformat()
-        if warnings_json:
-            data['warnings_json'] = warnings_json
-        if detections_json:
-            data['detections_json'] = detections_json
-        if cone_polygon_json:
-            data['cone_polygon_json'] = cone_polygon_json
-        if pole_polygon_json:
-            data['pole_polygon_json'] = pole_polygon_json
-
-        upload_url: str = self.base_url + '/upload'
+        headers, files, data, upload_url = self._build_upload_payload(
+            access_token=access_token,
+            image_bytes=image_bytes,
+            site=site,
+            stream_name=stream_name,
+            detection_time=detection_time,
+            warnings_json=warnings_json,
+            detections_json=detections_json,
+            cone_polygon_json=cone_polygon_json,
+            pole_polygon_json=pole_polygon_json,
+        )
 
         # Use shared client connection pool
         client = await self._get_client()
@@ -170,7 +156,6 @@ class ViolationSender:
                     headers=headers,
                 )
                 resp.raise_for_status()
-                # Return the violation ID from the response
                 return resp.json().get('violation_id')
 
             except httpx.ConnectTimeout:
@@ -178,38 +163,147 @@ class ViolationSender:
                     f"[send_violation] Attempt {attempt+1}: "
                     'Connection timeout, retry...',
                 )
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(backoff_delay)
-                    backoff_delay *= 2  # Exponential backoff
-                else:
-                    raise RuntimeError(
-                        '[send_violation] All retry attempts exhausted due to '
-                        'timeout',
-                    )
+                backoff_delay = await self._on_timeout(attempt, backoff_delay)
 
             except httpx.HTTPStatusError as exc:
-                # If 401, refresh token and retry
-                if exc.response.status_code == 401:
-                    logging.warning(
-                        '[send_violation] Unauthorized. '
-                        'Attempting token refresh...',
-                    )
-                    await self.token_manager.refresh_token()
-                    # Update headers with new token
-                    new_token = await self.token_manager.get_valid_token()
-                    headers['Authorization'] = f"Bearer {new_token}"
-
-                    if attempt < self.max_retries - 1:
-                        continue  # Retry instead of recursive call
+                if await self._try_refresh_on_401(exc, attempt, headers):
+                    continue
                 raise
 
             except Exception as e:
                 logging.error(f"[send_violation] Unexpected error: {e}")
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(backoff_delay)
-                    backoff_delay *= 2
-                else:
-                    raise
+                backoff_delay = await self._on_unexpected(
+                    attempt, backoff_delay, e,
+                )
 
         # If all attempts fail, return None
         return None
+
+    def _build_upload_payload(
+        self,
+        access_token: str,
+        image_bytes: bytes,
+        site: str,
+        stream_name: str,
+        detection_time: datetime | None,
+        warnings_json: str | None,
+        detections_json: str | None,
+        cone_polygon_json: str | None,
+        pole_polygon_json: str | None,
+    ) -> tuple[
+        dict[str, str],
+        dict[str, tuple[str, bytes, str]],
+        dict[str, str],
+        str,
+    ]:
+        """
+        Build headers, files, form data, and URL for upload request.
+
+        Args:
+            access_token (str): The access token for authentication.
+            image_bytes (bytes): The image bytes to upload.
+            site (str): The site identifier.
+            stream_name (str): The stream name.
+            detection_time (datetime | None): The time of detection.
+            warnings_json (str | None): JSON string of warnings.
+            detections_json (str | None): JSON string of detection items.
+            cone_polygon_json (str | None): JSON string of cone polygons.
+            pole_polygon_json (str | None): JSON string of pole polygons.
+
+        Returns:
+            tuple[
+                dict[str, str],
+                dict[str, tuple[str, bytes, str]],
+                dict[str, str],
+                str,
+            ]: The headers, files, form data, and upload URL.
+        """
+        headers: dict[str, str] = {
+            'Authorization': f"Bearer {access_token}",
+        }
+        files: dict[str, tuple[str, bytes, str]] = {
+            'image': ('violation.jpg', image_bytes, 'image/jpeg'),
+        }
+        data: dict[str, str] = {
+            'site': site,
+            'stream_name': stream_name,
+        }
+        if detection_time:
+            data['detection_time'] = detection_time.isoformat()
+        if warnings_json:
+            data['warnings_json'] = warnings_json
+        if detections_json:
+            data['detections_json'] = detections_json
+        if cone_polygon_json:
+            data['cone_polygon_json'] = cone_polygon_json
+        if pole_polygon_json:
+            data['pole_polygon_json'] = pole_polygon_json
+
+        upload_url: str = self.base_url + '/upload'
+        return headers, files, data, upload_url
+
+    async def _on_timeout(self, attempt: int, delay: int) -> int:
+        """
+        Handle timeout backoff; raise if final attempt, else sleep and backoff.
+
+        Args:
+            attempt (int): The current attempt number.
+            delay (int): The current backoff delay.
+
+        Returns:
+            int: The next backoff delay.
+        """
+        if attempt < self.max_retries - 1:
+            await asyncio.sleep(delay)
+            return delay * 2
+        raise RuntimeError(
+            '[send_violation] All retry attempts exhausted due to timeout',
+        )
+
+    async def _on_unexpected(
+        self, attempt: int, delay: int, err: Exception,
+    ) -> int:
+        """
+        Handle unexpected error backoff; re-raise on final attempt.
+
+        Args:
+            attempt (int): The current attempt number.
+            delay (int): The current backoff delay.
+            err (Exception): The unexpected error that occurred.
+
+        Returns:
+            int: The next backoff delay.
+        """
+        if attempt < self.max_retries - 1:
+            await asyncio.sleep(delay)
+            return delay * 2
+        raise err
+
+    async def _try_refresh_on_401(
+        self,
+        exc: httpx.HTTPStatusError,
+        attempt: int,
+        headers: dict[str, str],
+    ) -> bool:
+        """
+        Attempt token refresh on 401; update headers and signal retry.
+
+        Args:
+            exc (httpx.HTTPStatusError): The HTTP error that occurred.
+            attempt (int): The current attempt number.
+            headers (dict[str, str]): The headers to update.
+
+        Returns:
+            bool:
+                True if the caller should retry,
+                otherwise False (caller should raise).
+        """
+        if exc.response is not None and exc.response.status_code == 401:
+            logging.warning(
+                '[send_violation] Unauthorized. Attempting token refresh...',
+            )
+            await self.token_manager.refresh_token()
+            new_token = await self.token_manager.get_valid_token()
+            headers['Authorization'] = f"Bearer {new_token}"
+            return attempt < self.max_retries - 1
+        return False
