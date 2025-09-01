@@ -87,6 +87,63 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
         mock_redis_client.close.assert_awaited_once()
         mock_engine_obj.dispose.assert_awaited_once()
 
+    @patch('examples.auth.lifespan.engine')
+    @patch('examples.auth.lifespan.start_jwt_scheduler')
+    @patch('examples.auth.lifespan.FastAPILimiter.init')
+    @patch('examples.auth.lifespan.RedisClient')
+    @patch('examples.auth.lifespan._DEFAULT_SERVICE')
+    async def test_global_lifespan_preload_script_exception(
+        self,
+        mock_default_service: MagicMock,
+        mock_redis_client_cls: MagicMock,
+        mock_limiter_init: MagicMock,
+        mock_start_scheduler: MagicMock,
+        mock_engine_obj: MagicMock,
+    ) -> None:
+        """
+        Ensure we cover the exception branch during preload_script.
+
+        Args:
+            mock_redis_client_cls (MagicMock): Patches the RedisClient class.
+            mock_limiter_init (MagicMock): Patches FastAPILimiter.init
+                to avoid real initialisation.
+            mock_start_scheduler (MagicMock): Patches start_jwt_scheduler to
+                avoid real scheduling.
+        """
+        mock_default_service.preload_script = AsyncMock(
+            side_effect=Exception('boom'),
+        )
+
+        # Scheduler mock
+        mock_scheduler: MagicMock = MagicMock()
+        mock_start_scheduler.return_value = mock_scheduler
+
+        # Redis client mocks
+        mock_redis_client: MagicMock = MagicMock()
+        mock_redis_client.connect = AsyncMock()
+        mock_redis_client.close = AsyncMock()
+        mock_redis_client_cls.return_value = mock_redis_client
+
+        # Engine begin context
+        mock_conn_ctx = AsyncMock()
+        mock_conn = MagicMock()
+        mock_conn.run_sync = AsyncMock()
+        mock_conn_ctx.__aenter__.return_value = mock_conn
+        mock_engine_obj.begin.return_value = mock_conn_ctx
+        mock_engine_obj.dispose = AsyncMock()
+
+        app = FastAPI()
+
+        async with global_lifespan(app):
+            # Startup proceeds even when preload_script fails
+            mock_limiter_init.assert_called_once()
+            mock_conn.run_sync.assert_awaited_once()
+
+        # Shutdown still occurs
+        mock_scheduler.shutdown.assert_called_once()
+        mock_redis_client.close.assert_awaited_once()
+        mock_engine_obj.dispose.assert_awaited_once()
+
 
 if __name__ == '__main__':
     unittest.main()

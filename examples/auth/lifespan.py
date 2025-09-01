@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi_limiter import FastAPILimiter
 
+from examples.auth.cache import _DEFAULT_SERVICE
 from examples.auth.database import engine
 from examples.auth.jwt_scheduler import start_jwt_scheduler
 from examples.auth.models import Base
@@ -26,10 +27,10 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         None: Control is yielded back to the application
             after performing startup tasks.
     """
-    # Step 1: Start the scheduler (e.g., for rotating JWT secret keys).
+    # Start the scheduler (e.g., for rotating JWT secret keys).
     scheduler = start_jwt_scheduler(app)
 
-    # Step 2: Initialise Redis connection and rate limiter.
+    # Initialise Redis connection and rate limiter.
     redis_host: str = os.getenv('REDIS_HOST', '127.0.0.1')
     redis_port: str = os.getenv('REDIS_PORT', '6379')
     redis_password: str = os.getenv('REDIS_PASSWORD', '')
@@ -39,7 +40,14 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
     redis_conn = await app.state.redis_client.connect()
     await FastAPILimiter.init(redis_conn)
 
-    # Step 3: Optionally create database tables on startup
+    # Preload Lua scripts into Redis (if any).
+    try:
+        await _DEFAULT_SERVICE.preload_script(redis_conn)
+    except Exception:
+        # Log the error or handle it as needed
+        pass
+
+    # Optionally create database tables on startup
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
