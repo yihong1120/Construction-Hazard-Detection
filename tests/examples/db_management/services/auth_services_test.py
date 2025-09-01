@@ -9,6 +9,7 @@ import jwt
 from fastapi import HTTPException
 
 from examples.db_management.schemas.auth import RefreshRequest
+from examples.db_management.schemas.auth import RefreshTokenPayload
 from examples.db_management.schemas.auth import UserLogin
 from examples.db_management.services import auth_services
 
@@ -310,11 +311,14 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_decode.return_value = {'subject': {'username': 'user'}}
         mock_cache_data: str = '{"refresh_tokens": ["valid_token"]}'
         self.redis_pool.get = AsyncMock(return_value=mock_cache_data)
-
-        payload: dict = await auth_services.verify_refresh_token(
-            'valid_token', self.redis_pool,
+        payload: RefreshTokenPayload = (
+            await auth_services.verify_refresh_token(
+                'valid_token', self.redis_pool,
+            )
         )
-        self.assertEqual(payload, {'subject': {'username': 'user'}})
+        self.assertEqual(
+            payload, {'subject': {'username': 'user'}},
+        )
 
     @patch('examples.db_management.services.auth_services.set_user_data')
     @patch('examples.db_management.services.auth_services.get_user_data')
@@ -342,7 +346,11 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
 
         mock_set_user_data.assert_awaited_with(
             self.redis_pool, 'user',
-            {'jti_list': ['jti456'], 'refresh_tokens': ['token456']},
+            {
+                'jti_list': ['jti456'],
+                'refresh_tokens': ['token456'],
+                'jti_meta': {},
+            },
         )
 
     @patch('examples.db_management.services.auth_services.set_user_data')
@@ -353,8 +361,10 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         'examples.db_management.services.'
         'auth_services.verify_refresh_token',
     )
+    @patch('examples.db_management.services.auth_services.jwt.decode')
     async def test_refresh_tokens_success(
         self,
+        mock_jwt_decode: MagicMock,
         mock_verify_refresh_token: MagicMock,
         mock_get_user_data: MagicMock,
         mock_jwt_access: MagicMock,
@@ -378,6 +388,9 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_jwt_access.create_access_token.return_value = 'new_access'
         mock_jwt_refresh.create_access_token.return_value = 'new_refresh'
 
+        # Simulate decode success with known exp
+        mock_jwt_decode.return_value = {'exp': 456}
+
         payload: RefreshRequest = RefreshRequest(refresh_token='old_refresh')
         result: dict[str, str | list[str]] = (
             await auth_services.refresh_tokens(
@@ -393,6 +406,165 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
                 'feature_names': ['feature1'],
             },
         )
+        mock_set_user_data.assert_awaited()
+        await_call = mock_set_user_data.await_args
+        assert await_call is not None
+        cache_arg = await_call.args[2]
+        assert isinstance(cache_arg, dict)
+        assert 'jti_meta' in cache_arg
+        assert 456 in cache_arg['jti_meta'].values()
+
+    @patch('examples.db_management.services.auth_services.jwt.decode')
+    @patch('examples.db_management.services.auth_services._load_feature_names')
+    @patch('examples.db_management.services.auth_services.jwt_access')
+    @patch('examples.db_management.services.auth_services.jwt_refresh')
+    @patch('examples.db_management.services.auth_services.set_user_data')
+    @patch('examples.db_management.services.auth_services._authenticate')
+    async def test_login_user_jti_meta_decode_success(
+        self,
+        mock_authenticate: AsyncMock,
+        mock_set_user_data: AsyncMock,
+        mock_jwt_refresh: MagicMock,
+        mock_jwt_access: MagicMock,
+        mock_load_features: MagicMock,
+        mock_jwt_decode: MagicMock,
+    ) -> None:
+        """Cover success path when decoding access token for jti_meta.
+
+        Ensures that jti expiry is stored into ``jti_meta`` when decode
+        succeeds.
+        """
+        user_mock: AsyncMock = AsyncMock(
+            id=1, username='user', role='user', group_id=1, is_active=True,
+        )
+        mock_authenticate.return_value = user_mock
+        mock_load_features.return_value = ['f1']
+        mock_jwt_access.create_access_token.return_value = 'acc'
+        mock_jwt_refresh.create_access_token.return_value = 'ref'
+        mock_jwt_decode.return_value = {'exp': 123}
+        self.redis_pool.get = AsyncMock(return_value=None)
+        payload: UserLogin = UserLogin(username='user', password='pw')
+        await auth_services.login_user(payload, self.db, self.redis_pool)
+
+        mock_set_user_data.assert_awaited()
+        await_call = mock_set_user_data.await_args
+        assert await_call is not None
+        cache_arg = await_call.args[2]
+        assert isinstance(cache_arg, dict)
+        assert 'jti_meta' in cache_arg
+        # Should contain exactly one JTI mapped to the exp 123
+        assert 123 in cache_arg['jti_meta'].values()
+
+    @patch('examples.db_management.services.auth_services.jwt.decode')
+    @patch('examples.db_management.services.auth_services._load_feature_names')
+    @patch('examples.db_management.services.auth_services.jwt_access')
+    @patch('examples.db_management.services.auth_services.jwt_refresh')
+    @patch('examples.db_management.services.auth_services.set_user_data')
+    @patch('examples.db_management.services.auth_services._authenticate')
+    async def test_login_user_jti_meta_decode_failure(
+        self,
+        mock_authenticate: AsyncMock,
+        mock_set_user_data: AsyncMock,
+        mock_jwt_refresh: MagicMock,
+        mock_jwt_access: MagicMock,
+        mock_load_features: MagicMock,
+        mock_jwt_decode: MagicMock,
+    ) -> None:
+        """Cover exception path when decoding access token for jti_meta.
+
+        Ensures the function continues gracefully when ``jwt.decode`` raises
+        during access-token decoding used only for jti expiry bookkeeping.
+        """
+        user_mock: AsyncMock = AsyncMock(
+            id=1, username='user', role='user', group_id=1, is_active=True,
+        )
+        mock_authenticate.return_value = user_mock
+        mock_load_features.return_value = ['f1']
+        mock_jwt_access.create_access_token.return_value = 'acc'
+        mock_jwt_refresh.create_access_token.return_value = 'ref'
+        # Force decode failure inside login_user jti_meta block
+        mock_jwt_decode.side_effect = Exception('decode-fail')
+        self.redis_pool.get = AsyncMock(return_value=None)
+
+        payload: UserLogin = UserLogin(username='user', password='pw')
+        result = await auth_services.login_user(
+            payload, self.db, self.redis_pool,
+        )
+
+        self.assertEqual(result['access_token'], 'acc')
+        self.assertEqual(result['refresh_token'], 'ref')
+        self.assertEqual(result['feature_names'], ['f1'])
+        mock_set_user_data.assert_awaited()
+
+    @patch('examples.db_management.services.auth_services.set_user_data')
+    @patch('examples.db_management.services.auth_services.get_user_data')
+    @patch('examples.db_management.services.auth_services.jwt.decode')
+    async def test_logout_user_jti_meta_pop_failure(
+        self,
+        mock_jwt_decode: MagicMock,
+        mock_get_user_data: MagicMock,
+        mock_set_user_data: AsyncMock,
+    ) -> None:
+        """Cover exception path when popping jti_meta fails.
+
+        Sets ``jti_meta`` to a non-mapping so that ``pop`` raises, ensuring
+        the broad ``except`` is exercised.
+        """
+        mock_jwt_decode.return_value = {
+            'username': 'user', 'jti': 'abc',
+        }
+        mock_get_user_data.return_value = {
+            'jti_list': ['abc'],
+            'refresh_tokens': ['tok'],
+            'jti_meta': 123,  # not a mapping → AttributeError on pop
+        }
+
+        await auth_services.logout_user(
+            'tok', 'Bearer x.y.z', self.redis_pool,
+        )
+
+        mock_set_user_data.assert_awaited()
+
+    @patch('examples.db_management.services.auth_services.set_user_data')
+    @patch('examples.db_management.services.auth_services.jwt_refresh')
+    @patch('examples.db_management.services.auth_services.jwt_access')
+    @patch('examples.db_management.services.auth_services.get_user_data')
+    @patch(
+        'examples.db_management.services.auth_services.verify_refresh_token',
+    )
+    @patch('examples.db_management.services.auth_services.jwt.decode')
+    async def test_refresh_tokens_jti_meta_decode_failure(
+        self,
+        mock_jwt_decode: MagicMock,
+        mock_verify: MagicMock,
+        mock_get_user_data: MagicMock,
+        mock_jwt_access: MagicMock,
+        mock_jwt_refresh: MagicMock,
+        mock_set_user_data: AsyncMock,
+    ) -> None:
+        """Cover exception path when decoding access token in refresh fails.
+
+        Ensures that token refresh still succeeds even if jti expiry decoding
+        fails; jti bookkeeping is best-effort.
+        """
+        mock_verify.return_value = {'subject': {'username': 'user'}}
+        mock_get_user_data.return_value = {
+            'db_user': {'id': 1, 'role': 'user'},
+            'refresh_tokens': ['old'],
+            'feature_names': ['f1'],
+            'jti_list': [],
+        }
+        mock_jwt_access.create_access_token.return_value = 'new_acc'
+        mock_jwt_refresh.create_access_token.return_value = 'new_ref'
+        # Force decode failure inside refresh_tokens jti_meta block
+        mock_jwt_decode.side_effect = Exception('decode-fail')
+
+        req = RefreshRequest(refresh_token='old')
+        result = await auth_services.refresh_tokens(req, self.redis_pool)
+
+        self.assertEqual(result['access_token'], 'new_acc')
+        self.assertEqual(result['refresh_token'], 'new_ref')
+        self.assertEqual(result['feature_names'], ['f1'])
         mock_set_user_data.assert_awaited()
 
 

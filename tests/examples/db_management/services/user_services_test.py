@@ -17,10 +17,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
     Unit tests for user_services using mocks.
     """
 
-    # --------------------------------------------------------------------- #
-    #                               Fixtures                                #
-    # --------------------------------------------------------------------- #
-
     def setUp(self) -> None:
         """
         Initialise shared mocks used by each test.
@@ -46,10 +42,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback = AsyncMock()
         self.db.execute = AsyncMock()
         self.db.get = AsyncMock()
-
-    # --------------------------------------------------------------------- #
-    #                           User creation                               #
-    # --------------------------------------------------------------------- #
 
     async def test_create_user_success(self) -> None:
         """
@@ -135,10 +127,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cm.exception.status_code, 500)
             self.db.rollback.assert_awaited()
 
-    # --------------------------------------------------------------------- #
-    #                           User retrieval                              #
-    # --------------------------------------------------------------------- #
-
     async def test_list_users(self) -> None:
         """
         Fetch all users, ensuring the underlying query is executed.
@@ -175,10 +163,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cm.exception.status_code, 404)
 
-    # --------------------------------------------------------------------- #
-    #                           User deletion                               #
-    # --------------------------------------------------------------------- #
-
     async def test_delete_user_success(self) -> None:
         """
         Persist the removal of an existing user.
@@ -204,10 +188,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cm.exception.status_code, 500)
         self.db.rollback.assert_awaited()
-
-    # --------------------------------------------------------------------- #
-    #                           Username updates                            #
-    # --------------------------------------------------------------------- #
 
     async def test_update_username_success(self) -> None:
         """
@@ -247,10 +227,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cm.exception.status_code, 500)
         self.db.rollback.assert_awaited()
 
-    # --------------------------------------------------------------------- #
-    #                           Password updates                            #
-    # --------------------------------------------------------------------- #
-
     async def test_update_password_success(self) -> None:
         """
         Set a new password and commit the change.
@@ -277,10 +253,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cm.exception.status_code, 500)
         self.db.rollback.assert_awaited()
 
-    # --------------------------------------------------------------------- #
-    #                         Active-status toggling                        #
-    # --------------------------------------------------------------------- #
-
     async def test_set_active_status_success(self) -> None:
         """
         Toggle the is_active flag and commit.
@@ -306,10 +278,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cm.exception.status_code, 500)
         self.db.rollback.assert_awaited()
-
-    # --------------------------------------------------------------------- #
-    #                       Profile creation / update                       #
-    # --------------------------------------------------------------------- #
 
     async def test_create_or_update_profile_update(self) -> None:
         """
@@ -407,12 +375,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
 
-# ------------------------------------------------------------------------- #
-#                                Test runner                               #
-# ------------------------------------------------------------------------- #
-
 if __name__ == '__main__':
-    # Execute the test-suite via unittest's CLI when run directly.
     unittest.main()
 
 '''

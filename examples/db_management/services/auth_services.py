@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any
+from typing import cast
 from uuid import uuid4
 
 import jwt
@@ -18,7 +18,11 @@ from examples.auth.jwt_config import jwt_refresh
 from examples.auth.models import Feature
 from examples.auth.models import group_features_table
 from examples.auth.models import User
+from examples.auth.token_cleanup import prune_user_cache
+from examples.db_management.schemas.auth import DbUserInfo
 from examples.db_management.schemas.auth import RefreshRequest
+from examples.db_management.schemas.auth import RefreshTokenPayload
+from examples.db_management.schemas.auth import UserCache
 from examples.db_management.schemas.auth import UserLogin
 
 # Configuration settings for JWT authentication
@@ -92,7 +96,7 @@ async def _authenticate(
 async def verify_refresh_token(
     refresh_token: str,
     redis_pool: Redis,
-) -> dict[str, Any]:
+) -> RefreshTokenPayload:
     """Verify and decode a JWT refresh token.
 
     Args:
@@ -100,7 +104,7 @@ async def verify_refresh_token(
         redis_pool (Redis): Redis connection pool for caching.
 
     Returns:
-        dict[str, Any]: Decoded token payload.
+        RefreshTokenPayload: Decoded token payload.
 
     Raises:
         HTTPException: If token is invalid, expired, or not recognised.
@@ -121,8 +125,12 @@ async def verify_refresh_token(
             status_code=401, detail='Invalid refresh token payload',
         )
 
-    # Retrieve user's data from Redis cache
-    user_data: dict | None = await get_user_data(redis_pool, username)
+    # Retrieve user's data from Redis cache (and prune expired entries)
+    await prune_user_cache(redis_pool, username)
+    user_data = cast(
+        UserCache | None,
+        await get_user_data(redis_pool, username),
+    )
     if (
         not user_data
         or refresh_token not in user_data.get('refresh_tokens', [])
@@ -131,7 +139,7 @@ async def verify_refresh_token(
             status_code=401, detail='Refresh token not recognised',
         )
 
-    return payload
+    return cast(RefreshTokenPayload, payload)
 
 
 async def login_user(
@@ -152,18 +160,24 @@ async def login_user(
     """
     user = await _authenticate(db, payload.username, payload.password)
 
-    # Retrieve or initialise user cache data
-    cache = await get_user_data(redis_pool, user.username) or {
-        'db_user': {
-            'id': user.id,
-            'username': user.username,
-            'role': user.role,
-            'group_id': user.group_id,
-            'is_active': user.is_active,
-        },
-        'jti_list': [],
-        'refresh_tokens': [],
-    }
+    # Retrieve or initialise user cache data (prune stale first)
+    await prune_user_cache(redis_pool, user.username)
+    cache = cast(
+        UserCache | None,
+        await get_user_data(redis_pool, user.username),
+    )
+    if cache is None:
+        cache = UserCache(
+            db_user=DbUserInfo(
+                id=user.id,
+                username=user.username,
+                role=user.role,
+                group_id=user.group_id,
+                is_active=user.is_active,
+            ),
+            jti_list=[],
+            refresh_tokens=[],
+        )
 
     # Load feature names for user's group
     feature_names = await _load_feature_names(db, user.group_id)
@@ -187,9 +201,28 @@ async def login_user(
     )
 
     # Update cache and store in Redis
-    cache['jti_list'].append(new_jti)
-    cache['refresh_tokens'].append(refresh_token)
-    await set_user_data(redis_pool, user.username, cache)
+    cache.setdefault('jti_list', []).append(new_jti)
+
+    # store access token expiry timestamp for pruning (epoch seconds)
+    try:
+        at_payload = jwt.decode(
+            access_token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+            options={'verify_exp': False},
+        )
+        exp_ts = int(at_payload.get('exp', 0))
+        jti_meta = cache.get('jti_meta', {}) or {}
+        jti_meta[new_jti] = exp_ts
+        cache['jti_meta'] = jti_meta
+    except Exception:
+        pass
+    cache.setdefault('refresh_tokens', []).append(refresh_token)
+    await set_user_data(
+        redis_pool,
+        user.username,
+        cast(dict[str, object], cache),
+    )
 
     return {
         'access_token': access_token,
@@ -232,19 +265,34 @@ async def logout_user(
     except jwt.PyJWTError:
         return
 
-    username = payload.get('username')
-    jti = payload.get('jti')
+    # Tokens issued by JwtAccessBearer store data under the 'subject' claim
+    subject = payload.get('subject') or {}
+    username = subject.get('username') or payload.get('username')
+    jti = subject.get('jti') or payload.get('jti')
 
     # Remove the tokens from Redis cache
-    cache = await get_user_data(redis_pool, username)
+    await prune_user_cache(redis_pool, username)
+    cache = cast(UserCache | None, await get_user_data(redis_pool, username))
     if not cache:
         return
 
     cache['jti_list'] = [x for x in cache.get('jti_list', []) if x != jti]
+    # remove jti_meta entry as well
+    try:
+        if jti:
+            jti_meta = cache.get('jti_meta', {}) or {}
+            jti_meta.pop(jti, None)
+            cache['jti_meta'] = jti_meta
+    except Exception:
+        pass
     cache['refresh_tokens'] = [
         x for x in cache.get('refresh_tokens', []) if x != refresh_token
     ]
-    await set_user_data(redis_pool, username, cache)
+    await set_user_data(
+        redis_pool,
+        username,
+        cast(dict[str, object], cache),
+    )
 
 
 async def refresh_tokens(
@@ -271,7 +319,8 @@ async def refresh_tokens(
     data = await verify_refresh_token(old_refresh, redis_pool)
     username = data['subject']['username']
 
-    cache = await get_user_data(redis_pool, username)
+    await prune_user_cache(redis_pool, username)
+    cache = cast(UserCache | None, await get_user_data(redis_pool, username))
     if not cache or old_refresh not in cache.get('refresh_tokens', []):
         raise HTTPException(status_code=401, detail='Refresh token invalid')
 
@@ -283,8 +332,8 @@ async def refresh_tokens(
     access_token = jwt_access.create_access_token(
         subject={
             'username': username,
-            'user_id': cache['db_user']['id'],
-            'role': cache['db_user']['role'],
+            'user_id': cast(DbUserInfo, cache['db_user'])['id'],
+            'role': cast(DbUserInfo, cache['db_user'])['role'],
             'jti': new_jti,
             'features': cache.get('feature_names', []),
         },
@@ -296,9 +345,27 @@ async def refresh_tokens(
     )
 
     # Update and store new tokens in Redis cache
-    cache['jti_list'].append(new_jti)
-    cache['refresh_tokens'].append(new_refresh)
-    await set_user_data(redis_pool, username, cache)
+    cache.setdefault('jti_list', []).append(new_jti)
+    # store access token expiry for pruning
+    try:
+        at_payload = jwt.decode(
+            access_token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+            options={'verify_exp': False},
+        )
+        exp_ts = int(at_payload.get('exp', 0))
+        jti_meta = cache.get('jti_meta', {}) or {}
+        jti_meta[new_jti] = exp_ts
+        cache['jti_meta'] = jti_meta
+    except Exception:
+        pass
+    cache.setdefault('refresh_tokens', []).append(new_refresh)
+    await set_user_data(
+        redis_pool,
+        username,
+        cast(dict[str, object], cache),
+    )
 
     return {
         'access_token': access_token,

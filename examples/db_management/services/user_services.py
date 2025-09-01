@@ -19,21 +19,25 @@ async def create_user(
     db: AsyncSession,
     profile: dict[str, Any] | None = None,
 ) -> User:
-    """Create a new user in the database.
+    """
+    Create a new user and optionally its profile.
 
     Args:
-        username (str): Username of the new user.
-        password (str): Password of the new user.
-        role (str): Role of the user (e.g., 'admin', 'user').
-        group_id (Optional[int]): Group identifier the user belongs to, if any.
-        db (AsyncSession): Database session.
+        username: Username of the new user.
+        password: Plain-text password to be hashed and stored securely.
+        role: Role of the user (for example, ``"admin"`` or ``"user"``).
+        group_id: Group identifier the user belongs to, if any.
+        db: Async SQLAlchemy session.
+        profile: Optional dictionary of profile fields used to create a
+            ``UserProfile`` (for example, ``display_name``, ``email``).
 
     Returns:
-        User: The newly created user instance.
+        The newly created ``User`` instance, refreshed to include relationships
+        ``profile`` and ``group``.
 
     Raises:
-        HTTPException: If the username already exists
-            or a database error occurs.
+        HTTPException: If the username/email already exists (400) or a generic
+            database error occurs (500).
     """
     try:
         new_user = User(
@@ -45,24 +49,24 @@ async def create_user(
         new_user.set_password(password)
         db.add(new_user)
 
-        # ＜重點①＞先 flush 取得 new_user.id（還沒 commit）
+        # Important ①: flush to obtain ``new_user.id`` (not yet committed).
         await db.flush()
 
-        # ＜重點②＞如有 profile → 帶 user_id
+        # Important ②: if a profile payload exists, create it with ``user_id``.
         if profile:
             prof = UserProfile(user_id=new_user.id, **profile)
             db.add(prof)
 
-        # 一次 commit
+        # Single commit for both user and profile operations.
         await db.commit()
 
-        # 刷最新狀態，含 profile
+        # Refresh to include the latest state, including profile and group.
         await db.refresh(new_user, attribute_names=['profile', 'group'])
         return new_user
 
     except IntegrityError as e:
         await db.rollback()
-        # username / email duplicate … 都可能在這炸出
+        # Duplicate username/email likely triggers an integrity error.
         raise HTTPException(400, 'Username or e-mail already exists.') from e
     except Exception as e:
         await db.rollback()
@@ -70,61 +74,63 @@ async def create_user(
 
 
 async def list_users(db: AsyncSession) -> list[User]:
-    """Retrieve a list of all users from the database.
+    """
+    Retrieve all users.
 
     Args:
-        db (AsyncSession): Database session.
+        db: Async SQLAlchemy session.
 
     Returns:
-        List[User]: List of user instances.
+        A list of ``User`` instances.
     """
-    # Fetch all users from the database
+    # Fetch all users from the database.
     result = await db.execute(select(User))
     return result.unique().scalars().all()
 
 
 async def get_user_by_id(user_id: int, db: AsyncSession) -> User:
-    """Retrieve a specific user by their unique identifier.
+    """
+    Retrieve a user by its unique identifier.
 
     Args:
-        user_id (int): Identifier of the user.
-        db (AsyncSession): Database session.
+        user_id: Numeric identifier of the user.
+        db: Async SQLAlchemy session.
 
     Returns:
-        User: The user instance matching the provided ID.
+        The matching ``User`` instance.
 
     Raises:
-        HTTPException: If no user is found with the specified ID.
+        HTTPException: If no user is found (404).
     """
     user = await db.get(User, user_id)
 
     if not user:
-        raise HTTPException(
-            status_code=404, detail='User not found.',
-        )
+        raise HTTPException(status_code=404, detail='User not found.')
 
     return user
 
 
 async def delete_user(user: User, db: AsyncSession) -> None:
-    """Delete a user from the database.
+    """
+    Delete a user.
 
     Args:
-        user (User): User instance to delete.
-        db (AsyncSession): Database session.
+        user: ``User`` instance to delete.
+        db: Async SQLAlchemy session.
 
     Raises:
-        HTTPException: If a database error occurs during deletion.
+        HTTPException: If a database error occurs during deletion (500).
     """
-    await db.delete(user)  # Mark user instance for deletion
+    # Mark the user instance for deletion.
+    await db.delete(user)
 
     try:
-        await db.commit()  # Commit the deletion transaction
+        # Commit the deletion transaction.
+        await db.commit()
     except Exception as e:
-        await db.rollback()  # Rollback on failure
-        raise HTTPException(
-            status_code=500, detail=f'Database error: {e}',
-        )
+        # Roll back on failure.
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f'Database error: {e}')
 
 
 async def update_username(
@@ -132,31 +138,32 @@ async def update_username(
     new_username: str,
     db: AsyncSession,
 ) -> None:
-    """Update the username of an existing user.
+    """
+    Update the username of an existing user.
 
     Args:
-        user (User): User instance to update.
-        new_username (str): The new username.
-        db (AsyncSession): Database session.
+        user: ``User`` instance to update.
+        new_username: The new username.
+        db: Async SQLAlchemy session.
 
     Raises:
-        HTTPException: If the new username already exists
-            or a database error occurs.
+        HTTPException: If the new username already exists (400) or a generic
+            database error occurs (500).
     """
-    user.username = new_username  # Set the new username
+    # Set the new username.
+    user.username = new_username
 
     try:
-        await db.commit()  # Commit changes to the database
+        # Commit changes to the database.
+        await db.commit()
     except IntegrityError:
-        await db.rollback()  # Rollback if username conflict occurs
-        raise HTTPException(
-            status_code=400, detail='Username already exists.',
-        )
+        # Roll back if a username conflict occurs.
+        await db.rollback()
+        raise HTTPException(status_code=400, detail='Username already exists.')
     except Exception as e:
-        await db.rollback()  # Rollback on unexpected errors
-        raise HTTPException(
-            status_code=500, detail=f'Database error: {e}',
-        )
+        # Roll back on unexpected errors.
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f'Database error: {e}')
 
 
 async def update_password(
@@ -164,25 +171,27 @@ async def update_password(
     new_password: str,
     db: AsyncSession,
 ) -> None:
-    """Update the password of an existing user.
+    """
+    Update the password of an existing user.
 
     Args:
-        user (User): User instance to update.
-        new_password (str): The new password.
-        db (AsyncSession): Database session.
+        user: ``User`` instance to update.
+        new_password: The new password in plain text.
+        db: Async SQLAlchemy session.
 
     Raises:
-        HTTPException: If a database error occurs during password update.
+        HTTPException: If a database error occurs during password update (500).
     """
-    user.set_password(new_password)  # Securely hash and set the new password
+    # Securely hash and set the new password.
+    user.set_password(new_password)
 
     try:
-        await db.commit()  # Save changes to database
+        # Save changes to the database.
+        await db.commit()
     except Exception as e:
-        await db.rollback()  # Rollback on error
-        raise HTTPException(
-            status_code=500, detail=f'Database error: {e}',
-        )
+        # Roll back on error.
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f'Database error: {e}')
 
 
 async def set_active_status(
@@ -190,37 +199,50 @@ async def set_active_status(
     is_active: bool,
     db: AsyncSession,
 ) -> None:
-    """Activate or deactivate a user account.
+    """
+    Activate or deactivate a user account.
 
     Args:
-        user (User): User instance to update.
-        is_active (bool): Activation status; True for active,
-            False for inactive.
-        db (AsyncSession): Database session.
+        user: ``User`` instance to update.
+        is_active: Activation status; ``True`` for active, ``False`` for
+            inactive.
+        db: Async SQLAlchemy session.
 
     Raises:
-        HTTPException: If a database error occurs during status update.
+        HTTPException: If a database error occurs during status update (500).
     """
-    user.is_active = is_active  # Update user's active status
+    # Update the user's active status.
+    user.is_active = is_active
 
     try:
-        await db.commit()  # Persist status change to database
+        # Persist status change to the database.
+        await db.commit()
     except Exception as e:
-        await db.rollback()  # Rollback if error occurs
-        raise HTTPException(
-            status_code=500, detail=f'Database error: {e}',
-        )
+        # Roll back if an error occurs.
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f'Database error: {e}')
 
 
 async def create_or_update_profile(
     user: User,
     data: dict[str, Any],
-    db:   AsyncSession,
+    db: AsyncSession,
     create_if_missing: bool = False,
 ) -> None:
     """
-    若 user.profile 不存在且 create_if_missing==True → 建新檔，
-    否則僅更新有傳入的欄位。
+    Create a new profile if absent, or update allowed fields.
+
+    Args:
+        user: ``User`` whose profile is to be created or updated.
+        data: Mapping of fields to update; keys outside the allowed set are
+            ignored. ``None`` values are ignored as well.
+        db: Async SQLAlchemy session.
+        create_if_missing: Whether to create a profile if none exists.
+
+    Raises:
+        HTTPException: If the profile is missing (404) and not allowed to be
+            created, a duplicate constraint is violated (400), or a generic
+            database error occurs (500).
     """
     profile = user.profile
     if not profile:
@@ -229,8 +251,13 @@ async def create_or_update_profile(
         profile = UserProfile(user_id=user.id)
         db.add(profile)
 
+    # Allow only known profile fields to be updated (safer than ``hasattr``).
+    allowed_fields = {
+        'display_name', 'avatar_url', 'email', 'mobile',
+        'department', 'title', 'address',
+    }
     for key, val in data.items():
-        if val is not None and hasattr(profile, key):
+        if val is not None and key in allowed_fields:
             setattr(profile, key, val)
 
     try:
@@ -238,9 +265,8 @@ async def create_or_update_profile(
         await db.refresh(user, attribute_names=['profile'])
     except IntegrityError:
         await db.rollback()
-        # email / mobile 皆設 UNIQUE → 捕捉重覆
-        msg = 'Duplicate email or mobile number.'
-        raise HTTPException(400, msg)
+        # ``email``/``mobile`` are UNIQUE → catch duplicates.
+        raise HTTPException(400, 'Duplicate email or mobile number.')
     except Exception as e:
         await db.rollback()
         raise HTTPException(500, f'Database error: {e}')
