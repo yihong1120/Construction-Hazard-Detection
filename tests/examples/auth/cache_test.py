@@ -219,7 +219,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(mock_request, creds)
+            await custom_rate_limiter(mock_request, Response(), creds)
         self.assertEqual(exc.exception.status_code, 401)
         self.assertIn('invalid or replaced', exc.exception.detail)
 
@@ -289,7 +289,10 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(mock_request, mock_credentials)
+            await custom_rate_limiter(
+                mock_request, Response(),
+                mock_credentials,
+            )
         self.assertEqual(exc.exception.status_code, 429)
         self.assertIn('Rate limit exceeded', exc.exception.detail)
 
@@ -325,7 +328,9 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'jti': 'test_jti',
         }
 
-        remaining = await custom_rate_limiter(mock_request, mock_credentials)
+        remaining = await custom_rate_limiter(
+            mock_request, Response(), mock_credentials,
+        )
         self.assertEqual(remaining, 24 - 5)
 
         # TTL is 100, not -1 => no expire call
@@ -362,7 +367,9 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'jti': 'test_jti',
         }
 
-        remaining = await custom_rate_limiter(mock_request, mock_credentials)
+        remaining = await custom_rate_limiter(
+            mock_request, Response(), mock_credentials,
+        )
         self.assertEqual(remaining, 3000 - 500)
 
         # TTL is 45, not -1 => no expire
@@ -396,7 +403,10 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(mock_request, mock_credentials)
+            await custom_rate_limiter(
+                mock_request, Response(),
+                mock_credentials,
+            )
         self.assertEqual(exc.exception.status_code, 429)
         self.assertEqual(exc.exception.detail, 'Rate limit exceeded')
 
@@ -424,7 +434,9 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'jti': 'test_jti',
         }
 
-        remaining = await custom_rate_limiter(mock_request, mock_credentials)
+        remaining = await custom_rate_limiter(
+            mock_request, Response(), mock_credentials,
+        )
         self.assertEqual(remaining, 24 - 10)
 
         redis_pool.expire.assert_awaited_once_with(
@@ -452,7 +464,10 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             return_value={'jti_list': ['test_jti']},
         ):
             with self.assertRaises(HTTPException) as exc:
-                await custom_rate_limiter(mock_request, mock_credentials)
+                await custom_rate_limiter(
+                    mock_request, Response(),
+                    mock_credentials,
+                )
             self.assertEqual(exc.exception.status_code, 401)
             self.assertEqual(
                 exc.exception.detail,
@@ -472,14 +487,20 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         mock_credentials = MagicMock()
         mock_credentials.subject = {'role': 'guest', 'jti': 'test_jti'}
         with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(mock_request, mock_credentials)
+            await custom_rate_limiter(
+                mock_request, Response(),
+                mock_credentials,
+            )
         self.assertEqual(exc.exception.status_code, 401)
         self.assertIn('missing or invalid fields', exc.exception.detail)
 
         # Missing jti
         mock_credentials.subject = {'role': 'guest', 'username': 'test_user'}
         with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(mock_request, mock_credentials)
+            await custom_rate_limiter(
+                mock_request, Response(),
+                mock_credentials,
+            )
         self.assertEqual(exc.exception.status_code, 401)
         self.assertIn('missing or invalid fields', exc.exception.detail)
 
@@ -489,7 +510,11 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'username': 123, 'jti': ['bad_jti'],
         }
         with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(mock_request, mock_credentials)
+            await custom_rate_limiter(
+                mock_request,
+                Response(),
+                mock_credentials,
+            )
         self.assertEqual(exc.exception.status_code, 401)
         self.assertIn('missing or invalid fields', exc.exception.detail)
 
@@ -512,7 +537,9 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
 
         with patch('examples.auth.cache.get_user_data', return_value=None):
             with self.assertRaises(HTTPException) as exc:
-                await custom_rate_limiter(mock_request, mock_credentials)
+                await custom_rate_limiter(
+                    mock_request, Response(), mock_credentials,
+                )
             self.assertEqual(exc.exception.status_code, 401)
             self.assertEqual(exc.exception.detail, 'No such user in Redis')
 

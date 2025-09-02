@@ -4,15 +4,13 @@ from fastapi import WebSocket
 
 
 def _is_websocket_connected(websocket: WebSocket) -> bool:
-    """
-    Check whether the WebSocket connection is still valid.
+    """Check whether the WebSocket connection still appears valid.
 
     Args:
-        websocket (WebSocket): The WebSocket instance to check.
+        websocket: The WebSocket instance to check.
 
     Returns:
-        bool: True if the WebSocket connection is valid,
-            otherwise False.
+        ``True`` when the connection looks healthy, ``False`` otherwise.
     """
     try:
         # Directly access attributes, handle AttributeError if missing
@@ -30,19 +28,15 @@ async def _safe_websocket_send_json(
     data: dict | list | str | int | float | bool | None,
     client_info: str = '',
 ) -> bool:
-    """
-    Safely send JSON data over WebSocket if connected.
+    """Safely send JSON data if the WebSocket is connected.
 
     Args:
-        websocket (WebSocket): The WebSocket instance to send data through.
-        data (dict | list | str | int | float | bool | None): The
-            JSON-serialisable data to send.
-        client_info (str, optional): Additional information about the client.
-            Defaults to ''.
+        websocket: The WebSocket instance to send data through.
+        data: JSON-serialisable data to send.
+        client_info: Optional tag included in log messages.
 
     Returns:
-        bool: True if the data was sent successfully,
-            otherwise False.
+        ``True`` if the data was sent successfully; ``False`` otherwise.
     """
     if not _is_websocket_connected(websocket):
         if client_info:
@@ -57,10 +51,7 @@ async def _safe_websocket_send_json(
         return True
     except Exception as e:
         if client_info:
-            print(
-                f"[WebSocket] {client_info}: Failed to send "
-                f"JSON: {e}",
-            )
+            print(f"[WebSocket] {client_info}: Failed to send JSON: {e}")
         return False
 
 
@@ -69,18 +60,15 @@ async def _safe_websocket_send_text(
     text: str,
     client_info: str = '',
 ) -> bool:
-    """
-    Safely send text data over WebSocket if connected.
+    """Safely send text data if the WebSocket is connected.
 
     Args:
-        websocket (WebSocket): The WebSocket instance to send data through.
-        text (str): The text data to send.
-        client_info (str, optional): Additional information about the client.
-            Defaults to ''.
+        websocket: The WebSocket instance to send data through.
+        text: The text payload to send.
+        client_info: Optional tag included in log messages.
 
     Returns:
-        bool: True if the data was sent successfully,
-            otherwise False.
+        ``True`` if the data was sent successfully; ``False`` otherwise.
     """
     if not _is_websocket_connected(websocket):
         if client_info:
@@ -95,10 +83,7 @@ async def _safe_websocket_send_text(
         return True
     except Exception as e:
         if client_info:
-            print(
-                f"[WebSocket] {client_info}: Failed to send "
-                f"text: {e}",
-            )
+            print(f"[WebSocket] {client_info}: Failed to send text: {e}")
         return False
 
 
@@ -107,18 +92,15 @@ async def _safe_websocket_send_bytes(
     data: bytes,
     client_info: str = '',
 ) -> bool:
-    """
-    Safely send binary data over WebSocket if connected.
+    """Safely send binary data if the WebSocket is connected.
 
     Args:
-        websocket (WebSocket): The WebSocket instance to send data through.
-        data (bytes): The binary data to send.
-        client_info (str, optional): Additional information about the client.
-            Defaults to ''.
+        websocket: The WebSocket instance to send data through.
+        data: The binary payload to send.
+        client_info: Optional tag included in log messages.
 
     Returns:
-        bool: True if the data was sent successfully,
-            otherwise False.
+        ``True`` if the data was sent successfully; ``False`` otherwise.
     """
     if not _is_websocket_connected(websocket):
         if client_info:
@@ -133,10 +115,7 @@ async def _safe_websocket_send_bytes(
         return True
     except Exception as e:
         if client_info:
-            print(
-                f"[WebSocket] {client_info}: Failed to send "
-                f"bytes: {e}",
-            )
+            print(f"[WebSocket] {client_info}: Failed to send bytes: {e}")
         return False
 
 
@@ -144,17 +123,14 @@ async def _safe_websocket_receive_text(
     websocket: WebSocket,
     client_info: str = '',
 ) -> str | None:
-    """
-    Safely receive text data from WebSocket if connected.
+    """Safely receive text data if the WebSocket is connected.
 
     Args:
-        websocket (WebSocket): The WebSocket instance to receive data from.
-        client_info (str, optional): Additional information about the client.
-            Defaults to ''.
+        websocket: The WebSocket instance to receive data from.
+        client_info: Optional tag included in log messages.
 
     Returns:
-        str | None: The received text data, or None if the operation
-            failed.
+        The received text data, or ``None`` if the operation failed.
     """
     if not _is_websocket_connected(websocket):
         if client_info:
@@ -168,10 +144,7 @@ async def _safe_websocket_receive_text(
         return await websocket.receive_text()
     except Exception as e:
         if client_info:
-            print(
-                f"[WebSocket] {client_info}: Failed to receive "
-                f"text: {e}",
-            )
+            print(f"[WebSocket] {client_info}: Failed to receive text: {e}")
         return None
 
 
@@ -179,17 +152,14 @@ async def _safe_websocket_receive_bytes(
     websocket: WebSocket,
     client_info: str = '',
 ) -> bytes | None:
-    """
-    Safely receive binary data from WebSocket if connected.
+    """Safely receive binary data if the WebSocket is connected.
 
     Args:
-        websocket (WebSocket): The WebSocket instance to receive data from.
-        client_info (str, optional): Additional information about the client.
-            Defaults to ''.
+        websocket: The WebSocket instance to receive data from.
+        client_info: Optional tag included in log messages.
 
     Returns:
-        bytes | None: The received binary data, or None if the operation
-            failed.
+        The received binary data, or ``None`` if the operation failed.
     """
     if not _is_websocket_connected(websocket):
         if client_info:
@@ -203,8 +173,5 @@ async def _safe_websocket_receive_bytes(
         return await websocket.receive_bytes()
     except Exception as e:
         if client_info:
-            print(
-                f"[WebSocket] {client_info}: Failed to receive ",
-                f"bytes: {e}",
-            )
+            print(f"[WebSocket] {client_info}: Failed to receive bytes: {e}")
         return None

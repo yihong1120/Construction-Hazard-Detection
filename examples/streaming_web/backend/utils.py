@@ -12,6 +12,7 @@ class Utils:
     A collection of static utility methods for:
     - Encoding/decoding URL-safe base64 strings
     - Sending frame data via WebSocket
+    - Filtering labels based on user permissions
     """
 
     @staticmethod
@@ -43,7 +44,7 @@ class Utils:
         Returns:
             bool: True if the string is URL-safe Base64, False otherwise.
         """
-        if not value or not isinstance(value, str):
+        if not value or type(value) is not str:
             return False
         if len(value) % 4 != 0:
             return False
@@ -85,3 +86,24 @@ class Utils:
             'label': label,
             'images': updated_data,
         })
+
+    @staticmethod
+    def filter_labels(
+        all_labels: list[str],
+        role: str,
+        sites: list[str],
+    ) -> list[str]:
+        """
+        Filter labels based on user role and site permissions.
+
+        Args:
+            all_labels (list[str]): The complete list of labels.
+            role (str): The role of the user (e.g., 'admin', 'user').
+            sites (list[str]): The list of sites the user has access to.
+
+        Returns:
+            list[str]: The filtered list of labels.
+        """
+        if role == 'admin':
+            return all_labels
+        return [lbl for lbl in all_labels if lbl in sites]

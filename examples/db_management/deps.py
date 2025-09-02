@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Security
 from fastapi_jwt import JwtAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -15,7 +16,7 @@ SUPER_ADMIN_NAME = 'ChangDar'
 
 
 async def get_current_user(
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """

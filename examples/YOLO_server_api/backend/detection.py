@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import gc
+import time
 from typing import Any
 from typing import Callable
 
@@ -85,14 +87,17 @@ def compile_detection_data(result: Any) -> list[list[float | int]]:
     """
     datas: list[list[float | int]] = []
 
-    # Handle SAHI prediction results
-    if hasattr(result, 'object_prediction_list'):
-        for obj in result.object_prediction_list:
+    # Handle SAHI prediction results (EAFP)
+    try:
+        opl = result.object_prediction_list  # may raise AttributeError
+        for obj in opl:
             label = int(obj.category.id)
             x1, y1, x2, y2 = (int(x) for x in obj.bbox.to_voc_bbox())
             conf = float(obj.score.value)
             datas.append([x1, y1, x2, y2, conf, label])
         return datas
+    except AttributeError:
+        pass
 
     # Handle Ultralytics prediction results
     boxes = result.boxes
@@ -132,6 +137,50 @@ async def process_labels(
     # Final pass: clean up any remaining overlaps
     datas = await remove_overlapping_labels(datas)
     return datas
+
+
+# Global semaphore for controlling concurrency in inference
+INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(4)
+
+
+async def run_detection_from_bytes(
+    img_bytes: bytes,
+    model_instance: Any,
+    semaphore: asyncio.Semaphore | None = None,
+) -> tuple[list[list[float | int]], dict[str, float]]:
+    """
+    Run detection on image bytes with concurrency control.
+
+    Args:
+        img_bytes: The raw image bytes.
+        model_instance: The loaded model instance.
+        semaphore:
+            The concurrency limit (optional).
+            If not provided, use INFERENCE_SEMAPHORE.
+
+        Returns:
+                A tuple containing:
+                - A list of detection results in the format
+                    [x1, y1, x2, y2, conf, label].
+                - A dictionary with timing information for 'inference'
+                    and 'post' processing.
+    """
+    img = convert_to_image(img_bytes)
+
+    # Concurrency limit: use HTTP's limit by default, WS can pass its own
+    sem = semaphore or INFERENCE_SEMAPHORE
+
+    inference_start = time.time()
+    async with sem:
+        result = await get_prediction_result(img, model_instance)
+    inference_time = time.time() - inference_start
+
+    post_start = time.time()
+    datas = compile_detection_data(result)
+    datas = await process_labels(datas)
+    post_time = time.time() - post_start
+
+    return datas, {'inference': inference_time, 'post': post_time}
 
 
 def get_category_indices(

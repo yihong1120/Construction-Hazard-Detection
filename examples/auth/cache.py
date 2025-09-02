@@ -4,10 +4,10 @@ import json
 from collections.abc import Sequence
 from typing import cast
 
-from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi import Response
+from fastapi import Security
 from fastapi_jwt import JwtAuthorizationCredentials
 from redis.asyncio import Redis
 from redis.exceptions import NoScriptError
@@ -239,7 +239,7 @@ return { current, ttl }
         self,
         request: Request,
         response: Response,
-        credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+        jwt_creds: JwtAuthorizationCredentials = Security(jwt_access),
     ) -> int:
         """
         Enforce per-role rate limiting.
@@ -258,7 +258,7 @@ return { current, ttl }
                 if the rate limit is exceeded.
         """
         payload: dict[str, object] = cast(
-            dict[str, object], credentials.subject,
+            dict[str, object], jwt_creds.subject,
         )
         username_obj: object = payload.get('username')
         token_jti_obj: object = payload.get('jti')
@@ -383,8 +383,8 @@ async def set_user_data(
 
 async def custom_rate_limiter(
     request: Request,
-    response: Response | JwtAuthorizationCredentials,
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    response: Response,
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> int:
     """
     Backwards-compatible wrapper for ``RateLimiterService.__call__``.
@@ -398,12 +398,4 @@ async def custom_rate_limiter(
     Returns:
         Remaining requests in the current window after this request.
     """
-    # If the second argument is not a Response, treat it as credentials (test
-    # shorthand) and create a temporary Response instance.
-    if not isinstance(response, Response):
-        credentials = response
-        response = Response()
-
-    return await _DEFAULT_SERVICE(
-        request, response, credentials=credentials,
-    )
+    return await _DEFAULT_SERVICE(request, response, credentials)

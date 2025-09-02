@@ -8,6 +8,7 @@ import redis.asyncio as redis
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Security
 from fastapi_jwt import JwtAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,7 +127,7 @@ async def delete_fcm_token(
 async def send_fcm_notification(
     req: SiteNotifyRequest,
     db: AsyncSession = Depends(get_db),
-    _cred: JwtAuthorizationCredentials = Depends(jwt_access),
+    _cred: JwtAuthorizationCredentials = Security(jwt_access),
     rds: redis.Redis = Depends(get_redis_pool),
 ) -> dict[str, object]:
     """

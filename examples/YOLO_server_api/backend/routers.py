@@ -1,46 +1,38 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import datetime
-import json
 import time
 from asyncio.log import logger
 from pathlib import Path
-from typing import Any
-from typing import cast
 
 import aiofiles
-import jwt
 import redis
 from fastapi import APIRouter
 from fastapi import Body
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Security
 from fastapi import WebSocket
-from fastapi import WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi_jwt import JwtAuthorizationCredentials
-from jwt import InvalidTokenError
 from werkzeug.utils import secure_filename
 
 from examples.auth.cache import custom_rate_limiter
-from examples.auth.cache import get_user_data
 from examples.auth.config import Settings
 from examples.auth.jwt_config import jwt_access
 from examples.auth.redis_pool import get_redis_pool_ws
-from examples.shared.ws_utils import _safe_websocket_receive_bytes
-from examples.shared.ws_utils import _safe_websocket_send_json
-from examples.YOLO_server_api.backend.detection import compile_detection_data
-from examples.YOLO_server_api.backend.detection import convert_to_image
-from examples.YOLO_server_api.backend.detection import get_prediction_result
-from examples.YOLO_server_api.backend.detection import process_labels
+from examples.YOLO_server_api.backend.detection import INFERENCE_SEMAPHORE
+from examples.YOLO_server_api.backend.detection import run_detection_from_bytes
 from examples.YOLO_server_api.backend.model_files import get_new_model_file
 from examples.YOLO_server_api.backend.model_files import update_model_file
 from examples.YOLO_server_api.backend.models import DetectionModelManager
 from examples.YOLO_server_api.backend.schemas import DetectionRequest
 from examples.YOLO_server_api.backend.schemas import ModelFileUpdate
 from examples.YOLO_server_api.backend.schemas import UpdateModelRequest
+from examples.YOLO_server_api.backend.websocket_handlers import (
+    handle_websocket_detect,
+)
 
 # Router instances for API endpoints
 detection_router: APIRouter = APIRouter()
@@ -52,17 +44,11 @@ model_loader: DetectionModelManager = DetectionModelManager()
 # Application settings configuration
 settings: Settings = Settings()
 
-# Concurrency control semaphores to prevent GPU OOM errors
-# Limit simultaneous inference operations to prevent memory overflow
-INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(4)
-# WebSocket connections can handle more concurrent operations
-WS_INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(8)
-
 
 @detection_router.post('/detect', response_class=JSONResponse)
 async def detect(
     detection_request: DetectionRequest = Depends(DetectionRequest.as_form),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
     remaining_requests: int = Depends(custom_rate_limiter),
 ) -> list[list[float | int]]:
     """Process object detection on uploaded images using YOLO models.
@@ -98,25 +84,17 @@ async def detect(
     img_bytes: bytes = await detection_request.image.read()
     io_time: float = time.time() - start_time
 
-    # Convert raw bytes to an image object for processing
-    img = convert_to_image(img_bytes)
-
     # Retrieve the requested model instance
     model_instance = model_loader.get_model(detection_request.model)
     if model_instance is None:
         raise HTTPException(status_code=404, detail='Model not found')
 
-    # Perform inference with concurrency control to prevent GPU OOM
-    inference_start: float = time.time()
-    async with INFERENCE_SEMAPHORE:
-        result = await get_prediction_result(img, model_instance)
-    inference_time: float = time.time() - inference_start
-
-    # Post-process the detection results
-    post_start: float = time.time()
-    datas: list[list[float | int]] = compile_detection_data(result)
-    datas = await process_labels(datas)
-    post_time: float = time.time() - post_start
+    # Unified pipeline with concurrency control
+    datas, timing = await run_detection_from_bytes(
+        img_bytes, model_instance, semaphore=INFERENCE_SEMAPHORE,
+    )
+    inference_time = timing['inference']
+    post_time = timing['post']
 
     # Log comprehensive timing information for performance analysis
     total_time: float = time.time() - start_time
@@ -135,300 +113,21 @@ async def websocket_detect(
     websocket: WebSocket,
     rds: redis.Redis = Depends(get_redis_pool_ws),
 ) -> None:
-    """Handle real-time object detection via WebSocket connections.
-
-    This WebSocket endpoint provides real-time object detection capabilities
-    for streaming image data. It supports JWT authentication via headers or
-    query parameters and includes comprehensive error handling and logging.
-
-    Args:
-        websocket: The WebSocket connection instance.
-        rds: Redis connection for user authentication data validation.
-
-    Returns:
-        None. This function handles the WebSocket lifecycle and communication.
-
-    Note:
-        The WebSocket expects:
-        - JWT authentication via Authorization header
-            or 'token' query parameter
-        - Model specification via 'x-model-key' header, query parameter,
-            or first message
-        - Binary image data for processing after initial configuration
-
-        The function maintains the connection until disconnection or error,
-        processing frames continuously and returning detection results.
     """
-    # Determine client IP address for logging purposes
-    client_ip: str = websocket.client.host if websocket.client else 'unknown'
-    print(f"[YOLO-WebSocket] New connection from {client_ip}")
 
-    # Accept the incoming WebSocket connection
-    await websocket.accept()
-
-    # Extract JWT token from Authorization header or query parameter
-    token: str | None = None
-
-    # Priority 1: Try to get token from Authorization header
-    # (mobile/desktop apps)
-    auth: str | None = websocket.headers.get('authorization')
-    if auth and auth.lower().startswith('bearer '):
-        token = auth.split(' ', 1)[1]
-        print(f"[YOLO-WebSocket] {client_ip}: Token from Authorization header")
-
-    # Priority 2: Try query parameter if header not found (web platforms)
-    if not token:
-        query_params: dict[str, str] = dict(websocket.query_params)
-        token = query_params.get('token')
-        if token:
-            print(f"[YOLO-WebSocket] {client_ip}: Token from query parameter")
-
-    # Reject connection if no authentication token is provided
-    if not token:
-        print(
-            f"[YOLO-WebSocket] {client_ip}: "
-            'No token found in header or query parameter',
-        )
-        await websocket.close(code=1008, reason='Missing authentication token')
-        return
-
-    # Verify JWT token using authentication module configuration
-    try:
-        payload: dict[str, Any] = jwt.decode(
-            token,
-            settings.authjwt_secret_key,
-            algorithms=[settings.ALGORITHM],
-        )
-    except InvalidTokenError as e:
-        print(f"[YOLO-WebSocket] {client_ip}: Invalid JWT token: {e}")
-        await websocket.close(code=1008, reason='Invalid token')
-        return
-
-    # Ensure JWT payload contains required data
-    if not payload:
-        print(f"[YOLO-WebSocket] {client_ip}: Empty JWT payload")
-        await websocket.close(code=1008, reason='Empty token payload')
-        return
-
-    # Extract username and JTI (JWT ID) from token payload
-    subject_data: dict[str, Any] = payload.get('subject', {})
-    username: str | None = (
-        subject_data.get('username') if subject_data else None
-    ) or payload.get('username')
-    jti: str | None = (
-        subject_data.get('jti') if subject_data else None
-    ) or payload.get('jti')
-
-    # Validate that both username and JTI are present
-    if not username or not jti:
-        print(
-            f"[YOLO-WebSocket] {client_ip}: Missing username or JTI in token",
-        )
-        await websocket.close(code=1008, reason='Invalid token data')
-        return
-
-    # Verify JTI against cached user data in Redis
-    user_data: dict[str, str | list[str]] | None = await get_user_data(
-        cast(redis.asyncio.Redis, rds), username,
+    """
+    await handle_websocket_detect(
+        websocket=websocket,
+        rds=rds,
+        settings=settings,
+        model_loader=model_loader,
     )
-
-    # Ensure user data exists and contains the JTI list
-    if (
-        not user_data
-        or 'jti_list' not in user_data
-        or jti not in user_data['jti_list']
-    ):
-        print(
-            f"[YOLO-WebSocket] {client_ip}: "
-            f"JTI not found in user active tokens for {username}",
-        )
-        await websocket.close(code=1008, reason='Token not active')
-        return
-
-    print(f"[YOLO-WebSocket] {client_ip}: Authenticated as {username}")
-
-    # Get model key from multiple sources
-    # (priority: header > query > first message)
-    model_key: str | None = None
-
-    # Priority 1: Try to get model key from custom header
-    model_key = websocket.headers.get('x-model-key')
-    if model_key:
-        print(
-            f"[YOLO-WebSocket] {client_ip} ({username}): "
-            'Model key from header',
-        )
-
-    # Priority 2: Try query parameter (backwards compatibility)
-    if not model_key:
-        query_params = dict(websocket.query_params)
-        model_key = query_params.get('model')
-        if model_key:
-            print(
-                f"[YOLO-WebSocket] {client_ip} ({username}): "
-                'Model key from query parameter (deprecated)',
-            )
-
-    # Priority 3: Expect model key in the first message
-    if not model_key:
-        print(
-            f"[YOLO-WebSocket] {client_ip} ({username}): "
-            'Waiting for model key in first message',
-        )
-        try:
-            # Wait for the first message containing model_key as JSON
-            first_message: str = await websocket.receive_text()
-            config_data: dict[str, Any] = json.loads(first_message)
-            model_key = config_data.get('model_key')
-            if not model_key:
-                print(
-                    f"[YOLO-WebSocket] {client_ip} ({username}): "
-                    'No model_key found in first message',
-                )
-                await websocket.close(
-                    code=1008,
-                    reason='Missing model_key in configuration',
-                )
-                return
-            print(
-                f"[YOLO-WebSocket] {client_ip} ({username}): "
-                f"Model key from first message",
-            )
-        except Exception as e:
-            print(
-                f"[YOLO-WebSocket] {client_ip} ({username}): "
-                f"Failed to parse first message: {e}",
-            )
-            await websocket.close(
-                code=1008,
-                reason='Invalid configuration message',
-            )
-            return
-
-    # Validate that the requested model exists
-    model_instance = model_loader.get_model(model_key)
-    if model_instance is None:
-        print(
-            f"[YOLO-WebSocket] {client_ip} ({username}): "
-            f"Model {model_key} not found",
-        )
-        # 1003 = Unsupported Data
-        await websocket.close(code=1003, reason='Model not found')
-        return
-
-    print(
-        f"[YOLO-WebSocket] {client_ip} ({username}): Using model {model_key}",
-    )
-
-    # Send confirmation message to client
-    config_response: dict[str, str] = {
-        'status': 'ready',
-        'model': model_key,
-        'message': 'Model loaded successfully, ready to process images',
-    }
-    success: bool = await _safe_websocket_send_json(
-        websocket,
-        config_response,
-        f"{client_ip} ({username})",
-    )
-    if not success:
-        print(
-            f"[YOLO-WebSocket] {client_ip} ({username}): "
-            f"Failed to send configuration response",
-        )
-        return
-
-    # Initialise frame counter for statistics
-    frame_count: int = 0
-
-    # Main processing loop for continuous frame processing
-    try:
-        while True:
-            # Safely receive image data from the WebSocket
-            img_bytes: bytes | None = await _safe_websocket_receive_bytes(
-                websocket,
-                f"{client_ip} ({username})",
-            )
-
-            # Check if reception failed (connection closed or error)
-            if img_bytes is None:
-                print(
-                    f"[YOLO-WebSocket] {client_ip} ({username}): "
-                    f"Failed to receive image data, connection may be closed",
-                )
-                break
-
-            frame_count += 1
-
-            try:
-                # Convert binary data to image for processing
-                img = convert_to_image(img_bytes)
-
-                # Use WebSocket-specific semaphore for concurrency control
-                async with WS_INFERENCE_SEMAPHORE:
-                    result = await get_prediction_result(img, model_instance)
-                    datas = compile_detection_data(result)
-                    datas = await process_labels(datas)
-
-                # Safely send results back to client
-                success = await _safe_websocket_send_json(
-                    websocket,
-                    datas,
-                    f"{client_ip} ({username})",
-                )
-                if not success:
-                    print(
-                        f"[YOLO-WebSocket] {client_ip} ({username}): "
-                        f"Failed to send results, stopping",
-                    )
-                    break
-
-                # Log statistics every 100 frames for monitoring
-                if frame_count % 100 == 0:
-                    print(
-                        f"[YOLO-WebSocket] {client_ip} ({username}): "
-                        f"Processed {frame_count} frames",
-                    )
-
-            except Exception as e:
-                print(
-                    f"[YOLO-WebSocket] {client_ip} ({username}): "
-                    f"Error processing frame {frame_count}: {e}",
-                )
-                # Attempt to send error information to client
-                await _safe_websocket_send_json(
-                    websocket,
-                    {'error': f'Frame processing error: {str(e)}'},
-                    f"{client_ip} ({username})",
-                )
-
-    except WebSocketDisconnect:
-        print(
-            f'[YOLO-WebSocket] {client_ip} ({username}): '
-            f'Client disconnected after {frame_count} frames',
-        )
-    except Exception as e:
-        print(
-            f"[YOLO-WebSocket] {client_ip} ({username}): "
-            f"Unexpected error: {e}",
-        )
-        try:
-            # 1011 = Internal Error
-            await websocket.close(code=1011, reason='Internal server error')
-        except Exception:
-            # Connection might already be closed
-            pass
-    finally:
-        print(
-            f'[YOLO-WebSocket] {client_ip} ({username}): '
-            f'Connection closed, total frames processed: {frame_count}',
-        )
 
 
 @model_management_router.post('/model_file_update')
 async def model_file_update(
     data: ModelFileUpdate = Depends(ModelFileUpdate.as_form),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> dict[str, str]:
     """Update a YOLO model file with administrative privileges.
 
@@ -492,7 +191,7 @@ async def model_file_update(
 @model_management_router.post('/get_new_model')
 async def get_new_model(
     update_request: UpdateModelRequest = Body(...),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> dict[str, str]:
     """Retrieve updated model files based on timestamp comparison.
 
