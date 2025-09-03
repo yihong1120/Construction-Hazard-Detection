@@ -10,53 +10,18 @@ from pathlib import Path
 from typing import cast
 from typing import TypedDict
 
-import aiohttp
 import cv2
 import numpy as np
-from aiohttp import ClientSession
-from aiohttp import ClientWebSocketResponse
-from aiohttp import WSMsgType
 from dotenv import load_dotenv
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 from ultralytics import YOLO
 
+from src.net.net_client import NetClient
 from src.utils import TokenManager
 
 # Load environment variables for configuration
 load_dotenv()
-
-
-class InputData(TypedDict):
-    """Input data structure for detection processing.
-
-    Attributes:
-        frame: The input image frame as numpy array.
-        model_key: The YOLO model identifier key.
-        detect_with_server: Whether to use server-based detection.
-    """
-    frame: np.ndarray
-    model_key: str
-    detect_with_server: bool
-
-
-class DetectionData(TypedDict):
-    """Detection result data structure.
-
-    Attributes:
-        x1: Left coordinate of bounding box.
-        y1: Top coordinate of bounding box.
-        x2: Right coordinate of bounding box.
-        y2: Bottom coordinate of bounding box.
-        confidence: Detection confidence score (0.0 to 1.0).
-        label: Class label identifier.
-    """
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    confidence: float
-    label: int
 
 
 class SharedToken(TypedDict, total=False):
@@ -148,9 +113,15 @@ class LiveStreamDetector:
                     device='cuda:0',
                 )
 
-        # Network handles
-        self._session: ClientSession | None = None
-        self._ws: ClientWebSocketResponse | None = None
+        # Networking via shared NetClient
+        self.net = NetClient(
+            base_url=self.api_url,
+            token_manager=self.token_manager,
+            ws_heartbeat=30,
+            ws_send_timeout=10.0,
+            ws_recv_timeout=15.0,
+            ws_connect_attempts=3,
+        )
         self._logger = logging.getLogger(__name__)
 
         # Tracking state stores
@@ -171,407 +142,7 @@ class LiveStreamDetector:
         self.remote_tracker = remote_tracker
         self.remote_cost_threshold = remote_cost_threshold
 
-    async def _ensure_ws_connection(self) -> ClientWebSocketResponse:
-        """Ensure a valid WebSocket connection is established.
-
-        Returns:
-            Active WebSocket connection ready for communication.
-
-        Raises:
-            ConnectionError:
-                If all connection attempts fail after maximum retries.
-        """
-        # Reduced retry count for faster failure detection
-        max_retries: int = 3
-        retry_count: int = 0
-        # Reduced initial backoff time
-        backoff: float = 2
-
-        while retry_count < max_retries:
-            try:
-                # Check if existing connection is still valid
-                if self._ws and not self._ws.closed:
-                    # Attempt to send ping to check connection health
-                    try:
-                        await self._ws.ping()
-                        await asyncio.sleep(0.1)  # Wait for pong response
-                        return self._ws
-                    except Exception:
-                        # Ping failed, connection is unhealthy, need to
-                        # reconnect
-                        self._logger.warning(
-                            'Existing WS connection unhealthy, '
-                            'reconnecting...',
-                        )
-                        await self.close()
-
-                if self._session and self._session.closed:
-                    self._session = None
-
-                # Ensure valid token is available, authenticate if necessary
-                await self.token_manager.ensure_token_valid()
-
-                # Check if token is empty after authentication
-                if not self.shared_token.get('access_token'):
-                    self._logger.error(
-                        'Access token is empty after authentication',
-                    )
-                    raise ConnectionError(
-                        'Failed to obtain valid access token',
-                    )
-
-                self._logger.info(
-                    f"Attempting WebSocket connection to: {self.api_url}",
-                )
-                self._logger.debug(
-                    f"Using access token: "
-                    f"{self.shared_token['access_token'][:20]}..." if
-                    self.shared_token.get('access_token') else 'No token',
-                )
-
-                # Try Method 1: Use header to transmit model_key (recommended)
-                success = await self._try_header_connection()
-                if success:
-                    return self._ws
-
-                # Method 1 failed, try Method 2: Use first message to transmit
-                # model_key
-                self._logger.info(
-                    'Header method failed, trying first message method...',
-                )
-                success = await self._try_first_message_connection()
-                if success:
-                    return self._ws
-
-                # Method 2 also failed, try Method 3: Use query parameter
-                # (backward compatibility)
-                self._logger.info(
-                    'First message method failed, trying legacy query '
-                    'parameter method...',
-                )
-                success = await self._try_legacy_connection()
-                if success:
-                    return self._ws
-
-                # All methods failed, raise exception to enter retry logic
-                raise ConnectionError('All connection methods failed')
-
-            except Exception as e:
-                # Check if this is a token expiry related error
-                error_message = str(e).lower()
-                if any(
-                    keyword in error_message for keyword in [
-                        'expired', '401', 'unauthorized', 'invalid token',
-                    ]
-                ):
-                    self._logger.warning(
-                        f"Token-related error detected: {e}. "
-                        'Attempting token refresh...',
-                    )
-                    try:
-                        await self.token_manager.refresh_token()
-                        self._logger.info(
-                            'Token refreshed successfully, will retry '
-                            'connection',
-                        )
-                    except Exception as refresh_error:
-                        self._logger.error(
-                            f"Token refresh failed: {refresh_error}. "
-                            'Will re-authenticate on next retry',
-                        )
-
-                self._logger.error(
-                    f"WS connection failed: {e}, retrying "
-                    f"({retry_count + 1}/{max_retries}) after {backoff}s",
-                )
-                await self.close()
-                retry_count += 1
-                if retry_count < max_retries:
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 1.5, 10)  # More gradual backoff
-
-        raise ConnectionError(
-            f"Max retries ({max_retries}) reached for WebSocket "
-            'connection.',
-        )
-
-    async def _try_header_connection(self) -> bool:
-        """Attempt connection using header method.
-
-        This method attempts to establish a WebSocket connection by
-        transmitting the model key via HTTP headers, which is the
-        recommended secure approach.
-
-        Returns:
-            True if connection successful, False otherwise.
-
-        Raises:
-            ConnectionError: For authentication-related failures that need
-                token refresh.
-        """
-        try:
-            headers = {
-                # Use lowercase key
-                'authorization': (
-                    f"Bearer {self.shared_token['access_token']}"
-                ),
-                'x-model-key': self.model_key,  # Use lowercase key
-            }
-
-            ws_url = (
-                self.api_url.replace(
-                    'https://', 'wss://',
-                ).replace('http://', 'ws://')
-                + '/ws/detect'
-            )
-
-            self._logger.debug(f"Header method connecting to: {ws_url}")
-            self._logger.debug(
-                f"Headers: authorization=Bearer "
-                f"{self.shared_token['access_token'][:20]}..., "
-                f"x-model-key={self.model_key}",
-            )
-
-            if not self._session:
-                timeout = aiohttp.ClientTimeout(total=30, connect=10)
-                self._session = aiohttp.ClientSession(timeout=timeout)
-
-            self._ws = await self._session.ws_connect(
-                ws_url,
-                headers=headers,
-                heartbeat=30,
-                autoping=True,
-                max_msg_size=50 * 1024 * 1024,
-            )
-
-            # Wait for configuration confirmation response
-            try:
-                config_msg = await asyncio.wait_for(
-                    self._ws.receive(), timeout=5.0,
-                )
-                if config_msg.type == WSMsgType.TEXT:
-                    config_response = json.loads(config_msg.data)
-                    if config_response.get('status') == 'ready':
-                        self._logger.info(
-                            f"Header method successful. "
-                            f"Model: {config_response.get('model')}",
-                        )
-                        return True
-                    else:
-                        self._logger.warning(
-                            f"Unexpected config response: {config_response}",
-                        )
-                        return False
-            except asyncio.TimeoutError:
-                self._logger.warning(
-                    'Timeout waiting for configuration confirmation',
-                )
-                return False
-            return False
-
-        except Exception as e:
-            self._logger.warning(f"Header method failed: {e}")
-            # If this is a 403 or token-related error,
-            # raise specific error for upper layer handling
-            if hasattr(e, 'status') and e.status == 403:
-                self._logger.error(
-                    f"Authentication failed (403). Token: "
-                    f"{self.shared_token['access_token'][:20]}... "
-                    f"API URL: {self.api_url}",
-                )
-                raise ConnectionError(
-                    'Authentication failed - token may be expired',
-                )
-            elif any(
-                keyword in str(e).lower()
-                for keyword in ['expired', 'unauthorized', 'invalid token']
-            ):
-                raise ConnectionError(f"Token-related error: {e}")
-            return False
-
-    async def _try_first_message_connection(self) -> bool:
-        """
-        Attempt connection using first message method.
-
-        Returns:
-            True if connection successful, False otherwise.
-
-        Raises:
-            ConnectionError:
-                For authentication-related failures that need token refresh.
-        """
-        try:
-            headers = {
-                # Use lowercase key
-                'authorization': f"Bearer {self.shared_token['access_token']}",
-            }
-
-            ws_url = (
-                self.api_url.replace(
-                    'https://', 'wss://',
-                ).replace('http://', 'ws://')
-                + '/ws/detect'
-            )
-
-            self._logger.debug(f"First message method connecting to: {ws_url}")
-
-            if not self._session:
-                timeout = aiohttp.ClientTimeout(total=30, connect=10)
-                self._session = aiohttp.ClientSession(timeout=timeout)
-
-            self._ws = await self._session.ws_connect(
-                ws_url,
-                headers=headers,
-                heartbeat=30,
-                autoping=True,
-                max_msg_size=50 * 1024 * 1024,
-            )
-
-            # Send configuration message
-            config_message = {
-                'model_key': self.model_key,
-                'config': {
-                    'confidence_threshold': 0.5,
-                    'iou_threshold': 0.4,
-                },
-            }
-            await self._ws.send_str(json.dumps(config_message))
-
-            # Wait for configuration confirmation response
-            try:
-                config_msg = await asyncio.wait_for(
-                    self._ws.receive(), timeout=5.0,
-                )
-                if config_msg.type == WSMsgType.TEXT:
-                    config_response = json.loads(config_msg.data)
-                    if config_response.get('status') == 'ready':
-                        self._logger.info(
-                            f"First message method successful. "
-                            f"Model: {config_response.get('model')}",
-                        )
-                        return True
-                    else:
-                        self._logger.warning(
-                            f"Unexpected config response: {config_response}",
-                        )
-                        return False
-            except asyncio.TimeoutError:
-                self._logger.warning(
-                    'Timeout waiting for configuration confirmation',
-                )
-                return False
-            return False
-
-        except Exception as e:
-            self._logger.warning(f"First message method failed: {e}")
-            # If this is a 403 or token-related error,
-            # raise specific error for upper layer handling
-            if hasattr(e, 'status') and e.status == 403:
-                self._logger.error(
-                    f"Authentication failed (403). Token: "
-                    f"{self.shared_token['access_token'][:20]}... "
-                    f"API URL: {self.api_url}",
-                )
-                raise ConnectionError(
-                    'Authentication failed - token may be expired',
-                )
-            elif any(
-                keyword in str(e).lower()
-                for keyword in ['expired', 'unauthorized', 'invalid token']
-            ):
-                raise ConnectionError(f"Token-related error: {e}")
-            return False
-
-    async def _try_legacy_connection(self) -> bool:
-        """
-        Attempt connection using query parameter method
-        (backward compatibility).
-
-        Returns:
-            True if connection successful, False otherwise.
-
-        Raises:
-            ConnectionError:
-                For authentication-related failures that need token refresh.
-        """
-        try:
-            headers = {
-                # Use lowercase key
-                'authorization': f"Bearer {self.shared_token['access_token']}",
-            }
-
-            # Use legacy query parameter method (not recommended, but
-            # backward compatible)
-            ws_url = (
-                self.api_url.replace(
-                    'https://', 'wss://',
-                ).replace('http://', 'ws://')
-                + f'/ws/detect?model={self.model_key}'
-            )
-
-            self._logger.debug(f"Legacy method connecting to: {ws_url}")
-
-            if not self._session:
-                timeout = aiohttp.ClientTimeout(total=30, connect=10)
-                self._session = aiohttp.ClientSession(timeout=timeout)
-
-            self._ws = await self._session.ws_connect(
-                ws_url,
-                headers=headers,
-                heartbeat=30,
-                autoping=True,
-                max_msg_size=50 * 1024 * 1024,
-            )
-
-            # Wait for configuration confirmation response (if available)
-            try:
-                config_msg = await asyncio.wait_for(
-                    self._ws.receive(), timeout=2.0,
-                )
-                if config_msg.type == WSMsgType.TEXT:
-                    config_response = json.loads(config_msg.data)
-                    if config_response.get('status') == 'ready':
-                        self._logger.info(
-                            f"Legacy method successful. "
-                            f"Model: {config_response.get('model')}",
-                        )
-                        return True
-                    else:
-                        # Might be an older service version without config
-                        # confirmation, return success directly
-                        self._logger.info(
-                            'Legacy method successful (no config '
-                            'confirmation)',
-                        )
-                        return True
-            except asyncio.TimeoutError:
-                # Older service versions may not send configuration
-                # confirmation, this is normal
-                self._logger.info(
-                    'Legacy method successful (no config confirmation)',
-                )
-                return True
-            return False
-
-        except Exception as e:
-            self._logger.warning(f"Legacy method failed: {e}")
-            # If this is a 403 or token-related error,
-            # raise specific error for upper layer handling
-            if hasattr(e, 'status') and e.status == 403:
-                self._logger.error(
-                    f"Authentication failed (403). Token: "
-                    f"{self.shared_token['access_token'][:20]}... "
-                    f"API URL: {self.api_url}",
-                )
-                raise ConnectionError(
-                    'Authentication failed - token may be expired',
-                )
-            elif any(
-                keyword in str(e).lower()
-                for keyword in ['expired', 'unauthorized', 'invalid token']
-            ):
-                raise ConnectionError(f"Token-related error: {e}")
-            return False
+    # NetClient handles WS connections; legacy WS connect helpers removed
 
     async def _detect_cloud_ws(self, frame: np.ndarray) -> list[list[float]]:
         """
@@ -588,71 +159,30 @@ class LiveStreamDetector:
             Returns empty list if all retry attempts fail to prevent system
             crashes.
         """
-        backoff: float = 1  # Faster initial backoff
-        max_backoff: float = 15  # Smaller maximum backoff
+        backoff: float = 1.0
+        max_backoff: float = 15.0
         retry_count: int = 0
-        max_retries: int = 3  # Reduced retry count
+        max_retries: int = 3
 
         while retry_count < max_retries:
             try:
-                # Check if token is about to expire before sending request
-                if self.token_manager.is_token_expired():
-                    self._logger.info(
-                        'Token expiring soon, preemptively refreshing...',
-                    )
-                    try:
-                        await self.token_manager.refresh_token()
-                        # Need to re-establish WebSocket connection after
-                        # token refresh
-                        await self.close()
-                    except Exception as e:
-                        self._logger.warning(
-                            f"Preemptive token refresh failed: {e}",
-                        )
-
-                ws = await self._ensure_ws_connection()
-
-                # Check WebSocket state, reconnect if closed
-                if ws.closed:
-                    self._logger.warning(
-                        'WebSocket is closed before sending, '
-                        'reconnecting...',
-                    )
-                    await self._close_and_retry()
-                    retry_count += 1
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 1.5, max_backoff)
-                    continue
-
-                # Prepare frame for transmission
-                frame_to_send = self._prepare_frame(frame)
-                img_buf = self._encode_frame(frame_to_send)
-                if img_buf is None:
-                    return []
-
-                # Send frame and get response
-                response = await self._send_and_receive(
-                    ws, img_buf, backoff, max_backoff,
-                )
-                if response is None:
-                    retry_count += 1
-                    continue
-
-                return response
-
+                result = await self._attempt_ws_detect(frame)
+                if result is not None:
+                    return result
             except Exception as e:
                 if await self._handle_exception(e):
                     await self.close()
-
                 self._logger.error(
-                    f"WS error: {e}, retrying "
-                    f"({retry_count + 1}/{max_retries}) after {backoff}s.",
+                    'WS error: %s, retrying (%d/%d) after %.1fs.',
+                    e,
+                    retry_count + 1,
+                    max_retries,
+                    backoff,
                 )
-                await self.close()
-                retry_count += 1
-                if retry_count < max_retries:
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 1.5, max_backoff)
+            await self.close()
+            retry_count += 1
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 1.5, max_backoff)
 
         # If all retries fail,
         # return empty results instead of raising exception
@@ -662,9 +192,43 @@ class LiveStreamDetector:
         )
         return []
 
-    async def _close_and_retry(self) -> None:
-        """Helper method to close connection and prepare for retry."""
-        await self.close()
+    async def _attempt_ws_detect(
+        self, frame: np.ndarray,
+    ) -> list[list[float]] | None:
+        """Single attempt to send frame and parse server response.
+
+        Returns parsed detections or None to indicate retry.
+        """
+        await self._maybe_refresh_token_and_reset_ws()
+
+        frame_to_send = self._prepare_frame(frame)
+        img_buf = self._encode_frame(frame_to_send)
+        if img_buf is None:
+            return []
+
+        ws_data = await self.net.ws_send_and_receive(
+            '/ws/detect',
+            img_buf,
+            headers={'x-model-key': self.model_key},
+        )
+        if ws_data is None:
+            return None
+        return await self._handle_response_data(ws_data)
+
+    async def _maybe_refresh_token_and_reset_ws(self) -> None:
+        """Refresh token proactively if expiring and reset WS if needed."""
+        if not self.token_manager.is_token_expired():
+            return
+        self._logger.info(
+            'Token expiring soon, preemptively refreshing...',
+        )
+        try:
+            await self.token_manager.refresh_token()
+            await self.close()
+        except Exception as e:
+            self._logger.warning(
+                'Preemptive token refresh failed: %s', e,
+            )
 
     def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
         """Prepare frame for transmission by resizing if needed."""
@@ -687,67 +251,22 @@ class LiveStreamDetector:
 
         return img_buf.tobytes()
 
-    async def _send_and_receive(
-        self, ws: ClientWebSocketResponse, img_buf: bytes,
-        backoff: float, max_backoff: float,
-    ) -> list[list[float]] | None:
-        """Send frame and receive response from WebSocket."""
-        try:
-            # Send with timeout
-            await asyncio.wait_for(ws.send_bytes(img_buf), timeout=10.0)
-        except (
-            aiohttp.ClientConnectionError, ConnectionResetError,
-            RuntimeError, asyncio.TimeoutError,
-        ) as send_err:
-            self._logger.warning(
-                f"[WebSocket] Send fail: {send_err}, reconnecting...",
-            )
-            await self.close()
-            return None
-
-        try:
-            # Receive with timeout
-            msg = await asyncio.wait_for(ws.receive(), timeout=15.0)
-        except asyncio.TimeoutError:
-            self._logger.warning(
-                '[WebSocket] Receive timeout, reconnecting...',
-            )
-            await self.close()
-            return None
-
-        return await self._process_message(msg)
-
     async def _process_message(self, msg) -> list[list[float]] | None:
-        """Process WebSocket message and extract detection results."""
-        if msg.type == WSMsgType.CLOSE:
-            self._logger.warning(
-                '[WebSocket] Closed by server, reconnecting...',
-            )
-            await self.close()
-            return None
-
-        if msg.type in (WSMsgType.PING, WSMsgType.PONG):
-            self._logger.debug('Received ping/pong, continuing...')
-            return None
-
-        if msg.type not in (WSMsgType.TEXT, WSMsgType.BINARY):
-            self._logger.warning(f"Unexpected WS message type: {msg.type}")
-            return []
-
+        """Deprecated; NetClient returns parsed JSON dict or list directly."""
         try:
-            data = json.loads(
-                msg.data if msg.type == WSMsgType.TEXT
-                else msg.data.decode('utf-8', 'ignore'),
-            )
-            return await self._handle_response_data(data)
-        except json.JSONDecodeError as e:
-            self._logger.error(f"JSON decode error: {e}")
+            data = json.loads(msg)
+        except Exception:
             return []
+        return await self._handle_response_data(data)
 
     async def _handle_response_data(self, data) -> list[list[float]] | None:
         """Handle different types of response data."""
-        if not isinstance(data, dict):
-            if isinstance(data, list):
+        try:
+            # Treat as mapping-like (dict)
+            _ = data.get  # may raise AttributeError if not dict-like
+        except AttributeError:
+            # Not a mapping; if it's a JSON array, return as-is
+            if type(data) is list:
                 return data
             self._logger.warning(f"Unexpected data format: {type(data)}")
             return []
@@ -760,11 +279,16 @@ class LiveStreamDetector:
         if 'error' in data:
             return await self._handle_server_error(data['error'])
 
-        # Handle status messages
-        if data.get('status') == 'ready':
-            self._logger.debug('Received ready status, continuing...')
-            return None
+        # Extract detections if present in known keys
+        dets = data.get('detections')
+        if type(dets) is list:
+            return dets
+        dets2 = data.get('data')
+        if type(dets2) is list:
+            return dets2
 
+        # No special handling for initial 'ready' in simplified protocol
+        self._logger.debug('No detection payload in message; ignoring.')
         return []
 
     async def _handle_server_error(self, error_msg: str) -> list[list[float]]:
@@ -955,10 +479,8 @@ class LiveStreamDetector:
         # Default / fallback
         return self._track_remote_centroid(dets)
 
-    # ------------------------------------------------------------------
     # Small utilities for tracking readability
-    # ------------------------------------------------------------------
-    # Centralized numeric constants for the Hungarian helpers
+    # Centralised numeric constants for the Hungarian helpers
     _LARGE_COST: float = 1e6
     _ZERO_EPS: float = 1e-12
 
@@ -1071,9 +593,7 @@ class LiveStreamDetector:
         self._set_remote_track(tid, (x1, y1, x2, y2), int(cls_id), (cx, cy))
         return [x1, y1, x2, y2, conf, cls_id, tid, 0]
 
-    # ------------------------------------------------------------------
     # Centroid tracker (original simple implementation)
-    # ------------------------------------------------------------------
     def _track_remote_centroid(
         self, dets: list[list[float]],
     ) -> list[list[float]]:
@@ -1136,9 +656,7 @@ class LiveStreamDetector:
             self._prune_remote_tracks()
         return assigned_tracks
 
-    # ------------------------------------------------------------------
     # Hungarian (global) assignment tracker
-    # ------------------------------------------------------------------
     def _track_remote_hungarian(
         self, dets: list[list[float]],
     ) -> list[list[float]]:
@@ -1355,6 +873,8 @@ class LiveStreamDetector:
                 c_sel = zero_cols[0]
                 assigned_cols.add(c_sel)
                 matches_all.append((r, c_sel))
+            else:  # pragma: no cover (degenerate no-zero row after reduction)
+                pass
 
         # Filter to original matrix size and cost threshold
         matches: list[tuple[int, int]] = []
@@ -1426,8 +946,6 @@ class LiveStreamDetector:
                 if r not in covered_rows and c not in covered_cols:
                     row_counts[r] += 1
                     col_counts[c] += 1
-            if not row_counts and not col_counts:
-                break
             if (
                 row_counts and (
                     not col_counts or
@@ -1530,10 +1048,7 @@ class LiveStreamDetector:
         finally:
             cap.release()
             cv2.destroyAllWindows()
-            if self._ws and not self._ws.closed:
-                await self._ws.close()
-            if self._session and not self._session.closed:
-                await self._session.close()
+            await self.net.close()
 
     async def close(self) -> None:
         """Close WebSocket and aiohttp session to prevent resource leaks.
@@ -1542,23 +1057,9 @@ class LiveStreamDetector:
         resources to prevent memory leaks and thread exceptions.
         """
         try:
-            if self._ws:
-                if not self._ws.closed:
-                    await self._ws.close()
-                self._ws = None
+            await self.net.close()
         except Exception as e:
-            self._logger.error(f"Error closing WebSocket: {e}")
-        try:
-            if self._session:
-                if not self._session.closed:
-                    await self._session.close()
-                self._session = None
-        except Exception as e:
-            self._logger.error(f"Error closing session: {e}")
-
-    #######################################################################
-    # Post-processing functions
-    #######################################################################
+            self._logger.error(f"Error closing NetClient: {e}")
 
     def remove_overlapping_labels(self, datas):
         """
@@ -1762,7 +1263,7 @@ async def main() -> None:
     )
 
     # Run detection loop
-    asyncio.run(detector.run_detection(args.url))  # pragma: no cover
+    await detector.run_detection(args.url)
 
 if __name__ == '__main__':
-    asyncio.run(main())  # pragma: no cover
+    asyncio.run(main())
