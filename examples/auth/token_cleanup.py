@@ -13,6 +13,122 @@ from examples.auth.config import Settings
 settings = Settings()
 
 
+def _typed_refresh_tokens(cache: dict[str, object]) -> list[str]:
+    """
+    Return list of refresh tokens if present and validly typed.
+
+    Args:
+        cache: The user cache dictionary.
+
+    Returns:
+        A list of refresh tokens as strings.
+    """
+    raw = cache.get('refresh_tokens', [])
+    if isinstance(raw, list):
+        return [t for t in raw if isinstance(t, str)]
+    return []
+
+
+def _prune_refresh_tokens(cache: dict[str, object]) -> tuple[list[str], bool]:
+    """
+    Return valid refresh tokens and whether the list changed.
+
+
+    Args:
+        cache: The user cache dictionary.
+
+    Returns:
+    A tuple of (new_tokens, changed) where new_tokens is the list of
+    valid refresh tokens and changed is a boolean indicating if the
+    list was modified.
+    """
+    tokens = _typed_refresh_tokens(cache)
+    if not tokens:
+        # Nothing to validate
+        return tokens, False
+
+    new_tokens: list[str] = []
+    changed = False
+    for tok in tokens:
+        try:
+            jwt.decode(
+                tok,
+                settings.authjwt_secret_key,
+                algorithms=[settings.ALGORITHM],
+            )
+            new_tokens.append(tok)
+        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+            changed = True
+            continue
+    return new_tokens, changed or (new_tokens != tokens)
+
+
+def _typed_jti(cache: dict[str, object]) -> tuple[list[str], dict[str, int]]:
+    """
+    Return (jti_list, jti_meta) if present and validly typed.
+
+    Args:
+        cache: The user cache dictionary.
+
+    Returns:
+        A tuple of (jti_list, jti_meta) where jti_list is a list of JTI
+        strings and jti_meta is a dictionary mapping JTI strings to their
+        expiration timestamps.
+    """
+    jti_list_raw = cache.get('jti_list', [])
+    if isinstance(jti_list_raw, list):
+        jti_list = [j for j in jti_list_raw if isinstance(j, str)]
+    else:
+        jti_list = []
+
+    jti_meta_raw = cache.get('jti_meta', {})
+    if isinstance(jti_meta_raw, dict):
+        jti_meta = {
+            k: int(v)
+            for k, v in jti_meta_raw.items()
+            if isinstance(k, str) and isinstance(v, int)
+        }
+    else:
+        jti_meta = {}
+    return jti_list, jti_meta
+
+
+def _prune_jti(
+    cache: dict[str, object],
+    now: int,
+) -> tuple[list[str], dict[str, int], bool]:
+    """
+    Return filtered (jti_list, jti_meta, changed).
+
+    Args:
+        cache: The user cache dictionary.
+        now: Current timestamp as an integer.
+
+    Returns:
+        A tuple of (new_jti_list, new_jti_meta, changed) where
+        new_jti_list is the filtered list of JTI strings, new_jti_meta is
+        the filtered JTI metadata dictionary, and changed is a boolean
+        indicating if any changes were made.
+    """
+    jti_list, jti_meta = _typed_jti(cache)
+    if not jti_meta and not jti_list:
+        return jti_list, jti_meta, False
+
+    new_jti_list: list[str] = []
+    for j in jti_list:
+        exp_ts: int = int(jti_meta.get(j, 0))
+        if exp_ts == 0 or exp_ts > now:
+            new_jti_list.append(j)
+
+    new_jti_meta: dict[str, int] = {}
+    for j, exp in jti_meta.items():
+        if j in new_jti_list and exp > now:
+            new_jti_meta[j] = int(exp)
+
+    changed = (new_jti_list != jti_list) or (new_jti_meta != jti_meta)
+    return new_jti_list, new_jti_meta, changed
+
+
 async def prune_user_cache(
     redis_pool: Redis,
     username: str,
@@ -32,80 +148,23 @@ async def prune_user_cache(
     if not cache:
         return None
 
-    changed: bool = False
     now: int = int(time.time())
+    changed: bool = False
 
     # Refresh tokens pruning
-    # The cache may contain a list of refresh tokens; keep those that are
-    # valid according to ``jwt.decode`` and drop expired/invalid ones.
-    refresh_raw = cache.get('refresh_tokens', [])
-    refresh_tokens: list[str]
-    if isinstance(refresh_raw, list):
-        # Ensure a typed list of strings only
-        refresh_tokens = [t for t in refresh_raw if isinstance(t, str)]
-    else:
-        refresh_tokens = []
-    new_refresh_tokens: list[str] = []
-    for tok in refresh_tokens:
-        try:
-            # Decode to verify validity and expiry
-            jwt.decode(
-                tok,
-                settings.authjwt_secret_key,
-                algorithms=[settings.ALGORITHM],
-            )
-            # Keep token only if decode succeeds
-            new_refresh_tokens.append(tok)
-        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
-            changed = True
-            # Drop expired/invalid tokens silently
-            continue
-    if new_refresh_tokens != refresh_tokens:
+    new_refresh_tokens, changed_refresh = _prune_refresh_tokens(cache)
+    if new_refresh_tokens != _typed_refresh_tokens(cache):
         cache['refresh_tokens'] = new_refresh_tokens
+    changed = changed or changed_refresh
 
     # JTI metadata pruning
-    # jti_list holds active JWT IDs; jti_meta maps JTI -> expiry timestamp.
-    jti_list_raw = cache.get('jti_list', [])
-    jti_list: list[str]
-    if isinstance(jti_list_raw, list):
-        jti_list = [j for j in jti_list_raw if isinstance(j, str)]
-    else:
-        jti_list = []
-
-    jti_meta_raw = cache.get('jti_meta', {})
-    jti_meta: dict[str, int]
-    if isinstance(jti_meta_raw, dict):
-        # Build a strictly typed mapping of str -> int
-        jti_meta = {
-            k: int(v)
-            for k, v in jti_meta_raw.items()
-            if isinstance(k, str) and isinstance(v, int)
-        }
-    else:
-        jti_meta = {}
-    if jti_meta:
-        new_jti_list: list[str] = []
-        for j in jti_list:
-            exp_ts: int = int(jti_meta.get(j, 0))
-            # Keep if no expiry is tracked (0) or it is still in the future
-            if exp_ts == 0 or exp_ts > now:
-                new_jti_list.append(j)
-            else:
-                changed = True
-
-        # Remove stale jti_meta entries not in list or already expired
-        new_jti_meta: dict[str, int] = {}
-        for j, exp in jti_meta.items():
-            if j in new_jti_list and exp > now:
-                new_jti_meta[j] = int(exp)
-            else:
-                changed = True
-
-        if new_jti_list != jti_list:
-            cache['jti_list'] = new_jti_list
+    new_jti_list, new_jti_meta, changed_jti = _prune_jti(cache, now)
+    if new_jti_list is not None:
+        cache['jti_list'] = new_jti_list
+    if new_jti_meta is not None:
         cache['jti_meta'] = new_jti_meta
+    changed = changed or changed_jti
 
-    # Persist only if an actual change occurred
     if changed:
         await set_user_data(redis_pool, username, cache)
 

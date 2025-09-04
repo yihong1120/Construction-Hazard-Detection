@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import unittest
 from datetime import datetime
+from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -21,150 +22,13 @@ from examples.violation_records.routers import get_user_sites_cached
 from examples.violation_records.routers import router
 
 
-#######################################################
-# 1) Mock domain classes
-#######################################################
-class MockSite:
-    """A mock Site model with basic fields."""
-
-    def __init__(self, site_id: int, name: str) -> None:
-        """
-        Create a mock Site instance.
-
-        Args:
-            site_id (int): The ID of the site.
-            name (str): The name of the site.
-        """
-        self.id: int = site_id
-        self.name: str = name
-        self.created_at: datetime = datetime(2023, 1, 1)
-        self.updated_at: datetime = datetime(2023, 1, 2)
-
-
-class MockUser:
-    """A mock User model containing a username and a list of mock sites."""
-
-    def __init__(self, username: str, sites: list[MockSite]) -> None:
-        """
-        Create a mock User instance.
-
-        Args:
-            username (str): The username.
-            sites (list[MockSite]): A list of mock Site instances.
-        """
-        self.username: str = username
-        self.sites: list[MockSite] = sites
-
-
-class MockViolation:
-    """
-    A mock Violation object that includes fields referenced in the real code
-    (e.g. cone_polygon_json, pole_polygon_json).
-    """
-
-    def __init__(
-        self,
-        violation_id: int,
-        site: str,
-        detection_time: datetime | None = None,
-        stream_name: str = 'Cam1',
-        image_path: str = 'some.jpg',
-    ) -> None:
-        """
-        Create a mock Violation instance.
-
-        Args:
-            violation_id (int): The ID of the violation.
-            site (str): The site name where the violation occurred.
-            detection_time (datetime | None): The time of detection.
-                Defaults to now.
-            stream_name (str): The name of the stream or camera.
-            image_path (str): The path to the violation image.
-        """
-        self.id: int = violation_id
-        self.site: str = site
-        self.stream_name: str = stream_name
-        self.detection_time: datetime = detection_time or datetime.now()
-        self.image_path: str = image_path
-        self.created_at: datetime = datetime(2023, 1, 3)
-
-        # Match fields in the real Violation model
-        self.detections_json: str = 'some detection'
-        self.warnings_json: str = 'some warning'
-        self.cone_polygon_json: str = 'some cone polygons'
-        self.pole_polygon_json: str = 'some pole polygons'
-
-
-#######################################################
-# 2) Fake DB result simulation classes
-#######################################################
-class FakeScalarsResult:
-    """
-    Simulate the result of (await db.scalars(stmt)).all(),
-    returning a list of mock items.
-    """
-
-    def __init__(self, items: list) -> None:
-        """Store the items to return when all() is called."""
-        self._items: list = items
-
-    def all(self) -> list:
-        """Return the stored items."""
-        return self._items
-
-
-class FakeExecuteResult:
-    """
-    Simulate the result of (await db.execute(stmt)), including .scalar() and
-    .scalars().all().
-    """
-
-    def __init__(self, scalar_result=None, scalars_result=None) -> None:
-        """
-        Args:
-            scalar_result: The single item returned by .scalar().
-            scalars_result: The list of items returned by .scalars().all().
-        """
-        self._scalar_result = scalar_result
-        self._scalars_result = scalars_result
-
-    def scalar(self):
-        """Simulate returning a single scalar result."""
-        return self._scalar_result
-
-    def scalars(self):
-        """Simulate returning an object whose .all() method gives a list."""
-        class NonAsyncScalars:
-            def __init__(self, data):
-                self._data = data
-
-            def all(self):
-                return self._data
-
-        return NonAsyncScalars(self._scalars_result or [])
-
-
-class FakeAsyncDB:
-    """
-    Simulate an asynchronous database session that provides .execute() and
-    .scalars().
-    """
-
-    def __init__(self) -> None:
-        """Create a fake DB with mocked execute/scalars methods."""
-        self.execute: AsyncMock = AsyncMock()
-        self.scalars: AsyncMock = AsyncMock()
-
-
-#######################################################
-# 3) Test class for violation routers
-#######################################################
 class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     """
     A test suite for violation-related endpoints.
     """
-    fake_db: ClassVar[FakeAsyncDB]
+    # fake_db is created in setUpClass as a SimpleNamespace with AsyncMocks
     client: ClassVar[TestClient]
+    fake_db: ClassVar[SimpleNamespace]  # 明確定義 fake_db 作為類別屬性
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -175,11 +39,14 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         app = FastAPI()
         app.include_router(router, prefix='/api')
 
-        # Create a single Fake DB instance
-        cls.fake_db = FakeAsyncDB()  # <== typed as ClassVar[FakeAsyncDB]
+        # Create a single fake DB instance with AsyncMock methods
+        cls.fake_db = SimpleNamespace(
+            execute=AsyncMock(),
+            scalars=AsyncMock(),
+        )
 
         async def override_get_db():
-            yield cls.fake_db
+            return cls.fake_db
 
         # Override get_db
         app.dependency_overrides[get_db] = override_get_db
@@ -189,6 +56,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             return JwtAuthorizationCredentials(
                 subject={'username': 'test_user'},
             )
+
         app.dependency_overrides[jwt_access] = override_jwt
 
         # Create a test client
@@ -208,7 +76,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     def simulate_user_query(
         self,
-        user_obj: MockUser | None,
+        user_obj: object | None,
     ) -> None:
         """
         Simulate the DB returning a user object.
@@ -217,13 +85,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             user_obj (MockUser | None): The mock user object to return.
         """
         self.fake_db.execute.side_effect = None
-        self.fake_db.execute.return_value = FakeExecuteResult(
-            scalar_result=user_obj,
-        )
+        self.fake_db.execute.return_value = self._exec_scalar(user_obj)
 
     def append_site_query(
         self,
-        site_obj: MockSite | None,
+        site_obj: object | None,
     ) -> None:
         """
         Append a site query result to the side_effect queue.
@@ -234,7 +100,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         cur = list(
             self.fake_db.execute.side_effect,
         ) if self.fake_db.execute.side_effect else []
-        cur.append(FakeExecuteResult(scalar_result=site_obj))
+        cur.append(self._exec_scalar(site_obj))
         self.fake_db.execute.side_effect = cur
 
     def append_count_query(self, count_val: int) -> None:
@@ -247,7 +113,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         cur = list(
             self.fake_db.execute.side_effect,
         ) if self.fake_db.execute.side_effect else []
-        cur.append(FakeExecuteResult(scalar_result=count_val))
+        cur.append(self._exec_scalar(count_val))
         self.fake_db.execute.side_effect = cur
 
     def simulate_scalars_list(self, items: list) -> None:
@@ -257,7 +123,51 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             items (list): A list of mock items to return.
         """
-        self.fake_db.scalars.return_value = FakeScalarsResult(items)
+        self.fake_db.scalars.return_value = self._scalars_list(items)
+
+    ###################################################
+    # Lightweight helpers replacing Fake* classes
+    ###################################################
+    def _exec_scalar(self, value):
+        """Return an object with scalar() -> value."""
+        return SimpleNamespace(scalar=lambda: value)
+
+    def _scalars_list(self, items: list):
+        """Return an object with all() -> items."""
+        return SimpleNamespace(all=lambda: items)
+
+    # Domain object creators (replace former Mock* classes)
+    def make_site(self, site_id: int, name: str):
+        return SimpleNamespace(
+            id=site_id,
+            name=name,
+            created_at=datetime(2023, 1, 1),
+            updated_at=datetime(2023, 1, 2),
+        )
+
+    def make_user(self, username: str, sites: list):
+        return SimpleNamespace(username=username, sites=sites)
+
+    def make_violation(
+        self,
+        violation_id: int,
+        site: str,
+        detection_time: datetime | None = None,
+        stream_name: str = 'Cam1',
+        image_path: str = 'some.jpg',
+    ):
+        return SimpleNamespace(
+            id=violation_id,
+            site=site,
+            stream_name=stream_name,
+            detection_time=detection_time or datetime.now(),
+            image_path=image_path,
+            created_at=datetime(2023, 1, 3),
+            detections_json='some detection',
+            warnings_json='some warning',
+            cone_polygon_json='some cone polygons',
+            pole_polygon_json='some pole polygons',
+        )
 
     ###################################################
     # Cache function tests
@@ -270,9 +180,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         from fastapi import HTTPException
 
         # Mock database to return None for user
-        self.fake_db.execute.return_value = FakeExecuteResult(
-            scalar_result=None,
-        )
+        self.fake_db.execute.return_value = self._exec_scalar(None)
 
         with self.assertRaises(HTTPException) as context:
             await get_user_sites_cached('nonexistent_user', self.fake_db)
@@ -283,19 +191,17 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     async def test_get_user_sites_cached_success(self) -> None:
         """
         Test get_user_sites_cached function with successful user retrieval.
-    """
+        """
         # Clear cache first
         _user_sites_cache.clear()
 
         # Create mock user with sites
-        siteA = MockSite(1, 'SiteA')
-        siteB = MockSite(2, 'SiteB')
-        user = MockUser('test_user', [siteA, siteB])
+        siteA = self.make_site(1, 'SiteA')
+        siteB = self.make_site(2, 'SiteB')
+        user = self.make_user('test_user', [siteA, siteB])
 
         # Mock database to return user
-        self.fake_db.execute.return_value = FakeExecuteResult(
-            scalar_result=user,
-        )
+        self.fake_db.execute.return_value = self._exec_scalar(user)
 
         # Call function
         result = await get_user_sites_cached('test_user', self.fake_db)
@@ -332,13 +238,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         _user_sites_cache['expired_user'] = (['OldSite'], old_time)
 
         # Create new mock user with different sites
-        siteA = MockSite(1, 'NewSite')
-        user = MockUser('expired_user', [siteA])
+        siteA = self.make_site(1, 'NewSite')
+        user = self.make_user('expired_user', [siteA])
 
         # Mock database to return updated user
-        self.fake_db.execute.return_value = FakeExecuteResult(
-            scalar_result=user,
-        )
+        self.fake_db.execute.return_value = self._exec_scalar(user)
 
         # Call function
         result = await get_user_sites_cached('expired_user', self.fake_db)
@@ -354,8 +258,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         Integration test for get_my_sites endpoint.
         """
         # Create mock user with sites
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA])
 
         # Mock the database query
         self.simulate_user_query(user)
@@ -382,7 +286,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         If the user has no sites, the endpoint should return an empty list.
         """
-        user = MockUser('test_user', [])
+        user = self.make_user('test_user', [])
         self.simulate_user_query(user)
         resp = self.client.get('/api/my_sites')
         self.assertEqual(resp.status_code, 200)
@@ -392,9 +296,9 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         If the user has multiple sites, return their info as a list of dicts.
         """
-        siteA = MockSite(1, 'SiteA')
-        siteB = MockSite(2, 'SiteB')
-        user = MockUser('test_user', [siteA, siteB])
+        siteA = self.make_site(1, 'SiteA')
+        siteB = self.make_site(2, 'SiteB')
+        user = self.make_user('test_user', [siteA, siteB])
         self.simulate_user_query(user)
         resp = self.client.get('/api/my_sites')
         self.assertEqual(resp.status_code, 200)
@@ -677,8 +581,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         mock_get_user_sites.return_value = ['SiteA']
         # Mock site query to return a different site
-        self.fake_db.execute.return_value = FakeExecuteResult(
-            scalar_result=MockSite(2, 'SiteB'),
+        self.fake_db.execute.return_value = self._exec_scalar(
+            self.make_site(2, 'SiteB'),
         )
         resp = self.client.get('/api/violations?site_id=2')
         self.assertEqual(resp.status_code, 403)
@@ -694,10 +598,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         mock_get_user_sites.return_value = ['SiteA']
         # Mock count query and violations query
-        self.fake_db.execute.return_value = FakeExecuteResult(scalar_result=2)
-        v1 = MockViolation(123, 'SiteA')
-        v2 = MockViolation(456, 'SiteA')
-        self.fake_db.scalars.return_value = FakeScalarsResult([v1, v2])
+        self.fake_db.execute.return_value = self._exec_scalar(2)
+        v1 = self.make_violation(123, 'SiteA')
+        v2 = self.make_violation(456, 'SiteA')
+        self.fake_db.scalars.return_value = self._scalars_list([v1, v2])
 
         params = {
             'keyword': 'cam',
@@ -723,15 +627,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         mock_get_user_sites.return_value = ['SiteA']
         # Mock site query and count query
         self.fake_db.execute.side_effect = [
-            FakeExecuteResult(
-                scalar_result=MockSite(
-                    1, 'SiteA',
-                ),
-            ),  # site query
-            FakeExecuteResult(scalar_result=1),  # count query
+            self._exec_scalar(self.make_site(1, 'SiteA')),
+            self._exec_scalar(1),
         ]
-        viol = MockViolation(101, 'SiteA')
-        self.fake_db.scalars.return_value = FakeScalarsResult([viol])
+        viol = self.make_violation(101, 'SiteA')
+        self.fake_db.scalars.return_value = self._scalars_list([viol])
 
         resp = self.client.get('/api/violations?site_id=1')
         self.assertEqual(resp.status_code, 200)
@@ -768,9 +668,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         not accessible.
         """
         mock_get_user_sites.return_value = ['SiteA']
-        self.fake_db.execute.return_value = FakeExecuteResult(
-            scalar_result=None,
-        )
+        self.fake_db.execute.return_value = self._exec_scalar(None)
         resp = self.client.get('/api/violations/1234')
         self.assertEqual(resp.status_code, 403)
 
@@ -784,10 +682,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         respond with 403.
         """
         mock_get_user_sites.return_value = ['SiteA']
-        viol = MockViolation(88, 'SiteB')
-        self.fake_db.execute.return_value = FakeExecuteResult(
-            scalar_result=viol,
-        )
+        viol = self.make_violation(88, 'SiteB')
+        self.fake_db.execute.return_value = self._exec_scalar(viol)
         resp = self.client.get('/api/violations/88')
         self.assertEqual(resp.status_code, 403)
 
@@ -801,10 +697,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         return 200 with violation data.
         """
         mock_get_user_sites.return_value = ['SiteA']
-        viol = MockViolation(77, 'SiteA')
-        self.fake_db.execute.return_value = FakeExecuteResult(
-            scalar_result=viol,
-        )
+        viol = self.make_violation(77, 'SiteA')
+        self.fake_db.execute.return_value = self._exec_scalar(viol)
         resp = self.client.get('/api/violations/77')
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
@@ -906,8 +800,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             mock_save_violation (AsyncMock): Mocked save_violation function.
         """
         # 1) User can access "SiteA"
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA])
         self.simulate_user_query(user)
 
         # 2) Simulate reading normal bytes from the image
@@ -965,8 +859,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_file_cls (MagicMock): Mocked UploadFile class.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA])
         self.simulate_user_query(user)
 
         # The second DB call for site check returns None => triggers 403
@@ -996,8 +890,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_file_cls (MagicMock): Mocked UploadFile class.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA])
         self.simulate_user_query(user)
 
         mock_file_obj = MagicMock()
@@ -1024,8 +918,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_file_cls (MagicMock): Mocked UploadFile class.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA])
         self.simulate_user_query(user)
 
         mock_file_obj = MagicMock()
@@ -1055,8 +949,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         If save_violation returns None, /api/upload should return 500.
         """
-        siteA = MockSite(1, 'SiteA')
-        user = MockUser('test_user', [siteA])
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA])
         self.simulate_user_query(user)
 
         mock_file_obj = MagicMock()

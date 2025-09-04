@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from examples.line_chatbot.line_bot import app
 from examples.line_chatbot.line_bot import handler
-from examples.line_chatbot.line_bot import line_bot_api
+from examples.line_chatbot.line_bot import messaging_api
 
 
 class TestLineBot(unittest.TestCase):
@@ -25,9 +26,9 @@ class TestLineBot(unittest.TestCase):
         # FastAPI test client
         self.client: TestClient = TestClient(app)
 
-        # Mock the LINE Bot API reply_message method
+        # Mock the LINE Messaging API v3 reply_message method
         self.mock_line_bot_api = patch.object(
-            line_bot_api, 'reply_message',
+            messaging_api, 'reply_message',
         ).start()
 
         # Mock the LINE Bot WebhookHandler handle method
@@ -51,10 +52,7 @@ class TestLineBot(unittest.TestCase):
                 {
                     'replyToken': 'reply_token',
                     'type': 'message',
-                    'message': {
-                        'type': 'text',
-                        'text': 'Hello',
-                    },
+                    'message': {'type': 'text', 'text': 'Hello'},
                 },
             ],
         }
@@ -76,104 +74,113 @@ class TestLineBot(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.text, 'OK')
 
-        # Ensure the handler.handle method
-        # was called once with correct arguments
+        # Ensure the handler.handle method was called once with compact JSON
         expected_body = json.dumps(fake_body, separators=(',', ':'))
         self.mock_handler_handle.assert_called_once_with(
             expected_body, fake_signature,
         )
 
     def test_callback_missing_signature(self) -> None:
-        """
-        Test that the webhook endpoint returns 400 if no signature is provided.
-        """
-        # Fake body without signature
+        """Should return 400 when signature is missing."""
         fake_body: dict = {'events': []}
-
-        # Send a POST request without a signature header
         response = self.client.post(
-            '/webhook',
-            json=fake_body,
-            headers={},  # Missing X-Line-Signature
+            '/webhook', json=fake_body, headers={},
         )
-
-        # Validate response
         self.assertEqual(response.status_code, 400)
 
     def test_callback_invalid_signature(self) -> None:
-        """
-        Test that the webhook endpoint returns 400 if the signature is invalid.
-        """
-        from linebot.exceptions import InvalidSignatureError
+        """Should return 400 when signature is invalid."""
+        from linebot.v3.webhook import InvalidSignatureError
 
         fake_signature: str = 'fake_signature'
         fake_body: dict = {'events': []}
 
-        # Simulate an InvalidSignatureError being raised
         self.mock_handler_handle.side_effect = InvalidSignatureError
-
-        # Send a POST request with an invalid signature
         response = self.client.post(
-            '/webhook',
-            json=fake_body,
+            '/webhook', json=fake_body,
             headers={'X-Line-Signature': fake_signature},
         )
-
-        # Validate response
         self.assertEqual(response.status_code, 400)
 
     def test_callback_internal_server_error(self) -> None:
-        """
-        Test that the webhook endpoint returns 500
-        for unexpected server errors.
-        """
+        """Should return 500 on unexpected server errors."""
         fake_signature: str = 'fake_signature'
         fake_body: dict = {'events': []}
 
-        # Simulate a generic exception being raised
         self.mock_handler_handle.side_effect = Exception('Some error')
-
-        # Send a POST request
         response = self.client.post(
             '/webhook',
             json=fake_body,
             headers={'X-Line-Signature': fake_signature},
         )
-
-        # Validate response
         self.assertEqual(response.status_code, 500)
 
     def test_handle_text_message(self) -> None:
-        """
-        Test that the handle_text_message function processes a text message
-        event correctly and sends an appropriate reply.
-        """
-        # Create a fake TextMessage event
-        from linebot.models import MessageEvent, TextMessage
-        event: MessageEvent = MessageEvent(
+        """Text message should trigger a reply with the same text echoed."""
+        event = SimpleNamespace(
             reply_token='dummy_token',
-            message=TextMessage(text='Hello, World!'),
+            message=SimpleNamespace(text='Hello, World!'),
         )
-
-        # Import the function to test
         from examples.line_chatbot.line_bot import handle_text_message
-
-        # Call the function with the fake event
         handle_text_message(event)
 
-        # Validate that line_bot_api.reply_message was called once
+        self.mock_line_bot_api.assert_called_once()
+        args, kwargs = self.mock_line_bot_api.call_args
+        reply_req = args[0]
+        self.assertEqual(reply_req.reply_token, 'dummy_token')
+        self.assertEqual(len(reply_req.messages), 1)
+        self.assertEqual(reply_req.messages[0].text, '您发送的消息是: Hello, World!')
+
+    def test_handle_text_message_empty_early_return(self) -> None:
+        """
+        Empty or whitespace-only message should early return without reply.
+        """
+        event = SimpleNamespace(
+            reply_token='dummy_token',
+            message=SimpleNamespace(text='   \t'),
+        )
+        from examples.line_chatbot.line_bot import handle_text_message
+        handle_text_message(event)
+        self.mock_line_bot_api.assert_not_called()
+
+    def test_handle_text_message_linebot_api_error(self) -> None:
+        """ApiException should be handled and not crash the handler."""
+        from linebot.v3.messaging.exceptions import ApiException
+        event = SimpleNamespace(
+            reply_token='dummy_token',
+            message=SimpleNamespace(text='boom'),
+        )
+        from examples.line_chatbot.line_bot import handle_text_message
+
+        class _FakeApiException(ApiException):  # type: ignore[misc]
+            def __init__(self) -> None:
+                pass
+
+            def __str__(self) -> str:
+                return 'fake-api-exception'
+
+        self.mock_line_bot_api.side_effect = _FakeApiException()
+        handle_text_message(event)
         self.mock_line_bot_api.assert_called_once()
 
-        # Extract the arguments passed to reply_message
-        args, kwargs = self.mock_line_bot_api.call_args
-
-        # Verify the reply token
-        self.assertEqual(args[0], 'dummy_token')
-
-        # Verify the reply message content
-        text_send_message = args[1]
-        self.assertEqual(text_send_message.text, '您发送的消息是: Hello, World!')
+    def test_handle_text_message_generic_exception(self) -> None:
+        """Generic exceptions should be caught and logged without raising."""
+        event = SimpleNamespace(
+            reply_token='dummy_token',
+            message=SimpleNamespace(text='crash'),
+        )
+        from examples.line_chatbot.line_bot import handle_text_message
+        self.mock_line_bot_api.side_effect = Exception('boom')
+        handle_text_message(event)
+        self.mock_line_bot_api.assert_called_once()
 
 
 if __name__ == '__main__':
     unittest.main()
+
+"""
+pytest \
+    --cov=examples.line_chatbot.line_bot \
+    --cov-report=term-missing \
+    tests/examples/line_chatbot/line_bot_test.py
+"""

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -85,23 +87,17 @@ class TestLocalNotificationServer(unittest.TestCase):
         """
         flag = False
 
-        class FakeConn:
-            """
-            Fake connection class to simulate the database connection.
-            """
-
-            async def run_sync(self, fn, *args, **kwargs) -> None:
+        @asynccontextmanager
+        async def fake_begin():
+            async def run_sync(fn, *args, **kwargs):
                 nonlocal flag
                 flag = True
 
-            async def __aenter__(self) -> FakeConn:
-                return self
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-                pass
+            # Yield a simple object exposing run_sync
+            yield SimpleNamespace(run_sync=run_sync)
 
         fake_engine = MagicMock()
-        fake_engine.begin = lambda: FakeConn()
+        fake_engine.begin = lambda: fake_begin()
         fake_engine.dispose = AsyncMock()  # Make dispose awaitable
 
         with patch('examples.auth.lifespan.engine', fake_engine):

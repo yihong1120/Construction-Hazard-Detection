@@ -11,6 +11,7 @@ from fastapi import File
 from fastapi import Form
 from fastapi import HTTPException
 from fastapi import Query
+from fastapi import Security
 from fastapi import UploadFile
 from fastapi.responses import FileResponse
 from fastapi_jwt import JwtAuthorizationCredentials
@@ -63,7 +64,7 @@ router: APIRouter = APIRouter()
 )
 async def get_my_sites(
     db: AsyncSession = Depends(get_db),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> list[SiteOut]:
     """
     Retrieve all sites accessible by the currently logged-in user.
@@ -122,7 +123,7 @@ async def get_violations(
     ),
     offset: int = Query(0, ge=0, description='Starting record offset'),
     db: AsyncSession = Depends(get_db),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> ViolationList:
     """
     Retrieve a paginated list of violation records.
@@ -232,7 +233,7 @@ async def get_violations(
 async def get_single_violation(
     violation_id: int,
     db: AsyncSession = Depends(get_db),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> dict:
     """
     Retrieve detailed information for a specific violation record.
@@ -302,7 +303,7 @@ async def get_single_violation(
 )
 async def get_violation_image(
     image_path: str,
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> FileResponse:
     """
     Retrieve a violation image file from the "static" directory.
@@ -365,7 +366,7 @@ async def upload_violation(
     pole_polygon_json: str | None = Form(None),
     image: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    credentials: JwtAuthorizationCredentials = Depends(jwt_access),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> dict:
     """
     Upload a new violation record, including an image and associated metadata.

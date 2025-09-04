@@ -2,23 +2,35 @@ from __future__ import annotations
 
 import logging
 
+import uvicorn
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import PlainTextResponse
-from linebot import LineBotApi
-from linebot import WebhookHandler
-from linebot.exceptions import InvalidSignatureError
-from linebot.exceptions import LineBotApiError
-from linebot.models import MessageEvent
-from linebot.models import TextMessage
-from linebot.models import TextSendMessage
+from linebot.v3.exceptions import InvalidSignatureError
+from linebot.v3.messaging import ApiClient
+from linebot.v3.messaging import Configuration
+from linebot.v3.messaging import MessagingApi
+from linebot.v3.messaging import ReplyMessageRequest
+from linebot.v3.messaging import TextMessage as V3TextMessage
+from linebot.v3.messaging.exceptions import ApiException
+from linebot.v3.webhook import WebhookHandler
+from linebot.v3.webhooks import MessageEvent
+from linebot.v3.webhooks import TextMessageContent
 
-# Create a FastAPI application instance
-app = FastAPI()
+from examples.auth.lifespan import global_lifespan
 
-# Initialise the LINE Bot API and WebhookHandler with access token and secret
-line_bot_api: LineBotApi = LineBotApi('YOUR_LINE_CHANNEL_ACCESS_TOKEN')
+# Create a FastAPI application instance with shared global lifespan
+# This ensures Redis and the rate-limit Lua script are initialised/preloaded.
+app = FastAPI(lifespan=global_lifespan)
+
+# Initialise the LINE Messaging API (v3) and WebhookHandler
+# with access token and secret
+configuration: Configuration = Configuration(
+    access_token='YOUR_LINE_CHANNEL_ACCESS_TOKEN',
+)
+api_client: ApiClient = ApiClient(configuration)
+messaging_api: MessagingApi = MessagingApi(api_client)
 handler: WebhookHandler = WebhookHandler('YOUR_LINE_CHANNEL_SECRET')
 
 
@@ -65,7 +77,7 @@ async def callback(request: Request) -> str:
     return 'OK'
 
 
-@handler.add(MessageEvent, message=TextMessage)
+@handler.add(MessageEvent, message=TextMessageContent)
 def handle_text_message(event: MessageEvent) -> None:
     """
     Handle incoming text messages from users.
@@ -94,19 +106,18 @@ def handle_text_message(event: MessageEvent) -> None:
         # Generate a response based on the user's message
         assistant_response: str = f"您发送的消息是: {user_message}"
 
-        # Send the response back to the user via LINE
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=assistant_response),
+        # Send the response back to the user via LINE (v3 API)
+        messaging_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[V3TextMessage(text=assistant_response)],
+            ),
         )
-    except LineBotApiError as e:
+    except ApiException as e:
         logging.error(f"Error responding to message: {e}")
     except Exception as e:
         logging.error(f"Unexpected error: {e}")
 
 
 if __name__ == '__main__':
-    import uvicorn
-
-    # Start the FastAPI application using uvicorn
     uvicorn.run(app, host='127.0.0.1', port=8000)

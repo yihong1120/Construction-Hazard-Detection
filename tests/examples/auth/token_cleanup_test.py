@@ -75,12 +75,23 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         ):
             out = await tc.prune_user_cache(self.rds, 'bob')
 
-        self.assertEqual(out, {'refresh_tokens': ['valid1']})
+            self.assertEqual(
+                out,
+                {
+                    'refresh_tokens': ['valid1'],
+                    'jti_list': [],
+                    'jti_meta': {},
+                },
+            )
         mock_get.assert_awaited_once_with(self.rds, 'bob')
         mock_set.assert_awaited_once_with(
             self.rds,
             'bob',
-            {'refresh_tokens': ['valid1']},
+            {
+                'refresh_tokens': ['valid1'],
+                'jti_list': [],
+                'jti_meta': {},
+            },
         )
         # Ensure decode was attempted for each token
         self.assertEqual(
@@ -236,8 +247,15 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         ):
             out = await tc.prune_user_cache(self.rds, 'fred')
 
-        # No change expected since tokens are not a list
-        self.assertEqual(out, cache)
+        # 會補上正規化的空 jti 欄位，且不寫回
+        self.assertEqual(
+            out,
+            {
+                'refresh_tokens': 'oops-not-a-list',
+                'jti_list': [],
+                'jti_meta': {},
+            },
+        )
         mock_get.assert_awaited_once_with(self.rds, 'fred')
         mock_set.assert_not_awaited()
 
@@ -260,7 +278,7 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
 
         # No changes since jti_meta is invalid type (treated as empty),
         # and no refresh tokens provided to change state
-        self.assertEqual(out, cache)
+        self.assertEqual(out, {'jti_list': ['a'], 'jti_meta': {}})
         mock_get.assert_awaited_once_with(self.rds, 'gina')
         mock_set.assert_not_awaited()
 
@@ -285,12 +303,12 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
 
         # jti_list remains the original invalid value as per current logic,
         # but jti_meta is pruned to empty and a write occurs
-        self.assertEqual(out, {'jti_list': 'oops', 'jti_meta': {}})
+            self.assertEqual(out, {'jti_list': [], 'jti_meta': {}})
         mock_get.assert_awaited_once_with(self.rds, 'hank')
         mock_set.assert_awaited_once_with(
             self.rds,
             'hank',
-            {'jti_list': 'oops', 'jti_meta': {}},
+            {'jti_list': [], 'jti_meta': {}},
         )
 
 
