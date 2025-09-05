@@ -119,7 +119,7 @@
 
 ## 操作說明
 
-在運行應用程式之前，請先準備串流設定檔 `config/configuration.json`（格式示例如下），以及完成「啟動方式」與「環境變數」的設定。
+在運行應用程式之前，請先完成「啟動方式」與「環境變數」的設定。串流設定檔 `config/configuration.json` 為選用，且一般不建議手動編輯；預設「資料庫模式」會集中管理串流。若您有進階需求再使用檔案式多串流設定，示例如下。
 
 ```json
 [
@@ -256,6 +256,8 @@
 
 8. **啟動主程式（兩種模式）**
 
+兩種模式擇一使用，請勿同時執行「資料庫模式」與「JSON 模式」。
+
 * **資料庫模式（預設）**
   `main.py` 會每隔固定秒數輪詢資料庫的 `stream_configs`，並動態啟動/重啟/停止各串流的子行程。
 
@@ -265,8 +267,8 @@
    python main.py --poll 5
    ```
 
-* **JSON 模式（以檔案配置多串流）**
-  使用 `--config` 指定 JSON 檔路徑；主程式會為 JSON 陣列中的每個串流配置各自啟動一個子行程。
+* **JSON 模式（以檔案配置多串流）— 選用、進階，不建議一般使用者**
+   使用 `--config` 指定 JSON 檔路徑；主程式會為 JSON 陣列中的每個串流配置各自啟動一個子行程。此模式與「資料庫模式」互斥，請擇一啟用。
 
    ```bash
    python main.py --config config/configuration.json
@@ -280,6 +282,12 @@
    登入帳密：`user` / `password`
 
 > 使用前，請先開啟「網頁設定」並設定各 API 端點（如：DETECT_API_URL、STREAMING_API_URL、DB_MANAGEMENT_API_URL、FCM_API_URL）以符合你的環境，然後再進行登入與操作。
+
+### iOS App
+
+- App Store： https://apps.apple.com/tw/app/visionnaire/id6743549024
+
+備註：若需完整的通知功能，請與我們聯繫。
 
 
 ## 資料庫設定與管理

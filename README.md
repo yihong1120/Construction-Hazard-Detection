@@ -129,7 +129,7 @@ Below are examples of real-time hazard detection by the system:
 
 ## Quick Start (Recommended)
 
-Before running the application, prepare your stream configuration file `config/configuration.json` (see below for an example), and complete the following quick start and environment variable setup steps.
+Before running the application, complete the following quick start and environment variable setup steps. Preparing a JSON stream configuration file `config/configuration.json` is optional and generally not recommended; the default Database Mode centrally manages streams. If you need file-based multi-stream config for advanced use cases, see the optional example below.
 
 ```json
 [
@@ -266,6 +266,8 @@ Before running the application, prepare your stream configuration file `config/c
 
 8. **Start the Main Program (Two Modes)**
 
+Choose one mode only; do not run Database Mode and JSON Mode at the same time.
+
 * **Database Mode (Default)**
   `main.py` will poll the `stream_configs` table and dynamically start/restart/stop stream subprocesses.
 
@@ -275,8 +277,8 @@ Before running the application, prepare your stream configuration file `config/c
    python main.py --poll 5
    ```
 
-* **JSON Mode (File-based Multi-stream Config)**
-  Use `--config` to specify the JSON file path; the main program will start a subprocess for each stream config in the array.
+* **JSON Mode (File-based Multi-stream Config) — Optional, advanced; not recommended for most users**
+   Use `--config` to specify the JSON file path; the main program will start a subprocess for each stream config in the array. This mode is mutually exclusive with Database Mode.
 
    ```bash
    python main.py --config config/configuration.json
@@ -290,6 +292,12 @@ Before running the application, prepare your stream configuration file `config/c
    Login: `user` / `password`
 
 > Before using, please open the Web Settings and configure API endpoints first (e.g., DETECT_API_URL, STREAMING_API_URL, DB_MANAGEMENT_API_URL, FCM_API_URL) to match your environment; then proceed with login and operations.
+
+### iOS App
+
+- App Store: https://apps.apple.com/tw/app/visionnaire/id6743549024
+
+Note: For complete notification functionality, please contact us.
 
 
 ## Database Configuration and Management
