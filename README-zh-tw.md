@@ -4,6 +4,7 @@
 
 <div align="center">
    <a href="examples/YOLO_server_api">模型辨識伺服器</a> |
+   <a href="examples/mcp_server">MCP 伺服器</a> |
    <a href="examples/local_notification_server">FCM 通知管理伺服器</a>|
    <a href="examples/violation_records">違規記錄伺服器</a>|
    <a href="examples/db_management">資料管理伺服器</a>|
@@ -29,26 +30,20 @@
    <a href="https://fastapi.tiangolo.com/">
    <img src="https://img.shields.io/badge/fastapi-0.115.5-blue?logo=fastapi" alt="FastAPI 0.115.5">
    </a>
+   <a href="https://pypi.org/project/fastmcp/2.12.4/">
+      <img src="https://img.shields.io/badge/FastMCP-2.12.4-purple" alt="FastMCP 2.12.4">
+   </a>
    <a href="https://redis.io/">
       <img src="https://img.shields.io/badge/Redis-7.0.15-red?logo=redis" alt="Redis 7.0.15">
-   </a>
-   <a href="https://www.docker.com/">
-      <img src="https://img.shields.io/badge/Docker-Container-blue?logo=docker" alt="Docker">
    </a>
 
    <!-- 第二行：測試、品質與資料 -->
 
-   <a href="https://github.com/pre-commit/pre-commit">
-      <img src="https://img.shields.io/badge/pre--commit-4.0.1-blue?logo=pre-commit" alt="Pre-commit 4.0.1">
-   </a>
-   <a href="https://docs.pytest.org/en/latest/">
-      <img src="https://img.shields.io/badge/pytest-8.3.4-blue?logo=pytest" alt="pytest 8.3.4">
+   <a href="https://www.docker.com/">
+      <img src="https://img.shields.io/badge/Docker-Container-blue?logo=docker" alt="Docker">
    </a>
    <a href="https://codecov.io/github/yihong1120/Construction-Hazard-Detection" >
       <img src="https://codecov.io/github/yihong1120/Construction-Hazard-Detection/graph/badge.svg?token=E0M66BUS8D" alt="Codecov">
-   </a>
-   <a href="https://codebeat.co/projects/github-com-yihong1120-construction-hazard-detection-main">
-      <img alt="codebeat badge" src="https://codebeat.co/badges/383396a9-e2cb-4604-8990-c1707e5870cf" />
    </a>
    <a href="https://universe.roboflow.com/object-detection-qn97p/construction-hazard-detection">
       <img src="https://app.roboflow.com/images/download-dataset-badge.svg" alt="Download Dataset from Roboflow">
@@ -84,6 +79,7 @@
 ## 目錄
 
 - [危險偵測範例](#危險偵測範例)
+- [MCP 伺服器（Agent 工具）](#mcp-伺服器agent-工具)
 - [操作說明](#操作說明)
 - [資料庫設定與管理](#資料庫設定與管理)
 - [環境變數](#環境變數)
@@ -116,6 +112,19 @@
     <p>工人在限制區域內</p>
   </div>
 </div>
+
+## MCP 伺服器（Agent 工具）
+
+此專案在 `examples/mcp_server` 提供一個基於 FastMCP 的 Model Context Protocol（MCP）伺服器，封裝偵測、違規分析、通知、違規紀錄、串流、模型管理與實用工具，方便 AI Agent 直接呼叫。
+
+- 重點工具：`inference.detect_frame`、`hazard.detect_violations`、`violations.search/get/get_image/my_sites`、`notify.line_push/telegram_send/broadcast_send`、`record.send_violation/batch_send_violations/sync_pending/get_statistics`、`streaming.start_detection/stop_detection/capture_frame/get_status`、`model.fetch/update/list_available/get_local` 與幾何工具。
+- 支援傳輸：stdio、SSE、streamable-HTTP（預設）。
+- 專案根目錄快速啟動：
+
+   - HTTP 傳輸：`python -m examples.mcp_server.main`
+   - stdio 傳輸：`MCP_TRANSPORT=stdio python -m examples.mcp_server.main`
+
+完整設定與 API 說明請見 `examples/mcp_server/README-zh-tw.md`。
 
 ## 操作說明
 
