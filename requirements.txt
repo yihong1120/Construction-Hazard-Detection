@@ -1,63 +1,64 @@
 aiofiles==25.1.0
-aiosqlite==0.21.0
-albumentationsx==2.0.10
-apscheduler==3.11.0
-asyncmy==0.2.10
-authlib==1.6.5
+aiomysql==0.3.2
+aiosqlite==0.22.1
+albumentationsx==2.0.15
+apscheduler==3.11.2
+authlib==1.6.6
 bcrypt==5.0.0
 ckip_transformers==0.3.4
 cloudinary==1.44.1
 codecov==2.1.13
-fastapi==0.119.0
+fastapi==0.128.0
 fastapi_jwt==0.3.0
 fastapi_limiter==0.1.6
-fastmcp==2.12.4
+fastmcp==2.14.4
 firebase_admin==7.1.0
 httpx==0.28.1
-huggingface_hub==0.35.3
-imagecorruptions==1.1.2
-imageio==2.37.0
-jsonschema==4.25.1
-line-bot-sdk==3.19.0
-numpy==2.1.1
-onnx==1.19.0
-onnxruntime==1.22.1
-onnxruntime-gpu==1.22.0
-opencv_python==4.10.0.84
-opencv_python_headless==4.10.0.84
-Pillow==11.3.0
-pre-commit==4.3.0
-pycocotools==2.0.10
-pydantic[email]==2.11.7
-pydantic_settings==2.9.1
-pytest==8.4.1
-pytest-cov==6.2.1
-pytest-xdist==3.6.1
-python-dotenv==1.1.0
+huggingface_hub==1.3.5
+# imagecorruptions==1.1.2
+# imageio==2.37.2
+jsonschema==4.26.0
+# line-bot-sdk==3.19.0
+numpy==2.4.1
+# onnx==1.20.0
+# onnxruntime==1.22.1
+# onnxruntime-gpu==1.22.0
+opencv_python==4.11.0.86
+opencv_python_headless==4.11.0.86
+Pillow==12.0.0
+pre-commit==4.5.1
+pycocotools==2.0.11
+pydantic[email]==2.12.5
+pydantic_settings==2.12.0
+pytest==9.0.2
+pytest-cov==7.0.0
+pytest-xdist==3.8.0
+python-dotenv==1.2.1
 python-jose==3.5.0
-python-multipart==0.0.20
-python-socketio==5.14.1
-python-telegram-bot==22.1
-redis==6.4.0
+python-multipart==0.0.22
+python-socketio==5.16.0
+python-telegram-bot==22.6
+redis==7.1.0
 sahi==0.11.36
 schedule==1.2.2
-scikit-learn==1.7.2
+scikit-learn==1.8.0
 shapely==2.1.2
 speedtest-cli==2.1.3
-sqlalchemy[asyncio]==2.0.41
-streamlink==7.3.0
-streamlit==1.49.1
-structlog==25.4.0
+sqlalchemy[asyncio]==2.0.46
+streamlink==8.1.2
+streamlit==1.53.1
+structlog==25.5.0
 tenacity==9.1.2
-tensorrt==10.13.2.6
-torch==2.8.0
-torchvision==0.23.0
-twilio==9.8.0
-ultralytics==8.3.213
-uvicorn==0.37.0
+tensorrt==10.14.1.48
+torch==2.9.1
+torchvision==0.24.1
+transformers==5.0.0
+twilio==9.10.0
+ultralytics==8.4.8
+uvicorn==0.40.0
 waitress==3.0.2
 watchdog==6.0.0
-werkzeug==3.1.1
+werkzeug==3.1.5
 
 # Uncomment for better performance on Linux/Mac
-# uvloop==0.21.0
+# uvloop==0.22.1
