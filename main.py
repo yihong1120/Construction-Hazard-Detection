@@ -13,7 +13,7 @@ from datetime import datetime
 from multiprocessing import Process
 from typing import TypedDict
 
-from asyncmy import create_pool
+import aiomysql
 from dotenv import load_dotenv
 from sqlalchemy.engine.url import make_url
 
@@ -87,17 +87,17 @@ class MainApp:
                     'DATABASE_URL environment variable is required',
                 )
             url = make_url(database_url)
-            self.db_pool = await create_pool(
+            self.db_pool = await aiomysql.create_pool(
                 host=url.host,
                 port=url.port or 3306,
                 user=url.username,
                 password=url.password,
                 db=url.database,
-                minsize=2,  # Minimum connections
-                maxsize=10,  # Maximum connections
-                pool_recycle=3600,  # 1 hour connection recycling
+                minsize=2,
+                maxsize=10,
+                pool_recycle=3600,
                 autocommit=True,
-                echo=False,  # Disable SQL logging for performance
+                echo=False,
             )
 
     async def fetch_stream_configs(self) -> list[StreamConfig]:
@@ -370,11 +370,19 @@ async def _run_single_stream(cfg: StreamConfig) -> None:
                 work_start_hour <= detection_time.hour < work_end_hour
             )
 
+            # Create a copy of the current frame to ensure data consistency
+            # Use copy() to avoid any reference issues across async operations
+            current_frame = frame.copy()
+            current_timestamp = int(ts)
+
+            # Generate detections with the frame copy
             datas, track_data = (
                 await live_stream_detector.generate_detections(
-                    frame,
+                    current_frame,
                 )
             )
+
+            # Generate danger detection results
             warnings, cone_polys, pole_polys = (
                 danger_detector.detect_danger(
                     track_data,
@@ -384,14 +392,16 @@ async def _run_single_stream(cfg: StreamConfig) -> None:
                 warnings, is_working,
             )
 
-            # Use optimized frame encoding (JPEG for better compression)
-            frame_bytes = Utils.encode_frame(frame, 'jpeg', 85)
+            # Use optimized frame encoding with the same frame used for
+            # detection. This ensures the image bytes correspond exactly
+            # to the detection data.
+            frame_bytes = Utils.encode_frame(current_frame, 'jpeg', 85)
 
             # Optionally stream result to backend using optimised transmission
             if store_in_redis:
                 try:
                     result = await frame_sender.send_optimized_frame(
-                        frame=frame,
+                        frame=current_frame,
                         site=site,
                         stream_name=stream_name,
                         encoding_format='jpeg',
@@ -400,7 +410,7 @@ async def _run_single_stream(cfg: StreamConfig) -> None:
                         warnings_json=json.dumps(warnings),
                         cone_polygons_json=json.dumps(cone_polys),
                         pole_polygons_json=json.dumps(pole_polys),
-                        detection_items_json=json.dumps(datas),
+                        detection_items_json=json.dumps(track_data),
                     )
 
                     # Check send result
@@ -415,19 +425,36 @@ async def _run_single_stream(cfg: StreamConfig) -> None:
                     print(f"[{site}:{stream_name}] Frame send error: {e}")
 
             # Send violation record + FCM push if needed
+            # Ensure all data corresponds to the same frame and timestamp
             if warnings and Utils.should_notify(
-                int(ts),
+                current_timestamp,
                 last_notification_time,
             ):
+                # Create deep copies of all detection data to ensure
+                # complete consistency. This prevents any race conditions
+                # or data corruption in async operations.
+                current_warnings = json.loads(json.dumps(warnings))
+                current_datas = json.loads(
+                    json.dumps(
+                        track_data,
+                    ),
+                ) if track_data else []
+                current_cone_polys = json.loads(
+                    json.dumps(cone_polys),
+                ) if cone_polys else []
+                current_pole_polys = json.loads(
+                    json.dumps(pole_polys),
+                ) if pole_polys else []
+
                 violation_id_str = await violation_sender.send_violation(
                     site=site,
                     stream_name=stream_name,
-                    warnings_json=json.dumps(warnings),
+                    warnings_json=json.dumps(current_warnings),
                     detection_time=detection_time,
                     image_bytes=frame_bytes,
-                    detections_json=json.dumps(datas),
-                    cone_polygon_json=json.dumps(cone_polys),
-                    pole_polygon_json=json.dumps(pole_polys),
+                    detections_json=json.dumps(current_datas),
+                    cone_polygon_json=json.dumps(current_cone_polys),
+                    pole_polygon_json=json.dumps(current_pole_polys),
                 )
                 # Try to convert violation_id to int, else None
                 try:
@@ -442,11 +469,11 @@ async def _run_single_stream(cfg: StreamConfig) -> None:
                 await fcm_sender.send_fcm_message_to_site(
                     site=site,
                     stream_name=stream_name,
-                    message=warnings,
+                    message=current_warnings,
                     image_path=None,
                     violation_id=violation_id,
                 )
-                last_notification_time = int(ts)
+                last_notification_time = current_timestamp
 
             # Dynamically adjust processing interval
             proc_time = time.time() - start
@@ -538,3 +565,9 @@ async def main() -> None:
 if __name__ == '__main__':
     multiprocessing.set_start_method('spawn', force=True)
     asyncio.run(main())
+
+"""
+python main.py --poll 15
+
+uv run python main.py --poll 15
+"""
