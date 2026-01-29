@@ -93,7 +93,7 @@ All required Python packages are listed in the `requirements.txt` file. The main
 - **fastapi-jwt** (for handling JWT-based security)
 - **redis** (asynchronous client)
 - **SQLAlchemy** (async engine for database interactions)
-- **asyncmy** (async MySQL driver, or adapt to the RDBMS of your choice)
+- **aiomysql** (async MySQL driver, or adapt to the RDBMS of your choice)
 - **werkzeug** (for password hashing)
 - **apscheduler** (for scheduled tasks)
 - **python-dotenv** (for loading environment variables)
@@ -125,8 +125,8 @@ Create a `.env` file in the `examples/auth` directory (or your project’s root)
 JWT_SECRET_KEY="your_super_secret_key"
 
 # SQLAlchemy database connection URI
-# e.g. MySQL: mysql+asyncmy://<user>:<password>@<host>/<database_name>
-DATABASE_URL="mysql+asyncmy://user:password@localhost/dbname"
+# e.g. MySQL: mysql+aiomysql://<user>:<password>@<host>/<database_name>
+DATABASE_URL="mysql+aiomysql://user:password@localhost/dbname"
 
 # Redis connection details
 REDIS_HOST="127.0.0.1"

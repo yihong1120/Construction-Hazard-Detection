@@ -19,7 +19,7 @@ class Settings(BaseSettings):
             or 'your_fallback_secret_key' if not set.
         sqlalchemy_database_uri (str): The database connection URI (async).
             Defaults to the value of the DATABASE_URL environment variable
-            or 'mysql+asyncmy://user:password@localhost/dbname' if not set.
+            or 'mysql+aiomysql://user:password@localhost/dbname' if not set.
         sqlalchemy_track_modifications (bool): Indicates whether SQLAlchemy
             should track modifications. Defaults to False.
     """
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         'JWT_SECRET_KEY', 'your_fallback_secret_key',
     )
     sqlalchemy_database_uri: str = os.getenv(
-        'DATABASE_URL', 'mysql+asyncmy://user:password@localhost/dbname',
+        'DATABASE_URL', 'mysql+aiomysql://user:password@localhost/dbname',
     )
     sqlalchemy_track_modifications: bool = False
 

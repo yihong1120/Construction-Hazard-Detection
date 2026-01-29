@@ -15,7 +15,7 @@ settings: Settings = Settings()
 # Create an asynchronous SQLAlchemy engine
 # using the database URI from settings.
 engine = create_async_engine(
-    settings.sqlalchemy_database_uri.replace('mysql://', 'mysql+asyncmy://'),
+    settings.sqlalchemy_database_uri.replace('mysql://', 'mysql+aiomysql://'),
     pool_recycle=3600,
 )
 

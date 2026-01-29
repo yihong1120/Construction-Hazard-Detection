@@ -93,7 +93,7 @@ examples/auth/
 - **fastapi-jwt**（用於 JWT 驗證）
 - **redis**（非同步用戶端）
 - **SQLAlchemy**（非同步的資料庫操作）
-- **asyncmy**（非同步的 MySQL 驅動程式，或可依需求替換成其他 RDBMS）
+- **aiomysql**（非同步的 MySQL 驅動程式，或可依需求替換成其他 RDBMS）
 - **werkzeug**（用於密碼雜湊）
 - **apscheduler**（用於排程工作）
 - **python-dotenv**（用於讀取環境變數）
@@ -125,8 +125,8 @@ examples/auth/
 JWT_SECRET_KEY="your_super_secret_key"
 
 # SQLAlchemy 資料庫連線 URI
-# 例如 MySQL: mysql+asyncmy://<user>:<password>@<host>/<database_name>
-DATABASE_URL="mysql+asyncmy://user:password@localhost/dbname"
+# 例如 MySQL: mysql+aiomysql://<user>:<password>@<host>/<database_name>
+DATABASE_URL="mysql+aiomysql://user:password@localhost/dbname"
 
 # Redis 連線資訊
 REDIS_HOST="127.0.0.1"
