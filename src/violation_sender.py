@@ -181,7 +181,7 @@ class ViolationSender:
 
     def _build_upload_payload(
         self,
-        access_token: str,
+        access_token: str | None,
         image_bytes: bytes,
         site: str,
         stream_name: str,
@@ -218,9 +218,9 @@ class ViolationSender:
                 str,
             ]: The headers, files, form data, and upload URL.
         """
-        headers: dict[str, str] = {
-            'Authorization': f"Bearer {access_token}",
-        }
+        headers: dict[str, str] = {}
+        if access_token:
+            headers['Authorization'] = f"Bearer {access_token}"
         files: dict[str, tuple[str, bytes, str]] = {
             'image': ('violation.jpg', image_bytes, 'image/jpeg'),
         }
