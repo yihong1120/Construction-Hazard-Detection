@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import cv2
 
 
@@ -20,6 +22,9 @@ class StreamViewer:
         """
         self.stream_url = stream_url
         self.window_name = window_name
+
+        # Set OpenCV FFMPEG options for RTSP streams to use TCP transport
+        os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp'
         self.cap = cv2.VideoCapture(self.stream_url)
 
     def display_stream(self):
