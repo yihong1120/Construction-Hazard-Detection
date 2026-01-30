@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import datetime
 import gc
+import os
 from collections.abc import AsyncGenerator
 from typing import TypedDict
 
@@ -39,6 +40,10 @@ class StreamCapture:
         """
         # Video stream URL
         self.stream_url = stream_url
+
+        # Set OpenCV FFMPEG options for RTSP streams to use TCP transport
+        os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp'
+
         # Video capture object
         self.cap: cv2.VideoCapture | None = None
         # Frame capture interval in seconds
