@@ -62,4 +62,9 @@ uvicorn examples.local_notification_server.app:app\
     --host 127.0.0.1 \
     --port 8003 \
     --workers 4
+
+uv run uvicorn examples.local_notification_server.app:app\
+    --host 127.0.0.1 \
+    --port 8003 \
+    --workers 4
 """

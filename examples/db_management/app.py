@@ -48,5 +48,11 @@ if __name__ == '__main__':
     main()
 
 """
-uvicorn examples.db_management.app:app --host 127.0.0.1 --port 8005 --workers 4
+uvicorn examples.db_management.app:app\
+    --host 127.0.0.1\
+    --port 8005 --workers 4
+
+uv run uvicorn examples.db_management.app:app\
+    --host 127.0.0.1\
+    --port 8005 --workers 4
 """

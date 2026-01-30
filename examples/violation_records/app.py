@@ -42,4 +42,8 @@ if __name__ == '__main__':
 uvicorn examples.violation_records.app:app\
     --host 127.0.0.1\
     --port 8002 --workers 4
+
+uv run uvicorn examples.violation_records.app:app\
+    --host 127.0.0.1\
+    --port 8002 --workers 4
 """

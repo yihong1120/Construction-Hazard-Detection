@@ -33,4 +33,7 @@ if __name__ == '__main__':
 """
 uvicorn examples.YOLO_server_api.backend.app:app \
     --host 127.0.0.1 --port 8000 --workers 8
+
+uv run uvicorn examples.YOLO_server_api.backend.app:app\
+    --host 127.0.0.1 --port 8000 --workers 8
 """
