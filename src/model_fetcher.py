@@ -35,7 +35,7 @@ class ModelFetcher:
         """
         self.api_url = api_url
         self.models = models or [
-            'yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x',
+            'yolo26n', 'yolo26s', 'yolo26m', 'yolo26l', 'yolo26x',
         ]
         self.local_dir = Path(local_dir)
 

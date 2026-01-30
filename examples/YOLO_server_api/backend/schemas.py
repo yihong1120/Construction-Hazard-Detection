@@ -26,7 +26,7 @@ class ModelFileUpdate(BaseModel):
     Represents the data required to update a model file.
 
     Attributes:
-        model (str): The model identifier (e.g., 'yolo11n').
+        model (str): The model identifier (e.g., 'yolo26n').
         file (UploadFile): The uploaded file (e.g., .pt file).
     """
 

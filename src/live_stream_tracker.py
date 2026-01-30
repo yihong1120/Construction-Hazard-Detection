@@ -19,20 +19,20 @@ class DetectionResult(TypedDict):
 
 class LiveStreamDetector:
     """
-    A class to perform live stream detection and tracking using YOLO11.
+    A class to perform live stream detection and tracking using YOLO26.
     """
 
     def __init__(
         self,
         stream_url: str,
-        model_path: str = '../models/pt/best_yolo11n.pt',
+        model_path: str = '../models/pt/best_yolo26n.pt',
     ):
         """
         Initialise live stream detector with video URL, YOLO model path.
 
         Args:
             stream_url (str): The full URL to the live video stream.
-            model_path (str): The path to the YOLO11 model file.
+            model_path (str): The path to the YOLO26 model file.
         """
         self.stream_url = stream_url
         self.model_path = model_path
@@ -60,7 +60,7 @@ class LiveStreamDetector:
             now = datetime.datetime.now()
             timestamp = now.timestamp()  # Unix timestamp
 
-            # Run YOLO11 tracking, maintain tracks across frames
+            # Run YOLO26 tracking, maintain tracks across frames
             results = self.model.track(source=frame, persist=True)
 
             # If detections exist, extract IDs and data
@@ -117,7 +117,7 @@ def main():
     Main function to run the live stream detection.
     """
     parser = argparse.ArgumentParser(
-        description='Perform live stream detection and tracking using YOLO11.',
+        description='Perform live stream detection and tracking using YOLO26.',
     )
     parser.add_argument(
         '--url',
@@ -128,7 +128,7 @@ def main():
     parser.add_argument(
         '--model',
         type=str,
-        default='../models/yolo11n.pt',
+        default='../models/pt/yolo26n.pt',
         help='Path to the YOLO model',
     )
     args = parser.parse_args()

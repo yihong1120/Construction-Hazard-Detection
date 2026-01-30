@@ -39,7 +39,7 @@ class LiveStreamDetector:
     def __init__(
         self,
         api_url: str | None = None,
-        model_key: str = 'yolo11n',
+        model_key: str = 'yolo26n',
         output_folder: str | None = None,
         detect_with_server: bool = False,
         shared_token: SharedToken | None = None,
@@ -105,7 +105,7 @@ class LiveStreamDetector:
                 )
             else:
                 self.model = AutoDetectionModel.from_pretrained(
-                    'yolo11',
+                    'yolo26',
                     model_path=str(
                         Path('models/pt') /
                         f"best_{self.model_key}.pt",
@@ -1236,7 +1236,7 @@ async def main() -> None:
     )
     parser.add_argument(
         '--model_key', type=str,
-        default='yolo11n', help='YOLO model identifier key',
+        default='yolo26n', help='YOLO model identifier key',
     )
     parser.add_argument(
         '--detect_with_server',

@@ -13,13 +13,13 @@ USE_SAHI: bool = os.getenv('USE_SAHI', 'false').lower() == 'true'
 
 # Base model variants
 MODEL_VARIANTS_ENV: str = os.getenv(
-    'MODEL_VARIANTS', 'yolo11x,yolo11l,yolo11m,yolo11s,yolo11n',
+    'MODEL_VARIANTS', 'yolo26x,yolo26l,yolo26m,yolo26s,yolo26n',
 )
 MODEL_VARIANTS: list[str] = [
     v.strip() for v in MODEL_VARIANTS_ENV.split(',') if v.strip()
 ]
 if not MODEL_VARIANTS:  # Fallback protection
-    MODEL_VARIANTS = ['yolo11n']
+    MODEL_VARIANTS = ['yolo26n']
 
 # Whether to enable lazy loading of models:
 # True means models are loaded only when first used
