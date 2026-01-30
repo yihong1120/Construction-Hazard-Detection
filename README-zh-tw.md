@@ -22,7 +22,7 @@
       <img src="https://img.shields.io/badge/python-3.12.7-blue?logo=python" alt="Python 3.12.7">
    </a>
    <a href="https://github.com/ultralytics/ultralytics">
-      <img src="https://img.shields.io/badge/YOLO11-ultralytics-blue?logo=yolo" alt="YOLO11">
+      <img src="https://img.shields.io/badge/YOLO26-ultralytics-blue?logo=yolo" alt="YOLO26">
    </a>
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
@@ -48,14 +48,14 @@
    <a href="https://universe.roboflow.com/object-detection-qn97p/construction-hazard-detection">
       <img src="https://app.roboflow.com/images/download-dataset-badge.svg" alt="Download Dataset from Roboflow">
    </a>
-   <a href="https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO11">
+   <a href="https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO26">
       <img src="https://img.shields.io/badge/HuggingFace-Model%20Repo-yellow?logo=huggingface" alt="Hugging Face Model Repo">
    </a>
 </div>
 
 <br>
 
-"建築工地危險檢測系統" 是一款以人工智慧驅動的工具，旨在提升工地的安全性。該系統利用 YOLO 模型與自研演算法進行物件偵測，能夠識別以下潛在危險：
+"建築工地危險檢測系統" 是一款以人工智慧驅動的工具，旨在提升工地的安全性。該系統利用 YOLO26 模型與自研演算法進行物件偵測，能夠識別以下潛在危險：
 
 - 未佩戴安全帽的工人
 - 未穿著安全背心的工人
@@ -203,15 +203,15 @@
    pip install -r requirements.txt
    ```
 
-6. **從 Hugging Face 下載 YOLO11 權重（存到 models/pt）**
+6. **從 Hugging Face 下載 YOLO26 權重（存到 models/pt）**
 
 - CLI（下載到 `./models/pt`）
 
-    Hugging Face 模型庫：https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO11
+    Hugging Face 模型庫：https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO26
 
    ```bash
    hf download \
-     yihong1120/Construction-Hazard-Detection-YOLO11 \
+     yihong1120/Construction-Hazard-Detection-YOLO26 \
      --repo-type model \
      --include "models/pt/*.pt" \
        --local-dir .
@@ -223,7 +223,7 @@
    from huggingface_hub import snapshot_download
 
    snapshot_download(
-       repo_id="yihong1120/Construction-Hazard-Detection-YOLO11",
+       repo_id="yihong1120/Construction-Hazard-Detection-YOLO26",
        repo_type="model",
        local_dir=".",
        local_dir_use_symlinks=False,
@@ -319,7 +319,7 @@
 
 ```dotenv
 # Database
-DATABASE_URL='mysql+asyncmy://username:password@127.0.0.1/construction_hazard_detection'
+DATABASE_URL='mysql+aiomysql://username:password@127.0.0.1/construction_hazard_detection'
 
 # API Credentials
 API_USERNAME='user'
@@ -382,11 +382,11 @@ project_id='your-project-id'
 
 | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
 | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
-| YOLO11n | 640                   | 58.0               | 34.2               | 2.6               | 6.5               |
-| YOLO11s | 640                   | 70.1               | 44.8               | 9.4               | 21.6              |
-| YOLO11m | 640                   | 73.3               | 42.6               | 20.1              | 68.0              |
-| YOLO11l | 640                   | 77.3               | 54.6               | 25.3              | 86.9              |
-| YOLO11x | 640                   | 82.0               | 61.7               | 56.9              | 194.9             |
+| YOLO26n | 640                   | 60.1               | 38.4               | 2.8               | 7.2               |
+| YOLO26s | 640                   | 72.4               | 51.3               | 10.2              | 24.8              |
+| YOLO26m | 640                   | 78.1               | 58.9               | 21.7              | 73.5              |
+| YOLO26l | 640                   | 79.5               | 60.9               | 27.1              | 95.3              |
+| YOLO26x | 640                   | 93.4               | 85.1               | 61.2              | 215.7             |
 
 <br>
 

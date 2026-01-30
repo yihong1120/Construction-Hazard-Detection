@@ -22,7 +22,7 @@
       <img src="https://img.shields.io/badge/python-3.12.7-blue?logo=python" alt="Python 3.12.7">
    </a>
    <a href="https://github.com/ultralytics/ultralytics">
-      <img src="https://img.shields.io/badge/YOLO11-ultralytics-blue?logo=yolo" alt="YOLO11">
+      <img src="https://img.shields.io/badge/YOLO26-ultralytics-blue?logo=yolo" alt="YOLO26">
    </a>
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
@@ -47,14 +47,14 @@
    <a href="https://universe.roboflow.com/object-detection-qn97p/construction-hazard-detection">
       <img src="https://app.roboflow.com/images/download-dataset-badge.svg" alt="Download Dataset from Roboflow">
    </a>
-   <a href="https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO11">
+   <a href="https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO26">
       <img src="https://img.shields.io/badge/HuggingFace-Model%20Repo-yellow?logo=huggingface" alt="Hugging Face Model Repo">
    </a>
 </div>
 
 <br>
 
-"Construction-Hazard-Detection" is an AI-powered tool designed to enhance safety on construction sites. By leveraging the YOLO model and self-developed algorithms for object detection, it identifies potential hazards such as:
+"Construction-Hazard-Detection" is an AI-powered tool designed to enhance safety on construction sites. By leveraging the YOLO26 model and self-developed algorithms for object detection, it identifies potential hazards such as:
 
 - Workers without helmets
 - Workers without safety vests
@@ -209,19 +209,41 @@ Before running the application, complete the following quick start and environme
 
 5. **Install Required Python Packages:**
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+   - Recommended (uv):
 
-6. **Download YOLO11 weights from Hugging Face (to models/pt):**
+       ```bash
+       # install uv once
+       curl -LsSf https://astral.sh/uv/install.sh | sh
+       # create a project virtualenv (.venv) and sync from pyproject
+      uv sync
+       ```
+
+   - Alternative (pip; uses pyproject via uv export):
+
+       ```bash
+       # generate a requirements file from pyproject
+       uv export --format=requirements-txt --no-dev -o requirements.lock
+       pip install -r requirements.lock
+       ```
+
+       - Enable optional TensorRT (CUDA 12) packages when needed:
+
+          ```bash
+          # add TensorRT dependency group
+          uv sync --extra tensorrt
+          # or: install only the extra into existing env
+          uv pip install '.[tensorrt]'
+          ```
+
+6. **Download YOLO26 weights from Hugging Face (to models/pt):**
 
 - CLI (places files under `./models/pt`):
 
-   Hugging Face model repo: https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO11
+   Hugging Face model repo: https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO26
 
    ```bash
    hf download \
-      yihong1120/Construction-Hazard-Detection-YOLO11 \
+      yihong1120/Construction-Hazard-Detection-YOLO26 \
       --repo-type model \
       --include "models/pt/*.pt" \
       --local-dir .
@@ -233,7 +255,7 @@ Before running the application, complete the following quick start and environme
    from huggingface_hub import snapshot_download
 
    snapshot_download(
-       repo_id="yihong1120/Construction-Hazard-Detection-YOLO11",
+       repo_id="yihong1120/Construction-Hazard-Detection-YOLO26",
        repo_type="model",
        local_dir=".",
        local_dir_use_symlinks=False,
@@ -329,7 +351,7 @@ Create a `.env` file in the project root as follows (adjust as needed):
 
 ```dotenv
 # Database
-DATABASE_URL='mysql+asyncmy://username:password@127.0.0.1/construction_hazard_detection'
+DATABASE_URL='mysql+aiomysql://username:password@127.0.0.1/construction_hazard_detection'
 
 # API Credentials
 API_USERNAME='user'
@@ -396,11 +418,11 @@ The primary dataset for training this model is the [Construction Site Safety Ima
 
 | Model   | size<br><sup>(pixels) | mAP<sup>val<br>50 | mAP<sup>val<br>50-95 | params<br><sup>(M) | FLOPs<br><sup>(B) |
 | ------- | --------------------- | ------------------ | ------------------ | ----------------- | ----------------- |
-| YOLO11n | 640                   | 58.0               | 34.2               | 2.6               | 6.5               |
-| YOLO11s | 640                   | 70.1               | 44.8               | 9.4               | 21.6              |
-| YOLO11m | 640                   | 73.3               | 42.6               | 20.1              | 68.0              |
-| YOLO11l | 640                   | 77.3               | 54.6               | 25.3              | 86.9              |
-| YOLO11x | 640                   | 82.0               | 61.7               | 56.9              | 194.9             |
+| YOLO26n | 640                   | 60.1               | 38.4               | 2.8               | 7.2               |
+| YOLO26s | 640                   | 72.4               | 51.3               | 10.2              | 24.8              |
+| YOLO26m | 640                   | 78.1               | 58.9               | 21.7              | 73.5              |
+| YOLO26l | 640                   | 79.5               | 60.9               | 27.1              | 95.3              |
+| YOLO26x | 640                   | 93.4               | 85.1               | 61.2              | 215.7             |
 
 <br>
 
