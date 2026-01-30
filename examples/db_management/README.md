@@ -131,7 +131,7 @@ Implements core database logic using asynchronous SQLAlchemy:
 Make sure to install required dependencies:
 
 ```bash
-pip install fastapi uvicorn sqlalchemy asyncmy redis pydantic PyJWT python-multipart
+pip install fastapi uvicorn sqlalchemy aiomysql redis pydantic PyJWT python-multipart
 ```
 
 ### 2. **Setup and Run Redis**

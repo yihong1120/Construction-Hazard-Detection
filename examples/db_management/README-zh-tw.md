@@ -130,7 +130,7 @@ uvicorn examples.db_management.app:app --host 127.0.0.1 --port 8000
 ### 1. 安裝依賴套件
 
 ```bash
-pip install fastapi uvicorn sqlalchemy asyncmy redis pydantic PyJWT python-multipart
+pip install fastapi uvicorn sqlalchemy aiomysql redis pydantic PyJWT python-multipart
 ```
 
 ### 2. 資料庫與Redis啟動
@@ -150,7 +150,7 @@ pip install fastapi uvicorn sqlalchemy asyncmy redis pydantic PyJWT python-multi
 ### 3. 配置環境變數 (`.env`)
 
 ```
-DATABASE_URL=mysql+asyncmy://user:password@localhost/db_management
+DATABASE_URL=mysql+aiomysql://user:password@localhost/db_management
 REDIS_URL=redis://localhost
 JWT_SECRET_KEY=your_jwt_secret_key_here
 ```
