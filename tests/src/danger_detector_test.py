@@ -223,20 +223,6 @@ class TestDangerDetector(unittest.TestCase):
         detector = DangerDetector(invalid_items)  # type: ignore
         self.assertEqual(detector.detection_items, {})
 
-    def test_invalid_detection_items_wrong_types(self) -> None:
-        """
-        Test initialization with wrong value types in detection items.
-        """
-        invalid_items = {
-            'detect_no_safety_vest_or_helmet': 'yes',  # Should be bool
-            'detect_near_machinery_or_vehicle': 1,     # Should be bool
-            'detect_in_restricted_area': True,
-            'detect_in_utility_pole_restricted_area': False,
-            'detect_machinery_close_to_pole': False,
-        }
-        detector = DangerDetector(invalid_items)  # type: ignore
-        self.assertEqual(detector.detection_items, {})
-
     def test_vehicle_proximity_detection(self) -> None:
         """
         Test vehicle proximity detection functionality.

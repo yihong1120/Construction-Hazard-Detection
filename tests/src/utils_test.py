@@ -1137,7 +1137,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [400, 400, 500, 500, 0.75, 9],  # Vehicle
         ]
         normalised_datas = Utils.normalise_data(datas)
-        clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
+        clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
         polygons = Utils.detect_polygon_from_cones(normalised_datas, clusterer)
         people_count = Utils.calculate_people_in_controlled_area(
             polygons, normalised_datas,
@@ -1179,7 +1179,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [400, 400, 500, 500, 0.75, 2],  # No-Safety Vest
         ]
         normalised_data = Utils.normalise_data(data)
-        clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
+        clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
         polygons = Utils.detect_polygon_from_cones(normalised_data, clusterer)
         self.assertEqual(len(polygons), 0)
 
@@ -1208,7 +1208,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         empty datasets in the utility pole union calculation.
         """
         datas: list[list[float]] = []  # No utility pole data
-        cluster = HDBSCAN(min_samples=3, min_cluster_size=2)
+        cluster = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
         poly = Utils.build_utility_pole_union(datas, cluster)
         self.assertTrue(isinstance(poly, Polygon))
         self.assertTrue(poly.is_empty)
@@ -1222,7 +1222,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         area around the single pole.
         """
         datas: list[list[float]] = [[10, 2, 20, 30, 0.9, 9]]
-        cluster = HDBSCAN(min_samples=3, min_cluster_size=2)
+        cluster = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
         poly = Utils.build_utility_pole_union(datas, cluster)
         self.assertTrue(isinstance(poly, Polygon))
         self.assertFalse(poly.is_empty)
@@ -1241,7 +1241,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [40, 1, 50, 30, 0.9, 9],
         ]
         # Lower parameters for clustering
-        cluster = HDBSCAN(min_samples=2, min_cluster_size=2)
+        cluster = HDBSCAN(min_samples=2, min_cluster_size=2, copy=True)
         poly = Utils.build_utility_pole_union(datas, cluster)
         self.assertTrue(isinstance(poly, Polygon))
         self.assertGreater(poly.area, 0)
@@ -1283,7 +1283,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         Returns:
             None
         """
-        clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
+        clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
         result = Utils.detect_polygon_from_cones([], clusterer)
         self.assertEqual(
             result, [], 'Expected an empty list when datas is empty.',
@@ -1362,7 +1362,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [10, 5, 20, 30, 0.9, 9],
             [25, 8, 35, 35, 0.9, 9],
         ]
-        cluster = HDBSCAN(min_samples=3, min_cluster_size=2)
+        cluster = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
 
         # Act
         poly = Utils.build_utility_pole_union(datas, cluster)

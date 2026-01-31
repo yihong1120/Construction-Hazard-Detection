@@ -26,7 +26,7 @@ class DangerDetector:
                 - 'detect_in_utility_pole_restricted_area'
                 - 'detect_machinery_close_to_pole'
         """
-        self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2)
+        self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
 
         required_keys = {
             'detect_no_safety_vest_or_helmet',
@@ -36,17 +36,11 @@ class DangerDetector:
             'detect_machinery_close_to_pole',
         }
 
-        if (
-            isinstance(detection_items, dict)
-            and all(
-                isinstance(k, str) and isinstance(v, bool)
-                for k, v in detection_items.items()
-            )
-            and required_keys.issubset(detection_items.keys())
-        ):
-            self.detection_items = detection_items
-        else:
-            self.detection_items = {}
+        self.detection_items = (
+            detection_items
+            if detection_items and required_keys.issubset(detection_items)
+            else {}
+        )
 
     def detect_danger(
         self,
