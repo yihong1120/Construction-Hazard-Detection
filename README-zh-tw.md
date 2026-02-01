@@ -48,7 +48,7 @@
    <a href="https://universe.roboflow.com/object-detection-qn97p/construction-hazard-detection">
       <img src="https://app.roboflow.com/images/download-dataset-badge.svg" alt="Download Dataset from Roboflow">
    </a>
-   <a href="https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO26">
+   <a href="https://huggingface.co/yihong1120/Construction-Hazard-Detection">
       <img src="https://img.shields.io/badge/HuggingFace-Model%20Repo-yellow?logo=huggingface" alt="Hugging Face Model Repo">
    </a>
 </div>
@@ -207,11 +207,11 @@
 
 - CLI（下載到 `./models/pt`）
 
-    Hugging Face 模型庫：https://huggingface.co/yihong1120/Construction-Hazard-Detection-YOLO26
+    Hugging Face 模型庫：https://huggingface.co/yihong1120/Construction-Hazard-Detection
 
    ```bash
    hf download \
-     yihong1120/Construction-Hazard-Detection-YOLO26 \
+     yihong1120/Construction-Hazard-Detection \
      --repo-type model \
      --include "models/pt/*.pt" \
        --local-dir .
@@ -223,7 +223,7 @@
    from huggingface_hub import snapshot_download
 
    snapshot_download(
-       repo_id="yihong1120/Construction-Hazard-Detection-YOLO26",
+       repo_id="yihong1120/Construction-Hazard-Detection",
        repo_type="model",
        local_dir=".",
        local_dir_use_symlinks=False,
