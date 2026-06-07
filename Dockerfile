@@ -1,11 +1,16 @@
 # Use the previously built base image
-FROM yihong123/base:latest
+FROM base:latest
 
 # Set the working directory in the container
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy only necessary files into the container
 COPY --chown=appuser:appuser config /app/config
+COPY --chown=appuser:appuser examples /app/examples
 COPY --chown=appuser:appuser src /app/src
 COPY --chown=appuser:appuser main.py /app/main.py
 

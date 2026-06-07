@@ -10,18 +10,16 @@ authors = [
 license = { file = "LICENSE" }
 dependencies = [
   "aiofiles==25.1.0",
+  "aiortc==1.14.0",
   "aiosqlite==0.22.1",
   "albumentationsx==2.0.15",
   "apscheduler==3.11.2",
-  "aiomysql==0.3.2",
+  "asyncpg==0.31.0",
   "authlib==1.6.6",
-  "bcrypt==5.0.0",
   "ckip_transformers==0.3.4",
   "transformers==5.0.0",
   "cloudinary==1.44.1",
   "fastapi==0.128.0",
-  "fastapi_jwt==0.3.0",
-  "fastapi_limiter==0.1.6",
   "fastmcp==2.14.4",
   "firebase_admin==7.1.0",
   "httpx==0.28.1",
@@ -32,8 +30,10 @@ dependencies = [
   "opencv_python_headless==4.11.0.86",
   "Pillow==12.0.0",
   "pycocotools==2.0.11",
+  "PyJWT==2.10.1",
   "pydantic[email]==2.12.5",
   "pydantic_settings==2.12.0",
+  "pwdlib[argon2]==0.3.0",
   "python-dotenv==1.2.1",
   "python-jose==3.5.0",
   "python-multipart==0.0.22",
@@ -42,6 +42,7 @@ dependencies = [
   "redis==7.1.0",
   "sahi==0.11.36",
   "schedule==1.2.2",
+  "scipy==1.13.1",
   "scikit-learn==1.8.0",
   "shapely==2.1.2",
   "speedtest-cli==2.1.3",
@@ -58,7 +59,6 @@ dependencies = [
   "uvicorn==0.40.0",
   "waitress==3.0.2",
   "watchdog==6.0.0",
-  "werkzeug==3.1.5",
 ]
 
 [project.optional-dependencies]
@@ -68,6 +68,8 @@ dev = [
   "pytest==9.0.2",
   "pytest-cov==7.0.0",
   "pytest-xdist==3.8.0",
+  "types-aiofiles",
+  "types-requests",
 ]
 
 [tool.uv]
@@ -75,6 +77,34 @@ dev = [
 
 [tool.mypy]
 show_error_codes = true
+
+[tool.coverage.run]
+omit = [
+  "*/examples/auth/cache copy.py",
+  "*/examples/YOLO_train/QAT.py",
+  "*/examples/YOLO_train/export_int8_trt.py",
+  "*/examples/YOLO_train/int_gen.py",
+  "*/examples/YOLO_train/test.py",
+  "*/examples/line_chatbot/line_bot.py",
+]
+
+[tool.coverage.report]
+omit = [
+  "*/examples/auth/cache copy.py",
+  "*/examples/YOLO_train/QAT.py",
+  "*/examples/YOLO_train/export_int8_trt.py",
+  "*/examples/YOLO_train/int_gen.py",
+  "*/examples/YOLO_train/test.py",
+  "*/examples/line_chatbot/line_bot.py",
+]
+
+[[tool.mypy.overrides]]
+module = ["ruamel.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["networkx.*", "shapely.*", "sklearn.*"]
+ignore_missing_imports = true
 
 [build-system]
 requires = ["setuptools>=61"]

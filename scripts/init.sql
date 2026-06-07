@@ -16,7 +16,9 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 -- Safe for repeated imports: drop child tables before parent tables
 DROP TABLE IF EXISTS group_features;
+DROP TABLE IF EXISTS site_notification_preferences;
 DROP TABLE IF EXISTS user_sites;
+DROP TABLE IF EXISTS site_groups;
 DROP TABLE IF EXISTS stream_configs;
 DROP TABLE IF EXISTS violations;
 DROP TABLE IF EXISTS user_profiles;
@@ -48,28 +50,24 @@ CREATE TABLE users (
     username VARCHAR(80) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(20) NOT NULL DEFAULT 'user',
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     group_id INT,
     CONSTRAINT fk_users_group
         FOREIGN KEY (group_id) REFERENCES group_info(id)
         ON DELETE SET NULL,
-    INDEX idx_users_group (group_id)
+    INDEX idx_users_group (group_id),
+    CONSTRAINT chk_users_status CHECK (status IN ('active', 'inactive', 'pending'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE sites (
     id INT PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(80) NOT NULL,
-    group_id INT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT fk_sites_group
-        FOREIGN KEY (group_id) REFERENCES group_info(id)
-        ON DELETE SET NULL,
     -- To allow violations.site to be an FK, name must be unique
-    UNIQUE KEY uq_sites_name (name),
-    INDEX idx_sites_group (group_id)
+    UNIQUE KEY uq_sites_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========== Relationship/Detail Tables ==========
@@ -82,6 +80,16 @@ CREATE TABLE group_features (
     CONSTRAINT fk_gf_feature FOREIGN KEY (feature_id) REFERENCES features(id) ON DELETE CASCADE,
     INDEX idx_gf_group (group_id),
     INDEX idx_gf_feature (feature_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE site_groups (
+    site_id  INT NOT NULL,
+    group_id INT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (site_id, group_id),
+    CONSTRAINT fk_site_groups_site  FOREIGN KEY (site_id)  REFERENCES sites(id)      ON DELETE CASCADE,
+    CONSTRAINT fk_site_groups_group FOREIGN KEY (group_id) REFERENCES group_info(id) ON DELETE CASCADE,
+    INDEX idx_sg_group (group_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE user_profiles (
@@ -104,6 +112,19 @@ CREATE TABLE user_sites (
     CONSTRAINT fk_us_site FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE,
     INDEX idx_us_user (user_id),
     INDEX idx_us_site (site_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE site_notification_preferences (
+    user_id INT NOT NULL,
+    site_id INT NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, site_id),
+    CONSTRAINT fk_snp_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_snp_site FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE,
+    INDEX idx_snp_site_enabled (site_id, is_enabled),
+    INDEX idx_snp_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE stream_configs (
@@ -166,18 +187,18 @@ ON DUPLICATE KEY UPDATE
     description = VALUES(description);
 
 -- Guest admin user (update if already present)
-INSERT INTO users (username, password_hash, role, is_active, group_id)
+INSERT INTO users (username, password_hash, role, status, group_id)
 VALUES (
     'user',
-    'scrypt:32768:8:1$HP2pOGl5dSjKGax9$9a46ec70ddd6cca8400e712487fa30f005ae5d21786847d6f71bf3afeda3a8a5f68c7ea9a3f1cbd74c2b934f21110d071389b085aa1941e2db7b59304ef8f88f',
+    '$argon2id$v=19$m=65536,t=3,p=4$WWrgNzRESjrJxeP6KC+jsQ$LRWIP3bk3vAJf5kSEA+gkSk1+KYvVU2VDwCKGiUtBCg',
     'admin',
-    TRUE,
+    'active',
     1
 )
 ON DUPLICATE KEY UPDATE
     password_hash = VALUES(password_hash),
     role = VALUES(role),
-    is_active = VALUES(is_active),
+    status = VALUES(status),
     group_id = VALUES(group_id);
 
 -- Enable yolo_api for default group (map by name to avoid hard-coded ID)
