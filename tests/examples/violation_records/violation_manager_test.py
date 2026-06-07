@@ -4,6 +4,7 @@ import unittest
 import uuid
 from datetime import datetime
 from unittest.mock import AsyncMock
+from unittest.mock import call
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -144,6 +145,43 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
         self.mock_db.add.assert_not_called()
         self.mock_db.commit.assert_not_awaited()
         self.mock_db.refresh.assert_not_awaited()
+
+    @patch('examples.violation_records.violation_manager.uuid.uuid4')
+    @patch('examples.violation_records.violation_manager.Path.mkdir')
+    @patch('examples.violation_records.violation_manager.aiofiles.open')
+    async def test_save_violation_streams_upload_file(
+        self,
+        mock_aiofiles_open: MagicMock,
+        _mock_mkdir: MagicMock,
+        mock_uuid: MagicMock,
+    ) -> None:
+        """UploadFile input is read and written in bounded chunks."""
+        mock_uuid.return_value = uuid.UUID('12345678123456781234567812345678')
+        mock_file_handle = AsyncMock()
+        mock_context_manager = AsyncMock()
+        mock_context_manager.__aenter__.return_value = mock_file_handle
+        mock_context_manager.__aexit__.return_value = False
+        mock_aiofiles_open.return_value = mock_context_manager
+
+        upload_file = AsyncMock()
+        upload_file.read = AsyncMock(side_effect=[b'chunk1', b'chunk2', b''])
+        self.mock_db.refresh.side_effect = lambda obj: setattr(obj, 'id', 100)
+
+        new_violation_id = await self.manager.save_violation(
+            db=self.mock_db,
+            site='Test Site',
+            stream_name='Camera1',
+            detection_time=self.mock_detection_time,
+            image_file=upload_file,
+            chunk_size=5,
+        )
+
+        self.assertEqual(new_violation_id, 100)
+        upload_file.read.assert_has_awaits([call(5), call(5), call(5)])
+        mock_file_handle.write.assert_has_awaits([
+            call(b'chunk1'),
+            call(b'chunk2'),
+        ])
 
 
 if __name__ == '__main__':

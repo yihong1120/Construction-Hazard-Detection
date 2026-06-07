@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -9,9 +10,10 @@ from ultralytics import YOLO
 from watchdog.events import FileSystemEvent
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
-from werkzeug.utils import secure_filename
 
+from examples.shared.filename_utils import sanitize_filename
 from examples.YOLO_server_api.backend.config import EXPLICIT_CUDA_CLEANUP
+from examples.YOLO_server_api.backend.config import get_inference_device
 from examples.YOLO_server_api.backend.config import LAZY_LOAD_MODELS
 from examples.YOLO_server_api.backend.config import MAX_LOADED_MODELS
 from examples.YOLO_server_api.backend.config import MODEL_VARIANTS
@@ -56,11 +58,12 @@ class ModelFileChangeHandler(FileSystemEventHandler):
         """
         if event.is_directory:
             return
-        if not event.src_path.endswith(self.model_manager.extension):
+        event_path = os.fsdecode(event.src_path)
+        if not event_path.endswith(self.model_manager.extension):
             return
         # Derive model name from filename and sanitise it to avoid unsafe chars
-        raw_name = Path(event.src_path).stem.split('best_')[-1]
-        name = secure_filename(raw_name)
+        raw_name = Path(event_path).stem.split('best_')[-1]
+        name = sanitize_filename(raw_name)
         if name in self.model_manager.model_names:
             self.model_manager._safe_load(name)
             print(f'🟢  Model {name} hot-reloaded (watcher).')
@@ -120,7 +123,7 @@ class DetectionModelManager:
         ``AutoDetectionModel``, or a standard PyTorch YOLO model.
 
         Args:
-            name: Model variant name (e.g., 'yolo11x', 'yolo11s').
+            name: Model variant name (e.g., 'yolo26x', 'yolo26s').
 
         Returns:
             A loaded model instance (YOLO or AutoDetectionModel).
@@ -130,7 +133,7 @@ class DetectionModelManager:
             RuntimeError: If a required dependency (e.g., SAHI) is missing.
         """
         # Sanitize the provided model variant name defensively.
-        safe_name = secure_filename(name)
+        safe_name = sanitize_filename(name)
 
         if USE_SAHI:
             # SAHI mode: Use AutoDetectionModel with .pt files (slicing)
@@ -145,7 +148,9 @@ class DetectionModelManager:
             if not model_path.exists():
                 raise FileNotFoundError(f'Model file not found: {model_path}')
             return AutoDetectionModel.from_pretrained(
-                'yolo11', model_path=str(model_path), device='cuda:0',
+                'yolo26',
+                model_path=str(model_path),
+                device=get_inference_device(),
             )
 
         if USE_TENSORRT:
@@ -207,8 +212,7 @@ class DetectionModelManager:
         if not LAZY_LOAD_MODELS:
             return
 
-        # Enforce LRU limit
-        loaded_count = len([m for m in self.models.values() if m is not None])
+        loaded_count = self._loaded_model_count()
         while loaded_count > MAX_LOADED_MODELS:
             # Remove the least recently used model
             if not self._lru_order:  # Safety check
@@ -218,6 +222,7 @@ class DetectionModelManager:
                 try:
                     # Release reference explicitly
                     self.models[evict_name] = None
+                    loaded_count -= 1
                     print(f'🧹 Evicted model (LRU): {evict_name}')
                     # Perform CUDA cache cleanup only for PyTorch (.pt) mode
                     if not USE_TENSORRT and EXPLICIT_CUDA_CLEANUP:
@@ -231,10 +236,10 @@ class DetectionModelManager:
                             pass
                 except Exception:
                     pass
-            # Recalculate loaded count after eviction
-            loaded_count = len(
-                [m for m in self.models.values() if m is not None],
-            )
+
+    def _loaded_model_count(self) -> int:
+        """Count loaded models without allocating an intermediate list."""
+        return sum(model is not None for model in self.models.values())
 
     # =============== Public API ==================
     def get_model(self, key: str) -> ModelType | None:
@@ -244,14 +249,14 @@ class DetectionModelManager:
         load the model on demand.
 
         Args:
-            key: Model variant name (e.g., 'yolo11x', 'yolo11s', 'yolo11n').
+            key: Model variant name (e.g., 'yolo26x', 'yolo26s', 'yolo26n').
 
         Returns:
             The requested model instance if available; otherwise ``None``.
         """
         # Lazy load on demand
         # Sanitize the key defensively before lookup.
-        safe_key = secure_filename(key)
+        safe_key = sanitize_filename(key)
 
         if safe_key not in self.models:
             return None
@@ -292,7 +297,7 @@ class DetectionModelManager:
         Returns:
             ``True`` if reloading succeeded; otherwise ``False``.
         """
-        safe_name = secure_filename(name)
+        safe_name = sanitize_filename(name)
         if safe_name not in self.model_names:
             return False
         # Force reload regardless of cache state
@@ -315,6 +320,9 @@ class DetectionModelManager:
         times and handles cases where the observer was never initialised.
         """
         # Safely stop the file system observer if it exists
-        if hasattr(self, 'observer') and self.observer is not None:
-            self.observer.stop()
-            self.observer.join()
+        try:
+            if self.observer is not None:
+                self.observer.stop()
+                self.observer.join()
+        except AttributeError:
+            pass

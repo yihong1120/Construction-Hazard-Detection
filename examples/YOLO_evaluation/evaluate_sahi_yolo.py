@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from typing import Any
 
 import numpy as np
 from pycocotools.coco import COCO
@@ -27,7 +28,7 @@ class COCOEvaluator:
         slice_width: int = 370,
         overlap_height_ratio: float = 0.3,
         overlap_width_ratio: float = 0.3,
-    ):
+    ) -> None:
         """
         Initialises the evaluator with model and dataset parameters.
 
@@ -46,12 +47,9 @@ class COCOEvaluator:
             overlap_width_ratio (float, optional): Width slice overlap ratio.
                 Defaults to 0.3.
         """
-        self.model = AutoDetectionModel.from_pretrained(
-            model_type='yolov8',
-            model_path=model_path,
-            confidence_threshold=confidence_threshold,
-            # device="cpu",  # Uncomment this to force CPU usage
-        )
+        self.model: Any | None = None
+        self.model_path = model_path
+        self.confidence_threshold = confidence_threshold
         self.coco_json = coco_json
         self.image_dir = image_dir
         self.slice_height = slice_height
@@ -67,6 +65,12 @@ class COCOEvaluator:
             Dict[str, float]: A dictionary containing computed metrics.
         """
         print(f"Evaluating model with data path: {self.coco_json}")
+        if self.model is None:
+            self.model = AutoDetectionModel.from_pretrained(
+                model_type='yolov8',
+                model_path=self.model_path,
+                confidence_threshold=self.confidence_threshold,
+            )
         coco = Coco.from_coco_dict_or_path(self.coco_json)
         pycoco = COCO(self.coco_json)
         predictions = []
@@ -129,7 +133,8 @@ class COCOEvaluator:
         return metrics
 
 
-def main():
+def main() -> None:
+    """Evaluate a SAHI-backed YOLO model with COCO metrics."""
     parser = argparse.ArgumentParser(
         description='Evaluates a YOLO model using COCO metrics.',
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import computed_field
@@ -9,11 +10,15 @@ from pydantic import EmailStr
 
 from examples.db_management.schemas.group import GroupRead
 
+UserStatus = Literal['active', 'inactive', 'pending']
+
 
 # ──────────────────────────────────────────────────────────
 #  共用：User-Profile Schemas
 # ──────────────────────────────────────────────────────────
 class UserProfileBase(BaseModel):
+    """Shared user profile fields."""
+
     family_name:   str
     middle_name:   str | None = None
     given_name:    str
@@ -22,6 +27,8 @@ class UserProfileBase(BaseModel):
 
 
 class UserProfileRead(UserProfileBase):
+    """User profile response payload."""
+
     created_at: datetime
     updated_at: datetime
 
@@ -29,6 +36,8 @@ class UserProfileRead(UserProfileBase):
 
 
 class UserProfileUpdate(BaseModel):
+    """User profile update payload."""
+
     user_id:       int
     family_name:   str | None = None
     middle_name:   str | None = None
@@ -48,13 +57,28 @@ class UserCreate(BaseModel):
     profile:   UserProfileBase | None = None
 
 
+class UserSignup(BaseModel):
+    """Schema representing a public account signup request."""
+
+    username: str
+    password: str
+    profile: UserProfileBase
+
+
+class ApproveUserSignup(BaseModel):
+    """Schema representing admin approval of a pending signup."""
+
+    user_id: int
+    group_id: int | None = None
+
+
 class UserRead(BaseModel):
     """Schema representing detailed user information."""
 
     id: int
     username: str
     role: str
-    is_active: bool
+    status: UserStatus
     group_id: int | None
     group: GroupRead | None
     profile:    UserProfileRead | None
@@ -108,11 +132,11 @@ class UpdateMyPassword(BaseModel):
     new_password: str
 
 
-class SetUserActiveStatus(BaseModel):
-    """Schema for setting a user's active/inactive status."""
+class SetUserStatus(BaseModel):
+    """Schema for setting a user's status."""
 
     user_id: int
-    is_active: bool
+    status: UserStatus
 
 
 class UpdateUserRole(BaseModel):

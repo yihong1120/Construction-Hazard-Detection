@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import unittest
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -12,7 +13,7 @@ from examples.mcp_server.tools.record import RecordTools
 class SendViolationTests(unittest.IsolatedAsyncioTestCase):
     """Tests for send_violation method."""
 
-    async def test_send_violation_success(self):
+    async def test_send_violation_success(self) -> None:
         """Should send violation successfully and return proper dict."""
         fake_sender = AsyncMock()
         fake_sender.send_violation.return_value = 'abc123'
@@ -33,7 +34,7 @@ class SendViolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertIn('abc123', res['message'])
 
-    async def test_send_violation_with_data_url_prefix(self):
+    async def test_send_violation_with_data_url_prefix(self) -> None:
         """Should handle base64 with data URL prefix correctly."""
         fake_sender = AsyncMock()
         fake_sender.send_violation.return_value = 'id123'
@@ -49,7 +50,7 @@ class SendViolationTests(unittest.IsolatedAsyncioTestCase):
             res = await tool.send_violation(img, [], 'warn')
         self.assertTrue(res['success'])
 
-    async def test_send_violation_demo_mode_saves_file(self):
+    async def test_send_violation_demo_mode_saves_file(self) -> None:
         """Should save locally and return mock success in demo mode."""
         fake_sender = AsyncMock()
         with (
@@ -73,7 +74,7 @@ class SendViolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertIn('Demo mode', res['message'])
 
-    async def test_send_violation_invalid_timestamp(self):
+    async def test_send_violation_invalid_timestamp(self) -> None:
         """Should handle invalid ISO timestamp gracefully."""
         fake_sender = AsyncMock()
         fake_sender.send_violation.return_value = None
@@ -92,7 +93,7 @@ class SendViolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(res['success'])
         self.assertIn('Failed', res['message'])
 
-    async def test_send_violation_exception_logged(self):
+    async def test_send_violation_exception_logged(self) -> None:
         """Should catch exceptions and return failure dict."""
         with (
             patch(
@@ -115,7 +116,7 @@ class SendViolationTests(unittest.IsolatedAsyncioTestCase):
 class BatchSendViolationsTests(unittest.IsolatedAsyncioTestCase):
     """Tests for batch_send_violations."""
 
-    async def test_batch_send_all_success(self):
+    async def test_batch_send_all_success(self) -> None:
         """Should process all successfully."""
         tool = RecordTools()
         with patch.object(
@@ -134,12 +135,13 @@ class BatchSendViolationsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertEqual(res['successful'], 3)
 
-    async def test_batch_send_partial_failures(self):
+    async def test_batch_send_partial_failures(self) -> Any:
         """Should handle partial failures."""
         tool = RecordTools()
         results = [{'success': True}, {'success': False}, {'success': True}]
 
-        async def fake_send(**_):
+        async def fake_send(**_) -> Any:
+            """Support fake_send."""
             return results.pop(0)
 
         with patch.object(tool, 'send_violation', new=fake_send):
@@ -154,7 +156,7 @@ class BatchSendViolationsTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(res['success'])
         self.assertEqual(res['failed'], 1)
 
-    async def test_batch_send_raises_and_logs(self):
+    async def test_batch_send_raises_and_logs(self) -> None:
         """Should log an error and re-raise when send_violation raises."""
         tool = RecordTools()
         with (
@@ -183,7 +185,7 @@ class BatchSendViolationsTests(unittest.IsolatedAsyncioTestCase):
 class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
     """Tests for backup_local_records."""
 
-    async def test_backup_with_custom_path_success(self):
+    async def test_backup_with_custom_path_success(self) -> None:
         """Should backup using provided path."""
         fake_sender = AsyncMock()
         fake_sender.backup_to_local.return_value = (True, 5)
@@ -196,7 +198,7 @@ class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertEqual(res['records_count'], 5)
 
-    async def test_backup_default_path_failure(self):
+    async def test_backup_default_path_failure(self) -> None:
         """Should handle backup failure and construct default path."""
         fake_sender = AsyncMock()
         fake_sender.backup_to_local.return_value = (False, 0)
@@ -209,7 +211,7 @@ class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(res['success'])
         self.assertIn('Backup failed', res['message'])
 
-    async def test_backup_default_path_construction(self):
+    async def test_backup_default_path_construction(self) -> None:
         """Should construct default backup path using dirname/join
         and loop time.
         """
@@ -245,7 +247,7 @@ class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
             '/base/static/violations_backup_123.json',
         )
 
-    async def test_compute_default_backup_path_helper(self):
+    async def test_compute_default_backup_path_helper(self) -> None:
         """Directly exercise the helper to ensure its lines are covered."""
         fake_loop = MagicMock()
         fake_loop.time.return_value = 42.0
@@ -267,7 +269,7 @@ class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
             path = tool._compute_default_backup_path()
         self.assertEqual(path, '/root/static/violations_backup_42.json')
 
-    async def test_backup_raises_and_logs(self):
+    async def test_backup_raises_and_logs(self) -> None:
         """Should log and raise on exception."""
         with (
             patch(
@@ -285,7 +287,7 @@ class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
                 await tool.backup_local_records('/tmp/test.json')
             logger.error.assert_called_once()
 
-    async def test_backup_raises_after_sender_created(self):
+    async def test_backup_raises_after_sender_created(self) -> None:
         """Should log and raise when backup_to_local raises after init."""
         fake_sender = AsyncMock()
         fake_sender.backup_to_local.side_effect = RuntimeError('ioerr')
@@ -311,7 +313,7 @@ class SyncAndStatsAndCacheTests(unittest.IsolatedAsyncioTestCase):
     get_upload_statistics, clear_local_cache.
     """
 
-    async def test_sync_pending_records_default(self):
+    async def test_sync_pending_records_default(self) -> None:
         """Should return default not supported message."""
         fake_sender = AsyncMock()
         with patch(
@@ -323,7 +325,7 @@ class SyncAndStatsAndCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(res['success'])
         self.assertIn('not supported', res['message'])
 
-    async def test_get_upload_statistics_default(self):
+    async def test_get_upload_statistics_default(self) -> None:
         """Should return default placeholder statistics."""
         fake_sender = AsyncMock()
         with patch(
@@ -335,7 +337,7 @@ class SyncAndStatsAndCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertIn('pending', res['statistics'])
 
-    async def test_clear_local_cache_default(self):
+    async def test_clear_local_cache_default(self) -> None:
         """Should return default not supported response."""
         fake_sender = AsyncMock()
         with patch(
@@ -347,7 +349,7 @@ class SyncAndStatsAndCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(res['success'])
         self.assertIn('not supported', res['message'])
 
-    async def test_sync_raises_and_logs(self):
+    async def test_sync_raises_and_logs(self) -> None:
         """Should log and raise on sync exception."""
         with (
             patch(
@@ -365,7 +367,7 @@ class SyncAndStatsAndCacheTests(unittest.IsolatedAsyncioTestCase):
                 await tool.sync_pending_records()
             logger.error.assert_called_once()
 
-    async def test_stats_raises_and_logs(self):
+    async def test_stats_raises_and_logs(self) -> None:
         """Should log and raise on stats exception."""
         with (
             patch(
@@ -383,7 +385,7 @@ class SyncAndStatsAndCacheTests(unittest.IsolatedAsyncioTestCase):
                 await tool.get_upload_statistics()
             logger.error.assert_called_once()
 
-    async def test_clear_cache_raises_and_logs(self):
+    async def test_clear_cache_raises_and_logs(self) -> None:
         """Should log and raise on cache exception."""
         with (
             patch(
@@ -405,7 +407,7 @@ class SyncAndStatsAndCacheTests(unittest.IsolatedAsyncioTestCase):
 class EnsureViolationSenderTests(unittest.IsolatedAsyncioTestCase):
     """Tests for _ensure_violation_sender method."""
 
-    async def test_initialises_once(self):
+    async def test_initialises_once(self) -> None:
         """Should create ViolationSender only once."""
         with patch(
             'examples.mcp_server.tools.record.ViolationSender',

@@ -11,25 +11,20 @@ from PIL import Image
 
 
 class WeChatNotifier:
-    """
-    A class to handle sending notifications through WeChat Work.
-    """
+    """Send notifications through WeChat Work."""
 
     def __init__(
         self, corp_id: str | None = None,
         corp_secret: str | None = None,
         agent_id: int | None = None,
-    ):
-        """
-        Initialises the WeChatNotifier with authentication details.
+    ) -> None:
+        """Initialise the WeChat notifier.
 
         Args:
-            corp_id (str, optional): The corporation ID.
-                Defaults to environment variable 'WECHAT_CORP_ID'.
-            corp_secret (str, optional): The corporation secret.
-                Defaults to environment variable 'WECHAT_CORP_SECRET'.
-            agent_id (int, optional): The agent ID.
-                Defaults to env variable 'WECHAT_AGENT_ID' or 0 if not set.
+            corp_id: Corporation ID. Reads ``WECHAT_CORP_ID`` when omitted.
+            corp_secret: Corporation secret. Reads ``WECHAT_CORP_SECRET`` when
+                omitted.
+            agent_id: Agent ID. Reads ``WECHAT_AGENT_ID`` when omitted.
         """
         load_dotenv()
         self.corp_id = corp_id or os.getenv('WECHAT_CORP_ID')
@@ -56,7 +51,7 @@ class WeChatNotifier:
         user_id: str,
         message: str,
         image: np.ndarray | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """
         Sends a notification to a specified user in WeChat Work.
 
@@ -121,7 +116,8 @@ class WeChatNotifier:
 
 
 # Example usage
-def main():
+def main() -> None:
+    """Send a sample WeChat notification for direct script execution."""
     notifier = WeChatNotifier()
     user_id = 'your_user_id_here'
     message = 'Hello, WeChat!'

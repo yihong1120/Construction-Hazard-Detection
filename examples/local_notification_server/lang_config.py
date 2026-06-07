@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from src.warning_types import Warnings
+
 LANGUAGES = {
     'en-GB': {
         'warning_people_in_controlled_area':
@@ -8,6 +10,8 @@ LANGUAGES = {
             'Warning: {count} people are not wearing a hardhat!',
         'warning_no_safety_vest':
             'Warning: {count} people are not wearing a safety vest!',
+        'warning_no_mask':
+            'Warning: {count} people are not wearing a mask!',
         'warning_close_to_machinery':
             'Warning: {count} people are too close to machinery!',
         'warning_close_to_vehicle':
@@ -40,6 +44,8 @@ LANGUAGES = {
             '警告: 有{count}人未佩戴安全帽!',
         'warning_no_safety_vest':
             '警告: 有{count}人未穿著安全背心!',
+        'warning_no_mask':
+            '警告: 有{count}人未佩戴口罩!',
         'warning_close_to_machinery':
             '警告: 有{count}人過於靠近機具!',
         'warning_close_to_vehicle':
@@ -71,6 +77,8 @@ LANGUAGES = {
             '警告: 有{count}人未佩戴安全帽!',
         'warning_no_safety_vest':
             '警告: 有{count}人未穿着安全背心!',
+        'warning_no_mask':
+            '警告: 有{count}人未佩戴口罩!',
         'warning_close_to_machinery':
             '警告: 有{count}人过于靠近机械!',
         'warning_close_to_vehicle':
@@ -104,6 +112,8 @@ LANGUAGES = {
         'warning_no_safety_vest':
             'Avertissement: {count} personnes ne portent pas de '
             'gilet de sécurité!',
+        'warning_no_mask':
+            'Avertissement: {count} personnes ne portent pas de masque!',
         'warning_close_to_machinery':
             'Avertissement: Il y a {count} personnes trop proches de '
             'la machinerie!',
@@ -139,6 +149,8 @@ LANGUAGES = {
             'Cảnh báo: Có {count} người không đội mũ bảo hộ!',
         'warning_no_safety_vest':
             'Cảnh báo: Có {count} người không mặc áo gi-lê an toàn!',
+        'warning_no_mask':
+            'Cảnh báo: Có {count} người không đeo khẩu trang!',
         'warning_close_to_machinery':
             'Cảnh báo: Có {count} người quá gần máy móc!',
         'warning_close_to_vehicle':
@@ -171,6 +183,8 @@ LANGUAGES = {
         'warning_no_safety_vest':
             'Peringatan: Ada {count} orang tidak mengenakan '
             'rompi keselamatan!',
+        'warning_no_mask':
+            'Peringatan: Ada {count} orang tidak mengenakan masker!',
         'warning_close_to_machinery':
             'Peringatan: Ada {count} orang terlalu dekat dengan mesin!',
         'warning_close_to_vehicle':
@@ -203,6 +217,8 @@ LANGUAGES = {
             'คำเตือน: มี {count} คนไม่สวมหมวกนิรภัย!',
         'warning_no_safety_vest':
             'คำเตือน: มี {count} คนไม่สวมเสื้อกั๊กนิรภัย!',
+        'warning_no_mask':
+            'คำเตือน: มี {count} คนไม่สวมหน้ากากอนามัย!',
         'warning_close_to_machinery':
             'คำเตือน: มี {count} คนอยู่ใกล้เครื่องจักรมากเกินไป!',
         'warning_close_to_vehicle':
@@ -226,7 +242,75 @@ LANGUAGES = {
 
         'warning_notification': '[การแจ้งเตือนความปลอดภัย]',
     },
+
+    'ja-JP': {
+        'warning_people_in_controlled_area':
+            '警告: {count}人が管理区域に入りました!',
+        'warning_no_hardhat':
+            '警告: {count}人がヘルメットを着用していません!',
+        'warning_no_safety_vest':
+            '警告: {count}人が安全ベストを着用していません!',
+        'warning_no_mask':
+            '警告: {count}人がマスクを着用していません!',
+        'warning_close_to_machinery':
+            '警告: {count}人が重機に近づきすぎています!',
+        'warning_close_to_vehicle':
+            '警告: {count}人が車両に近づきすぎています!',
+        'warning_people_in_utility_pole_controlled_area':
+            '警告: {count}人が電柱制限区域に入りました!',
+        'detect_machinery_close_to_pole':
+            '警告: {count}台の重機が電柱に近づきすぎています!',
+
+        'no_warning': '警告なし',
+        'machinery': '重機',
+        'vehicle': '車両',
+        'helmet': 'ヘルメット',
+        'person': '作業員',
+        'no_helmet': 'ヘルメットなし',
+        'vest': '安全ベスト',
+        'no_vest': '安全ベストなし',
+        'mask': 'マスク',
+        'no_mask': 'マスクなし',
+        'cone': 'カラーコーン',
+
+        'warning_notification': '[警告通知]',
+    },
 }
+
+
+LANGUAGE_ALIASES: dict[str, str] = {
+    'en': 'en-GB',
+    'en-gb': 'en-GB',
+    'en-us': 'en-GB',
+    'zh': 'zh-TW',
+    'zh-tw': 'zh-TW',
+    'zh-hant': 'zh-TW',
+    'zh-hk': 'zh-TW',
+    'zh-mo': 'zh-TW',
+    'zh-cn': 'zh-CN',
+    'zh-hans': 'zh-CN',
+    'fr': 'fr-FR',
+    'fr-fr': 'fr-FR',
+    'vi': 'vi-VN',
+    'vi-vn': 'vi-VN',
+    'id': 'id-ID',
+    'id-id': 'id-ID',
+    'th': 'th-TH',
+    'th-th': 'th-TH',
+    'ja': 'ja-JP',
+    'jp': 'ja-JP',
+    'ja-jp': 'ja-JP',
+}
+
+
+def normalize_language(language: str | None) -> str | None:
+    """Return the supported notification language code for a device value."""
+    if not language:
+        return None
+    candidate = language.strip().replace('_', '-')
+    if candidate in LANGUAGES:
+        return candidate
+    return LANGUAGE_ALIASES.get(candidate.lower())
 
 
 class Translator:
@@ -236,7 +320,7 @@ class Translator:
 
     @staticmethod
     def translate_from_dict(
-        body_dict: dict[str, dict[str, int]],
+        body_dict: Warnings,
         language: str,
     ) -> list[str]:
         """
@@ -255,7 +339,7 @@ class Translator:
             ]
 
         Args:
-            body_dict (dict[str, dict[str, int]]):
+            body_dict:
                 A dictionary where each key corresponds to a warning message
                 and its value is a dictionary of placeholders to be replaced.
             language (str):
@@ -264,12 +348,12 @@ class Translator:
         Returns:
             list[str]: A list of translated warning messages.
         """
-        # If the language key is not in LANGUAGES, default to 'en-GB'
-        if language not in LANGUAGES:
-            language = 'en-GB'
+        normalized_language = normalize_language(language)
+        if normalized_language is None:
+            return []
 
         translations: list[str] = []
-        lang_map = LANGUAGES[language]
+        lang_map = LANGUAGES[normalized_language]
 
         for key, placeholders in body_dict.items():
             template = lang_map.get(key)

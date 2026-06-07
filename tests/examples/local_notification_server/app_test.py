@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from typing import Any
 from typing import ClassVar
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -69,7 +70,12 @@ class TestLocalNotificationServer(unittest.TestCase):
         """
         called = False
 
-        def fake_run(app_obj, host: str, port: int) -> None:
+        def fake_run(app_obj: Any, host: str, port: int) -> None:
+            """Support fake_run.
+
+            Args:
+                app_obj: Test helper value.
+            """
             nonlocal called
             called = True
             # Check parameters
@@ -88,8 +94,14 @@ class TestLocalNotificationServer(unittest.TestCase):
         flag = False
 
         @asynccontextmanager
-        async def fake_begin():
-            async def run_sync(fn, *args, **kwargs):
+        async def fake_begin() -> None:
+            """Support fake_begin."""
+            async def run_sync(fn: Any, *args, **kwargs) -> None:
+                """Support run_sync.
+
+                Args:
+                    fn: Test helper value.
+                """
                 nonlocal flag
                 flag = True
 

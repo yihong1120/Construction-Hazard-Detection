@@ -14,8 +14,21 @@ settings: Settings = Settings()
 
 # Create an asynchronous SQLAlchemy engine
 # using the database URI from settings.
+sqlalchemy_database_uri = settings.sqlalchemy_database_uri
+if sqlalchemy_database_uri.startswith('postgres://'):
+    sqlalchemy_database_uri = sqlalchemy_database_uri.replace(
+        'postgres://', 'postgresql+asyncpg://', 1,
+    )
+elif sqlalchemy_database_uri.startswith('postgresql://'):
+    sqlalchemy_database_uri = sqlalchemy_database_uri.replace(
+        'postgresql://', 'postgresql+asyncpg://', 1,
+    )
+
 engine = create_async_engine(
-    settings.sqlalchemy_database_uri.replace('mysql://', 'mysql+aiomysql://'),
+    sqlalchemy_database_uri,
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,
     pool_recycle=3600,
 )
 

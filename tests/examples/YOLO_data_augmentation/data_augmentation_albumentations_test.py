@@ -8,11 +8,17 @@ from unittest.mock import patch
 
 import numpy as np
 
+from examples.YOLO_data_augmentation.data_augmentation_albumentations import A
 from examples.YOLO_data_augmentation.data_augmentation_albumentations import (
     DataAugmentation,
 )
 from examples.YOLO_data_augmentation.data_augmentation_albumentations import (
     main,
+)
+
+_requires_albumentations = unittest.skipUnless(
+    hasattr(A, 'Compose'),
+    'Albumentations transforms are unavailable.',
 )
 
 
@@ -103,18 +109,28 @@ class TestDataAugmentation(unittest.TestCase):
             'read_label_file',
             return_value=(mock_class_labels, mock_bboxes),
         ):
+            transformed = {
+                'image': mock_image,
+                'bboxes': mock_bboxes,
+                'class_labels': mock_class_labels,
+            }
             with patch.object(
-                self.augmenter, 'write_label_file',
-            ) as mock_write_label_file:
-                with patch(
-                    'examples.YOLO_data_augmentation.'
-                    'data_augmentation_albumentations.cv2.imwrite',
-                ) as mock_imwrite:
-                    self.augmenter.augment_image(Path('image.jpg'))
-                    self.assertTrue(mock_imread.called)
-                    self.assertTrue(mock_cvtColor.called)
-                    self.assertTrue(mock_imwrite.called)
-                    self.assertTrue(mock_write_label_file.called)
+                self.augmenter,
+                'process_image',
+                return_value=transformed,
+            ):
+                with patch.object(
+                    self.augmenter, 'write_label_file',
+                ) as mock_write_label_file:
+                    with patch(
+                        'examples.YOLO_data_augmentation.'
+                        'data_augmentation_albumentations.cv2.imwrite',
+                    ) as mock_imwrite:
+                        self.augmenter.augment_image(Path('image.jpg'))
+                        self.assertTrue(mock_imread.called)
+                        self.assertTrue(mock_cvtColor.called)
+                        self.assertTrue(mock_imwrite.called)
+                        self.assertTrue(mock_write_label_file.called)
 
     @patch(
         'examples.YOLO_data_augmentation.data_augmentation_albumentations.'
@@ -160,13 +176,15 @@ class TestDataAugmentation(unittest.TestCase):
                 :, :3,
             ] if img.shape[2] == 4 else img
 
-            # Mock the mask to be used in MaskDropout
-            mock_mask = np.random.randint(0, 2, (100, 100), dtype=np.uint8)
-
-            with patch(
-                'examples.YOLO_data_augmentation.'
-                'data_augmentation_albumentations.A.MaskDropout',
-                return_value={'mask': mock_mask},
+            transformed = {
+                'image': mock_image[:, :, :3],
+                'bboxes': mock_bboxes,
+                'class_labels': mock_class_labels,
+            }
+            with patch.object(
+                self.augmenter,
+                'process_image',
+                return_value=transformed,
             ):
                 self.augmenter.augment_image(Path('image_with_alpha.jpg'))
                 self.assertTrue(mock_imread.called)
@@ -179,6 +197,7 @@ class TestDataAugmentation(unittest.TestCase):
 
                 self.assertTrue(mock_imwrite.called)
 
+    @_requires_albumentations
     @patch(
         'examples.YOLO_data_augmentation.data_augmentation_albumentations.'
         'A.Compose',
@@ -215,6 +234,7 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(resized_image.shape, (64, 64, 3))
         self.assertEqual(resized_bboxes, [[0.5, 0.5, 0.2, 0.2]])
 
+    @_requires_albumentations
     def test_resize_large_image(self) -> None:
         """
         Test resize_image_and_bboxes method with a large image.

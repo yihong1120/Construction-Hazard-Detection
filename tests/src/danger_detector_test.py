@@ -104,7 +104,7 @@ class TestDangerDetector(unittest.TestCase):
             [250, 250, 270, 270, 0.85, 6, -1, 0],
             [450, 450, 470, 470, 0.92, 6, -1, 0],
         ]
-        data = Utils.normalise_data(data)
+        data = [Utils.normalise_bbox(item) for item in data]
         warnings, cone_polygons, pole_polygons = self.detector.detect_danger(
             data,
         )
@@ -165,6 +165,10 @@ class TestDangerDetector(unittest.TestCase):
             data,
         )
         self.assertIn('warning_close_to_machinery', warnings)
+        self.assertEqual(
+            warnings['warning_close_to_machinery']['person_bboxes'],
+            [[100, 100, 105, 110]],
+        )
 
     def test_utility_pole_detection(self) -> None:
         """
@@ -240,6 +244,65 @@ class TestDangerDetector(unittest.TestCase):
             data,
         )
         self.assertIn('warning_close_to_vehicle', warnings)
+        self.assertEqual(
+            warnings['warning_close_to_vehicle']['person_bboxes'],
+            [[100, 100, 105, 110]],
+        )
+
+    def test_vehicle_proximity_counts_person_once(self) -> None:
+        """
+        A person close to multiple vehicles is one warning target.
+        """
+        data: list[list[float]] = [
+            [100, 100, 105, 110, 0.95, 5, 42, 0],
+            [107, 105, 200, 200, 0.85, 10, 1, 1],
+            [108, 105, 220, 210, 0.82, 10, 2, 1],
+        ]
+
+        warnings, _, _ = self.detector.detect_danger(data)
+
+        self.assertEqual(warnings['warning_close_to_vehicle']['count'], 1)
+        self.assertEqual(
+            warnings['warning_close_to_vehicle']['person_bboxes'],
+            [[100, 100, 105, 110]],
+        )
+        self.assertEqual(
+            warnings['warning_close_to_vehicle']['person_track_ids'],
+            ['42'],
+        )
+
+    def test_vehicle_proximity_uses_spatial_candidates(self) -> None:
+        """
+        Far vehicles should not be checked as proximity candidates.
+        """
+        data: list[list[float]] = [
+            [100, 100, 105, 110, 0.95, 5, -1, 0],
+            [107, 105, 200, 200, 0.85, 10, 1, 1],
+        ]
+        data.extend(
+            [
+                10_000 + index * 300,
+                100,
+                10_080 + index * 300,
+                180,
+                0.8,
+                10,
+                1,
+                1,
+            ]
+            for index in range(100)
+        )
+        original_close = DangerDetector._is_dangerously_close_detection
+
+        with patch.object(
+            DangerDetector,
+            '_is_dangerously_close_detection',
+            side_effect=original_close,
+        ) as mock_close:
+            warnings, _, _ = self.detector.detect_danger(data)
+
+        self.assertIn('warning_close_to_vehicle', warnings)
+        self.assertLess(mock_close.call_count, 10)
 
     def test_driver_filtering(self) -> None:
         """

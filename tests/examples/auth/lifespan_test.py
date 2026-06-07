@@ -18,12 +18,10 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.auth.lifespan.engine')
     @patch('examples.auth.lifespan.start_jwt_scheduler')
-    @patch('examples.auth.lifespan.FastAPILimiter.init')
     @patch('examples.auth.lifespan.RedisClient')
     async def test_global_lifespan(
         self,
         mock_redis_client_cls: MagicMock,
-        mock_limiter_init: MagicMock,
         mock_start_scheduler: MagicMock,
         mock_engine_obj: MagicMock,
     ) -> None:
@@ -32,8 +30,6 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
 
         Args:
             mock_redis_client_cls (MagicMock): Patches the RedisClient class.
-            mock_limiter_init (MagicMock): Patches FastAPILimiter.init
-                to avoid real initialisation.
             mock_start_scheduler (MagicMock): Patches start_jwt_scheduler to
                 avoid real scheduling.
         """
@@ -71,12 +67,6 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
                 'be set to our mock object.',
             )
 
-            # FastAPILimiter should be initialised
-            # with the mock_redis_client's connection.
-            mock_limiter_init.assert_called_once_with(
-                mock_redis_client.connect.return_value,
-            )
-
             # The scheduler should not be shut down
             # while we are in the context.
             mock_scheduler.shutdown.assert_not_called()
@@ -89,14 +79,12 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.auth.lifespan.engine')
     @patch('examples.auth.lifespan.start_jwt_scheduler')
-    @patch('examples.auth.lifespan.FastAPILimiter.init')
     @patch('examples.auth.lifespan.RedisClient')
     @patch('examples.auth.lifespan._DEFAULT_SERVICE')
     async def test_global_lifespan_preload_script_exception(
         self,
         mock_default_service: MagicMock,
         mock_redis_client_cls: MagicMock,
-        mock_limiter_init: MagicMock,
         mock_start_scheduler: MagicMock,
         mock_engine_obj: MagicMock,
     ) -> None:
@@ -105,8 +93,6 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
 
         Args:
             mock_redis_client_cls (MagicMock): Patches the RedisClient class.
-            mock_limiter_init (MagicMock): Patches FastAPILimiter.init
-                to avoid real initialisation.
             mock_start_scheduler (MagicMock): Patches start_jwt_scheduler to
                 avoid real scheduling.
         """
@@ -136,7 +122,6 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
 
         async with global_lifespan(app):
             # Startup proceeds even when preload_script fails
-            mock_limiter_init.assert_called_once()
             mock_conn.run_sync.assert_awaited_once()
 
         # Shutdown still occurs

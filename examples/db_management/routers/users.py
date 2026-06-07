@@ -9,14 +9,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from examples.auth.database import get_db
+from examples.auth.models import Group
 from examples.auth.models import User
+from examples.auth.models import USER_STATUS_ACTIVE
+from examples.auth.models import USER_STATUS_PENDING
 from examples.auth.redis_pool import get_redis_pool
+from examples.auth.user_service import invalidate_effective_site_cache
+from examples.db_management.deps import ensure_admin_with_group
 from examples.db_management.deps import ensure_not_super
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
 from examples.db_management.deps import require_admin
-from examples.db_management.deps import require_super_admin
-from examples.db_management.schemas.user import SetUserActiveStatus
+from examples.db_management.schemas.user import ApproveUserSignup
+from examples.db_management.schemas.user import SetUserStatus
 from examples.db_management.schemas.user import UpdateMyPassword
 from examples.db_management.schemas.user import UpdatePassword
 from examples.db_management.schemas.user import UpdatePasswordById
@@ -27,17 +32,67 @@ from examples.db_management.schemas.user import UpdateUserRole
 from examples.db_management.schemas.user import UserCreate
 from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
+from examples.db_management.schemas.user import UserSignup
+from examples.db_management.services.site_services import \
+    list_site_ids_for_group
+from examples.db_management.services.site_services import \
+    seed_site_notification_preferences
 from examples.db_management.services.user_services import (
     create_or_update_profile,
 )
 from examples.db_management.services.user_services import create_user
 from examples.db_management.services.user_services import delete_user
 from examples.db_management.services.user_services import get_user_by_id
-from examples.db_management.services.user_services import set_active_status
+from examples.db_management.services.user_services import set_user_status
 from examples.db_management.services.user_services import update_password
 from examples.db_management.services.user_services import update_username
 
 router = APIRouter(tags=['user-mgmt'])
+
+
+async def _load_user_read(user_id: int, db: AsyncSession) -> UserRead:
+    """Load a user with related group/profile data for API responses."""
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.group),
+            selectinload(User.profile),
+        )
+        .where(User.id == user_id),
+    )
+    return UserRead.model_validate(result.scalar_one())
+
+
+async def _get_group_or_404(group_id: int, db: AsyncSession) -> Group:
+    """Load a group and raise 404 if it does not exist."""
+    group = (
+        await db.execute(select(Group).where(Group.id == group_id))
+    ).unique().scalar_one_or_none()
+    if group is None:
+        raise HTTPException(404, 'Group not found.')
+    return group
+
+
+def _resolve_target_group_id(
+    requested_group_id: int | None,
+    operator: User,
+    default_to_operator_group: bool = False,
+) -> int | None:
+    """Resolve the effective group ID that the operator may manage."""
+    if is_super_admin(operator):
+        return requested_group_id
+
+    ensure_admin_with_group(operator)
+
+    if requested_group_id is None:
+        if default_to_operator_group:
+            return operator.group_id
+        raise HTTPException(400, 'group_id is required.')
+
+    if requested_group_id != operator.group_id:
+        raise HTTPException(403, 'Cannot operate on other group')
+
+    return requested_group_id
 
 
 @router.post(
@@ -48,7 +103,7 @@ router = APIRouter(tags=['user-mgmt'])
 async def add_user(
     payload: UserCreate,
     db: AsyncSession = Depends(get_db),
-    me: UserRead = Depends(get_current_user),
+    me: User = Depends(get_current_user),
 ) -> UserRead:
     """Create a new user.
 
@@ -60,25 +115,114 @@ async def add_user(
     Returns:
         Newly created user's details.
     """
+    target_group_id = _resolve_target_group_id(
+        payload.group_id,
+        me,
+        default_to_operator_group=True,
+    )
+
     new_user = await create_user(
         username=payload.username,
         password=payload.password,
         role=payload.role,
-        group_id=payload.group_id or me.group_id,
+        group_id=target_group_id,
         db=db,
         profile=payload.profile.model_dump() if payload.profile else None,
     )
-    # 重新查一次，把 group + profile 完整帶出
+    if target_group_id:
+        site_ids = await list_site_ids_for_group(target_group_id, db)
+        await seed_site_notification_preferences(
+            user_ids=[new_user.id],
+            site_ids=site_ids,
+            db=db,
+        )
+        if site_ids:
+            await db.commit()
+    invalidate_effective_site_cache()
+    return await _load_user_read(new_user.id, db)
+
+
+@router.post('/signup', response_model=UserRead, status_code=201)
+async def signup_user(
+    payload: UserSignup,
+    db: AsyncSession = Depends(get_db),
+) -> UserRead:
+    """Create a pending user account for later admin approval."""
+    new_user = await create_user(
+        username=payload.username,
+        password=payload.password,
+        role='user',
+        group_id=None,
+        db=db,
+        profile=payload.profile.model_dump(),
+        status=USER_STATUS_PENDING,
+    )
+    return await _load_user_read(new_user.id, db)
+
+
+@router.get(
+    '/list_pending_users',
+    response_model=list[UserRead],
+    dependencies=[Depends(require_admin)],
+)
+async def list_pending_users(
+    db: AsyncSession = Depends(get_db),
+) -> list[UserRead]:
+    """List pending, ungrouped user signups waiting for admin approval."""
     result = await db.execute(
         select(User)
         .options(
             selectinload(User.group),
             selectinload(User.profile),
         )
-        .where(User.id == new_user.id),
+        .where(
+            User.role == 'user',
+            User.status == USER_STATUS_PENDING,
+            User.group_id.is_(None),
+        ),
     )
-    user_full = result.scalar_one()
-    return UserRead.model_validate(user_full)
+    users = result.scalars().all()
+    return [UserRead.model_validate(user) for user in users]
+
+
+@router.put('/approve_user_signup', response_model=UserRead)
+async def approve_user_signup(
+    payload: ApproveUserSignup,
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(require_admin),
+) -> UserRead:
+    """Approve a pending signup by assigning a group and activating it."""
+    user = await get_user_by_id(payload.user_id, db)
+    ensure_not_super(user)
+
+    if (
+        user.role != 'user'
+        or user.status != USER_STATUS_PENDING
+        or user.group_id is not None
+    ):
+        raise HTTPException(400, 'User is not awaiting signup approval.')
+
+    target_group_id = _resolve_target_group_id(
+        payload.group_id,
+        me,
+        default_to_operator_group=True,
+    )
+    if target_group_id is None:
+        raise HTTPException(400, 'group_id is required.')
+
+    await _get_group_or_404(target_group_id, db)
+
+    user.group_id = target_group_id
+    user.status = USER_STATUS_ACTIVE
+    site_ids = await list_site_ids_for_group(target_group_id, db)
+    await seed_site_notification_preferences(
+        user_ids=[user.id],
+        site_ids=site_ids,
+        db=db,
+    )
+    await db.commit()
+    invalidate_effective_site_cache()
+    return await _load_user_read(user.id, db)
 
 
 @router.get(
@@ -121,6 +265,7 @@ async def remove_user(
     user = await get_user_by_id(payload['user_id'], db)
     ensure_not_super(user)
     await delete_user(user, db)
+    invalidate_effective_site_cache()
     return {'message': 'User deleted successfully.'}
 
 
@@ -251,15 +396,15 @@ async def change_username_by_id(
     return {'message': 'Username updated successfully.'}
 
 
-@router.put('/set_user_active_status', dependencies=[Depends(require_admin)])
-async def activate_user(
-    payload: SetUserActiveStatus,
+@router.put('/set_user_status', dependencies=[Depends(require_admin)])
+async def update_user_status(
+    payload: SetUserStatus,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Set a user's active status.
+    """Set a user's account status.
 
     Args:
-        payload: User ID and active status.
+        payload: User ID and target status.
         db: Async database session.
 
     Returns:
@@ -267,8 +412,8 @@ async def activate_user(
     """
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
-    await set_active_status(user, payload.is_active, db)
-    return {'message': 'User active status updated successfully.'}
+    await set_user_status(user, payload.status, db)
+    return {'message': 'User status updated successfully.'}
 
 
 @router.put('/update_user_role', dependencies=[Depends(require_admin)])
@@ -298,10 +443,11 @@ async def change_role(
     return {'message': 'User role updated successfully.'}
 
 
-@router.put('/update_user_group', dependencies=[Depends(require_super_admin)])
+@router.put('/update_user_group', dependencies=[Depends(require_admin)])
 async def change_group(
     payload: UpdateUserGroup,
     db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
 ) -> dict[str, str]:
     """Update the user's group membership.
 
@@ -313,8 +459,14 @@ async def change_group(
         Confirmation message.
     """
     user = await get_user_by_id(payload.user_id, db)
-    user.group_id = payload.new_group_id
+    ensure_not_super(user)
+    target_group_id = _resolve_target_group_id(payload.new_group_id, me)
+    if target_group_id is None:
+        raise HTTPException(400, 'group_id is required.')
+    await _get_group_or_404(target_group_id, db)
+    user.group_id = target_group_id
     await db.commit()
+    invalidate_effective_site_cache()
     return {'message': 'User group updated successfully.'}
 
 
@@ -323,6 +475,7 @@ async def update_profile(
     payload: UserProfileUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
+    """Update contact profile details for a user."""
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     await create_or_update_profile(

@@ -200,7 +200,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(self.db.execute.call_count, 2)
-        self.assertEqual(self.db.commit.call_count, 2)
+        self.assertEqual(self.db.commit.call_count, 1)
 
     async def test_list_group_features(self) -> None:
         """Test listing groups with their associated feature IDs.

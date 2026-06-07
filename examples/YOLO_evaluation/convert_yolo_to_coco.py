@@ -13,7 +13,7 @@ class COCOConverter:
     Converts YOLO format annotations to COCO format.
     """
 
-    def __init__(self, categories: list[str]):
+    def __init__(self, categories: list[str]) -> None:
         """
         Initialises COCO data structure and category mappings.
 
@@ -29,7 +29,7 @@ class COCOConverter:
         self.image_id = 1  # Unique ID for each image
         self.annotation_id = 1  # Unique ID for each annotation
 
-    def initialise_categories(self, categories: list[str]):
+    def initialise_categories(self, categories: list[str]) -> None:
         """Initialises categories for COCO format.
 
         Args:
@@ -44,7 +44,7 @@ class COCOConverter:
                 },
             )
 
-    def convert_annotations(self, labels_dir: str, images_dir: str):
+    def convert_annotations(self, labels_dir: str, images_dir: str) -> None:
         """Reads YOLO formatted annotations and converts them to COCO format.
 
         Args:
@@ -104,7 +104,7 @@ class COCOConverter:
                         self.annotation_id += 1
                 self.image_id += 1
 
-    def save_to_json(self, output_path: str):
+    def save_to_json(self, output_path: str) -> None:
         """Saves the COCO formatted data to a JSON file.
 
         Args:
@@ -114,7 +114,8 @@ class COCOConverter:
             json.dump(self.coco_format, json_file, indent=4)
 
 
-def main():
+def main() -> None:
+    """Convert YOLO labels to a COCO annotation file."""
     parser = argparse.ArgumentParser(
         description='Convert YOLO format annotations to COCO format.',
     )

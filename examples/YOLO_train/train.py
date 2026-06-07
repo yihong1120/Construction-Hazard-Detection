@@ -20,7 +20,7 @@ class YOLOModelHandler:
         model (YOLO, Optional): The loaded YOLO model object.
     """
 
-    def __init__(self, model_name: str, batch_size: int = -1):
+    def __init__(self, model_name: str, batch_size: int = -1) -> None:
         """
         Initialises the YOLOModelHandler with a specified model.
 
@@ -322,6 +322,9 @@ class YOLOModelHandler:
             with open(temp_data_config, 'w') as file:
                 file.write(data_yaml)
 
+            # Reload the model to ensure a fresh start for each fold
+            self.load_model()
+
             print(f"Training fold {fold}/{n_splits}")
             self.train_model(
                 data_config=temp_data_config,
@@ -338,8 +341,103 @@ class YOLOModelHandler:
 
             fold += 1
 
+    def train_on_all_data(
+        self,
+        data_config: str,
+        epochs: int,
+        optimizer: str,
+    ) -> None:
+        """
+        Trains the model on the entire dataset (all images) without splitting.
+        This provides the strongest model that has seen all available data.
 
-def main():
+        Args:
+            data_config (str): The path to the data configuration file.
+            epochs (int): The number of training epochs.
+            optimizer (str): The type of optimizer to use.
+        """
+        if self.model is None:
+            raise RuntimeError('The model is not loaded properly.')
+
+        print('Preparing to train on all data...')
+
+        # Load the data paths
+        dataset_path = os.path.dirname(data_config)
+        images_path = os.path.join(dataset_path, 'images')
+
+        # Verify the all-images directory exists (as expected by the CV logic)
+        if not os.path.exists(images_path) or not os.path.isdir(images_path):
+            print(
+                (
+                    f"Warning: 'images' folder not found at {images_path}. "
+                    'Cannot perform all-data training.'
+                ),
+            )
+            return
+
+        # Create a temporary config for all-data training
+        # We read the original config to preserve class names
+        with open(data_config) as file:
+            original_yaml = file.read()
+
+        # Create a new YAML focusing on the full images directory
+        # We update train and val to point to the absolute path
+        # of the images folder.
+        abs_images_path = os.path.abspath(images_path)
+
+        # We try to preserve the 'names' and 'nc' parts while replacing paths
+        # A simple append/override strategy:
+        # We write a new file that defines path/train/val at the top.
+        # If 'names' is a dict in the file, it will be parsed.
+
+        temp_all_data_config = os.path.join(
+            dataset_path, 'all_data_train.yaml',
+        )
+
+        with open(temp_all_data_config, 'w') as f:
+            # We override the path settings.
+            # Note: If the original file has 'train:' lines,
+            # this prepend might conflict if not handled,
+            # but usually last key wins or we can comment out old lines.
+            # To be safe, we'll try to use the dictionary mode if
+            # supported or just rely on the fact that we're pointing
+            # to the same dataset structure but unified.
+
+            # Better approach: Read lines, exclude path/train/val
+            # lines, write new ones.
+            lines = original_yaml.splitlines()
+            filtered_lines = [
+                line
+                for line in lines
+                if not any(
+                    line.strip().startswith(k)
+                    for k in ['path:', 'train:', 'val:', 'test:']
+                )
+            ]
+
+            f.write(f"path: {os.path.dirname(abs_images_path)}\n")
+            f.write('train: images\n')
+            # Validate on training data just to enable the process
+            f.write('val: images\n')
+            f.write('\n'.join(filtered_lines))
+
+        # Reload model to start fresh
+        self.load_model()
+
+        print(f"Training on all data using config: {temp_all_data_config}")
+        self.train_model(
+            data_config=temp_all_data_config,
+            epochs=epochs,
+            optimizer=optimizer,
+        )
+
+        # Cleanup
+        if os.path.exists(temp_all_data_config):
+            os.remove(temp_all_data_config)
+
+
+def main() -> None:
+    """Run the YOLO command-line training workflow."""
     parser = argparse.ArgumentParser(
         description='YOLO training, validation, prediction, and export.',
     )
@@ -359,7 +457,7 @@ def main():
     parser.add_argument(
         '--model_name',
         type=str,
-        default='./../../models/pt/best_yolo11x.pt',
+        default='./../../models/pt/best_yolo26x.pt',
         help='Name or path of the YOLO model file',
     )
     parser.add_argument(
@@ -414,19 +512,43 @@ def main():
         help='Number of folds for cross-validation',
     )
 
+    parser.add_argument(
+        '--full_data_training',
+        action='store_true',
+        help=(
+            'Train on all available data (images folder) '
+            'without validation split'
+        ),
+    )
+
     args = parser.parse_args()
 
     handler = YOLOModelHandler(args.model_name, args.batch_size)
 
     try:
+        # 1. Cross Validation
         if args.cross_validate:
+            print('--- Starting Cross-Validation ---')
             handler.cross_validate_model(
                 data_config=args.data_config,
                 epochs=args.epochs,
                 optimizer=args.optimizer,
                 n_splits=args.n_splits,
             )
-        else:
+            print('--- Cross-Validation Complete ---')
+
+        # 2. Final Training on All Data (Optional or Standalone)
+        if args.full_data_training:
+            print('--- Starting Final Training on All Data ---')
+            handler.train_on_all_data(
+                data_config=args.data_config,
+                epochs=args.epochs,
+                optimizer=args.optimizer,
+            )
+
+        # 3. Standard Training (Default if no special modes selected)
+        if not args.cross_validate and not args.full_data_training:
+            print('--- Starting Standard Training (Train/Val Split) ---')
             handler.train_model(
                 data_config=args.data_config,
                 epochs=args.epochs,
@@ -464,9 +586,16 @@ if __name__ == '__main__':
     # Example command to run the script
     # python train.py \
     #     --data_config=cv_dataset/data.yaml \
-    #     --epochs=100 \
-    #     --model_name=../../models/pt/best_yolo11x.pt \
+    #     --epochs=2 \
+    #     --model_name=../../models/pt/yolo26n.pt \
     #     --batch_size=16 \
     #     --optimizer=auto \
     #     --cross_validate \
     #     --n_splits=5
+
+    # python train.py \
+    #     --data_config=cv_dataset/data.yaml \
+    #     --model_name=../../models/pt/best_yolo26l.pt \
+    #     --epochs=100 \
+    #     --batch_size=16 \
+    #     --full_data_training

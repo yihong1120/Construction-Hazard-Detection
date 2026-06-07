@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-from fastapi_jwt import JwtAuthorizationCredentials
 
 from examples.auth.jwt_config import jwt_access
+from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.violation_records.app import app
 from examples.violation_records.app import main
 

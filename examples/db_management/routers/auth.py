@@ -11,6 +11,7 @@ from examples.auth.redis_pool import get_redis_pool
 from examples.db_management.schemas.auth import LogoutRequest
 from examples.db_management.schemas.auth import RefreshRequest
 from examples.db_management.schemas.auth import TokenPair
+from examples.db_management.schemas.auth import TokenPairData
 from examples.db_management.schemas.auth import UserLogin
 from examples.db_management.services.auth_services import login_user
 from examples.db_management.services.auth_services import logout_user
@@ -35,8 +36,8 @@ async def login(
     Returns:
         TokenPair: Generated JWT access and refresh tokens.
     """
-    result = await login_user(payload, db, redis)
-    return TokenPair(**result)
+    result: TokenPairData = await login_user(payload, db, redis)
+    return TokenPair.model_validate(result)
 
 
 @router.post('/logout')
@@ -73,5 +74,5 @@ async def refresh(
     Returns:
         TokenPair: Newly issued access and refresh tokens.
     """
-    result = await refresh_tokens(payload, redis)
-    return TokenPair(**result)
+    result: TokenPairData = await refresh_tokens(payload, redis)
+    return TokenPair.model_validate(result)

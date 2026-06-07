@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import unittest
+from typing import Any
 from unittest.mock import MagicMock
 from unittest.mock import Mock
 from unittest.mock import patch
@@ -15,14 +16,16 @@ from src.notifiers.broadcast_notifier import main
 
 class TestBroadcastNotifier(unittest.TestCase):
 
-    def setUp(self):
+    """Test suite."""
+
+    def setUp(self) -> None:
         """
         Set up the BroadcastNotifier instance for each test.
         """
         self.notifier = BroadcastNotifier('http://localhost:8080/broadcast')
 
     @patch('src.notifiers.broadcast_notifier.requests.post')
-    def test_broadcast_message_success(self, mock_post):
+    def test_broadcast_message_success(self, mock_post: Any) -> None:
         """
         Test that a message is successfully broadcasted.
         """
@@ -36,7 +39,7 @@ class TestBroadcastNotifier(unittest.TestCase):
         )
 
     @patch('src.notifiers.broadcast_notifier.requests.post')
-    def test_broadcast_message_failure(self, mock_post):
+    def test_broadcast_message_failure(self, mock_post: Any) -> None:
         """
         Test that a failure in broadcasting the message is handled correctly.
         """
@@ -50,7 +53,7 @@ class TestBroadcastNotifier(unittest.TestCase):
         )
 
     @patch('src.notifiers.broadcast_notifier.requests.post')
-    def test_broadcast_message_exception(self, mock_post):
+    def test_broadcast_message_exception(self, mock_post: Any) -> None:
         """
         Test that an exception during the broadcast is handled correctly.
         """
@@ -72,9 +75,9 @@ class TestBroadcastNotifier(unittest.TestCase):
     @patch('src.notifiers.broadcast_notifier.print')
     def test_main(
         self,
-        mock_print,
-        mock_broadcast_message,
-    ):
+        mock_print: Any,
+        mock_broadcast_message: Any,
+    ) -> None:
         """
         Ensure broadcasts a message and prints the status.
         """

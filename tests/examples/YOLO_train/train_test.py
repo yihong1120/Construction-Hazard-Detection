@@ -10,20 +10,13 @@ from examples.YOLO_train.train import YOLOModelHandler
 
 
 class TestYOLOModelHandler(unittest.TestCase):
+    """Test suite."""
+
     def setUp(self) -> None:
         """
         Set up the test environment before each test.
         """
         self.model_name: str = 'models/pt/best_yolo11x.pt'
-        self.handler: YOLOModelHandler = YOLOModelHandler(self.model_name)
-
-    def tearDown(self) -> None:
-        """
-        Clean up after each test.
-        """
-        # Delete the handler object
-        if hasattr(self, 'handler'):
-            del self.handler
 
     @patch('examples.YOLO_train.train.YOLO')
     def test_load_model_with_yaml(
@@ -353,6 +346,7 @@ class TestYOLOModelHandler(unittest.TestCase):
             optimizer='auto',
             cross_validate=False,
             n_splits=5,
+            full_data_training=False,
         )
 
         main()
@@ -386,6 +380,7 @@ class TestYOLOModelHandler(unittest.TestCase):
             optimizer='auto',
             cross_validate=True,  # Enable cross-validation
             n_splits=5,
+            full_data_training=False,
         )
 
         main()
@@ -407,12 +402,12 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_handler.export_model.assert_called_with(export_format='onnx')
         mock_handler.save_model.assert_called_with('model.pt')
 
-    @patch('examples.YOLO_train.train.YOLOModelHandler.train_model')
+    @patch('examples.YOLO_train.train.YOLOModelHandler')
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_exception_handling(
         self,
         mock_parse_args: unittest.mock.MagicMock,
-        mock_train_model: unittest.mock.MagicMock,
+        mock_handler_class: unittest.mock.MagicMock,
     ) -> None:
         """
         Test the main function's exception handling.
@@ -429,10 +424,13 @@ class TestYOLOModelHandler(unittest.TestCase):
             optimizer='auto',
             cross_validate=False,
             n_splits=5,
+            full_data_training=False,
         )
 
         # Simulate an exception during training
-        mock_train_model.side_effect = Exception('Mocked training error')
+        mock_handler_class.return_value.train_model.side_effect = Exception(
+            'Mocked training error',
+        )
 
         with (
             patch('builtins.print') as mock_print,

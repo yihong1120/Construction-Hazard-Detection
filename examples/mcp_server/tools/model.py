@@ -3,17 +3,29 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from typing import TypedDict
 
 from src.model_fetcher import ModelFetcher
+
+
+class CachedModelInfo(TypedDict, total=False):
+    """Cached model metadata."""
+
+    path: str
+    version: str | None
+    size: int
+    fetch_time: float
+    update_time: float
 
 
 class ModelTools:
     """Tools for managing ML models and model operations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialise lazy model management resources."""
         self.logger = logging.getLogger(__name__)
-        self._model_fetcher = None
-        self._current_models: dict[str, dict] = {}
+        self._model_fetcher: ModelFetcher | None = None
+        self._current_models: dict[str, CachedModelInfo] = {}
 
     async def fetch_model(
         self,
@@ -32,20 +44,19 @@ class ModelTools:
             dict[str, Any]: Download status and model information.
         """
         try:
-            await self._ensure_model_fetcher()
+            fetcher = await self._ensure_model_fetcher()
 
-            # Fallback: request update for a single model
-            # synchronously in a thread
+            # Request update for a single model synchronously in a thread
             # Note: model_version is ignored by current ModelFetcher API
-            last_time = self._model_fetcher.get_last_update_time(model_name)
+            last_time = fetcher.get_last_update_time(model_name)
             await asyncio.to_thread(
-                self._model_fetcher.request_new_model,
+                fetcher.request_new_model,
                 model_name,
                 last_time,
             )
 
             model_path = Path(
-                self._model_fetcher.local_dir,
+                fetcher.local_dir,
                 f"best_{model_name}.pt",
             )
             success = bool(model_path.exists())
@@ -90,10 +101,10 @@ class ModelTools:
             dict[str, Any]: List of available models and counts.
         """
         try:
-            await self._ensure_model_fetcher()
+            fetcher = await self._ensure_model_fetcher()
 
-            # Fallback: list models from ModelFetcher configuration
-            models = list(self._model_fetcher.models)
+            # List models from ModelFetcher configuration
+            models = list(fetcher.models)
 
             return {
                 'success': True,
@@ -119,10 +130,10 @@ class ModelTools:
             dict[str, Any]: Model information.
         """
         try:
-            await self._ensure_model_fetcher()
+            fetcher = await self._ensure_model_fetcher()
 
-            # Fallback: inspect local filesystem for model info
-            p = Path(self._model_fetcher.local_dir, f"best_{model_name}.pt")
+            # Inspect local filesystem for model info
+            p = Path(fetcher.local_dir, f"best_{model_name}.pt")
             if bool(p.exists()):
                 stat = p.stat()
                 model_info = {
@@ -165,16 +176,16 @@ class ModelTools:
             dict[str, Any]: Update status and new version details.
         """
         try:
-            await self._ensure_model_fetcher()
+            fetcher = await self._ensure_model_fetcher()
 
-            # Fallback: request update for a single model
-            last_time = self._model_fetcher.get_last_update_time(model_name)
+            # Request update for a single model
+            last_time = fetcher.get_last_update_time(model_name)
             await asyncio.to_thread(
-                self._model_fetcher.request_new_model,
+                fetcher.request_new_model,
                 model_name,
                 last_time,
             )
-            p = Path(self._model_fetcher.local_dir, f"best_{model_name}.pt")
+            p = Path(fetcher.local_dir, f"best_{model_name}.pt")
             success = bool(p.exists())
             if success:
                 stat = p.stat()
@@ -220,10 +231,10 @@ class ModelTools:
             dict[str, Any]: Validation results.
         """
         try:
-            await self._ensure_model_fetcher()
+            fetcher = await self._ensure_model_fetcher()
 
-            # Fallback: check if local model file exists
-            p = Path(self._model_fetcher.local_dir, f"best_{model_name}.pt")
+            # Check if local model file exists
+            p = Path(fetcher.local_dir, f"best_{model_name}.pt")
             exists = bool(p.exists())
             return {
                 'success': True,
@@ -252,12 +263,12 @@ class ModelTools:
             dict[str, Any]: Local model information and counts.
         """
         try:
-            await self._ensure_model_fetcher()
+            fetcher = await self._ensure_model_fetcher()
 
-            # Fallback: scan local model directories
+            # Scan local model directories
             model_files: list[str] = []
             search_dirs = [
-                Path(self._model_fetcher.local_dir),
+                Path(fetcher.local_dir),
                 Path('models/onnx'),
                 Path('models/int8_engine'),
             ]
@@ -295,7 +306,7 @@ class ModelTools:
         try:
             await self._ensure_model_fetcher()
 
-            # Fallback: nothing to cleanup (single-version files)
+            # Nothing to cleanup for single-version files
             return {
                 'success': True,
                 'cleaned_models': 0,
@@ -311,8 +322,9 @@ class ModelTools:
             self.logger.error(f"Failed to cleanup old models: {e}")
             raise
 
-    async def _ensure_model_fetcher(self) -> None:
-        """Ensure the model fetcher is initialised."""
+    async def _ensure_model_fetcher(self) -> ModelFetcher:
+        """Ensure the model fetcher is initialised and return it."""
         if self._model_fetcher is None:
             self._model_fetcher = ModelFetcher()
             self.logger.info('Initialised model fetcher')
+        return self._model_fetcher

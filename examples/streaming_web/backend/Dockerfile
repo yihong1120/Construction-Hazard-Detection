@@ -1,8 +1,13 @@
 # Use the shared base image
-FROM yihong123/base:latest
+FROM base:latest
 
 # Set the working directory within the container
 WORKDIR /app
+
+# H.264 HTTP streaming endpoints transcode Redis image frames with ffmpeg.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy the application code into the container
 COPY . .

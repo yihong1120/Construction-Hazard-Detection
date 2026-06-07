@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import unittest
+from typing import Any
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -9,18 +10,23 @@ from examples.mcp_server.tools.utils import UtilsTools
 
 
 class TestCalculatePolygonArea(unittest.IsolatedAsyncioTestCase):
-    async def test_triangle_area(self):
+    """Test suite."""
+
+    async def test_triangle_area(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         points = [[0, 0], [4, 0], [0, 3]]
         res = await tool.calculate_polygon_area(points)
         self.assertAlmostEqual(res['area'], 6.0)
 
-    async def test_less_than_three_points(self):
+    async def test_less_than_three_points(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         res = await tool.calculate_polygon_area([[1, 1], [2, 2]])
         self.assertEqual(res['area'], 0.0)
 
-    async def test_area_exception(self):
+    async def test_area_exception(self) -> None:
+        """Exercise this test."""
         with patch(
             'examples.mcp_server.tools.utils.logging.getLogger',
         ) as mock_logger:
@@ -39,19 +45,24 @@ class TestCalculatePolygonArea(unittest.IsolatedAsyncioTestCase):
 
 
 class TestPointInPolygon(unittest.IsolatedAsyncioTestCase):
-    async def test_inside(self):
+    """Test suite."""
+
+    async def test_inside(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         poly = [[0, 0], [10, 0], [10, 10], [0, 10]]
         res = await tool.point_in_polygon([5, 5], poly)
         self.assertTrue(res['is_inside'])
 
-    async def test_outside(self):
+    async def test_outside(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         poly = [[0, 0], [10, 0], [10, 10], [0, 10]]
         res = await tool.point_in_polygon([15, 5], poly)
         self.assertFalse(res['is_inside'])
 
-    async def test_point_exception(self):
+    async def test_point_exception(self) -> None:
+        """Exercise this test."""
         with patch(
             'examples.mcp_server.tools.utils.logging.getLogger',
         ) as mock_logger:
@@ -71,17 +82,22 @@ class TestPointInPolygon(unittest.IsolatedAsyncioTestCase):
 
 
 class TestBBoxIntersection(unittest.IsolatedAsyncioTestCase):
-    async def test_overlap(self):
+    """Test suite."""
+
+    async def test_overlap(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         res = await tool.bbox_intersection([0, 0, 2, 2], [1, 1, 3, 3])
         self.assertTrue(res['intersection_area'] > 0)
 
-    async def test_no_overlap(self):
+    async def test_no_overlap(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         res = await tool.bbox_intersection([0, 0, 1, 1], [2, 2, 3, 3])
         self.assertEqual(res['intersection_area'], 0.0)
 
-    async def test_bbox_exception(self):
+    async def test_bbox_exception(self) -> None:
+        """Exercise this test."""
         with patch(
             'examples.mcp_server.tools.utils.logging.getLogger',
         ) as mock_logger:
@@ -101,7 +117,10 @@ class TestBBoxIntersection(unittest.IsolatedAsyncioTestCase):
 
 
 class TestDistanceBetweenPoints(unittest.IsolatedAsyncioTestCase):
-    async def test_all_metrics(self):
+    """Test suite."""
+
+    async def test_all_metrics(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         p1, p2 = [0, 0], [3, 4]
         self.assertAlmostEqual(
@@ -123,12 +142,14 @@ class TestDistanceBetweenPoints(unittest.IsolatedAsyncioTestCase):
             4,
         )
 
-    async def test_invalid_metric(self):
+    async def test_invalid_metric(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         with self.assertRaises(ValueError):
             await tool.distance_between_points([0, 0], [1, 1], 'invalid')
 
-    async def test_distance_exception(self):
+    async def test_distance_exception(self) -> None:
+        """Exercise this test."""
         with patch(
             'examples.mcp_server.tools.utils.logging.getLogger',
         ) as mock_logger:
@@ -145,7 +166,10 @@ class TestDistanceBetweenPoints(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCreateSafetyZone(unittest.IsolatedAsyncioTestCase):
-    async def test_circle_square(self):
+    """Test suite."""
+
+    async def test_circle_square(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         self.assertEqual(
             len(
@@ -164,13 +188,15 @@ class TestCreateSafetyZone(unittest.IsolatedAsyncioTestCase):
             4,
         )
 
-    async def test_invalid_shape(self):
+    async def test_invalid_shape(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         with self.assertRaises(ValueError):
             await tool.create_safety_zone([0, 0], 1, 'triangle')
 
-    async def test_zone_exception(self):
+    async def test_zone_exception(self) -> None:
         # __import__ 是 builtins，而不是模組屬性
+        """Exercise this test."""
         with (
             patch('builtins.__import__', side_effect=RuntimeError('boom')),
             patch(
@@ -186,7 +212,10 @@ class TestCreateSafetyZone(unittest.IsolatedAsyncioTestCase):
 
 
 class TestNormalizeCoordinates(unittest.IsolatedAsyncioTestCase):
-    async def test_all_formats(self):
+    """Test suite."""
+
+    async def test_all_formats(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         self.assertTrue(
             (
@@ -210,7 +239,8 @@ class TestNormalizeCoordinates(unittest.IsolatedAsyncioTestCase):
             )['success'],
         )
 
-    async def test_invalid_cases(self):
+    async def test_invalid_cases(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         with self.assertRaises(ValueError):
             await tool.normalize_coordinates(
@@ -225,7 +255,8 @@ class TestNormalizeCoordinates(unittest.IsolatedAsyncioTestCase):
                 [[0, 0]], 100, 100, 'invalid',
             )
 
-    async def test_normalize_exception(self):
+    async def test_normalize_exception(self) -> None:
+        """Exercise this test."""
         with patch(
             'examples.mcp_server.tools.utils.logging.getLogger',
         ) as mock_logger:
@@ -245,13 +276,22 @@ class TestNormalizeCoordinates(unittest.IsolatedAsyncioTestCase):
 
 
 class TestConvertImageFormat(unittest.IsolatedAsyncioTestCase):
-    async def test_successful_conversion(self):
+    """Test suite."""
+
+    async def test_successful_conversion(self) -> None:
+        """Exercise this test."""
         fake_img_data = base64.b64encode(b'fakeimg').decode()
         fake_image = MagicMock()
         fake_image.convert.return_value = fake_image
 
         # 模擬 PIL 寫入資料到 BytesIO
-        def _fake_save(buf, format=None, **kw):
+        def _fake_save(buf: Any, format: Any = None, **kw) -> None:
+            """Support _fake_save.
+
+            Args:
+                buf: Test helper value.
+                format: Test helper value.
+            """
             buf.write(b'newdata')
 
         fake_image.save.side_effect = _fake_save
@@ -268,9 +308,10 @@ class TestConvertImageFormat(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertEqual(res['converted_image'], 'encoded')
 
-    async def test_pil_fallback(self):
+    async def test_pil_retry(self) -> None:
+        """Exercise this test."""
         fake_img_data = 'abc123'
-        # 讓 PIL 失敗 → 走 fallback，並驗證 logger.warning
+        # 讓 PIL 失敗 → 走 retry，並驗證 logger.warning
         with (
             patch('PIL.Image.open', side_effect=RuntimeError('fail')),
             patch(
@@ -284,7 +325,8 @@ class TestConvertImageFormat(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         logger.warning.assert_called_once()
 
-    async def test_convert_exception(self):
+    async def test_convert_exception(self) -> None:
+        """Exercise this test."""
         with patch(
             'examples.mcp_server.tools.utils.logging.getLogger',
         ) as mock_logger:
@@ -302,7 +344,10 @@ class TestConvertImageFormat(unittest.IsolatedAsyncioTestCase):
 
 
 class TestValidateDetectionData(unittest.IsolatedAsyncioTestCase):
-    async def test_valid_detection(self):
+    """Test suite."""
+
+    async def test_valid_detection(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         res = await tool.validate_detection_data(
             [{'bbox': [0, 0, 10, 10]}],
@@ -311,7 +356,8 @@ class TestValidateDetectionData(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(res['is_valid'])
 
-    async def test_invalid_detections(self):
+    async def test_invalid_detections(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         dets = [
             {'bbox': [10, 10, 5, 5]},
@@ -323,8 +369,9 @@ class TestValidateDetectionData(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(res['is_valid'])
         self.assertGreater(len(res['validation_errors']), 1)
 
-    async def test_validate_exception(self):
+    async def test_validate_exception(self) -> None:
         # 避免打掉 isinstance（mock 自己會用），改在 float() 轉換處觸發錯誤
+        """Exercise this test."""
         with (
             patch(
                 'examples.mcp_server.tools.utils.float',
@@ -345,7 +392,8 @@ class TestValidateDetectionData(unittest.IsolatedAsyncioTestCase):
                 )
             logger.error.assert_called_once()
 
-    async def test_more_invalid_branches_and_normalized(self):
+    async def test_more_invalid_branches_and_normalized(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         dets = [
             {},  # missing 'bbox'/'box'
@@ -371,7 +419,8 @@ class TestValidateDetectionData(unittest.IsolatedAsyncioTestCase):
         self.assertIn("'conf' must be a number", joined)
         self.assertIn("'cls' must be an integer", joined)
 
-    async def test_valid_normalized_only(self):
+    async def test_valid_normalized_only(self) -> None:
+        """Exercise this test."""
         tool = UtilsTools()
         dets = [{'bbox': [0.2, 0.2, 0.8, 0.9]}]
         res = await tool.validate_detection_data(dets, 1920, 1080)
@@ -379,7 +428,10 @@ class TestValidateDetectionData(unittest.IsolatedAsyncioTestCase):
 
 
 class TestEnsureUtils(unittest.IsolatedAsyncioTestCase):
-    async def test_ensure_once(self):
+    """Test suite."""
+
+    async def test_ensure_once(self) -> None:
+        """Exercise this test."""
         with patch('examples.mcp_server.tools.utils.Utils') as mock_utils:
             tool = UtilsTools()
             await tool._ensure_utils()

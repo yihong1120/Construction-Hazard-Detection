@@ -2,50 +2,32 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import gc
+import hashlib
 import json
-import math
 import multiprocessing
 import os
-import time
 from concurrent.futures import ProcessPoolExecutor
-from datetime import datetime
+from contextlib import suppress
 from multiprocessing import Process
-from typing import TypedDict
+from multiprocessing.managers import SyncManager
+from typing import Any
+from typing import cast
 
-import aiomysql
+from asyncpg import create_pool  # type: ignore[import-untyped]
+from asyncpg.pool import Pool  # type: ignore[import-untyped]
 from dotenv import load_dotenv
 from sqlalchemy.engine.url import make_url
 
-from src.danger_detector import DangerDetector
-from src.frame_sender import BackendFrameSender
-from src.live_stream_detection import LiveStreamDetector
 from src.monitor_logger import LoggerConfig
-from src.notifiers.fcm_notifier import FCMSender
-from src.stream_capture import StreamCapture
-from src.utils import RedisManager
+from src.stream_processor import delete_stream_live_metadata
+from src.stream_processor import process_single_stream
+from src.stream_processor import StreamConfig
 from src.utils import Utils
-from src.violation_sender import ViolationSender
+from src.yolo_worker import ResultStore
+from src.yolo_worker import YOLO_WORKER_STOP_MESSAGE
+from src.yolo_worker import YoloWorker
 
-load_dotenv()
-
-
-class StreamConfig(TypedDict, total=False):
-    """
-    Represents the configuration structure for a video stream as retrieved
-    from the database.
-    """
-    video_url: str
-    updated_at: str
-    model_key: str
-    site: str
-    stream_name: str
-    detect_with_server: bool
-    expire_date: str | None
-    detection_items: dict[str, bool]
-    work_start_hour: int
-    work_end_hour: int
-    store_in_redis: bool
+load_dotenv(override=True)
 
 
 class MainApp:
@@ -69,11 +51,15 @@ class MainApp:
         # video_url → process info dict
         self.running_processes: dict[str, dict] = {}
         self.lock = asyncio.Lock()  # Prevent overlapping reloads
-        self.db_pool = None  # Will hold MySQL connection pool
+        self.db_pool: Pool | None = None  # PostgreSQL async connection pool
 
         # Process pool management to improve performance
         self.max_workers = min(multiprocessing.cpu_count(), 8)
         self.process_executor: ProcessPoolExecutor | None = None
+        self.yolo_manager: SyncManager | None = None
+        self.yolo_request_queues: list[Any] = []
+        self.yolo_result_stores: list[Any] = []
+        self.yolo_worker_processes: list[Process] = []
 
     async def _ensure_db_pool(self) -> None:
         """
@@ -87,17 +73,22 @@ class MainApp:
                     'DATABASE_URL environment variable is required',
                 )
             url = make_url(database_url)
-            self.db_pool = await aiomysql.create_pool(
+            port = url.port
+            if url.drivername.startswith('mysql') and port == 3306:
+                port = 5432
+            self.db_pool = await create_pool(
                 host=url.host,
-                port=url.port or 3306,
+                port=port or 5432,
                 user=url.username,
                 password=url.password,
-                db=url.database,
-                minsize=2,
-                maxsize=10,
-                pool_recycle=3600,
-                autocommit=True,
-                echo=False,
+                database=url.database,
+                min_size=2,
+                max_size=10,
+                max_inactive_connection_lifetime=300,
+                command_timeout=30,
+                server_settings={
+                    'application_name': 'construction-hazard-detection',
+                },
             )
 
     async def fetch_stream_configs(self) -> list[StreamConfig]:
@@ -133,9 +124,7 @@ class MainApp:
         JOIN sites s ON sc.site_id = s.id
         """
         async with self.db_pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(sql)
-                rows = await cur.fetchall()
+            rows = await conn.fetch(sql)
 
         configs: list[StreamConfig] = []
 
@@ -184,6 +173,9 @@ class MainApp:
         while True:
             try:
                 await self.reload_configurations()
+            except TimeoutError as e:
+                self.logger.exception(f"[poll] Reload timeout: {e}")
+                await self._reset_db_pool()
             except Exception as e:
                 self.logger.exception(f"[poll] Reload error: {e}")
             await asyncio.sleep(self.poll_interval)
@@ -197,6 +189,11 @@ class MainApp:
         """
         async with self.lock:
             configs = await self.fetch_stream_configs()
+            workers_restarted = (
+                self._ensure_yolo_worker()
+                if self.yolo_worker_processes
+                else False
+            )
             cfg_map = {c['video_url']: c for c in configs}
 
             # 1. Stop removed or expired streams
@@ -209,39 +206,21 @@ class MainApp:
                     self.stop_process(proc_info['process'])
 
                     if proc_info['cfg'].get('store_in_redis'):
-                        redis_key = (
-                            f"stream_frame:"
-                            f"{Utils.encode(proc_info['cfg']['site'])}"
-                            f"|{Utils.encode(proc_info['cfg']['stream_name'])}"
-                        )
-                        redis_manager = RedisManager()
-                        await redis_manager.delete(redis_key)
+                        await self._delete_stream_redis_keys(proc_info['cfg'])
 
                     del self.running_processes[video_url]
                     continue
 
-                # 2. Restart if config updated
-                if cfg['updated_at'] != proc_info['updated_at']:
-                    self.logger.info(
-                        f"Restart stream {video_url} (updated_at changed)",
+                if self._stream_needs_restart(
+                    proc_info,
+                    cfg,
+                    workers_restarted,
+                ):
+                    await self._restart_stream_process(
+                        video_url,
+                        proc_info,
+                        cfg,
                     )
-                    self.stop_process(proc_info['process'])
-
-                    if proc_info['cfg'].get('store_in_redis'):
-                        redis_key = (
-                            f"stream_frame:"
-                            f"{Utils.encode(proc_info['cfg']['site'])}"
-                            f"|{Utils.encode(proc_info['cfg']['stream_name'])}"
-                        )
-                        redis_manager = RedisManager()
-                        await redis_manager.delete(redis_key)
-
-                    new_proc = self.start_process(cfg)
-                    self.running_processes[video_url] = {
-                        'process': new_proc,
-                        'updated_at': cfg['updated_at'],
-                        'cfg': cfg,
-                    }
 
             # 3. Start any new streams
             for video_url, cfg in cfg_map.items():
@@ -268,9 +247,121 @@ class MainApp:
         Returns:
             Process: The new multiprocessing.Process object.
         """
-        p = Process(target=process_single_stream, args=(cfg,))
+        self._ensure_yolo_worker()
+        yolo_request_queue, yolo_result_store = self._yolo_worker_slot(cfg)
+        p = Process(
+            target=process_single_stream,
+            args=(cfg, yolo_request_queue, yolo_result_store),
+        )
         p.start()
         return p
+
+    def _ensure_yolo_worker(self) -> bool:
+        """Start the shared YOLO worker pool when enabled."""
+        if os.getenv(
+            'YOLO_WORKER_ENABLED',
+            'true',
+        ).strip().lower() not in {'1', 'true', 'yes', 'on'}:
+            if self.yolo_worker_processes:
+                self._stop_yolo_worker()
+                return True
+            return False
+        worker_count = max(1, int(os.getenv('YOLO_WORKER_COUNT', '2')))
+        if (
+            len(self.yolo_worker_processes) == worker_count
+            and all(p.is_alive() for p in self.yolo_worker_processes)
+        ):
+            return False
+        self._stop_yolo_worker()
+        if self.yolo_manager is None:
+            self.yolo_manager = multiprocessing.Manager()
+        devices = _csv_env('YOLO_WORKER_DEVICES', 'cuda:0')
+        for worker_index in range(worker_count):
+            request_queue = self.yolo_manager.Queue(
+                maxsize=int(os.getenv('YOLO_WORKER_QUEUE_SIZE', '64')),
+            )
+            result_store = self.yolo_manager.dict()
+            device = devices[worker_index % len(devices)]
+            worker = YoloWorker(
+                request_queue,
+                cast(ResultStore, result_store),
+                device,
+            )
+            process = Process(
+                target=worker.run,
+                daemon=True,
+            )
+            process.start()
+            self.yolo_request_queues.append(request_queue)
+            self.yolo_result_stores.append(result_store)
+            self.yolo_worker_processes.append(process)
+            self.logger.info(
+                '[YOLO-Worker] process %s started on %s',
+                worker_index,
+                device,
+            )
+        return True
+
+    async def _restart_stream_process(
+        self,
+        video_url: str,
+        proc_info: dict[str, Any],
+        cfg: StreamConfig,
+    ) -> None:
+        """Restart one stream process and refresh its process metadata."""
+        reason = self._restart_reason(proc_info, cfg)
+        self.logger.info(f"Restart stream {video_url} ({reason})")
+        self.stop_process(proc_info['process'])
+        if proc_info['cfg'].get('store_in_redis'):
+            await self._delete_stream_redis_keys(proc_info['cfg'])
+        new_proc = self.start_process(cfg)
+        self.running_processes[video_url] = {
+            'process': new_proc,
+            'updated_at': cfg['updated_at'],
+            'cfg': cfg,
+        }
+
+    @staticmethod
+    def _stream_needs_restart(
+        proc_info: dict[str, Any],
+        cfg: StreamConfig,
+        workers_restarted: bool,
+    ) -> bool:
+        """Return True when an existing stream should be relaunched."""
+        proc = proc_info['process']
+        return (
+            workers_restarted
+            or cfg['updated_at'] != proc_info['updated_at']
+            or not proc.is_alive()
+        )
+
+    @staticmethod
+    def _restart_reason(
+        proc_info: dict[str, Any],
+        cfg: StreamConfig,
+    ) -> str:
+        """Build a compact restart reason for logs."""
+        if cfg['updated_at'] != proc_info['updated_at']:
+            return 'updated_at changed'
+        if not proc_info['process'].is_alive():
+            return 'process exited'
+        return 'YOLO worker restarted'
+
+    def _yolo_worker_slot(
+        self,
+        cfg: StreamConfig,
+    ) -> tuple[object | None, object | None]:
+        """Return the worker queue/result store assigned to this camera."""
+        if not self.yolo_request_queues or not self.yolo_result_stores:
+            return None, None
+        camera_key = f"{cfg.get('site', '')}|{cfg.get('stream_name', '')}"
+        digest = hashlib.blake2b(camera_key.encode(), digest_size=4).digest()
+        index = int.from_bytes(digest, 'big') % len(self.yolo_request_queues)
+        return self.yolo_request_queues[index], self.yolo_result_stores[index]
+
+    async def _delete_stream_redis_keys(self, cfg: StreamConfig) -> None:
+        """Delete compact live metadata for one configured camera."""
+        await delete_stream_live_metadata(cfg)
 
     def stop_process(self, proc: Process) -> None:
         """
@@ -304,10 +395,39 @@ class MainApp:
         if self.process_executor:
             self.process_executor.shutdown(wait=True)
 
+        self._stop_yolo_worker()
+
         # Close database connection pool
         if self.db_pool:
-            self.db_pool.close()
-            await self.db_pool.wait_closed()
+            await self.db_pool.close()
+            self.db_pool = None
+
+    async def _reset_db_pool(self) -> None:
+        """Close the current database pool so the next poll reconnects."""
+        pool = self.db_pool
+        self.db_pool = None
+        if pool is not None:
+            with suppress(Exception):
+                await pool.close()
+
+    def _stop_yolo_worker(self) -> None:
+        """Stop the shared YOLO worker pool and manager."""
+        for request_queue in self.yolo_request_queues:
+            try:
+                request_queue.put(YOLO_WORKER_STOP_MESSAGE)
+            except Exception as e:
+                self.logger.error(f"Error signalling YOLO worker: {e}")
+        for process in self.yolo_worker_processes:
+            process.join(timeout=10)
+            if process.is_alive():
+                process.kill()
+                process.join()
+        if self.yolo_manager is not None:
+            self.yolo_manager.shutdown()
+            self.yolo_manager = None
+        self.yolo_request_queues.clear()
+        self.yolo_result_stores.clear()
+        self.yolo_worker_processes.clear()
 
     async def run(self) -> None:
         """
@@ -321,192 +441,6 @@ class MainApp:
             self.logger.error(f"Unexpected error in main loop: {e}")
         finally:
             await self.cleanup_resources()
-
-
-async def _run_single_stream(cfg: StreamConfig) -> None:
-    """Run one stream processing coroutine for the given configuration."""
-    video_url = cfg['video_url']
-    model_key = cfg['model_key']
-    site = cfg['site']
-    stream_name = cfg['stream_name']
-    detect_with_server = cfg['detect_with_server']
-    detection_items = cfg['detection_items']
-    work_start_hour = cfg['work_start_hour']
-    work_end_hour = cfg['work_end_hour']
-    store_in_redis = cfg['store_in_redis']
-
-    # Initialise components
-    streaming_capture = StreamCapture(stream_url=video_url)
-    live_stream_detector = LiveStreamDetector(
-        api_url=os.getenv('DETECT_API_URL') or '',
-        model_key=model_key,
-        output_folder=site,
-        detect_with_server=detect_with_server,
-    )
-    danger_detector = DangerDetector(detection_items)
-    fcm_sender = FCMSender(api_url=os.getenv('FCM_API_URL') or '')
-    violation_sender = ViolationSender(
-        api_url=os.getenv('VIOLATION_RECORD_API_URL') or '',
-    )
-    frame_sender = BackendFrameSender(
-        api_url=os.getenv('STREAMING_API_URL') or '',
-        max_retries=3,
-        timeout=30,  # Increase timeout
-        reconnect_backoff=2.0,  # Moderate backoff time
-    )
-
-    last_notification_time: int = 0
-    redis_key = (
-        f"stream_frame:{Utils.encode(site)}|{Utils.encode(stream_name)}"
-    )
-    redis_manager = RedisManager()
-
-    try:
-        # Process each frame
-        async for frame, ts in streaming_capture.execute_capture():
-            start = time.time()
-            detection_time = datetime.fromtimestamp(int(ts))
-            is_working = (
-                work_start_hour <= detection_time.hour < work_end_hour
-            )
-
-            # Create a copy of the current frame to ensure data consistency
-            # Use copy() to avoid any reference issues across async operations
-            current_frame = frame.copy()
-            current_timestamp = int(ts)
-
-            # Generate detections with the frame copy
-            datas, track_data = (
-                await live_stream_detector.generate_detections(
-                    current_frame,
-                )
-            )
-
-            # Generate danger detection results
-            warnings, cone_polys, pole_polys = (
-                danger_detector.detect_danger(
-                    track_data,
-                )
-            )
-            warnings = Utils.filter_warnings_by_working_hour(
-                warnings, is_working,
-            )
-
-            # Use optimized frame encoding with the same frame used for
-            # detection. This ensures the image bytes correspond exactly
-            # to the detection data.
-            frame_bytes = Utils.encode_frame(current_frame, 'jpeg', 85)
-
-            # Optionally stream result to backend using optimised transmission
-            if store_in_redis:
-                try:
-                    result = await frame_sender.send_optimized_frame(
-                        frame=current_frame,
-                        site=site,
-                        stream_name=stream_name,
-                        encoding_format='jpeg',
-                        jpeg_quality=85,
-                        use_websocket=True,
-                        warnings_json=json.dumps(warnings),
-                        cone_polygons_json=json.dumps(cone_polys),
-                        pole_polygons_json=json.dumps(pole_polys),
-                        detection_items_json=json.dumps(track_data),
-                    )
-
-                    # Check send result
-                    if result.get('status') != 'ok':
-                        print(
-                            f"[{site}:{stream_name}] Frame send failed: "
-                            f"{result}",
-                        )
-
-                except Exception as e:
-                    # Handle frame send error
-                    print(f"[{site}:{stream_name}] Frame send error: {e}")
-
-            # Send violation record + FCM push if needed
-            # Ensure all data corresponds to the same frame and timestamp
-            if warnings and Utils.should_notify(
-                current_timestamp,
-                last_notification_time,
-            ):
-                # Create deep copies of all detection data to ensure
-                # complete consistency. This prevents any race conditions
-                # or data corruption in async operations.
-                current_warnings = json.loads(json.dumps(warnings))
-                current_datas = json.loads(
-                    json.dumps(
-                        track_data,
-                    ),
-                ) if track_data else []
-                current_cone_polys = json.loads(
-                    json.dumps(cone_polys),
-                ) if cone_polys else []
-                current_pole_polys = json.loads(
-                    json.dumps(pole_polys),
-                ) if pole_polys else []
-
-                violation_id_str = await violation_sender.send_violation(
-                    site=site,
-                    stream_name=stream_name,
-                    warnings_json=json.dumps(current_warnings),
-                    detection_time=detection_time,
-                    image_bytes=frame_bytes,
-                    detections_json=json.dumps(current_datas),
-                    cone_polygon_json=json.dumps(current_cone_polys),
-                    pole_polygon_json=json.dumps(current_pole_polys),
-                )
-                # Try to convert violation_id to int, else None
-                try:
-                    violation_id: int | None = (
-                        int(violation_id_str)
-                        if violation_id_str is not None
-                        else None
-                    )
-                except Exception:
-                    violation_id = None
-
-                await fcm_sender.send_fcm_message_to_site(
-                    site=site,
-                    stream_name=stream_name,
-                    message=current_warnings,
-                    image_path=None,
-                    violation_id=violation_id,
-                )
-                last_notification_time = current_timestamp
-
-            # Dynamically adjust processing interval
-            proc_time = time.time() - start
-            streaming_capture.update_capture_interval(
-                int((math.floor(proc_time * 2) + 1) / 2),
-            )
-
-        await streaming_capture.release_resources()
-        gc.collect()
-
-    finally:
-        # Ensure cleanup
-        await live_stream_detector.close()
-        await streaming_capture.release_resources()
-        await frame_sender.close()  # Ensure WebSocket connection is closed
-        if store_in_redis:
-            try:
-                await redis_manager.delete(redis_key)
-            except Exception as e:
-                print(
-                    f"[WARN] Failed to delete redis key {redis_key}: {e}",
-                )
-
-
-def process_single_stream(cfg: StreamConfig) -> None:
-    """
-    Logic executed by each child process to capture frames, detect hazards,
-    and send results to backend or Redis.
-
-    Args:
-        cfg (StreamConfig): The configuration dict for this stream.
-    """
-    asyncio.run(_run_single_stream(cfg))
 
 
 async def main() -> None:
@@ -530,10 +464,16 @@ async def main() -> None:
         # Load configs from JSON file
         with open(args.config, encoding='utf-8') as f:
             configs = json.load(f)
+        app = MainApp(poll_interval=args.poll)
+        app._ensure_yolo_worker()
         # Start a process for each config
         procs = []
         for cfg in configs:
-            proc = Process(target=process_single_stream, args=(cfg,))
+            yolo_request_queue, yolo_result_store = app._yolo_worker_slot(cfg)
+            proc = Process(
+                target=process_single_stream,
+                args=(cfg, yolo_request_queue, yolo_result_store),
+            )
             proc.start()
             procs.append(proc)
         try:
@@ -547,6 +487,7 @@ async def main() -> None:
                 if p.is_alive():
                     p.terminate()
                     p.join()
+            await app.cleanup_resources()
     else:
         app = MainApp(poll_interval=args.poll)
         try:
@@ -554,12 +495,22 @@ async def main() -> None:
         except KeyboardInterrupt:
             print('\n[INFO] KeyboardInterrupt, shutting down...')
         finally:
-            # Ensure all child processes are stopped and DB closed
-            for info in app.running_processes.values():
-                app.stop_process(info['process'])
-            if app.db_pool:
-                app.db_pool.close()
-                await app.db_pool.wait_closed()
+            await app.cleanup_resources()
+
+
+def _csv_env(name: str, default: str) -> list[str]:
+    """Read a comma-separated environment setting.
+
+    Args:
+        name: Environment variable name.
+        default: Default comma-separated value.
+
+    Returns:
+        Normalised non-empty entries.
+    """
+    value = os.getenv(name, default)
+    items = [item.strip() for item in value.split(',') if item.strip()]
+    return items or [default]
 
 
 if __name__ == '__main__':

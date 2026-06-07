@@ -3,12 +3,16 @@ from __future__ import annotations
 from typing import TypeAlias
 from typing import TypedDict
 
+from src.warning_types import MutableWarnings
+
 
 # Note: Avoid providing a catch-all JSON alias here to encourage
 # using precise TypedDicts for request/response shapes where feasible.
 
 
 class TransportConfig(TypedDict):
+    """MCP transport configuration."""
+
     transport: str
     host: str
     port: int
@@ -23,6 +27,8 @@ PolygonsCoords: TypeAlias = list[list[list[float]]]
 
 
 class DetectionLikeDict(TypedDict, total=False):
+    """Dictionary-shaped detection accepted by MCP tools."""
+
     bbox: list[float]
     box: list[float]
     confidence: float
@@ -32,6 +38,8 @@ class DetectionLikeDict(TypedDict, total=False):
 
 
 class InferenceMeta(TypedDict):
+    """Metadata returned with an inference response."""
+
     model_key: str
     engine: str
     tracker: str
@@ -41,12 +49,16 @@ class InferenceMeta(TypedDict):
 
 
 class InferenceResponse(TypedDict):
+    """YOLO inference response payload."""
+
     detections: list[FloatBBox]
     tracked: list[list[float]]
     meta: InferenceMeta
 
 
 class HazardMeta(TypedDict):
+    """Metadata returned with a hazard response."""
+
     image_width: int | None
     image_height: int | None
     working_hour_only: bool | None
@@ -54,7 +66,9 @@ class HazardMeta(TypedDict):
 
 
 class HazardResponse(TypedDict):
-    warnings: dict[str, dict[str, int]]
+    """Safety hazard analysis response payload."""
+
+    warnings: MutableWarnings
     cone_polygons: PolygonsCoords
     pole_polygons: PolygonsCoords
     meta: HazardMeta

@@ -78,11 +78,19 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.refresh = AsyncMock()
         self.db.add = MagicMock()
 
-        # Simulate super_admin query, user_sites_table.insert,
-        # and refreshed_site query
+        # Simulate: bulk site_groups insert, group user query,
+        # super_admin query, user_sites insert,
+        # bulk pref insert for super_admin, and refreshed site query.
+        mock_group_insert_result: MagicMock = MagicMock()
+        mock_empty_users_result: MagicMock = MagicMock()
+        mock_empty_users_result.scalars.return_value.all.return_value = []
         mock_admin_result: MagicMock = MagicMock()
-        mock_admin_result.scalar_one_or_none.return_value = MagicMock(id=999)
+        (
+            mock_admin_result.unique.return_value.scalar_one_or_none
+            .return_value
+        ) = MagicMock(id=999)
         mock_insert_result: MagicMock = MagicMock()
+        mock_pref_insert_result: MagicMock = MagicMock()
         mock_refreshed_site_result: MagicMock = MagicMock()
         (
             mock_refreshed_site_result
@@ -91,15 +99,18 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         ) = MagicMock()
         self.db.execute = AsyncMock(
             side_effect=[
-                mock_admin_result,
-                mock_insert_result,
-                mock_refreshed_site_result,
+                mock_group_insert_result,  # site_groups insert
+                mock_empty_users_result,  # user query for pref seeding
+                mock_admin_result,  # super admin query
+                mock_insert_result,  # user_sites insert
+                mock_pref_insert_result,  # bulk pref insert for super_admin
+                mock_refreshed_site_result,  # select refreshed site
             ],
         )
 
         result: MagicMock = await site_services.create_site(
             name='New Site',
-            group_id=self.group_id,
+            group_ids=[self.group_id],
             db=self.db,
         )
         expected = (
@@ -123,11 +134,25 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
         self.db.add = MagicMock()
+        mock_empty_users_result: MagicMock = MagicMock()
+        mock_empty_users_result.scalars.return_value.all.return_value = []
+        mock_admin_result: MagicMock = MagicMock()
+        (
+            mock_admin_result.unique.return_value.scalar_one_or_none
+            .return_value
+        ) = None
+        self.db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),  # bulk site_groups insert
+                mock_empty_users_result,  # group user query
+                mock_admin_result,  # super admin query
+            ],
+        )
 
         with self.assertRaises(HTTPException) as context:
             await site_services.create_site(
                 name='Fail Site',
-                group_id=self.group_id,
+                group_ids=[self.group_id],
                 db=self.db,
             )
 
@@ -219,7 +244,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_add_user_to_site(self) -> None:
         """Test adding a user to a site.
 
-        Verifies that a user is added to a site and the transaction is
+        Verifies that a user is added to a site and a default
+        notification preference is created, then the transaction is
         committed.
         """
         self.db.execute = AsyncMock()
@@ -231,14 +257,20 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
             db=self.db,
         )
 
+        # Two execute calls: user_sites insert + bulk pref insert
+        self.assertEqual(self.db.execute.await_count, 2)
         self.db.commit.assert_awaited()
 
     async def test_remove_user_from_site(self) -> None:
         """Test removing a user from a site.
 
-        Verifies that a user is removed from a site and the transaction
-        is committed.
+        When the user has no group-based access, the notification
+        preference is also deleted and the transaction is committed.
         """
+        # Simulate a user with no group → pref is deleted directly
+        mock_user: MagicMock = MagicMock()
+        mock_user.group_id = None
+        self.db.get = AsyncMock(return_value=mock_user)
         self.db.execute = AsyncMock()
         self.db.commit = AsyncMock()
 
@@ -248,6 +280,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
             db=self.db,
         )
 
+        # Two execute calls: user_sites delete + pref delete
+        self.assertEqual(self.db.execute.await_count, 2)
         self.db.commit.assert_awaited()
 
     async def test_create_site_without_group_id(self) -> None:
@@ -259,7 +293,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as context:
             await site_services.create_site(
                 name='NoGroupSite',
-                group_id=None,
+                group_ids=[],
                 db=self.db,
             )
 
@@ -292,6 +326,120 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
 
         self.db.commit.assert_awaited()
         self.db.delete.assert_awaited_with(self.site)
+
+    async def test_add_group_to_site_seeds_prefs(self) -> None:
+        """add_group_to_site creates prefs for all users in the group."""
+        mock_users_result: MagicMock = MagicMock()
+        mock_users_result.scalars.return_value.all.return_value = [1, 2]
+        self.db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),          # site_groups insert
+                mock_users_result,    # select users in group
+                MagicMock(),          # bulk pref insert
+            ],
+        )
+        self.db.commit = AsyncMock()
+
+        await site_services.add_group_to_site(
+            site_id=self.site.id,
+            group_id=self.group_id,
+            db=self.db,
+        )
+
+        self.assertEqual(self.db.execute.await_count, 3)
+        self.db.commit.assert_awaited()
+
+    async def test_add_group_to_site_no_users(self) -> None:
+        """add_group_to_site commits successfully when group has no users."""
+        mock_users_result: MagicMock = MagicMock()
+        mock_users_result.scalars.return_value.all.return_value = []
+        self.db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),        # site_groups insert
+                mock_users_result,  # select users → empty
+            ],
+        )
+        self.db.commit = AsyncMock()
+
+        await site_services.add_group_to_site(
+            site_id=self.site.id,
+            group_id=self.group_id,
+            db=self.db,
+        )
+
+        self.assertEqual(self.db.execute.await_count, 2)
+        self.db.commit.assert_awaited()
+
+    async def test_remove_group_from_site_deletes_prefs(self) -> None:
+        """remove_group_from_site deletes prefs for members without
+        direct access.
+        """
+        self.db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),          # site_groups delete
+                MagicMock(),          # conditional preference delete
+            ],
+        )
+        self.db.commit = AsyncMock()
+
+        await site_services.remove_group_from_site(
+            site_id=self.site.id,
+            group_id=self.group_id,
+            db=self.db,
+        )
+
+        self.assertEqual(self.db.execute.await_count, 2)
+        self.db.commit.assert_awaited()
+
+    async def test_remove_group_from_site_no_users(self) -> None:
+        """remove_group_from_site commits with no pref deletions when
+        group is empty.
+        """
+        self.db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),       # site_groups delete
+                MagicMock(),       # conditional preference delete
+            ],
+        )
+        self.db.commit = AsyncMock()
+
+        await site_services.remove_group_from_site(
+            site_id=self.site.id,
+            group_id=self.group_id,
+            db=self.db,
+        )
+
+        self.assertEqual(self.db.execute.await_count, 2)
+        self.db.commit.assert_awaited()
+
+    async def test_remove_user_from_site_keeps_pref_when_group_access(
+            self,
+    ) -> None:
+        """Keeps the pref when the user's group still owns the site."""
+        mock_user: MagicMock = MagicMock()
+        mock_user.group_id = 5  # user still in a group
+        self.db.get = AsyncMock(return_value=mock_user)
+        # site_groups query returns a non-None row → group still has access
+        mock_group_row: MagicMock = MagicMock()
+        mock_group_row.first.return_value = (1,)
+        self.db.execute = AsyncMock(
+            side_effect=[
+                MagicMock(),       # user_sites delete
+                mock_group_row,    # site_groups check → group still linked
+            ],
+        )
+        self.db.commit = AsyncMock()
+
+        await site_services.remove_user_from_site(
+            user_id=self.user_id,
+            site_id=self.site.id,
+            db=self.db,
+        )
+
+        # Only 2 executes: user_sites delete + group access check;
+        # NO pref delete because group still has the site
+        self.assertEqual(self.db.execute.await_count, 2)
+        self.db.commit.assert_awaited()
 
 
 if __name__ == '__main__':

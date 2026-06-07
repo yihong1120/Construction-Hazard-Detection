@@ -59,11 +59,19 @@ class TestUserModel(unittest.TestCase):
         self.assertTrue(asyncio.run(user.check_password('secure_password')))
         self.assertFalse(asyncio.run(user.check_password('wrong_password')))
 
+    def test_check_password_unknown_hash_returns_false(self) -> None:
+        """
+        Test unsupported hashes fail authentication without 500s.
+        """
+        user = User(username='testuser')
+        user.password_hash = 'scrypt:32768:8:1$salt$hash'
+        self.assertFalse(asyncio.run(user.check_password('secure_password')))
+
     def test_to_dict(self) -> None:
         """
         Test the to_dict method of the User model.
         """
-        user = User(username='testuser', role='admin', is_active=True)
+        user = User(username='testuser', role='admin', status='active')
         user.set_password('secure_password')
         self.session.add(user)
         self.session.commit()
@@ -74,16 +82,18 @@ class TestUserModel(unittest.TestCase):
         # Validate dictionary contents
         self.assertEqual(user_dict['username'], 'testuser')
         self.assertEqual(user_dict['role'], 'admin')
-        self.assertTrue(user_dict['is_active'])
+        self.assertEqual(user_dict['status'], 'active')
         self.assertIn('created_at', user_dict)
         self.assertIn('updated_at', user_dict)
 
-    def test_feature_repr(self):
+    def test_feature_repr(self) -> None:
+        """Exercise this test."""
         feature = Feature(id=1, feature_name='test_feature')
         self.assertIn('Feature', repr(feature))
         self.assertIn('test_feature', repr(feature))
 
-    def test_group_repr(self):
+    def test_group_repr(self) -> None:
+        """Exercise this test."""
         group = Group(
             id=1, name='test_group',
             uniform_number='12345678', max_allowed_streams=1,

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
+from examples.auth.models import Group
 from examples.auth.models import Site
 from examples.auth.models import User
 from examples.db_management import deps
@@ -39,10 +40,20 @@ class TestDeps(unittest.IsolatedAsyncioTestCase):
             role='user',
             group_id=None,
         )
-        self.site_in_group: Site = Site(id=1, name='Test Site', group_id=100)
-        self.site_other_group: Site = Site(
-            id=2, name='Other Site', group_id=999,
+        self.group: Group = Group(
+            id=100,
+            name='Test Group',
+            uniform_number='12345678',
         )
+        self.other_group: Group = Group(
+            id=999,
+            name='Other Group',
+            uniform_number='87654321',
+        )
+        self.site_in_group: Site = Site(id=1, name='Test Site')
+        self.site_in_group.groups = [self.group]
+        self.site_other_group: Site = Site(id=2, name='Other Site')
+        self.site_other_group.groups = [self.other_group]
 
     @patch('examples.db_management.deps.jwt_access', new_callable=AsyncMock)
     @patch('examples.db_management.deps.get_db', new_callable=AsyncMock)

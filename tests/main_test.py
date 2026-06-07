@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import multiprocessing
-import sys
+import os
+import runpy
 import unittest
 from datetime import datetime
 from datetime import timedelta
+from typing import Any
+from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import numpy as np
+
 import main
+import src.stream_processor as processor
+from examples.streaming_web.backend.media_paths import build_overlay_demand_key
 from main import MainApp
 from main import process_single_stream
 from main import StreamConfig
@@ -19,7 +26,8 @@ from main import StreamConfig
 class AsyncFrameGenerator:
     """Async generator for mock video frames."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Support __init__."""
         self.yielded = False
 
     def __aiter__(self):
@@ -37,10 +45,14 @@ class AsyncFrameGenerator:
 
 
 class MockCursor:
-    async def execute(self, *args, **kwargs):
+    """Tests for MockCursor."""
+
+    async def execute(self, *args, **kwargs) -> None:
+        """Support execute."""
         pass
 
-    async def fetchall(self):
+    async def fetchall(self) -> Any:
+        """Support fetchall."""
         return []
 
     async def __aenter__(self):
@@ -51,7 +63,14 @@ class MockCursor:
 
 
 class MockConnection:
-    def cursor(self):
+    """Tests for MockConnection."""
+
+    async def fetch(self, *args, **kwargs) -> Any:
+        """Support fetch."""
+        return []
+
+    def cursor(self) -> Any:
+        """Support cursor."""
         return MockCursor()
 
     async def __aenter__(self):
@@ -62,6 +81,8 @@ class MockConnection:
 
 
 class MockAcquire:
+    """Tests for MockAcquire."""
+
     async def __aenter__(self):
         return MockConnection()
 
@@ -70,7 +91,10 @@ class MockAcquire:
 
 
 class MockPool:
-    def acquire(self):
+    """Tests for MockPool."""
+
+    def acquire(self) -> Any:
+        """Support acquire."""
         return MockAcquire()
 
 
@@ -78,15 +102,16 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
     """Unit tests for MainApp class defined in main.py."""
     @patch.object(MainApp, '_ensure_db_pool', new_callable=AsyncMock)
     async def test_fetch_stream_configs_db_pool_not_initialised(
-        self, mock_ensure,
-    ):
+        self, mock_ensure: Any,
+    ) -> None:
         """Test fetch_stream_configs raises if db_pool is not initialised."""
         self.app.db_pool = None
         with self.assertRaises(RuntimeError):
             await self.app.fetch_stream_configs()
 
+    @patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'})
     @patch('main.Process')
-    def test_start_and_stop_process(self, mock_process_class):
+    def test_start_and_stop_process(self, mock_process_class: Any) -> None:
         """Test start_process and stop_process methods."""
         # Mock the Process class to avoid actually starting processes
         mock_process = MagicMock()
@@ -97,7 +122,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         # Verify Process was created with correct arguments
         mock_process_class.assert_called_once_with(
-            target=process_single_stream, args=(cfg,),
+            target=process_single_stream, args=(cfg, None, None),
         )
         mock_process.start.assert_called_once()
         self.assertEqual(proc, mock_process)
@@ -111,8 +136,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
     @patch('main.MainApp.start_process')
     @patch('main.MainApp.fetch_stream_configs')
     def test_reload_configurations_starts_new_stream(
-        self, mock_fetch, mock_start,
-    ):
+        self, mock_fetch: Any, mock_start: Any,
+    ) -> None:
         """Test reload_configurations starts new stream if not tracked."""
         cfg = self.dummy_cfg.copy()
         cfg['expire_date'] = None
@@ -122,14 +147,17 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         app = MainApp()
         app.running_processes = {}
 
-        async def run():
+        async def run() -> None:
+            """Support run."""
             await app.reload_configurations()
         asyncio.run(run())
         self.assertIn(cfg['video_url'], app.running_processes)
         mock_start.assert_called_once_with(cfg)
 
     @patch('main.MainApp.fetch_stream_configs')
-    def test_reload_configurations_skips_expired_config(self, mock_fetch):
+    def test_reload_configurations_skips_expired_config(
+            self, mock_fetch: Any,
+    ) -> None:
         """Test reload_configurations skips expired configs."""
         expired_cfg = self.dummy_cfg.copy()
         expired_cfg['expire_date'] = (
@@ -139,20 +167,26 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         app = MainApp()
         app.running_processes = {}
 
-        async def run():
+        async def run() -> None:
+            """Support run."""
             await app.reload_configurations()
         asyncio.run(run())
         self.assertNotIn(expired_cfg['video_url'], app.running_processes)
 
     @patch('main.asyncio.run')
     @patch('main.argparse.ArgumentParser.parse_args')
-    def test_main_entrypoint(self, mock_args, mock_run):
+    def test_main_entrypoint(self, mock_args: Any, mock_run: Any) -> None:
         """Test CLI entrypoint main() function."""
         from main import main as main_entry
         mock_args.return_value = type('Args', (), {'poll': 1})()
         asyncio_run_called = False
 
-        def fake_run(coro):
+        def fake_run(coro: Any) -> None:
+            """Support fake_run.
+
+            Args:
+                coro: Test helper value.
+            """
             nonlocal asyncio_run_called
             asyncio_run_called = True
             assert asyncio.iscoroutine(coro)
@@ -162,6 +196,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(asyncio_run_called)
 
     async def asyncSetUp(self) -> None:
+        """Prepare test fixtures."""
         self.app = MainApp(poll_interval=1)
         self.mock_logger = MagicMock()
         self.app.logger = self.mock_logger
@@ -185,8 +220,1826 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             'store_in_redis': False,
         }
 
+    @patch('src.stream_processor.os.getenv')
+    def test_resolve_detect_with_server_force_local(
+            self, mock_getenv: Any,
+    ) -> None:
+        """Test deployment override forces local inference."""
+        mock_getenv.side_effect = lambda key: {
+            'DETECT_FORCE_LOCAL': 'true',
+            'DETECT_FORCE_SERVER': 'false',
+        }.get(key)
+        self.assertFalse(processor._resolve_detect_with_server(True))
+
+    @patch('src.stream_processor.os.getenv')
+    def test_resolve_detect_with_server_force_server(
+            self, mock_getenv: Any,
+    ) -> None:
+        """Test deployment override forces server inference."""
+        mock_getenv.side_effect = lambda key: {
+            'DETECT_FORCE_LOCAL': 'false',
+            'DETECT_FORCE_SERVER': 'true',
+        }.get(key)
+        self.assertTrue(processor._resolve_detect_with_server(False))
+
+    @patch.dict(
+        os.environ,
+        {'DETECT_FORCE_LOCAL': 'true', 'DETECT_FORCE_SERVER': 'false'},
+    )
+    def test_resolve_detect_with_server_force_local_from_environ(self) -> None:
+        """Test local override from the real process environment."""
+        self.assertFalse(processor._resolve_detect_with_server(True))
+
+    def test_validate_server_model_key_accepts_configured_model(self) -> None:
+        """Server mode accepts configured YOLO server model keys."""
+        with patch.dict(
+            os.environ,
+            {'DETECT_SERVER_MODEL_KEYS': 'yolo26n,yolo26s'},
+        ):
+            processor._validate_server_model_key('yolo26n')
+
+    def test_validate_server_model_key_rejects_unknown_model(self) -> None:
+        """Server mode rejects model keys the YOLO server cannot load."""
+        with patch.dict(
+            os.environ,
+            {'DETECT_SERVER_MODEL_KEYS': 'yolo26n,yolo26s'},
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'yolo11n'):
+                processor._validate_server_model_key('yolo11n')
+
+    async def test_delete_stream_live_metadata_removes_stream_key(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        redis_manager = MagicMock()
+        redis_manager.delete = AsyncMock()
+
+        with patch(
+            'src.stream_processor.RedisManager',
+            return_value=redis_manager,
+        ):
+            await processor.delete_stream_live_metadata(self.dummy_cfg)
+
+        redis_manager.delete.assert_awaited_once_with(
+            processor._stream_metadata_key('SiteA', 'StreamOne'),
+        )
+
+    def test_process_single_stream_loads_env_and_runs_async_processor(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        queue = object()
+        result_store = object()
+        with (
+            patch('src.stream_processor.load_dotenv') as load_env,
+            patch('src.stream_processor.asyncio.run') as run,
+            patch('src.stream_processor._run_single_stream') as run_single,
+        ):
+            run.side_effect = lambda coro: coro.close()
+            processor.process_single_stream(
+                self.dummy_cfg,
+                yolo_request_queue=queue,
+                yolo_result_store=result_store,
+            )
+
+        load_env.assert_called_once_with(override=True)
+        run_single.assert_called_once_with(
+            self.dummy_cfg,
+            yolo_request_queue=queue,
+            yolo_result_store=result_store,
+        )
+        run.assert_called_once()
+
+    async def test_run_single_stream_uses_decoupled_loop_and_cleans_resources(
+        self,
+    ) -> None:
+        """Exercise this test."""
+        cfg = dict(self.dummy_cfg)
+        cfg.update({
+            'detect_with_server': False,
+            'store_in_redis': True,
+            'model_key': 'yolo26n',
+        })
+        streaming_capture = AsyncMock()
+        yolo_detector = AsyncMock()
+        clean_publisher = AsyncMock()
+        redis_manager = MagicMock()
+        redis_manager.delete = AsyncMock(side_effect=RuntimeError('gone'))
+
+        with (
+            patch(
+                'src.stream_processor.StreamCapture',
+                return_value=streaming_capture,
+            ),
+            patch(
+                'src.stream_processor.YoloDetector',
+                return_value=yolo_detector,
+            ),
+            patch('src.stream_processor.DangerDetector'),
+            patch('src.stream_processor.FCMSender'),
+            patch('src.stream_processor.ViolationSender'),
+            patch(
+                'src.stream_processor.RedisManager',
+                return_value=redis_manager,
+            ),
+            patch(
+                'src.stream_processor.MediaStreamPublisher',
+                return_value=clean_publisher,
+            ),
+            patch(
+                'src.stream_processor._run_decoupled_media_server_loop',
+                new_callable=AsyncMock,
+            ) as decoupled_loop,
+            patch.dict(
+                os.environ,
+                {
+                    'MEDIA_PUBLISH_DECOUPLED_ANNOTATED': 'true',
+                    'MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM': 'false',
+                    'MEDIA_PUBLISH_CLEAN_STREAM': 'true',
+                    'MEDIA_PUBLISH_ANNOTATED_STREAM': 'true',
+                    'DETECT_FORCE_LOCAL': 'false',
+                    'DETECT_FORCE_SERVER': 'false',
+                },
+            ),
+        ):
+            await processor._run_single_stream(cfg)
+
+        decoupled_loop.assert_awaited_once()
+        yolo_detector.close.assert_awaited_once()
+        streaming_capture.release_resources.assert_awaited_once()
+        clean_publisher.close.assert_awaited_once()
+        redis_manager.delete.assert_awaited_once()
+
+    async def test_run_single_stream_requires_worker_for_server_mode(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        cfg = dict(self.dummy_cfg)
+        cfg.update({
+            'detect_with_server': True,
+            'store_in_redis': False,
+            'model_key': 'yolo26n',
+        })
+        streaming_capture = AsyncMock()
+        yolo_detector = AsyncMock()
+
+        with (
+            patch(
+                'src.stream_processor.StreamCapture',
+                return_value=streaming_capture,
+            ),
+            patch(
+                'src.stream_processor.YoloDetector',
+                return_value=yolo_detector,
+            ),
+            patch.dict(
+                os.environ,
+                {
+                    'YOLO_WORKER_ENABLED': 'true',
+                    'DETECT_SERVER_MODEL_KEYS': 'yolo26n',
+                    'DETECT_FORCE_LOCAL': 'false',
+                    'DETECT_FORCE_SERVER': 'false',
+                },
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'shared worker queues'):
+                await processor._run_single_stream(cfg)
+
+        yolo_detector.close.assert_not_called()
+        streaming_capture.release_resources.assert_not_called()
+
+    async def test_run_single_stream_starts_server_worker_client(self) -> None:
+        """Exercise this test."""
+        cfg = dict(self.dummy_cfg)
+        cfg.update({
+            'detect_with_server': True,
+            'store_in_redis': False,
+            'model_key': 'yolo26n',
+        })
+        streaming_capture = AsyncMock()
+        yolo_detector = AsyncMock()
+
+        with (
+            patch(
+                'src.stream_processor.StreamCapture',
+                return_value=streaming_capture,
+            ),
+            patch(
+                'src.stream_processor.YoloWorkerClient',
+                return_value=object(),
+            ),
+            patch(
+                'src.stream_processor.YoloDetector',
+                return_value=yolo_detector,
+            ),
+            patch('src.stream_processor.DangerDetector'),
+            patch('src.stream_processor.FCMSender'),
+            patch('src.stream_processor.ViolationSender'),
+            patch(
+                'src.stream_processor._run_inline_stream_loop',
+                new_callable=AsyncMock,
+            ) as inline_loop,
+            patch.dict(
+                os.environ,
+                {
+                    'YOLO_WORKER_ENABLED': 'true',
+                    'DETECT_SERVER_MODEL_KEYS': 'yolo26n',
+                    'MEDIA_PUBLISH_CLEAN_STREAM': 'false',
+                    'MEDIA_PUBLISH_ANNOTATED_STREAM': 'false',
+                    'DETECT_FORCE_LOCAL': 'false',
+                    'DETECT_FORCE_SERVER': 'false',
+                },
+            ),
+        ):
+            await processor._run_single_stream(
+                cfg,
+                yolo_request_queue=object(),
+                yolo_result_store=object(),
+            )
+
+        inline_loop.assert_awaited_once()
+        yolo_detector.close.assert_awaited_once()
+
+    async def test_run_single_stream_starts_and_closes_clean_restreamer(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        cfg = dict(self.dummy_cfg)
+        cfg.update({
+            'detect_with_server': False,
+            'store_in_redis': True,
+            'model_key': 'yolo26n',
+        })
+        streaming_capture = AsyncMock()
+        yolo_detector = AsyncMock()
+        restreamer = AsyncMock()
+        redis_manager = MagicMock()
+        redis_manager.delete = AsyncMock()
+
+        with (
+            patch(
+                'src.stream_processor.StreamCapture',
+                return_value=streaming_capture,
+            ),
+            patch(
+                'src.stream_processor.YoloDetector',
+                return_value=yolo_detector,
+            ),
+            patch('src.stream_processor.DangerDetector'),
+            patch('src.stream_processor.FCMSender'),
+            patch('src.stream_processor.ViolationSender'),
+            patch(
+                'src.stream_processor.RedisManager',
+                return_value=redis_manager,
+            ),
+            patch(
+                'src.stream_processor.MediaSourceRestreamer',
+                return_value=restreamer,
+            ),
+            patch(
+                'src.stream_processor._run_inline_stream_loop',
+                new_callable=AsyncMock,
+            ),
+            patch.dict(
+                os.environ,
+                {
+                    'MEDIA_PUBLISH_DECOUPLED_ANNOTATED': 'false',
+                    'MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM': 'true',
+                    'MEDIA_PUBLISH_CLEAN_STREAM': 'true',
+                    'MEDIA_PUBLISH_ANNOTATED_STREAM': 'false',
+                    'DETECT_FORCE_LOCAL': 'false',
+                    'DETECT_FORCE_SERVER': 'false',
+                },
+            ),
+        ):
+            await processor._run_single_stream(cfg)
+
+        restreamer.start.assert_awaited_once()
+        restreamer.close.assert_awaited_once()
+
+    async def test_run_single_stream_uses_inline_loop_when_decoupled_disabled(
+        self,
+    ) -> None:
+        """Exercise this test."""
+        cfg = dict(self.dummy_cfg)
+        cfg.update({
+            'detect_with_server': False,
+            'store_in_redis': True,
+            'model_key': 'yolo26n',
+        })
+        streaming_capture = AsyncMock()
+        yolo_detector = AsyncMock()
+        redis_manager = MagicMock()
+        redis_manager.delete = AsyncMock()
+
+        with (
+            patch(
+                'src.stream_processor.StreamCapture',
+                return_value=streaming_capture,
+            ),
+            patch(
+                'src.stream_processor.YoloDetector',
+                return_value=yolo_detector,
+            ),
+            patch('src.stream_processor.DangerDetector'),
+            patch('src.stream_processor.FCMSender'),
+            patch('src.stream_processor.ViolationSender'),
+            patch(
+                'src.stream_processor.RedisManager',
+                return_value=redis_manager,
+            ),
+            patch(
+                'src.stream_processor._run_inline_stream_loop',
+                new_callable=AsyncMock,
+            ) as inline_loop,
+            patch.dict(
+                os.environ,
+                {
+                    'MEDIA_PUBLISH_DECOUPLED_ANNOTATED': 'false',
+                    'MEDIA_PUBLISH_CLEAN_STREAM': 'false',
+                    'MEDIA_PUBLISH_ANNOTATED_STREAM': 'false',
+                    'DETECT_FORCE_LOCAL': 'false',
+                    'DETECT_FORCE_SERVER': 'false',
+                },
+            ),
+        ):
+            await processor._run_single_stream(cfg)
+
+        inline_loop.assert_awaited_once()
+        yolo_detector.close.assert_awaited_once()
+
+    async def test_inline_stream_loop_keeps_running_on_publish_errors(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        frame = np.full((8, 8, 3), 50, dtype=np.uint8)
+
+        async def execute_capture() -> None:
+            """Support execute_capture."""
+            yield frame, 1_640_995_200.0
+
+        streaming_capture = MagicMock()
+        streaming_capture.execute_capture = execute_capture
+        streaming_capture.update_capture_interval = MagicMock()
+        streaming_capture.release_resources = AsyncMock()
+        yolo_detector = AsyncMock()
+        yolo_detector.generate_detections.return_value = (
+            [],
+            [[1, 1, 5, 5, 0.9, 5]],
+        )
+        danger_detector = MagicMock()
+        danger_detector.detect_danger.return_value = (
+            {'warning_no_hardhat': {'count': 1}},
+            [],
+            [],
+        )
+        clean_media_publisher = AsyncMock()
+        fcm_sender = AsyncMock()
+        violation_sender = AsyncMock()
+        redis_manager = MagicMock()
+
+        with (
+            patch(
+                'src.stream_processor._publish_requested_overlay_snapshot',
+                new_callable=AsyncMock,
+            ) as publish_overlay,
+            patch(
+                'src.stream_processor._send_violation_and_notification',
+                new_callable=AsyncMock,
+                return_value=1_640_995_200,
+            ) as send_violation,
+            patch(
+                'src.stream_processor.Utils.filter_warnings_by_working_hour',
+                return_value={'warning_no_hardhat': {'count': 1}},
+            ),
+            patch(
+                'src.stream_processor.Utils.should_notify',
+                return_value=True,
+            ),
+        ):
+            publish_overlay.side_effect = [
+                RuntimeError('prime failed'),
+                RuntimeError('publish failed'),
+            ]
+            await processor._run_inline_stream_loop(
+                streaming_capture=streaming_capture,
+                yolo_detector=yolo_detector,
+                danger_detector=danger_detector,
+                fcm_sender=fcm_sender,
+                violation_sender=violation_sender,
+                redis_manager=redis_manager,
+                clean_source_restreamer=None,
+                clean_media_publisher=clean_media_publisher,
+                overlay_media_publishers={},
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                publish_annotated_stream=True,
+                live_view_enabled=True,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+            )
+
+        self.assertEqual(publish_overlay.await_count, 2)
+        send_violation.assert_awaited_once()
+        streaming_capture.update_capture_interval.assert_called_once_with(0.2)
+        streaming_capture.release_resources.assert_awaited_once()
+
+    async def test_inline_stream_loop_stores_media_metadata_on_success(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        frame = np.full((8, 8, 3), 50, dtype=np.uint8)
+
+        async def execute_capture() -> None:
+            """Support execute_capture."""
+            yield frame, 1_640_995_200.0
+
+        streaming_capture = MagicMock()
+        streaming_capture.execute_capture = execute_capture
+        streaming_capture.update_capture_interval = MagicMock()
+        streaming_capture.release_resources = AsyncMock()
+        yolo_detector = AsyncMock()
+        yolo_detector.generate_detections.return_value = ([], [])
+        danger_detector = MagicMock()
+        danger_detector.detect_danger.return_value = ({}, [], [])
+        clean_media_publisher = AsyncMock()
+        redis_manager = MagicMock()
+        pipe = MagicMock()
+        pipe.execute = AsyncMock()
+        redis_manager.redis.pipeline.return_value = pipe
+
+        await processor._run_inline_stream_loop(
+            streaming_capture=streaming_capture,
+            yolo_detector=yolo_detector,
+            danger_detector=danger_detector,
+            fcm_sender=AsyncMock(),
+            violation_sender=AsyncMock(),
+            redis_manager=redis_manager,
+            clean_source_restreamer=None,
+            clean_media_publisher=clean_media_publisher,
+            overlay_media_publishers={},
+            media_publish_base='rtsp://media-server:8554',
+            media_path='hazard_site_cam',
+            publish_annotated_stream=False,
+            live_view_enabled=True,
+            site='SiteA',
+            stream_name='Cam1',
+            work_start_hour=0,
+            work_end_hour=24,
+            metadata_key='stream_metadata:site|cam',
+        )
+
+        pipe.xadd.assert_called_once()
+        pipe.execute.assert_awaited_once()
+
+    async def test_detect_latest_frames_publishes_detected_frame(self) -> None:
+        """Annotated publishing uses the same frame passed to detection."""
+        latest_frame = processor._LatestFrameState()
+        detected_frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        async with latest_frame.lock:
+            latest_frame.frame = detected_frame.copy()
+            latest_frame.timestamp = 1_640_995_200.0
+            latest_frame.sequence = 1
+            latest_frame.event.set()
+
+        yolo_detector = AsyncMock()
+        yolo_detector.generate_detections = AsyncMock(
+            return_value=([], [[1, 1, 4, 4, 0.9, 5]]),
+        )
+        danger_detector = MagicMock()
+        danger_detector.detect_danger.return_value = ({}, [], [])
+        fcm_sender = AsyncMock()
+        violation_sender = AsyncMock()
+        latest_detection = processor._LatestDetectionState()
+
+        stop_event = asyncio.Event()
+
+        pipe = MagicMock()
+        pipe.xadd = MagicMock()
+
+        async def execute_once() -> None:
+            """Support execute_once."""
+            stop_event.set()
+
+        pipe.execute = AsyncMock(side_effect=execute_once)
+        redis_manager = MagicMock()
+        redis_manager.redis.pipeline.return_value = pipe
+
+        await asyncio.wait_for(
+            processor._detect_latest_frames(
+                latest_frame=latest_frame,
+                yolo_detector=yolo_detector,
+                danger_detector=danger_detector,
+                fcm_sender=fcm_sender,
+                violation_sender=violation_sender,
+                redis_manager=redis_manager,
+                latest_detection=latest_detection,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                stop_event=stop_event,
+            ),
+            timeout=1.0,
+        )
+
+        async with latest_detection.lock:
+            self.assertIsNotNone(latest_detection.frame)
+            assert latest_detection.frame is not None
+            self.assertTrue(
+                np.array_equal(latest_detection.frame, detected_frame),
+            )
+            self.assertEqual(
+                latest_detection.track_data,
+                [[1, 1, 4, 4, 0.9, 5]],
+            )
+
+    async def test_decoupled_loop_starts_all_requested_tasks(self) -> Any:
+        """Exercise this test."""
+        clean_media_publisher = AsyncMock()
+
+        async def stop_capture(**_kwargs) -> Any:
+            """Support stop_capture."""
+            return None
+
+        async def stop_detection(**_kwargs) -> Any:
+            """Support stop_detection."""
+            return None
+
+        async def stop_overlay(**_kwargs) -> Any:
+            """Support stop_overlay."""
+            return None
+
+        async def stop_clean(**_kwargs) -> Any:
+            """Support stop_clean."""
+            return None
+
+        with (
+            patch(
+                'src.stream_processor._capture_latest_frames',
+                side_effect=stop_capture,
+            ) as capture_latest,
+            patch(
+                'src.stream_processor._detect_latest_frames',
+                side_effect=stop_detection,
+            ) as detect_latest,
+            patch(
+                'src.stream_processor._publish_requested_overlay_frames',
+                side_effect=stop_overlay,
+            ) as publish_overlay,
+            patch(
+                'src.stream_processor._publish_latest_clean_frames',
+                side_effect=stop_clean,
+            ) as publish_clean,
+        ):
+            await processor._run_decoupled_media_server_loop(
+                streaming_capture=AsyncMock(),
+                yolo_detector=AsyncMock(),
+                danger_detector=MagicMock(),
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=MagicMock(),
+                clean_media_publisher=clean_media_publisher,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                publish_overlay_streams=True,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+            )
+
+        capture_latest.assert_called_once()
+        detect_latest.assert_called_once()
+        publish_overlay.assert_called_once()
+        publish_clean.assert_called_once()
+
+    async def test_decoupled_loop_raises_child_task_exception(self) -> None:
+        """Exercise this test."""
+        async def fail_capture(**_kwargs) -> None:
+            """Support fail_capture."""
+            raise RuntimeError('capture failed')
+
+        async def stop_detection(**_kwargs) -> None:
+            """Support stop_detection."""
+            await asyncio.Event().wait()
+
+        with (
+            patch(
+                'src.stream_processor._capture_latest_frames',
+                side_effect=fail_capture,
+            ),
+            patch(
+                'src.stream_processor._detect_latest_frames',
+                side_effect=stop_detection,
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'capture failed'):
+                await processor._run_decoupled_media_server_loop(
+                    streaming_capture=AsyncMock(),
+                    yolo_detector=AsyncMock(),
+                    danger_detector=MagicMock(),
+                    fcm_sender=AsyncMock(),
+                    violation_sender=AsyncMock(),
+                    redis_manager=MagicMock(),
+                    clean_media_publisher=None,
+                    media_publish_base='rtsp://media-server:8554',
+                    media_path='hazard_site_cam',
+                    publish_overlay_streams=False,
+                    site='SiteA',
+                    stream_name='Cam1',
+                    work_start_hour=0,
+                    work_end_hour=24,
+                    metadata_key='stream_metadata:site|cam',
+                )
+
+    async def test_capture_latest_frames_returns_when_stop_event_is_set(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        async def execute_capture() -> None:
+            """Support execute_capture."""
+            yield np.zeros((4, 4, 3), dtype=np.uint8), 1_640_995_200.0
+
+        streaming_capture = MagicMock()
+        streaming_capture.execute_capture = execute_capture
+        streaming_capture.update_capture_interval = MagicMock()
+        stop_event = asyncio.Event()
+        stop_event.set()
+
+        await processor._capture_latest_frames(
+            streaming_capture=streaming_capture,
+            latest_frame=processor._LatestFrameState(),
+            stop_event=stop_event,
+        )
+
+        streaming_capture.update_capture_interval.assert_called_once()
+
+    async def test_capture_latest_frames_updates_latest_frame(self) -> None:
+        """Exercise this test."""
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+
+        async def execute_capture() -> None:
+            """Support execute_capture."""
+            yield frame, 1_640_995_200.0
+
+        streaming_capture = MagicMock()
+        streaming_capture.execute_capture = execute_capture
+        streaming_capture.update_capture_interval = MagicMock()
+        latest_frame = processor._LatestFrameState()
+
+        with patch.dict(os.environ, {'MEDIA_PUBLISH_SOURCE_FPS': '20'}):
+            await processor._capture_latest_frames(
+                streaming_capture=streaming_capture,
+                latest_frame=latest_frame,
+                stop_event=asyncio.Event(),
+            )
+
+        streaming_capture.update_capture_interval.assert_called_once_with(0.05)
+        async with latest_frame.lock:
+            self.assertEqual(latest_frame.sequence, 1)
+            self.assertFalse(latest_frame.frame.flags.writeable)
+
+    async def test_detect_latest_frames_recovers_from_timeout_and_errors(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        async with latest_frame.lock:
+            latest_frame.frame = frame
+            latest_frame.timestamp = 1_640_995_200.0
+            latest_frame.sequence = 1
+            latest_frame.event.set()
+
+        yolo_detector = AsyncMock()
+        yolo_detector.generate_detections.side_effect = RuntimeError('busy')
+        latest_detection = processor._LatestDetectionState()
+        stop_event = asyncio.Event()
+
+        async def stop_after_sleep(_delay: Any) -> None:
+            """Support stop_after_sleep.
+
+            Args:
+                _delay: Test helper value.
+            """
+            stop_event.set()
+
+        with patch(
+            'src.stream_processor.asyncio.sleep',
+            side_effect=stop_after_sleep,
+        ):
+            await processor._detect_latest_frames(
+                latest_frame=latest_frame,
+                yolo_detector=yolo_detector,
+                danger_detector=MagicMock(),
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=MagicMock(),
+                latest_detection=latest_detection,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                stop_event=stop_event,
+            )
+
+        yolo_detector.generate_detections.assert_awaited_once()
+
+    async def test_detect_latest_frames_recovers_from_metadata_errors(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        async with latest_frame.lock:
+            latest_frame.frame = frame
+            latest_frame.timestamp = 1_640_995_200.0
+            latest_frame.sequence = 1
+            latest_frame.event.set()
+
+        yolo_detector = AsyncMock()
+        yolo_detector.generate_detections.return_value = ([], [])
+        danger_detector = MagicMock()
+        danger_detector.detect_danger.side_effect = RuntimeError('metadata')
+        latest_detection = processor._LatestDetectionState()
+        stop_event = asyncio.Event()
+
+        async def stop_after_sleep(_delay: Any) -> None:
+            """Support stop_after_sleep.
+
+            Args:
+                _delay: Test helper value.
+            """
+            stop_event.set()
+
+        with patch(
+            'src.stream_processor.asyncio.sleep',
+            side_effect=stop_after_sleep,
+        ):
+            await processor._detect_latest_frames(
+                latest_frame=latest_frame,
+                yolo_detector=yolo_detector,
+                danger_detector=danger_detector,
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=MagicMock(),
+                latest_detection=latest_detection,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                stop_event=stop_event,
+            )
+
+        danger_detector.detect_danger.assert_called_once_with([])
+
+    async def test_detect_latest_frames_sends_violation_notification(
+            self,
+    ) -> Any:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        async with latest_frame.lock:
+            latest_frame.frame = frame
+            latest_frame.timestamp = 1_640_995_200.0
+            latest_frame.sequence = 1
+            latest_frame.event.set()
+
+        yolo_detector = AsyncMock()
+        yolo_detector.generate_detections.return_value = ([], [])
+        danger_detector = MagicMock()
+        warnings = {'warning_no_hardhat': {'count': 1}}
+        danger_detector.detect_danger.return_value = (warnings, [], [])
+        redis_manager = MagicMock()
+        pipe = MagicMock()
+        pipe.execute = AsyncMock()
+        redis_manager.redis.pipeline.return_value = pipe
+        stop_event = asyncio.Event()
+
+        async def send_and_stop(**_kwargs) -> Any:
+            """Support send_and_stop."""
+            stop_event.set()
+            return 1_640_995_200
+
+        with (
+            patch(
+                'src.stream_processor.Utils.should_notify',
+                return_value=True,
+            ),
+            patch(
+                'src.stream_processor._send_violation_and_notification',
+                side_effect=send_and_stop,
+            ) as send_violation,
+        ):
+            await processor._detect_latest_frames(
+                latest_frame=latest_frame,
+                yolo_detector=yolo_detector,
+                danger_detector=danger_detector,
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=redis_manager,
+                latest_detection=processor._LatestDetectionState(),
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                stop_event=stop_event,
+            )
+
+        send_violation.assert_awaited_once()
+
+    async def test_detect_latest_frames_skips_empty_or_same_sequence(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        async with latest_frame.lock:
+            latest_frame.sequence = 0
+            latest_frame.event.set()
+        stop_event = asyncio.Event()
+        yolo_detector = AsyncMock()
+
+        async def wait_once() -> None:
+            """Support wait_once."""
+            stop_event.set()
+
+        with patch.object(latest_frame.event, 'wait', side_effect=wait_once):
+            await processor._detect_latest_frames(
+                latest_frame=latest_frame,
+                yolo_detector=yolo_detector,
+                danger_detector=MagicMock(),
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=MagicMock(),
+                latest_detection=processor._LatestDetectionState(),
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                stop_event=stop_event,
+            )
+
+        yolo_detector.generate_detections.assert_not_called()
+
+    async def test_detect_latest_frames_continues_on_frame_wait_timeout(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        stop_event = asyncio.Event()
+        yolo_detector = AsyncMock()
+
+        async def wait_timeout(awaitable: Any, timeout: Any) -> None:
+            """Support wait_timeout.
+
+            Args:
+                awaitable: Test helper value.
+                timeout: Test helper value.
+            """
+            awaitable.close()
+            stop_event.set()
+            raise asyncio.TimeoutError
+
+        with patch(
+            'src.stream_processor.asyncio.wait_for',
+            side_effect=wait_timeout,
+        ):
+            await processor._detect_latest_frames(
+                latest_frame=latest_frame,
+                yolo_detector=yolo_detector,
+                danger_detector=MagicMock(),
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=MagicMock(),
+                latest_detection=processor._LatestDetectionState(),
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                stop_event=stop_event,
+            )
+
+        yolo_detector.generate_detections.assert_not_called()
+
+    async def test_send_violation_and_notification_casts_violation_id(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        fcm_sender = AsyncMock()
+        violation_sender = AsyncMock()
+        violation_sender.send_violation.return_value = '42'
+        warnings = {'warning_no_hardhat': {'count': 1}}
+
+        with patch(
+            'src.stream_processor.Utils.encode_frame',
+            return_value=b'jpeg',
+        ):
+            result = await processor._send_violation_and_notification(
+                fcm_sender=fcm_sender,
+                violation_sender=violation_sender,
+                site='SiteA',
+                stream_name='Cam1',
+                warnings=warnings,
+                detection_time=datetime.fromtimestamp(1_640_995_200),
+                frame=np.zeros((4, 4, 3), dtype=np.uint8),
+                track_data=[],
+                cone_polys=[],
+                pole_polys=[],
+                current_timestamp=1_640_995_200,
+            )
+
+        self.assertEqual(result, 1_640_995_200)
+        fcm_sender.send_fcm_message_to_site.assert_awaited_once()
+        self.assertEqual(
+            fcm_sender.send_fcm_message_to_site.call_args.kwargs[
+                'violation_id'
+            ],
+            42,
+        )
+
+    async def test_send_violation_and_notification_accepts_non_numeric_id(
+        self,
+    ) -> None:
+        """Exercise this test."""
+        fcm_sender = AsyncMock()
+        violation_sender = AsyncMock()
+        violation_sender.send_violation.return_value = 'bad-id'
+
+        with patch(
+            'src.stream_processor.Utils.encode_frame',
+            return_value=b'jpeg',
+        ):
+            await processor._send_violation_and_notification(
+                fcm_sender=fcm_sender,
+                violation_sender=violation_sender,
+                site='SiteA',
+                stream_name='Cam1',
+                warnings={},
+                detection_time=datetime.fromtimestamp(1_640_995_200),
+                frame=np.zeros((4, 4, 3), dtype=np.uint8),
+                track_data=[],
+                cone_polys=[],
+                pole_polys=[],
+                current_timestamp=1_640_995_200,
+            )
+
+        self.assertIsNone(
+            fcm_sender.send_fcm_message_to_site.call_args.kwargs[
+                'violation_id'
+            ],
+        )
+
+    async def test_publish_requested_overlay_frames_primes_from_capture(
+            self,
+    ) -> None:
+        """Demanded overlay HLS paths are opened before detection finishes."""
+        latest_frame = processor._LatestFrameState()
+        latest_detection = processor._LatestDetectionState()
+        captured_frame = np.full((8, 8, 3), 127, dtype=np.uint8)
+        async with latest_frame.lock:
+            latest_frame.frame = captured_frame.copy()
+            latest_frame.timestamp = 1_640_995_200.0
+            latest_frame.sequence = 1
+            latest_frame.event.set()
+
+        stop_event = asyncio.Event()
+
+        redis_manager = MagicMock()
+
+        async def scan_iter(**_kwargs) -> None:
+            """Support scan_iter."""
+            yield b'media_overlay_demand:hazard_U2l0ZUE_Q2FtMQ:emgtVFc'
+
+        redis_manager.redis.scan_iter = scan_iter
+        redis_manager.redis.set = AsyncMock()
+
+        publisher = AsyncMock()
+
+        async def publish_once(frame: Any) -> None:
+            """Support publish_once.
+
+            Args:
+                frame: Test helper value.
+            """
+            self.assertTrue(np.array_equal(frame, captured_frame))
+            stop_event.set()
+
+        publisher.publish.side_effect = publish_once
+
+        with patch(
+            'src.stream_processor.MediaStreamPublisher',
+            return_value=publisher,
+        ):
+            await asyncio.wait_for(
+                processor._publish_requested_overlay_frames(
+                    latest_frame=latest_frame,
+                    latest_detection=latest_detection,
+                    redis_manager=redis_manager,
+                    media_publish_base='rtsp://media-server:8554',
+                    media_path='hazard_U2l0ZUE_Q2FtMQ',
+                    site='SiteA',
+                    stream_name='Cam1',
+                    stop_event=stop_event,
+                ),
+                timeout=1.0,
+            )
+
+        publisher.publish.assert_awaited_once()
+
+    async def test_publish_requested_overlay_frames_uses_startup_on_no_frame(
+        self,
+    ) -> None:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        latest_detection = processor._LatestDetectionState()
+        stop_event = asyncio.Event()
+        redis_manager = MagicMock()
+
+        async def scan_iter(**_kwargs) -> None:
+            """Support scan_iter."""
+            yield build_overlay_demand_key(
+                'hazard_site_cam',
+                'en',
+            ).encode()
+
+        redis_manager.redis.scan_iter = scan_iter
+        redis_manager.redis.set = AsyncMock()
+        publisher = AsyncMock()
+
+        async def publish_once(frame: Any) -> None:
+            """Support publish_once.
+
+            Args:
+                frame: Test helper value.
+            """
+            self.assertEqual(frame.shape, (720, 1280, 3))
+            stop_event.set()
+
+        publisher.publish.side_effect = publish_once
+
+        with patch(
+            'src.stream_processor.MediaStreamPublisher',
+            return_value=publisher,
+        ):
+            await processor._publish_requested_overlay_frames(
+                latest_frame=latest_frame,
+                latest_detection=latest_detection,
+                redis_manager=redis_manager,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                stop_event=stop_event,
+            )
+
+        publisher.publish.assert_awaited_once()
+
+    async def test_publish_requested_overlay_frames_recovers_from_errors(
+            self,
+    ) -> Any:
+        """Exercise this test."""
+        stop_event = asyncio.Event()
+
+        async def requested_once(*_args) -> None:
+            """Support requested_once."""
+            stop_event.set()
+            raise RuntimeError('redis down')
+
+        async def sleep_noop(_delay: Any) -> Any:
+            """Support sleep_noop.
+
+            Args:
+                _delay: Test helper value.
+            """
+            return None
+
+        with (
+            patch(
+                'src.stream_processor._requested_overlay_languages',
+                side_effect=requested_once,
+            ),
+            patch(
+                'src.stream_processor.asyncio.sleep',
+                side_effect=sleep_noop,
+            ),
+            patch(
+                'src.stream_processor._close_overlay_publishers',
+                new_callable=AsyncMock,
+            ) as close_publishers,
+        ):
+            await processor._publish_requested_overlay_frames(
+                latest_frame=processor._LatestFrameState(),
+                latest_detection=processor._LatestDetectionState(),
+                redis_manager=MagicMock(),
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                stop_event=stop_event,
+            )
+
+        close_publishers.assert_awaited_once()
+
+    async def test_publish_requested_overlay_snapshot_publishes_each_language(
+        self,
+    ) -> None:
+        """Exercise this test."""
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        redis_manager = MagicMock()
+        publishers: dict[str, processor.MediaStreamPublisher] = {}
+
+        with (
+            patch(
+                'src.stream_processor._requested_overlay_languages',
+                new_callable=AsyncMock,
+                return_value={'zh-TW', 'en'},
+            ) as requested,
+            patch(
+                'src.stream_processor._publish_overlay_language_snapshot',
+                new_callable=AsyncMock,
+            ) as publish_language,
+            patch(
+                'src.stream_processor._close_unrequested_overlay_publishers',
+                new_callable=AsyncMock,
+            ) as close_unrequested,
+        ):
+            await processor._publish_requested_overlay_snapshot(
+                redis_manager=redis_manager,
+                overlay_media_publishers=publishers,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                source_frame=frame,
+                warnings={},
+                cone_polys=[],
+                pole_polys=[],
+                track_data=[],
+            )
+
+        requested.assert_awaited_once_with(redis_manager, 'hazard_site_cam')
+        close_unrequested.assert_awaited_once_with(publishers, {'zh-TW', 'en'})
+        self.assertEqual(publish_language.await_count, 2)
+
+    async def test_overlay_language_snapshot_reuses_same_sequence_render(
+        self,
+    ) -> None:
+        """Do not re-render unchanged detection overlays every publish tick."""
+        redis_manager = MagicMock()
+        redis_manager.redis.set = AsyncMock()
+        publisher = AsyncMock()
+        overlay_publishers = cast(
+            dict[str, processor.MediaStreamPublisher],
+            {'zh-TW': publisher},
+        )
+        rendered_cache: dict[str, tuple[int, np.ndarray]] = {}
+        snapshot = processor._OverlaySnapshot(
+            sequence=7,
+            frame=np.full((8, 8, 3), 32, dtype=np.uint8),
+            warnings={'warning_no_hardhat': {'count': 1}},
+            cone_polys=[],
+            pole_polys=[],
+            track_data=[[1, 1, 4, 4, 0.9, 5]],
+        )
+
+        rendered = np.full((8, 8, 3), 200, dtype=np.uint8)
+        with patch(
+            'src.stream_processor._build_media_publish_frame',
+            return_value=rendered,
+        ) as build_frame:
+            await processor._publish_overlay_language_snapshot(
+                redis_manager=redis_manager,
+                overlay_media_publishers=overlay_publishers,
+                rendered_overlay_cache=rendered_cache,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_U2l0ZUE_Q2FtMQ',
+                site='SiteA',
+                stream_name='Cam1',
+                label_language='zh-TW',
+                snapshot=snapshot,
+            )
+            await processor._publish_overlay_language_snapshot(
+                redis_manager=redis_manager,
+                overlay_media_publishers=overlay_publishers,
+                rendered_overlay_cache=rendered_cache,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_U2l0ZUE_Q2FtMQ',
+                site='SiteA',
+                stream_name='Cam1',
+                label_language='zh-TW',
+                snapshot=snapshot,
+            )
+
+        build_frame.assert_called_once()
+        self.assertEqual(publisher.publish.await_count, 2)
+
+    def test_build_media_startup_frame_has_stable_dimensions(self) -> None:
+        """Startup slate can open the annotated media path before capture."""
+        frame = processor._build_media_startup_frame('SiteA', 'Cam1')
+
+        self.assertEqual(frame.shape, (720, 1280, 3))
+        self.assertEqual(frame.dtype, np.uint8)
+
+    async def test_latest_overlay_snapshot_prefers_detection(self) -> None:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        latest_detection = processor._LatestDetectionState()
+        source_frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        detected_frame = np.ones((2, 2, 3), dtype=np.uint8)
+        async with latest_frame.lock:
+            latest_frame.frame = source_frame
+            latest_frame.sequence = 1
+        async with latest_detection.lock:
+            latest_detection.frame = detected_frame
+            latest_detection.sequence = 2
+            latest_detection.warnings = {'warning': {'count': 1}}
+            latest_detection.track_data = [[1, 2, 3, 4, 0.9, 5]]
+
+        snapshot = await processor._latest_overlay_snapshot(
+            latest_frame,
+            latest_detection,
+        )
+
+        assert snapshot is not None
+        self.assertEqual(snapshot.sequence, 2)
+        self.assertTrue(np.array_equal(snapshot.frame, detected_frame))
+        self.assertEqual(snapshot.track_data, [[1, 2, 3, 4, 0.9, 5]])
+
+    async def test_latest_overlay_snapshot_uses_frame_when_no_detection(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        latest_detection = processor._LatestDetectionState()
+        source_frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        async with latest_frame.lock:
+            latest_frame.frame = source_frame
+            latest_frame.sequence = 3
+
+        snapshot = await processor._latest_overlay_snapshot(
+            latest_frame,
+            latest_detection,
+        )
+
+        assert snapshot is not None
+        self.assertEqual(snapshot.sequence, 3)
+        self.assertTrue(np.array_equal(snapshot.frame, source_frame))
+
+    async def test_latest_overlay_snapshot_returns_none_without_frames(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        snapshot = await processor._latest_overlay_snapshot(
+            processor._LatestFrameState(),
+            processor._LatestDetectionState(),
+        )
+
+        self.assertIsNone(snapshot)
+
+    async def test_requested_overlay_languages_filters_invalid_keys(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        media_path = 'hazard_site_cam'
+        valid_key = build_overlay_demand_key(media_path, 'zh-TW')
+        invalid_key = f'{processor.OVERLAY_DEMAND_PREFIX}:{media_path}:中文'
+        redis_manager = MagicMock()
+
+        async def scan_iter(**_kwargs) -> None:
+            """Support scan_iter."""
+            yield valid_key.encode()
+            yield invalid_key
+
+        redis_manager.redis.scan_iter = scan_iter
+
+        languages = await processor._requested_overlay_languages(
+            redis_manager,
+            media_path,
+        )
+
+        self.assertEqual(languages, {'zh-TW'})
+
+    async def test_close_overlay_publishers_closes_all(self) -> None:
+        """Exercise this test."""
+        publisher_a = AsyncMock()
+        publisher_b = AsyncMock()
+        publishers = cast(
+            dict[str, processor.MediaStreamPublisher],
+            {'en': publisher_a, 'zh-TW': publisher_b},
+        )
+
+        await processor._close_overlay_publishers(publishers)
+
+        self.assertEqual(publishers, {})
+        publisher_a.close.assert_awaited_once()
+        publisher_b.close.assert_awaited_once()
+
+    async def test_close_unrequested_overlay_publishers_keeps_requested(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        requested = AsyncMock()
+        unrequested = AsyncMock()
+        publishers = cast(
+            dict[str, processor.MediaStreamPublisher],
+            {'en': requested, 'zh-TW': unrequested},
+        )
+
+        await processor._close_unrequested_overlay_publishers(
+            publishers,
+            {'en'},
+        )
+
+        self.assertEqual(set(publishers), {'en'})
+        requested.close.assert_not_called()
+        unrequested.close.assert_awaited_once()
+
+    def test_drop_unrequested_overlay_cache(self) -> None:
+        """Exercise this test."""
+        cache = {
+            'en': (1, np.zeros((1, 1, 3), dtype=np.uint8)),
+            'zh-TW': (1, np.zeros((1, 1, 3), dtype=np.uint8)),
+        }
+
+        processor._drop_unrequested_overlay_cache(cache, {'en'})
+
+        self.assertEqual(set(cache), {'en'})
+
+    async def test_store_media_server_viewer_data(self) -> None:
+        """Exercise this test."""
+        pipe = MagicMock()
+        pipe.execute = AsyncMock()
+        redis_manager = MagicMock()
+        redis_manager.redis.pipeline.return_value = pipe
+
+        await processor._store_media_server_viewer_data(
+            redis_manager,
+            'stream_metadata:site|cam',
+            warnings={'warning': {'count': 1}},
+        )
+
+        pipe.xadd.assert_called_once_with(
+            'stream_metadata:site|cam',
+            {'has_warning': 'true'},
+            maxlen=10,
+        )
+        pipe.execute.assert_awaited_once()
+
+    def test_csv_env_and_allowed_overlay_languages(self) -> None:
+        """Exercise this test."""
+        with patch.dict(
+            os.environ,
+            {'MEDIA_OVERLAY_ALLOWED_LANGUAGES': ' en,zh-TW,en,bad '},
+        ):
+            self.assertEqual(
+                processor._allowed_overlay_languages(),
+                ('en', 'zh-TW'),
+            )
+
+    def test_allowed_overlay_languages_defaults_to_en_when_empty(self) -> None:
+        """Exercise this test."""
+        with patch.dict(
+            os.environ,
+            {'MEDIA_OVERLAY_ALLOWED_LANGUAGES': 'bad'},
+        ):
+            self.assertEqual(processor._allowed_overlay_languages(), ('en',))
+
+    def test_mark_frame_readonly(self) -> None:
+        """Exercise this test."""
+        frame = np.zeros((2, 2, 3), dtype=np.uint8)
+
+        processor._mark_frame_readonly(frame)
+
+        self.assertFalse(frame.flags.writeable)
+
+    def test_mark_frame_readonly_ignores_arrays_that_cannot_change_flags(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        frame = MagicMock()
+        frame.setflags.side_effect = ValueError
+
+        processor._mark_frame_readonly(frame)
+
+        frame.setflags.assert_called_once_with(write=False)
+
+    def test_resolve_detect_with_server_returns_configured_default(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(processor._resolve_detect_with_server(True))
+
+    def test_build_media_publish_frame_delegates_to_overlay_renderer(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        rendered = np.ones((2, 2, 3), dtype=np.uint8)
+        with patch(
+            'src.stream_processor.render_overlay_array',
+            return_value=rendered,
+        ) as render:
+            result = processor._build_media_publish_frame(
+                frame=frame,
+                warnings={},
+                cone_polys=[],
+                pole_polys=[],
+                track_data=[],
+                label_language='en',
+            )
+
+        self.assertTrue(np.array_equal(result, rendered))
+        render.assert_called_once()
+        self.assertFalse(np.shares_memory(render.call_args.args[0], frame))
+
+    async def test_mark_overlay_ready_uses_ttl(self) -> None:
+        """Exercise this test."""
+        redis_manager = MagicMock()
+        redis_manager.redis.set = AsyncMock()
+
+        with patch.dict(os.environ, {'MEDIA_OVERLAY_READY_TTL_SECONDS': '3'}):
+            await processor._mark_overlay_ready(redis_manager, 'overlay_path')
+
+        redis_manager.redis.set.assert_awaited_once_with(
+            'media_overlay_ready:overlay_path',
+            b'1',
+            ex=5,
+        )
+
+    async def test_publish_latest_clean_frames_waits_for_first_frame(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        stop_event = asyncio.Event()
+        publisher = AsyncMock()
+
+        async def sleep_once(_delay: Any) -> None:
+            """Support sleep_once.
+
+            Args:
+                _delay: Test helper value.
+            """
+            stop_event.set()
+
+        with patch(
+            'src.stream_processor.asyncio.sleep',
+            side_effect=sleep_once,
+        ):
+            await processor._publish_latest_clean_frames(
+                latest_frame,
+                publisher,
+                stop_event,
+            )
+
+        publisher.publish.assert_not_called()
+
+    async def test_publish_latest_clean_frames_recovers_from_publish_errors(
+        self,
+    ) -> None:
+        """Exercise this test."""
+        latest_frame = processor._LatestFrameState()
+        async with latest_frame.lock:
+            latest_frame.frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        stop_event = asyncio.Event()
+        publisher = AsyncMock()
+        publisher.publish.side_effect = RuntimeError('ffmpeg busy')
+
+        async def sleep_once(_delay: Any) -> None:
+            """Support sleep_once.
+
+            Args:
+                _delay: Test helper value.
+            """
+            stop_event.set()
+
+        with patch(
+            'src.stream_processor.asyncio.sleep',
+            side_effect=sleep_once,
+        ):
+            await processor._publish_latest_clean_frames(
+                latest_frame,
+                publisher,
+                stop_event,
+            )
+
+        publisher.publish.assert_awaited_once()
+
     @patch('main.create_pool', new_callable=AsyncMock)
-    async def test_db_pool_created_once(self, mock_create_pool):
+    async def test_ensure_db_pool_rewrites_mysql_default_port(
+        self,
+        mock_create_pool: Any,
+    ) -> None:
+        """Exercise this test."""
+        mock_pool = AsyncMock()
+        mock_create_pool.return_value = mock_pool
+
+        with patch(
+            'main.os.getenv',
+            return_value='mysql://user:pass@db.example/app',
+        ):
+            await self.app._ensure_db_pool()
+
+        self.assertEqual(mock_create_pool.call_args.kwargs['port'], 5432)
+
+    @patch('main.create_pool', new_callable=AsyncMock)
+    async def test_ensure_db_pool_rewrites_mysql_3306_port(
+        self,
+        mock_create_pool: Any,
+    ) -> None:
+        """Exercise this test."""
+        mock_pool = AsyncMock()
+        mock_create_pool.return_value = mock_pool
+
+        with patch(
+            'main.os.getenv',
+            return_value='mysql://user:pass@db.example:3306/app',
+        ):
+            await self.app._ensure_db_pool()
+
+        self.assertEqual(mock_create_pool.call_args.kwargs['port'], 5432)
+
+    def test_ensure_yolo_worker_disabled_stops_existing_workers(self) -> None:
+        """Exercise this test."""
+        self.app.yolo_worker_processes = [MagicMock()]
+        with (
+            patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'}),
+            patch.object(self.app, '_stop_yolo_worker') as stop_worker,
+        ):
+            restarted = self.app._ensure_yolo_worker()
+
+        self.assertTrue(restarted)
+        stop_worker.assert_called_once()
+
+    def test_ensure_yolo_worker_disabled_without_workers_is_noop(self) -> None:
+        """Exercise this test."""
+        with patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'}):
+            self.assertFalse(self.app._ensure_yolo_worker())
+
+    def test_ensure_yolo_worker_keeps_alive_pool(self) -> None:
+        """Exercise this test."""
+        process_a = MagicMock()
+        process_b = MagicMock()
+        process_a.is_alive.return_value = True
+        process_b.is_alive.return_value = True
+        self.app.yolo_worker_processes = [process_a, process_b]
+
+        with patch.dict(
+            os.environ,
+            {'YOLO_WORKER_ENABLED': 'true', 'YOLO_WORKER_COUNT': '2'},
+        ):
+            self.assertFalse(self.app._ensure_yolo_worker())
+
+    def test_ensure_yolo_worker_starts_configured_workers(self) -> None:
+        """Exercise this test."""
+        manager = MagicMock()
+        manager.Queue.side_effect = ['queue-0', 'queue-1']
+        manager.dict.side_effect = [{'result': 0}, {'result': 1}]
+        process_a = MagicMock()
+        process_b = MagicMock()
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    'YOLO_WORKER_ENABLED': 'true',
+                    'YOLO_WORKER_COUNT': '2',
+                    'YOLO_WORKER_DEVICES': 'cuda:0,cuda:1',
+                    'YOLO_WORKER_QUEUE_SIZE': '7',
+                },
+            ),
+            patch('main.multiprocessing.Manager', return_value=manager),
+            patch('main.YoloWorker') as worker_class,
+            patch('main.Process', side_effect=[process_a, process_b]),
+        ):
+            worker_class.return_value.run = MagicMock()
+            restarted = self.app._ensure_yolo_worker()
+
+        self.assertTrue(restarted)
+        self.assertEqual(self.app.yolo_request_queues, ['queue-0', 'queue-1'])
+        self.assertEqual(len(self.app.yolo_result_stores), 2)
+        process_a.start.assert_called_once()
+        process_b.start.assert_called_once()
+        self.assertEqual(manager.Queue.call_args.kwargs['maxsize'], 7)
+
+    def test_yolo_worker_slot_returns_empty_and_stable_assignment(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        self.assertEqual(
+            self.app._yolo_worker_slot(self.dummy_cfg),
+            (None, None),
+        )
+        self.app.yolo_request_queues = ['q0', 'q1']
+        self.app.yolo_result_stores = ['r0', 'r1']
+
+        first = self.app._yolo_worker_slot(self.dummy_cfg)
+        second = self.app._yolo_worker_slot(self.dummy_cfg)
+
+        self.assertEqual(first, second)
+        self.assertIn(first[0], {'q0', 'q1'})
+
+    def test_restart_reason_covers_all_reasons(self) -> None:
+        """Exercise this test."""
+        proc = MagicMock()
+        proc.is_alive.return_value = False
+        info = {
+            'updated_at': 'old',
+            'process': proc,
+        }
+        cfg = dict(self.dummy_cfg)
+        cfg['updated_at'] = 'new'
+        self.assertEqual(
+            self.app._restart_reason(info, cfg),
+            'updated_at changed',
+        )
+
+        cfg['updated_at'] = 'old'
+        self.assertEqual(self.app._restart_reason(info, cfg), 'process exited')
+        proc.is_alive.return_value = True
+        self.assertEqual(
+            self.app._restart_reason(info, cfg),
+            'YOLO worker restarted',
+        )
+
+    async def test_restart_stream_process_updates_running_process(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        old_proc = MagicMock()
+        new_proc = MagicMock()
+        old_cfg = dict(self.dummy_cfg)
+        old_cfg['store_in_redis'] = True
+        proc_info = {
+            'process': old_proc,
+            'updated_at': old_cfg['updated_at'],
+            'cfg': old_cfg,
+        }
+        cfg = dict(self.dummy_cfg)
+        cfg['updated_at'] = 'new'
+
+        with (
+            patch.object(self.app, 'stop_process') as stop_process,
+            patch.object(
+                self.app,
+                '_delete_stream_redis_keys',
+                new_callable=AsyncMock,
+            ) as delete_keys,
+            patch.object(
+                self.app,
+                'start_process',
+                return_value=new_proc,
+            ) as start_process,
+        ):
+            await self.app._restart_stream_process(
+                self.dummy_cfg['video_url'],
+                proc_info,
+                cfg,
+            )
+
+        stop_process.assert_called_once_with(old_proc)
+        delete_keys.assert_awaited_once_with(old_cfg)
+        start_process.assert_called_once_with(cfg)
+        self.assertIs(
+            self.app.running_processes[self.dummy_cfg['video_url']]['process'],
+            new_proc,
+        )
+
+    def test_stop_process_kills_still_alive_process(self) -> None:
+        """Exercise this test."""
+        proc = MagicMock()
+        proc.is_alive.return_value = True
+
+        self.app.stop_process(proc)
+
+        proc.terminate.assert_called_once()
+        proc.kill.assert_called_once()
+        self.assertEqual(proc.join.call_count, 2)
+
+    def test_stop_process_logs_errors(self) -> None:
+        """Exercise this test."""
+        proc = MagicMock()
+        proc.terminate.side_effect = RuntimeError('boom')
+
+        self.app.stop_process(proc)
+
+        self.mock_logger.error.assert_called_once()
+
+    async def test_cleanup_resources_stops_executor_workers_and_db(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        proc = MagicMock()
+        executor = MagicMock()
+        db_pool = MagicMock()
+        db_pool.close = AsyncMock()
+        self.app.running_processes = {
+            'rtsp://cam': {'process': proc},
+        }
+        self.app.process_executor = executor
+        self.app.db_pool = db_pool
+
+        with patch.object(self.app, '_stop_yolo_worker') as stop_worker:
+            await self.app.cleanup_resources()
+
+        proc.terminate.assert_called_once()
+        executor.shutdown.assert_called_once_with(wait=True)
+        stop_worker.assert_called_once()
+        db_pool.close.assert_awaited_once()
+        self.assertIsNone(self.app.db_pool)
+
+    async def test_reset_db_pool_ignores_close_errors(self) -> None:
+        """Exercise this test."""
+        db_pool = MagicMock()
+        db_pool.close = AsyncMock(side_effect=RuntimeError('closed'))
+        self.app.db_pool = db_pool
+
+        await self.app._reset_db_pool()
+
+        self.assertIsNone(self.app.db_pool)
+        db_pool.close.assert_awaited_once()
+
+    def test_stop_yolo_worker_signals_kills_and_shuts_down_manager(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        bad_queue = MagicMock()
+        bad_queue.put.side_effect = RuntimeError('queue closed')
+        good_queue = MagicMock()
+        alive_process = MagicMock()
+        alive_process.is_alive.return_value = True
+        stopped_process = MagicMock()
+        stopped_process.is_alive.return_value = False
+        manager = MagicMock()
+        self.app.yolo_request_queues = [bad_queue, good_queue]
+        self.app.yolo_result_stores = [{'x': 1}]
+        self.app.yolo_worker_processes = [alive_process, stopped_process]
+        self.app.yolo_manager = manager
+
+        self.app._stop_yolo_worker()
+
+        good_queue.put.assert_called_once_with(main.YOLO_WORKER_STOP_MESSAGE)
+        alive_process.kill.assert_called_once()
+        manager.shutdown.assert_called_once()
+        self.assertEqual(self.app.yolo_request_queues, [])
+        self.assertEqual(self.app.yolo_result_stores, [])
+        self.assertEqual(self.app.yolo_worker_processes, [])
+        self.assertIsNone(self.app.yolo_manager)
+
+    async def test_run_logs_unexpected_errors_and_cleans_up(self) -> None:
+        """Exercise this test."""
+        with (
+            patch.object(
+                self.app,
+                'poll_and_reload',
+                new_callable=AsyncMock,
+                side_effect=RuntimeError('boom'),
+            ),
+            patch.object(
+                self.app,
+                'cleanup_resources',
+                new_callable=AsyncMock,
+            ) as cleanup,
+        ):
+            await self.app.run()
+
+        self.mock_logger.error.assert_called_once()
+        cleanup.assert_awaited_once()
+
+    def test_csv_env_defaults_when_empty(self) -> None:
+        """Exercise this test."""
+        with patch.dict(os.environ, {'TEST_CSV_ENV': ' , '}):
+            self.assertEqual(
+                main._csv_env('TEST_CSV_ENV', 'cuda:0'),
+                ['cuda:0'],
+            )
+
+    def test_main_module_entrypoint_runs_main(self) -> None:
+        """Exercise this test."""
+        with (
+            patch('multiprocessing.set_start_method') as set_start_method,
+            patch('asyncio.run') as run,
+        ):
+            run.side_effect = lambda coro: coro.close()
+            runpy.run_path('main.py', run_name='__main__')
+
+        set_start_method.assert_called_once_with('spawn', force=True)
+        run.assert_called_once()
+
+    @patch('main.create_pool', new_callable=AsyncMock)
+    async def test_db_pool_created_once(self, mock_create_pool: Any) -> None:
         """Test that database pool is only created once."""
         mock_pool = AsyncMock()
         mock_create_pool.return_value = mock_pool
@@ -199,7 +2052,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_create_pool.assert_called_once()
 
     @patch('main.os.getenv')
-    async def test_ensure_db_pool_missing_database_url(self, mock_getenv):
+    async def test_ensure_db_pool_missing_database_url(
+            self, mock_getenv: Any,
+    ) -> None:
         """
         Test that _ensure_db_pool raises RuntimeError
         when DATABASE_URL is None.
@@ -217,7 +2072,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_getenv.assert_called_with('DATABASE_URL')
 
     @patch('main.MainApp.fetch_stream_configs')
-    async def test_reload_config_adds_new_stream(self, mock_fetch):
+    async def test_reload_config_adds_new_stream(
+            self, mock_fetch: Any,
+    ) -> None:
         """Test launching a new stream process."""
         mock_cfg = self.dummy_cfg.copy()
         mock_fetch.return_value = [mock_cfg]
@@ -231,7 +2088,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             mock_start.assert_called_once()
 
     @patch('main.MainApp.fetch_stream_configs')
-    async def test_reload_config_stops_expired_stream(self, mock_fetch):
+    async def test_reload_config_stops_expired_stream(
+            self, mock_fetch: Any,
+    ) -> None:
         """Test stopping an expired stream process."""
         expired_date = (datetime.now() - timedelta(days=1)).isoformat()
         mock_cfg = self.dummy_cfg.copy()
@@ -247,7 +2106,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_fetch.return_value = []  # Simulate deletion or expiry
 
         with patch(
-            'main.RedisManager.delete',
+            'main.delete_stream_live_metadata',
             new_callable=AsyncMock,
         ) as mock_del:
             await self.app.reload_configurations()
@@ -255,7 +2114,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             mock_del.assert_awaited()
 
     @patch('main.MainApp.fetch_stream_configs')
-    async def test_reload_config_restarts_updated_stream(self, mock_fetch):
+    async def test_reload_config_restarts_updated_stream(
+            self, mock_fetch: Any,
+    ) -> None:
         """Test that stream process is restarted if updated_at has changed."""
         video_url = self.dummy_cfg['video_url']
         old_cfg = self.dummy_cfg.copy()
@@ -273,8 +2134,13 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         mock_fetch.return_value = [new_cfg]
 
-        with patch('main.MainApp.start_process') as mock_start, \
-                patch('main.RedisManager.delete', new_callable=AsyncMock):
+        with (
+            patch('main.MainApp.start_process') as mock_start,
+            patch(
+                'main.delete_stream_live_metadata',
+                new_callable=AsyncMock,
+            ),
+        ):
             mock_start.return_value = MagicMock()
             await self.app.reload_configurations()
             mock_proc.terminate.assert_called_once()
@@ -283,7 +2149,62 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             mock_start.assert_called_once()
 
     @patch('main.MainApp.fetch_stream_configs')
-    async def test_reload_config_skips_expired_config(self, mock_fetch):
+    async def test_reload_config_restarts_dead_stream(
+            self, mock_fetch: Any,
+    ) -> None:
+        """Test that a dead stream process is relaunched."""
+        cfg = self.dummy_cfg.copy()
+        mock_proc = MagicMock()
+        mock_proc.is_alive.return_value = False
+        self.app.running_processes[cfg['video_url']] = {
+            'process': mock_proc,
+            'updated_at': cfg['updated_at'],
+            'cfg': cfg,
+        }
+        mock_fetch.return_value = [cfg]
+
+        with patch('main.MainApp.start_process') as mock_start:
+            mock_start.return_value = MagicMock()
+            await self.app.reload_configurations()
+
+        mock_proc.terminate.assert_called_once()
+        mock_start.assert_called_once_with(cfg)
+        self.assertIs(
+            self.app.running_processes[cfg['video_url']]['process'],
+            mock_start.return_value,
+        )
+
+    @patch('main.MainApp.fetch_stream_configs')
+    async def test_reload_config_restarts_after_worker_restart(
+        self,
+        mock_fetch: Any,
+    ) -> None:
+        """Test that streams receive fresh queues after worker restart."""
+        cfg = self.dummy_cfg.copy()
+        mock_proc = MagicMock()
+        mock_proc.is_alive.return_value = True
+        self.app.running_processes[cfg['video_url']] = {
+            'process': mock_proc,
+            'updated_at': cfg['updated_at'],
+            'cfg': cfg,
+        }
+        self.app.yolo_worker_processes = [MagicMock()]
+        mock_fetch.return_value = [cfg]
+
+        with (
+            patch.object(self.app, '_ensure_yolo_worker', return_value=True),
+            patch('main.MainApp.start_process') as mock_start,
+        ):
+            mock_start.return_value = MagicMock()
+            await self.app.reload_configurations()
+
+        mock_proc.terminate.assert_called_once()
+        mock_start.assert_called_once_with(cfg)
+
+    @patch('main.MainApp.fetch_stream_configs')
+    async def test_reload_config_skips_expired_config(
+            self, mock_fetch: Any,
+    ) -> None:
         """Test that expired configs are not started."""
         expired_cfg = self.dummy_cfg.copy()
         expired_cfg['expire_date'] = (
@@ -296,9 +2217,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             mock_start.assert_not_called()
 
     @patch('main.MainApp.reload_configurations')
-    async def test_poll_and_reload_runs_once(self, mock_reload):
+    async def test_poll_and_reload_runs_once(self, mock_reload: Any) -> None:
         """Test polling loop executes reload and waits."""
-        async def stop_after_one():
+        async def stop_after_one() -> None:
+            """Support stop_after_one."""
             await asyncio.sleep(0.01)
             raise KeyboardInterrupt()
 
@@ -309,11 +2231,14 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_reload.assert_called_once()
 
     @patch('main.MainApp.reload_configurations')
-    async def test_poll_and_reload_exception_handling(self, mock_reload):
+    async def test_poll_and_reload_exception_handling(
+            self, mock_reload: Any,
+    ) -> None:
         """Test that poll_and_reload handles exceptions and continues."""
         call_count = 0
 
-        async def side_effect():
+        async def side_effect() -> None:
+            """Support side_effect."""
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -329,7 +2254,33 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # Should be called twice (once with exception, once to stop)
         self.assertEqual(mock_reload.call_count, 2)
 
-    async def test_app_run_method(self):
+    @patch('main.MainApp.reload_configurations')
+    async def test_poll_and_reload_resets_pool_on_timeout(
+            self, mock_reload: Any,
+    ) -> None:
+        """Test that DB pool is reset after a reload timeout."""
+        call_count = 0
+        db_pool = MagicMock()
+        db_pool.close = AsyncMock()
+        self.app.db_pool = db_pool
+
+        async def side_effect() -> None:
+            """Support side_effect."""
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise TimeoutError('db timed out')
+            raise KeyboardInterrupt()
+
+        mock_reload.side_effect = side_effect
+
+        with self.assertRaises(KeyboardInterrupt):
+            await self.app.poll_and_reload()
+
+        db_pool.close.assert_awaited_once()
+        self.assertIsNone(self.app.db_pool)
+
+    async def test_app_run_method(self) -> None:
         """Test the run method calls poll_and_reload."""
         with patch.object(self.app, 'poll_and_reload') as mock_poll, \
                 patch.object(self.app, 'cleanup_resources') as mock_cleanup:
@@ -344,7 +2295,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             mock_cleanup.assert_called_once()
 
     @patch('main.MainApp.fetch_stream_configs')
-    async def test_reload_config_with_store_redis_false(self, mock_fetch):
+    async def test_reload_config_with_store_redis_false(
+            self, mock_fetch: Any,
+    ) -> None:
         """Test reload_configurations with store_in_redis=False."""
         expired_cfg = self.dummy_cfg.copy()
         expired_cfg['expire_date'] = (
@@ -360,13 +2313,15 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         mock_fetch.return_value = []
 
-        # Should not call RedisManager.delete since store_in_redis is False
-        with patch('main.RedisManager') as mock_redis_class:
+        # Should not delete live metadata since store_in_redis is False
+        with patch('main.delete_stream_live_metadata') as mock_redis_class:
             await self.app.reload_configurations()
             mock_redis_class.assert_not_called()
 
     @patch('main.MainApp.fetch_stream_configs')
-    async def test_reload_config_redis_cleanup_on_restart(self, mock_fetch):
+    async def test_reload_config_redis_cleanup_on_restart(
+            self, mock_fetch: Any,
+    ) -> None:
         """
         Test Redis cleanup during stream restart when store_in_redis=True.
         """
@@ -388,31 +2343,26 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         mock_fetch.return_value = [new_cfg]
 
-        with patch('main.MainApp.start_process') as mock_start, \
-                patch('main.RedisManager') as mock_redis_class, \
-                patch('main.Utils.encode') as mock_encode:
+        with (
+            patch('main.MainApp.start_process') as mock_start,
+            patch(
+                'main.delete_stream_live_metadata',
+                new_callable=AsyncMock,
+            ) as mock_delete,
+        ):
 
             mock_start.return_value = MagicMock()
-            mock_redis_instance = AsyncMock()
-            mock_redis_class.return_value = mock_redis_instance
-            mock_encode.side_effect = lambda x: f"encoded_{x}"
 
             await self.app.reload_configurations()
 
-            # Verify Redis cleanup was called for restart
-            mock_redis_instance.delete.assert_awaited_once()
-            expected_key = (
-                f"stream_frame:encoded_{old_cfg['site']}|"
-                f"encoded_{old_cfg['stream_name']}"
-            )
-            mock_redis_instance.delete.assert_awaited_with(expected_key)
+            mock_delete.assert_awaited_once_with(old_cfg)
 
     @patch('main.print')
     @patch('main.MainApp')
     @patch('main.argparse.ArgumentParser.parse_args')
     async def test_main_function_keyboard_interrupt(
-        self, mock_args, mock_app_class, mock_print,
-    ):
+        self, mock_args: Any, mock_app_class: Any, mock_print: Any,
+    ) -> None:
         """Test main function handles KeyboardInterrupt."""
         from main import main as main_func
 
@@ -422,6 +2372,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         )()
         mock_app = MagicMock()  # Use MagicMock instead of AsyncMock
         mock_app.run = AsyncMock(side_effect=KeyboardInterrupt())
+        mock_app.cleanup_resources = AsyncMock()
         mock_app.running_processes = {}
         mock_app.db_pool = None
         mock_app_class.return_value = mock_app
@@ -431,12 +2382,13 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_print.assert_called_with(
             '\n[INFO] KeyboardInterrupt, shutting down...',
         )
+        mock_app.cleanup_resources.assert_awaited_once()
 
     @patch('main.MainApp')
     @patch('main.argparse.ArgumentParser.parse_args')
     async def test_main_function_with_db_cleanup(
-        self, mock_args, mock_app_class,
-    ):
+        self, mock_args: Any, mock_app_class: Any,
+    ) -> None:
         """Test main function with database cleanup."""
         from main import main as main_func
 
@@ -446,6 +2398,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         )()
         mock_app = MagicMock()  # Use MagicMock instead of AsyncMock
         mock_app.run = AsyncMock(side_effect=KeyboardInterrupt())
+        mock_app.cleanup_resources = AsyncMock()
 
         # Mock running processes
         self.mock_process = MagicMock()
@@ -454,9 +2407,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         }
 
         # Mock database pool
-        self.mock_db_pool = MagicMock()  # Use MagicMock instead of AsyncMock
-        self.mock_db_pool.close = MagicMock()  # Non-async close
-        self.mock_db_pool.wait_closed = AsyncMock()  # But wait_closed is async
+        self.mock_db_pool = MagicMock()
+        self.mock_db_pool.close = AsyncMock()
         mock_app.db_pool = self.mock_db_pool
         mock_app.stop_process = MagicMock()
 
@@ -464,18 +2416,20 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         await main_func()
 
-        # Assert cleanup calls after main_func
-        mock_app.stop_process.assert_called_once_with(self.mock_process)
-        self.mock_db_pool.close.assert_called_once()
-        self.mock_db_pool.wait_closed.assert_awaited_once()
+        mock_app.cleanup_resources.assert_awaited_once()
 
+    @patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'})
     @patch('main.Process')
     @patch('main.json.load')
     @patch('main.open', create=True)
     @patch('main.argparse.ArgumentParser.parse_args')
     async def test_main_function_json_config(
-        self, mock_args, mock_open, mock_json_load, mock_process_class,
-    ):
+        self,
+        mock_args: Any,
+        mock_open: Any,
+        mock_json_load: Any,
+        mock_process_class: Any,
+    ) -> None:
         """Test main function with --config argument (JSON file)."""
         from main import main as main_func
 
@@ -489,7 +2443,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # Make is_alive return True once, then always False to
         # avoid StopIteration
 
-        def is_alive_side_effect():
+        def is_alive_side_effect() -> None:
+            """Support is_alive_side_effect."""
             yield True
             while True:
                 yield False
@@ -500,11 +2455,12 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         await main_func()
 
         mock_process_class.assert_called_once_with(
-            target=process_single_stream, args=(self.dummy_cfg,),
+            target=process_single_stream, args=(self.dummy_cfg, None, None),
         )
         mock_proc.start.assert_called_once()
         mock_proc.join.assert_called()
 
+    @patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'})
     @patch('main.print')
     @patch('main.Process')
     @patch('main.json.load')
@@ -512,12 +2468,12 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
     @patch('main.argparse.ArgumentParser.parse_args')
     async def test_main_function_json_config_keyboard_interrupt(
         self,
-        mock_args,
-        _mock_open,
-        mock_json_load,
-        mock_process_class,
-        mock_print,
-    ):
+        mock_args: Any,
+        _mock_open: Any,
+        mock_json_load: Any,
+        mock_process_class: Any,
+        mock_print: Any,
+    ) -> Any:
         """
         Test main function with JSON config handling KeyboardInterrupt
         """
@@ -537,7 +2493,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # Track call count to is_alive
         call_count = 0
 
-        def is_alive_side_effect():
+        def is_alive_side_effect() -> Any:
+            """Support is_alive_side_effect."""
             nonlocal call_count
             call_count += 1
             # First two calls return True (enter while loop)
@@ -551,7 +2508,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # simulate user interruption
         join_call_count = 0
 
-        def join_side_effect(*args, **kwargs):
+        def join_side_effect(*args, **kwargs) -> Any:
+            """Support join_side_effect."""
             nonlocal join_call_count
             join_call_count += 1
             if join_call_count == 1:
@@ -573,13 +2531,18 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # Verify process cleanup in finally block
         mock_process.terminate.assert_called()
 
+    @patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'})
     @patch('main.Process')
     @patch('main.json.load')
     @patch('main.open', create=True)
     @patch('main.argparse.ArgumentParser.parse_args')
     async def test_main_function_json_config_alive_process_cleanup(
-        self, mock_args, mock_open, mock_json_load, mock_process_class,
-    ):
+        self,
+        mock_args: Any,
+        mock_open: Any,
+        mock_json_load: Any,
+        mock_process_class: Any,
+    ) -> Any:
         """
         Test main function JSON config with alive process cleanup
         """
@@ -599,7 +2562,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # Make is_alive return False for while loop exit, but True in finally
         call_count = 0
 
-        def is_alive_side_effect():
+        def is_alive_side_effect() -> Any:
+            """Support is_alive_side_effect."""
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -622,7 +2586,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(mock_process.join.call_count >= 1)
 
     @patch('main.process_single_stream')
-    def test_process_single_stream_basic(self, mock_process_func):
+    def test_process_single_stream_basic(self, mock_process_func: Any) -> None:
         """Test that process_single_stream can be called."""
         # Import the function to test
         from main import process_single_stream
@@ -640,72 +2604,23 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             # If there are dependency issues, that's okay for coverage
             pass
 
-    @patch('main.asyncio.run')
-    @patch('main.StreamCapture')
-    @patch('main.LiveStreamDetector')
-    @patch('main.DangerDetector')
-    @patch('main.FCMSender')
-    @patch('main.ViolationSender')
-    @patch('main.BackendFrameSender')
-    @patch('main.RedisManager')
-    @patch('main.Utils')
-    @patch('main.os.getenv')
-    def test_process_single_stream_coverage(
-        self, mock_getenv, mock_utils, mock_redis_mgr,
-        mock_frame_sender, mock_violation_sender,
-        mock_fcm_sender, mock_danger_detector,
-        mock_live_detector, mock_stream_capture,
-        mock_asyncio_run,
-    ):
-        """Test process_single_stream function for coverage."""
-        from main import process_single_stream
-
-        # Mock environment variables
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_API_URL': 'http://detect.test',
-            'FCM_API_URL': 'http://fcm.test',
-            'VIOLATION_RECORD_API_URL': 'http://violation.test',
-            'STREAMING_API_URL': 'http://streaming.test',
-        }.get(key, '')
-
-        # Mock Utils methods
-        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
-        mock_utils.filter_warnings_by_working_hour.return_value = [
-            'test warning',
-        ]
-        mock_utils.encode_frame.return_value = b'frame_bytes'
-        mock_utils.should_notify.return_value = True
-
-        # Mock the async function to avoid actual execution
-        async def mock_main():
-            pass
-
-        mock_asyncio_run.side_effect = lambda func: None
-
-        cfg = self.dummy_cfg.copy()
-        cfg['store_in_redis'] = True
-
-        # Call the function to cover the code path
-        process_single_stream(cfg)
-
-        # Verify asyncio.run was called
-        mock_asyncio_run.assert_called_once()
-
-    def test_module_level_imports(self):
+    def test_module_level_imports(self) -> None:
         """Test module level code coverage."""
         # This test covers the module-level imports and load_dotenv() call
         self.assertTrue(hasattr(main, 'MainApp'))
         self.assertTrue(hasattr(main, 'StreamConfig'))
         self.assertTrue(hasattr(main, 'process_single_stream'))
 
-    def test_if_main_block_coverage(self):
+    def test_if_main_block_coverage(self) -> None:
         """Test coverage of the if __name__ == '__main__' block."""
         # Verify that the multiprocessing module
         # has the set_start_method function
         self.assertTrue(hasattr(multiprocessing, 'set_start_method'))
 
     @patch('main.create_pool', new_callable=AsyncMock)
-    async def test_fetch_stream_configs_with_data(self, mock_create_pool):
+    async def test_fetch_stream_configs_with_data(
+            self, mock_create_pool: Any,
+    ) -> None:
         """Test fetch_stream_configs with actual database data."""
         # Create a simpler mock that bypasses
         # the complex async context manager setup
@@ -759,8 +2674,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
     @patch('main.create_pool', new_callable=AsyncMock)
     async def test_fetch_stream_configs_with_null_values(
-        self, mock_create_pool,
-    ):
+        self, mock_create_pool: Any,
+    ) -> None:
         """Test fetch_stream_configs with null values in database."""
         # Create a simpler mock that
         # bypasses the complex async context manager setup
@@ -802,8 +2717,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
     @patch('main.create_pool', new_callable=AsyncMock)
     async def test_fetch_stream_configs_database_operations(
-        self, mock_create_pool,
-    ):
+        self, mock_create_pool: Any,
+    ) -> Any:
         """
         Test the actual database operation code paths in fetch_stream_configs.
         """
@@ -829,24 +2744,21 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             1,  # machine_close_pole
         )
 
-        # Create a proper async context manager mock
-        cursor_mock = AsyncMock()
-        cursor_mock.execute = AsyncMock()
-        cursor_mock.fetchall = AsyncMock(return_value=[mock_row])
-
         class MockConnection:
-            def cursor(self):
-                class MockCursor:
-                    async def __aenter__(self):
-                        return cursor_mock
+            """Tests for MockConnection."""
 
-                    async def __aexit__(self, exc_type, exc_val, exc_tb):
-                        return None
-                return MockCursor()
+            async def fetch(self, *args, **kwargs) -> Any:
+                """Support fetch."""
+                return [mock_row]
 
         class MockPool:
-            def acquire(self):
+            """Tests for MockPool."""
+
+            def acquire(self) -> Any:
+                """Support acquire."""
                 class MockAcquire:
+                    """Tests for MockAcquire."""
+
                     async def __aenter__(self):
                         return MockConnection()
 
@@ -872,1088 +2784,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(detection_items['detect_no_safety_vest_or_helmet'])
         self.assertFalse(detection_items['detect_near_machinery_or_vehicle'])
         self.assertTrue(detection_items['detect_in_restricted_area'])
-
-    @patch('main.asyncio.run')
-    @patch('main.StreamCapture')
-    @patch('main.LiveStreamDetector')
-    @patch('main.DangerDetector')
-    @patch('main.FCMSender')
-    @patch('main.ViolationSender')
-    @patch('main.BackendFrameSender')
-    @patch('main.RedisManager')
-    @patch('main.Utils')
-    @patch('main.os.getenv')
-    @patch('main.time.time')
-    @patch('main.datetime')
-    @patch('main.json.dumps')
-    @patch('main.math.floor')
-    @patch('main.gc.collect')
-    def test_process_single_stream_full_async_execution(
-        self, mock_gc, mock_floor, mock_json_dumps,
-        mock_datetime_class, mock_time, mock_getenv,
-        mock_utils, mock_redis_mgr, mock_frame_sender,
-        mock_violation_sender, mock_fcm_sender,
-        mock_danger_detector, mock_live_detector,
-        mock_stream_capture, mock_asyncio_run,
-    ):
-        """
-        Test process_single_stream with full async execution to
-        cover the loop and processing logic.
-        """
-        from main import process_single_stream
-
-        # Mock environment variables
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_API_URL': 'http://detect.test',
-            'FCM_API_URL': 'http://fcm.test',
-            'VIOLATION_RECORD_API_URL': 'http://violation.test',
-            'STREAMING_API_URL': 'http://streaming.test',
-        }.get(key, '')
-
-        # Mock time and datetime
-        mock_time.side_effect = [1000.0, 1002.5]  # start time, end time
-        mock_datetime_instance = MagicMock()
-        mock_datetime_instance.hour = 10  # Working hours
-        mock_datetime_class.fromtimestamp.return_value = mock_datetime_instance
-        mock_floor.return_value = 2
-
-        # Mock Utils
-        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
-        mock_utils.filter_warnings_by_working_hour.return_value = [
-            'test warning',
-        ]
-        mock_utils.encode_frame.return_value = b'frame_bytes'
-        mock_utils.should_notify.return_value = True
-
-        # Mock JSON dumps
-        mock_json_dumps.return_value = '{"test": "data"}'
-        # Mock streaming capture with proper async generator
-        mock_capture_instance = AsyncMock()
-        mock_stream_capture.return_value = mock_capture_instance
-
-        # Create mock frame with shape attribute
-        mock_frame = MagicMock()
-        mock_frame.shape = [480, 640, 3]  # height, width, channels
-
-        # Mock execute_capture to return the async generator directly
-        mock_capture_instance.execute_capture = MagicMock(
-            return_value=AsyncFrameGenerator(),
-        )
-        mock_capture_instance.release_resources = AsyncMock()
-        mock_capture_instance.update_capture_interval = MagicMock()
-
-        # Mock detector responses
-        mock_live_instance = AsyncMock()
-        mock_live_detector.return_value = mock_live_instance
-        mock_live_instance.generate_detections = AsyncMock(
-            return_value=(
-                {'test': 'data'}, {'track': 'data'},
-            ),
-        )
-        mock_live_instance.close = AsyncMock()
-
-        mock_danger_instance = MagicMock()
-        mock_danger_detector.return_value = mock_danger_instance
-        mock_danger_instance.detect_danger.return_value = (
-            ['warning'], [{'cone': 'poly'}], [{'pole': 'poly'}],
-        )
-
-        # Mock senders
-        mock_fcm_instance = AsyncMock()
-        mock_fcm_sender.return_value = mock_fcm_instance
-        mock_fcm_instance.send_fcm_message_to_site = AsyncMock()
-
-        mock_violation_instance = AsyncMock()
-        mock_violation_sender.return_value = mock_violation_instance
-        mock_violation_instance.send_violation = AsyncMock(return_value='123')
-
-        mock_frame_instance = AsyncMock()
-        mock_frame_sender.return_value = mock_frame_instance
-        mock_frame_instance.send_optimized_frame = AsyncMock(
-            return_value={'status': 'ok'},
-        )
-        mock_frame_instance.close = AsyncMock()
-
-        # Mock Redis manager
-        mock_redis_instance = AsyncMock()
-        mock_redis_mgr.return_value = mock_redis_instance
-        mock_redis_instance.delete = AsyncMock()
-        # Actually execute the async function to cover the loop logic
-
-        def mock_run(coro):
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(coro)
-                return result
-            finally:
-                # Clean up any remaining tasks to avoid warnings
-                pending = asyncio.all_tasks(loop)
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(
-                            *pending, return_exceptions=True,
-                        ),
-                    )
-                loop.close()
-
-        mock_asyncio_run.side_effect = mock_run
-
-        cfg = self.dummy_cfg.copy()
-        cfg['store_in_redis'] = True
-
-        # Call the function to execute the full async logic
-        process_single_stream(cfg)
-
-        # Verify key async operations were called
-        mock_live_instance.generate_detections.assert_awaited()
-        mock_violation_instance.send_violation.assert_awaited()
-        mock_fcm_instance.send_fcm_message_to_site.assert_awaited()
-        mock_frame_instance.send_optimized_frame.assert_awaited()
-        mock_capture_instance.release_resources.assert_awaited()
-        mock_live_instance.close.assert_awaited()
-        mock_redis_instance.delete.assert_awaited()
-
-    @patch('main.asyncio.run')
-    @patch('main.StreamCapture')
-    @patch('main.LiveStreamDetector')
-    @patch('main.DangerDetector')
-    @patch('main.FCMSender')
-    @patch('main.ViolationSender')
-    @patch('main.BackendFrameSender')
-    @patch('main.RedisManager')
-    @patch('main.Utils')
-    @patch('main.os.getenv')
-    @patch('main.time.time')
-    @patch('main.datetime')
-    @patch('main.json.dumps')
-    @patch('main.math.floor')
-    @patch('main.gc.collect')
-    def test_process_single_stream_no_redis_path(
-        self, mock_gc, mock_floor, mock_json_dumps,
-        mock_datetime_class, mock_time, mock_getenv,
-        mock_utils, mock_redis_mgr, mock_frame_sender,
-        mock_violation_sender, mock_fcm_sender,
-        mock_danger_detector, mock_live_detector,
-        mock_stream_capture, mock_asyncio_run,
-    ):
-        """
-        Test process_single_stream with store_in_redis=False path to
-        cover the logic where no Redis operations are performed.
-        """
-        from main import process_single_stream
-
-        # Mock environment variables
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_API_URL': 'http://detect.test',
-            'FCM_API_URL': 'http://fcm.test',
-            'VIOLATION_RECORD_API_URL': 'http://violation.test',
-            'STREAMING_API_URL': 'http://streaming.test',
-        }.get(key, '')
-
-        # Mock time and datetime
-        mock_time.side_effect = [1000.0, 1002.5]
-        mock_datetime_instance = MagicMock()
-        mock_datetime_instance.hour = 10  # Working hours
-        mock_datetime_class.fromtimestamp.return_value = mock_datetime_instance
-        mock_floor.return_value = 2
-
-        # Mock Utils
-        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
-        mock_utils.filter_warnings_by_working_hour.return_value = (
-            []  # No warnings
-        )
-        mock_utils.encode_frame.return_value = b'frame_bytes'
-        mock_utils.should_notify.return_value = False  # No notification needed
-
-        # Mock JSON dumps
-        mock_json_dumps.return_value = '{"test": "data"}'
-
-        # Mock streaming capture
-        mock_capture_instance = AsyncMock()
-        mock_stream_capture.return_value = mock_capture_instance
-
-        # Create mock frame with shape attribute
-        mock_frame = MagicMock()
-        mock_frame.shape = [480, 640, 3]
-
-        # Mock execute_capture to return the async generator directly
-        mock_capture_instance.execute_capture = MagicMock(
-            return_value=AsyncFrameGenerator(),
-        )
-        mock_capture_instance.release_resources = AsyncMock()
-        mock_capture_instance.update_capture_interval = MagicMock()
-
-        # Mock detector responses
-        mock_live_instance = AsyncMock()
-        mock_live_detector.return_value = mock_live_instance
-        mock_live_instance.generate_detections = AsyncMock(
-            return_value=(
-                {'test': 'data'}, {'track': 'data'},
-            ),
-        )
-        mock_live_instance.close = AsyncMock()
-
-        mock_danger_instance = MagicMock()
-        mock_danger_detector.return_value = mock_danger_instance
-        mock_danger_instance.detect_danger.return_value = (
-            [], [], [],  # No warnings, cones, or poles
-        )
-
-        # Mock senders
-        mock_fcm_instance = AsyncMock()
-        mock_fcm_sender.return_value = mock_fcm_instance
-
-        mock_violation_instance = AsyncMock()
-        mock_violation_sender.return_value = mock_violation_instance
-
-        mock_frame_instance = AsyncMock()
-        mock_frame_sender.return_value = mock_frame_instance
-        mock_frame_instance.send_optimized_frame = AsyncMock(
-            return_value={'status': 'ok'},
-        )
-        mock_frame_instance.close = AsyncMock()
-
-        # Mock Redis manager
-        mock_redis_instance = AsyncMock()
-        mock_redis_mgr.return_value = mock_redis_instance
-
-        # Execute the async function
-        def mock_run(coro):
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(coro)
-                return result
-            finally:
-                # Clean up any remaining tasks to avoid warnings
-                pending = asyncio.all_tasks(loop)
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(
-                            *pending, return_exceptions=True,
-                        ),
-                    )
-                loop.close()
-
-        mock_asyncio_run.side_effect = mock_run
-
-        cfg = self.dummy_cfg.copy()
-        cfg['store_in_redis'] = False  # Test the no-redis path
-
-        # Call the function
-        process_single_stream(cfg)
-
-        # Verify detection was called but not frame sending
-        # (since store_in_redis=False)
-        mock_live_instance.generate_detections.assert_awaited()
-        mock_frame_instance.send_optimized_frame.assert_not_awaited()
-
-        # Verify cleanup was called
-        mock_capture_instance.release_resources.assert_awaited()
-        mock_live_instance.close.assert_awaited()
-
-        # Redis delete should not be called in cleanup
-        # since store_in_redis=False
-        mock_redis_instance.delete.assert_not_awaited()
-
-    @patch('main.asyncio.run')
-    @patch('main.StreamCapture')
-    @patch('main.LiveStreamDetector')
-    @patch('main.DangerDetector')
-    @patch('main.FCMSender')
-    @patch('main.ViolationSender')
-    @patch('main.BackendFrameSender')
-    @patch('main.RedisManager')
-    @patch('main.Utils')
-    @patch('main.os.getenv')
-    @patch('main.time.time')
-    @patch('main.datetime')
-    @patch('main.json.dumps')
-    @patch('main.math.floor')
-    @patch('main.gc.collect')
-    @patch('main.print')
-    def test_process_single_stream_redis_cleanup_exception(
-        self, mock_print, mock_gc, mock_floor,
-        mock_json_dumps, mock_datetime_class,
-        mock_time, mock_getenv, mock_utils,
-        mock_redis_mgr, mock_frame_sender,
-        mock_violation_sender, mock_fcm_sender,
-        mock_danger_detector, mock_live_detector,
-        mock_stream_capture, mock_asyncio_run,
-    ):
-        """Test process_single_stream Redis cleanup exception handling."""
-        from main import process_single_stream
-
-        # Mock environment variables
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_API_URL': 'http://detect.test',
-            'FCM_API_URL': 'http://fcm.test',
-            'VIOLATION_RECORD_API_URL': 'http://violation.test',
-            'STREAMING_API_URL': 'http://streaming.test',
-        }.get(key, '')
-
-        # Mock time and datetime
-        mock_time.side_effect = [1000.0, 1002.5]
-        mock_datetime_instance = MagicMock()
-        mock_datetime_instance.hour = 10
-        mock_datetime_class.fromtimestamp.return_value = mock_datetime_instance
-        mock_floor.return_value = 2
-
-        # Mock Utils
-        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
-        mock_utils.filter_warnings_by_working_hour.return_value = []
-        mock_utils.encode_frame.return_value = b'frame_bytes'
-        mock_utils.should_notify.return_value = False
-
-        # Mock JSON dumps
-        mock_json_dumps.return_value = '{"test": "data"}'
-
-        # Mock streaming capture
-        mock_capture_instance = AsyncMock()
-        mock_stream_capture.return_value = mock_capture_instance
-
-        mock_frame = MagicMock()
-        mock_frame.shape = [480, 640, 3]
-
-        # Mock execute_capture to return the async generator directly
-        mock_capture_instance.execute_capture = MagicMock(
-            return_value=AsyncFrameGenerator(),
-        )
-        mock_capture_instance.release_resources = AsyncMock()
-        mock_capture_instance.update_capture_interval = MagicMock()
-
-        # Mock detector responses
-        mock_live_instance = AsyncMock()
-        mock_live_detector.return_value = mock_live_instance
-        mock_live_instance.generate_detections = AsyncMock(
-            return_value=(
-                {'test': 'data'}, {'track': 'data'},
-            ),
-        )
-        mock_live_instance.close = AsyncMock()
-
-        mock_danger_instance = MagicMock()
-        mock_danger_detector.return_value = mock_danger_instance
-        mock_danger_instance.detect_danger.return_value = ([], [], [])
-
-        # Mock senders
-        mock_fcm_instance = AsyncMock()
-        mock_fcm_sender.return_value = mock_fcm_instance
-
-        mock_violation_instance = AsyncMock()
-        mock_violation_sender.return_value = mock_violation_instance
-
-        mock_frame_instance = AsyncMock()
-        mock_frame_sender.return_value = mock_frame_instance
-
-        # Mock Redis manager to raise exception on delete
-        mock_redis_instance = AsyncMock()
-        mock_redis_mgr.return_value = mock_redis_instance
-        mock_redis_instance.delete = AsyncMock(
-            side_effect=Exception('Redis connection failed'),
-        )
-
-        # Execute the async function
-        def mock_run(coro):
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(coro)
-                return result
-            finally:
-                # Clean up any remaining tasks to avoid warnings
-                pending = asyncio.all_tasks(loop)
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(
-                            *pending, return_exceptions=True,
-                        ),
-                    )
-                loop.close()
-
-        mock_asyncio_run.side_effect = mock_run
-
-        cfg = self.dummy_cfg.copy()
-        cfg['store_in_redis'] = True  # Enable Redis to test cleanup exception
-
-        # Call the function
-        process_single_stream(cfg)
-
-        # Verify Redis delete was attempted and exception was caught
-        mock_redis_instance.delete.assert_awaited()
-
-        # Verify exception was printed
-        mock_print.assert_called()
-        print_args = mock_print.call_args[0][0]
-        self.assertIn('[WARN] Failed to delete redis key', print_args)
-        self.assertIn('Redis connection failed', print_args)
-
-    @patch('main.asyncio.run')
-    @patch('main.StreamCapture')
-    @patch('main.LiveStreamDetector')
-    @patch('main.DangerDetector')
-    @patch('main.FCMSender')
-    @patch('main.ViolationSender')
-    @patch('main.BackendFrameSender')
-    @patch('main.RedisManager')
-    @patch('main.Utils')
-    @patch('main.os.getenv')
-    @patch('main.time.time')
-    @patch('main.datetime')
-    @patch('main.json.dumps')
-    @patch('main.math.floor')
-    @patch('main.gc.collect')
-    def test_process_single_stream_violation_id_conversion_exception(
-        self, mock_gc, mock_floor,
-        mock_json_dumps, mock_datetime_class,
-        mock_time, mock_getenv, mock_utils,
-        mock_redis_mgr, mock_frame_sender,
-        mock_violation_sender, mock_fcm_sender,
-        mock_danger_detector, mock_live_detector,
-        mock_stream_capture, mock_asyncio_run,
-    ):
-        """
-        Test process_single_stream violation_id conversion exception handling.
-        """
-        from main import process_single_stream
-
-        # Mock environment variables
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_API_URL': 'http://detect.test',
-            'FCM_API_URL': 'http://fcm.test',
-            'VIOLATION_RECORD_API_URL': 'http://violation.test',
-            'STREAMING_API_URL': 'http://streaming.test',
-        }.get(key, '')
-
-        # Mock time and datetime
-        mock_time.side_effect = [1000.0, 1002.5]
-        mock_datetime_instance = MagicMock()
-        mock_datetime_instance.hour = 10  # Working hours
-        mock_datetime_class.fromtimestamp.return_value = mock_datetime_instance
-        mock_floor.return_value = 2
-
-        # Mock Utils
-        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
-        mock_utils.filter_warnings_by_working_hour.return_value = [
-            'test warning',
-        ]
-        mock_utils.encode_frame.return_value = b'frame_bytes'
-        mock_utils.should_notify.return_value = True
-
-        # Mock JSON dumps
-        mock_json_dumps.return_value = '{"test": "data"}'
-
-        # Mock streaming capture
-        mock_capture_instance = AsyncMock()
-        mock_stream_capture.return_value = mock_capture_instance
-
-        mock_frame = MagicMock()
-        mock_frame.shape = [480, 640, 3]
-
-        # Mock execute_capture to return the async generator directly
-        mock_capture_instance.execute_capture = MagicMock(
-            return_value=AsyncFrameGenerator(),
-        )
-        mock_capture_instance.release_resources = AsyncMock()
-        mock_capture_instance.update_capture_interval = MagicMock()
-
-        # Mock detector responses
-        mock_live_instance = AsyncMock()
-        mock_live_detector.return_value = mock_live_instance
-        mock_live_instance.generate_detections = AsyncMock(
-            return_value=(
-                {'test': 'data'}, {'track': 'data'},
-            ),
-        )
-        mock_live_instance.close = AsyncMock()
-
-        mock_danger_instance = MagicMock()
-        mock_danger_detector.return_value = mock_danger_instance
-        mock_danger_instance.detect_danger.return_value = (
-            ['warning'], [{'cone': 'poly'}], [{'pole': 'poly'}],
-        )
-
-        # Mock senders
-        mock_fcm_instance = AsyncMock()
-        mock_fcm_sender.return_value = mock_fcm_instance
-        mock_fcm_instance.send_fcm_message_to_site = AsyncMock()
-
-        mock_violation_instance = AsyncMock()
-        mock_violation_sender.return_value = mock_violation_instance
-        # Return an invalid violation_id that can't be converted to int
-        mock_violation_instance.send_violation = AsyncMock(
-            return_value='invalid_id',
-        )
-
-        mock_frame_instance = AsyncMock()
-        mock_frame_sender.return_value = mock_frame_instance
-        mock_frame_instance.send_optimized_frame = AsyncMock(
-            return_value={'status': 'ok'},
-        )
-        mock_frame_instance.close = AsyncMock()
-
-        # Mock Redis manager
-        mock_redis_instance = AsyncMock()
-        mock_redis_mgr.return_value = mock_redis_instance
-        mock_redis_instance.delete = AsyncMock()
-
-        # Execute the async function
-        def mock_run(coro):
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(coro)
-                return result
-            finally:
-                # Clean up any remaining tasks to avoid warnings
-                pending = asyncio.all_tasks(loop)
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(
-                            *pending, return_exceptions=True,
-                        ),
-                    )
-                loop.close()
-
-        mock_asyncio_run.side_effect = mock_run
-
-        cfg = self.dummy_cfg.copy()
-        cfg['store_in_redis'] = True
-
-        # Call the function
-        process_single_stream(cfg)
-
-        # Verify FCM sender was called with violation_id=None
-        # due to conversion exception
-        mock_fcm_instance.send_fcm_message_to_site.assert_awaited_with(
-            site=cfg['site'],
-            stream_name=cfg['stream_name'],
-            message=['test warning'],
-            image_path=None,
-            violation_id=None,  # Should be None due to conversion exception
-        )
-
-    @patch('main.asyncio.run')
-    @patch('main.multiprocessing.set_start_method')
-    @patch('main.main')
-    def test_main_execution(
-        self, mock_main_func, mock_set_start_method, mock_asyncio_run,
-    ):
-        """Test main block execution when script is run directly."""
-        # Create a new module namespace to simulate fresh execution
-        namespace = {'__name__': '__main__'}
-
-        # Execute the main block
-        exec(
-            compile(
-                open(main.__file__).read(),
-                main.__file__,
-                'exec',
-            ),
-            namespace,
-        )
-
-        # Verify multiprocessing start method was set
-        mock_set_start_method.assert_called_with('spawn', force=True)
-
-        # Verify asyncio.run was called (with some coroutine)
-        mock_asyncio_run.assert_called_once()
-
-        # Check that the argument to asyncio.run is a coroutine from main()
-        call_args = mock_asyncio_run.call_args[0][0]
-        self.assertTrue(hasattr(call_args, '__await__'))  # It's a coroutine
-
-    @patch('main.asyncio.run')
-    @patch('main.StreamCapture')
-    @patch('main.LiveStreamDetector')
-    @patch('main.DangerDetector')
-    @patch('main.FCMSender')
-    @patch('main.ViolationSender')
-    @patch('main.BackendFrameSender')
-    @patch('main.RedisManager')
-    @patch('main.Utils')
-    @patch('main.os.getenv')
-    def test_process_single_stream_exception_handling(
-        self, mock_getenv, mock_utils,
-        mock_redis_mgr, mock_frame_sender,
-        mock_violation_sender, mock_fcm_sender,
-        mock_danger_detector, mock_live_detector,
-        mock_stream_capture, mock_asyncio_run,
-    ):
-        """Test process_single_stream exception handling in finally block."""
-        from main import process_single_stream
-
-        # Mock environment variables
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_API_URL': 'http://detect.test',
-            'FCM_API_URL': 'http://fcm.test',
-            'VIOLATION_RECORD_API_URL': 'http://violation.test',
-            'STREAMING_API_URL': 'http://streaming.test',
-        }.get(key, '')
-
-        # Mock Utils
-        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
-
-        # Track that cleanup was executed
-        cleanup_executed = False
-
-        # Mock asyncio.run to simulate exception and cleanup
-        def mock_run(func):
-            nonlocal cleanup_executed
-            cleanup_executed = True
-            # Don't actually run the async function to avoid complications
-            return None
-
-        mock_asyncio_run.side_effect = mock_run
-
-        cfg = self.dummy_cfg.copy()
-        cfg['store_in_redis'] = True
-
-        # Call the function
-        process_single_stream(cfg)
-
-        # Verify asyncio.run was called (indicating function execution)
-        mock_asyncio_run.assert_called_once()
-        self.assertTrue(cleanup_executed)
-
-    @patch('main.asyncio.run')
-    @patch('main.StreamCapture')
-    @patch('main.LiveStreamDetector')
-    @patch('main.DangerDetector')
-    @patch('main.FCMSender')
-    @patch('main.ViolationSender')
-    @patch('main.BackendFrameSender')
-    @patch('main.RedisManager')
-    @patch('main.Utils')
-    @patch('main.os.getenv')
-    def test_process_single_stream_violation_id_exception(
-        self, mock_getenv, mock_utils,
-        mock_redis_mgr, mock_frame_sender,
-        mock_violation_sender, mock_fcm_sender,
-        mock_danger_detector, mock_live_detector,
-        mock_stream_capture, mock_asyncio_run,
-    ):
-        """
-        Test process_single_stream with violation_id conversion exception.
-        """
-        from main import process_single_stream
-
-        # Mock environment variables
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_API_URL': 'http://detect.test',
-            'FCM_API_URL': 'http://fcm.test',
-            'VIOLATION_RECORD_API_URL': 'http://violation.test',
-            'STREAMING_API_URL': 'http://streaming.test',
-        }.get(key, '')
-
-        # Mock Utils
-        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
-        mock_utils.filter_warnings_by_working_hour.return_value = [
-            'test warning',
-        ]
-        mock_utils.encode_frame.return_value = b'frame_bytes'
-        mock_utils.should_notify.return_value = True
-
-        # Track that function was executed
-        func_executed = False
-
-        # Mock asyncio.run to track execution
-        def mock_run(func):
-            nonlocal func_executed
-            func_executed = True
-            return None
-
-        mock_asyncio_run.side_effect = mock_run
-
-        cfg = self.dummy_cfg.copy()
-        cfg['store_in_redis'] = False
-
-        # Call the function
-        process_single_stream(cfg)
-
-        # Verify function was executed
-        mock_asyncio_run.assert_called_once()
-        self.assertTrue(func_executed)
-
-    def test_main_module_execution(self):
-        """Test the module execution path."""
-        # Verify key components exist
-        self.assertTrue(hasattr(main, 'load_dotenv'))
-        self.assertTrue(hasattr(main, 'StreamConfig'))
-        self.assertTrue(hasattr(main, 'MainApp'))
-        self.assertTrue(hasattr(main, 'main'))
-        self.assertTrue(hasattr(main, 'process_single_stream'))
-
-    @patch('multiprocessing.set_start_method')
-    @patch('main.asyncio.run')
-    def test_main_block_execution(
-        self, mock_asyncio_run, mock_set_start_method,
-    ):
-        """
-        Test the if __name__ == '__main__' block execution.
-        """
-        # Test that multiprocessing.set_start_method can be called
-        multiprocessing.set_start_method('spawn', force=True)
-
-        # Verify the function was called
-        mock_set_start_method.assert_called_with('spawn', force=True)
-
-        # Test that main function can be called with asyncio.run
-        from main import main as main_func
-        mock_asyncio_run.return_value = None
-
-        # Create a coroutine and run it
-        coro = main_func()
-        if hasattr(coro, 'close'):
-            coro.close()  # Close the coroutine to avoid warnings
-
-    def test_main_script_execution_simulation(self):
-        """
-        Simulate running the main script to test multiprocessing setup.
-        """
-        # Save original values
-        original_argv = sys.argv.copy()
-
-        try:
-            # Simulate script execution
-            sys.argv = ['main.py']
-
-            # Patch the set_start_method to simulate multiprocessing setup
-            with patch('multiprocessing.set_start_method') as mock_set_start:
-
-                # Simulate the multiprocessing setup
-                multiprocessing.set_start_method('spawn', force=True)
-                mock_set_start.assert_called_with('spawn', force=True)
-
-                # Test that main can be called
-                from main import main as main_func
-                coro = main_func()
-                # Close the coroutine to avoid warnings
-                if hasattr(coro, 'close'):
-                    coro.close()
-
-        finally:
-            # Restore original values
-            sys.argv = original_argv
-
-    @patch('main.Process')
-    def test_stop_process_exception_handling(self, mock_process_class):
-        """Test stop_process method exception handling."""
-        mock_process = MagicMock()
-        mock_process.terminate.side_effect = Exception('Terminate failed')
-        mock_process.join.side_effect = Exception('Join failed')
-        mock_process_class.return_value = mock_process
-
-        # Test that exceptions in stop_process are handled gracefully
-        # The stop_process method should call terminate but not join
-        # if terminate fails
-        self.app.stop_process(mock_process)
-
-        # Verify terminate was called
-        mock_process.terminate.assert_called_once()
-
-    async def test_cleanup_resources_with_db_pool(self):
-        """Test cleanup_resources with database pool."""
-        # Set up a mock database pool
-        mock_db_pool = AsyncMock()
-        self.app.db_pool = mock_db_pool
-
-        # Call cleanup_resources
-        await self.app.cleanup_resources()
-
-        # Verify database pool was closed properly
-        mock_db_pool.close.assert_called_once()
-        mock_db_pool.wait_closed.assert_awaited_once()
-
-    async def test_cleanup_resources_with_process_executor(self):
-        """Test cleanup_resources with process executor."""
-        # Set up a mock process executor
-        mock_executor = MagicMock()
-        self.app.process_executor = mock_executor
-
-        # Add some running processes
-        mock_process = MagicMock()
-        self.app.running_processes = {
-            'test_url': {'process': mock_process},
-        }
-
-        with patch.object(self.app, 'stop_process') as mock_stop:
-            await self.app.cleanup_resources()
-
-            # Verify process was stopped
-            mock_stop.assert_called_once_with(mock_process)
-
-            # Verify process executor was shut down
-            mock_executor.shutdown.assert_called_once_with(wait=True)
-
-            # Verify running processes were cleared
-            self.assertEqual(len(self.app.running_processes), 0)
-
-    async def test_run_method_general_exception_handling(self):
-        """Test run method handles general exceptions."""
-        with patch.object(self.app, 'poll_and_reload') as mock_poll, \
-                patch.object(self.app, 'cleanup_resources') as mock_cleanup:
-
-            # Make poll_and_reload raise a general exception
-            mock_poll.side_effect = RuntimeError('Unexpected error')
-            mock_cleanup.return_value = None
-
-            # run() method should handle the exception and still call cleanup
-            await self.app.run()
-
-            mock_poll.assert_called_once()
-            mock_cleanup.assert_called_once()
-
-    @patch('main.asyncio.run')
-    @patch('main.StreamCapture')
-    @patch('main.LiveStreamDetector')
-    @patch('main.DangerDetector')
-    @patch('main.FCMSender')
-    @patch('main.ViolationSender')
-    @patch('main.BackendFrameSender')
-    @patch('main.RedisManager')
-    @patch('main.Utils')
-    @patch('main.os.getenv')
-    @patch('main.time.time')
-    @patch('main.datetime')
-    @patch('main.json.dumps')
-    @patch('main.math.floor')
-    @patch('main.gc.collect')
-    def test_process_single_stream_frame_send_failure(
-        self, mock_gc, mock_floor, mock_json_dumps,
-        mock_datetime_class, mock_time, mock_getenv,
-        mock_utils, mock_redis_mgr, mock_frame_sender,
-        mock_violation_sender, mock_fcm_sender,
-        mock_danger_detector, mock_live_detector,
-        mock_stream_capture, mock_asyncio_run,
-    ):
-        """Test process_single_stream frame send failure handling."""
-        from main import process_single_stream
-
-        # Mock environment variables
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_API_URL': 'http://detect.test',
-            'FCM_API_URL': 'http://fcm.test',
-            'VIOLATION_RECORD_API_URL': 'http://violation.test',
-            'STREAMING_API_URL': 'http://streaming.test',
-        }.get(key, '')
-
-        # Mock time and datetime
-        mock_time.side_effect = [1000.0, 1002.5]
-        mock_datetime_instance = MagicMock()
-        mock_datetime_instance.hour = 10
-        mock_datetime_class.fromtimestamp.return_value = mock_datetime_instance
-        mock_floor.return_value = 2
-
-        # Mock Utils
-        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
-        mock_utils.filter_warnings_by_working_hour.return_value = []
-        mock_utils.encode_frame.return_value = b'frame_bytes'
-        mock_utils.should_notify.return_value = False
-
-        # Mock JSON dumps
-        mock_json_dumps.return_value = '{"test": "data"}'
-
-        # Mock streaming capture
-        mock_capture_instance = AsyncMock()
-        mock_stream_capture.return_value = mock_capture_instance
-
-        mock_frame = MagicMock()
-        mock_frame.shape = [480, 640, 3]
-
-        mock_capture_instance.execute_capture = MagicMock(
-            return_value=AsyncFrameGenerator(),
-        )
-        mock_capture_instance.release_resources = AsyncMock()
-        mock_capture_instance.update_capture_interval = MagicMock()
-
-        # Mock detector responses
-        mock_live_instance = AsyncMock()
-        mock_live_detector.return_value = mock_live_instance
-        mock_live_instance.generate_detections = AsyncMock(
-            return_value=(
-                {'test': 'data'}, {'track': 'data'},
-            ),
-        )
-        mock_live_instance.close = AsyncMock()
-
-        mock_danger_instance = MagicMock()
-        mock_danger_detector.return_value = mock_danger_instance
-        mock_danger_instance.detect_danger.return_value = ([], [], [])
-
-        # Mock senders
-        mock_fcm_instance = AsyncMock()
-        mock_fcm_sender.return_value = mock_fcm_instance
-
-        mock_violation_instance = AsyncMock()
-        mock_violation_sender.return_value = mock_violation_instance
-
-        # Mock frame sender to raise exception
-        mock_frame_instance = AsyncMock()
-        mock_frame_sender.return_value = mock_frame_instance
-        mock_frame_instance.send_optimized_frame = AsyncMock(
-            side_effect=Exception('Frame send failed'),
-        )
-        mock_frame_instance.close = AsyncMock()
-
-        # Mock Redis manager
-        mock_redis_instance = AsyncMock()
-        mock_redis_mgr.return_value = mock_redis_instance
-        mock_redis_instance.delete = AsyncMock()
-
-        # Execute the async function
-        def mock_run(coro):
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(coro)
-                return result
-            finally:
-                pending = asyncio.all_tasks(loop)
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(
-                            *pending, return_exceptions=True,
-                        ),
-                    )
-                loop.close()
-
-        mock_asyncio_run.side_effect = mock_run
-
-        cfg = self.dummy_cfg.copy()
-        cfg['store_in_redis'] = True
-
-        # Call the function - should handle frame send exception
-        process_single_stream(cfg)
-
-        # Verify frame send was attempted
-        mock_frame_instance.send_optimized_frame.assert_awaited()
-
-    @patch('main.asyncio.run')
-    @patch('main.StreamCapture')
-    @patch('main.LiveStreamDetector')
-    @patch('main.DangerDetector')
-    @patch('main.FCMSender')
-    @patch('main.ViolationSender')
-    @patch('main.BackendFrameSender')
-    @patch('main.RedisManager')
-    @patch('main.Utils')
-    @patch('main.os.getenv')
-    @patch('main.time.time')
-    @patch('main.datetime')
-    @patch('main.json.dumps')
-    @patch('main.math.floor')
-    @patch('main.gc.collect')
-    def test_process_single_stream_frame_send_status_failure(
-        self, mock_gc, mock_floor, mock_json_dumps,
-        mock_datetime_class, mock_time, mock_getenv,
-        mock_utils, mock_redis_mgr, mock_frame_sender,
-        mock_violation_sender, mock_fcm_sender,
-        mock_danger_detector, mock_live_detector,
-        mock_stream_capture, mock_asyncio_run,
-    ):
-        """Test process_single_stream frame send status not ok."""
-        from main import process_single_stream
-
-        # Mock environment variables
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_API_URL': 'http://detect.test',
-            'FCM_API_URL': 'http://fcm.test',
-            'VIOLATION_RECORD_API_URL': 'http://violation.test',
-            'STREAMING_API_URL': 'http://streaming.test',
-        }.get(key, '')
-
-        # Mock time and datetime
-        mock_time.side_effect = [1000.0, 1002.5]
-        mock_datetime_instance = MagicMock()
-        mock_datetime_instance.hour = 10
-        mock_datetime_class.fromtimestamp.return_value = mock_datetime_instance
-        mock_floor.return_value = 2
-
-        # Mock Utils
-        mock_utils.encode.side_effect = lambda x: f"encoded_{x}"
-        mock_utils.filter_warnings_by_working_hour.return_value = []
-        mock_utils.encode_frame.return_value = b'frame_bytes'
-        mock_utils.should_notify.return_value = False
-
-        # Mock JSON dumps
-        mock_json_dumps.return_value = '{"test": "data"}'
-
-        # Mock streaming capture
-        mock_capture_instance = AsyncMock()
-        mock_stream_capture.return_value = mock_capture_instance
-
-        mock_frame = MagicMock()
-        mock_frame.shape = [480, 640, 3]
-
-        mock_capture_instance.execute_capture = MagicMock(
-            return_value=AsyncFrameGenerator(),
-        )
-        mock_capture_instance.release_resources = AsyncMock()
-        mock_capture_instance.update_capture_interval = MagicMock()
-
-        # Mock detector responses
-        mock_live_instance = AsyncMock()
-        mock_live_detector.return_value = mock_live_instance
-        mock_live_instance.generate_detections = AsyncMock(
-            return_value=(
-                {'test': 'data'}, {'track': 'data'},
-            ),
-        )
-        mock_live_instance.close = AsyncMock()
-
-        mock_danger_instance = MagicMock()
-        mock_danger_detector.return_value = mock_danger_instance
-        mock_danger_instance.detect_danger.return_value = ([], [], [])
-
-        # Mock senders
-        mock_fcm_instance = AsyncMock()
-        mock_fcm_sender.return_value = mock_fcm_instance
-
-        mock_violation_instance = AsyncMock()
-        mock_violation_sender.return_value = mock_violation_instance
-
-        # Mock frame sender to return failure status
-        mock_frame_instance = AsyncMock()
-        mock_frame_sender.return_value = mock_frame_instance
-        mock_frame_instance.send_optimized_frame = AsyncMock(
-            return_value={'status': 'failed', 'error': 'Connection timeout'},
-        )
-        mock_frame_instance.close = AsyncMock()
-
-        # Mock Redis manager
-        mock_redis_instance = AsyncMock()
-        mock_redis_mgr.return_value = mock_redis_instance
-        mock_redis_instance.delete = AsyncMock()
-
-        # Execute the async function
-        def mock_run(coro):
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(coro)
-                return result
-            finally:
-                pending = asyncio.all_tasks(loop)
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(
-                            *pending, return_exceptions=True,
-                        ),
-                    )
-                loop.close()
-
-        mock_asyncio_run.side_effect = mock_run
-
-        cfg = self.dummy_cfg.copy()
-        cfg['store_in_redis'] = True
-
-        # Call the function - should handle frame send status failure
-        process_single_stream(cfg)
-
-        # Verify frame send was attempted
-        mock_frame_instance.send_optimized_frame.assert_awaited()
 
 
 if __name__ == '__main__':

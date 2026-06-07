@@ -22,6 +22,22 @@ from examples.db_management.schemas.site import SiteUpdate
 from examples.db_management.schemas.site import SiteUserOp
 
 
+class AsyncKeyIterator:
+    """Small async iterator used to mock Redis SCAN results."""
+
+    def __init__(self, keys: list[bytes]) -> None:
+        """Support __init__."""
+        self._keys = keys
+
+    def __aiter__(self) -> AsyncKeyIterator:
+        return self
+
+    async def __anext__(self) -> bytes:
+        if not self._keys:
+            raise StopAsyncIteration
+        return self._keys.pop(0)
+
+
 class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
     """
     Test suite for site management router endpoints.
@@ -81,28 +97,36 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         site = MagicMock()
         site.id = 1
         site.name = 'New Site'
-        site.group_id = 1
-        site.group = MagicMock()
-        site.group.name = 'GroupName'
+        group_mock = MagicMock()
+        group_mock.id = 1
+        group_mock.name = 'GroupName'
+        site.groups = [group_mock]
         site.users = [MagicMock(id=2)]
         mock_create_site.return_value = site
         payload = SiteCreate(name='New Site')
         result = await endpoint_create_site(payload, self.db, self.user)
         self.assertEqual(result.id, 1)
         self.assertEqual(result.name, 'New Site')
-        self.assertEqual(result.group_name, 'GroupName')
+        self.assertEqual(result.group_names, ['GroupName'])
         self.assertEqual(result.user_ids, [2])
 
     async def test_endpoint_create_site_permission_denied(self) -> None:
         """Ensure creating site in other groups is denied."""
-        payload = SiteCreate(name='Site', group_id=2)
+        payload = SiteCreate(name='Site', group_ids=[2])
         with self.assertRaises(HTTPException) as ctx:
             await endpoint_create_site(payload, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 403)
 
+    @patch(
+        'examples.db_management.routers.sites.'
+        'refresh_site_notification_user_cache',
+        new_callable=AsyncMock,
+    )
     @patch('examples.db_management.routers.sites.update_site')
     async def test_endpoint_update_site_success(
-        self, mock_update_site: MagicMock,
+        self,
+        mock_update_site: MagicMock,
+        mock_refresh_site_cache: AsyncMock,
     ) -> None:
         """Test successful update of a site's name.
 
@@ -112,16 +136,33 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         site = MagicMock()
         site.id = 1
         site.name = 'Site'
-        site.group_id = 1
-        site.group = MagicMock()
-        site.group.name = 'GroupName'
+        group_mock = MagicMock()
+        group_mock.id = 1
+        group_mock.name = 'GroupName'
+        site.groups = [group_mock]
         site.users = [MagicMock(id=2)]
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = site
         self.db.execute.return_value = mock_result
         payload = SiteUpdate(site_id=1, new_name='Updated Name')
-        result = await endpoint_update_site(payload, self.db, self.user)
+        mock_redis = AsyncMock()
+        result = await endpoint_update_site(
+            payload,
+            self.db,
+            self.user,
+            mock_redis,
+        )
         self.assertEqual(result['message'], 'Site updated successfully.')
+        mock_redis.delete.assert_awaited_once_with(
+            'site_notification_users:Site',
+            'site_notification_users_ready:Site',
+            'site_notification_users_lock:Site',
+        )
+        mock_refresh_site_cache.assert_awaited_once_with(
+            'Updated Name',
+            self.db,
+            mock_redis,
+        )
 
     async def test_update_site_not_found(self) -> None:
         """Test update_site when site not found."""
@@ -138,9 +179,10 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         site = MagicMock()
         site.id = 1
         site.name = 'Site'
-        site.group_id = 1
-        site.group = MagicMock()
-        site.group.name = 'GroupName'
+        group_mock = MagicMock()
+        group_mock.id = 1
+        group_mock.name = 'GroupName'
+        site.groups = [group_mock]
         site.users = [MagicMock(id=2)]
         mock_result = MagicMock()
         mock_result.unique.return_value = mock_result
@@ -149,7 +191,9 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
 
         # Mock redis object
         mock_redis = MagicMock()
-        mock_redis.keys = AsyncMock(return_value=[b'key1', b'key2'])
+        mock_redis.scan_iter.return_value = AsyncKeyIterator(
+            [b'key1', b'key2'],
+        )
         mock_redis.delete = AsyncMock()
 
         payload = SiteDelete(site_id=1)
@@ -163,8 +207,13 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             result['message'],
             'Site and related data deleted successfully.',
         )
-        mock_redis.keys.assert_called_once()
-        mock_redis.delete.assert_called_once_with(b'key1', b'key2')
+        mock_redis.scan_iter.assert_called_once()
+        mock_redis.delete.assert_any_call(b'key1', b'key2')
+        mock_redis.delete.assert_any_call(
+            'site_notification_users:Site',
+            'site_notification_users_ready:Site',
+            'site_notification_users_lock:Site',
+        )
 
     async def test_delete_site_not_found(self) -> None:
         """Test delete_site when site not found."""
@@ -177,10 +226,16 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             await endpoint_delete_site(payload, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 404)
 
+    @patch(
+        'examples.db_management.routers.sites.'
+        'refresh_site_notification_user_cache',
+        new_callable=AsyncMock,
+    )
     @patch('examples.db_management.routers.sites.add_user_to_site')
     async def test_endpoint_add_user_to_site_success(
         self,
         mock_add_user: MagicMock,
+        mock_refresh_site_cache: AsyncMock,
     ) -> None:
         """Test successful addition of user to site.
 
@@ -188,7 +243,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             mock_add_user (MagicMock): Patched add_user_to_site function.
         """
         site = MagicMock()
-        site.group_id = 1
+        site.groups = [MagicMock(id=1)]
         user_to_add = MagicMock()
         user_to_add.username = 'testuser'
         user_to_add.group_id = 1
@@ -198,10 +253,22 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_result.scalar_one_or_none.side_effect = [site, user_to_add]
         self.db.execute.return_value = mock_result
         payload = SiteUserOp(site_id=1, user_id=2)
-        result = await endpoint_add_user_to_site(payload, self.db, self.user)
+        mock_redis = AsyncMock()
+        site.name = 'Site One'
+        result = await endpoint_add_user_to_site(
+            payload,
+            self.db,
+            self.user,
+            mock_redis,
+        )
         self.assertEqual(
             result['message'],
             'User linked to site successfully.',
+        )
+        mock_refresh_site_cache.assert_awaited_once_with(
+            'Site One',
+            self.db,
+            mock_redis,
         )
 
     async def test_add_user_to_site_site_not_found(self) -> None:
@@ -218,7 +285,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
     async def test_add_user_to_site_user_not_found(self) -> None:
         """Test add_user_to_site when user not found."""
         site = MagicMock()
-        site.group_id = 1
+        site.groups = [MagicMock(id=1)]
         mock_result = MagicMock()
         mock_result.unique.return_value = mock_result
         mock_result.scalar_one_or_none.side_effect = [site, None]
@@ -231,7 +298,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
     async def test_add_user_to_site_super_admin_forbidden(self) -> None:
         """Test add_user_to_site forbidden for super admin user."""
         site = MagicMock()
-        site.group_id = 1
+        site.groups = [MagicMock(id=1)]
         user_to_add = MagicMock()
         user_to_add.username = SUPER_ADMIN_NAME
         user_to_add.group_id = 1
@@ -247,7 +314,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
     async def test_add_user_to_site_group_mismatch(self) -> None:
         """Test add_user_to_site forbidden for group mismatch."""
         site = MagicMock()
-        site.group_id = 1
+        site.groups = [MagicMock(id=1)]
         user_to_add = MagicMock()
         user_to_add.username = 'testuser'
         user_to_add.group_id = 2
@@ -273,7 +340,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             mock_is_super_admin (MagicMock): Patched is_super_admin function.
         """
         site = MagicMock()
-        site.group_id = 1
+        site.groups = [MagicMock(id=1)]
         super_admin_user = MagicMock()
         super_admin_user.role = 'super_admin'
         super_admin_user.username = SUPER_ADMIN_NAME
@@ -303,7 +370,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
     async def test_remove_user_from_site_user_not_found(self) -> None:
         """Test remove_user_from_site when user not found."""
         site = MagicMock()
-        site.group_id = 1
+        site.groups = [MagicMock(id=1)]
         mock_result = MagicMock()
         mock_result.unique.return_value = mock_result
         mock_result.scalar_one_or_none.side_effect = [site, None]
@@ -316,7 +383,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
     async def test_remove_user_from_site_super_admin_forbidden(self) -> None:
         """Test remove_user_from_site forbidden for super admin user."""
         site = MagicMock()
-        site.group_id = 1
+        site.groups = [MagicMock(id=1)]
         user_to_remove = MagicMock()
         user_to_remove.username = SUPER_ADMIN_NAME
         user_to_remove.group_id = 1
@@ -341,9 +408,16 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
         mock_list_sites.assert_called_once_with(self.db, group_id=42)
 
+    @patch(
+        'examples.db_management.routers.sites.'
+        'refresh_site_notification_user_cache',
+        new_callable=AsyncMock,
+    )
     @patch('examples.db_management.routers.sites.remove_user_from_site')
     async def test_endpoint_remove_user_from_site_success(
-        self, mock_remove_user: MagicMock,
+        self,
+        mock_remove_user: MagicMock,
+        mock_refresh_site_cache: AsyncMock,
     ) -> None:
         """Test successful removal of a user from a site.
 
@@ -353,7 +427,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         """
         site = MagicMock()
         site.id = 1
-        site.group_id = 1
+        site.groups = [MagicMock(id=1)]
         user_to_remove = MagicMock()
         user_to_remove.id = 2
         user_to_remove.username = 'normal_user'
@@ -363,10 +437,13 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_result.scalar_one_or_none.side_effect = [site, user_to_remove]
         self.db.execute.return_value = mock_result
         payload = SiteUserOp(site_id=1, user_id=2)
+        site.name = 'Site One'
+        mock_redis = AsyncMock()
         result = await endpoint_remove_user_from_site(
             payload,
             self.db,
             self.user,
+            mock_redis,
         )
         self.assertEqual(
             result['message'],
@@ -374,6 +451,11 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         )
         mock_remove_user.assert_called_once_with(
             user_to_remove.id, site.id, self.db,
+        )
+        mock_refresh_site_cache.assert_awaited_once_with(
+            'Site One',
+            self.db,
+            mock_redis,
         )
 
 

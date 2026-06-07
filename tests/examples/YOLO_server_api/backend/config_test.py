@@ -127,25 +127,20 @@ class TestConfig(unittest.TestCase):
         self.assertIsInstance(result, bool)
         self.assertEqual(result, config.EXPLICIT_CUDA_CLEANUP)
 
-    def test_model_variants_fallback_protection(self) -> None:
-        """Test that MODEL_VARIANTS has fallback protection for empty input."""
-        # Test the fallback logic by simulating empty MODEL_VARIANTS_ENV
+    def test_model_variants_empty_input(self) -> None:
+        """Test that empty MODEL_VARIANTS input stays empty."""
         empty_env_value = ''
         variants = [v.strip() for v in empty_env_value.split(',') if v.strip()]
-        if not variants:  # This should trigger the fallback
-            variants = ['yolo11n']
 
-        # The fallback protection should result in ['yolo11n']
-        self.assertEqual(variants, ['yolo11n'])
+        self.assertEqual(variants, [])
 
     @patch.dict(os.environ, {'MODEL_VARIANTS': ''}, clear=False)
-    def test_actual_model_variants_fallback(self) -> None:
-        """Test actual MODULE fallback by running in subprocess with empty
+    def test_actual_model_variants_empty(self) -> None:
+        """Test actual module behaviour by running in subprocess with empty
         MODEL_VARIANTS."""
         import subprocess
         import sys
 
-        # Run a subprocess with empty MODEL_VARIANTS to test fallback
         result = subprocess.run(
             [
                 sys.executable, '-c',
@@ -157,9 +152,8 @@ class TestConfig(unittest.TestCase):
             text=True,
         )
 
-        # Should have fallback value ['yolo11n']
-        output = result.stdout.strip()
-        self.assertIn("'yolo11n'", output)
+        output = result.stdout.strip().splitlines()[-1]
+        self.assertEqual(output, '[]')
 
     @patch.dict(
         os.environ,

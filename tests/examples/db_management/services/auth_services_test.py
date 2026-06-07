@@ -51,7 +51,7 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
             username='user',
             role='user',
             group_id=1,
-            is_active=True,
+            status='active',
         )
         mock_authenticate.return_value = user_mock
         mock_load_feature_names.return_value = ['feature1', 'feature2']
@@ -60,13 +60,13 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
 
         mock_redis_data: str = (
             '{"db_user": {"id": 1, "username": "user", "role": "user", '
-            '"group_id": 1, "is_active": true}, "jti_list": [], '
+            '"group_id": 1, "status": "active"}, "jti_list": [], '
             '"refresh_tokens": []}'
         )
         self.redis_pool.get = AsyncMock(return_value=mock_redis_data)
 
         payload: UserLogin = UserLogin(username='user', password='pass')
-        result: dict[str, str | int | list[str]] = (
+        result = (
             await auth_services.login_user(
                 payload, self.db, self.redis_pool,
             )
@@ -99,7 +99,7 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         """
         mock_user: AsyncMock = AsyncMock()
         mock_user.check_password = AsyncMock(return_value=True)
-        mock_user.is_active = False
+        mock_user.status = 'inactive'
         self.db.scalar = AsyncMock(return_value=mock_user)
 
         with self.assertRaises(HTTPException) as ctx:
@@ -290,11 +290,11 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         Ensures that the user object is returned if the credentials are
         valid and the user is active.
         """
-        mock_user: MagicMock = MagicMock(is_active=True)
+        mock_user: MagicMock = MagicMock(status='active')
         mock_user.check_password = AsyncMock(return_value=True)
         self.db.scalar = AsyncMock(return_value=mock_user)
 
-        user: MagicMock = await auth_services._authenticate(
+        user = await auth_services._authenticate(
             self.db, 'valid_user', 'valid_password',
         )
         self.assertEqual(user, mock_user)
@@ -392,7 +392,7 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_jwt_decode.return_value = {'exp': 456}
 
         payload: RefreshRequest = RefreshRequest(refresh_token='old_refresh')
-        result: dict[str, str | list[str]] = (
+        result = (
             await auth_services.refresh_tokens(
                 payload,
                 self.redis_pool,
@@ -435,7 +435,7 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         succeeds.
         """
         user_mock: AsyncMock = AsyncMock(
-            id=1, username='user', role='user', group_id=1, is_active=True,
+            id=1, username='user', role='user', group_id=1, status='active',
         )
         mock_authenticate.return_value = user_mock
         mock_load_features.return_value = ['f1']
@@ -476,7 +476,7 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         during access-token decoding used only for jti expiry bookkeeping.
         """
         user_mock: AsyncMock = AsyncMock(
-            id=1, username='user', role='user', group_id=1, is_active=True,
+            id=1, username='user', role='user', group_id=1, status='active',
         )
         mock_authenticate.return_value = user_mock
         mock_load_features.return_value = ['f1']

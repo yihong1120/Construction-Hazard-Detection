@@ -107,11 +107,12 @@ class TestStreamViewer(unittest.TestCase):
         """
         Test the main function.
         """
-        main()
+        main(['https://example.com/stream', '--window-name', 'Preview'])
 
         # Check if StreamViewer was initialised with the correct URL
         mock_init.assert_called_once_with(
-            'https://cctv4.kctmc.nat.gov.tw/50204bfc/',
+            'https://example.com/stream',
+            'Preview',
         )
 
         # Check if display_stream was called

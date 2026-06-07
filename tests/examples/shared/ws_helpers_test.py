@@ -63,6 +63,7 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
     """
 
     def __init__(self, methodName: str = 'runTest') -> None:
+        """Support __init__."""
         super().__init__(methodName)
         # Minimal WebSocket double with an async close method and call log.
         self.ws: SimpleNamespace = SimpleNamespace()
@@ -204,6 +205,7 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
     """
 
     def __init__(self, methodName: str = 'runTest') -> None:
+        """Support __init__."""
         super().__init__(methodName)
         # Minimal WS substitute with a close method and call log.
         self.ws: SimpleNamespace = SimpleNamespace()
@@ -228,7 +230,6 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
             websocket: object,
             rds_arg: object,
             settings_arg: object,
-            *,
             auto_register_jti: bool,
             client_tag: str,
         ) -> tuple[str, str, dict[str, str]]:

@@ -139,7 +139,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self.stream_capture.successfully_captured = False
 
         # Start the coroutine generator.
-        async def mock_generic():
+        async def mock_generic() -> None:
+            """Support mock_generic."""
             for i in range(2):
                 frame_mock = MagicMock()
                 # Explicitly set frame name
@@ -456,7 +457,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
         mock_timestamp = 1234567890.0
 
-        async def mock_execute_capture(self):
+        async def mock_execute_capture(self) -> None:
+            """Support mock_execute_capture."""
             yield mock_frame, mock_timestamp
 
         # Execute main function and verify print and gc.collect calls
@@ -492,7 +494,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         instance.isOpened.return_value = True
 
         # Mock capture_generic_frames method and execute
-        async def mock_generic_frames():
+        async def mock_generic_frames() -> None:
+            """Support mock_generic_frames."""
             for _ in range(3):
                 yield np.zeros((480, 640, 3), dtype=np.uint8), time.time()
 
@@ -534,6 +537,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_speedtest: MagicMock,
     ) -> None:
         # Mock Speedtest object's download and upload methods
+        """Exercise this test."""
         mock_speedtest.return_value.get_best_server.return_value = {}
         mock_speedtest.return_value.download.return_value = 20_000_000
         mock_speedtest.return_value.upload.return_value = 5_000_000

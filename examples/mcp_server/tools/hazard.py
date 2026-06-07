@@ -7,6 +7,8 @@ from examples.mcp_server.schemas import DetectionLikeDict
 from examples.mcp_server.schemas import HazardResponse
 from src.danger_detector import DangerDetector
 from src.utils import Utils
+from src.warning_types import MutableWarnings
+from src.warning_types import Warnings
 
 
 class HazardTools:
@@ -15,9 +17,10 @@ class HazardTools:
 
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialise lazy hazard detection resources."""
         self.logger = logging.getLogger(__name__)
-        self._detector = None
+        self._detector: DangerDetector | None = None
 
     async def detect_violations(
         self,
@@ -50,6 +53,8 @@ class HazardTools:
             # Initialise detector if needed
             if self._detector is None:
                 await self._init_detector(detection_items)
+            detector = self._detector
+            assert detector is not None
 
             # Normalize detections to expected format if provided as dicts
             norm_detections: list[list[float]]
@@ -59,32 +64,16 @@ class HazardTools:
                     list[DetectionLikeDict], detections,
                 )
                 for d in det_dicts:
-                    # Expected keys:
-                    # - bbox [x1,y1,x2,y2]
-                    # - confidence/conf
-                    # - class_/cls/(class fallback)
-                    bbox_any = (
-                        d['bbox']
-                        if 'bbox' in d
-                        else (d['box'] if 'box' in d else None)
-                    )
+                    bbox_any = d['bbox'] if 'bbox' in d else None
                     if (
                         not isinstance(bbox_any, (list, tuple))
                         or len(bbox_any) < 4
                     ):
                         continue
                     x1, y1, x2, y2 = bbox_any[:4]
-                    # confidence (use object-typed intermediary for mypy)
-                    conf_any: object | None
-                    if 'confidence' in d:
-                        conf_any = cast(object, d['confidence'])
-                    elif 'conf' in d:
-                        conf_any = cast(object, d['conf'])
-                    else:
-                        conf_any = cast(dict[str, object], d).get(
-                            'confidence', 0.0,
-                        )  # fallback
-                    # convert confidence safely
+                    if 'confidence' not in d or 'class_' not in d:
+                        continue
+                    conf_any = cast(object, d['confidence'])
                     if isinstance(
                         conf_any,
                         (int, float, str),
@@ -95,17 +84,7 @@ class HazardTools:
                             conf_f = 0.0
                     else:
                         conf_f = 0.0
-                    # class index (prefer typed keys; allow 'class' fallback)
-                    cls_any: object | None
-                    if 'class_' in d:
-                        cls_any = cast(object, d['class_'])
-                    elif 'cls' in d:
-                        cls_any = cast(object, d['cls'])
-                    else:
-                        cls_any = cast(dict[str, object], d).get(
-                            'class',
-                            0,
-                        )
+                    cls_any = cast(object, d['class_'])
                     if isinstance(cls_any, (int, float, str)):
                         try:
                             cls_idx_i = int(cls_any)
@@ -126,7 +105,7 @@ class HazardTools:
                 norm_detections = cast(list[list[float]], detections)
 
             # Perform violation detection
-            result = self._detector.detect_danger(
+            result = detector.detect_danger(
                 norm_detections,
             )
             warnings, cone_polygons, pole_polygons = result
@@ -167,9 +146,9 @@ class HazardTools:
 
     async def filter_warnings_by_working_hour(
         self,
-        warnings: dict[str, dict[str, int]],
+        warnings: Warnings,
         is_working_hour: bool,
-    ) -> dict[str, dict[str, int]]:
+    ) -> MutableWarnings:
         """Filter warnings based on working hours.
 
         Args:

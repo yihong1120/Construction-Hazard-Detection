@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from examples.auth.models import User
+from examples.auth.models import USER_STATUS_ACTIVE
+from examples.auth.models import USER_STATUS_VALUES
 from examples.auth.models import UserProfile
 
 
@@ -18,6 +20,7 @@ async def create_user(
     group_id: int | None,
     db: AsyncSession,
     profile: dict[str, Any] | None = None,
+    status: str = USER_STATUS_ACTIVE,
 ) -> User:
     """
     Create a new user and optionally its profile.
@@ -30,6 +33,7 @@ async def create_user(
         db: Async SQLAlchemy session.
         profile: Optional dictionary of profile fields used to create a
             ``UserProfile`` (for example, ``display_name``, ``email``).
+        status: Account status to assign when creating the user.
 
     Returns:
         The newly created ``User`` instance, refreshed to include relationships
@@ -44,7 +48,7 @@ async def create_user(
             username=username,
             role=role,
             group_id=group_id,
-            is_active=True,
+            status=status,
         )
         new_user.set_password(password)
         db.add(new_user)
@@ -85,7 +89,7 @@ async def list_users(db: AsyncSession) -> list[User]:
     """
     # Fetch all users from the database.
     result = await db.execute(select(User))
-    return result.unique().scalars().all()
+    return list(result.unique().scalars().all())
 
 
 async def get_user_by_id(user_id: int, db: AsyncSession) -> User:
@@ -194,25 +198,26 @@ async def update_password(
         raise HTTPException(status_code=500, detail=f'Database error: {e}')
 
 
-async def set_active_status(
+async def set_user_status(
     user: User,
-    is_active: bool,
+    status: str,
     db: AsyncSession,
 ) -> None:
     """
-    Activate or deactivate a user account.
+    Update a user's status.
 
     Args:
         user: ``User`` instance to update.
-        is_active: Activation status; ``True`` for active, ``False`` for
-            inactive.
+        status: New account status.
         db: Async SQLAlchemy session.
 
     Raises:
         HTTPException: If a database error occurs during status update (500).
     """
-    # Update the user's active status.
-    user.is_active = is_active
+    if status not in USER_STATUS_VALUES:
+        raise HTTPException(status_code=400, detail='Invalid user status.')
+
+    user.status = status
 
     try:
         # Persist status change to the database.
@@ -253,8 +258,8 @@ async def create_or_update_profile(
 
     # Allow only known profile fields to be updated (safer than ``hasattr``).
     allowed_fields = {
-        'display_name', 'avatar_url', 'email', 'mobile',
-        'department', 'title', 'address',
+        'family_name', 'middle_name', 'given_name',
+        'email', 'mobile_number',
     }
     for key, val in data.items():
         if val is not None and key in allowed_fields:

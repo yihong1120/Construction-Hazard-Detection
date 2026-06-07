@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Callable
 from typing import ClassVar
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -70,6 +70,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         """
 
         def _override() -> SimpleNamespace:
+            """Support _override."""
             return SimpleNamespace(subject={'role': role, 'user': 'tester'})
 
         return _override
@@ -98,7 +99,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         # Issue request with image file and model name
         files = {'image': ('test.jpg', b'123', 'image/jpeg')}
-        data = {'model': 'yolo11n'}
+        data = {'model': 'yolo26n'}
         # Exercise endpoint
         resp = self.client.post('/api/detect', files=files, data=data)
         # Verify response and delegation
@@ -141,7 +142,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'model.pt', b'model content', 'application/octet-stream',
             ),
         }
-        data = {'model': 'yolo11n'}
+        data = {'model': 'yolo26n'}
         # Exercise endpoint
         resp = self.client.post(
             '/api/model_file_update', data=data, files=files,
@@ -163,7 +164,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'model.pt', b'model content', 'application/octet-stream',
             ),
         }
-        data = {'model': 'yolo11n'}
+        data = {'model': 'yolo26n'}
         resp = self.client.post(
             '/api/model_file_update', data=data, files=files,
         )
@@ -220,7 +221,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 'model.pt', b'xxx', 'application/octet-stream',
             ),
         }
-        data = {'model': 'yolo11n'}
+        data = {'model': 'yolo26n'}
         resp = self.client.post(
             '/api/model_file_update', data=data, files=files,
         )
@@ -243,13 +244,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         mock_get_file.return_value = b'data'
         payload = {
-            'model': 'yolo11n',
+            'model': 'yolo26n',
             'last_update_time': '2023-10-01T12:30:00',
         }
         resp = self.client.post('/api/get_new_model', json=payload)
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        self.assertEqual(body['message'], 'Model yolo11n is updated.')
+        self.assertEqual(body['message'], 'Model yolo26n is updated.')
         self.assertEqual(body['model_file'], 'ZGF0YQ==')  # base64 of b'data'
         mock_logger.info.assert_called()
 
@@ -269,18 +270,18 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         """
         mock_get_file.return_value = None
         payload = {
-            'model': 'yolo11n',
+            'model': 'yolo26n',
             'last_update_time': '2023-10-01T12:30:00',
         }
         resp = self.client.post('/api/get_new_model', json=payload)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(
-            resp.json(), {'message': 'Model yolo11n is up to date.'},
+            resp.json(), {'message': 'Model yolo26n is up to date.'},
         )
 
     def test_get_new_model_invalid_datetime(self) -> None:
         """Verify invalid datetime yields 400 Bad Request."""
-        payload = {'model': 'yolo11n', 'last_update_time': 'invalid_datetime'}
+        payload = {'model': 'yolo26n', 'last_update_time': 'invalid_datetime'}
         resp = self.client.post('/api/get_new_model', json=payload)
         self.assertEqual(resp.status_code, 400)
 
@@ -299,7 +300,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             _patch_file: Mocked get new model file function.
         """
         payload = {
-            'model': 'yolo11n',
+            'model': 'yolo26n',
             'last_update_time': '2023-10-01T12:30:00',
         }
         resp = self.client.post('/api/get_new_model', json=payload)
@@ -318,7 +319,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             self._override_jwt_role_factory('guest')
         )
         payload = {
-            'model': 'yolo11n',
+            'model': 'yolo26n',
             'last_update_time': '2023-10-01T12:30:00',
         }
         resp = self.client.post('/api/get_new_model', json=payload)

@@ -11,6 +11,8 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <!-- Links the external CSS file for styling -->
     <link rel="stylesheet" href="/css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js" defer></script>
+
     <!-- Links the external JavaScript file for functionality, loaded asynchronously -->
     <script src="/js/camera.js" type="module" defer></script>
 </head>
@@ -20,10 +22,38 @@
     <div id="camera-container">
         <!-- Left section: Displays the live stream -->
         <div id="camera-stream">
+            <div id="stream-controls" class="stream-controls">
+                <label class="stream-control">
+                    <input id="overlay-toggle" type="checkbox" />
+                    <span>Overlay</span>
+                </label>
+                <label class="stream-control">
+                    <span>Language</span>
+                    <select id="language-select">
+                        <option value="en">English</option>
+                        <option value="zh-TW">繁體中文</option>
+                        <option value="zh-CN">简体中文</option>
+                        <option value="ja">日本語</option>
+                        <option value="vi">Tiếng Việt</option>
+                        <option value="id">Bahasa Indonesia</option>
+                        <option value="fr">Français</option>
+                        <option value="th">ไทย</option>
+                    </select>
+                </label>
+                <label class="stream-control confidence-control">
+                    <span>Confidence</span>
+                    <input id="confidence-input" type="range" min="0" max="1" step="0.05" />
+                    <output id="confidence-output"></output>
+                </label>
+            </div>
             <!-- Loading indicator shown before the stream loads -->
             <div id="loading-indicator" class="loading">Loading stream...</div>
             <!-- Placeholder for the live stream image, initially hidden -->
-            <img id="stream-image" alt="Live Stream" class="hidden" />
+            <div id="media-stage" class="media-stage">
+                <img id="stream-image" alt="Live Stream" class="hidden" />
+                <video id="stream-video" class="hidden" autoplay muted playsinline controls></video>
+                <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
+            </div>
             <!-- Displays metadata for the stream, such as the last updated timestamp -->
             <div id="stream-meta" class="meta"></div>
         </div>

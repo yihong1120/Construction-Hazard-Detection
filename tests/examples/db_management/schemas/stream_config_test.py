@@ -21,7 +21,7 @@ class TestStreamConfigCreate(unittest.TestCase):
         self.assertEqual(data.site_id, 1)
         self.assertEqual(data.stream_name, 'stream1')
         self.assertEqual(data.video_url, 'http://video.url')
-        self.assertEqual(data.model_key, 'yolo11x')
+        self.assertEqual(data.model_key, 'yolo26n')
         self.assertTrue(data.detect_with_server)
         self.assertEqual(data.work_start_hour, 7)
         self.assertEqual(data.work_end_hour, 18)

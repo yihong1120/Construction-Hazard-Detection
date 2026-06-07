@@ -73,6 +73,31 @@ class TestSiteNotifyRequest(unittest.TestCase):
             'https://example.com/image.png',
         )
 
+    def test_valid_data_with_warning_metadata_lists(self) -> None:
+        """
+        Warning payloads may include bbox and track-id metadata.
+        """
+        data = {
+            'site': 'AnotherSite',
+            'stream_name': 'Title',
+            'body': {
+                'warning_close_to_machinery': {
+                    'count': 1,
+                    'person_bboxes': [[10, 20, 30, 40]],
+                    'person_track_ids': ['42'],
+                },
+            },
+        }
+
+        site_notify_request = SiteNotifyRequest(**data)
+
+        self.assertEqual(
+            site_notify_request.body['warning_close_to_machinery'][
+                'person_bboxes'
+            ],
+            [[10, 20, 30, 40]],
+        )
+
     def test_missing_site(self) -> None:
         """
         Test validation error when the 'site' field is missing.

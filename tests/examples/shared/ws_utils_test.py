@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import examples.shared.ws_utils as ws_utils
 
@@ -158,6 +159,24 @@ class TestWSUtils(unittest.IsolatedAsyncioTestCase):
             self.websocket, b'abc', self.client_info,
         )
         self.assertFalse(result)
+
+    async def test_safe_websocket_send_bytes_expected_close_suppresses_log(
+        self,
+    ) -> None:
+        """Routine close-race send errors should not be logged as failures."""
+
+        self.websocket.send_bytes = AsyncMock(
+            side_effect=RuntimeError(
+                'Cannot call "send" once a close message has been sent.',
+            ),
+        )
+        with patch('builtins.print') as print_mock:
+            result: bool = await ws_utils._safe_websocket_send_bytes(
+                self.websocket, b'abc', self.client_info,
+            )
+
+        self.assertFalse(result)
+        print_mock.assert_not_called()
 
     async def test_safe_websocket_receive_text_success(self) -> None:
         """Receiving text returns the payload on success when connected."""

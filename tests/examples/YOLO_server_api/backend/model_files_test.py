@@ -20,7 +20,7 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
         """
         Set up common variables for testing.
         """
-        self.valid_model = 'yolo11n'
+        self.valid_model = 'yolo26n'
         self.invalid_model = 'yolo_invalid'
         self.model_file = Path('test_model.pt')
         self.updated_time = datetime.datetime(2023, 1, 1, 0, 0, 0)
@@ -241,8 +241,8 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
         """
         # Mock the resolve method to return a path outside the base directory
         mock_resolve.side_effect = [
-            Path('/safe/models/pt').resolve(),  # base_dir
-            Path('/unsafe/path/best_yolo11n.pt').resolve(),  # destination_path
+            Path('/safe/models/pt'),  # base_dir
+            Path('/unsafe/path/best_yolo26n.pt'),  # destination_path
         ]
 
         with patch('pathlib.Path.is_file', return_value=True):
@@ -270,8 +270,8 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
         """
         # Mock the resolve method to return a path outside the base directory
         mock_resolve.side_effect = [
-            Path('/safe/models/pt').resolve(),  # base_dir
-            Path('/unsafe/path/best_yolo11n.pt').resolve(),  # destination_path
+            Path('/safe/models/pt'),  # base_dir
+            Path('/unsafe/path/best_yolo26n.pt'),  # destination_path
         ]
 
         with self.assertRaises(ValueError) as context:

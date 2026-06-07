@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
+from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -9,7 +11,8 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.db_management.routers import users
-from examples.db_management.schemas.user import SetUserActiveStatus
+from examples.db_management.schemas.user import ApproveUserSignup
+from examples.db_management.schemas.user import SetUserStatus
 from examples.db_management.schemas.user import UpdateMyPassword
 from examples.db_management.schemas.user import UpdatePassword
 from examples.db_management.schemas.user import UpdatePasswordById
@@ -18,8 +21,10 @@ from examples.db_management.schemas.user import UpdateUsername
 from examples.db_management.schemas.user import UpdateUsernameById
 from examples.db_management.schemas.user import UpdateUserRole
 from examples.db_management.schemas.user import UserCreate
+from examples.db_management.schemas.user import UserProfileBase
 from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
+from examples.db_management.schemas.user import UserSignup
 
 
 class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
@@ -37,6 +42,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.current_user: MagicMock = MagicMock()
         self.current_user.check_password = AsyncMock(return_value=True)
         self.current_user.username = 'testuser'
+        self.current_user.role = 'admin'
+        self.current_user.group_id = 10
 
     @patch('examples.db_management.routers.users.create_user')
     async def test_add_user(
@@ -61,13 +68,14 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             id=1,
             username='newuser',
             role='user',
+            status='active',
             group=mock_group,
             profile=mock_profile,
         )
         mock_create_user.return_value = mock_user
 
         payload: UserCreate = UserCreate(
-            username='newuser', password='pass', group_id=1,
+            username='newuser', password='pass', group_id=10,
         )
 
         # db.execute returns a mock whose scalar_one is a sync method
@@ -89,6 +97,63 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.group.name, 'group1')
         if response.profile is not None:
             self.assertEqual(response.profile.email, 'test@example.com')
+
+    @patch('examples.db_management.routers.users.create_user')
+    async def test_signup_user(
+        self, mock_create_user: AsyncMock,
+    ) -> None:
+        """Test self-service signup creates a pending ungrouped user."""
+        mock_profile: MagicMock = MagicMock()
+        mock_profile.family_name = 'Family'
+        mock_profile.middle_name = None
+        mock_profile.given_name = 'Given'
+        mock_profile.email = 'pending@example.com'
+        mock_profile.mobile_number = None
+        mock_user: MagicMock = MagicMock(
+            id=2,
+            username='pending',
+            role='user',
+            status='pending',
+            group=None,
+            group_id=None,
+            profile=mock_profile,
+        )
+        mock_create_user.return_value = mock_user
+
+        signup_profile: UserProfileBase = UserProfileBase(
+            family_name='Family',
+            given_name='Given',
+            email='pending@example.com',
+        )
+        payload: UserSignup = UserSignup(
+            username='pending',
+            password='pass',
+            profile=signup_profile,
+        )
+
+        mock_result: MagicMock = MagicMock()
+        mock_result.scalar_one.return_value = mock_user
+        self.db.execute.return_value = mock_result
+
+        response: UserRead = await users.signup_user(payload, self.db)
+
+        mock_create_user.assert_awaited_once_with(
+            username='pending',
+            password='pass',
+            role='user',
+            group_id=None,
+            db=self.db,
+            profile={
+                'family_name': 'Family',
+                'middle_name': None,
+                'given_name': 'Given',
+                'email': 'pending@example.com',
+                'mobile_number': None,
+            },
+            status='pending',
+        )
+        self.assertEqual(response.status, 'pending')
+        self.assertIsNone(response.group_id)
 
     @patch('examples.db_management.routers.users.get_user_by_id')
     @patch('examples.db_management.routers.users.delete_user')
@@ -254,6 +319,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             id=1,
             username='user1',
             role='user',
+            status='active',
             group=mock_group1,
             profile=mock_profile1,
         )
@@ -270,6 +336,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             id=2,
             username='user2',
             role='admin',
+            status='active',
             group=mock_group2,
             profile=mock_profile2,
         )
@@ -279,11 +346,149 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         ]
         self.db.execute.return_value = mock_result
 
-        result: list[MagicMock] = await users.list_users(self.db)
+        result = cast(list[UserRead], await users.list_users(self.db))
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].username, 'user1')
-        self.assertEqual(result[1].group.name, 'group2')
-        self.assertEqual(result[1].profile.email, 'test2@example.com')
+        group = result[1].group
+        profile = result[1].profile
+        self.assertIsNotNone(group)
+        self.assertIsNotNone(profile)
+        assert group is not None
+        assert profile is not None
+        self.assertEqual(group.name, 'group2')
+        self.assertEqual(profile.email, 'test2@example.com')
+
+    async def test_list_pending_users(self) -> None:
+        """Test listing pending self-signup users."""
+        mock_profile: MagicMock = MagicMock()
+        mock_profile.family_name = 'Pending'
+        mock_profile.middle_name = None
+        mock_profile.given_name = 'User'
+        mock_profile.email = 'pending@example.com'
+        mock_profile.mobile_number = None
+        pending_user: MagicMock = MagicMock(
+            id=3,
+            username='pending-user',
+            role='user',
+            status='pending',
+            group_id=None,
+            group=None,
+            profile=mock_profile,
+        )
+        mock_result: MagicMock = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [pending_user]
+        self.db.execute.return_value = mock_result
+
+        result = await users.list_pending_users(self.db)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].username, 'pending-user')
+        self.assertEqual(result[0].status, 'pending')
+        self.assertIsNone(result[0].group_id)
+
+    @patch('examples.db_management.routers.users._load_user_read')
+    @patch('examples.db_management.routers.users._get_group_or_404')
+    @patch('examples.db_management.routers.users.get_user_by_id')
+    async def test_approve_user_signup_admin_uses_own_group(
+        self,
+        mock_get_user_by_id: AsyncMock,
+        mock_get_group: AsyncMock,
+        mock_load_user_read: AsyncMock,
+    ) -> None:
+        """Test admin approval defaults to the admin's own group."""
+        now = datetime.now()
+        pending_user: MagicMock = MagicMock(
+            id=4,
+            username='pending',
+            role='user',
+            status='pending',
+            group_id=None,
+        )
+        mock_get_user_by_id.return_value = pending_user
+        mock_get_group.return_value = MagicMock(id=10)
+        mock_load_user_read.return_value = UserRead(
+            id=4,
+            username='pending',
+            role='user',
+            status='active',
+            group_id=10,
+            group=None,
+            profile=None,
+            created_at=now,
+            updated_at=now,
+        )
+        payload: ApproveUserSignup = ApproveUserSignup(user_id=4)
+
+        # db.execute for site_ids query returns no sites → no pref inserts
+        mock_site_result: MagicMock = MagicMock()
+        mock_site_result.scalars.return_value.all.return_value = []
+        self.db.execute.return_value = mock_site_result
+
+        result = await users.approve_user_signup(
+            payload,
+            self.db,
+            self.current_user,
+        )
+
+        self.assertEqual(pending_user.group_id, 10)
+        self.assertEqual(pending_user.status, 'active')
+        mock_get_group.assert_awaited_once_with(10, self.db)
+        mock_load_user_read.assert_awaited_once_with(4, self.db)
+        self.db.commit.assert_awaited_once()
+        self.assertEqual(result.username, 'pending')
+
+    @patch('examples.db_management.routers.users._get_group_or_404')
+    @patch('examples.db_management.routers.users.get_user_by_id')
+    async def test_approve_user_signup_rejects_other_group(
+        self,
+        mock_get_user_by_id: AsyncMock,
+        mock_get_group: AsyncMock,
+    ) -> None:
+        """Test admin cannot approve signup into another group."""
+        pending_user: MagicMock = MagicMock(
+            id=5,
+            username='pending-other',
+            role='user',
+            status='pending',
+            group_id=None,
+        )
+        mock_get_user_by_id.return_value = pending_user
+        payload: ApproveUserSignup = ApproveUserSignup(user_id=5, group_id=99)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await users.approve_user_signup(
+                payload, self.db, self.current_user,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.db.commit.assert_not_awaited()
+        mock_get_group.assert_not_called()
+
+    @patch('examples.db_management.routers.users._get_group_or_404')
+    @patch('examples.db_management.routers.users.get_user_by_id')
+    async def test_approve_user_signup_requires_pending_state(
+        self,
+        mock_get_user_by_id: AsyncMock,
+        mock_get_group: AsyncMock,
+    ) -> None:
+        """Test approval rejects users that are not pending signups."""
+        active_user: MagicMock = MagicMock(
+            id=6,
+            username='active-user',
+            role='user',
+            status='active',
+            group_id=10,
+        )
+        mock_get_user_by_id.return_value = active_user
+        payload: ApproveUserSignup = ApproveUserSignup(user_id=6, group_id=10)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await users.approve_user_signup(
+                payload, self.db, self.current_user,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        mock_get_group.assert_not_called()
 
     @patch('examples.db_management.routers.users.update_password')
     @patch('examples.db_management.routers.users.get_user_by_id')
@@ -370,25 +575,29 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response['message'], 'Username updated successfully.')
 
-    @patch('examples.db_management.routers.users.set_active_status')
+    @patch('examples.db_management.routers.users.set_user_status')
     @patch('examples.db_management.routers.users.get_user_by_id')
-    async def test_activate_user(
+    async def test_update_user_status(
         self,
         mock_get_user_by_id: AsyncMock,
-        mock_set_active_status: AsyncMock,
+        mock_set_user_status: AsyncMock,
     ) -> None:
-        """Test setting a user's active status successfully."""
+        """Test setting a user's status successfully."""
         mock_user: MagicMock = MagicMock()
         mock_get_user_by_id.return_value = mock_user
-        payload: SetUserActiveStatus = SetUserActiveStatus(
-            user_id=1, is_active=True,
+        payload: SetUserStatus = SetUserStatus(
+            user_id=1, status='active',
         )
-        response: dict[str, str] = await users.activate_user(payload, self.db)
+        response: dict[str, str] = await users.update_user_status(
+            payload, self.db,
+        )
         mock_get_user_by_id.assert_awaited_with(1, self.db)
-        mock_set_active_status.assert_awaited_with(mock_user, True, self.db)
+        mock_set_user_status.assert_awaited_with(
+            mock_user, 'active', self.db,
+        )
         self.assertEqual(
             response['message'],
-            'User active status updated successfully.',
+            'User status updated successfully.',
         )
 
     @patch('examples.db_management.routers.users.get_user_by_id')
@@ -501,15 +710,40 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_user: MagicMock = MagicMock()
         mock_get_user_by_id.return_value = mock_user
         payload: UpdateUserGroup = UpdateUserGroup(user_id=1, new_group_id=99)
+        me: MagicMock = MagicMock(role='admin', group_id=99, username='admin')
         db: AsyncMock = AsyncMock()
-        response: dict[str, str] = await users.change_group(payload, db)
+        with patch(
+            'examples.db_management.routers.users._get_group_or_404',
+            AsyncMock(return_value=MagicMock(id=99)),
+        ) as mock_get_group:
+            response: dict[str, str] = await users.change_group(
+                payload, db, me,
+            )
         mock_get_user_by_id.assert_awaited_with(1, db)
+        mock_get_group.assert_awaited_with(99, db)
         self.assertEqual(mock_user.group_id, 99)
         db.commit.assert_awaited()
         self.assertEqual(
             response['message'],
             'User group updated successfully.',
         )
+
+    @patch('examples.db_management.routers.users.get_user_by_id')
+    async def test_change_group_forbidden_for_other_group(
+        self, mock_get_user_by_id: AsyncMock,
+    ) -> None:
+        """Test admin cannot manually assign a user into another group."""
+        mock_user: MagicMock = MagicMock()
+        mock_get_user_by_id.return_value = mock_user
+        payload: UpdateUserGroup = UpdateUserGroup(user_id=1, new_group_id=99)
+        me: MagicMock = MagicMock(role='admin', group_id=10, username='admin')
+        db: AsyncMock = AsyncMock()
+
+        with self.assertRaises(HTTPException) as ctx:
+            await users.change_group(payload, db, me)
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        db.commit.assert_not_awaited()
 
 
 if __name__ == '__main__':

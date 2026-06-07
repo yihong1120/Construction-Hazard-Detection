@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Sequence
 from io import BytesIO
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -25,6 +26,25 @@ from examples.YOLO_server_api.backend.detection import (
 from examples.YOLO_server_api.backend.detection import (
     remove_overlapping_labels,
 )
+
+
+class _FakeTensor:
+    """Tests for _FakeTensor."""
+
+    def __init__(
+        self,
+        value: Sequence[Sequence[float]] | Sequence[float],
+    ) -> None:
+        """Support __init__."""
+        self._value = np.asarray(value)
+
+    def cpu(self) -> _FakeTensor:
+        """Support cpu."""
+        return self
+
+    def numpy(self) -> np.ndarray:
+        """Support numpy."""
+        return self._value
 
 
 class TestDetection(unittest.IsolatedAsyncioTestCase):
@@ -62,6 +82,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         mock_imdecode.assert_called_once()
         self.assertIsNotNone(img)
 
+    @patch('examples.YOLO_server_api.backend.detection.USE_TENSORRT', True)
     @patch('examples.YOLO_server_api.backend.detection.USE_SAHI', False)
     async def test_get_prediction_result_tensorrt(self) -> None:
         """
@@ -121,19 +142,9 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """
         # Mock ultralytics result
         mock_boxes = MagicMock()
-
-        # Create mock tensor objects
-        mock_xyxy_tensor = MagicMock()
-        mock_xyxy_tensor.tolist.return_value = [10.0, 20.0, 30.0, 40.0]
-        mock_boxes.xyxy = [mock_xyxy_tensor]
-
-        mock_conf_tensor = MagicMock()
-        mock_conf_tensor.item.return_value = 0.9
-        mock_boxes.conf = [mock_conf_tensor]
-
-        mock_cls_tensor = MagicMock()
-        mock_cls_tensor.item.return_value = 1
-        mock_boxes.cls = [mock_cls_tensor]
+        mock_boxes.xyxy = _FakeTensor([[10.0, 20.0, 30.0, 40.0]])
+        mock_boxes.conf = _FakeTensor([0.9])
+        mock_boxes.cls = _FakeTensor([1])
 
         mock_result = MagicMock()
         mock_result.boxes = mock_boxes
@@ -141,11 +152,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         if hasattr(mock_result, 'object_prediction_list'):
             delattr(mock_result, 'object_prediction_list')
 
-        # Mock len to return 1 for boxes
-        with patch(
-            'examples.YOLO_server_api.backend.detection.len', return_value=1,
-        ):
-            result = compile_detection_data(mock_result)
+        result = compile_detection_data(mock_result)
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0], [10, 20, 30, 40, 0.9, 1])

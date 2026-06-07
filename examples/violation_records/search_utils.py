@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Iterable
+from functools import lru_cache
+
 from ckip_transformers.nlp import CkipWordSegmenter
 
 # ---------------------------
@@ -117,7 +121,7 @@ class SearchUtils:
     synonym expansion, and building Elasticsearch queries.
     """
 
-    def __init__(self, device: int = -1):
+    def __init__(self, device: int = -1) -> None:
         """
         Initialise the CKIP word segmenter.
 
@@ -125,10 +129,38 @@ class SearchUtils:
             device (int): If using CPU, set device to -1.
             Otherwise, specify the GPU device number.
         """
+        import logging
+
+        # Suppress logging from transformers to avoid confusing warnings
+        logging.getLogger('transformers').setLevel(logging.ERROR)
+
         self.ws_driver = CkipWordSegmenter(device=device)
         self.synonyms_map = SYNONYMS_MAP
         self.english_stop_words = ENGLISH_STOP_WORDS
         self.chinese_stop_words = CHINESE_STOP_WORDS
+        self._synonym_index = self._build_synonym_index(
+            self.synonyms_map.items(),
+        )
+
+    @staticmethod
+    def _build_synonym_index(
+        synonym_items: Iterable[tuple[str, list[str]]],
+    ) -> dict[str, tuple[tuple[str, tuple[str, ...]], ...]]:
+        """Group synonym keys by first character to reduce substring checks."""
+        grouped: defaultdict[str, list[tuple[str, tuple[str, ...]]]] = (
+            defaultdict(list)
+        )
+        for key, values in synonym_items:
+            normalized_key = key.lower()
+            if not normalized_key:
+                continue
+            grouped[normalized_key[0]].append(
+                (normalized_key, tuple(values)),
+            )
+        return {
+            first_char: tuple(items)
+            for first_char, items in grouped.items()
+        }
 
     def tokenize(self, user_input: str) -> list[str]:
         """
@@ -140,14 +172,22 @@ class SearchUtils:
         Returns:
             list[str]: A list of tokens after stop words are removed.
         """
+        return list(self._tokenize_cached(user_input))
+
+    @lru_cache(maxsize=512)
+    def _tokenize_cached(self, user_input: str) -> tuple[str, ...]:
+        """Tokenise input once and cache the immutable token tuple."""
         tokens = self.ws_driver([user_input])[0]
-        filtered_tokens = [
-            token.lower().strip()
-            for token in tokens
-            if token.lower().strip() not in self.english_stop_words
-            and token.strip() not in self.chinese_stop_words
-        ]
-        return filtered_tokens
+        filtered_tokens: list[str] = []
+        for token in tokens:
+            stripped = token.strip()
+            lowered = stripped.lower()
+            if (
+                lowered not in self.english_stop_words
+                and stripped not in self.chinese_stop_words
+            ):
+                filtered_tokens.append(lowered)
+        return tuple(filtered_tokens)
 
     def expand_synonyms(self, user_input: str) -> list[str]:
         """
@@ -159,16 +199,23 @@ class SearchUtils:
         Returns:
             list[str]: A list of unique tokens and their associated synonyms.
         """
-        tokens = self.tokenize(user_input)
-        results = set()
+        return list(self._expand_synonyms_cached(user_input))
+
+    @lru_cache(maxsize=512)
+    def _expand_synonyms_cached(self, user_input: str) -> tuple[str, ...]:
+        """Expand synonyms and cache repeated query terms."""
+        tokens = self._tokenize_cached(user_input)
+        results: set[str] = set()
         for token in tokens:
-            for key, vlist in self.synonyms_map.items():
-                # If the key is a substring of the token, add the synonyms
-                if key in token:
-                    results.update(vlist)
+            for first_char in frozenset(token):
+                synonym_items = self._synonym_index.get(first_char, ())
+                for key, vlist in synonym_items:
+                    # If the key is a substring of the token, add synonyms.
+                    if key in token:
+                        results.update(vlist)
             # Always add the original token
             results.add(token)
-        return list(results)
+        return tuple(results)
 
     def build_elasticsearch_query(self, user_input: str) -> dict:
         """
@@ -181,19 +228,15 @@ class SearchUtils:
             dict: A dictionary representing the Elasticsearch query.
         """
         keywords = self.expand_synonyms(user_input)
+        fields = ('stream_name', 'warnings_json')
         query = {
             'query': {
                 'bool': {
-                    'should': (
-                        [
-                            {'wildcard': {'stream_name': f"*{kw}*"}}
-                            for kw in keywords
-                        ]
-                        + [
-                            {'wildcard': {'warnings_json': f"*{kw}*"}}
-                            for kw in keywords
-                        ]
-                    ),
+                    'should': [
+                        {'wildcard': {field: f"*{kw}*"}}
+                        for kw in keywords
+                        for field in fields
+                    ],
                 },
             },
         }

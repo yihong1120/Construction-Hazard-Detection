@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
+from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -22,7 +24,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         Initialise shared mocks used by each test.
         """
         self.db: MagicMock = MagicMock()
-        self.user: MagicMock = MagicMock()
+        self.user = cast(User, MagicMock())
         self.user.id = 1
         self.user.profile = MagicMock()
         self.user.group = MagicMock()
@@ -30,7 +32,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         # Common profile payload used by several tests
         self.profile_data: dict[str, str] = {
             'email': 'test@example.com',
-            'mobile': '123456789',
+            'mobile_number': '123456789',
         }
 
         # Mock the methods of the database session
@@ -67,7 +69,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
                 MockProfile.return_value = MagicMock()
 
                 # Act
-                result: MagicMock = await user_services.create_user(
+                result = await user_services.create_user(
                     'user',
                     'pw',
                     'admin',
@@ -83,11 +85,42 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
                 self.db.commit.assert_awaited()
                 self.db.refresh.assert_awaited()
 
+    async def test_create_user_inactive_success(self) -> None:
+        """
+        Allow creating a pending account with pending status.
+        """
+        self.db.flush = AsyncMock()
+        self.db.commit = AsyncMock()
+        self.db.refresh = AsyncMock()
+        self.db.add = MagicMock()
+
+        with patch(
+            'examples.db_management.services.user_services.User',
+        ) as MockUser:
+            mock_user: MagicMock = MagicMock()
+            mock_user.id = 2
+            mock_user.set_password = MagicMock()
+            MockUser.return_value = mock_user
+
+            await user_services.create_user(
+                'pending',
+                'pw',
+                'user',
+                None,
+                self.db,
+                self.profile_data,
+                status='pending',
+            )
+
+            self.assertEqual(MockUser.call_args.kwargs['status'], 'pending')
+
     async def test_create_user_integrity_error(self) -> None:
         """
         Return *400 Bad Request* when attempting to save a duplicate user.
         """
-        self.db.flush = AsyncMock(side_effect=IntegrityError('a', 'b', 'c'))
+        self.db.flush = AsyncMock(
+            side_effect=IntegrityError('a', 'b', Exception('c')),
+        )
         self.db.rollback = AsyncMock()
 
         with patch(
@@ -148,7 +181,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         """
         self.db.get = AsyncMock(return_value=self.user)
 
-        user: MagicMock = await user_services.get_user_by_id(1, self.db)
+        user = await user_services.get_user_by_id(1, self.db)
 
         self.assertEqual(user, self.user)
 
@@ -205,7 +238,9 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         """
         Return *400 Bad Request* when the new username already exists.
         """
-        self.db.commit = AsyncMock(side_effect=IntegrityError('a', 'b', 'c'))
+        self.db.commit = AsyncMock(
+            side_effect=IntegrityError('a', 'b', Exception('c')),
+        )
         self.db.rollback = AsyncMock()
 
         with self.assertRaises(HTTPException) as cm:
@@ -231,42 +266,44 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         """
         Set a new password and commit the change.
         """
-        self.db.commit = AsyncMock()
-        self.user.set_password = MagicMock()
+        db = cast(Any, self.db)
+        user = cast(Any, self.user)
+        db.commit = AsyncMock()
+        user.set_password = MagicMock()
 
         await user_services.update_password(self.user, 'pw', self.db)
 
-        self.user.set_password.assert_called_once_with('pw')
-        self.db.commit.assert_awaited()
+        user.set_password.assert_called_once_with('pw')
+        db.commit.assert_awaited()
 
     async def test_update_password_exception(self) -> None:
         """
         Return *500 Internal Server Error* when committing fails.
         """
-        self.db.commit = AsyncMock(side_effect=Exception('fail'))
-        self.db.rollback = AsyncMock()
-        self.user.set_password = MagicMock()
+        db = cast(Any, self.db)
+        user = cast(Any, self.user)
+        db.commit = AsyncMock(side_effect=Exception('fail'))
+        db.rollback = AsyncMock()
+        user.set_password = MagicMock()
 
         with self.assertRaises(HTTPException) as cm:
             await user_services.update_password(self.user, 'pw', self.db)
 
         self.assertEqual(cm.exception.status_code, 500)
-        self.db.rollback.assert_awaited()
+        db.rollback.assert_awaited()
 
-    async def test_set_active_status_success(self) -> None:
+    async def test_set_user_status_success(self) -> None:
         """
-        Toggle the is_active flag and commit.
+        Update the status field and commit.
         """
         self.db.commit = AsyncMock()
 
-        await user_services.set_active_status(self.user, True, self.db)
+        await user_services.set_user_status(self.user, 'active', self.db)
 
-        self.assertTrue(
-            self.user.is_active or self.user.is_active is not False,
-        )
+        self.assertEqual(self.user.status, 'active')
         self.db.commit.assert_awaited()
 
-    async def test_set_active_status_exception(self) -> None:
+    async def test_set_user_status_exception(self) -> None:
         """
         Raise *500 Internal Server Error* when commit fails.
         """
@@ -274,35 +311,50 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback = AsyncMock()
 
         with self.assertRaises(HTTPException) as cm:
-            await user_services.set_active_status(self.user, False, self.db)
+            await user_services.set_user_status(self.user, 'inactive', self.db)
 
         self.assertEqual(cm.exception.status_code, 500)
         self.db.rollback.assert_awaited()
+
+    async def test_set_user_status_invalid(self) -> None:
+        """Reject unknown account statuses."""
+        with self.assertRaises(HTTPException) as cm:
+            await user_services.set_user_status(self.user, 'unknown', self.db)
+
+        self.assertEqual(cm.exception.status_code, 400)
 
     async def test_create_or_update_profile_update(self) -> None:
         """
         Update fields on an existing UserProfile.
         """
-        self.db.commit = AsyncMock()
-        self.db.refresh = AsyncMock()
-        self.user.profile = MagicMock()
-        self.user.profile.email = 'old@example.com'
+        db = cast(Any, self.db)
+        user = cast(Any, self.user)
+        db.commit = AsyncMock()
+        db.refresh = AsyncMock()
+        user.profile = MagicMock()
+        user.profile.email = 'old@example.com'
+        user.profile.family_name = 'Old'
 
         await user_services.create_or_update_profile(
-            self.user, {'email': 'new@example.com'}, self.db,
+            self.user,
+            {'email': 'new@example.com', 'family_name': 'New'},
+            self.db,
         )
 
-        self.assertEqual(self.user.profile.email, 'new@example.com')
-        self.db.commit.assert_awaited()
-        self.db.refresh.assert_awaited()
+        self.assertEqual(user.profile.email, 'new@example.com')
+        self.assertEqual(user.profile.family_name, 'New')
+        db.commit.assert_awaited()
+        db.refresh.assert_awaited()
 
     async def test_create_or_update_profile_create(self) -> None:
         """
         Create a brand-new profile when one is absent and allowed.
         """
-        self.db.commit = AsyncMock()
-        self.db.refresh = AsyncMock()
-        self.user.profile = None
+        db = cast(Any, self.db)
+        user = cast(Any, self.user)
+        db.commit = AsyncMock()
+        db.refresh = AsyncMock()
+        user.profile = None
 
         with patch(
             'examples.db_management.services.user_services.UserProfile',
@@ -317,16 +369,17 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
                 create_if_missing=True,
             )
 
-            self.db.add.assert_called_with(mock_profile)
-            self.db.commit.assert_awaited()
-            self.db.refresh.assert_awaited()
+            db.add.assert_called_with(mock_profile)
+            db.commit.assert_awaited()
+            db.refresh.assert_awaited()
 
     async def test_create_or_update_profile_not_found(self) -> None:
         """
         Return *404 Not Found* if profile is missing
         and creation is disallowed.
         """
-        self.user.profile = None
+        user = cast(Any, self.user)
+        user.profile = None
 
         with self.assertRaises(HTTPException) as cm:
             await user_services.create_or_update_profile(
@@ -342,7 +395,9 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         """
         Handle a unique-constraint violation on profile save.
         """
-        self.db.commit = AsyncMock(side_effect=IntegrityError('a', 'b', 'c'))
+        self.db.commit = AsyncMock(
+            side_effect=IntegrityError('a', 'b', Exception('c')),
+        )
         self.db.rollback = AsyncMock()
         self.db.refresh = AsyncMock()
 

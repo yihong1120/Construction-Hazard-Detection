@@ -8,11 +8,11 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi import Response
 from fastapi import Security
-from fastapi_jwt import JwtAuthorizationCredentials
 from redis.asyncio import Redis
 from redis.exceptions import NoScriptError
 
 from examples.auth.jwt_config import jwt_access
+from examples.auth.jwt_config import JwtAuthorizationCredentials
 
 
 class RateLimiterService:
@@ -170,7 +170,7 @@ return { current, ttl }
         Returns:
             A tuple of ``(current_requests, ttl_seconds)``.
         """
-        # Fast path: single RTT using EVALSHA; compatible fallbacks below.
+        # Single RTT using EVALSHA.
         try:
             sha = await self._ensure_rate_limit_script(redis_pool)
             res: Sequence[object] = await redis_pool.evalsha(
@@ -202,27 +202,6 @@ return { current, ttl }
             current = int(res[0])
             ttl = int(res[1])
             return current, ttl
-        except Exception:
-            # Fallback 1: direct INCR + TTL (apply EXPIRE if missing)
-            try:
-                current_requests = int(await redis_pool.incr(key))
-                ttl = int(await redis_pool.ttl(key))
-                if ttl == -1:
-                    await redis_pool.expire(key, window_seconds)
-                    ttl = window_seconds
-                return current_requests, ttl
-            except Exception:
-                # Fallback 2: non-transactional pipeline for single round-trip
-                async with redis_pool.pipeline(transaction=False) as pipe:
-                    pipe.incr(key)
-                    pipe.ttl(key)
-                    results = await pipe.execute()
-                current_requests = int(results[0])
-                ttl = int(results[1])
-                if ttl == -1:
-                    await redis_pool.expire(key, window_seconds)
-                    ttl = window_seconds
-                return current_requests, ttl
 
     async def preload_script(self, redis_pool: Redis) -> None:
         """Optionally pre-load the Lua script at app start.
@@ -310,7 +289,7 @@ return { current, ttl }
             role, self.limits['user'],
         )
 
-        # Compose rate-limit key (keeps legacy shape for compatibility)
+        # Compose rate-limit key
         key: str = self._rate_key(
             role, username, request.method, request.url.path,
         )

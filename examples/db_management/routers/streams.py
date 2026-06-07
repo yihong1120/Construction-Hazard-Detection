@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from examples.auth.database import get_db
 from examples.auth.models import Site
 from examples.auth.models import StreamConfig
+from examples.auth.models import User
 from examples.db_management.deps import _site_permission
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
@@ -39,7 +40,7 @@ router = APIRouter(tags=['stream-config'])
 async def endpoint_list_stream_configs(
     site_id: int,
     db: AsyncSession = Depends(get_db),
-    me=Depends(get_current_user),
+    me: User = Depends(get_current_user),
 ) -> list[StreamConfigRead]:
     """List all stream configurations for a given site.
 
@@ -62,35 +63,46 @@ async def endpoint_list_stream_configs(
 
     stream_configs = await list_stream_configs(site_id, db)
 
-    # Retrieve current stream count and group limit
-    current, _ = await get_group_stream_limit(site.group_id, db)
-
-    return [
-        StreamConfigRead(
-            id=c.id,
-            stream_name=c.stream_name,
-            video_url=c.video_url,
-            model_key=c.model_key,
-            detect_with_server=c.detect_with_server,
-            store_in_redis=c.store_in_redis,
-            work_start_hour=c.work_start_hour,
-            work_end_hour=c.work_end_hour,
-            detect_no_safety_vest_or_helmet=c.detect_no_safety_vest_or_helmet,
-            detect_near_machinery_or_vehicle=(
-                c.detect_near_machinery_or_vehicle
+    # Cache group limits to avoid N+1 queries.
+    # Each StreamConfig owns its group.
+    group_limit_cache: dict[int, tuple[int, int]] = {}
+    result: list[StreamConfigRead] = []
+    for c in stream_configs:
+        if c.group_id not in group_limit_cache:
+            group_limit_cache[c.group_id] = await get_group_stream_limit(
+                c.group_id, db,
+            )
+        current, max_streams = group_limit_cache[c.group_id]
+        result.append(
+            StreamConfigRead(
+                id=c.id,
+                stream_name=c.stream_name,
+                video_url=c.video_url,
+                model_key=c.model_key,
+                detect_with_server=c.detect_with_server,
+                store_in_redis=c.store_in_redis,
+                work_start_hour=c.work_start_hour,
+                work_end_hour=c.work_end_hour,
+                detect_no_safety_vest_or_helmet=(
+                    c.detect_no_safety_vest_or_helmet
+                ),
+                detect_near_machinery_or_vehicle=(
+                    c.detect_near_machinery_or_vehicle
+                ),
+                detect_in_restricted_area=c.detect_in_restricted_area,
+                detect_in_utility_pole_restricted_area=(
+                    c.detect_in_utility_pole_restricted_area
+                ),
+                detect_machinery_close_to_pole=(
+                    c.detect_machinery_close_to_pole
+                ),
+                expire_date=c.expire_date,
+                total_stream_in_group=current,
+                max_allowed_streams=max_streams,
+                updated_at=c.updated_at,
             ),
-            detect_in_restricted_area=c.detect_in_restricted_area,
-            detect_in_utility_pole_restricted_area=(
-                c.detect_in_utility_pole_restricted_area
-            ),
-            detect_machinery_close_to_pole=c.detect_machinery_close_to_pole,
-            expire_date=c.expire_date,
-            total_stream_in_group=current,
-            max_allowed_streams=site.group.max_allowed_streams,
-            updated_at=c.updated_at,
         )
-        for c in stream_configs
-    ]
+    return result
 
 
 @router.post(
@@ -100,7 +112,7 @@ async def endpoint_list_stream_configs(
 async def endpoint_create_stream_config(
     payload: StreamConfigCreate,
     db: AsyncSession = Depends(get_db),
-    me=Depends(get_current_user),
+    me: User = Depends(get_current_user),
 ) -> dict[str, str | int]:
     """Create a new stream configuration for a site.
 
@@ -122,13 +134,28 @@ async def endpoint_create_stream_config(
 
     _site_permission(me, site=site)
 
-    current, limit = await get_group_stream_limit(site.group_id, db)
+    # Resolve which group owns this stream config.
+    # For non-super-admins the group defaults to the admin's own group.
+    group_id: int | None = (
+        payload.group_id if payload.group_id else me.group_id
+    )
+    if not group_id:
+        raise HTTPException(
+            status_code=400, detail='group_id is required to create a stream.',
+        )
+    if group_id not in {g.id for g in site.groups}:
+        raise HTTPException(
+            status_code=403,
+            detail='Group is not associated with this site.',
+        )
+
+    current, limit = await get_group_stream_limit(group_id, db)
     if current >= limit:
         raise HTTPException(
             status_code=403, detail='Stream limit reached for group.',
         )
 
-    payload_with_group = payload.model_copy(update={'group_id': site.group_id})
+    payload_with_group = payload.model_copy(update={'group_id': group_id})
     cfg = await create_stream_config(payload_with_group, db)
 
     return {
@@ -145,7 +172,7 @@ async def endpoint_update_stream_config(
     cfg_id: int,
     payload: StreamConfigUpdate,
     db: AsyncSession = Depends(get_db),
-    me=Depends(get_current_user),
+    me: User = Depends(get_current_user),
 ) -> dict[str, str]:
     """Update an existing stream configuration.
 
@@ -195,7 +222,7 @@ async def endpoint_update_stream_config(
 async def endpoint_delete_stream_config(
     cfg_id: int,
     db: AsyncSession = Depends(get_db),
-    me=Depends(get_current_user),
+    me: User = Depends(get_current_user),
 ) -> dict[str, str]:
     """Delete an existing stream configuration.
 
@@ -229,7 +256,7 @@ async def endpoint_delete_stream_config(
 async def endpoint_group_stream_limit(
     group_id: int,
     db: AsyncSession = Depends(get_db),
-    me=Depends(get_current_user),
+    me: User = Depends(get_current_user),
 ) -> dict[str, int]:
     """Retrieve the stream limit and current usage for a group.
 

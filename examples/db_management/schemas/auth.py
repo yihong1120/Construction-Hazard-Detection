@@ -13,7 +13,7 @@ class DbUserInfo(TypedDict):
     username: str
     role: str
     group_id: int | None
-    is_active: bool
+    status: str
 
 
 class UserCache(TypedDict, total=False):
@@ -65,6 +65,18 @@ class RefreshRequest(BaseModel):
     """Schema representing a token refresh request."""
 
     refresh_token: str
+
+
+class TokenPairData(TypedDict, total=False):
+    """Typed dictionary for TokenPair-compatible response payloads."""
+
+    access_token: str
+    refresh_token: str
+    username: str
+    role: str
+    user_id: int
+    group_id: int | None
+    feature_names: list[str]
 
 
 class TokenPair(BaseModel):

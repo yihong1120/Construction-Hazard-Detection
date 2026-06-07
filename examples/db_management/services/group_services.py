@@ -20,7 +20,7 @@ async def list_groups(db: AsyncSession) -> list[Group]:
     # Execute query to fetch all groups
     result = await db.execute(select(Group))
     # Return a unique set of groups
-    return result.unique().scalars().all()
+    return list(result.unique().scalars().all())
 
 
 async def create_group(

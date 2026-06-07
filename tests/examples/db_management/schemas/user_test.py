@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
+from typing import Any
+from typing import cast
 
 from pydantic import ValidationError
 
@@ -26,9 +28,11 @@ class TestUserProfileBase(unittest.TestCase):
     def test_missing(self) -> None:
         """Test validation error when required fields are missing."""
         with self.assertRaises(ValidationError):
-            user.UserProfileBase(family_name='f', given_name='g')
+            cast(Any, user.UserProfileBase)(
+                family_name='f', given_name='g',
+            )
         with self.assertRaises(ValidationError):
-            user.UserProfileBase(given_name='g', email='a@b.com')
+            cast(Any, user.UserProfileBase)(given_name='g', email='a@b.com')
 
 
 class TestUserProfileRead(unittest.TestCase):
@@ -69,7 +73,7 @@ class TestUserProfileUpdate(unittest.TestCase):
     def test_missing(self) -> None:
         """Test validation error when user_id is missing."""
         with self.assertRaises(ValidationError):
-            user.UserProfileUpdate()
+            cast(Any, user.UserProfileUpdate)()
 
 
 class TestUserCreate(unittest.TestCase):
@@ -101,9 +105,47 @@ class TestUserCreate(unittest.TestCase):
     def test_missing(self) -> None:
         """Test validation errors when required fields are missing."""
         with self.assertRaises(ValidationError):
-            user.UserCreate(username='u', password='p')
+            cast(Any, user.UserCreate)(username='u', password='p')
         with self.assertRaises(ValidationError):
-            user.UserCreate(password='p', group_id=1)
+            cast(Any, user.UserCreate)(password='p', group_id=1)
+
+
+class TestUserSignup(unittest.TestCase):
+    """Unit tests for the UserSignup schema."""
+
+    def test_valid(self) -> None:
+        """Test creating a valid UserSignup instance."""
+        profile: user.UserProfileBase = user.UserProfileBase(
+            family_name='f', given_name='g', email='a@b.com',
+        )
+        data: user.UserSignup = user.UserSignup(
+            username='u', password='p', profile=profile,
+        )
+        self.assertEqual(data.username, 'u')
+        self.assertEqual(data.profile.email, 'a@b.com')
+
+    def test_missing_profile(self) -> None:
+        """Test validation error when profile is missing."""
+        with self.assertRaises(ValidationError):
+            cast(Any, user.UserSignup)(username='u', password='p')
+
+
+class TestApproveUserSignup(unittest.TestCase):
+    """Unit tests for the ApproveUserSignup schema."""
+
+    def test_valid_with_group(self) -> None:
+        """Test approving a signup with an explicit group."""
+        data: user.ApproveUserSignup = user.ApproveUserSignup(
+            user_id=1, group_id=2,
+        )
+        self.assertEqual(data.user_id, 1)
+        self.assertEqual(data.group_id, 2)
+
+    def test_valid_without_group(self) -> None:
+        """Test approving a signup without explicit group."""
+        data: user.ApproveUserSignup = user.ApproveUserSignup(user_id=1)
+        self.assertEqual(data.user_id, 1)
+        self.assertIsNone(data.group_id)
 
 
 class TestUserRead(unittest.TestCase):
@@ -123,7 +165,7 @@ class TestUserRead(unittest.TestCase):
             updated_at=now,
         )
         data: user.UserRead = user.UserRead(
-            id=1, username='u', role='admin', is_active=True,
+            id=1, username='u', role='admin', status='active',
             group_id=1, group=group_obj, profile=profile_obj,
             created_at=now, updated_at=now,
         )
@@ -136,7 +178,7 @@ class TestUserRead(unittest.TestCase):
         """Test UserRead instance with no group or profile."""
         now: datetime = datetime.now()
         data: user.UserRead = user.UserRead(
-            id=2, username='u', role='user', is_active=True,
+            id=2, username='u', role='user', status='inactive',
             group_id=None, group=None, profile=None,
             created_at=now, updated_at=now,
         )
@@ -145,7 +187,7 @@ class TestUserRead(unittest.TestCase):
     def test_missing(self) -> None:
         """Test validation error when fields are missing."""
         with self.assertRaises(ValidationError):
-            user.UserRead()
+            cast(Any, user.UserRead)()
 
 
 if __name__ == '__main__':

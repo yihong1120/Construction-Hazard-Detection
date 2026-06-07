@@ -137,7 +137,7 @@ class TypedDictShapeTests(unittest.TestCase):
         coordinate lists.
         """
         expected = {
-            'warnings': dict[str, dict[str, int]],
+            'warnings': dict[str, dict[str, object]],
             'cone_polygons': S.PolygonsCoords,
             'pole_polygons': S.PolygonsCoords,
             'meta': S.HazardMeta,
@@ -155,13 +155,16 @@ class StructuralValidatorsTests(unittest.TestCase):
     """
 
     def _is_list_of(self, xs: object, tp: type) -> bool:
+        """Support _is_list_of."""
         return isinstance(xs, list) and all(isinstance(x, tp) for x in xs)
 
     def _is_floatbbox(self, xs: object) -> bool:
+        """Support _is_floatbbox."""
         return self._is_list_of(xs, float)
 
     def _is_polygonscoords(self, xs: object) -> bool:
         # list[list[list[float]]]
+        """Support _is_polygonscoords."""
         if not isinstance(xs, list):
             return False
         for poly in xs:
@@ -173,6 +176,7 @@ class StructuralValidatorsTests(unittest.TestCase):
         return True
 
     def _validate_inference_meta(self, m: object) -> bool:
+        """Support _validate_inference_meta."""
         if not isinstance(m, dict):
             return False
         required = {
@@ -196,6 +200,7 @@ class StructuralValidatorsTests(unittest.TestCase):
         return True
 
     def _validate_inference_response(self, r: object) -> bool:
+        """Support _validate_inference_response."""
         if not isinstance(r, dict):
             return False
         if 'detections' not in r or 'tracked' not in r or 'meta' not in r:
@@ -213,6 +218,7 @@ class StructuralValidatorsTests(unittest.TestCase):
         return self._validate_inference_meta(r['meta'])
 
     def _validate_hazard_meta(self, m: object) -> bool:
+        """Support _validate_hazard_meta."""
         if not isinstance(m, dict):
             return False
         int_or_none = (int, type(None))
@@ -230,6 +236,7 @@ class StructuralValidatorsTests(unittest.TestCase):
         )
 
     def _validate_hazard_response(self, r: object) -> bool:
+        """Support _validate_hazard_response."""
         if not isinstance(r, dict):
             return False
         if not {

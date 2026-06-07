@@ -50,7 +50,6 @@ async def check_and_maybe_close_on_timeout(
     websocket: WebSocket,
     session_start: float,
     client_label: str,
-    *,
     use_text: bool = False,
 ) -> bool:
     """
@@ -120,7 +119,6 @@ async def authenticate_ws_or_none(
     websocket: WebSocket,
     rds: redis_async.Redis,
     settings: SettingsLike,
-    *,
     auto_register_jti: bool,
     client_tag: str,
 ) -> tuple[str, dict[str, object]] | tuple[None, None]:

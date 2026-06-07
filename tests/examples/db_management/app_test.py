@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
+from typing import cast
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -52,6 +54,7 @@ class AppIntegrationTest(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        """Clean up test fixtures."""
         for p in getattr(cls, '_patchers', []):
             p.stop()
 
@@ -97,9 +100,12 @@ class AppIntegrationTest(unittest.TestCase):
         expected_paths: list[str] = [
             '/list_features',
             '/list_groups',
+            '/list_pending_users',
             '/list_sites',
             '/list_stream_configs',
             '/list_users',
+            '/approve_user_signup',
+            '/signup',
         ]
         for p in expected_paths:
             self.assertIn(p, data['paths'])
@@ -122,10 +128,11 @@ class AppIntegrationTest(unittest.TestCase):
         This test verifies that all expected router tags are present in
         the application's route definitions.
         """
-        tags: set[str] = {
-            r.tags[0]
-            for r in self.app.routes if getattr(r, 'tags', None)
-        }
+        tags: set[str] = set()
+        for route in self.app.routes:
+            route_tags = getattr(cast(Any, route), 'tags', None)
+            if route_tags:
+                tags.add(route_tags[0])
         expected: set[str] = {
             'auth',
             'user-mgmt',

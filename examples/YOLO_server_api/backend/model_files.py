@@ -2,8 +2,35 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
+from typing import Final
 
 import torch
+
+
+VALID_MODEL_FILES: Final[dict[str, str]] = {
+    'yolo26n': 'best_yolo26n.pt',
+    'yolo26s': 'best_yolo26s.pt',
+    'yolo26m': 'best_yolo26m.pt',
+    'yolo26l': 'best_yolo26l.pt',
+    'yolo26x': 'best_yolo26x.pt',
+}
+
+
+def _model_destination_path(model: str) -> Path:
+    """Return the destination path for a managed model file."""
+    if model not in VALID_MODEL_FILES:
+        raise ValueError(
+            f"Invalid model key: {model}. "
+            f"Must be one of {list(VALID_MODEL_FILES.keys())}.",
+        )
+
+    base_dir = Path('models/pt').resolve()
+    destination_path = (base_dir / VALID_MODEL_FILES[model]).resolve()
+    try:
+        destination_path.relative_to(base_dir)
+    except ValueError:
+        raise ValueError('Attempted path traversal in destination path.')
+    return destination_path
 
 
 async def update_model_file(model: str, model_file: Path) -> None:
@@ -11,22 +38,10 @@ async def update_model_file(model: str, model_file: Path) -> None:
     Update the model file for a specified model.
 
     Args:
-        model (str): The model key (e.g., 'yolo11n', 'yolo11s').
+        model (str): The model key (e.g., 'yolo26n', 'yolo26s').
         model_file (Path): The path to the new `.pt` model file.
     """
-    # Define valid models and their corresponding filenames
-    valid_models = {
-        'yolo11n': 'best_yolo11n.pt',
-        'yolo11s': 'best_yolo11s.pt',
-        'yolo11m': 'best_yolo11m.pt',
-        'yolo11l': 'best_yolo11l.pt',
-        'yolo11x': 'best_yolo11x.pt',
-    }
-    if model not in valid_models:
-        raise ValueError(
-            f"Invalid model key: {model}. "
-            f"Must be one of {list(valid_models.keys())}.",
-        )
+    destination_path = _model_destination_path(model)
 
     if not model_file.is_file() or model_file.suffix != '.pt':
         raise ValueError(
@@ -37,16 +52,6 @@ async def update_model_file(model: str, model_file: Path) -> None:
         torch.jit.load(str(model_file))
     except Exception as e:
         raise ValueError(f"Invalid PyTorch model file: {e}")
-
-    # Use a base directory and construct the destination path safely
-    base_dir = Path('models/pt').resolve()
-    destination_filename = valid_models[model]
-    destination_path = base_dir / destination_filename
-
-    # Ensure the destination path is within the base directory
-    destination_path = destination_path.resolve()
-    if not str(destination_path).startswith(str(base_dir)):
-        raise ValueError('Attempted path traversal in destination path.')
 
     destination_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -64,37 +69,14 @@ async def get_new_model_file(
     Retrieve the new model file if updated since the provided time.
 
     Args:
-        model (str): The model key (e.g., 'yolo11n', 'yolo11s').
+        model (str): The model key (e.g., 'yolo26n', 'yolo26s').
         last_update_time (datetime.datetime): The last update time
             provided by the user.
 
     Returns:
         bytes | None: Model file content if updated, else None.
     """
-    # Define valid models and their corresponding filenames
-    valid_models = {
-        'yolo11n': 'best_yolo11n.pt',
-        'yolo11s': 'best_yolo11s.pt',
-        'yolo11m': 'best_yolo11m.pt',
-        'yolo11l': 'best_yolo11l.pt',
-        'yolo11x': 'best_yolo11x.pt',
-    }
-
-    if model not in valid_models:
-        raise ValueError(
-            f"Invalid model key: {model}. "
-            f"Must be one of {list(valid_models.keys())}.",
-        )
-
-    # Use a base directory and construct the destination path safely
-    base_dir = Path('models/pt').resolve()
-    destination_filename = valid_models[model]
-    destination_path = base_dir / destination_filename
-
-    # Ensure the destination path is within the base directory
-    destination_path = destination_path.resolve()
-    if not str(destination_path).startswith(str(base_dir)):
-        raise ValueError('Attempted path traversal in destination path.')
+    destination_path = _model_destination_path(model)
 
     if not destination_path.is_file():
         return None

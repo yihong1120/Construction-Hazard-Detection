@@ -81,13 +81,13 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
             inst.detect_danger.assert_called_once_with(expected)
             self.assertIn('meta', res)
 
-    async def test_detect_violations_normalises_box_conf_cls(self) -> None:
-        """Normalise keys: box + conf + cls."""
+    async def test_detect_violations_normalises_dict_input(self) -> None:
+        """Normalise explicit detection dict keys."""
         detections = [
             {
-                'box': [10, 20, 30, 40],  # ints should cast to float
-                'conf': 0.88,
-                'cls': 7,
+                'bbox': [10, 20, 30, 40],
+                'confidence': 0.88,
+                'class_': 7,
             },
         ]
         expected: list[list[float]] = [[10.0, 20.0, 30.0, 40.0, 0.88, 7.0]]
@@ -106,13 +106,9 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
         detections = [
             {'bbox': [1, 2, 3]},  # fewer than 4 coords -> invalid
             {'bbox': 'not-a-list'},  # wrong type
-            {'box': [0, 0, 0, 0], 'conf': 'bad-float', 'cls': 'bad-int'},
+            {'box': [0, 0, 0, 0], 'confidence': 0.9, 'class_': 1},
         ]
-        # The third item should still normalise
-        # (conf -> 0.0 fallback, cls -> 0 fallback)
-        expected: list[list[float]] = [
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        ]
+        expected: list[list[float]] = []
 
         with patch(
             'examples.mcp_server.tools.hazard.DangerDetector',
@@ -123,38 +119,13 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
             await tool.detect_violations(detections=cast(list, detections))
             inst.detect_danger.assert_called_once_with(expected)
 
-    async def test_detect_violations_fallback_conf_and_class(self) -> None:
-        """When 'confidence'/'conf' and 'class_'/'cls' are absent,
-        use fallbacks.
-        """
-        detections = [
-            {
-                'bbox': [5.0, 6.0, 7.0, 8.0],
-                # no 'confidence' and no 'conf' -> fallback default 0.0
-                # no 'class_' and no 'cls' but has 'class' -> fallback reads 3
-                'class': 3,
-            },
-        ]
-        expected: list[list[float]] = [[5.0, 6.0, 7.0, 8.0, 0.0, 3.0]]
-
-        with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
-        ) as mock_dd:
-            inst = mock_dd.return_value
-            inst.detect_danger.return_value = ({}, [], [])
-
-            tool = HazardTools()
-            await tool.detect_violations(detections=cast(list, detections))
-
-            inst.detect_danger.assert_called_once_with(expected)
-
-    async def test_detect_violations_non_numeric_conf_and_cls(self) -> None:
-        """Non-numeric conf/cls types should normalise to zeros."""
+    async def test_detect_violations_non_numeric_values(self) -> None:
+        """Non-numeric confidence/class_ types should normalise to zeros."""
         detections = [
             {
                 'bbox': [0, 0, 1, 1],
-                'conf': {'x': 1},  # not int/float/str -> 0.0
-                'cls': {'y': 2},  # not int/float/str -> 0
+                'confidence': {'x': 1},
+                'class_': {'y': 2},
             },
         ]
         expected: list[list[float]] = [[0.0, 0.0, 1.0, 1.0, 0.0, 0.0]]

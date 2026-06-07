@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import unittest
+from typing import Any
 from unittest.mock import MagicMock
 from unittest.mock import mock_open
 from unittest.mock import patch
@@ -12,14 +13,17 @@ from examples.YOLO_evaluation.convert_yolo_to_coco import main
 
 
 class TestCOCOConverter(unittest.TestCase):
-    def setUp(self):
+    """Test suite."""
+
+    def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.categories = [
             'Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest',
             'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle',
         ]
         self.converter = COCOConverter(self.categories)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         """
         Clean up after each test.
         """
@@ -37,12 +41,12 @@ class TestCOCOConverter(unittest.TestCase):
     @patch('builtins.print')  # Mock print to check warning messages
     def test_convert_annotations(
         self,
-        mock_print,
-        mock_file,
-        mock_image_open,
-        mock_exists,
-        mock_listdir,
-    ):
+        mock_print: Any,
+        mock_file: Any,
+        mock_image_open: Any,
+        mock_exists: Any,
+        mock_listdir: Any,
+    ) -> None:
         """
         Test the conversion of YOLO annotations to COCO format,
         including the handling of non-existing images.
@@ -79,7 +83,7 @@ class TestCOCOConverter(unittest.TestCase):
         )
 
     @patch('builtins.open', new_callable=mock_open)
-    def test_save_to_json(self, mock_file):
+    def test_save_to_json(self, mock_file: Any) -> None:
         """
         Test saving the COCO format data to a JSON file.
         """
@@ -118,7 +122,7 @@ class TestCOCOConverter(unittest.TestCase):
         new_callable=mock_open,
         read_data='0 0.5 0.5 0.5 0.5\n',
     )
-    def test_initialise_categories(self, mock_file):
+    def test_initialise_categories(self, mock_file: Any) -> None:
         """
         Test the initialisation of categories in COCO format.
         """
@@ -142,10 +146,10 @@ class TestCOCOConverter(unittest.TestCase):
     @patch('argparse.ArgumentParser.parse_args')
     def test_main(
             self,
-            mock_parse_args,
-            mock_save_to_json,
-            mock_convert_annotations,
-    ):
+            mock_parse_args: Any,
+            mock_save_to_json: Any,
+            mock_convert_annotations: Any,
+    ) -> None:
         """
         Test the main function.
         """

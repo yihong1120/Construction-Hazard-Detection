@@ -16,8 +16,8 @@ class BoundingBoxVisualiser:
         self,
         image_path: str | Path,
         label_path: str | Path,
-        class_names: list,
-    ):
+        class_names: list[str],
+    ) -> None:
         """
         Initialises the BoundingBoxVisualiser with the specified image,
         label paths, and class names.
@@ -30,11 +30,12 @@ class BoundingBoxVisualiser:
         self.image_path = Path(image_path)
         self.label_path = Path(label_path)
         self.class_names = class_names
-        self.image = cv2.imread(str(self.image_path))
-        if self.image is None:
+        image = cv2.imread(str(self.image_path))
+        if image is None:
             raise ValueError(
                 'Image could not be loaded. Please check the image path.',
             )
+        self.image = image
 
     def draw_bounding_boxes(self) -> None:
         """
@@ -47,10 +48,16 @@ class BoundingBoxVisualiser:
             lines = f.readlines()
 
         for line in lines:
-            class_id, x_centre, y_centre, bbox_width, bbox_height = map(
-                float,
-                line.split(),
-            )
+            parts = line.strip().split()
+            if len(parts) < 5:
+                continue
+            try:
+                class_id_f, x_centre, y_centre, bbox_width, bbox_height = map(
+                    float, parts[:5],
+                )
+            except Exception:
+                continue
+            class_id = int(class_id_f)
 
             # Convert from relative to absolute coordinates
             x_centre, bbox_width = x_centre * width, bbox_width * width
@@ -66,7 +73,10 @@ class BoundingBoxVisualiser:
 
             # Draw the rectangle and label
             cv2.rectangle(self.image, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            label = self.class_names[int(class_id)]
+            if 0 <= class_id < len(self.class_names):
+                label = self.class_names[class_id]
+            else:
+                label = f"class_{class_id}"
             cv2.putText(
                 self.image,
                 label,
@@ -96,7 +106,8 @@ class BoundingBoxVisualiser:
             plt.show()
 
 
-def main():
+def main() -> None:
+    """Visualise bounding boxes from YOLO label files."""
     parser = argparse.ArgumentParser(
         description='Visualise bounding boxes on images.',
     )
@@ -134,6 +145,7 @@ def main():
         'Safety Cone',
         'Safety Vest',
         'machinery',
+        'utility pole',
         'vehicle',
     ]
 
@@ -148,6 +160,9 @@ if __name__ == '__main__':
 
 """example
 python visualise_bounding_boxes.py \
-    --image './aug_4.jpg' \
-    --label './aug_4.txt'
+    --image './dataset_aug/train/images/'\
+        'maxresdefault_jpg.rf.d1b39feb98434e2d9b3675eef2e4b9ad_aug_9.jpg' \
+    --label './dataset_aug/train/labels/'\
+        'maxresdefault_jpg.rf.d1b39feb98434e2d9b3675eef2e4b9ad_aug_9.txt' \
+    --save --output './visualised_image.jpg'
 """

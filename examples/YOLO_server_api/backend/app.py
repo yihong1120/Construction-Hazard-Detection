@@ -24,6 +24,7 @@ app.include_router(model_management_router)
 
 
 def main() -> None:
+    """Run the YOLO FastAPI server for local development."""
     uvicorn.run(app, host='127.0.0.1', port=8000, workers=2)
 
 

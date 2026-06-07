@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from examples.local_notification_server.lang_config import LANGUAGES
 from examples.local_notification_server.lang_config import main
+from examples.local_notification_server.lang_config import normalize_language
 from examples.local_notification_server.lang_config import Translator
 
 
@@ -23,6 +24,7 @@ class TestLangConfig(unittest.TestCase):
         # Define the supported language codes (matching lang_config.py)
         self.supported_langs: set[str] = {
             'en-GB', 'zh-TW', 'zh-CN', 'fr-FR', 'vi-VN', 'id-ID', 'th-TH',
+            'ja-JP',
         }
 
         # Each language must include these keys
@@ -104,9 +106,9 @@ class TestLangConfig(unittest.TestCase):
         # 3) Key not found => returns the key itself
         self.assertEqual(result[2], 'non_existent_key')
 
-    def test_translate_from_dict_fallback_to_english(self) -> None:
+    def test_translate_from_dict_skips_unsupported_language(self) -> None:
         """
-        Ensure we fallback to 'en-GB' when given an unknown language code.
+        Ensure unsupported language codes do not switch to another locale.
         """
         body_dict: dict[str, dict[str, Any]] = {
             'warning_close_to_vehicle': {'count': '2'},
@@ -114,11 +116,16 @@ class TestLangConfig(unittest.TestCase):
         language = 'xx-XX'  # Invalid code
 
         result = Translator.translate_from_dict(body_dict, language)
-        # Expect: 'Warning: 2 people are too close to vehicles!'
-        self.assertIn(
-            'Warning: 2 people are too close to vehicles!',
-            result[0],
-        )
+        self.assertEqual(result, [])
+
+    def test_normalize_language_aliases(self) -> None:
+        """Common app language tags collapse to supported notification tags."""
+        self.assertEqual(normalize_language('en'), 'en-GB')
+        self.assertEqual(normalize_language('zh_Hant'), 'zh-TW')
+        self.assertEqual(normalize_language('zh-CN'), 'zh-CN')
+        self.assertEqual(normalize_language('ja'), 'ja-JP')
+        self.assertIsNone(normalize_language('missing'))
+        self.assertIsNone(normalize_language(None))
 
     def test_translate_from_dict_placeholder_replacement(self) -> None:
         """

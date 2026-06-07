@@ -5,11 +5,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
-from examples.line_chatbot.line_bot import app
-from examples.line_chatbot.line_bot import handler
-from examples.line_chatbot.line_bot import messaging_api
+pytest.importorskip('linebot')
+
+from examples.line_chatbot.line_bot import app  # noqa: E402
+from examples.line_chatbot.line_bot import handler  # noqa: E402
+from examples.line_chatbot.line_bot import messaging_api  # noqa: E402
 
 
 class TestLineBot(unittest.TestCase):
@@ -153,7 +156,10 @@ class TestLineBot(unittest.TestCase):
         from examples.line_chatbot.line_bot import handle_text_message
 
         class _FakeApiException(ApiException):  # type: ignore[misc]
+            """Tests for _FakeApiException."""
+
             def __init__(self) -> None:
+                """Support __init__."""
                 pass
 
             def __str__(self) -> str:

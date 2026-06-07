@@ -4,6 +4,9 @@ import unittest
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from firebase_admin import messaging
+
+from examples.local_notification_server.fcm_service import FcmSendResult
 from examples.local_notification_server.fcm_service import init_firebase_app
 from examples.local_notification_server.fcm_service import (
     send_fcm_notification_service,
@@ -93,6 +96,9 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
         """
         result = await send_fcm_notification_service([], 'Title', 'Body')
         self.assertFalse(result)
+        self.assertIsInstance(result, FcmSendResult)
+        self.assertEqual(result.success_count, 0)
+        self.assertEqual(result.failure_count, 0)
 
     @patch('firebase_admin.messaging.send_each')
     async def test_all_success(self, mock_send_each: MagicMock) -> None:
@@ -110,6 +116,9 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
         tokens = ['valid_token']
         result = await send_fcm_notification_service(tokens, 'Title', 'Body')
         self.assertTrue(result)
+        self.assertEqual(result.success_count, 1)
+        self.assertEqual(result.failure_count, 0)
+        self.assertEqual(result.invalid_tokens, ())
 
     @patch('firebase_admin.messaging.send_each')
     async def test_partial_fail(self, mock_send_each: MagicMock) -> None:
@@ -122,13 +131,22 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
         mock_response = MagicMock()
         mock_response.failure_count = 1
         mock_response.responses = [
-            MagicMock(success=True), MagicMock(success=False),
+            MagicMock(success=True),
+            MagicMock(
+                success=False,
+                exception=messaging.UnregisteredError(
+                    'Requested entity was not found.',
+                ),
+            ),
         ]
         mock_send_each.return_value = mock_response
 
         tokens = ['valid_token', 'invalid_token']
         result = await send_fcm_notification_service(tokens, 'Title', 'Body')
         self.assertFalse(result)
+        self.assertEqual(result.success_count, 1)
+        self.assertEqual(result.failure_count, 1)
+        self.assertEqual(result.invalid_tokens, ('invalid_token',))
 
     @patch('firebase_admin.messaging.send_each')
     async def test_exception(self, mock_send_each: MagicMock) -> None:
@@ -143,6 +161,9 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
         tokens = ['token']
         result = await send_fcm_notification_service(tokens, 'Title', 'Body')
         self.assertFalse(result)
+        self.assertEqual(result.success_count, 0)
+        self.assertEqual(result.failure_count, 1)
+        self.assertEqual(result.invalid_tokens, ())
 
 
 if __name__ == '__main__':

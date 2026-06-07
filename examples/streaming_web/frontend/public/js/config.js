@@ -95,7 +95,7 @@ function initFormFields(item, config) {
   setBasicFields(item, config);
   setWorkHours(item, config);
   setExpireDateUI(item, config);
-  setDetectAndRedisFlags(item, config);
+  setDetectAndLiveViewFlags(item, config);
   setDetectionItemsUI(item, config);
 }
 
@@ -111,7 +111,7 @@ function setBasicFields(item, config) {
   siteInput.value = config.site || "";
   streamNameInput.value = config.stream_name || "";
   videoUrlInput.value = config.video_url || "";
-  modelKeySelect.value = config.model_key || "yolo11n";
+  modelKeySelect.value = config.model_key || "yolo26n";
 }
 
 /**
@@ -146,14 +146,14 @@ function setExpireDateUI(item, config) {
 }
 
 /**
- * Set detect_with_server & store_in_redis checkboxes
+ * Set detect_with_server & live-view checkboxes.
  */
-function setDetectAndRedisFlags(item, config) {
+function setDetectAndLiveViewFlags(item, config) {
   const detectWithServerCheckbox = item.querySelector("input[name='detect_with_server']");
-  const storeInRedisCheckbox = item.querySelector("input[name='store_in_redis']");
+  const liveViewCheckbox = item.querySelector("input[name='store_in_redis']");
 
   detectWithServerCheckbox.checked = !!config.detect_with_server;
-  storeInRedisCheckbox.checked = !!config.store_in_redis;
+  liveViewCheckbox.checked = !!config.store_in_redis;
 }
 
 /**
@@ -395,7 +395,7 @@ function buildSingleConfigFromDOM(container) {
 
   // Remove empty notifications
   cfg.notifications = cfg.notifications.filter((notif) => notif.token);
-  // Ensure store_in_redis is boolean
+  // API field controls whether this stream publishes a live MediaMTX view.
   cfg.store_in_redis = !!cfg.store_in_redis;
 
   return cfg;
@@ -632,7 +632,7 @@ addConfigBtn.addEventListener("click", () => {
     site: "",
     stream_name: "",
     video_url: "",
-    model_key: "yolo11n",
+    model_key: "yolo26n",
     expire_date: getTodayDate(), // default
     detect_with_server: false,
     store_in_redis: false,

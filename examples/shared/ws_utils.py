@@ -1,6 +1,24 @@
 from __future__ import annotations
 
 from fastapi import WebSocket
+from fastapi import WebSocketDisconnect
+
+
+def _is_expected_websocket_close_error(exc: Exception) -> bool:
+    """Return True for routine disconnect races during WebSocket I/O."""
+    if isinstance(exc, WebSocketDisconnect):
+        return True
+
+    message = str(exc)
+    return (
+        'close message has been sent' in message
+        or 'Cannot call "send" once a close message has been sent' in message
+        or (
+            'Cannot call "receive" once a disconnect message '
+            'has been received' in message
+        )
+        or 'Unexpected ASGI message' in message
+    )
 
 
 def _is_websocket_connected(websocket: WebSocket) -> bool:
@@ -50,7 +68,7 @@ async def _safe_websocket_send_json(
         await websocket.send_json(data)
         return True
     except Exception as e:
-        if client_info:
+        if client_info and not _is_expected_websocket_close_error(e):
             print(f"[WebSocket] {client_info}: Failed to send JSON: {e}")
         return False
 
@@ -82,7 +100,7 @@ async def _safe_websocket_send_text(
         await websocket.send_text(text)
         return True
     except Exception as e:
-        if client_info:
+        if client_info and not _is_expected_websocket_close_error(e):
             print(f"[WebSocket] {client_info}: Failed to send text: {e}")
         return False
 
@@ -114,7 +132,7 @@ async def _safe_websocket_send_bytes(
         await websocket.send_bytes(data)
         return True
     except Exception as e:
-        if client_info:
+        if client_info and not _is_expected_websocket_close_error(e):
             print(f"[WebSocket] {client_info}: Failed to send bytes: {e}")
         return False
 
@@ -143,7 +161,7 @@ async def _safe_websocket_receive_text(
     try:
         return await websocket.receive_text()
     except Exception as e:
-        if client_info:
+        if client_info and not _is_expected_websocket_close_error(e):
             print(f"[WebSocket] {client_info}: Failed to receive text: {e}")
         return None
 
@@ -172,6 +190,6 @@ async def _safe_websocket_receive_bytes(
     try:
         return await websocket.receive_bytes()
     except Exception as e:
-        if client_info:
+        if client_info and not _is_expected_websocket_close_error(e):
             print(f"[WebSocket] {client_info}: Failed to receive bytes: {e}")
         return None

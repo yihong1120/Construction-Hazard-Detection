@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import posixpath
+from collections.abc import Callable
 from collections.abc import Mapping
 from urllib.parse import urlparse
 from urllib.parse import urlunparse
@@ -22,13 +23,13 @@ class NetClient:
         self,
         base_url: str,
         token_manager: TokenManager,
-        *,
         timeout: int = 10,
         reconnect_backoff: float = 1.5,
         ws_heartbeat: int = 30,
         ws_send_timeout: float = 10.0,
         ws_recv_timeout: float = 10.0,
         ws_connect_attempts: int = 3,
+        auth_required: bool = True,
     ) -> None:
         """
         Initialise the NetClient with the given parameters.
@@ -49,6 +50,8 @@ class NetClient:
                 messages over WebSocket. Defaults to 10.0.
             ws_connect_attempts (int, optional): The number of attempts to
                 connect the WebSocket. Defaults to 3.
+            auth_required (bool, optional): Whether HTTP/WS requests should
+                acquire and refresh JWT credentials. Defaults to True.
         """
         self.base_url: str = base_url.rstrip('/')
         self.token_manager: TokenManager = token_manager
@@ -58,6 +61,7 @@ class NetClient:
         self.ws_send_timeout: float = ws_send_timeout
         self.ws_recv_timeout: float = ws_recv_timeout
         self.ws_connect_attempts: int = ws_connect_attempts
+        self.auth_required: bool = auth_required
 
         self._session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -108,6 +112,8 @@ class NetClient:
         Raises:
             Exception: If authentication and token retrieval both fail.
         """
+        if not self.auth_required:
+            return {'User-Agent': 'ConstructionHazardDetection/1.0'}
         try:
             access_token = await self.token_manager.get_valid_token()
         except Exception:
@@ -121,7 +127,6 @@ class NetClient:
     async def http_post(
         self,
         path: str,
-        *,
         data: Mapping[str, object],
         files: dict[str, tuple[str, bytes, str]] | None = None,
         max_retries: int = 3,
@@ -162,7 +167,9 @@ class NetClient:
                 delay = min(self.reconnect_backoff * (attempt + 1), 10.0)
                 await asyncio.sleep(delay)
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code in (401, 403):
+                if self.auth_required and exc.response.status_code in (
+                    401, 403,
+                ):
                     await self.token_manager.refresh_token()
                     headers = await self.auth_headers()
                     if attempt == max_retries - 1:
@@ -266,12 +273,24 @@ class NetClient:
                 self._log.info('[WS] Connection established')
                 return ws
             except aiohttp.ClientResponseError as e:
-                if e.status == 401:
+                self._log.warning(
+                    '[WS] connection response error from %s: status=%s %s',
+                    ws_url,
+                    e.status,
+                    e.message,
+                )
+                if self.auth_required and e.status == 401:
                     await self.token_manager.refresh_token()
                 elif e.status in (403, 404):
                     raise
-            except (aiohttp.ClientConnectorError, asyncio.TimeoutError):
-                pass
+            except (aiohttp.ClientConnectorError, asyncio.TimeoutError) as e:
+                self._log.warning(
+                    '[WS] connection attempt %d/%d to %s failed: %s',
+                    attempt,
+                    attempts,
+                    ws_url,
+                    e,
+                )
             if attempt < attempts:
                 delay = min(self.reconnect_backoff * attempt, 10.0)
                 await asyncio.sleep(delay)
@@ -300,27 +319,32 @@ class NetClient:
         ws_path: str,
         payload: bytes,
         headers: dict[str, str] | None = None,
-    ) -> dict[str, object] | None:
+        ignore_messages: Callable[[object], bool] | None = None,
+    ) -> object | None:
         """Send bytes over WS and await a JSON response.
 
         Args:
-          ws_path: WS path for ensure/connect.
-          payload: Bytes to send over the socket.
-          headers: Optional extra headers.
+            ws_path: WS path for ensure/connect.
+            payload: Bytes to send over the socket.
+            headers: Optional extra headers.
+            ignore_messages: Optional predicate used to skip control
+                messages and continue waiting for the actual response
+                payload.
 
         Returns:
-          Parsed JSON dictionary, or ``None`` if sending/receiving failed.
+            Parsed JSON payload, or ``None`` if sending/receiving failed.
         """
         ws = await self.ensure_ws(ws_path, headers=headers)
         if ws.closed:
-            ws = await self._reconnect_ws(ws_path, headers)
-            if ws is None:
+            reconnected_ws = await self._reconnect_ws(ws_path, headers)
+            if reconnected_ws is None:
                 return None
+            ws = reconnected_ws
 
         if not await self._send_ws_bytes(ws, payload):
             return None
 
-        return await self._receive_ws_json(ws)
+        return await self._receive_ws_json_until(ws, ignore_messages)
 
     async def _reconnect_ws(
         self, ws_path: str, headers: dict[str, str] | None,
@@ -371,9 +395,26 @@ class NetClient:
             await self.close()
             return False
 
+    async def _receive_ws_json_until(
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        ignore_messages: Callable[[object], bool] | None = None,
+    ) -> object | None:
+        """Receive JSON messages until one should be returned to the caller."""
+        while True:
+            data = await self._receive_ws_json(ws)
+            if data is None:
+                return None
+            if ignore_messages and ignore_messages(data):
+                self._log.debug(
+                    '[WS] skipping control message on %s', self._ws_path,
+                )
+                continue
+            return data
+
     async def _receive_ws_json(
         self, ws: aiohttp.ClientWebSocketResponse,
-    ) -> dict[str, object] | None:
+    ) -> object | None:
         """
         Receive a WS message and parse JSON payloads.
 
@@ -381,7 +422,7 @@ class NetClient:
           ws: The connected WS instance to receive from.
 
         Returns:
-          Parsed JSON payload as a dictionary, or ``None`` on failure/end.
+          Parsed JSON payload, or ``None`` on failure/end.
         """
         try:
             resp = await asyncio.wait_for(
@@ -402,13 +443,24 @@ class NetClient:
             return _json.loads(resp.data.decode('utf-8'))
 
         if resp.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
+            self._log.warning(
+                '[WS] connection closed on %s: code=%s extra=%s',
+                self._ws_path,
+                resp.data,
+                getattr(resp, 'extra', ''),
+            )
             # 1008: policy violation/auth error
-            if resp.data == 1008:
+            if self.auth_required and resp.data == 1008:
                 await self.token_manager.refresh_token()
             await self.close()
             return None
 
         if resp.type == aiohttp.WSMsgType.ERROR:
+            self._log.warning(
+                '[WS] connection error on %s: %s',
+                self._ws_path,
+                ws.exception(),
+            )
             await self.close()
             return None
 

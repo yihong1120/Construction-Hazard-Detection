@@ -57,6 +57,7 @@ class TestNormalizeSafeRelPath(unittest.TestCase):
 
             def __init__(self, *parts: str) -> None:
                 # If initialised with a single string, split by '/'.
+                """Support __init__."""
                 if len(parts) == 1 and isinstance(parts[0], str):
                     self.parts: tuple[str, ...] = tuple(parts[0].split('/'))
                 else:
@@ -74,11 +75,11 @@ class TestNormalizeSafeRelPath(unittest.TestCase):
     def test_segment_sanitization_empty(self) -> None:
         """Empty result from sanitising must raise a 400 segment error.
 
-        secure_filename is patched to return an empty string to exercise the
+        sanitize_filename is patched to return an empty string to exercise the
         branch where a segment is considered invalid after sanitisation.
         """
         with patch(
-            'examples.violation_records.path_utils.secure_filename',
+            'examples.violation_records.path_utils.sanitize_filename',
             return_value='',
         ):
             with self.assertRaises(HTTPException) as cm:
@@ -91,10 +92,11 @@ class TestNormalizeSafeRelPath(unittest.TestCase):
         raw: str = 'valid My/img 1.PNG'
         out: Path = _normalize_safe_rel_path(raw)
         # Compute expected using the same sanitiser per segment.
-        from examples.violation_records.path_utils import secure_filename
+        from examples.shared.filename_utils import sanitize_filename
 
         exp: Path = (
-            Path(secure_filename('valid My')) / secure_filename('img 1.PNG')
+            Path(sanitize_filename('valid My')) /
+            sanitize_filename('img 1.PNG')
         )
         self.assertEqual(out, exp)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from pydantic import BaseModel
+from pydantic import Field
 
 
 class StreamConfigCreate(BaseModel):
@@ -11,7 +12,7 @@ class StreamConfigCreate(BaseModel):
     site_id: int
     stream_name: str
     video_url: str
-    model_key: str = 'yolo11x'
+    model_key: str = 'yolo26n'
     detect_with_server: bool = True
     work_start_hour: int = 7
     work_end_hour: int = 18
@@ -22,7 +23,13 @@ class StreamConfigCreate(BaseModel):
     detect_in_utility_pole_restricted_area: bool = False
     detect_machinery_close_to_pole: bool = False
 
-    store_in_redis: bool = False
+    store_in_redis: bool = Field(
+        default=False,
+        description=(
+            'Enables live MediaMTX publishing; Redis is '
+            'used only for compact metadata and overlay coordination.'
+        ),
+    )
     expire_date: datetime | None = None
     group_id: int | None = None
 
@@ -46,7 +53,13 @@ class StreamConfigUpdate(BaseModel):
     detect_in_utility_pole_restricted_area: bool | None = None
     detect_machinery_close_to_pole: bool | None = None
 
-    store_in_redis: bool | None = None
+    store_in_redis: bool | None = Field(
+        default=None,
+        description=(
+            'Enables live MediaMTX publishing; Redis is '
+            'used only for compact metadata and overlay coordination.'
+        ),
+    )
     expire_date: datetime | None = None
 
 
@@ -59,7 +72,12 @@ class StreamConfigRead(BaseModel):
     model_key: str
 
     detect_with_server: bool
-    store_in_redis: bool
+    store_in_redis: bool = Field(
+        description=(
+            'Enables live MediaMTX publishing; Redis is '
+            'used only for compact metadata and overlay coordination.'
+        ),
+    )
     work_start_hour: int
     work_end_hour: int
 

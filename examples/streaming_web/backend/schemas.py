@@ -1,11 +1,3 @@
-"""Shared schemas and type definitions for the streaming web backend.
-
-This module centralises common data structures used across WebSocket handlers
-and Redis services. Using ``TypedDict`` keeps runtime structures lightweight
-whilst providing strong editor and type-checking support.
-
-All docstrings use British English.
-"""
 from __future__ import annotations
 
 from typing import TypedDict
@@ -14,34 +6,13 @@ from pydantic import BaseModel
 
 
 class FrameOutData(TypedDict, total=False):
-    """A frame record read from Redis and prepared for outbound delivery.
-
-    Keys are optional as upstream sources may omit some. The ``frame_bytes`` is
-    the raw encoded image payload. Width and height describe image dimensions.
-    """
+    """A compact Redis metadata record for MediaMTX live viewers."""
 
     key: str
     id: str
-    frame_bytes: bytes
-    warnings: str
-    cone_polygons: str
-    pole_polygons: str
-    detection_items: str
-    width: int
-    height: int
-
-
-class FrameInHeader(TypedDict, total=False):
-    """Header fields accompanying inbound frame bytes from clients."""
-
-    label: str
-    key: str
-    warnings_json: str
-    cone_polygons_json: str
-    pole_polygons_json: str
-    detection_items_json: str
-    width: int
-    height: int
+    stream_id: str
+    redis_key: str
+    has_warning: bool | str
 
 
 class LabelListResponse(BaseModel):
@@ -50,16 +21,78 @@ class LabelListResponse(BaseModel):
     labels: list[str]
 
 
+class StreamPlaybackRequest(BaseModel):
+    """Requested playback profile for one camera stream."""
+
+    label: str
+    stream_id: str | None = None
+    key: str | None = None
+    overlay: bool | str | None = False
+    language: str | None = None
+    lang: str | None = None
+    transport: str = 'hls'
+
+
+class OverlayLanguageInfo(BaseModel):
+    """One backend-supported overlay language contract for clients."""
+
+    code: str
+    notification_code: str
+    display_name: str
+    native_name: str
+    is_default: bool
+    class_labels: dict[str, str]
+    warning_labels: dict[str, str]
+    notification_templates: dict[str, str]
+
+
+class OverlayLanguageListResponse(BaseModel):
+    """Supported overlay language codes and translation dictionaries."""
+
+    default_language: str
+    allowed_language_codes: list[str]
+    supported_languages: list[str]
+    aliases: dict[str, str]
+    languages: list[OverlayLanguageInfo]
+    stream_playback_endpoint: str
+    playback_endpoint: str
+    max_active_languages_per_stream: int
+    demand_ttl_seconds: int
+    ready_ttl_seconds: int
+
+
 class FramePostResponse(BaseModel):
-    """Response model representing the status of a frame upload operation."""
+    """Response model representing a simple status message."""
 
     status: str
     message: str
 
 
+class WebRTCOfferRequest(BaseModel):
+    """Client SDP offer schema retained for API compatibility."""
+
+    sdp: str
+    type: str = 'offer'
+    overlay: str | None = None
+    lang: str | None = None
+    language: str | None = None
+    min_confidence: float | None = None
+
+
+class WebRTCAnswerResponse(BaseModel):
+    """Server SDP answer schema retained for API compatibility."""
+
+    sdp: str
+    type: str
+
+
 __all__ = [
     'FrameOutData',
-    'FrameInHeader',
     'LabelListResponse',
+    'StreamPlaybackRequest',
+    'OverlayLanguageInfo',
+    'OverlayLanguageListResponse',
     'FramePostResponse',
+    'WebRTCOfferRequest',
+    'WebRTCAnswerResponse',
 ]

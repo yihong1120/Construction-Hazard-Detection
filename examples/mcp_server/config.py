@@ -13,7 +13,7 @@ load_dotenv()
 
 
 # ---------------------------------------------------------------------------
-# Default configuration values for fallback
+# Default configuration values
 # ---------------------------------------------------------------------------
 DEFAULT_ENV: dict[str, str] = {
     'MCP_TRANSPORT': 'streamable-http',

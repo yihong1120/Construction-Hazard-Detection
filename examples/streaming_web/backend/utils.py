@@ -3,8 +3,13 @@ from __future__ import annotations
 import base64
 import re
 from typing import Any
+from typing import Final
 
 from fastapi import WebSocket
+
+_base64_urlsafe_re: Final[re.Pattern[str]] = re.compile(
+    r'^[A-Za-z0-9\-_]+={0,2}$',
+)
 
 
 class Utils:
@@ -48,7 +53,7 @@ class Utils:
             return False
         if len(value) % 4 != 0:
             return False
-        return re.fullmatch(r'^[A-Za-z0-9\-_]+={0,2}$', value) is not None
+        return _base64_urlsafe_re.fullmatch(value) is not None
 
     @staticmethod
     def decode(value: str) -> str:
@@ -104,6 +109,7 @@ class Utils:
         Returns:
             list[str]: The filtered list of labels.
         """
-        if role == 'admin':
+        if role == 'super_admin':
             return all_labels
-        return [lbl for lbl in all_labels if lbl in sites]
+        allowed_sites = set(sites)
+        return [lbl for lbl in all_labels if lbl in allowed_sites]

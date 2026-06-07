@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
+import os
 from typing import cast
 
-import redis
+import redis.asyncio as redis
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 
@@ -12,7 +14,6 @@ from examples.auth.config import Settings
 from examples.shared.ws_helpers import authenticate_ws_or_none
 from examples.shared.ws_helpers import check_and_maybe_close_on_timeout
 from examples.shared.ws_helpers import get_auto_register_jti
-from examples.shared.ws_helpers import log_every_n
 from examples.shared.ws_helpers import start_session_timer
 from examples.shared.ws_utils import _safe_websocket_receive_bytes
 from examples.shared.ws_utils import _safe_websocket_send_json
@@ -27,6 +28,24 @@ WS_INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(8)
 AUTO_REGISTER_JTI: bool = get_auto_register_jti()
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Read a boolean environment setting."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _should_bypass_local_auth(client_ip: str) -> bool:
+    """Allow trusted same-host pipeline calls to skip JWT auth."""
+    if not _env_bool('YOLO_WS_ALLOW_LOCALHOST_BYPASS', True):
+        return False
+    try:
+        return ipaddress.ip_address(client_ip).is_loopback
+    except ValueError:
+        return client_ip in {'localhost', 'unknown'}
+
+
 async def _get_model_key_from_ws(
         websocket: WebSocket,
         client_ip: str,
@@ -39,17 +58,6 @@ async def _get_model_key_from_ws(
             (
                 f"[YOLO-WebSocket] {client_ip} ({username}): "
                 'Model key from header'
-            ),
-        )
-        return model_key
-
-    query_params = dict(websocket.query_params)
-    model_key = query_params.get('model')
-    if model_key:
-        print(
-            (
-                f"[YOLO-WebSocket] {client_ip} ({username}): "
-                'Model key from query parameter (deprecated)'
             ),
         )
         return model_key
@@ -103,6 +111,7 @@ async def _send_ready_config(
         client_ip: str,
         username: str,
 ) -> bool:
+    """Send the ready message after a model has been selected."""
     config_response: dict[str, str] = {
         'status': 'ready',
         'model': model_key,
@@ -126,10 +135,11 @@ async def _send_ready_config(
 async def _process_frame_and_respond(
         websocket: WebSocket,
         img_bytes: bytes,
-        model_instance,
+        model_instance: object,
         client_ip: str,
         username: str,
 ) -> bool:
+    """Run detection for one frame and send the result."""
     datas, _ = await run_detection_from_bytes(
         img_bytes, model_instance, semaphore=WS_INFERENCE_SEMAPHORE,
     )
@@ -152,6 +162,7 @@ async def _prepare_model_and_notify(
     username: str,
     model_loader: DetectionModelManager,
 ) -> object | None:
+    """Load the requested model and notify the websocket client."""
     model_key: str | None = await _get_model_key_from_ws(
         websocket,
         client_ip,
@@ -183,10 +194,11 @@ async def _prepare_model_and_notify(
 async def _detect_loop(
         websocket: WebSocket,
         session_start: float,
-        model_instance,
+        model_instance: object,
         client_ip: str,
         username: str,
 ) -> int:
+    """Receive websocket frames until timeout, close, or send failure."""
     frame_count: int = 0
     while True:
         if await check_and_maybe_close_on_timeout(
@@ -217,12 +229,6 @@ async def _detect_loop(
         )
         if not success:
             break
-        log_every_n(
-            f"[YOLO-WebSocket] {client_ip} ({username})",
-            frame_count,
-            unit='frames',
-            n=100,
-        )
     return frame_count
 
 
@@ -232,21 +238,32 @@ async def handle_websocket_detect(
         settings: Settings,
         model_loader: DetectionModelManager,
 ) -> None:
+    """Handle one YOLO websocket detection session."""
     client_ip: str = websocket.client.host if websocket.client else 'unknown'
     print(f"[YOLO-WebSocket] New connection from {client_ip}")
 
     await websocket.accept()
 
-    username, _ = await authenticate_ws_or_none(
-        websocket,
-        rds,
-        settings,
-        auto_register_jti=AUTO_REGISTER_JTI,
-        client_tag=f"[YOLO-WebSocket] {client_ip}",
-    )
-    if not username:
-        return
-    print(f"[YOLO-WebSocket] {client_ip}: Authenticated as {username}")
+    if _should_bypass_local_auth(client_ip):
+        username = os.getenv('YOLO_WS_LOCAL_USERNAME') or 'local-main'
+        print(
+            (
+                f"[YOLO-WebSocket] {client_ip}: "
+                'Localhost auth bypass enabled'
+            ),
+        )
+    else:
+        authenticated_username, _ = await authenticate_ws_or_none(
+            websocket,
+            rds,
+            settings,
+            auto_register_jti=AUTO_REGISTER_JTI,
+            client_tag=f"[YOLO-WebSocket] {client_ip}",
+        )
+        if not authenticated_username:
+            return
+        username = authenticated_username
+        print(f"[YOLO-WebSocket] {client_ip}: Authenticated as {username}")
 
     session_start: float = start_session_timer()
 

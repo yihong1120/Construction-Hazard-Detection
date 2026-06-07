@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from examples.mcp_server.config import get_transport_config
 from examples.mcp_server.schemas import DetectionLikeDict
@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Initialise FastMCP server
 mcp = FastMCP('construction-hazard-detection')
+
 
 # Initialise tool instances lazily used by MCP tool handlers
 inference_tools = InferenceTools()
@@ -418,76 +419,57 @@ async def utils_validate_detections(
     )
 
 
-async def run_server():
+async def run_server() -> None:
     """Run the MCP server with configured transport."""
-    try:
-        # Get transport configuration
-        transport_config = get_transport_config()
+    transport_config = get_transport_config()
 
-        logger.info('Starting Construction Hazard Detection MCP Server')
-        logger.info(f"Transport: {transport_config['transport']}")
+    logger.info('Starting Construction Hazard Detection MCP Server')
+    logger.info(f"Transport: {transport_config['transport']}")
 
-        if transport_config['transport'] == 'stdio':
-            # Run with stdio transport
-            await mcp.run_stdio_async()
-        elif transport_config['transport'] == 'sse':
-            # Run with SSE transport - no timeout limits
-            # Remove keep-alive timeout
-            # Remove graceful shutdown timeout
-            # Remove HTTP event size limit
-            uvicorn_config = {
-                'timeout_keep_alive': 0,
-                'timeout_graceful_shutdown': None,
-                'h11_max_incomplete_event_size': None,
-            }
-            await mcp.run_sse_async(
-                host=transport_config['host'],
-                port=transport_config['port'],
-                uvicorn_config=uvicorn_config,
-                stateless_http=True,
-            )
-        elif transport_config['transport'] == 'streamable-http':
-            # Run with streamable HTTP transport - no timeout limits
-            # Remove keep-alive timeout
-            # Remove graceful shutdown timeout
-            # Remove HTTP event size limit
-            uvicorn_config = {
-                'timeout_keep_alive': 0,
-                'timeout_graceful_shutdown': None,
-                'h11_max_incomplete_event_size': None,
-            }
-            await mcp.run_http_async(
-                transport='streamable-http',
-                host=transport_config['host'],
-                port=transport_config['port'],
-                uvicorn_config=uvicorn_config,
-                stateless_http=True,
-            )
-        elif transport_config['transport'] == 'http':
-            # Run with standard HTTP transport - no timeout limits
-            # Remove keep-alive timeout
-            # Remove graceful shutdown timeout
-            # Remove HTTP event size limit
-            uvicorn_config = {
-                'timeout_keep_alive': 0,
-                'timeout_graceful_shutdown': None,
-                'h11_max_incomplete_event_size': None,
-            }
-            await mcp.run_http_async(
-                transport='http',
-                host=transport_config['host'],
-                port=transport_config['port'],
-                uvicorn_config=uvicorn_config,
-                stateless_http=True,
-            )
-        else:
-            raise ValueError(
-                f"Unsupported transport type: {transport_config['transport']}",
-            )
-
-    except Exception as e:
-        logger.error(f"Failed to start MCP server: {e}")
-        raise
+    if transport_config['transport'] == 'stdio':
+        await mcp.run_stdio_async()
+    elif transport_config['transport'] == 'sse':
+        uvicorn_config = {
+            'timeout_keep_alive': 0,
+            'timeout_graceful_shutdown': None,
+            'h11_max_incomplete_event_size': None,
+        }
+        await mcp.run_sse_async(  # type: ignore[call-arg]
+            host=transport_config['host'],
+            port=transport_config['port'],
+            uvicorn_config=uvicorn_config,
+            stateless_http=True,
+        )
+    elif transport_config['transport'] == 'streamable-http':
+        uvicorn_config = {
+            'timeout_keep_alive': 0,
+            'timeout_graceful_shutdown': None,
+            'h11_max_incomplete_event_size': None,
+        }
+        await mcp.run_http_async(  # type: ignore[attr-defined]
+            transport='streamable-http',
+            host=transport_config['host'],
+            port=transport_config['port'],
+            uvicorn_config=uvicorn_config,
+            stateless_http=True,
+        )
+    elif transport_config['transport'] == 'http':
+        uvicorn_config = {
+            'timeout_keep_alive': 0,
+            'timeout_graceful_shutdown': None,
+            'h11_max_incomplete_event_size': None,
+        }
+        await mcp.run_http_async(  # type: ignore[attr-defined]
+            transport='http',
+            host=transport_config['host'],
+            port=transport_config['port'],
+            uvicorn_config=uvicorn_config,
+            stateless_http=True,
+        )
+    else:
+        raise ValueError(
+            f"Unsupported transport type: {transport_config['transport']}",
+        )
 
 
 if __name__ == '__main__':

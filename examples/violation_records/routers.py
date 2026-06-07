@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from datetime import timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -14,21 +14,19 @@ from fastapi import Query
 from fastapi import Security
 from fastapi import UploadFile
 from fastapi.responses import FileResponse
-from fastapi_jwt import JwtAuthorizationCredentials
 from sqlalchemy import and_
 from sqlalchemy import func
 from sqlalchemy import or_
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-from werkzeug.utils import secure_filename
 
 from examples.auth import user_service as _user_service
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
+from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.models import Site
-from examples.auth.models import User
 from examples.auth.models import Violation
+from examples.shared.filename_utils import sanitize_filename
 from examples.violation_records.path_utils import _determine_media_type
 from examples.violation_records.path_utils import _normalize_safe_rel_path
 from examples.violation_records.path_utils import _resolve_and_authorize
@@ -38,10 +36,19 @@ from examples.violation_records.schemas import ViolationItem
 from examples.violation_records.schemas import ViolationList
 from examples.violation_records.search_utils import SearchUtils
 from examples.violation_records.settings import STATIC_DIR
+from examples.violation_records.violation_manager import (
+    EmptyViolationImageError,
+)
+from examples.violation_records.violation_manager import (
+    ViolationImageReadError,
+)
 from examples.violation_records.violation_manager import ViolationManager
 
-# Re-export for backward compatibility with tests
-get_user_sites_cached = _user_service.get_user_sites_cached
+# Module-level aliases used by tests for patching
+get_cached_effective_site_names = _user_service.get_cached_effective_site_names
+load_user_with_effective_sites = _user_service.load_user_with_effective_sites
+get_user_effective_sites = _user_service.load_user_with_effective_sites
+get_user_sites_cached = _user_service.get_cached_effective_site_names
 
 # Instantiate a global ViolationManager for handling image saving
 # and record creation.
@@ -53,7 +60,93 @@ search_util: SearchUtils = SearchUtils(device=-1)
 # Create a FastAPI router for violations-related endpoints.
 router: APIRouter = APIRouter()
 
-# Note: get_user_sites_cached is provided by examples.auth.user_service
+# Note: effective site access helpers are provided by
+# examples.auth.user_service
+
+_violation_columns = (
+    Violation.id,
+    Violation.site,
+    Violation.stream_name,
+    Violation.detection_time,
+    Violation.image_path,
+    Violation.created_at,
+    Violation.detections_json,
+    Violation.warnings_json,
+    Violation.cone_polygon_json,
+    Violation.pole_polygon_json,
+)
+_violation_column_count = len(_violation_columns)
+
+
+def _violation_to_item(row: Any) -> ViolationItem:
+    """Convert an ORM object or selected-column row into a response item."""
+    if hasattr(row, 'site'):
+        return ViolationItem(
+            id=row.id,
+            site_name=row.site,
+            stream_name=row.stream_name,
+            detection_time=row.detection_time.astimezone(),
+            image_path=row.image_path,
+            created_at=row.created_at.astimezone(),
+            detection_items=row.detections_json,
+            warnings=row.warnings_json,
+            cone_polygons=row.cone_polygon_json,
+            pole_polygons=row.pole_polygon_json,
+        )
+
+    (
+        violation_id,
+        site,
+        stream_name,
+        detection_time,
+        image_path,
+        created_at,
+        detections_json,
+        warnings_json,
+        cone_polygon_json,
+        pole_polygon_json,
+    ) = row
+    return ViolationItem(
+        id=violation_id,
+        site_name=site,
+        stream_name=stream_name,
+        detection_time=detection_time.astimezone(),
+        image_path=image_path,
+        created_at=created_at.astimezone(),
+        detection_items=detections_json,
+        warnings=warnings_json,
+        cone_polygons=cone_polygon_json,
+        pole_polygons=pole_polygon_json,
+    )
+
+
+def _split_violation_row_total(row: Any) -> tuple[Any, int | None]:
+    """Split an optional window-count column from a selected violation row."""
+    mapping = getattr(row, '_mapping', None)
+    if mapping is not None and 'total_count' in mapping:
+        try:
+            row_length = len(row)
+        except TypeError:
+            return row, int(mapping['total_count'])
+        if row_length == _violation_column_count + 1:
+            return row[:_violation_column_count], int(mapping['total_count'])
+        return row, int(mapping['total_count'])
+
+    try:
+        row_length = len(row)
+    except TypeError:
+        return row, None
+
+    if row_length == _violation_column_count + 1:
+        return row[:_violation_column_count], int(row[-1])
+    return row, None
+
+
+def _scalar_value(value: Any) -> Any:
+    """Return a scalar result value."""
+    if hasattr(value, 'name'):
+        return value.name
+    return value
 
 
 @router.get(
@@ -86,15 +179,7 @@ async def get_my_sites(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    stmt_user = (
-        select(User)
-        .where(User.username == username)
-        .options(selectinload(User.sites))
-    )
-    result_user = await db.execute(stmt_user)
-    user_obj: User | None = result_user.scalar()
-    if not user_obj:
-        raise HTTPException(status_code=404, detail='User not found')
+    _, sites = await get_user_effective_sites(username, db)
 
     return [
         SiteOut(
@@ -103,7 +188,7 @@ async def get_my_sites(
             created_at=s.created_at,
             updated_at=s.updated_at,
         )
-        for s in user_obj.sites
+        for s in sites
     ]
 
 
@@ -161,16 +246,18 @@ async def get_violations(
     conditions: list = [Violation.site.in_(site_names)]
 
     if site_id is not None:
-        site_stmt = select(Site).where(Site.id == site_id)
-        site_obj: Site | None = (await db.execute(site_stmt)).scalar()
-        if not site_obj or site_obj.name not in site_names:
+        site_name_set = set(site_names)
+        site_stmt = select(Site.name).where(Site.id == site_id)
+        site_name = _scalar_value((await db.execute(site_stmt)).scalar())
+        if not site_name or site_name not in site_name_set:
             raise HTTPException(status_code=403, detail='No access to site_id')
-        conditions.append(Violation.site == site_obj.name)
+        conditions.append(Violation.site == site_name)
 
-    if keyword:
-        synonyms: list[str] = search_util.expand_synonyms(keyword)
+    keyword_text = keyword.strip() if keyword else None
+    if keyword_text:
+        synonyms: list[str] = search_util.expand_synonyms(keyword_text)
         or_list: list = []
-        for syn in synonyms:
+        for syn in dict.fromkeys(synonyms):
             or_list.append(Violation.stream_name.ilike(f"%{syn}%"))
             or_list.append(Violation.warnings_json.ilike(f"%{syn}%"))
         if or_list:
@@ -181,45 +268,32 @@ async def get_violations(
     if end_time:
         conditions.append(Violation.detection_time <= end_time)
 
-    # Execute count and query tasks in parallel for performance
-    count_task = db.execute(
-        select(func.count())
-        .select_from(Violation)
-        .where(and_(*conditions)),
-    )
+    where_clause = and_(*conditions)
 
-    violations_task = db.scalars(
-        select(Violation)
-        .where(and_(*conditions))
+    rows_stmt = (
+        select(*_violation_columns, func.count().over().label('total_count'))
+        .where(where_clause)
         .order_by(Violation.detection_time.desc())
         .offset(offset)
-        .limit(limit),
+        .limit(limit)
     )
+    rows_result = await db.execute(rows_stmt)
+    rows = rows_result.all()
+    total = 0
+    items: list[ViolationItem] = []
+    for row in rows:
+        item_row, row_total = _split_violation_row_total(row)
+        if row_total is not None:
+            total = row_total
+        items.append(_violation_to_item(item_row))
 
-    import asyncio
-    total_result, violations_result = await asyncio.gather(
-        count_task, violations_task,
-    )
-
-    total: int = total_result.scalar()
-    violations: list[Violation] = violations_result.all()
-
-    # Construct response items in batch
-    items: list[ViolationItem] = [
-        ViolationItem(
-            id=v.id,
-            site_name=v.site,
-            stream_name=v.stream_name,
-            detection_time=v.detection_time,
-            image_path=v.image_path,
-            created_at=v.created_at,
-            detection_items=v.detections_json,
-            warnings=v.warnings_json,
-            cone_polygons=v.cone_polygon_json,
-            pole_polygons=v.pole_polygon_json,
+    if not rows and offset:
+        total_result = await db.execute(
+            select(func.count())
+            .select_from(Violation)
+            .where(where_clause),
         )
-        for v in violations
-    ]
+        total = int(total_result.scalar() or 0)
 
     return ViolationList(total=total, items=items)
 
@@ -234,7 +308,7 @@ async def get_single_violation(
     violation_id: int,
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
-) -> dict:
+) -> ViolationItem:
     """
     Retrieve detailed information for a specific violation record.
 
@@ -270,11 +344,26 @@ async def get_single_violation(
 
     # Retrieve user sites using the cache
     site_names: list[str] = await get_user_sites_cached(username, db)
+    if not site_names:
+        raise HTTPException(
+            status_code=403, detail='No access to this violation',
+        )
 
-    stmt_violation = select(Violation).where(Violation.id == violation_id)
-    violation: Violation | None = (await db.execute(stmt_violation)).scalar()
+    stmt_violation = select(*_violation_columns).where(
+        Violation.id == violation_id,
+        Violation.site.in_(site_names),
+    )
+    result = await db.execute(stmt_violation)
+    row = result.first() if hasattr(result, 'first') else result.scalar()
 
-    if not violation or violation.site not in site_names:
+    if not row:
+        print(
+            f"[get_single_violation] No access to violation_id {violation_id}",
+        )
+        raise HTTPException(
+            status_code=403, detail='No access to this violation',
+        )
+    if hasattr(row, 'site') and row.site not in site_names:
         print(
             f"[get_single_violation] No access to violation_id {violation_id}",
         )
@@ -282,18 +371,7 @@ async def get_single_violation(
             status_code=403, detail='No access to this violation',
         )
 
-    return ViolationItem(
-        id=violation.id,
-        site_name=violation.site,
-        stream_name=violation.stream_name,
-        detection_time=violation.detection_time,
-        image_path=violation.image_path,
-        created_at=violation.created_at,
-        detection_items=violation.detections_json,
-        warnings=violation.warnings_json,
-        cone_polygons=violation.cone_polygon_json,
-        pole_polygons=violation.pole_polygon_json,
-    )
+    return _violation_to_item(row)
 
 
 @router.get(
@@ -344,7 +422,7 @@ async def get_violation_image(
         media_type=media_type,
         headers={
             'Content-Disposition': (
-                f'inline; filename="{secure_filename(full_path.name)}"'
+                f'inline; filename="{sanitize_filename(full_path.name)}"'
             ),
         },
     )
@@ -367,7 +445,7 @@ async def upload_violation(
     image: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
-) -> dict:
+) -> UploadViolationResponse:
     """
     Upload a new violation record, including an image and associated metadata.
 
@@ -377,7 +455,7 @@ async def upload_violation(
         stream_name (str):
             The name of the video stream or camera.
         detection_time (datetime | None):
-            The detection time; defaults to UTC now.
+            The detection time; defaults to local now.
         warnings_json (str | None):
             JSON string describing warnings.
         detections_json (str | None):
@@ -405,39 +483,34 @@ async def upload_violation(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    site_stmt = await db.execute(
-        select(Site)
-        .join(User.sites)
-        .where(User.username == username, Site.name == site),
-    )
-    site_obj: Site | None = site_stmt.scalar()
-    if not site_obj:
+    site_names: list[str] = await get_user_sites_cached(username, db)
+    if site not in site_names:
         print(f"[upload_violation] No access to site {site}")
         raise HTTPException(status_code=403, detail='No access to this site')
 
-    detection_time = detection_time or datetime.now(timezone.utc)
+    detection_time = (
+        detection_time.astimezone()
+        if detection_time is not None
+        else datetime.now().astimezone()
+    )
 
     try:
-        image_bytes: bytes = await image.read()
-        if not image_bytes:
-            raise HTTPException(status_code=400, detail='Empty image file')
-    except Exception as exc:
+        violation_id: int | None = await violation_manager.save_violation(
+            db=db,
+            site=site,
+            stream_name=stream_name,
+            detection_time=detection_time,
+            image_file=image,
+            warnings_json=warnings_json,
+            detections_json=detections_json,
+            cone_polygon_json=cone_polygon_json,
+            pole_polygon_json=pole_polygon_json,
+        )
+    except (EmptyViolationImageError, ViolationImageReadError) as exc:
         logging.error(f"[upload_violation] read error: {exc}")
         raise HTTPException(
             status_code=400, detail='Failed to read image file',
         )
-
-    violation_id: int | None = await violation_manager.save_violation(
-        db=db,
-        site=site,
-        stream_name=stream_name,
-        detection_time=detection_time,
-        image_bytes=image_bytes,
-        warnings_json=warnings_json,
-        detections_json=detections_json,
-        cone_polygon_json=cone_polygon_json,
-        pole_polygon_json=pole_polygon_json,
-    )
     if not violation_id:
         raise HTTPException(
             status_code=500, detail='Failed to create violation record',

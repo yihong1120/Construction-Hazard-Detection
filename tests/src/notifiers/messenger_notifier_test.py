@@ -23,7 +23,7 @@ class TestMessengerNotifier(unittest.TestCase):
         'src.notifiers.messenger_notifier.os.getenv',
         return_value='test_page_access_token',
     )
-    def setUpClass(cls, mock_getenv) -> None:
+    def setUpClass(cls, mock_getenv: Any) -> None:
         """
         Set up class method to initialise the MessengerNotifier instance.
         """

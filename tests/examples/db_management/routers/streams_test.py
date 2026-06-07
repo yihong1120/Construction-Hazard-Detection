@@ -28,9 +28,11 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.current_user: MagicMock = MagicMock()
         self.current_user.role = 'admin'
         self.current_user.group_id = 1
-        self.site_mock: MagicMock = MagicMock(
-            group_id=1, group=MagicMock(max_allowed_streams=5),
-        )
+        group_mock: MagicMock = MagicMock()
+        group_mock.id = 1
+        group_mock.max_allowed_streams = 5
+        self.site_mock: MagicMock = MagicMock()
+        self.site_mock.groups = [group_mock]
 
     @patch('examples.db_management.routers.streams.list_stream_configs')
     @patch('examples.db_management.routers.streams.get_group_stream_limit')
@@ -67,6 +69,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
             expire_date=None,
             updated_at=datetime.datetime.now(),
             site_id=1,
+            group_id=1,
             site=self.site_mock,
         )
         mock_list.return_value = [mock_config]

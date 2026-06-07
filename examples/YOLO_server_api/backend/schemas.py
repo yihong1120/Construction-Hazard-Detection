@@ -9,6 +9,8 @@ from pydantic import BaseModel
 
 
 class DetectionRequest(BaseModel):
+    """Form payload for image detection."""
+
     model: str
     image: UploadFile
 
@@ -18,6 +20,7 @@ class DetectionRequest(BaseModel):
         model: str = Form(...),
         image: UploadFile = File(...),
     ) -> DetectionRequest:
+        """Build a detection request from multipart form fields."""
         return cls(model=model, image=image)
 
 

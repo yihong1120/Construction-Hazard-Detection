@@ -16,8 +16,8 @@ from examples.YOLO_server_api.backend import websocket_handlers as ws_mod
 class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
     """Tests for extracting model key from WebSocket context.
 
-    Covers header, query parameter, and first message fallbacks, and
-    validates error responses when the key is missing or invalid.
+    Covers header and first message model keys, and validates error responses
+    when the key is missing or invalid.
     """
 
     async def test_header_model_key(self) -> None:
@@ -27,14 +27,6 @@ class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
         ws.query_params = {}
         result = await ws_mod._get_model_key_from_ws(ws, '1.2.3.4', 'alice')
         self.assertEqual(result, 'modelA')
-
-    async def test_query_param_model_key(self) -> None:
-        """Query param is used when header is absent."""
-        ws = MagicMock(spec=WebSocket)
-        ws.headers = {}
-        ws.query_params = {'model': 'modelB'}
-        result = await ws_mod._get_model_key_from_ws(ws, '1.2.3.4', 'bob')
-        self.assertEqual(result, 'modelB')
 
     async def test_first_message_model_key(self) -> None:
         """First message JSON is used when header and query are absent."""
@@ -295,7 +287,6 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
                     ws_mod, '_process_frame_and_respond',
                     new=AsyncMock(return_value=True),
                 ),
-                patch.object(ws_mod, 'log_every_n', new=MagicMock()),
         ):
             count = await ws_mod._detect_loop(
                 ws, 0.0, object(), '1.2.3.4', 'carol',
@@ -348,6 +339,55 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=(None, None)),
         ):
             await ws_mod.handle_websocket_detect(ws, rds, settings, loader)
+
+    def test_should_bypass_local_auth(self) -> None:
+        """Only loopback clients bypass JWT when explicitly enabled."""
+        with patch.dict(
+            ws_mod.os.environ,
+            {'YOLO_WS_ALLOW_LOCALHOST_BYPASS': 'true'},
+        ):
+            self.assertTrue(ws_mod._should_bypass_local_auth('127.0.0.1'))
+            self.assertTrue(ws_mod._should_bypass_local_auth('::1'))
+            self.assertFalse(ws_mod._should_bypass_local_auth('9.9.9.9'))
+        with patch.dict(
+            ws_mod.os.environ,
+            {'YOLO_WS_ALLOW_LOCALHOST_BYPASS': 'false'},
+        ):
+            self.assertFalse(ws_mod._should_bypass_local_auth('127.0.0.1'))
+
+    async def test_localhost_bypass_skips_auth(self) -> None:
+        """Local main.py pipeline calls can skip JWT auth."""
+        ws = self._make_ws()
+        ws.client = SimpleNamespace(host='127.0.0.1')
+        rds: MagicMock = MagicMock(spec=redis.Redis)
+        settings: MagicMock = MagicMock()
+        loader: MagicMock = MagicMock()
+        model_obj: object = object()
+        with (
+            patch.dict(
+                ws_mod.os.environ,
+                {'YOLO_WS_ALLOW_LOCALHOST_BYPASS': 'true'},
+            ),
+            patch.object(
+                ws_mod, 'authenticate_ws_or_none',
+                new=AsyncMock(return_value=('alice', 'jti')),
+            ) as auth_mock,
+            patch.object(
+                ws_mod,
+                '_prepare_model_and_notify',
+                new=AsyncMock(return_value=model_obj),
+            ) as prep_mock,
+            patch.object(
+                ws_mod,
+                '_detect_loop',
+                new=AsyncMock(return_value=1),
+            ) as loop_mock,
+        ):
+            await ws_mod.handle_websocket_detect(ws, rds, settings, loader)
+
+        auth_mock.assert_not_awaited()
+        prep_mock.assert_awaited_once()
+        loop_mock.assert_awaited_once()
 
     async def test_successful_flow(self) -> None:
         """Happy path: prepare model and run detection loop."""

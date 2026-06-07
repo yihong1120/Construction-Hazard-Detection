@@ -18,13 +18,13 @@ class TestDatabaseEngine(unittest.TestCase):
 
     def test_engine_uri_replacement(self) -> None:
         """
-        Ensure the engine URL uses 'mysql+asyncmy://' rather than 'mysql://',
-        and that Base has valid metadata.
+        Ensure the engine URL uses the async PostgreSQL driver, and that Base
+        has valid metadata.
         """
         engine_url_str: str = str(engine.url)
         self.assertIn(
-            'mysql+asyncmy://', engine_url_str,
-            msg='Engine should use asyncmy in the URL.',
+            'postgresql+asyncpg://', engine_url_str,
+            msg='Engine should use asyncpg in the URL.',
         )
         self.assertIsNotNone(engine, 'Engine instance should not be None.')
         self.assertTrue(

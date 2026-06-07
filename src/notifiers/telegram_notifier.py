@@ -32,14 +32,10 @@ class TelegramResponse(TypedDict):
 
 
 class TelegramNotifier:
-    """
-    A class to handle sending notifications through Telegram.
-    """
+    """Send notifications through Telegram."""
 
-    def __init__(self):
-        """
-        Initialises the TelegramNotifier.
-        """
+    def __init__(self) -> None:
+        """Load environment variables for Telegram credentials."""
         load_dotenv()
 
     async def send_notification(
@@ -93,7 +89,8 @@ class TelegramNotifier:
 
 
 # Example usage
-async def main():
+async def main() -> None:
+    """Send a sample Telegram notification for direct script execution."""
     notifier = TelegramNotifier()
     chat_id = 'your_chat_id_here'
     message = 'Hello, Telegram!'

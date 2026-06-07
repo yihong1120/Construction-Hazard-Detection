@@ -23,15 +23,14 @@ class ModelFetcher:
         api_url: str = 'http://your-server-address/get_new_model',
         models: list[str] | None = None,
         local_dir: str = 'models/pt',
-    ):
-        """
-        Initialises the ModelFetcher instance with default values.
+    ) -> None:
+        """Initialise the model fetcher.
 
         Args:
-            api_url (str): The API URL for fetching updated models.
-            models (Optional[list[str]]): A list of model names to update.
-                Defaults to common YOLO models.
-            local_dir (str): The directory to store model files.
+            api_url: API URL for fetching updated models.
+            models: Model names to update. Common YOLO model keys are used
+                when omitted.
+            local_dir: Directory where model files are stored.
         """
         self.api_url = api_url
         self.models = models or [
@@ -113,13 +112,8 @@ class ModelFetcher:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error requesting model {model}: {e}")
 
-    def update_all_models(self):
-        """
-        Attempt to update all model files.
-
-        Returns:
-            None
-        """
+    def update_all_models(self) -> None:
+        """Attempt to update all configured model files."""
         for model in self.models:
             try:
                 logger.info(f"Checking for updates for model {model}...")
@@ -130,12 +124,14 @@ class ModelFetcher:
 
 
 # Schedule the task to run every hour
-def schedule_task():
+def schedule_task() -> None:
+    """Run one scheduled model update task."""
     updater = ModelFetcher()
     updater.update_all_models()
 
 
-def run_scheduler_loop():
+def run_scheduler_loop() -> None:
+    """Run pending scheduled tasks until the process is interrupted."""
     logger.info('Starting scheduled tasks. Press Ctrl+C to exit.')
     while True:
         schedule.run_pending()

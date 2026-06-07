@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 from io import BytesIO
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
@@ -26,7 +27,7 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         'src.notifiers.telegram_notifier.os.getenv',
         return_value='test_bot_token',
     )
-    def setUpClass(cls, mock_getenv) -> None:
+    def setUpClass(cls, mock_getenv: Any) -> None:
         """
         Set up the TelegramNotifier instance for tests.
         """
@@ -45,7 +46,7 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
     )
     async def test_send_notification_no_image(
         self,
-        mock_getenv,
+        mock_getenv: Any,
         mock_send_message: AsyncMock,
     ) -> None:
         """
@@ -73,7 +74,7 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
     )
     async def test_send_notification_with_image(
         self,
-        mock_getenv,
+        mock_getenv: Any,
         mock_send_photo: AsyncMock,
     ) -> None:
         """

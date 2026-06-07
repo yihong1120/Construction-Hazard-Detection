@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import inspect
 import logging
 import os
 from datetime import datetime
@@ -13,9 +13,10 @@ from src.violation_sender import ViolationSender
 class RecordTools:
     """Tools for managing violation records and data persistence."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialise lazy violation record resources."""
         self.logger = logging.getLogger(__name__)
-        self._violation_sender = None
+        self._violation_sender: ViolationSender | None = None
 
     async def send_violation(
         self,
@@ -40,7 +41,7 @@ class RecordTools:
             dict[str, Any]: Upload status and record ID.
         """
         try:
-            await self._ensure_violation_sender()
+            sender = await self._ensure_violation_sender()
 
             # Convert base64 to bytes
             import base64
@@ -75,13 +76,6 @@ class RecordTools:
                 'stream_name',
             ) or 'default-stream'
 
-            det_json = json.dumps(
-                detections,
-            ) if detections is not None else None
-            warn_json = json.dumps(
-                {'message': warning_message},
-            ) if warning_message else None
-
             dt: datetime | None = None
             if timestamp:
                 try:
@@ -90,15 +84,15 @@ class RecordTools:
                     dt = None
 
             # Call existing async API
-            violation_id = await self._violation_sender.send_violation(
+            violation_id = await sender.send_violation(
                 site=site,
                 stream_name=stream_name,
                 image_bytes=image_bytes,
                 detection_time=dt,
-                warnings_json=warn_json,
-                detections_json=det_json,
-                cone_polygon_json=None,
-                pole_polygon_json=None,
+                warnings={'message': warning_message},
+                detections=detections,
+                cone_polygon=None,
+                pole_polygon=None,
             )
 
             success = violation_id is not None
@@ -173,7 +167,7 @@ class RecordTools:
             dict[str, Any]: Backup status and file path.
         """
         try:
-            await self._ensure_violation_sender()
+            sender = await self._ensure_violation_sender()
 
             # Use default backup path if not provided
             if backup_path is None:  # pragma: no cover
@@ -181,12 +175,22 @@ class RecordTools:
                     self._compute_default_backup_path()
                 )  # pragma: no cover
 
-            # Create backup
-            success, backed_up_count = await (
-                self._violation_sender.backup_to_local(
-                    backup_path,
-                )
-            )
+            backup_method = getattr(sender, 'backup_to_local', None)
+            if not callable(backup_method):
+                return {
+                    'success': False,
+                    'backup_path': backup_path,
+                    'records_count': 0,
+                    'message': (
+                        'Backup is not supported by current ViolationSender '
+                        'implementation'
+                    ),
+                }
+            backup_result = backup_method(backup_path)
+            if inspect.isawaitable(backup_result):
+                success, backed_up_count = await backup_result
+            else:
+                success, backed_up_count = backup_result
 
             return {
                 'success': success,
@@ -228,7 +232,6 @@ class RecordTools:
         try:
             await self._ensure_violation_sender()
 
-            # Fallback: not implemented in current ViolationSender
             return {
                 'success': False,
                 'synced_count': 0,
@@ -252,7 +255,6 @@ class RecordTools:
         try:
             await self._ensure_violation_sender()
 
-            # Fallback: not implemented in current ViolationSender
             return {
                 'success': True,
                 'statistics': {
@@ -278,7 +280,6 @@ class RecordTools:
         try:
             await self._ensure_violation_sender()
 
-            # Fallback: not implemented in current ViolationSender
             return {
                 'success': False,
                 'cleared_count': 0,
@@ -292,8 +293,9 @@ class RecordTools:
             self.logger.error(f"Failed to clear cache: {e}")
             raise
 
-    async def _ensure_violation_sender(self) -> None:
-        """Ensure the violation sender is initialised."""
+    async def _ensure_violation_sender(self) -> ViolationSender:
+        """Ensure the violation sender is initialised and return it."""
         if self._violation_sender is None:
             self._violation_sender = ViolationSender()
             self.logger.info('Initialised violation sender')
+        return self._violation_sender

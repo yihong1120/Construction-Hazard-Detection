@@ -50,6 +50,7 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             key: str,
             algorithms: list[str],
         ) -> dict[str, object]:
+            """Support decode_side_effect."""
             if tok == 'valid1':
                 self.assertEqual(key, 's')
                 self.assertEqual(algorithms, ['HS256'])
@@ -190,6 +191,7 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             key: str,
             algorithms: list[str],
         ) -> dict[str, object]:
+            """Support decode_side_effect."""
             if tok == 'ok':
                 return {}
             raise tc.jwt.InvalidTokenError('bad')

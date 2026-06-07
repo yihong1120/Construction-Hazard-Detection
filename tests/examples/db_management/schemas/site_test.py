@@ -12,14 +12,14 @@ class TestSiteCreate(unittest.TestCase):
 
     def test_valid(self) -> None:
         """Test creating a valid SiteCreate instance."""
-        data: site.SiteCreate = site.SiteCreate(name='s', group_id=1)
+        data: site.SiteCreate = site.SiteCreate(name='s', group_ids=[1])
         self.assertEqual(data.name, 's')
-        self.assertEqual(data.group_id, 1)
+        self.assertEqual(data.group_ids, [1])
 
     def test_optional(self) -> None:
         """Test creating a SiteCreate instance without optional group_id."""
         data: site.SiteCreate = site.SiteCreate(name='s')
-        self.assertIsNone(data.group_id)
+        self.assertEqual(data.group_ids, [])
 
     def test_missing(self) -> None:
         """Test validation error if required fields are missing."""
@@ -77,20 +77,20 @@ class TestSiteRead(unittest.TestCase):
     def test_valid(self) -> None:
         """Test creating a valid SiteRead instance with all fields."""
         data: site.SiteRead = site.SiteRead(
-            id=1, name='s', group_id=2,
-            group_name='g', user_ids=[1, 2],
+            id=1, name='s', group_ids=[2],
+            group_names=['g'], user_ids=[1, 2],
         )
         self.assertEqual(data.id, 1)
         self.assertEqual(data.name, 's')
-        self.assertEqual(data.group_id, 2)
-        self.assertEqual(data.group_name, 'g')
+        self.assertEqual(data.group_ids, [2])
+        self.assertEqual(data.group_names, ['g'])
         self.assertEqual(data.user_ids, [1, 2])
 
     def test_optional(self) -> None:
         """Test creating a SiteRead instance with optional fields omitted."""
         data: site.SiteRead = site.SiteRead(id=2, name='s', user_ids=[])
-        self.assertIsNone(data.group_id)
-        self.assertIsNone(data.group_name)
+        self.assertEqual(data.group_ids, [])
+        self.assertEqual(data.group_names, [])
         self.assertEqual(data.user_ids, [])
 
     def test_missing(self) -> None:

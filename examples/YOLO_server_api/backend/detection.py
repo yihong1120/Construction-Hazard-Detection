@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import time
+from collections.abc import Callable
+from collections.abc import Sequence
 from typing import Any
-from typing import Callable
 
 import cv2
 import numpy as np
 from sahi.predict import get_sliced_prediction
 
+from examples.YOLO_server_api.backend.config import get_inference_device
 from examples.YOLO_server_api.backend.config import USE_SAHI
+from examples.YOLO_server_api.backend.config import USE_TENSORRT
 
 
 def convert_to_image(data: bytes) -> np.ndarray:
@@ -27,7 +29,10 @@ def convert_to_image(data: bytes) -> np.ndarray:
     """
     # Convert bytes to numpy array for image decoding
     npimg = np.frombuffer(data, np.uint8)
-    return cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+    image = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+    if image is None:
+        raise cv2.error('Unable to decode image bytes')
+    return image
 
 
 async def get_prediction_result(img: np.ndarray, model: Any) -> Any:
@@ -66,7 +71,10 @@ async def get_prediction_result(img: np.ndarray, model: Any) -> Any:
     else:  # Ultralytics (TensorRT or standard) inference path
         # Ultralytics returns list[Results], we only need the first result
         # for single image
-        return model.predict(source=img, verbose=False)[0]
+        predict_kwargs = {'source': img, 'verbose': False}
+        if not USE_TENSORRT:
+            predict_kwargs['device'] = get_inference_device()
+        return model.predict(**predict_kwargs)[0]
 
 
 def compile_detection_data(result: Any) -> list[list[float | int]]:
@@ -99,14 +107,39 @@ def compile_detection_data(result: Any) -> list[list[float | int]]:
     except AttributeError:
         pass
 
-    # Handle Ultralytics prediction results
-    boxes = result.boxes
-    for i in range(len(boxes)):
-        x1, y1, x2, y2 = map(int, boxes.xyxy[i].tolist())
-        conf = float(boxes.conf[i].item())
-        label = int(boxes.cls[i].item())
-        datas.append([x1, y1, x2, y2, conf, label])
-    return datas
+    # Handle Ultralytics prediction results. Convert tensors once instead of
+    # calling .tolist() / .item() for every detection.
+    return _compile_ultralytics_detection_data(result.boxes)
+
+
+def _compile_ultralytics_detection_data(
+    boxes: Any,
+) -> list[list[float | int]]:
+    """Convert Ultralytics boxes to the shared detection row format."""
+    xyxy = boxes.xyxy.cpu().numpy()
+    if xyxy.size == 0:
+        return []
+
+    xyxy = xyxy.reshape(1, 4) if xyxy.ndim == 1 else xyxy
+    conf = boxes.conf.cpu().numpy().reshape(-1)
+    labels = boxes.cls.cpu().numpy().reshape(-1)
+
+    return [
+        [
+            int(x1),
+            int(y1),
+            int(x2),
+            int(y2),
+            float(score),
+            int(label),
+        ]
+        for (x1, y1, x2, y2), score, label in zip(
+            xyxy,
+            conf,
+            labels,
+            strict=False,
+        )
+    ]
 
 
 async def process_labels(
@@ -130,13 +163,8 @@ async def process_labels(
         The double overlap removal ensures that removing contained labels
         doesn't create new overlapping conflicts.
     """
-    # First pass: remove overlapping detections
     datas = await remove_overlapping_labels(datas)
-    # Remove completely contained detections
-    datas = await remove_completely_contained_labels(datas)
-    # Final pass: clean up any remaining overlaps
-    datas = await remove_overlapping_labels(datas)
-    return datas
+    return await remove_completely_contained_labels(datas)
 
 
 # Global semaphore for controlling concurrency in inference
@@ -204,12 +232,23 @@ def get_category_indices(
     Note:
         Label IDs are based on the trained model's class definitions.
     """
-    return {
-        'hardhat': [i for i, d in enumerate(datas) if d[5] == 0],
-        'no_hardhat': [i for i, d in enumerate(datas) if d[5] == 2],
-        'safety_vest': [i for i, d in enumerate(datas) if d[5] == 7],
-        'no_safety_vest': [i for i, d in enumerate(datas) if d[5] == 4],
+    indices: dict[str, list[int]] = {
+        'hardhat': [],
+        'no_hardhat': [],
+        'safety_vest': [],
+        'no_safety_vest': [],
     }
+    label_to_key = {
+        0: 'hardhat',
+        2: 'no_hardhat',
+        7: 'safety_vest',
+        4: 'no_safety_vest',
+    }
+    for i, detection in enumerate(datas):
+        key = label_to_key.get(int(detection[5]))
+        if key is not None:
+            indices[key].append(i)
+    return indices
 
 
 async def _calc_and_filter(
@@ -238,8 +277,56 @@ async def _calc_and_filter(
     """
     bad: set[int] = set()
     for idx1 in idxs1:
-        bad |= await fn(idx1, idxs2, datas)
+        bad.update(await fn(idx1, idxs2, datas))
     return bad
+
+
+def _add_overlaps(
+    bad: set[int],
+    i1: int,
+    idxs2: list[int],
+    datas: list[list[float | int]],
+    thr: float = 0.5,
+) -> None:
+    """Add indices whose boxes overlap a reference above threshold."""
+    d1 = datas[i1]
+    area1 = area(d1[0], d1[1], d1[2], d1[3])
+    for i2 in idxs2:
+        if _overlap_ratio_with_area(d1, datas[i2], area1) > thr:
+            bad.add(i2)
+
+
+def _add_contained(
+    bad: set[int],
+    i1: int,
+    idxs2: list[int],
+    datas: list[list[float | int]],
+) -> None:
+    """Add indices for boxes contained by their conflicting pair."""
+    d1 = datas[i1]
+    for i2 in idxs2:
+        d2 = datas[i2]
+        # Check if candidate detection is contained within reference
+        if contained(d2, d1):
+            bad.add(i2)
+        # Check if reference detection is contained within candidate
+        elif contained(d1, d2):
+            bad.add(i1)
+
+
+def _add_conflicting_pair_indices(
+    bad: set[int],
+    idxs1: list[int],
+    idxs2: list[int],
+    datas: list[list[float | int]],
+    add_fn: Callable[
+        [set[int], int, list[int], list[list[float | int]]],
+        None,
+    ],
+) -> None:
+    """Add conflicting detection indices between two label groups."""
+    for idx1 in idxs1:
+        add_fn(bad, idx1, idxs2, datas)
 
 
 async def remove_overlapping_labels(
@@ -260,24 +347,22 @@ async def remove_overlapping_labels(
         Memory cleanup with gc.collect() is performed after removal operations.
     """
     ci = get_category_indices(datas)
-    bad = set()
+    bad: set[int] = set()
 
     # Find overlaps between hardhat and no_hardhat detections
-    bad |= await _calc_and_filter(
-        ci['hardhat'], ci['no_hardhat'], datas, find_overlaps,
+    _add_conflicting_pair_indices(
+        bad, ci['hardhat'], ci['no_hardhat'], datas, _add_overlaps,
     )
     # Find overlaps between safety_vest and no_safety_vest detections
-    bad |= await _calc_and_filter(
-        ci['safety_vest'], ci['no_safety_vest'], datas, find_overlaps,
+    _add_conflicting_pair_indices(
+        bad,
+        ci['safety_vest'],
+        ci['no_safety_vest'],
+        datas,
+        _add_overlaps,
     )
 
-    # Remove conflicting detections in reverse order to maintain indices
-    for i in sorted(bad, reverse=True):
-        datas.pop(i)
-
-    # Force garbage collection to free memory from removed detections
-    gc.collect()
-    return datas
+    return _without_indices(datas, bad)
 
 
 async def find_overlaps(
@@ -304,16 +389,14 @@ async def find_overlaps(
         Uses intersection over union (IoU) calculation
             for overlap determination.
     """
-    return {
-        i2
-        for i2 in idxs2
-        if overlap_ratio(datas[i1][:4], datas[i2][:4]) > thr
-    }
+    bad: set[int] = set()
+    _add_overlaps(bad, i1, idxs2, datas, thr)
+    return bad
 
 
 def overlap_ratio(
-    b1: list[float | int],
-    b2: list[float | int],
+    b1: Sequence[float | int],
+    b2: Sequence[float | int],
 ) -> float:
     """
     Calculate intersection over union (IoU) ratio between two bounding boxes.
@@ -329,19 +412,45 @@ def overlap_ratio(
         Uses the intersection area divided by union area formula.
         Handles edge cases where boxes don't overlap (returns 0.0).
     """
-    # Calculate intersection boundaries
+    return _overlap_ratio_values(b1, b2)
+
+
+def _overlap_ratio_values(
+    b1: Sequence[float | int],
+    b2: Sequence[float | int],
+) -> float:
+    """Calculate IoU without allocating sliced box lists."""
+    return _overlap_ratio_with_area(
+        b1,
+        b2,
+        area(b1[0], b1[1], b1[2], b1[3]),
+    )
+
+
+def _overlap_ratio_with_area(
+    b1: Sequence[float | int],
+    b2: Sequence[float | int],
+    area1: int,
+) -> float:
+    """Calculate IoU when the first box area is already known."""
     x1, y1, x2, y2 = (
         max(b1[0], b2[0]),  # Left edge of intersection
         max(b1[1], b2[1]),  # Top edge of intersection
         min(b1[2], b2[2]),  # Right edge of intersection
         min(b1[3], b2[3]),  # Bottom edge of intersection
     )
+    if x2 < x1 or y2 < y1:
+        return 0.0
 
     # Calculate intersection area
     inter = area(x1, y1, x2, y2)
 
     # Calculate union area (area of both boxes minus intersection)
-    union_area = area(*b1) + area(*b2) - inter
+    union_area = (
+        area1
+        + area(b2[0], b2[1], b2[2], b2[3])
+        - inter
+    )
 
     # Return IoU ratio (handle division by zero)
     return inter / float(union_area) if union_area > 0 else 0.0
@@ -394,22 +503,23 @@ async def remove_completely_contained_labels(
         negative detections.
     """
     ci = get_category_indices(datas)
-    bad = set()
+    bad: set[int] = set()
 
     # Find contained detections between hardhat and no_hardhat categories
-    bad |= await _calc_and_filter(
-        ci['hardhat'], ci['no_hardhat'], datas, find_contained,
+    _add_conflicting_pair_indices(
+        bad, ci['hardhat'], ci['no_hardhat'], datas, _add_contained,
     )
     # Find contained detections between safety_vest
     # and no_safety_vest categories
-    bad |= await _calc_and_filter(
-        ci['safety_vest'], ci['no_safety_vest'], datas, find_contained,
+    _add_conflicting_pair_indices(
+        bad,
+        ci['safety_vest'],
+        ci['no_safety_vest'],
+        datas,
+        _add_contained,
     )
 
-    # Remove contained detections in reverse order to maintain indices
-    for i in sorted(bad, reverse=True):
-        datas.pop(i)
-    return datas
+    return _without_indices(datas, bad)
 
 
 async def find_contained(
@@ -434,20 +544,14 @@ async def find_contained(
         Checks both directions: reference contained in candidate, and candidate
         contained in reference, to identify all containment conflicts.
     """
-    res = set()
-    for i2 in idxs2:
-        # Check if candidate detection is contained within reference
-        if contained(datas[i2][:4], datas[i1][:4]):
-            res.add(i2)
-        # Check if reference detection is contained within candidate
-        elif contained(datas[i1][:4], datas[i2][:4]):
-            res.add(i1)
-    return res
+    bad: set[int] = set()
+    _add_contained(bad, i1, idxs2, datas)
+    return bad
 
 
 def contained(
-    inner: list[float | int],
-    outer: list[float | int],
+    inner: Sequence[float | int],
+    outer: Sequence[float | int],
 ) -> bool:
     """Check if one bounding box is completely contained within another.
 
@@ -472,3 +576,17 @@ def contained(
         and inner[2] <= outer[2]  # Inner right <= outer right
         and inner[3] <= outer[3]  # Inner bottom <= outer bottom
     )
+
+
+def _without_indices(
+    datas: list[list[float | int]],
+    bad: set[int],
+) -> list[list[float | int]]:
+    """Return detections excluding bad indices without repeated list shifts."""
+    if not bad:
+        return datas
+    return [
+        detection
+        for i, detection in enumerate(datas)
+        if i not in bad
+    ]

@@ -7,6 +7,8 @@ import gc
 import os
 from collections.abc import AsyncGenerator
 from typing import TypedDict
+from urllib.parse import urlsplit
+from urllib.parse import urlunsplit
 
 import cv2
 import numpy as np
@@ -14,42 +16,86 @@ import speedtest
 import streamlink
 
 
+def _is_rtsp_url(value: str) -> bool:
+    """Return whether a URL uses an RTSP scheme."""
+    return value.lower().startswith(('rtsp://', 'rtsps://'))
+
+
+def _redact_stream_url(value: str) -> str:
+    """Redact credentials from a stream URL for logs.
+
+    Args:
+        value: Stream URL to sanitise.
+
+    Returns:
+        URL with credentials removed.
+    """
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return '<invalid-url>'
+    if not parts.username and not parts.password:
+        return value
+    host = parts.hostname or ''
+    if parts.port:
+        host = f'{host}:{parts.port}'
+    return urlunsplit((
+        parts.scheme,
+        f'<credentials>@{host}',
+        parts.path,
+        parts.query,
+        parts.fragment,
+    ))
+
+
 class InputData(TypedDict):
+    """Input payload for a stream capture task."""
+
     stream_url: str
-    capture_interval: int
+    capture_interval: float
 
 
 class ResultData(TypedDict):
+    """Captured frame payload emitted by the stream capture task."""
+
     frame: np.ndarray
     timestamp: float
 
 
 class StreamCapture:
-    """
-    A class to capture frames from a video stream.
-    """
+    """Capture frames from a live or local video stream."""
 
-    def __init__(self, stream_url: str, capture_interval: int = 15):
-        """
-        Initialises the StreamCapture with the given stream URL.
+    def __init__(
+        self,
+        stream_url: str,
+        capture_interval: float = 15,
+    ) -> None:
+        """Initialise the stream capture.
 
         Args:
-            stream_url (str): The URL of the video stream.
-            capture_interval (int, optional): The interval at which frames
-                should be captured. Defaults to 15.
+            stream_url: URL or local path of the video stream.
+            capture_interval: Delay between captured frames in seconds.
         """
-        # Video stream URL
         self.stream_url = stream_url
 
-        # Set OpenCV FFMPEG options for RTSP streams to use TCP transport
-        os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp'
+        # Set OpenCV FFMPEG options for RTSP streams to use TCP transport.
+        os.environ.setdefault(
+            'OPENCV_FFMPEG_CAPTURE_OPTIONS',
+            'rtsp_transport;tcp|stimeout;5000000|max_delay;5000000',
+        )
 
-        # Video capture object
         self.cap: cv2.VideoCapture | None = None
-        # Frame capture interval in seconds
-        self.capture_interval = capture_interval
-        # Flag to indicate successful capture
+        self.capture_interval: float = capture_interval
         self.successfully_captured = False
+        self.reopen_delay = float(
+            os.getenv('STREAM_CAPTURE_REOPEN_DELAY_SECONDS', '5.0'),
+        )
+        self.max_reopen_delay = float(
+            os.getenv(
+                'STREAM_CAPTURE_MAX_REOPEN_DELAY_SECONDS',
+                '60.0',
+            ),
+        )
 
     async def initialise_stream(self, stream_url: str) -> None:
         """
@@ -58,13 +104,27 @@ class StreamCapture:
         Args:
             stream_url (str): The URL of the stream to initialise.
         """
-        self.cap = cv2.VideoCapture(stream_url)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        # self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
+        self.cap = self._create_capture(stream_url)
 
         if not self.cap.isOpened():
-            await asyncio.sleep(5)
-            self.cap.open(stream_url)
+            await asyncio.sleep(self.reopen_delay)
+            self.cap.release()
+            self.cap = self._create_capture(stream_url)
+
+    @staticmethod
+    def _create_capture(stream_url: str) -> cv2.VideoCapture:
+        """Create a configured OpenCV capture object."""
+        cap = cv2.VideoCapture(stream_url)
+        cap.set(
+            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+            float(os.getenv('STREAM_CAPTURE_OPEN_TIMEOUT_MS', '5000.0')),
+        )
+        cap.set(
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+            float(os.getenv('STREAM_CAPTURE_READ_TIMEOUT_MS', '5000.0')),
+        )
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return cap
 
     async def release_resources(self) -> None:
         """
@@ -73,7 +133,6 @@ class StreamCapture:
         if self.cap:
             self.cap.release()
             self.cap = None
-        gc.collect()
 
     async def execute_capture(
         self,
@@ -89,6 +148,7 @@ class StreamCapture:
             seconds=self.capture_interval,
         )
         fail_count = 0  # Counter for consecutive failures
+        backoff_seconds = self.reopen_delay
 
         while True:
             if self.cap is None:
@@ -102,22 +162,34 @@ class StreamCapture:
                 fail_count += 1
                 print(
                     'Failed to read frame, trying to reinitialise stream. '
-                    f"Fail count: {fail_count}",
+                    f"Fail count: {fail_count}, "
+                    f"source={_redact_stream_url(self.stream_url)}",
+                    flush=True,
                 )
                 await self.release_resources()
+                await asyncio.sleep(backoff_seconds)
+                backoff_seconds = min(
+                    self.max_reopen_delay,
+                    max(self.reopen_delay, backoff_seconds * 1.5),
+                )
                 await self.initialise_stream(self.stream_url)
                 # Switch to generic frame capture after 5 consecutive failures
-                if fail_count >= 5 and not self.successfully_captured:
+                if (
+                    fail_count >= 5
+                    and not self.successfully_captured
+                    and not _is_rtsp_url(self.stream_url)
+                ):
                     print('Switching to generic frame capture method.')
-                    async for generic_frame, timestamp in (
+                    async for generic_frame, generic_timestamp in (
                         self.capture_generic_frames()
                     ):
-                        yield generic_frame, timestamp
+                        yield generic_frame, generic_timestamp
                     return
                 continue
             else:
                 # Reset fail count on successful read
                 fail_count = 0
+                backoff_seconds = self.reopen_delay
 
                 # Mark as successfully captured
                 self.successfully_captured = True
@@ -131,10 +203,6 @@ class StreamCapture:
                 last_process_time = current_time
                 timestamp = current_time.timestamp()
                 yield frame, timestamp
-
-                # Clear memory
-                del frame, timestamp
-                gc.collect()
 
             await asyncio.sleep(0.01)  # Adjust the sleep time as needed
 
@@ -215,6 +283,7 @@ class StreamCapture:
 
         last_process_time = datetime.datetime.now()
         fail_count = 0  # Counter for consecutive failures
+        backoff_seconds = self.reopen_delay
 
         while True:
             # Read the frame from the stream
@@ -227,7 +296,15 @@ class StreamCapture:
                 fail_count += 1
                 print(
                     'Failed to read frame from generic stream. '
-                    f"Fail count: {fail_count}",
+                    f"Fail count: {fail_count}, "
+                    'source='
+                    f'{_redact_stream_url(stream_url or self.stream_url)}',
+                    flush=True,
+                )
+                await asyncio.sleep(backoff_seconds)
+                backoff_seconds = min(
+                    self.max_reopen_delay,
+                    max(self.reopen_delay, backoff_seconds * 1.5),
                 )
 
                 # Reinitialise the stream after 5 consecutive failures
@@ -249,6 +326,7 @@ class StreamCapture:
             else:
                 # Reset fail count on successful read
                 fail_count = 0
+                backoff_seconds = self.reopen_delay
 
                 # Mark as successfully captured
                 self.successfully_captured = True
@@ -261,13 +339,9 @@ class StreamCapture:
                 timestamp = current_time.timestamp()
                 yield frame, timestamp
 
-                # Clear memory
-                del frame, timestamp
-                gc.collect()
-
             await asyncio.sleep(0.01)  # Adjust the sleep time as needed
 
-    def update_capture_interval(self, new_interval: int) -> None:
+    def update_capture_interval(self, new_interval: float) -> None:
         """
         Updates the capture interval.
 
@@ -277,7 +351,8 @@ class StreamCapture:
         self.capture_interval = new_interval
 
 
-async def main():
+async def main() -> None:
+    """Run the stream capture command-line utility."""
     parser = argparse.ArgumentParser(
         description='Capture video stream frames asynchronously.',
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime
@@ -96,10 +97,10 @@ class ViolationSender:
         stream_name: str,
         image_bytes: bytes,
         detection_time: datetime | None = None,
-        warnings_json: str | None = None,
-        detections_json: str | None = None,
-        cone_polygon_json: str | None = None,
-        pole_polygon_json: str | None = None,
+        warnings: object | None = None,
+        detections: object | None = None,
+        cone_polygon: object | None = None,
+        pole_polygon: object | None = None,
     ) -> str | None:
         """
         Send a violation image and associated metadata to the backend API.
@@ -109,10 +110,6 @@ class ViolationSender:
             stream_name (str): The stream identifier.
             image_bytes (bytes): The image data in bytes.
             detection_time (Optional[datetime]): The time of detection.
-            warnings_json (Optional[str]): JSON string of warnings.
-            detections_json (Optional[str]): JSON string of detection items.
-            cone_polygon_json (Optional[str]): JSON string of cone polygons.
-            pole_polygon_json (Optional[str]): JSON string of pole polygons.
 
         Returns:
             Optional[str]:
@@ -134,10 +131,10 @@ class ViolationSender:
             site=site,
             stream_name=stream_name,
             detection_time=detection_time,
-            warnings_json=warnings_json,
-            detections_json=detections_json,
-            cone_polygon_json=cone_polygon_json,
-            pole_polygon_json=pole_polygon_json,
+            warnings_json=json.dumps(warnings),
+            detections_json=json.dumps(detections),
+            cone_polygon_json=json.dumps(cone_polygon),
+            pole_polygon_json=json.dumps(pole_polygon),
         )
 
         # Use shared client connection pool
@@ -229,7 +226,7 @@ class ViolationSender:
             'stream_name': stream_name,
         }
         if detection_time:
-            data['detection_time'] = detection_time.isoformat()
+            data['detection_time'] = detection_time.astimezone().isoformat()
         if warnings_json:
             data['warnings_json'] = warnings_json
         if detections_json:

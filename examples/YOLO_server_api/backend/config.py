@@ -18,8 +18,6 @@ MODEL_VARIANTS_ENV: str = os.getenv(
 MODEL_VARIANTS: list[str] = [
     v.strip() for v in MODEL_VARIANTS_ENV.split(',') if v.strip()
 ]
-if not MODEL_VARIANTS:  # Fallback protection
-    MODEL_VARIANTS = ['yolo26n']
 
 # Whether to enable lazy loading of models:
 # True means models are loaded only when first used
@@ -29,7 +27,7 @@ LAZY_LOAD_MODELS: bool = (
 
 # Maximum number of models allowed in memory simultaneously in lazy loading
 # mode (LRU eviction)
-MAX_LOADED_MODELS: int = int(os.getenv('MAX_LOADED_MODELS', '5'))
+MAX_LOADED_MODELS: int = int(os.getenv('MAX_LOADED_MODELS', '3'))
 
 # Whether to preload the smallest model at startup (only in lazy mode)
 PRELOAD_SMALLEST: bool = (
@@ -41,6 +39,32 @@ PRELOAD_SMALLEST: bool = (
 EXPLICIT_CUDA_CLEANUP: bool = (
     os.getenv('EXPLICIT_CUDA_CLEANUP', 'true').lower() == 'true'
 )
+
+# Inference device. Use "auto" to prefer CUDA only when PyTorch can initialise
+# it successfully; this avoids reconnect loops on hosts where CUDA reports
+# availability errors such as error 804.
+YOLO_INFERENCE_DEVICE: str = os.getenv(
+    'YOLO_INFERENCE_DEVICE',
+    os.getenv('YOLO_DEVICE', 'auto'),
+).strip().lower()
+
+
+def get_inference_device() -> str:
+    """Return a safe Ultralytics/SAHI device string for this host."""
+    if YOLO_INFERENCE_DEVICE and YOLO_INFERENCE_DEVICE != 'auto':
+        return YOLO_INFERENCE_DEVICE
+    try:
+        import torch
+
+        return 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    except Exception as exc:
+        warnings.warn(
+            f'CUDA availability check failed, falling back to CPU: {exc}',
+            UserWarning,
+            stacklevel=2,
+        )
+        return 'cpu'
+
 
 # Configuration validation: SAHI mode enforces .pt file usage and is
 # incompatible with TensorRT
@@ -62,6 +86,7 @@ _CONFIG_INFO: str = f"""
     'TensorRT' if USE_TENSORRT else
     'Standard YOLO'
 }
+   • Inference device: {YOLO_INFERENCE_DEVICE}
    • Model variants: {', '.join(MODEL_VARIANTS)}
 """
 

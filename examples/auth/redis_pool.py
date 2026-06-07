@@ -42,7 +42,7 @@ class RedisClient:
         Close the Redis connection if it is currently active.
         """
         if self.client:
-            await self.client.aclose()
+            await self.client.close()
             self.client = None
 
 

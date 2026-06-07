@@ -14,7 +14,8 @@ from src.notifiers.telegram_notifier import TelegramNotifier
 class NotifyTools:
     """Tools for sending notifications via various platforms."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialise lazy notification clients."""
         self.logger = logging.getLogger(__name__)
         self._line_messenger: LineMessenger | None = None
         self._broadcast_notifier: BroadcastNotifier | None = None

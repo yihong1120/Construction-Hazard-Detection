@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -13,7 +14,10 @@ from examples.mcp_server.tools.violations import ViolationsTools
 
 class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
-    async def asyncSetUp(self):
+    """Test suite."""
+
+    async def asyncSetUp(self) -> None:
+        """Prepare test fixtures."""
         self.tool = ViolationsTools()
         self.tool.logger = MagicMock()
 
@@ -33,10 +37,11 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     )
     async def test_ensure_client_initializes(
         self,
-        mock_token,
-        mock_client,
-        mock_env,
-    ):
+        mock_token: Any,
+        mock_client: Any,
+        mock_env: Any,
+    ) -> None:
+        """Exercise this test."""
         await self.tool._ensure_client()
         mock_client.assert_called_once()
         mock_token.assert_called_once()
@@ -49,7 +54,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         if k == 'MCP_STATIC_BEARER'
         else '',
     )
-    async def test_get_auth_headers_static_bearer(self, _):
+    async def test_get_auth_headers_static_bearer(self, _: Any) -> None:
+        """Exercise this test."""
         self.tool._token_manager = MagicMock()
         headers = await self.tool._get_auth_headers()
         self.assertIn('Authorization', headers)
@@ -61,13 +67,15 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         if k == 'MCP_ALLOW_NO_AUTH'
         else '',
     )
-    async def test_get_auth_headers_no_auth(self, _):
+    async def test_get_auth_headers_no_auth(self, _: Any) -> None:
+        """Exercise this test."""
         self.tool._token_manager = MagicMock()
         headers = await self.tool._get_auth_headers()
         self.assertNotIn('Authorization', headers)
 
     @patch('examples.mcp_server.tools.violations.os.getenv', return_value='')
-    async def test_get_auth_headers_valid_token(self, _):
+    async def test_get_auth_headers_valid_token(self, _: Any) -> None:
+        """Exercise this test."""
         fake_token = 'XYZ'
         tm = AsyncMock()
         tm.get_valid_token.return_value = fake_token
@@ -76,7 +84,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(headers['Authorization'], f'Bearer {fake_token}')
 
     @patch('examples.mcp_server.tools.violations.os.getenv', return_value='')
-    async def test_get_auth_headers_exception(self, _):
+    async def test_get_auth_headers_exception(self, _: Any) -> None:
+        """Exercise this test."""
         self.tool._token_manager = AsyncMock()
         self.tool._token_manager.get_valid_token.side_effect = RuntimeError(
             'fail',
@@ -93,7 +102,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         AsyncMock(return_value={'h': 'v'}),
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_search_success(self):
+    async def test_search_success(self) -> None:
+        """Exercise this test."""
         mock_response = AsyncMock()
         mock_response.json.return_value = {'total': 1, 'items': []}
         mock_response.raise_for_status.return_value = None
@@ -105,7 +115,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res['total'], 1)
 
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_search_exception(self):
+    async def test_search_exception(self) -> None:
+        """Exercise this test."""
         self.tool._get_auth_headers = AsyncMock(
             side_effect=RuntimeError('bad'),
         )
@@ -122,8 +133,9 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         AsyncMock(return_value={'h': 'v'}),
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_search_with_start_end_time_params(self):
+    async def test_search_with_start_end_time_params(self) -> None:
         # Ensure start_time/end_time branches are covered
+        """Exercise this test."""
         mock_response = AsyncMock()
         mock_response.json.return_value = {'total': 0, 'items': []}
         # non-awaitable path for _maybe_await
@@ -155,7 +167,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         AsyncMock(return_value={'h': 'v'}),
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_get_success(self):
+    async def test_get_success(self) -> None:
+        """Exercise this test."""
         resp = AsyncMock()
         resp.json.return_value = {'id': 1}
         resp.raise_for_status.return_value = None
@@ -167,7 +180,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['id'], 1)
 
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_get_exception(self):
+    async def test_get_exception(self) -> None:
+        """Exercise this test."""
         self.tool._get_auth_headers = AsyncMock(
             side_effect=RuntimeError('fail'),
         )
@@ -186,7 +200,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         AsyncMock(return_value={'h': 'v'}),
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_get_image_as_base64_success(self):
+    async def test_get_image_as_base64_success(self) -> None:
+        """Exercise this test."""
         mock_response = AsyncMock()
         mock_response.content = b'data'
         mock_response.headers = {'content-type': 'image/png'}
@@ -203,7 +218,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res['image_base64'], 'ENCODED')
         self.assertEqual(res['media_type'], 'image/png')
 
-    async def test_get_image_non_base64(self):
+    async def test_get_image_non_base64(self) -> None:
+        """Exercise this test."""
         self.tool._base_url = 'https://api'
         res = await self.tool.get_image('x.jpg', as_base64=False)
         self.assertIn('url', res)
@@ -214,7 +230,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         AsyncMock(return_value={'h': 'v'}),
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_get_image_http_error(self):
+    async def test_get_image_http_error(self) -> None:
+        """Exercise this test."""
         client = AsyncMock()
         response = MagicMock(status_code=404)
         err = httpx.HTTPStatusError('404', request=None, response=response)
@@ -226,7 +243,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status_code'], 404)
 
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_get_image_general_error(self):
+    async def test_get_image_general_error(self) -> None:
+        """Exercise this test."""
         self.tool._get_auth_headers = AsyncMock(
             side_effect=RuntimeError('boom'),
         )
@@ -245,7 +263,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         AsyncMock(return_value={'h': 'v'}),
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_my_sites_success(self):
+    async def test_my_sites_success(self) -> None:
+        """Exercise this test."""
         resp = AsyncMock()
         resp.json.return_value = [{'id': 1}]
         resp.raise_for_status.return_value = None
@@ -257,7 +276,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res[0]['id'], 1)
 
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
-    async def test_my_sites_exception(self):
+    async def test_my_sites_exception(self) -> None:
+        """Exercise this test."""
         self.tool._get_auth_headers = AsyncMock(
             side_effect=RuntimeError('bad'),
         )
@@ -280,12 +300,14 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         'get_image',
         AsyncMock(return_value={'img': 'data'}),
     )
-    async def test_get_image_by_violation_id_success(self):
+    async def test_get_image_by_violation_id_success(self) -> None:
+        """Exercise this test."""
         res = await self.tool.get_image_by_violation_id(1)
         self.assertEqual(res['img'], 'data')
 
     @patch.object(ViolationsTools, 'get', AsyncMock(return_value={'id': 1}))
-    async def test_get_image_by_violation_id_no_image(self):
+    async def test_get_image_by_violation_id_no_image(self) -> None:
+        """Exercise this test."""
         res = await self.tool.get_image_by_violation_id(1)
         self.assertFalse(res['success'])
         self.assertIn('No image_path', res['message'])
@@ -295,7 +317,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         'get',
         AsyncMock(side_effect=RuntimeError('bad')),
     )
-    async def test_get_image_by_violation_id_exception(self):
+    async def test_get_image_by_violation_id_exception(self) -> None:
+        """Exercise this test."""
         res = await self.tool.get_image_by_violation_id(1)
         self.assertFalse(res['success'])
         self.assertIn('bad', res['message'])
@@ -303,7 +326,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
     # --- close ---
 
-    async def test_close(self):
+    async def test_close(self) -> None:
+        """Exercise this test."""
         client = AsyncMock()
         self.tool._client = client
         await self.tool.close()
@@ -312,8 +336,9 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
     # --- _maybe_await ---
 
-    async def test__maybe_await_non_awaitable(self):
+    async def test__maybe_await_non_awaitable(self) -> None:
         # Directly exercise the non-awaitable branch to cover return-on-line
+        """Exercise this test."""
         value = {'a': 1}
         result = await _maybe_await(value)
         self.assertIs(result, value)

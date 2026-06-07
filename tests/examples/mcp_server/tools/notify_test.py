@@ -12,7 +12,7 @@ from examples.mcp_server.tools.notify import NotifyTools
 class LinePushTests(unittest.IsolatedAsyncioTestCase):
     """Tests for line_push method."""
 
-    async def test_line_push_success_with_base64(self):
+    async def test_line_push_success_with_base64(self) -> None:
         """Should decode base64 and send successfully."""
         fake_line = AsyncMock()
         fake_line.push_message.return_value = 200
@@ -28,7 +28,7 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res['status_code'], 200)
         self.assertIn('successfully', res['message'])
 
-    async def test_line_push_with_data_url_prefix(self):
+    async def test_line_push_with_data_url_prefix(self) -> None:
         """Should handle data URL prefix correctly."""
         fake_line = AsyncMock()
         fake_line.push_message.return_value = 400
@@ -45,7 +45,7 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(res['success'])
         self.assertIn('Failed', res['message'])
 
-    async def test_line_push_raises_and_logs(self):
+    async def test_line_push_raises_and_logs(self) -> None:
         """Should log and re-raise on error."""
         with (
             patch(
@@ -66,7 +66,7 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
 class BroadcastSendTests(unittest.IsolatedAsyncioTestCase):
     """Tests for broadcast_send."""
 
-    async def test_broadcast_send_success(self):
+    async def test_broadcast_send_success(self) -> None:
         """Should send broadcast successfully."""
         fake_broadcast = MagicMock()
         fake_broadcast.broadcast_message.return_value = True
@@ -79,7 +79,7 @@ class BroadcastSendTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertIn('successfully', res['message'])
 
-    async def test_broadcast_send_failure(self):
+    async def test_broadcast_send_failure(self) -> None:
         """Should return failure message."""
         fake_broadcast = MagicMock()
         fake_broadcast.broadcast_message.return_value = False
@@ -92,7 +92,7 @@ class BroadcastSendTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(res['success'])
         self.assertIn('Failed', res['message'])
 
-    async def test_broadcast_send_raises_and_logs(self):
+    async def test_broadcast_send_raises_and_logs(self) -> None:
         """Should log and raise on exception."""
         with (
             patch(
@@ -117,7 +117,7 @@ class BroadcastSendTests(unittest.IsolatedAsyncioTestCase):
 class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
     """Tests for telegram_send."""
 
-    async def test_telegram_send_success_with_image(self):
+    async def test_telegram_send_success_with_image(self) -> None:
         """Should decode image and send successfully."""
         fake_telegram = AsyncMock()
         fake_telegram.send_notification = AsyncMock()
@@ -142,7 +142,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertIn('successfully', res['message'])
 
-    async def test_telegram_send_imdecode_none(self):
+    async def test_telegram_send_imdecode_none(self) -> None:
         """Should handle imdecode returning None gracefully."""
         fake_telegram = AsyncMock()
         fake_telegram.send_notification = AsyncMock()
@@ -161,7 +161,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
             res = await tool.telegram_send('chat', 'msg', img_b64)
         self.assertTrue(res['success'])
 
-    async def test_telegram_send_notification_failure(self):
+    async def test_telegram_send_notification_failure(self) -> None:
         """Should return success=False when send_notification raises."""
         fake_telegram = AsyncMock()
         fake_telegram.send_notification = AsyncMock(
@@ -187,7 +187,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(res['success'])
         self.assertIn('Failed', res['message'])
 
-    async def test_telegram_send_logs_and_reraises(self):
+    async def test_telegram_send_logs_and_reraises(self) -> None:
         """Should log and re-raise on outer exception."""
         with (
             patch(
@@ -204,7 +204,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
                 await tool.telegram_send('id', 'msg')
             tool.logger.error.assert_called_once()
 
-    async def test_telegram_send_text_only_success(self):
+    async def test_telegram_send_text_only_success(self) -> None:
         """Should succeed when sending text-only without image_base64."""
         fake_telegram = AsyncMock()
         fake_telegram.send_notification = AsyncMock()
@@ -217,7 +217,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         fake_telegram.send_notification.assert_awaited_once()
         self.assertTrue(res['success'])
 
-    async def test_telegram_send_with_data_url_prefix(self):
+    async def test_telegram_send_with_data_url_prefix(self) -> None:
         """Should strip data URL prefix before decoding
         and send successfully.
         """
@@ -250,7 +250,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
 class EnsureInitialisationTests(unittest.IsolatedAsyncioTestCase):
     """Tests for internal _ensure_* methods."""
 
-    async def test_ensure_line_messenger_initialises_once(self):
+    async def test_ensure_line_messenger_initialises_once(self) -> None:
         """Should create messenger only once."""
         with patch(
             'examples.mcp_server.tools.notify.LineMessenger',
@@ -260,7 +260,7 @@ class EnsureInitialisationTests(unittest.IsolatedAsyncioTestCase):
             await tool._ensure_line_messenger()
             mock_line.assert_called_once()
 
-    async def test_ensure_broadcast_notifier_with_url_and_env(self):
+    async def test_ensure_broadcast_notifier_with_url_and_env(self) -> None:
         """Should handle both explicit and env-based URLs."""
         with (
             patch(
@@ -292,7 +292,7 @@ class EnsureInitialisationTests(unittest.IsolatedAsyncioTestCase):
             await tool2._ensure_broadcast_notifier(None)
             mock_bcast2.assert_called_once()
 
-    async def test_ensure_telegram_notifier_initialises_once(self):
+    async def test_ensure_telegram_notifier_initialises_once(self) -> None:
         """Should create telegram notifier only once."""
         with patch(
             'examples.mcp_server.tools.notify.TelegramNotifier',

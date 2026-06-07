@@ -6,6 +6,7 @@ import os
 import unittest
 from datetime import datetime
 from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -394,7 +395,12 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         """
         open_orig = open
 
-        def open_side_effect(path, *args, **kwargs):
+        def open_side_effect(path: Any, *args, **kwargs) -> Any:
+            """Support open_side_effect.
+
+            Args:
+                path: Test helper value.
+            """
             if path == 'dummy.json':
                 raise Exception('load error')
             return open_orig(path, *args, **kwargs)
@@ -412,7 +418,12 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         """
         open_orig = open
 
-        def open_side_effect(path, *args, **kwargs):
+        def open_side_effect(path: Any, *args, **kwargs) -> Any:
+            """Support open_side_effect.
+
+            Args:
+                path: Test helper value.
+            """
             if path == 'dummy.json':
                 raise Exception('save error')
             return open_orig(path, *args, **kwargs)

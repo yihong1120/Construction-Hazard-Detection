@@ -1,76 +1,69 @@
 from __future__ import annotations
 
+import argparse
 import os
 
 import cv2
 
 
 class StreamViewer:
-    """
-    A class to handle the viewing of video streams (RTSP, HTTP, etc.).
-    """
+    """Display RTSP, HTTP, or local video streams with OpenCV."""
 
-    def __init__(self, stream_url: str, window_name: str = 'Stream Viewer'):
-        """
-        Initialises the StreamViewer instance with a stream URL
-        and a window name.
+    def __init__(
+        self,
+        stream_url: str,
+        window_name: str = 'Stream Viewer',
+    ) -> None:
+        """Initialise the stream viewer.
 
         Args:
-            stream_url (str): The URL of the video stream.
-            window_name (str): The name of the window where the stream
-                               will be displayed.
+            stream_url: URL or path of the video stream.
+            window_name: OpenCV window name used for display.
         """
         self.stream_url = stream_url
         self.window_name = window_name
 
-        # Set OpenCV FFMPEG options for RTSP streams to use TCP transport
+        # TCP transport avoids packet loss issues on many RTSP cameras.
         os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp'
         self.cap = cv2.VideoCapture(self.stream_url)
 
-    def display_stream(self):
-        """
-        Displays the video stream in a window.
-
-        Continuously captures frames from the video stream and displays them.
-        The loop breaks when 'q' is pressed or if the stream cannot be
-        retrieved.
-        """
+    def display_stream(self) -> None:
+        """Display frames until the stream ends or the user presses ``q``."""
         while True:
-            # Capture the next frame from the stream.
             ret, frame = self.cap.read()
-
-            # If the frame was successfully retrieved.
             if ret:
-                # Display the video frame.
                 cv2.imshow(self.window_name, frame)
-
-                # Break the loop if 'q' is pressed.
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
             else:
                 print('Failed to retrieve frame.')
                 break
 
-        # Release the video capture object and close all OpenCV windows.
         self.release_resources()
 
-    def release_resources(self):
-        """
-        Releases resources used by the StreamViewer.
-        """
+    def release_resources(self) -> None:
+        """Release OpenCV capture and window resources."""
         self.cap.release()
         cv2.destroyAllWindows()
 
 
-def main():
+def main(argv: list[str] | None = None) -> None:
+    """Parse command-line arguments and run the stream viewer.
+
+    Args:
+        argv: Optional command-line argument list. ``None`` reads from
+            ``sys.argv`` via ``argparse``.
     """
-    Main function to run the StreamViewer.
-    """
-    # Replace 'vide0_url' with your stream URL.
-    video_url = (
-        'https://cctv4.kctmc.nat.gov.tw/50204bfc/'
+    parser = argparse.ArgumentParser(description='View a video stream.')
+    parser.add_argument('stream_url', help='RTSP, HTTP, or local video URL.')
+    parser.add_argument(
+        '--window-name',
+        default='Stream Viewer',
+        help='OpenCV window name.',
     )
-    viewer = StreamViewer(video_url)
+    args = parser.parse_args(argv)
+
+    viewer = StreamViewer(args.stream_url, args.window_name)
     viewer.display_stream()
 
 

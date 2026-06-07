@@ -6,25 +6,23 @@ from pathlib import Path
 
 
 class LoggerConfig:
-    """
-    Sets up app logger with console and file handlers.
-    """
+    """Configure the application logger with console and file handlers."""
 
     def __init__(
         self,
-        log_file='monitor.log',
-        log_dir='logs',
-        level=logging.INFO,
-        formatter=None,
-    ):
-        """
-        Initialise logger with file name, level, and formatter.
+        log_file: str = 'monitor.log',
+        log_dir: str = 'logs',
+        level: int = logging.INFO,
+        formatter: logging.Formatter | None = None,
+    ) -> None:
+        """Initialise the logger configuration.
 
         Args:
-            log_file (str): Log file name, defaults to 'monitor.log'.
-            log_dir (str): Log storage directory, defaults to 'logs'.
-            level (logging.Level): The logging level. Defaults to logging.INFO.
-            formatter (logging.Formatter): Log formatter, defaults to standard.
+            log_file: File name for the rotating log file.
+            log_dir: Directory where log files are stored.
+            level: Logging level passed to handlers and the logger.
+            formatter: Optional formatter. A standard timestamp formatter is
+                used when omitted.
         """
         self.log_file = log_file
         self.log_dir = log_dir
@@ -33,43 +31,33 @@ class LoggerConfig:
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         )
 
-        # Ensure that we get a unique logger instance by using a unique name
         self.logger = logging.getLogger(f"SiteSafetyMonitor_{log_file}")
         self.setup_logger()
 
-    def setup_logger(self):
-        """
-        Configures the logger with rotating file handler and console handler.
-        """
-        # Create log directory if it doesn't exist
+    def setup_logger(self) -> None:
+        """Configure rotating file and console handlers."""
         Path(self.log_dir).mkdir(parents=True, exist_ok=True)
 
-        # Prevent adding handlers multiple times
+        # Reconfiguration must be idempotent because tests and reloads may
+        # construct more than one LoggerConfig in a process.
         if self.logger.hasHandlers():
             self.logger.handlers.clear()
 
-        # Configure the file handler
         file_handler = self.get_file_handler()
-        # Configure the console handler
         console_handler = self.get_console_handler()
 
-        # Add the handlers to the logger
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
         self.logger.setLevel(self.level)
 
-        # Prevent log messages from propagating to the parent logger
         self.logger.propagate = False
-
-        # Debug: Log to verify the handlers have been added
         self.logger.debug('Logger handlers set up complete.')
 
-    def get_file_handler(self):
-        """
-        Creates and returns a rotating file handler.
+    def get_file_handler(self) -> RotatingFileHandler:
+        """Create a rotating file handler.
 
         Returns:
-            logging.Handler: A configured rotating file handler.
+            A configured rotating file handler.
         """
         file_handler = RotatingFileHandler(
             filename=Path(self.log_dir) / self.log_file,
@@ -80,37 +68,30 @@ class LoggerConfig:
         file_handler.setFormatter(self.formatter)
         return file_handler
 
-    def get_console_handler(self):
-        """
-        Creates and returns a console handler.
+    def get_console_handler(self) -> logging.StreamHandler:
+        """Create a console stream handler.
 
         Returns:
-            logging.Handler: A configured console handler.
+            A configured console stream handler.
         """
         console_handler = logging.StreamHandler()
         console_handler.setLevel(self.level)
         console_handler.setFormatter(self.formatter)
         return console_handler
 
-    def get_logger(self):
-        """
-        Returns the configured logger instance.
+    def get_logger(self) -> logging.Logger:
+        """Return the configured logger instance.
 
         Returns:
-            logging.Logger: A configured logger instance.
+            A configured logger.
         """
         return self.logger
 
 
-def main():
-    """
-    Main function to initialise logger and log a message.
-    """
-    # Initialise the logger configuration
+def main() -> None:
+    """Initialise logging for direct script execution."""
     logger_config = LoggerConfig()
     logger = logger_config.get_logger()
-
-    # Log a message indicating that the logging setup is complete
     logger.info('Logging setup complete.')
 
 

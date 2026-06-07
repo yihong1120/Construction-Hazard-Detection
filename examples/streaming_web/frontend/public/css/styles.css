@@ -19,14 +19,17 @@ h1 {
     padding: 10px; /* Add padding to the grid */
 }
 
-.camera img {
+.camera img,
+.camera video {
     width: 100%; /* Ensure images take up the full width of their container */
     height: auto; /* Maintain aspect ratio */
     border-radius: 8px; /* Add rounded corners to images */
     transition: transform 0.2s; /* Smooth zoom effect on hover */
+    background: #111;
 }
 
-.camera img:hover {
+.camera img:hover,
+.camera video:hover {
     transform: scale(1.03); /* Slight zoom on hover for visual feedback */
 }
 
@@ -52,12 +55,13 @@ h1 {
         box-shadow: none; /* Remove shadow for simpler design */
     }
 
-    .camera img {
+    .camera img,
+    .camera video {
         border-radius: 0; /* Remove rounded corners */
     }
 }
 
-/* Fallback for unsupported browsers */
+/* Default path for unsupported browsers */
 @supports not (forced-color-adjust: auto) {
     body {
         background-color: #fff; /* Default to white background */
@@ -70,7 +74,8 @@ h1 {
         box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Slightly darker shadow */
     }
 
-    .camera img {
+    .camera img,
+    .camera video {
         border-radius: 8px; /* Keep rounded corners */
     }
 }
@@ -136,12 +141,56 @@ h1 {
     display: none; /* Hide elements */
 }
 
-#stream-image {
+.stream-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.stream-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+}
+
+.stream-control select,
+.stream-control input[type="range"] {
+    min-height: 32px;
+}
+
+.confidence-control input {
+    width: 120px;
+}
+
+.media-stage {
+    position: relative;
+    display: inline-grid;
+    max-width: 100%;
+    max-height: 80vh;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+#stream-image,
+#stream-video {
+    grid-area: 1 / 1;
     max-width: 100%; /* Ensure the image scales properly */
     max-height: 80vh; /* Limit the height to 80% of the viewport */
-    border-radius: 8px; /* Rounded corners */
-    object-fit: cover; /* Maintain aspect ratio while covering the container */
-    margin-bottom: 10px; /* Add spacing below the image */
+    object-fit: contain; /* Keep overlay coordinates aligned with the media */
+    margin-bottom: 0;
+}
+
+.overlay-canvas {
+    grid-area: 1 / 1;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 2;
 }
 
 .meta {

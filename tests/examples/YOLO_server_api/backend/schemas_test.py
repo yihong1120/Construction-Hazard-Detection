@@ -17,19 +17,19 @@ class TestDetectionRequest(unittest.TestCase):
     Tests for the DetectionRequest model in schemas.py
     """
 
-    def test_creation_direct(self):
+    def test_creation_direct(self) -> None:
         """
         Tests creating a DetectionRequest object directly
         with a mock UploadFile and a model name.
         """
         mock_file = MagicMock(spec=UploadFile)
-        data = {'model': 'yolo11n', 'image': mock_file}
+        data = {'model': 'yolo26n', 'image': mock_file}
         detection_request = DetectionRequest(**data)
 
-        self.assertEqual(detection_request.model, 'yolo11n')
+        self.assertEqual(detection_request.model, 'yolo26n')
         self.assertIs(detection_request.image, mock_file)
 
-    def test_creation_missing_fields(self):
+    def test_creation_missing_fields(self) -> None:
         """
         Tests ValidationError is raised if required fields are missing.
         """
@@ -37,7 +37,7 @@ class TestDetectionRequest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             DetectionRequest()
 
-    def test_as_form_method_manual_args(self):
+    def test_as_form_method_manual_args(self) -> None:
         """
         Tests the as_form classmethod by manually passing
         the arguments that would normally come from FastAPI.
@@ -57,7 +57,7 @@ class TestModelFileUpdate(unittest.TestCase):
     Tests for the ModelFileUpdate model in schemas.py
     """
 
-    def test_creation_direct(self):
+    def test_creation_direct(self) -> None:
         """
         Tests creating a ModelFileUpdate object directly
         with a mock UploadFile and a model name.
@@ -68,14 +68,14 @@ class TestModelFileUpdate(unittest.TestCase):
         self.assertEqual(model_file_update.model, 'yolov5')
         self.assertIs(model_file_update.file, mock_file)
 
-    def test_creation_missing_fields(self):
+    def test_creation_missing_fields(self) -> None:
         """
         Tests ValidationError is raised if required fields are missing.
         """
         with self.assertRaises(ValidationError):
             ModelFileUpdate()
 
-    def test_as_form_method_manual_args(self):
+    def test_as_form_method_manual_args(self) -> None:
         """
         Tests the as_form classmethod by manually passing
         the arguments that would normally come from FastAPI.
@@ -95,7 +95,7 @@ class TestUpdateModelRequest(unittest.TestCase):
     Tests for the UpdateModelRequest model in schemas.py
     """
 
-    def test_valid_creation(self):
+    def test_valid_creation(self) -> None:
         """
         Tests creating an UpdateModelRequest with valid data.
         """
@@ -107,14 +107,14 @@ class TestUpdateModelRequest(unittest.TestCase):
         self.assertEqual(req.model, 'yolov5')
         self.assertEqual(req.last_update_time, '2023-10-01T12:30:00')
 
-    def test_missing_fields(self):
+    def test_missing_fields(self) -> None:
         """
         Tests that missing required fields raise ValidationError.
         """
         with self.assertRaises(ValidationError):
             UpdateModelRequest()
 
-    def test_last_update_as_datetime_valid(self):
+    def test_last_update_as_datetime_valid(self) -> None:
         """
         Tests the last_update_as_datetime method with a valid ISO string.
         """
@@ -132,7 +132,7 @@ class TestUpdateModelRequest(unittest.TestCase):
         self.assertEqual(dt.hour, 12)
         self.assertEqual(dt.minute, 30)
 
-    def test_last_update_as_datetime_invalid(self):
+    def test_last_update_as_datetime_invalid(self) -> None:
         """
         Tests last_update_as_datetime with an invalid ISO date string.
         """

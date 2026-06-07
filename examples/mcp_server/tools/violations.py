@@ -22,9 +22,10 @@ async def _maybe_await(value: Any) -> Any:
 class ViolationsTools:
     """Tools for querying and managing violation records."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialise lazy violation query resources."""
         self.logger = logging.getLogger(__name__)
-        self._token_manager = None
+        self._token_manager: TokenManager | None = None
         self._client: httpx.AsyncClient | None = None
         self._base_url: str = ''
 

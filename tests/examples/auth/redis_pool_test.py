@@ -91,7 +91,7 @@ class TestRedisClient(unittest.IsolatedAsyncioTestCase):
         await self.redis_client.close()
 
         # Verify that the close method of the Redis client was called
-        mock_redis_instance.aclose.assert_awaited_once()
+        mock_redis_instance.close.assert_awaited_once()
 
         # Verify that the client is set to None
         self.assertIsNone(self.redis_client.client)

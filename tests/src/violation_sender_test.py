@@ -21,10 +21,10 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
     stream: str
     img: bytes
     ts: datetime
-    warn: str
-    det: str
-    cone: str
-    pole: str
+    warn: list[dict[str, int]]
+    det: list[object]
+    cone: list[object]
+    pole: list[object]
     sender: ViolationSender
 
     def setUp(self) -> None:
@@ -35,10 +35,10 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         self.stream = 'Cam-01'
         self.img = b'fake_image_data'
         self.ts = datetime(2025, 1, 2, 3, 4, 5)
-        self.warn = '[{"code": 1}]'
-        self.det = '[]'
-        self.cone = '[]'
-        self.pole = '[]'
+        self.warn = [{'code': 1}]
+        self.det = []
+        self.cone = []
+        self.pole = []
         self.sender = ViolationSender(
             api_url='http://testserver/api/violations',
             max_retries=3,
@@ -64,10 +64,10 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
             stream_name=self.stream,
             image_bytes=self.img,
             detection_time=self.ts,
-            warnings_json=self.warn,
-            detections_json=self.det,
-            cone_polygon_json=self.cone,
-            pole_polygon_json=self.pole,
+            warnings=self.warn,
+            detections=self.det,
+            cone_polygon=self.cone,
+            pole_polygon=self.pole,
         )
 
     @patch.object(ViolationSender, '_get_client', new_callable=AsyncMock)
@@ -375,7 +375,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['site'], self.site)
         self.assertEqual(data['stream_name'], self.stream)
         self.assertNotIn('detection_time', data)
-        self.assertNotIn('warnings_json', data)
+        self.assertEqual(data['warnings_json'], 'null')
 
     @patch.object(ViolationSender, '_get_client', new_callable=AsyncMock)
     @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)

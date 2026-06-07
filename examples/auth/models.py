@@ -4,6 +4,8 @@ import asyncio
 from datetime import datetime
 from datetime import timezone
 
+from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
 from sqlalchemy import Boolean
 from sqlalchemy import Column
 from sqlalchemy import DateTime
@@ -17,10 +19,16 @@ from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
-from werkzeug.security import check_password_hash
-from werkzeug.security import generate_password_hash
 
 from examples.auth.database import Base
+
+password_hash = PasswordHash.recommended()
+
+
+def utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp for ORM-side defaults."""
+    return datetime.now(timezone.utc)
+
 
 # -------------------------------------------------------
 #  Feature Model
@@ -54,12 +62,12 @@ class Feature(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
@@ -94,7 +102,11 @@ group_features_table: Table = Table(
             ondelete='CASCADE',
         ), primary_key=True,
     ),
-    Column('created_at', DateTime, server_default=text('CURRENT_TIMESTAMP')),
+    Column(
+        'created_at',
+        DateTime(timezone=True),
+        server_default=text('CURRENT_TIMESTAMP'),
+    ),
 )
 
 # -------------------------------------------------------
@@ -137,17 +149,18 @@ class Group(Base):
 
     sites: Mapped[list[Site]] = relationship(
         'Site',
-        back_populates='group',
+        secondary='site_groups',
+        back_populates='groups',
         lazy='joined',
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
@@ -184,10 +197,57 @@ user_sites_table: Table = Table(
 )
 
 
+class SiteNotificationPreference(Base):
+    """Per-user notification preference for a specific site."""
+
+    __tablename__ = 'site_notification_preferences'
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey('users.id', ondelete='CASCADE'),
+        primary_key=True,
+    )
+    site_id: Mapped[int] = mapped_column(
+        ForeignKey('sites.id', ondelete='CASCADE'),
+        primary_key=True,
+    )
+    is_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship(
+        'User', back_populates='notification_preferences',
+    )
+    site: Mapped[Site] = relationship(
+        'Site', back_populates='notification_preferences',
+    )
+
+
 # -------------------------------------------------------
 #  User Model
 # -------------------------------------------------------
+USER_STATUS_ACTIVE = 'active'
+USER_STATUS_INACTIVE = 'inactive'
+USER_STATUS_PENDING = 'pending'
+USER_STATUS_VALUES = (
+    USER_STATUS_ACTIVE,
+    USER_STATUS_INACTIVE,
+    USER_STATUS_PENDING,
+)
+
+
 class UserProfile(Base):
+    """Stores contact and profile details for a user account."""
+
     __tablename__ = 'user_profiles'
 
     user_id: Mapped[int] = mapped_column(
@@ -202,12 +262,12 @@ class UserProfile(Base):
     mobile_number: Mapped[str | None] = mapped_column(String(20), unique=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
@@ -227,7 +287,7 @@ class User(Base):
         username (str): Unique login identifier.
         password_hash (str): Hashed user password.
         role (str): Access level (e.g., admin, user, guest).
-        is_active (bool): Whether the user account is active.
+        status (str): Account lifecycle status.
         created_at (datetime): Timestamp of creation.
         updated_at (datetime): Timestamp of last update.
         sites (list[Site]): Sites the user has access to.
@@ -243,18 +303,18 @@ class User(Base):
     role: Mapped[str] = mapped_column(
         String(20), default='user', nullable=False,
     )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False,
+    status: Mapped[str] = mapped_column(
+        String(20), default=USER_STATUS_ACTIVE, nullable=False,
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.now(timezone.utc),
+        DateTime(timezone=True), nullable=False, default=utc_now,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     # group_info.id
@@ -286,6 +346,14 @@ class User(Base):
         passive_deletes=True,
     )
 
+    notification_preferences: Mapped[list[SiteNotificationPreference]] = (
+        relationship(
+            'SiteNotificationPreference',
+            back_populates='user',
+            cascade='all, delete-orphan',
+        )
+    )
+
     def set_password(self, password: str) -> None:
         """
         Hash and store the user's password securely.
@@ -293,7 +361,7 @@ class User(Base):
         Args:
             password (str): The plain-text password to be hashed.
         """
-        self.password_hash = generate_password_hash(password)
+        self.password_hash = password_hash.hash(password)
 
     async def check_password(self, password: str) -> bool:
         """
@@ -307,11 +375,14 @@ class User(Base):
         Returns:
             bool: True if the password matches, otherwise False.
         """
-        return await asyncio.to_thread(
-            check_password_hash,
-            str(self.password_hash),
-            password,
-        )
+        try:
+            return await asyncio.to_thread(
+                password_hash.verify,
+                password,
+                str(self.password_hash),
+            )
+        except UnknownHashError:
+            return False
 
     def to_dict(self) -> dict:
         """
@@ -324,10 +395,32 @@ class User(Base):
             'id': self.id,
             'username': self.username,
             'role': self.role,
-            'is_active': self.is_active,
+            'status': self.status,
             'created_at': self.created_at,
             'updated_at': self.updated_at,
         }
+
+
+# -------------------------------------------------------
+#  site_groups  (Many-to-Many: Site ↔ Group)
+# -------------------------------------------------------
+site_groups_table: Table = Table(
+    'site_groups',
+    Base.metadata,
+    Column(
+        'site_id', ForeignKey('sites.id', ondelete='CASCADE'),
+        primary_key=True,
+    ),
+    Column(
+        'group_id', ForeignKey('group_info.id', ondelete='CASCADE'),
+        primary_key=True,
+    ),
+    Column(
+        'created_at',
+        DateTime(timezone=True),
+        server_default=text('CURRENT_TIMESTAMP'),
+    ),
+)
 
 
 # -------------------------------------------------------
@@ -350,26 +443,26 @@ class Site(Base):
     __tablename__ = 'sites'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(80), nullable=False)
-
-    group_id: Mapped[int | None] = mapped_column(
-        ForeignKey('group_info.id', ondelete='SET NULL'),
-        nullable=True,
-    )
-    group: Mapped[Group | None] = relationship(
-        'Group',
-        back_populates='sites',
-        lazy='joined',
+    name: Mapped[str] = mapped_column(
+        String(80), unique=True, nullable=False,
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.now(timezone.utc),
+        DateTime(timezone=True), nullable=False, default=utc_now,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+    # Many-to-many relationship to Group
+    groups: Mapped[list[Group]] = relationship(
+        'Group',
+        secondary=site_groups_table,
+        back_populates='sites',
+        lazy='joined',
     )
 
     # Many-to-many relationship to User
@@ -378,11 +471,18 @@ class Site(Base):
         'User', secondary=user_sites_table, back_populates='sites',
     )
 
+    notification_preferences: Mapped[list[SiteNotificationPreference]] = (
+        relationship(
+            'SiteNotificationPreference',
+            back_populates='site',
+            cascade='all, delete-orphan',
+        )
+    )
+
     # One-to-many relationship to Violation
     # This is a foreign key to the violations table
     violations: Mapped[list[Violation]] = relationship(
         'Violation',
-        primaryjoin='Site.name == foreign(Violation.site)',
         back_populates='site_obj',
     )
 
@@ -455,7 +555,7 @@ class StreamConfig(Base):
 
     detect_with_server: Mapped[bool] = mapped_column(Boolean, default=True)
     expire_date:        Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True,
+        DateTime(timezone=True), nullable=True,
     )
 
     work_start_hour: Mapped[int] = mapped_column(Integer)
@@ -464,12 +564,12 @@ class StreamConfig(Base):
     store_in_redis: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
         nullable=False,
     )
 
@@ -484,7 +584,7 @@ class StreamConfig(Base):
     __table_args__ = (
         # Ensure that the combination of site_id and stream_name is unique
         # across the table to prevent duplicate stream configurations
-        UniqueConstraint('site_id', 'stream_name', name='uq_site_stream'),
+        UniqueConstraint('site_id', 'stream_name', name='uq_sc_site_stream'),
     )
 
 
@@ -514,7 +614,7 @@ class Violation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     stream_name: Mapped[str] = mapped_column(String(80), nullable=False)
     detection_time: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.now(timezone.utc),
+        DateTime(timezone=True), nullable=False, default=utc_now,
     )
     image_path: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -525,15 +625,18 @@ class Violation(Base):
     warnings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=True, default=datetime.now(timezone.utc),
+        DateTime(timezone=True), nullable=True, default=utc_now,
     )
 
     # Foreign key: name of the associated site
-    site: Mapped[str] = mapped_column(String(80), nullable=False)
+    site: Mapped[str] = mapped_column(
+        String(80),
+        ForeignKey('sites.name', ondelete='CASCADE'),
+        nullable=False,
+    )
 
     # ORM relationship to the actual Site object
     site_obj: Mapped[Site] = relationship(
         'Site',
-        primaryjoin='foreign(Violation.site) == Site.name',
         back_populates='violations',
     )

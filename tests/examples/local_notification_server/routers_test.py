@@ -42,6 +42,10 @@ class TestLocalNotificationServer(unittest.TestCase):
 
         # Redis mock: use MagicMock for correct pipeline chain
         self.mock_redis: MagicMock = MagicMock()
+        self.mock_redis.get = AsyncMock(return_value=None)
+        self.mock_redis.exists = AsyncMock(return_value=0)
+        self.mock_redis.smembers = AsyncMock(return_value=set())
+        self.mock_redis.set = AsyncMock()
         self.mock_redis.hset = AsyncMock()
         self.mock_redis.hdel = AsyncMock()
         # pipeline mock will be set in each test as needed
@@ -135,10 +139,17 @@ class TestLocalNotificationServer(unittest.TestCase):
         mock_site.name = site_name
         mock_site.users = users
 
-        result: MagicMock = MagicMock()
-        result.unique.return_value = result
-        result.scalar_one_or_none.return_value = mock_site
-        self.mock_session.execute = AsyncMock(return_value=result)
+        site_lookup_result: MagicMock = MagicMock()
+        site_lookup_result.first.return_value = (1, 1)
+
+        user_ids_result: MagicMock = MagicMock()
+        user_ids_result.scalars.return_value.all.return_value = [
+            user.id for user in users
+        ]
+
+        self.mock_session.execute = AsyncMock(
+            side_effect=[site_lookup_result, user_ids_result],
+        )
         return mock_site
 
     # ------------------------------------------------------------------------
@@ -176,6 +187,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         data: dict[str, object] = {
             'user_id': 123,
             'device_token': 'my-test-token',
+            'device_lang': 'en-GB',
         }
         response = self.client.post('/fcm/store_token', json=data)
         self.assertEqual(response.status_code, 200)
@@ -187,6 +199,22 @@ class TestLocalNotificationServer(unittest.TestCase):
         pipe_mock.hset.assert_called_once_with(
             'fcm_tokens:123', 'my-test-token', 'en-GB',
         )
+
+    def test_store_fcm_token_requires_device_lang(self) -> None:
+        """Token registration requires an explicit supported language."""
+        self.mock_user_in_db(user_id=123)
+        data: dict[str, object] = {
+            'user_id': 123,
+            'device_token': 'my-test-token',
+        }
+
+        response = self.client.post('/fcm/store_token', json=data)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(), {'detail': 'unsupported_device_lang'},
+        )
+        self.mock_redis.pipeline.assert_not_called()
 
     def test_store_fcm_token_with_device_lang(self) -> None:
         """
@@ -209,8 +237,25 @@ class TestLocalNotificationServer(unittest.TestCase):
             },
         )
         pipe_mock.hset.assert_called_once_with(
-            'fcm_tokens:123', 'test-token', 'zh',
+            'fcm_tokens:123', 'test-token', 'zh-TW',
         )
+
+    def test_store_fcm_token_with_unsupported_device_lang(self) -> None:
+        """Unsupported device languages are rejected instead of retry."""
+        self.mock_user_in_db(user_id=123)
+        data: dict[str, object] = {
+            'user_id': 123,
+            'device_token': 'test-token',
+            'device_lang': 'unknown',
+        }
+
+        response = self.client.post('/fcm/store_token', json=data)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(), {'detail': 'unsupported_device_lang'},
+        )
+        self.mock_redis.pipeline.assert_not_called()
 
     # ------------------------------------------------------------------------
     # Tests for /delete_token (DELETE) - removing an FCM token from Redis
@@ -309,16 +354,22 @@ class TestLocalNotificationServer(unittest.TestCase):
     # ------------------------------------------------------------------------
     # Tests for /send_fcm_notification (POST) - sending notifications
     # ------------------------------------------------------------------------
-    def test_send_fcm_notification_site_not_found(self) -> None:
+    @patch(
+        'examples.local_notification_server.routers.'
+        'get_site_notification_user_ids_cached',
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    def test_send_fcm_notification_site_not_found(
+        self,
+        mock_get_user_ids: AsyncMock,
+    ) -> None:
         """
         Test sending a notification for a non-existent site.
         Expects a 200 response with success=False and a specific message.
         """
-        # Simulate a DB query that returns no Site
-        result: MagicMock = MagicMock()
-        result.unique.return_value = result
-        result.scalar_one_or_none.return_value = None
-        self.mock_session.execute = AsyncMock(return_value=result)
+        _ = mock_get_user_ids
+        self.mock_redis.set = AsyncMock(return_value=True)
 
         data: dict[str, object] = {
             'site': 'MissingSite',
@@ -336,16 +387,26 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(
             response.json(), {
                 'success': False,
-                'message': "Site 'MissingSite' not found or has no users.",
+                'message': "Site 'MissingSite' not found.",
             },
         )
 
-    def test_send_fcm_notification_site_no_users(self) -> None:
+    @patch(
+        'examples.local_notification_server.routers.'
+        'get_site_notification_user_ids_cached',
+        new_callable=AsyncMock,
+        return_value=[],
+    )
+    def test_send_fcm_notification_site_no_users(
+        self,
+        mock_get_user_ids: AsyncMock,
+    ) -> None:
         """
         Test sending a notification for a site that has no users.
         Expects a 200 response with success=False and a relevant message.
         """
-        self.mock_site_in_db('EmptySite', [])
+        _ = mock_get_user_ids
+        self.mock_redis.set = AsyncMock(return_value=True)
 
         data: dict[str, object] = {
             'site': 'EmptySite',
@@ -363,18 +424,26 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(
             response.json(), {
                 'success': False,
-                'message': "Site 'EmptySite' not found or has no users.",
+                'message': "Site 'EmptySite' has no subscribed users.",
             },
         )
 
-    def test_send_fcm_notification_no_tokens(self) -> None:
+    @patch(
+        'examples.local_notification_server.routers.'
+        'get_site_notification_user_ids_cached',
+        new_callable=AsyncMock,
+        return_value=[1, 2],
+    )
+    def test_send_fcm_notification_no_tokens(
+        self,
+        mock_get_user_ids: AsyncMock,
+    ) -> None:
         """
         Test sending a notification where users exist,
         but none have tokens in Redis.
         """
-        user1: MagicMock = MagicMock(id=1)
-        user2: MagicMock = MagicMock(id=2)
-        self.mock_site_in_db('SiteWithNoTokens', [user1, user2])
+        _ = mock_get_user_ids
+        self.mock_redis.set = AsyncMock(return_value=True)
 
         # Redis pipeline mock
         pipe_mock: MagicMock = MagicMock()
@@ -418,8 +487,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         Args:
             mock_send_fcm (AsyncMock): Mocked FCM notification sending service.
         """
-        user: MagicMock = MagicMock(id=42)
-        self.mock_site_in_db('MySite', [user])
+        self.mock_redis.set = AsyncMock(return_value=True)
 
         pipe_mock: MagicMock = MagicMock()
         pipe_mock.hgetall = MagicMock()
@@ -438,9 +506,14 @@ class TestLocalNotificationServer(unittest.TestCase):
             'body': {'en': {'helmet': 1}},
         }
         headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
-        response = self.client.post(
-            '/fcm/send_fcm_notification', json=data, headers=headers,
-        )
+        with patch(
+            'examples.local_notification_server.routers.'
+            'get_site_notification_user_ids_cached',
+            new=AsyncMock(return_value=[42]),
+        ):
+            response = self.client.post(
+                '/fcm/send_fcm_notification', json=data, headers=headers,
+            )
 
         self.assertEqual(response.status_code, 200)
         resp_json = response.json()
@@ -469,8 +542,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         Args:
             mock_send_fcm (AsyncMock): Mocked FCM notification sending service.
         """
-        user: MagicMock = MagicMock(id=99)
-        self.mock_site_in_db('MySite', [user])
+        self.mock_redis.set = AsyncMock(return_value=True)
 
         pipe_mock: MagicMock = MagicMock()
         pipe_mock.hgetall = MagicMock()
@@ -488,9 +560,14 @@ class TestLocalNotificationServer(unittest.TestCase):
             'body': {'en': {'helmet': 1}},
         }
         headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
-        response = self.client.post(
-            '/fcm/send_fcm_notification', json=data, headers=headers,
-        )
+        with patch(
+            'examples.local_notification_server.routers.'
+            'get_site_notification_user_ids_cached',
+            new=AsyncMock(return_value=[99]),
+        ):
+            response = self.client.post(
+                '/fcm/send_fcm_notification', json=data, headers=headers,
+            )
 
         self.assertEqual(response.status_code, 200)
         resp_json = response.json()
@@ -510,8 +587,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         """
         Test FCM notification sending timeout branch.
         """
-        user: MagicMock = MagicMock(id=1)
-        self.mock_site_in_db('TimeoutSite', [user])
+        _ = mock_send_fcm
+        self.mock_redis.set = AsyncMock(return_value=True)
         pipe_mock: MagicMock = MagicMock()
         pipe_mock.hgetall = MagicMock()
         pipe_mock.execute = AsyncMock(return_value=[{b'token': b'en'}])
@@ -519,18 +596,25 @@ class TestLocalNotificationServer(unittest.TestCase):
         # Patch asyncio.wait_for to raise TimeoutError
         import asyncio as real_asyncio
         with patch('asyncio.wait_for', side_effect=real_asyncio.TimeoutError):
-            data = {
-                'site': 'TimeoutSite',
-                'stream_name': 'TimeoutStream',
-                'body': {'en': {'helmet': 1}},
-            }
-            headers = {'Authorization': 'Bearer dummy-token'}
-            response = self.client.post(
-                '/fcm/send_fcm_notification', json=data, headers=headers,
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertFalse(response.json()['success'])
-            self.assertIn('timed out', response.json()['message'])
+            with patch(
+                'examples.local_notification_server.routers.'
+                'get_site_notification_user_ids_cached',
+                new=AsyncMock(return_value=[1]),
+            ):
+                data = {
+                    'site': 'TimeoutSite',
+                    'stream_name': 'TimeoutStream',
+                    'body': {'en': {'helmet': 1}},
+                }
+                headers = {'Authorization': 'Bearer dummy-token'}
+                response = self.client.post(
+                    '/fcm/send_fcm_notification',
+                    json=data,
+                    headers=headers,
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['success'])
+        self.assertIn('timed out', response.json()['message'])
 
     @patch(
         'examples.local_notification_server.services.'
@@ -543,30 +627,60 @@ class TestLocalNotificationServer(unittest.TestCase):
         """
         Test FCM notification sending exception branch.
         """
-        _ = mock_send_fcm  # Mark as used to avoid unused argument warning
-        user: MagicMock = MagicMock(id=1)
-        self.mock_site_in_db('ExceptionSite', [user])
+        _ = mock_send_fcm
+        self.mock_redis.set = AsyncMock(return_value=True)
         pipe_mock: MagicMock = MagicMock()
         pipe_mock.hgetall = MagicMock()
         pipe_mock.execute = AsyncMock(return_value=[{b'token': b'en'}])
         self.mock_redis.pipeline.return_value = pipe_mock
         # Patch asyncio.gather to raise Exception
         with patch('asyncio.wait_for', side_effect=Exception('fail!')):
-            data = {
-                'site': 'ExceptionSite',
-                'stream_name': 'ExceptionStream',
-                'body': {'en': {'helmet': 1}},
-            }
-            headers = {'Authorization': 'Bearer dummy-token'}
-            response = self.client.post(
-                '/fcm/send_fcm_notification', json=data, headers=headers,
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertFalse(response.json()['success'])
-            self.assertIn(
-                'Failed to send FCM notifications.',
-                response.json()['message'],
-            )
+            with patch(
+                'examples.local_notification_server.routers.'
+                'get_site_notification_user_ids_cached',
+                new=AsyncMock(return_value=[1]),
+            ):
+                data = {
+                    'site': 'ExceptionSite',
+                    'stream_name': 'ExceptionStream',
+                    'body': {'en': {'helmet': 1}},
+                }
+                headers = {'Authorization': 'Bearer dummy-token'}
+                response = self.client.post(
+                    '/fcm/send_fcm_notification', json=data, headers=headers,
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['success'])
+        self.assertIn(
+            'Failed to send FCM notifications.',
+            response.json()['message'],
+        )
+
+    def test_send_fcm_notification_duplicate_skipped(self) -> None:
+        """It skips duplicated sends claimed by another notification server."""
+        self.mock_redis.set = AsyncMock(return_value=False)
+
+        data: dict[str, object] = {
+            'site': 'MySite',
+            'stream_name': 'MainStream',
+            'image_path': None,
+            'violation_id': 999,
+            'body': {'en': {'helmet': 1}},
+        }
+        headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
+        response = self.client.post(
+            '/fcm/send_fcm_notification', json=data, headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                'success': True,
+                'message': 'Duplicate notification skipped.',
+            },
+        )
+        self.mock_session.execute.assert_not_called()
 
     def test_send_fcm_notification_body_empty(self) -> None:
         """

@@ -6,16 +6,13 @@ import requests
 
 
 class BroadcastNotifier:
-    """
-    A class to connect to a broadcast system and send messages.
-    """
+    """Send text messages to an HTTP broadcast endpoint."""
 
-    def __init__(self, broadcast_url: str):
-        """
-        Initialises the BroadcastNotifier with the broadcast system's URL.
+    def __init__(self, broadcast_url: str) -> None:
+        """Initialise the broadcast notifier.
 
         Args:
-            broadcast_url (str): The URL of the broadcast API or service.
+            broadcast_url: URL of the broadcast API or service.
         """
         self.broadcast_url = broadcast_url
         self.logger = logging.getLogger(__name__)
@@ -51,14 +48,12 @@ class BroadcastNotifier:
             return False
 
 
-def main():
-    # Configure logging
+def main() -> None:
+    """Send a sample broadcast message for direct script execution."""
     logging.basicConfig(level=logging.INFO)
 
-    # Initialise the BroadcastNotifier with the broadcast system URL
     notifier = BroadcastNotifier('http://localhost:8080/broadcast')
 
-    # Send a test message
     status = notifier.broadcast_message('Test broadcast message')
     print(f"Broadcast status: {status}")
 

@@ -11,7 +11,7 @@ class ModelEvaluator:
     A class to evaluate YOLO models using Ultralytics framework.
     """
 
-    def __init__(self, model_path: str, data_path: str):
+    def __init__(self, model_path: str, data_path: str) -> None:
         """
         Initialises the model evaluator with the path to the model and dataset.
 
@@ -35,7 +35,8 @@ class ModelEvaluator:
         return self.model.val(data=self.data_path)
 
 
-def main():
+def main() -> None:
+    """Evaluate a YOLO model with Ultralytics validation."""
     parser = argparse.ArgumentParser(description='Evaluates a YOLO model.')
     parser.add_argument(
         '--model_path',

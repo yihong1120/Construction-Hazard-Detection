@@ -4,6 +4,7 @@ import time
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Any
 from typing import ClassVar
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -11,13 +12,13 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from fastapi_jwt import JwtAuthorizationCredentials
-from werkzeug.utils import secure_filename
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
+from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.user_service import _cache_ttl
 from examples.auth.user_service import _user_sites_cache
+from examples.shared.filename_utils import sanitize_filename
 from examples.violation_records.routers import get_user_sites_cached
 from examples.violation_records.routers import router
 
@@ -45,14 +46,16 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             scalars=AsyncMock(),
         )
 
-        async def override_get_db():
+        async def override_get_db() -> Any:
+            """Support override_get_db."""
             return cls.fake_db
 
         # Override get_db
         app.dependency_overrides[get_db] = override_get_db
 
         # Override jwt_access dependency
-        def override_jwt():
+        def override_jwt() -> Any:
+            """Support override_jwt."""
             return JwtAuthorizationCredentials(
                 subject={'username': 'test_user'},
             )
@@ -66,6 +69,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         Reset the fake DB's mocks before each test.
         """
+        _user_sites_cache.clear()
         self.fake_db.execute.reset_mock()
         self.fake_db.execute.side_effect = None
         self.fake_db.scalars.reset_mock()
@@ -85,7 +89,14 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             user_obj (MockUser | None): The mock user object to return.
         """
         self.fake_db.execute.side_effect = None
-        self.fake_db.execute.return_value = self._exec_scalar(user_obj)
+        if user_obj is None:
+            self.fake_db.execute.return_value = self._exec_scalar(None)
+            return
+
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(user_obj),
+            self._exec_scalars_all(getattr(user_obj, 'sites', [])),
+        ]
 
     def append_site_query(
         self,
@@ -128,16 +139,59 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     # Lightweight helpers replacing Fake* classes
     ###################################################
-    def _exec_scalar(self, value):
+    def _exec_scalar(self, value: Any) -> Any:
         """Return an object with scalar() -> value."""
-        return SimpleNamespace(scalar=lambda: value)
+        return SimpleNamespace(
+            scalar=lambda: value,
+            scalar_one_or_none=lambda: value,
+            unique=lambda: SimpleNamespace(
+                scalars=lambda: SimpleNamespace(one_or_none=lambda: value),
+            ),
+        )
 
-    def _scalars_list(self, items: list):
+    def _exec_scalars_all(self, values: list) -> Any:
+        """Return an object with scalars().all() -> values."""
+        _scalars_ns = SimpleNamespace(
+            all=lambda: values,
+            unique=lambda: SimpleNamespace(all=lambda: values),
+        )
+        return SimpleNamespace(
+            scalars=lambda: _scalars_ns,
+            unique=lambda: SimpleNamespace(
+                scalars=lambda: _scalars_ns,
+            ),
+        )
+
+    def _exec_all(self, values: list) -> Any:
+        """Return an object with all() -> values."""
+        return SimpleNamespace(all=lambda: values)
+
+    def _violation_row(self, violation: Any) -> Any:
+        """Return a selected-column row matching the violations query."""
+        return (
+            violation.id,
+            violation.site,
+            violation.stream_name,
+            violation.detection_time,
+            violation.image_path,
+            violation.created_at,
+            violation.detections_json,
+            violation.warnings_json,
+            violation.cone_polygon_json,
+            violation.pole_polygon_json,
+        )
+
+    def _violation_row_with_total(self, violation: Any, total: int) -> Any:
+        """Return a selected-column row with the window total appended."""
+        return (*self._violation_row(violation), total)
+
+    def _scalars_list(self, items: list) -> Any:
         """Return an object with all() -> items."""
         return SimpleNamespace(all=lambda: items)
 
     # Domain object creators (replace former Mock* classes)
-    def make_site(self, site_id: int, name: str):
+    def make_site(self, site_id: int, name: str) -> Any:
+        """Support make_site."""
         return SimpleNamespace(
             id=site_id,
             name=name,
@@ -145,8 +199,22 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             updated_at=datetime(2023, 1, 2),
         )
 
-    def make_user(self, username: str, sites: list):
-        return SimpleNamespace(username=username, sites=sites)
+    def make_user(
+        self,
+        username: str,
+        sites: list,
+        user_id: int = 1,
+        role: str = 'user',
+        group_id: int | None = 1,
+    ) -> Any:
+        """Support make_user."""
+        return SimpleNamespace(
+            id=user_id,
+            username=username,
+            role=role,
+            group_id=group_id,
+            sites=sites,
+        )
 
     def make_violation(
         self,
@@ -155,7 +223,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         detection_time: datetime | None = None,
         stream_name: str = 'Cam1',
         image_path: str = 'some.jpg',
-    ):
+    ) -> Any:
+        """Support make_violation."""
         return SimpleNamespace(
             id=violation_id,
             site=site,
@@ -201,7 +270,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         user = self.make_user('test_user', [siteA, siteB])
 
         # Mock database to return user
-        self.fake_db.execute.return_value = self._exec_scalar(user)
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(user),
+            self._exec_scalars_all(user.sites),
+        ]
 
         # Call function
         result = await get_user_sites_cached('test_user', self.fake_db)
@@ -242,7 +314,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         user = self.make_user('expired_user', [siteA])
 
         # Mock database to return updated user
-        self.fake_db.execute.return_value = self._exec_scalar(user)
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(user),
+            self._exec_scalars_all(user.sites),
+        ]
 
         # Call function
         result = await get_user_sites_cached('expired_user', self.fake_db)
@@ -312,7 +387,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         Provide a JWT token with no 'username' in the subject dict to
         exercise `if not username: ...`.
         """
-        def override_jwt_no_username():
+        def override_jwt_no_username() -> Any:
+            """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -429,7 +505,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         If the file exists with a .jpg/.jpeg, return 200 and ensure
         content-type is image/jpeg and the Content-Disposition filename is
-        sanitised via secure_filename.
+        sanitised before being returned.
 
         Args:
             mock_path (MagicMock): Mocked Path class.
@@ -450,7 +526,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.headers['content-type'], 'image/jpeg')
         # Header should contain sanitized filename
         self.assertIn(
-            f'filename="{secure_filename(unsafe_name)}"',
+            f'filename="{sanitize_filename(unsafe_name)}"',
             resp.headers['content-disposition'],
         )
 
@@ -598,10 +674,12 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         mock_get_user_sites.return_value = ['SiteA']
         # Mock count query and violations query
-        self.fake_db.execute.return_value = self._exec_scalar(2)
         v1 = self.make_violation(123, 'SiteA')
         v2 = self.make_violation(456, 'SiteA')
-        self.fake_db.scalars.return_value = self._scalars_list([v1, v2])
+        self.fake_db.execute.return_value = self._exec_all([
+            self._violation_row_with_total(v1, 2),
+            self._violation_row_with_total(v2, 2),
+        ])
 
         params = {
             'keyword': 'cam',
@@ -626,12 +704,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         mock_get_user_sites.return_value = ['SiteA']
         # Mock site query and count query
+        viol = self.make_violation(101, 'SiteA')
         self.fake_db.execute.side_effect = [
             self._exec_scalar(self.make_site(1, 'SiteA')),
-            self._exec_scalar(1),
+            self._exec_all([self._violation_row_with_total(viol, 1)]),
         ]
-        viol = self.make_violation(101, 'SiteA')
-        self.fake_db.scalars.return_value = self._scalars_list([viol])
 
         resp = self.client.get('/api/violations?site_id=1')
         self.assertEqual(resp.status_code, 200)
@@ -639,6 +716,24 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['total'], 1)
         self.assertEqual(len(data['items']), 1)
         self.assertEqual(data['items'][0]['id'], 101)
+
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_empty_tail_page_counts_total(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """If offset is beyond the last row, total remains accurate."""
+        mock_get_user_sites.return_value = ['SiteA']
+        self.fake_db.execute.side_effect = [
+            self._exec_all([]),
+            self._exec_scalar(3),
+        ]
+
+        resp = self.client.get('/api/violations?offset=100')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {'total': 3, 'items': []})
+        self.assertEqual(self.fake_db.execute.await_count, 2)
 
     ###################################################
     # /api/violations/{violation_id} Tests
@@ -713,7 +808,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         If the JWT token has no 'username', return 401 for invalid token.
         """
-        def override_jwt_no_username():
+        def override_jwt_no_username() -> Any:
+            """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -734,7 +830,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         If the JWT token has no 'username', return 401 for invalid token.
         """
-        def override_jwt_no_username():
+        def override_jwt_no_username() -> Any:
+            """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -762,7 +859,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         Args:
             mock_path (MagicMock): Mocked Path class.
         """
-        def override_jwt_no_username():
+        def override_jwt_no_username() -> Any:
+            """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -827,7 +925,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         If the token lacks 'username', /api/upload should 401.
         """
-        def override_jwt_no_username():
+        def override_jwt_no_username() -> Any:
+            """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username

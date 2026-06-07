@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import base64
+from typing import cast
 
 import redis.asyncio as redis
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
 from examples.auth.database import get_db
 from examples.auth.models import Site
 from examples.auth.models import User
 from examples.auth.redis_pool import get_redis_pool
+from examples.auth.user_service import invalidate_effective_site_cache
 from examples.db_management.deps import _site_permission
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
@@ -20,17 +22,53 @@ from examples.db_management.deps import require_admin
 from examples.db_management.deps import SUPER_ADMIN_NAME
 from examples.db_management.schemas.site import SiteCreate
 from examples.db_management.schemas.site import SiteDelete
+from examples.db_management.schemas.site import SiteGroupOp
 from examples.db_management.schemas.site import SiteRead
 from examples.db_management.schemas.site import SiteUpdate
 from examples.db_management.schemas.site import SiteUserOp
+from examples.db_management.services.site_services import add_group_to_site
 from examples.db_management.services.site_services import add_user_to_site
 from examples.db_management.services.site_services import create_site
 from examples.db_management.services.site_services import delete_site
 from examples.db_management.services.site_services import list_sites
+from examples.db_management.services.site_services import \
+    remove_group_from_site
 from examples.db_management.services.site_services import remove_user_from_site
 from examples.db_management.services.site_services import update_site
+from examples.local_notification_server.services import (
+    invalidate_site_notification_user_cache,
+)
+from examples.local_notification_server.services import \
+    refresh_site_notification_user_cache
 
 router: APIRouter = APIRouter(tags=['site-mgmt'])
+
+
+async def _delete_matching_redis_keys(
+    rds: redis.Redis,
+    key_pattern: str,
+    batch_size: int = 500,
+) -> None:
+    """Delete matching Redis keys without blocking Redis with KEYS."""
+    pending: list[bytes | str] = []
+    async for key in rds.scan_iter(match=key_pattern, count=batch_size):
+        pending.append(key)
+        if len(pending) >= batch_size:
+            await rds.delete(*pending)
+            pending = []
+    if pending:
+        await rds.delete(*pending)
+
+
+def _site_to_read(site: Site) -> SiteRead:
+    """Convert a Site ORM instance to the API response model."""
+    return SiteRead(
+        id=site.id,
+        name=site.name,
+        group_ids=[g.id for g in site.groups],
+        group_names=[g.name for g in site.groups],
+        user_ids=[user.id for user in site.users],
+    )
 
 
 @router.get('/list_sites', response_model=list[SiteRead])
@@ -59,16 +97,7 @@ async def endpoint_list_sites(
         raise HTTPException(status_code=403, detail='Admin role required.')
 
     # Convert Site objects to SiteRead schemas for response
-    return [
-        SiteRead(
-            id=site.id,
-            name=site.name,
-            group_id=site.group_id,
-            group_name=site.group.name if site.group else None,
-            user_ids=[user.id for user in site.users],
-        )
-        for site in sites
-    ]
+    return [_site_to_read(site) for site in sites]
 
 
 @router.post(
@@ -94,20 +123,18 @@ async def endpoint_create_site(
     Raises:
         HTTPException: If permission check fails.
     """
-    group_id: int | None = payload.group_id or me.group_id
+    if is_super_admin(me):
+        group_ids: list[int] = payload.group_ids
+    else:
+        # Validate any explicitly supplied group IDs before overriding
+        for gid in payload.group_ids:
+            _site_permission(me, group_id=gid)
+        group_ids = [cast(int, me.group_id)]
 
-    # Perform permission checks (admins restricted to their group)
-    _site_permission(me, group_id=group_id)
+    site: Site = await create_site(payload.name, group_ids, db)
+    invalidate_effective_site_cache()
 
-    site: Site = await create_site(payload.name, group_id, db)
-
-    return SiteRead(
-        id=site.id,
-        name=site.name,
-        group_id=site.group_id,
-        group_name=site.group.name if site.group else None,
-        user_ids=[user.id for user in site.users],
-    )
+    return _site_to_read(site)
 
 
 @router.put(
@@ -118,6 +145,7 @@ async def endpoint_update_site(
     payload: SiteUpdate,
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
+    rds: redis.Redis = Depends(get_redis_pool),
 ) -> dict[str, str]:
     """Update an existing site's name.
 
@@ -145,7 +173,11 @@ async def endpoint_update_site(
     # Permission check before updating the site
     _site_permission(me, site=site)
 
+    old_name = site.name
     await update_site(site, payload.new_name, db)
+    invalidate_effective_site_cache()
+    await invalidate_site_notification_user_cache([old_name], rds)
+    await refresh_site_notification_user_cache(payload.new_name, db, rds)
     return {'message': 'Site updated successfully.'}
 
 
@@ -159,7 +191,7 @@ async def endpoint_delete_site(
     me: User = Depends(get_current_user),
     rds: redis.Redis = Depends(get_redis_pool),
 ) -> dict[str, str]:
-    """Delete an existing site and related data, and remove related redis keys.
+    """Delete an existing site and related data, and remove related Redis keys.
 
     Args:
         payload (SiteDelete): Contains site ID to delete.
@@ -186,7 +218,7 @@ async def endpoint_delete_site(
     # Check permissions for deletion
     _site_permission(me, site=site)
 
-    # Delete redis streaming keys (site.name must be base64 encoded)
+    # Delete compact live metadata keys for this site.
     def encode_site_name(site_name: str) -> str:
         """Encode the site name using URL-safe base64 encoding.
 
@@ -200,12 +232,13 @@ async def endpoint_delete_site(
             site_name.encode('utf-8'),
         ).decode('ascii')
     encoded_name: str = encode_site_name(site.name)
-    key_pattern: str = f'stream_frame:{encoded_name}*'
-    keys: list[bytes] = await rds.keys(key_pattern)
-    if keys:
-        await rds.delete(*keys)
+    key_pattern: str = f'stream_metadata:{encoded_name}*'
+    await _delete_matching_redis_keys(rds, key_pattern)
+
+    await invalidate_site_notification_user_cache([site.name], rds)
 
     await delete_site(site, db)
+    invalidate_effective_site_cache()
     return {'message': 'Site and related data deleted successfully.'}
 
 
@@ -217,6 +250,7 @@ async def endpoint_add_user_to_site(
     payload: SiteUserOp,
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
+    rds: redis.Redis = Depends(get_redis_pool),
 ) -> dict[str, str]:
     """Associate a user with a specific site.
 
@@ -260,13 +294,15 @@ async def endpoint_add_user_to_site(
             detail="Cannot modify super admin's site membership.",
         )
 
-    if user.group_id != site.group_id:
+    if user.group_id not in {g.id for g in site.groups}:
         raise HTTPException(
             status_code=403,
             detail='User and site must belong to the same group.',
         )
 
     await add_user_to_site(user.id, site.id, db)
+    invalidate_effective_site_cache()
+    await refresh_site_notification_user_cache(site.name, db, rds)
     return {'message': 'User linked to site successfully.'}
 
 
@@ -278,6 +314,7 @@ async def endpoint_remove_user_from_site(
     payload: SiteUserOp,
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
+    rds: redis.Redis = Depends(get_redis_pool),
 ) -> dict[str, str]:
     """Dissociate a user from a specific site.
 
@@ -320,4 +357,82 @@ async def endpoint_remove_user_from_site(
         )
 
     await remove_user_from_site(user.id, site.id, db)
+    invalidate_effective_site_cache()
+    await refresh_site_notification_user_cache(site.name, db, rds)
     return {'message': 'User unlinked from site successfully.'}
+
+
+@router.post(
+    '/add_group_to_site',
+    dependencies=[Depends(require_admin)],
+)
+async def endpoint_add_group_to_site(
+    payload: SiteGroupOp,
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Associate a group with a specific site.
+
+    Args:
+        payload (SiteGroupOp): Contains site ID and group ID.
+        db (AsyncSession): Database session.
+        me (User): Current authenticated user.
+
+    Returns:
+        dict[str, str]: Confirmation message.
+
+    Raises:
+        HTTPException: If site is not found or permission fails.
+    """
+    site: Site | None = (
+        await db.execute(
+            select(Site).where(Site.id == payload.site_id),
+        )
+    ).unique().scalar_one_or_none()
+
+    if not site:
+        raise HTTPException(status_code=404, detail='Site not found.')
+
+    _site_permission(me, group_id=payload.group_id)
+
+    await add_group_to_site(site.id, payload.group_id, db)
+    invalidate_effective_site_cache()
+    return {'message': 'Group linked to site successfully.'}
+
+
+@router.post(
+    '/remove_group_from_site',
+    dependencies=[Depends(require_admin)],
+)
+async def endpoint_remove_group_from_site(
+    payload: SiteGroupOp,
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Dissociate a group from a specific site.
+
+    Args:
+        payload (SiteGroupOp): Contains site ID and group ID.
+        db (AsyncSession): Database session.
+        me (User): Current authenticated user.
+
+    Returns:
+        dict[str, str]: Confirmation message.
+
+    Raises:
+        HTTPException: If site is not found or permission fails.
+    """
+    site: Site | None = (
+        await db.execute(
+            select(Site).where(Site.id == payload.site_id),
+        )
+    ).unique().scalar_one_or_none()
+
+    if not site:
+        raise HTTPException(status_code=404, detail='Site not found.')
+
+    _site_permission(me, group_id=payload.group_id)
+
+    await remove_group_from_site(site.id, payload.group_id, db)
+    invalidate_effective_site_cache()
+    return {'message': 'Group unlinked from site successfully.'}

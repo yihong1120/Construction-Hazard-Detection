@@ -12,7 +12,10 @@ from examples.YOLO_evaluation.evaluate_sahi_yolo import main
 
 
 class TestCOCOEvaluator(unittest.TestCase):
+    """Test suite."""
+
     def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.model_path: str = 'models/pt/best_yolo11n.pt'
         self.coco_json: str = 'tests/dataset/coco_annotations.json'
         self.image_dir: str = 'tests/dataset/val/images'

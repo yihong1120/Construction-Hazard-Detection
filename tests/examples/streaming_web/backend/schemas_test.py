@@ -38,12 +38,12 @@ class TestLabelListResponse(unittest.TestCase):
         Test creating a LabelListResponse with a non-string label.
         Expecting a ValidationError with a relevant message.
         """
-        invalid_data: dict[str, list[str | int]] = {
+        invalid_data: dict[str, object] = {
             'labels': ['valid_label', 123],
-        }  # 123 is not a string
+        }
 
         with self.assertRaises(ValidationError) as context:
-            LabelListResponse(**invalid_data)
+            LabelListResponse.model_validate(invalid_data)
 
         self.assertIn('Input should be a valid string', str(context.exception))
 
@@ -83,12 +83,12 @@ class TestFramePostResponse(unittest.TestCase):
         Test creating a FramePostResponse with an invalid type for 'status'.
         Expecting ValidationError with a relevant message.
         """
-        invalid_data: dict[str, int | str] = {
-            'status': 200,  # Should be a string
+        invalid_data: dict[str, object] = {
+            'status': 200,
             'message': 'Frame was stored.',
         }
         with self.assertRaises(ValidationError) as context:
-            FramePostResponse(**invalid_data)
+            FramePostResponse.model_validate(invalid_data)
 
         self.assertIn('Input should be a valid string', str(context.exception))
 

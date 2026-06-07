@@ -8,6 +8,7 @@ import httpx
 from dotenv import load_dotenv
 
 from src.utils import TokenManager
+from src.warning_types import Warnings
 
 # Load environment variables
 load_dotenv()
@@ -97,7 +98,7 @@ class FCMSender:
         self,
         site: str,
         stream_name: str,
-        message: dict[str, dict[str, int]],
+        message: Warnings,
         image_path: str | None = None,
         violation_id: int | None = None,
     ) -> bool:
@@ -108,7 +109,7 @@ class FCMSender:
         Args:
             site (str): Name of the construction site.
             stream_name (str): Name of the live stream.
-            message (dict[str, dict[str, int]]): Warning data.
+            message: Warning data.
             image_path (Optional[str]):
                 Image URL to display in the notification.
             violation_id (Optional[int]): Violation record ID.

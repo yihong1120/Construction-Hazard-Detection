@@ -16,7 +16,7 @@ class TestSchemas(unittest.TestCase):
     Test suite for the Pydantic models defined in schemas.py.
     """
 
-    def test_site_out_success(self):
+    def test_site_out_success(self) -> None:
         """
         Ensure SiteOut can be instantiated with valid data.
         """
@@ -32,7 +32,7 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(site.created_at, data['created_at'])
         self.assertEqual(site.updated_at, data['updated_at'])
 
-    def test_site_out_missing_field(self):
+    def test_site_out_missing_field(self) -> None:
         """
         If a required field is missing (e.g., 'name'),
         a ValidationError is expected.
@@ -46,7 +46,7 @@ class TestSchemas(unittest.TestCase):
         with self.assertRaises(ValidationError):
             SiteOut(**data)
 
-    def test_violation_item_success(self):
+    def test_violation_item_success(self) -> None:
         """
         Ensure ViolationItem can be instantiated with valid data.
         """
@@ -74,7 +74,7 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(violation.cone_polygons, '[]')
         self.assertIsNone(violation.pole_polygons)
 
-    def test_violation_item_invalid_field_type(self):
+    def test_violation_item_invalid_field_type(self) -> None:
         """
         If a field type is incorrect, e.g. 'id' is a string instead of int,
         a ValidationError should be raised.
@@ -90,7 +90,7 @@ class TestSchemas(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ViolationItem(**data)
 
-    def test_violation_list_success(self):
+    def test_violation_list_success(self) -> None:
         """
         Ensure ViolationList can be instantiated with a 'total' count and
         a list of ViolationItem objects.
@@ -116,7 +116,7 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(first_item.id, 2)
         self.assertEqual(first_item.stream_name, 'CamY')
 
-    def test_violation_list_empty_items(self):
+    def test_violation_list_empty_items(self) -> None:
         """
         If 'items' is an empty list, the schema should still work.
         """
@@ -128,7 +128,7 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(result.total, 0)
         self.assertEqual(result.items, [])
 
-    def test_upload_violation_response_success(self):
+    def test_upload_violation_response_success(self) -> None:
         """
         Ensure UploadViolationResponse can be instantiated with valid data.
         """
@@ -140,7 +140,7 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(response.message, data['message'])
         self.assertEqual(response.violation_id, 999)
 
-    def test_upload_violation_response_missing_field(self):
+    def test_upload_violation_response_missing_field(self) -> None:
         """
         If a required field is missing (e.g., 'violation_id'),
         a ValidationError is expected.

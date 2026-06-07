@@ -6,7 +6,11 @@ import logging
 import math
 import os
 import time
+from collections.abc import Callable
+from collections.abc import Coroutine
 from datetime import datetime
+from typing import Any
+from typing import cast
 
 import aiohttp
 import cv2
@@ -20,7 +24,11 @@ from shapely.geometry import Point
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 from sklearn.cluster import HDBSCAN
+from watchdog.events import FileSystemEvent
 from watchdog.events import FileSystemEventHandler
+
+from src.warning_types import MutableWarnings
+from src.warning_types import Warnings
 
 
 class TokenManager:
@@ -380,16 +388,18 @@ class Utils:
 
     @staticmethod
     def encode_frame(
-        frame: np.ndarray, format: str = 'jpeg', quality: int = 85,
+        frame: np.ndarray | None,
+        format: str = 'jpeg',
+        quality: int = 85,
     ) -> bytes:
         """
         Encodes an image frame (NumPy array) into specified format as bytes
         with compression.
 
         Args:
-            frame (np.ndarray): The image frame to encode. Should be a valid
-                NumPy array representing an image, typically in BGR format
-                as used by OpenCV.
+            frame (np.ndarray | None): The image frame to encode. Should be
+                a valid NumPy array representing an image, typically in BGR
+                format as used by OpenCV.
             format (str): Image format ('jpeg' or 'png'). JPEG is recommended
                 for video streams.
             quality (int): For JPEG: quality level (0-100), for PNG:
@@ -403,6 +413,8 @@ class Utils:
             None: All exceptions are caught and logged; function returns
                 b'' on error.
         """
+        if frame is None:
+            return b''
         try:
             if format.lower() == 'jpeg':
                 # JPEG compression - much smaller file size for video streams
@@ -427,84 +439,16 @@ class Utils:
             return b''
 
     @staticmethod
-    def create_h264_encoder(
-        width: int,
-        height: int,
-        fps: int = 30,
-        bitrate: int = 2000000,
-    ) -> cv2.VideoWriter | None:
-        """
-        Create an H.264 video encoder for streaming.
-
-        Args:
-            width (int): Frame width
-            height (int): Frame height
-            fps (int): Frames per second
-            bitrate (int): Target bitrate in bits per second
-
-        Returns:
-            cv2.VideoWriter | None: Video writer instance or None if failed
-        """
-        try:
-            # H.264 codec with hardware acceleration if available
-            fourcc = cv2.VideoWriter_fourcc(*'H264')
-
-            # Create video writer for H.264 stream
-            gst_pipeline = (
-                'appsrc ! videoconvert ! x264enc bitrate={} '
-                'speed-preset=ultrafast tune=zerolatency ! h264parse ! '
-                'rtph264pay config-interval=1 pt=96 ! '
-                'udpsink host=127.0.0.1 port=5000'
-            ).format(bitrate // 1000)
-
-            writer = cv2.VideoWriter(
-                gst_pipeline,
-                fourcc,
-                fps,
-                (width, height),
-            )
-
-            if writer.isOpened():
-                return writer
-            else:
-                logging.error('Failed to initialize H.264 encoder')
-                return None
-
-        except Exception as e:
-            logging.error(f"Error creating H.264 encoder: {e}")
-            return None
-
-    @staticmethod
-    def encode_frame_h264(frame: np.ndarray, encoder: cv2.VideoWriter) -> bool:
-        """
-        Encode and write a frame using H.264 encoder.
-
-        Args:
-            frame (np.ndarray): Frame to encode
-            encoder (cv2.VideoWriter): H.264 encoder instance
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            if encoder and encoder.isOpened():
-                encoder.write(frame)
-                return True
-            return False
-        except Exception as e:
-            logging.error(f"Error encoding H.264 frame: {e}")
-            return False
-
     @staticmethod
     def filter_warnings_by_working_hour(
-        warnings: dict[str, dict[str, int]],
+        warnings: Warnings,
         is_working_hour: bool,
-    ) -> dict[str, dict[str, int]]:
+    ) -> MutableWarnings:
         """
         Filters the warnings dictionary according to working hours.
 
         Args:
-            warnings (dict[str, dict[str, int]]):
+            warnings:
                 Dictionary of warning types and their parameters, e.g.:
                 {
                     "warning_people_in_controlled_area": {"count": 3},
@@ -515,7 +459,7 @@ class Utils:
                 Whether the current time is within working hours.
 
         Returns:
-            dict[str, dict[str, int]]:
+            dict:
                 Filtered warnings dictionary, containing only relevant warnings
                 according to the working hour status.
 
@@ -529,20 +473,18 @@ class Utils:
         if not warnings:
             return {}
 
-        # During working hours, return all warnings without filtering.
         if is_working_hour:
-            return warnings
+            return {
+                warning_type: dict(params)
+                for warning_type, params in warnings.items()
+            }
 
-        # Outside working hours, retain only warnings related to controlled
-        # areas.
-        filtered: dict[str, dict[str, int]] = {}
-        for key, params in warnings.items():
-            # Only keep 'warning_people_in_controlled_area' for
-            # notification/storage.
-            if key == 'warning_people_in_controlled_area':
-                filtered[key] = params
-
-        return filtered
+        params = warnings.get('warning_people_in_controlled_area')
+        return (
+            {'warning_people_in_controlled_area': dict(params)}
+            if params is not None
+            else {}
+        )
 
     @staticmethod
     def should_notify(
@@ -579,154 +521,7 @@ class Utils:
         right_x = max(bbox[0], bbox[2])
         top_y = min(bbox[1], bbox[3])
         bottom_y = max(bbox[1], bbox[3])
-        if len(bbox) > 4:
-            return [left_x, top_y, right_x, bottom_y, bbox[4], bbox[5]]
-        return [left_x, top_y, right_x, bottom_y]
-
-    @staticmethod
-    def normalise_data(datas: list[list[float]]) -> list[list[float]]:
-        """
-        Normalises a list of bounding box data.
-
-        Args:
-            datas (List[List[float]]): List of bounding box data.
-
-        Returns:
-            List[List[float]]: Normalised data.
-        """
-        return [Utils.normalise_bbox(data[:4] + data[4:]) for data in datas]
-
-    @staticmethod
-    def overlap_percentage(bbox1: list[float], bbox2: list[float]) -> float:
-        """
-        Calculate the overlap percentage between two bounding boxes.
-
-        Args:
-            bbox1 (List[float]): The first bounding box.
-            bbox2 (List[float]): The second bounding box.
-
-        Returns:
-            float: The overlap percentage.
-        """
-        # Calculate the coordinates of the intersection rectangle
-        x1 = max(bbox1[0], bbox2[0])
-        y1 = max(bbox1[1], bbox2[1])
-        x2 = min(bbox1[2], bbox2[2])
-        y2 = min(bbox1[3], bbox2[3])
-
-        # Calculate the area of the intersection rectangle
-        overlap_area = max(0, x2 - x1) * max(0, y2 - y1)
-
-        # Calculate the area of both bounding boxes
-        area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
-        area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
-
-        # Calculate the overlap percentage
-        return overlap_area / float(area1 + area2 - overlap_area)
-
-    @staticmethod
-    def is_driver(person_bbox: list[float], vehicle_bbox: list[float]) -> bool:
-        """
-        Check if a person is a driver based on position near a vehicle.
-
-        Args:
-            person_bbox (List[float]): Bounding box of person.
-            vehicle_bbox (List[float]): Bounding box of vehicle.
-
-        Returns:
-            bool: True if the person is likely the driver, False otherwise.
-        """
-        # Extract coordinates and dimensions of person and vehicle boxes
-        person_bottom_y = person_bbox[3]
-        person_top_y = person_bbox[1]
-        person_left_x = person_bbox[0]
-        person_right_x = person_bbox[2]
-        person_width = person_bbox[2] - person_bbox[0]
-        person_height = person_bbox[3] - person_bbox[1]
-
-        vehicle_top_y = vehicle_bbox[1]
-        vehicle_bottom_y = vehicle_bbox[3]
-        vehicle_left_x = vehicle_bbox[0]
-        vehicle_right_x = vehicle_bbox[2]
-        vehicle_height = vehicle_bbox[3] - vehicle_bbox[1]
-
-        # 1. Check vertical bottom position: person's bottom should be above
-        #    the vehicle's bottom by at least half the person's height
-        if not (
-            person_bottom_y < vehicle_bottom_y
-            and vehicle_bottom_y - person_bottom_y >= person_height / 2
-        ):
-            return False
-
-        # 2. Check horizontal position: person's edges should not extend
-        #    beyond half the width of the person from the vehicle's edges
-        if not (
-            person_left_x >= vehicle_left_x - person_width / 2
-            and person_right_x <= vehicle_right_x + person_width / 2
-        ):
-            return False
-
-        # 3. The person's top must be below the vehicle's top
-        if not (person_top_y > vehicle_top_y):
-            return False
-
-        # 4. Person's height is less than or equal to half the vehicle's height
-        if not (person_height <= vehicle_height / 2):
-            return False
-
-        return True
-
-    @staticmethod
-    def is_dangerously_close(
-        person_bbox: list[float],
-        vehicle_bbox: list[float],
-        label: str,
-    ) -> bool:
-        """
-        Determine if a person is dangerously close to machinery or vehicles.
-
-        Args:
-            person_bbox (list[float]): Bounding box of person.
-            vehicle_bbox (list[float]): Machine/vehicle box.
-            label (str): Type of the second object ('machinery' or 'vehicle').
-
-        Returns:
-            bool: True if the person is dangerously close, False otherwise.
-        """
-        # Calculate dimensions of the person bounding box
-        person_width = person_bbox[2] - person_bbox[0]
-        person_height = person_bbox[3] - person_bbox[1]
-        person_area = person_width * person_height
-
-        # Calculate the area of the vehicle bounding box
-        vehicle_area = (vehicle_bbox[2] - vehicle_bbox[0]) * \
-            (vehicle_bbox[3] - vehicle_bbox[1])
-        acceptable_ratio = 0.1 if label == 'vehicle' else 0.05
-
-        # Check if person area ratio is acceptable compared to vehicle area
-        if person_area / vehicle_area > acceptable_ratio:
-            return False
-
-        # Define danger distances
-        danger_distance_horizontal = 5 * person_width
-        danger_distance_vertical = 1.5 * person_height
-
-        # Calculate min horizontal/vertical distance between person and
-        # vehicle
-        horizontal_distance = min(
-            abs(person_bbox[2] - vehicle_bbox[0]),
-            abs(person_bbox[0] - vehicle_bbox[2]),
-        )
-        vertical_distance = min(
-            abs(person_bbox[3] - vehicle_bbox[1]),
-            abs(person_bbox[1] - vehicle_bbox[3]),
-        )
-
-        # Determine if the person is dangerously close
-        return (
-            horizontal_distance <= danger_distance_horizontal and
-            vertical_distance <= danger_distance_vertical
-        )
+        return [left_x, top_y, right_x, bottom_y, *bbox[4:]]
 
     @staticmethod
     def detect_polygon_from_cones(
@@ -1179,31 +974,33 @@ class Utils:
 
 
 class FileEventHandler(FileSystemEventHandler):
-    """
-    A class to handle file events.
-    """
+    """Handle file modification events for one watched path."""
 
-    def __init__(self, file_path: str, callback, loop):
-        """
-        Initialises the FileEventHandler instance.
+    def __init__(
+        self,
+        file_path: str,
+        callback: Callable[[], Coroutine[Any, Any, None]],
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        """Initialise the file event handler.
 
         Args:
-            file_path (str): The path of the file to watch.
-            callback (Callable): The function to call when file is modified.
-            loop (asyncio.AbstractEventLoop): The asyncio event loop.
+            file_path: Path to watch.
+            callback: Coroutine callback scheduled when the file changes.
+            loop: Event loop used to schedule the callback from watchdog's
+                thread.
         """
         self.file_path = os.path.abspath(file_path)
         self.callback = callback
         self.loop = loop
 
-    def on_modified(self, event):
-        """
-        Called when a file is modified.
+    def on_modified(self, event: FileSystemEvent) -> None:
+        """Schedule the callback when the watched file is modified.
 
         Args:
-            event (FileSystemEvent): The event object.
+            event: Watchdog event emitted by the observer.
         """
-        event_path = os.path.abspath(event.src_path)
+        event_path = os.path.abspath(os.fsdecode(event.src_path))
         if event_path == self.file_path:
             print(f"[DEBUG] Configuration file modified: {event_path}")
             asyncio.run_coroutine_threadsafe(
@@ -1269,7 +1066,7 @@ class RedisManager:
             bytes | None: The value if found, None otherwise.
         """
         try:
-            return await self.redis.get(key)
+            return cast(bytes | None, await self.redis.get(key))
         except Exception as e:
             logging.error(f"Error retrieving Redis key {key}: {str(e)}")
             return None

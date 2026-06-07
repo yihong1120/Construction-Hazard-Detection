@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import HTTPException
-from werkzeug.utils import secure_filename
 
+from examples.shared.filename_utils import sanitize_filename
 from examples.violation_records.settings import STATIC_DIR
 
 
@@ -14,7 +14,7 @@ def _normalize_safe_rel_path(image_path: str, path_cls: type = Path) -> Path:
 
     - Reject absolute paths or traversal tokens ('..').
     - Strip leading static/ if present to avoid duplication.
-    - Sanitize each segment with secure_filename; reject empty results.
+    - Sanitize each segment; reject empty results.
 
     Raises HTTPException(400) on invalid inputs.
     """
@@ -29,7 +29,7 @@ def _normalize_safe_rel_path(image_path: str, path_cls: type = Path) -> Path:
     for part in raw_path.parts:
         if part in {'', '.', '..'}:
             raise HTTPException(status_code=400, detail='Invalid path')
-        cleaned = secure_filename(part)
+        cleaned = sanitize_filename(part)
         if not cleaned:
             raise HTTPException(status_code=400, detail='Invalid path segment')
         safe_parts.append(cleaned)

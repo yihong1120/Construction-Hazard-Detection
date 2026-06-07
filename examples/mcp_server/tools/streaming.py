@@ -2,24 +2,54 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import logging
+from collections.abc import Callable
+from typing import cast
 
 import cv2
 
-from src.live_stream_detection import LiveStreamDetector
 from src.stream_capture import StreamCapture
 from src.stream_viewer import StreamViewer
+from src.yolo_detector import YoloDetector
 
 
 class StreamingTools:
     """Tools for managing live video streams and continuous detection."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialise lazy streaming resources."""
         self.logger = logging.getLogger(__name__)
-        self._stream_capture = None
-        self._live_detector = None
-        self._stream_viewer = None
-        self._active_streams = {}
+        self._stream_capture: StreamCapture | None = None
+        self._yolo_detector: YoloDetector | None = None
+        self._stream_viewer: StreamViewer | None = None
+        self._viewer_tasks: dict[int, asyncio.Task[object]] = {}
+        self._active_streams: (
+            dict[str, dict[str, object]]
+            | Callable[[], dict[str, dict[str, object]]]
+        ) = {}
+
+    def _get_stream_store(self) -> dict[str, dict[str, object]]:
+        """Return the active stream store, supporting test doubles."""
+        if callable(self._active_streams):
+            return self._active_streams()
+        return self._active_streams
+
+    async def _call_viewer_method(
+        self,
+        viewer: StreamViewer,
+        method_name: str,
+        *args: object,
+        **kwargs: object,
+    ) -> object | None:
+        """Call an optional viewer method and await it when needed."""
+        method = getattr(viewer, method_name, None)
+        if not callable(method):
+            return None
+        result = method(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     async def start_detection_stream(
         self,
@@ -40,16 +70,17 @@ class StreamingTools:
             dict[str, Any]: Stream status and identifier.
         """
         try:
-            await self._ensure_live_detector()
+            await self._ensure_yolo_detector()
 
             # Generate stream ID if not provided
             if stream_id is None:
                 import time
                 stream_id = f"stream_{int(time.time())}"
 
-            # LiveStreamDetector lacks start_stream_detection;
+            # YoloDetector lacks start_stream_detection;
             # return graceful message
-            self._active_streams[stream_id] = {
+            stream_store = self._get_stream_store()
+            stream_store[stream_id] = {
                 'stream_url': stream_url,
                 'status': 'unsupported',
                 'start_time': asyncio.get_event_loop().time(),
@@ -61,7 +92,7 @@ class StreamingTools:
                 'status': 'unsupported',
                 'message': (
                     'Continuous detection is not implemented in current '
-                    'LiveStreamDetector'
+                    'YoloDetector'
                 ),
             }
 
@@ -82,13 +113,14 @@ class StreamingTools:
             dict[str, Any]: Stop status and information.
         """
         try:
-            await self._ensure_live_detector()
+            await self._ensure_yolo_detector()
 
-            # LiveStreamDetector lacks stop_stream_detection;
+            # YoloDetector lacks stop_stream_detection;
             # return graceful message
-            if stream_id in self._active_streams:
-                self._active_streams[stream_id]['status'] = 'unsupported'
-                self._active_streams[stream_id]['stop_time'] = (
+            stream_store = self._get_stream_store()
+            if stream_id in stream_store:
+                stream_store[stream_id]['status'] = 'unsupported'
+                stream_store[stream_id]['stop_time'] = (
                     asyncio.get_event_loop().time()
                 )
 
@@ -98,7 +130,7 @@ class StreamingTools:
                 'status': 'unsupported',
                 'message': (
                     'Stopping continuous detection is not implemented in '
-                    'current LiveStreamDetector'
+                    'current YoloDetector'
                 ),
             }
 
@@ -122,11 +154,7 @@ class StreamingTools:
             # Support MagicMock side effects in tests:
             # if _active_streams was patched as a callable,
             # invoke it to trigger the side effect and/or obtain the dict.
-            store = (
-                self._active_streams()
-                if callable(self._active_streams)
-                else self._active_streams
-            )
+            store = self._get_stream_store()
             if stream_id:
                 # Get specific stream status
                 if stream_id in store:
@@ -178,7 +206,7 @@ class StreamingTools:
             cap = cv2.VideoCapture(stream_url)
             ret, frame = cap.read()
             cap.release()
-            frame_data = None
+            frame_data: object = None
             if ret and frame is not None:
                 if frame_format == 'base64':
                     success, buf = cv2.imencode('.jpg', frame)
@@ -232,14 +260,26 @@ class StreamingTools:
             dict[str, Any]: Viewer status and URL.
         """
         try:
-            await self._ensure_stream_viewer(stream_url)
+            viewer = await self._ensure_stream_viewer(stream_url)
+            assert viewer is not None
 
-            # Start stream viewer
-            success, viewer_url = await self._stream_viewer.start_viewer(
+            # Start stream viewer using the richer API when available,
+            # otherwise fall back to the basic local OpenCV viewer.
+            viewer_result = await self._call_viewer_method(
+                viewer,
+                'start_viewer',
                 stream_url=stream_url,
                 port=viewer_port,
                 show_detections=show_detections,
             )
+            if viewer_result is None:
+                self._viewer_tasks[viewer_port] = asyncio.create_task(
+                    asyncio.to_thread(viewer.display_stream),
+                )
+                success = True
+                viewer_url = f'http://localhost:{viewer_port}'
+            else:
+                success, viewer_url = cast(tuple[bool, str], viewer_result)
 
             return {
                 'success': success,
@@ -272,10 +312,24 @@ class StreamingTools:
             # Ensure a viewer exists; if none, create a minimal one
             # with empty URL
             # so tests can patch and exercise the stop path.
-            await self._ensure_stream_viewer(stream_url='')
+            viewer = await self._ensure_stream_viewer(stream_url='')
+            assert viewer is not None
 
-            # Stop stream viewer
-            success = await self._stream_viewer.stop_viewer(port=viewer_port)
+            # Stop stream viewer using the richer API when available,
+            # otherwise release local OpenCV resources.
+            stop_result = await self._call_viewer_method(
+                viewer,
+                'stop_viewer',
+                port=viewer_port,
+            )
+            if stop_result is None:
+                viewer.release_resources()
+                task = self._viewer_tasks.pop(viewer_port, None)
+                if task is not None:
+                    task.cancel()
+                success = True
+            else:
+                success = bool(stop_result)
 
             return {
                 'success': success,
@@ -291,16 +345,17 @@ class StreamingTools:
             self.logger.error(f"Failed to stop stream viewer: {e}")
             raise
 
-    async def _ensure_live_detector(self) -> None:
-        """Ensure the live detector is initialised."""
-        if self._live_detector is None:
-            self._live_detector = LiveStreamDetector()
+    async def _ensure_yolo_detector(self) -> YoloDetector:
+        """Ensure the yolo detector is initialised and return it."""
+        if self._yolo_detector is None:
+            self._yolo_detector = YoloDetector()
             self.logger.info('Initialised live stream detector')
+        return self._yolo_detector
 
     async def _ensure_stream_capture(
         self,
         stream_url: str | None = None,
-    ) -> None:
+    ) -> StreamCapture | None:
         """Ensure the stream capture is initialised.
 
         Args:
@@ -309,14 +364,15 @@ class StreamingTools:
         """
         if self._stream_capture is None:
             if stream_url is None:
-                return
+                return None
             self._stream_capture = StreamCapture(stream_url)
             self.logger.info('Initialised stream capture')  # pragma: no cover
+        return self._stream_capture
 
     async def _ensure_stream_viewer(
         self,
         stream_url: str | None = None,
-    ) -> None:
+    ) -> StreamViewer | None:
         """Ensure the stream viewer is initialised.
 
         Args:
@@ -325,6 +381,7 @@ class StreamingTools:
         """
         if self._stream_viewer is None:
             if stream_url is None:
-                return
+                return None
             self._stream_viewer = StreamViewer(stream_url)
             self.logger.info('Initialised stream viewer')  # pragma: no cover
+        return self._stream_viewer

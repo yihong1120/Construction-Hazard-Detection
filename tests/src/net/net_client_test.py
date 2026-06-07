@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from types import SimpleNamespace
+from typing import Any
 from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -74,13 +75,28 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(client.build_ws_url('/x'), 'ws://example.com/base/x')
 
-    async def test_auth_headers_success_and_fallback(self) -> None:
+    async def test_auth_headers_success_and_retry(self) -> None:
         """If first retrieval fails, authenticate then retry once."""
         self.tm.get_valid_token.side_effect = [Exception('x'), 'ok']
         headers = await self.client.auth_headers()
         self.tm.authenticate.assert_awaited_once_with(force=True)
         self.assertEqual(headers['Authorization'], 'Bearer ok')
         self.assertIn('User-Agent', headers)
+
+    async def test_auth_headers_skip_when_auth_not_required(self) -> None:
+        """Internal clients can skip JWT acquisition entirely."""
+        client = NetClient(
+            'http://example.test',
+            token_manager=cast(TokenManager, self.tm),
+            auth_required=False,
+        )
+        headers = await client.auth_headers()
+        self.assertEqual(
+            headers,
+            {'User-Agent': 'ConstructionHazardDetection/1.0'},
+        )
+        self.tm.get_valid_token.assert_not_awaited()
+        self.tm.authenticate.assert_not_awaited()
 
     async def test_http_post_success(self) -> None:
         """Return JSON on successful POST."""
@@ -103,7 +119,8 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         fake_resp.json.return_value = {'ok': 1}
         fake_resp.raise_for_status.return_value = None
 
-        async def post_side_effect(*_a, **_k):
+        async def post_side_effect(*_a, **_k) -> Any:
+            """Support post_side_effect."""
             if not hasattr(post_side_effect, 'called'):
                 setattr(post_side_effect, 'called', True)
                 raise httpx.ConnectTimeout('t')
@@ -135,7 +152,8 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         fake_resp_ok.json.return_value = {'ok': 2}
         fake_resp_ok.raise_for_status.return_value = None
 
-        async def post_side_effect(*_a, **_k):
+        async def post_side_effect(*_a, **_k) -> Any:
+            """Support post_side_effect."""
             if not hasattr(post_side_effect, 'done'):
                 setattr(post_side_effect, 'done', True)
                 raise http_err
@@ -299,6 +317,26 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
             out = await self.client.ws_send_and_receive('/ws', b'payload')
         self.assertIsNone(out)
 
+    async def test_receive_ws_json_until_skips_control_messages(self) -> None:
+        """Control messages should be skipped until a payload is available."""
+        ws = MagicMock()
+        receive_json = AsyncMock(
+            side_effect=[
+                {'status': 'ready'},
+                {'detections': [[1, 1, 2, 2, 0.9, 0]]},
+            ],
+        )
+        with patch.object(self.client, '_receive_ws_json', new=receive_json):
+            out = await self.client._receive_ws_json_until(
+                ws,
+                ignore_messages=lambda data: (
+                    isinstance(data, dict) and data.get('status') == 'ready'
+                ),
+            )
+
+        self.assertEqual(out, {'detections': [[1, 1, 2, 2, 0.9, 0]]})
+        self.assertEqual(receive_json.await_count, 2)
+
     async def test_close_closes_ws_and_session(self) -> None:
         """Close both ws and session when open, then clear refs."""
         fake_ws = MagicMock()
@@ -360,7 +398,7 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         sess.ws_connect = AsyncMock(
             side_effect=[
                 aiohttp.ClientConnectorError(
-                    'h', OSError(),
+                    MagicMock(), OSError(),
                 ), MagicMock(),
             ],
         )
@@ -381,7 +419,7 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
             history=(),
             status=401,
             message='unauthorised',
-            headers={},
+            headers=None,
         )
         sess = MagicMock()
         sess.ws_connect = AsyncMock(side_effect=[err, MagicMock()])
@@ -390,6 +428,34 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(ws)
         self.tm.refresh_token.assert_awaited()
 
+    async def test_connect_with_retries_401_no_refresh_without_auth(
+        self,
+    ) -> None:
+        """Unauthenticated internal clients should not refresh tokens."""
+        err = aiohttp.ClientResponseError(
+            request_info=MagicMock(),
+            history=(),
+            status=401,
+            message='unauthorised',
+            headers=None,
+        )
+        client = NetClient(
+            'http://example.test',
+            token_manager=cast(TokenManager, self.tm),
+            reconnect_backoff=0.1,
+            ws_connect_attempts=2,
+            auth_required=False,
+        )
+        sess = MagicMock()
+        sess.ws_connect = AsyncMock(side_effect=[err, MagicMock()])
+        client._session = sess
+
+        with patch('asyncio.sleep', new=AsyncMock()):
+            ws = await client._connect_with_retries('/ws', headers=None)
+
+        self.assertIsNotNone(ws)
+        self.tm.refresh_token.assert_not_awaited()
+
     async def test_connect_with_retries_403_raises(self) -> None:
         """403/404 should be raised immediately without retry loop."""
         err = aiohttp.ClientResponseError(
@@ -397,7 +463,7 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
             history=(),
             status=403,
             message='forbidden',
-            headers={},
+            headers=None,
         )
         sess = MagicMock()
         sess.ws_connect = AsyncMock(side_effect=err)

@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import create_autospec
 from unittest.mock import MagicMock
 from unittest.mock import Mock
@@ -106,7 +107,12 @@ class TestDetectionModelManager(unittest.TestCase):
             )
             mock_sahi_module.AutoDetectionModel = mock_auto_detection_class
 
-            def side_effect(name, *args, **kwargs):
+            def side_effect(name: Any, *args, **kwargs) -> Any:
+                """Support side_effect.
+
+                Args:
+                    name: Test helper value.
+                """
                 if 'sahi.predict' in name:
                     return mock_sahi_module
                 else:
@@ -121,15 +127,23 @@ class TestDetectionModelManager(unittest.TestCase):
             manager.extension = '.pt'
 
             # Test SAHI mode by simulating it
-            with patch(
-                'examples.YOLO_server_api.backend.models.USE_SAHI', True,
+            with (
+                patch(
+                    'examples.YOLO_server_api.backend.models.USE_SAHI',
+                    True,
+                ),
+                patch(
+                    'examples.YOLO_server_api.backend.models.'
+                    'get_inference_device',
+                    return_value='cuda:0',
+                ),
             ):
-                result = manager.load_single_model('yolo11n')
+                result = manager.load_single_model('yolo26n')
 
                 # Verify from_pretrained was called correctly
                 mock_auto_detection_class.from_pretrained.assert_called_with(
-                    'yolo11',
-                    model_path=str(Path('models/pt/best_yolo11n.pt')),
+                    'yolo26',
+                    model_path=str(Path('models/pt/best_yolo26n.pt')),
                     device='cuda:0',
                 )
                 self.assertEqual(result, mock_model_instance)
@@ -156,11 +170,11 @@ class TestDetectionModelManager(unittest.TestCase):
                     False,
                 ),
             ):
-                result = manager.load_single_model('yolo11n')
+                result = manager.load_single_model('yolo26n')
 
                 # Verify YOLO was called correctly
                 mock_yolo.assert_called_with(
-                    str(Path('models/pt/best_yolo11n.pt')),
+                    str(Path('models/pt/best_yolo26n.pt')),
                 )
                 self.assertEqual(result, mock_yolo_instance)
 
@@ -170,8 +184,8 @@ class TestDetectionModelManager(unittest.TestCase):
         """
         # Mock a loaded model for testing retrieval
         mock_model = Mock()
-        self.model_manager.models['yolo11n'] = mock_model
-        model = self.model_manager.get_model('yolo11n')
+        self.model_manager.models['yolo26n'] = mock_model
+        model = self.model_manager.get_model('yolo26n')
 
         # Validate that the retrieved model matches the mock model
         self.assertEqual(model, mock_model)
@@ -297,7 +311,12 @@ class TestDetectionModelManager(unittest.TestCase):
             patch('builtins.__import__') as mock_import,
         ):
             # Mock import to raise an exception for SAHI
-            def side_effect(name, *args, **kwargs):
+            def side_effect(name: Any, *args, **kwargs) -> Any:
+                """Support side_effect.
+
+                Args:
+                    name: Test helper value.
+                """
                 if 'sahi.predict' in name:
                     raise ImportError('SAHI not installed')
                 else:
@@ -314,7 +333,7 @@ class TestDetectionModelManager(unittest.TestCase):
                 'examples.YOLO_server_api.backend.models.USE_SAHI', True,
             ):
                 with self.assertRaises(RuntimeError) as cm:
-                    manager.load_single_model('yolo11n')
+                    manager.load_single_model('yolo26n')
 
                 self.assertIn(
                     'SAHI mode is enabled but the sahi package is not '
@@ -381,15 +400,15 @@ class TestDetectionModelManager(unittest.TestCase):
         # Set up a mix of loaded and None models
         mock_model = Mock()
         self.model_manager.models = {
-            'yolo11x': mock_model,
-            'yolo11l': None,  # Simulate failed model
-            'yolo11m': mock_model,
-            'yolo11s': None,  # Simulate failed model
-            'yolo11n': mock_model,
+            'yolo26x': mock_model,
+            'yolo26l': None,  # Simulate failed model
+            'yolo26m': mock_model,
+            'yolo26s': None,  # Simulate failed model
+            'yolo26n': mock_model,
         }
 
         available = self.model_manager.get_available_models()
-        expected = ['yolo11x', 'yolo11m', 'yolo11n']
+        expected = ['yolo26x', 'yolo26m', 'yolo26n']
         self.assertEqual(sorted(available), sorted(expected))
 
     def test_is_model_loaded(self) -> None:
@@ -399,15 +418,15 @@ class TestDetectionModelManager(unittest.TestCase):
         # Set up test models
         mock_model = Mock()
         self.model_manager.models = {
-            'yolo11x': mock_model,
-            'yolo11l': None,
+            'yolo26x': mock_model,
+            'yolo26l': None,
         }
 
         # Test loaded model
-        self.assertTrue(self.model_manager.is_model_loaded('yolo11x'))
+        self.assertTrue(self.model_manager.is_model_loaded('yolo26x'))
 
         # Test failed/None model
-        self.assertFalse(self.model_manager.is_model_loaded('yolo11l'))
+        self.assertFalse(self.model_manager.is_model_loaded('yolo26l'))
 
         # Test non-existent model
         self.assertFalse(self.model_manager.is_model_loaded('nonexistent'))
@@ -418,14 +437,16 @@ class TestDetectionModelManager(unittest.TestCase):
         """
         # Mock the load_single_model method
         mock_model = Mock()
+        self.model_manager.model_names = ['yolo26x']
+        self.model_manager.models = {'yolo26x': None}
         with patch.object(
             self.model_manager, 'load_single_model', return_value=mock_model,
         ) as mock_load:
             # Test successful reload
-            result = self.model_manager.reload_model('yolo11x')
+            result = self.model_manager.reload_model('yolo26x')
             self.assertTrue(result)
-            mock_load.assert_called_once_with('yolo11x')
-            self.assertEqual(self.model_manager.models['yolo11x'], mock_model)
+            mock_load.assert_called_once_with('yolo26x')
+            self.assertEqual(self.model_manager.models['yolo26x'], mock_model)
 
     def test_reload_model_invalid_name(self) -> None:
         """
@@ -498,7 +519,7 @@ class TestDetectionModelManager(unittest.TestCase):
             side_effect=Exception('Model loading failed'),
         ):
             # Test reload failure
-            result = self.model_manager.reload_model('yolo11x')
+            result = self.model_manager.reload_model('yolo26x')
             self.assertFalse(result)
 
     def test_no_lazy_load_mode(self) -> None:
@@ -596,7 +617,7 @@ class TestModelFileChangeHandler(unittest.TestCase):
         """
         # Mock DetectionModelManager with necessary attributes and methods
         self.model_manager = create_autospec(DetectionModelManager)
-        self.model_manager.model_names = ['yolo11n']
+        self.model_manager.model_names = ['yolo26n']
         self.model_manager.models = {}
         self.model_manager.extension = '.pt'  # Add missing extension attribute
         self.model_manager.load_single_model = Mock(return_value='dummy_model')
@@ -620,7 +641,7 @@ class TestModelFileChangeHandler(unittest.TestCase):
         """
         event = MagicMock()
         event.is_directory = False
-        event.src_path = 'models/pt/best_yolo11n.pt'
+        event.src_path = 'models/pt/best_yolo26n.pt'
 
         # Mock the _safe_load method instead of load_single_model
         self.model_manager._safe_load = Mock()
@@ -629,7 +650,7 @@ class TestModelFileChangeHandler(unittest.TestCase):
         self.handler.on_modified(event)
 
         # Verify the _safe_load method was called
-        self.model_manager._safe_load.assert_called_once_with('yolo11n')
+        self.model_manager._safe_load.assert_called_once_with('yolo26n')
 
     def test_on_modified_with_wrong_extension(self) -> None:
         """
@@ -637,7 +658,7 @@ class TestModelFileChangeHandler(unittest.TestCase):
         """
         event = MagicMock()
         event.is_directory = False
-        event.src_path = 'models/pt/best_yolo11n.txt'  # Wrong extension
+        event.src_path = 'models/pt/best_yolo26n.txt'  # Wrong extension
 
         # Trigger the file modification event
         self.handler.on_modified(event)
@@ -901,6 +922,8 @@ class TestLRUEviction(unittest.TestCase):
 
         # Create a custom dict that fails on None assignment
         class FailingDict(dict):
+            """Tests for FailingDict."""
+
             def __setitem__(self, key, value):
                 if value is None:
                     raise Exception('Simulated failure')

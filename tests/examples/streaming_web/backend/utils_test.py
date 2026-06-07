@@ -87,19 +87,29 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         }
         websocket_mock.send_json.assert_awaited_once_with(expected_data)
 
+    async def test_filter_labels_super_admin_role(self) -> None:
+        """
+        Test the filter_labels function with super admin role.
+        Super admin should have access to all labels.
+        """
+        all_labels = ['site1', 'site2', 'site3']
+        user_sites = ['site1']
+        role = 'super_admin'
+
+        filtered_labels = Utils.filter_labels(all_labels, role, user_sites)
+
+        # Super admin should get all labels regardless of sites
+        self.assertEqual(filtered_labels, all_labels)
+
     async def test_filter_labels_admin_role(self) -> None:
-        """
-        Test the filter_labels function with admin role.
-        Admin should have access to all labels.
-        """
+        """Admin users should only see labels in their allowed sites."""
         all_labels = ['site1', 'site2', 'site3']
         user_sites = ['site1']
         role = 'admin'
 
         filtered_labels = Utils.filter_labels(all_labels, role, user_sites)
 
-        # Admin should get all labels regardless of sites
-        self.assertEqual(filtered_labels, all_labels)
+        self.assertEqual(filtered_labels, ['site1'])
 
     async def test_filter_labels_non_admin_role(self) -> None:
         """

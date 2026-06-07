@@ -9,9 +9,10 @@ from src.utils import Utils
 class UtilsTools:
     """Tools for geometry operations and general utilities."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialise lazy utility resources."""
         self.logger = logging.getLogger(__name__)
-        self._utils = None
+        self._utils: Utils | None = None
 
     async def calculate_polygon_area(
         self,
@@ -115,6 +116,7 @@ class UtilsTools:
         try:
             # Ensure bbox order [x1, y1, x2, y2]
             def _norm(b: list[float]) -> tuple[float, float, float, float]:
+                """Return a bounding box in left-top-right-bottom order."""
                 x1, y1, x2, y2 = b
                 return (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
 
@@ -271,6 +273,7 @@ class UtilsTools:
         try:
             # Basic normalisation utilities
             def _clip(v: float, lo: float, hi: float) -> float:
+                """Clamp a value to an inclusive range."""
                 return max(lo, min(hi, v))
 
             norm = []
@@ -412,10 +415,12 @@ class UtilsTools:
             # Validate detections inline
             errors: list[str] = []
 
-            def _is_number(v) -> bool:
+            def _is_number(v: object) -> bool:
+                """Return whether a value is a non-boolean number."""
                 return isinstance(v, (int, float)) and not isinstance(v, bool)
 
             def _in_range(v: float, lo: float, hi: float) -> bool:
+                """Return whether a value is inside an inclusive range."""
                 return lo <= v <= hi
 
             for idx, det in enumerate(detections):
@@ -499,8 +504,9 @@ class UtilsTools:
             self.logger.error(f"Failed to validate detection data: {e}")
             raise
 
-    async def _ensure_utils(self) -> None:
-        """Ensure the utils module is initialised."""
+    async def _ensure_utils(self) -> Utils:
+        """Ensure the utils module is initialised and return it."""
         if self._utils is None:
             self._utils = Utils()
             self.logger.info('Initialised utils module')
+        return self._utils

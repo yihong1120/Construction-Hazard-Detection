@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from src.warning_types import MutableWarnings
+
 
 class TokenRequest(BaseModel):
     """
@@ -11,12 +13,13 @@ class TokenRequest(BaseModel):
         user_id (int): Unique identifier of the user.
         device_token (str): Device token used for sending notifications.
         device_lang (Optional[str]):
-            Preferred device language, defaulting to British English ("en-GB").
+            Preferred device language. Required by ``/store_token`` and
+            ignored by ``/delete_token``.
     """
 
     user_id: int
     device_token: str
-    device_lang: str | None = 'en-GB'
+    device_lang: str | None = None
 
 
 class SiteNotifyRequest(BaseModel):
@@ -26,7 +29,7 @@ class SiteNotifyRequest(BaseModel):
     Attributes:
         site (str): Name or identifier of the site.
         stream_name (str): Name of the video stream associated with the event.
-        body (dict[str, dict[str, int]]):
+        body:
             Detection result data structured by category and item.
         image_path (Optional[str]):
             URL or path to the image related to the notification.
@@ -36,6 +39,28 @@ class SiteNotifyRequest(BaseModel):
 
     site: str
     stream_name: str
-    body: dict[str, dict[str, int]]
+    body: MutableWarnings
     image_path: str | None = None
     violation_id: int | None = None
+
+
+class SiteNotificationPreferenceIn(BaseModel):
+    """Requested notification status for one site."""
+
+    site_id: int
+    is_enabled: bool
+
+
+class SiteNotificationPreferenceUpdateRequest(BaseModel):
+    """Full notification preference payload from the settings page."""
+
+    preferences: list[SiteNotificationPreferenceIn]
+
+
+class SiteNotificationPreferenceOut(BaseModel):
+    """Notification subscription status for one site."""
+
+    site_id: int
+    site_name: str
+    group_name: str | None = None
+    is_enabled: bool

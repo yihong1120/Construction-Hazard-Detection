@@ -9,6 +9,7 @@ from typing import NoReturn
 from typing import Protocol
 
 import jwt
+from redis.asyncio import Redis
 
 from examples.auth.cache import get_user_data
 from examples.auth.cache import set_user_data
@@ -20,9 +21,13 @@ class WebSocketLike(Protocol):
     A minimal protocol describing the WebSocket operations we use.
     """
 
-    headers: Mapping[str, str]
-    # FastAPI provides a mapping-like object; we only convert it to ``dict``.
-    query_params: object
+    @property
+    def headers(self) -> Mapping[str, str]:
+        """Return request headers."""
+
+    @property
+    def query_params(self) -> object:
+        """Return request query parameters."""
 
     def close(self, code: int, reason: str) -> Awaitable[None]:
         """Close the WebSocket connection with a code and textual reason."""
@@ -100,7 +105,6 @@ def extract_token_from_ws(websocket: WebSocketLike) -> str | None:
 
 async def _fail_ws(
     websocket: WebSocketLike,
-    *,
     code: int,
     reason: str,
     tag: str,
@@ -202,7 +206,6 @@ def _extract_identity(
 
 def _build_autoreg_cache(
     user_data: dict[str, object] | None,
-    *,
     username: str,
     jti: str,
     payload: dict[str, object],
@@ -234,7 +237,7 @@ def _build_autoreg_cache(
                 subject_data.get('role') or payload.get('role'),
             ),
             'group_id': None,
-            'is_active': True,
+            'status': 'active',
         },
         'jti_list': [],
         'refresh_tokens': [],
@@ -291,7 +294,7 @@ def get_model_key_from_ws(websocket: WebSocketLike) -> str | None:
 
 async def authenticate_websocket(
     websocket: WebSocketLike,
-    rds: object,
+    rds: Redis,
     settings: SettingsLike,
     auto_register_jti: bool = AUTO_REGISTER_JTI,
     client_tag: str | None = None,
@@ -398,6 +401,5 @@ async def authenticate_websocket(
                 exit_reason='jti_not_active',
             )
 
-    # Successful authentication
-    print(f"{tag}: Authenticated as {username_str}")
+    # Successful authentication (callers may log connection context)
     return username_str, jti_str, payload

@@ -18,10 +18,13 @@ from examples.auth.jwt_config import jwt_refresh
 from examples.auth.models import Feature
 from examples.auth.models import group_features_table
 from examples.auth.models import User
+from examples.auth.models import USER_STATUS_ACTIVE
+from examples.auth.models import USER_STATUS_PENDING
 from examples.auth.token_cleanup import prune_user_cache
 from examples.db_management.schemas.auth import DbUserInfo
 from examples.db_management.schemas.auth import RefreshRequest
 from examples.db_management.schemas.auth import RefreshTokenPayload
+from examples.db_management.schemas.auth import TokenPairData
 from examples.db_management.schemas.auth import UserCache
 from examples.db_management.schemas.auth import UserLogin
 
@@ -87,7 +90,10 @@ async def _authenticate(
             status_code=401, detail='Wrong username or password',
         )
 
-    if not user.is_active:
+    if user.status == USER_STATUS_PENDING:
+        raise HTTPException(status_code=403, detail='User pending approval')
+
+    if user.status != USER_STATUS_ACTIVE:
         raise HTTPException(status_code=403, detail='User inactive')
 
     return user
@@ -146,7 +152,7 @@ async def login_user(
     payload: UserLogin,
     db: AsyncSession,
     redis_pool: Redis,
-) -> dict[str, str | int | list[str]]:
+) -> TokenPairData:
     """Authenticate user, issue JWT tokens, and store session in Redis cache.
 
     Args:
@@ -155,8 +161,7 @@ async def login_user(
         redis_pool (Redis): Redis connection pool for caching sessions.
 
     Returns:
-        dict[str, str | int | list[str]]:
-            Generated tokens and user-related details.
+        TokenPairData: Generated tokens and user-related details.
     """
     user = await _authenticate(db, payload.username, payload.password)
 
@@ -173,7 +178,7 @@ async def login_user(
                 username=user.username,
                 role=user.role,
                 group_id=user.group_id,
-                is_active=user.is_active,
+                status=user.status,
             ),
             jti_list=[],
             refresh_tokens=[],
@@ -269,6 +274,8 @@ async def logout_user(
     subject = payload.get('subject') or {}
     username = subject.get('username') or payload.get('username')
     jti = subject.get('jti') or payload.get('jti')
+    if not isinstance(username, str):
+        return
 
     # Remove the tokens from Redis cache
     await prune_user_cache(redis_pool, username)
@@ -298,7 +305,7 @@ async def logout_user(
 async def refresh_tokens(
     payload: RefreshRequest,
     redis_pool: Redis,
-) -> dict[str, str | list[str]]:
+) -> TokenPairData:
     """Issue new JWT tokens using a refresh token.
 
     Args:
@@ -306,7 +313,7 @@ async def refresh_tokens(
         redis_pool (Redis): Redis connection pool.
 
     Returns:
-        dict[str, str | list[str]] New JWT access and refresh tokens.
+        TokenPairData: New JWT access and refresh tokens.
 
     Raises:
         HTTPException: If refresh token is invalid or missing.

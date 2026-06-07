@@ -3,12 +3,12 @@ from __future__ import annotations
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Security
-from fastapi_jwt import JwtAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
+from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.models import Site
 from examples.auth.models import User
 
@@ -133,7 +133,6 @@ def ensure_admin_with_group(user: User) -> None:
 
 def _site_permission(
     op: User,
-    *,
     site: Site | None = None,
     group_id: int | None = None,
 ) -> None:
@@ -169,7 +168,12 @@ def _site_permission(
     ensure_admin_with_group(op)
 
     # Verify if the site belongs to the admin user's group.
-    if site and site.group_id != op.group_id:
+    if site:
+        site_group_ids = {g.id for g in site.groups}
+    else:
+        site_group_ids = set()
+
+    if site and op.group_id not in site_group_ids:
         raise HTTPException(
             status_code=403,
             detail="Cannot manage other group's site",

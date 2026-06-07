@@ -5,23 +5,25 @@ import datetime
 import time
 from asyncio.log import logger
 from pathlib import Path
+from typing import Final
 
-import aiofiles
-import redis
+import aiofiles  # type: ignore[import-untyped]
+import redis.asyncio as redis
 from fastapi import APIRouter
 from fastapi import Body
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Security
+from fastapi import UploadFile
 from fastapi import WebSocket
 from fastapi.responses import JSONResponse
-from fastapi_jwt import JwtAuthorizationCredentials
-from werkzeug.utils import secure_filename
 
 from examples.auth.cache import custom_rate_limiter
 from examples.auth.config import Settings
 from examples.auth.jwt_config import jwt_access
+from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.redis_pool import get_redis_pool_ws
+from examples.shared.filename_utils import sanitize_filename
 from examples.YOLO_server_api.backend.detection import INFERENCE_SEMAPHORE
 from examples.YOLO_server_api.backend.detection import run_detection_from_bytes
 from examples.YOLO_server_api.backend.model_files import get_new_model_file
@@ -43,6 +45,26 @@ model_loader: DetectionModelManager = DetectionModelManager()
 
 # Application settings configuration
 settings: Settings = Settings()
+
+_upload_chunk_size: Final[int] = 1024 * 1024
+
+
+async def _stream_upload_to_path(
+    upload_file: UploadFile,
+    destination: Path,
+    chunk_size: int = _upload_chunk_size,
+) -> None:
+    """Stream an uploaded file to disk without buffering it in memory."""
+    wrote_any = False
+    async with aiofiles.open(destination, 'wb') as f:
+        while True:
+            chunk = await upload_file.read(chunk_size)
+            if not chunk:
+                break
+            wrote_any = True
+            await f.write(chunk)
+    if not wrote_any:
+        raise ValueError('Empty upload file')
 
 
 @detection_router.post('/detect', response_class=JSONResponse)
@@ -162,12 +184,12 @@ async def model_file_update(
 
     # Secure the uploaded filename to prevent directory traversal attacks
     filename: str = data.file.filename or 'default_model_name'
-    tmp_path: Path = Path('/tmp') / secure_filename(filename)
+    safe_filename = sanitize_filename(filename) or 'default_model_name'
+    tmp_path: Path = Path('/tmp') / f"{time.time_ns()}_{safe_filename}"
 
     try:
         # Write the uploaded file to a temporary location
-        async with aiofiles.open(tmp_path, 'wb') as f:
-            await f.write(await data.file.read())
+        await _stream_upload_to_path(data.file, tmp_path)
 
         # Process the model file update
         await update_model_file(data.model, tmp_path)

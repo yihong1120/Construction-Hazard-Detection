@@ -11,7 +11,10 @@ from examples.YOLO_evaluation.evaluate_yolo import ModelEvaluator
 
 
 class TestModelEvaluator(unittest.TestCase):
+    """Test suite."""
+
     def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.model_path: str = 'models/pt/best_yolov8n.pt'
         self.data_path: str = 'tests/dataset/data.yaml'
         self.evaluator: ModelEvaluator | None = None

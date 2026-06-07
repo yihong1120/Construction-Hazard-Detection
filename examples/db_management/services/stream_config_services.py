@@ -30,7 +30,7 @@ async def list_stream_configs(
     result = await db.execute(
         select(StreamConfig).where(StreamConfig.site_id == site_id),
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
 
 async def create_stream_config(

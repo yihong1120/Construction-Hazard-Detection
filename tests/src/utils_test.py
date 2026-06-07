@@ -7,6 +7,7 @@ import time
 import unittest
 from datetime import datetime
 from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -306,7 +307,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             'access_token': 'NEW', 'refresh_token': 'NEWREF',
         }
 
-        async def side_effect(*_, **__):
+        async def side_effect(*_, **__) -> Any:
+            """Support side_effect."""
             await asyncio.sleep(0.01)
             self.shared_token['refresh_token'] = 'Y'
             return mock_resp
@@ -350,7 +352,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     @patch('aiohttp.ClientSession')
     async def test_refresh_token_fail_401(self, m_sess: AsyncMock) -> None:
         """
-        Trigger fallback to authenticate on 401 response.
+        Trigger retry to authenticate on 401 response.
         """
         self.shared_token['access_token'] = 'OLD'
         self.shared_token['refresh_token'] = 'RRR'
@@ -431,7 +433,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     @patch.object(TokenManager, 'refresh_token', new_callable=AsyncMock)
     async def test_handle_401_refresh_error(self, m_ref: AsyncMock) -> None:
         """
-        Fallback to authenticate if refresh_token fails during 401 handling.
+        Retry to authenticate if refresh_token fails during 401 handling.
         """
         m_ref.side_effect = Exception('some error')
         with patch.object(
@@ -452,6 +454,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         counter = 0.0
 
         async def fake_sleep(duration: float) -> None:
+            """Support fake_sleep."""
             nonlocal counter
             counter += duration
 
@@ -568,7 +571,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
-    async def test_get_valid_token_fallback_authenticate(
+    async def test_get_valid_token_retry_authenticate(
         self, m_session: AsyncMock,
     ) -> None:
         """
@@ -670,7 +673,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         mock_sessinst.post.return_value = mock_resp
         m_sess.return_value.__aenter__.return_value = mock_sessinst
 
-        async def change_token_side_effect(*_, **__):
+        async def change_token_side_effect(*_, **__) -> Any:
+            """Support change_token_side_effect."""
             self.shared_token['refresh_token'] = 'CHANGED'
             return mock_resp
         mock_sessinst.post = AsyncMock(side_effect=change_token_side_effect)
@@ -691,6 +695,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         self.shared_token['is_refreshing'] = True
 
         async def stop_refresh() -> None:
+            """Support stop_refresh."""
             await asyncio.sleep(0.5)
             self.shared_token['is_refreshing'] = False
 
@@ -731,6 +736,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
         # Simulate event with matching path using a precise event type
         class _DummyEvent:
+            """Tests for _DummyEvent."""
             src_path: str
 
         event: _DummyEvent = _DummyEvent()
@@ -759,6 +765,10 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         bbox: list[float] = [1, 2, 3, 4, 5, 6]
         result: list[float] = Utils.normalise_bbox(bbox)
         self.assertEqual(result, [1, 2, 3, 4, 5, 6])
+
+        bbox = [4, 3, 2, 1, 0.9, 5, 42, 1]
+        result = Utils.normalise_bbox(bbox)
+        self.assertEqual(result, [2, 1, 4, 3, 0.9, 5, 42, 1])
 
     def test_detect_polygon_from_cones_no_cones(self) -> None:
         """
@@ -887,7 +897,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         is_working_hour: bool = True  # During working hours
 
         # Act - filter warnings based on working hour status
-        message: dict[str, dict[str, int]] = (
+        message: dict[str, dict[str, object]] = (
             Utils.filter_warnings_by_working_hour(warnings, is_working_hour)
         )
 
@@ -916,7 +926,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         is_working_hour: bool = False  # Outside working hours
 
         # Act - filter warnings for non-working hours
-        message: dict[str, dict[str, int]] = (
+        message: dict[str, dict[str, object]] = (
             Utils.filter_warnings_by_working_hour(warnings, is_working_hour)
         )
 
@@ -937,7 +947,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         warnings: dict[str, dict[str, int]] = {}
         is_working_hour: bool = True
 
-        message: dict[str, dict[str, int]] = (
+        message: dict[str, dict[str, object]] = (
             Utils.filter_warnings_by_working_hour(warnings, is_working_hour)
         )
         # When warnings are empty, function should return empty dictionary
@@ -979,154 +989,6 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-    def test_is_driver(self) -> None:
-        """
-        Test case for checking if a person is driving based on bounding boxes.
-        """
-        person_bbox: list[float] = [100, 200, 150, 250]
-        vehicle_bbox: list[float] = [50, 100, 200, 300]
-        self.assertTrue(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        person_bbox = [100, 200, 200, 400]
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-    def test_driver_detection_coverage(self) -> None:
-        """
-        Test case to ensure driver detection code coverage.
-        """
-        # Case where person is likely the driver
-        person_bbox = Utils.normalise_bbox([150, 250, 170, 350])
-        vehicle_bbox = Utils.normalise_bbox([100, 200, 300, 400])
-        self.assertTrue(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person is not the driver
-        # due to horizontal position (left outside bounds)
-        person_bbox = Utils.normalise_bbox([50, 250, 90, 300])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person is not the driver
-        # due to horizontal position (right outside bounds)
-        person_bbox = Utils.normalise_bbox([310, 250, 350, 300])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person is not the driver
-        # due to vertical position (above vehicle)
-        person_bbox = Utils.normalise_bbox([100, 50, 150, 100])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person is the driver
-        # due to person's top being below vehicle's top
-        person_bbox = Utils.normalise_bbox([150, 210, 180, 300])
-        self.assertTrue(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person is not the driver
-        # due to person's height being more than half vehicle's height
-        person_bbox = Utils.normalise_bbox([150, 300, 180, 450])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        person_bbox = Utils.normalise_bbox([80, 250, 110, 300])
-        print(
-            f"Testing with person_bbox: "
-            f"{person_bbox} and vehicle_bbox: {vehicle_bbox}",
-        )
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-    def test_horizontal_position_check(self) -> None:
-        """
-        Test case to ensure coverage for horizontal position check.
-        """
-        # Case where person is within the acceptable horizontal bounds
-        person_bbox = Utils.normalise_bbox([200, 200, 240, 240])
-        vehicle_bbox = Utils.normalise_bbox([190, 150, 250, 300])
-        self.assertTrue(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person is to the left of the acceptable horizontal bounds
-        person_bbox = Utils.normalise_bbox([50, 200, 90, 240])
-        vehicle_bbox = Utils.normalise_bbox([100, 150, 200, 300])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person is to the right of the acceptable horizontal bounds
-        person_bbox = Utils.normalise_bbox([210, 200, 250, 240])
-        vehicle_bbox = Utils.normalise_bbox([100, 150, 200, 300])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person is exactly on the left boundary
-        person_bbox = Utils.normalise_bbox([150, 200, 190, 240])
-        vehicle_bbox = Utils.normalise_bbox([190, 150, 250, 300])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person is exactly on the right boundary
-        person_bbox = Utils.normalise_bbox([250, 200, 290, 240])
-        vehicle_bbox = Utils.normalise_bbox([190, 150, 250, 300])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person's height is exactly half the vehicle's height
-        person_bbox = Utils.normalise_bbox([100, 200, 150, 300])
-        vehicle_bbox = Utils.normalise_bbox([50, 100, 200, 400])
-        self.assertTrue(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where person's height is more than half the vehicle's height
-        person_bbox = Utils.normalise_bbox([100, 200, 150, 350])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-    def test_height_check(self) -> None:
-        """
-        Test case to ensure coverage for height check.
-        """
-        # Case where person's height is more than half the vehicle's height
-        person_bbox = Utils.normalise_bbox([150, 250, 180, 400])
-        vehicle_bbox = Utils.normalise_bbox([100, 200, 300, 300])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-        # Case where the driver's height condition is evaluated
-        vehicle_bbox = Utils.normalise_bbox([100, 100, 300, 400])
-        person_bbox = Utils.normalise_bbox([160, 150, 190, 310])
-        self.assertFalse(Utils.is_driver(person_bbox, vehicle_bbox))
-
-    def test_overlap_percentage(self) -> None:
-        """
-        Test calculating overlap percentage between two bounding boxes.
-        """
-        bbox1: list[float] = [100, 100, 200, 200]
-        bbox2: list[float] = [150, 150, 250, 250]
-        self.assertAlmostEqual(
-            Utils.overlap_percentage(bbox1, bbox2), 0.142857, places=6,
-        )
-
-        bbox1 = [100, 100, 200, 200]
-        bbox2 = [300, 300, 400, 400]
-        self.assertEqual(
-            Utils.overlap_percentage(
-                Utils.normalise_bbox(
-                    bbox1,
-                ), Utils.normalise_bbox(bbox2),
-            ), 0.0,
-        )
-
-    def test_is_dangerously_close(self) -> None:
-        """
-        Test case for checking if a person is dangerously close to a vehicle.
-        """
-        person_bbox: list[float] = [100, 100, 120, 120]
-        vehicle_bbox: list[float] = [100, 100, 200, 200]
-        self.assertTrue(
-            Utils.is_dangerously_close(
-                Utils.normalise_bbox(
-                    person_bbox,
-                ), Utils.normalise_bbox(vehicle_bbox), 'Vehicle',
-            ),
-        )
-
-        person_bbox = [0, 0, 10, 10]
-        vehicle_bbox = [100, 100, 200, 200]
-        self.assertFalse(
-            Utils.is_dangerously_close(
-                Utils.normalise_bbox(
-                    person_bbox,
-                ), Utils.normalise_bbox(vehicle_bbox), 'Vehicle',
-            ),
-        )
-
     def test_calculate_people_in_controlled_area(self) -> None:
         """
         Test case for calculating the number of people in the controlled area.
@@ -1136,7 +998,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [200, 200, 300, 300, 0.85, 5],  # Person
             [400, 400, 500, 500, 0.75, 9],  # Vehicle
         ]
-        normalised_datas = Utils.normalise_data(datas)
+        normalised_datas = [Utils.normalise_bbox(data) for data in datas]
         clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
         polygons = Utils.detect_polygon_from_cones(normalised_datas, clusterer)
         people_count = Utils.calculate_people_in_controlled_area(
@@ -1162,7 +1024,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [850, 850, 870, 870, 0.74, 6],  # Safety cone
         ]
 
-        normalised_datas = Utils.normalise_data(datas)
+        normalised_datas = [Utils.normalise_bbox(data) for data in datas]
         polygons = Utils.detect_polygon_from_cones(normalised_datas, clusterer)
         people_count = Utils.calculate_people_in_controlled_area(
             polygons, normalised_datas,
@@ -1178,7 +1040,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [200, 200, 300, 300, 0.85, 5],  # Person
             [400, 400, 500, 500, 0.75, 2],  # No-Safety Vest
         ]
-        normalised_data = Utils.normalise_data(data)
+        normalised_data = [Utils.normalise_bbox(item) for item in data]
         clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
         polygons = Utils.detect_polygon_from_cones(normalised_data, clusterer)
         self.assertEqual(len(polygons), 0)
@@ -1193,7 +1055,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         data: list[list[float]] = [
             [2, 2, 8, 8, 0.95, 5],  # Person inside the polygon
         ]
-        normalised_data = Utils.normalise_data(data)
+        normalised_data = [Utils.normalise_bbox(item) for item in data]
         people_count = Utils.calculate_people_in_controlled_area(
             polygons, normalised_data,
         )
@@ -1245,32 +1107,6 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         poly = Utils.build_utility_pole_union(datas, cluster)
         self.assertTrue(isinstance(poly, Polygon))
         self.assertGreater(poly.area, 0)
-
-    def test_is_dangerously_close_large_person_area(self) -> None:
-        """
-        Test case to ensure coverage for large person area ratio condition.
-
-        # Verifies that when the person area to vehicle area ratio exceeds
-        # the acceptable threshold, the function correctly returns False,
-        # indicating no dangerous proximity.
-
-        Returns:
-            None
-        """
-        # person_area = 100 * 100 = 10,000
-        person_bbox: list[float] = [0, 0, 100, 100]
-        # vehicle_area = 50 * 50 = 2,500
-        vehicle_bbox: list[float] = [0, 0, 50, 50]
-        label: str = 'vehicle'  # acceptable_ratio=0.1
-
-        # person_area / vehicle_area = 10000 / 2500 = 4 > 0.1
-        # Triggers if person_area / vehicle_area > acceptable_ratio =>
-        # return False
-        self.assertFalse(
-            Utils.is_dangerously_close(
-                person_bbox, vehicle_bbox, label,
-            ),
-        )
 
     def test_detect_polygon_from_cones_empty_list(self) -> None:
         """
@@ -1603,86 +1439,6 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
         encoded_frame: bytes = Utils.encode_frame(frame)
         self.assertEqual(encoded_frame, b'')
-
-    @patch('cv2.VideoWriter')
-    def test_create_h264_encoder_success(self, mock_writer: MagicMock) -> None:
-        """
-        Test create_h264_encoder success case.
-        """
-        mock_instance = MagicMock()
-        mock_instance.isOpened.return_value = True
-        mock_writer.return_value = mock_instance
-
-        result = Utils.create_h264_encoder(640, 480, 30, 2000000)
-        self.assertIsNotNone(result)
-
-    @patch('cv2.VideoWriter')
-    def test_create_h264_encoder_failure(self, mock_writer: MagicMock) -> None:
-        """
-        Test create_h264_encoder when writer fails to open.
-        """
-        mock_instance = MagicMock()
-        mock_instance.isOpened.return_value = False
-        mock_writer.return_value = mock_instance
-
-        result = Utils.create_h264_encoder(640, 480, 30, 2000000)
-        self.assertIsNone(result)
-
-    @patch('cv2.VideoWriter')
-    def test_create_h264_encoder_exception(
-        self, mock_writer: MagicMock,
-    ) -> None:
-        """
-        Test create_h264_encoder when exception occurs.
-        """
-        mock_writer.side_effect = Exception('Creation failed')
-
-        result = Utils.create_h264_encoder(640, 480, 30, 2000000)
-        self.assertIsNone(result)
-
-    def test_encode_frame_h264_success(self) -> None:
-        """
-        Test encode_frame_h264 success case.
-        """
-        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-        mock_encoder = MagicMock()
-        mock_encoder.isOpened.return_value = True
-
-        result = Utils.encode_frame_h264(frame, mock_encoder)
-        self.assertTrue(result)
-        mock_encoder.write.assert_called_once_with(frame)
-
-    def test_encode_frame_h264_encoder_not_opened(self) -> None:
-        """
-        Test encode_frame_h264 when encoder is not opened.
-        """
-        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-        mock_encoder = MagicMock()
-        mock_encoder.isOpened.return_value = False
-
-        result = Utils.encode_frame_h264(frame, mock_encoder)
-        self.assertFalse(result)
-
-    def test_encode_frame_h264_none_encoder(self) -> None:
-        """
-        Test encode_frame_h264 with None encoder.
-        """
-        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-
-        result = Utils.encode_frame_h264(frame, None)
-        self.assertFalse(result)
-
-    def test_encode_frame_h264_exception(self) -> None:
-        """
-        Test encode_frame_h264 when exception occurs.
-        """
-        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-        mock_encoder = MagicMock()
-        mock_encoder.isOpened.return_value = True
-        mock_encoder.write.side_effect = Exception('Write failed')
-
-        result = Utils.encode_frame_h264(frame, mock_encoder)
-        self.assertFalse(result)
 
     def test_filter_warnings_non_working_hours_with_controlled_area(
             self,

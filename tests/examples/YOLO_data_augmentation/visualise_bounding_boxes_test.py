@@ -14,7 +14,10 @@ from examples.YOLO_data_augmentation.visualise_bounding_boxes import main
 
 
 class TestBoundingBoxVisualiser(unittest.TestCase):
+    """Test suite."""
+
     def setUp(self) -> None:
+        """Prepare test fixtures."""
         self.image_path: str = (
             'tests/cv_dataset/images/'
             '-_jpeg.rf.3e98d2f5b90e0b1459e15f570a433459.jpg'
@@ -183,7 +186,8 @@ class TestBoundingBoxVisualiser(unittest.TestCase):
         mock_init.assert_called_once_with(
             'image.jpg', 'label.txt', [
                 'Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest',
-                'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle',
+                'Person', 'Safety Cone', 'Safety Vest', 'machinery',
+                'utility pole', 'vehicle',
             ],
         )
         mock_draw.assert_called_once()

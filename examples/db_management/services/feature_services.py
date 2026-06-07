@@ -20,7 +20,7 @@ async def list_features(db: AsyncSession) -> list[Feature]:
         List[Feature]: A list of all features.
     """
     result = await db.execute(select(Feature))
-    return result.unique().scalars().all()
+    return list(result.unique().scalars().all())
 
 
 async def create_feature(
@@ -131,13 +131,13 @@ async def update_group_features(
             group_features_table.c.group_id == group.id,
         ),
     )
-    await db.commit()
 
-    # Insert new feature associations
-    await db.execute(
-        group_features_table.insert(),
-        [{'group_id': group.id, 'feature_id': fid} for fid in feature_ids],
-    )
+    if feature_ids:
+        # Insert new feature associations
+        await db.execute(
+            group_features_table.insert(),
+            [{'group_id': group.id, 'feature_id': fid} for fid in feature_ids],
+        )
     await db.commit()
 
 

@@ -8,9 +8,8 @@ import httpx
 import numpy as np
 
 from examples.mcp_server.config import get_env_int
-from examples.mcp_server.config import get_env_var
 from examples.mcp_server.schemas import InferenceResponse
-from src.live_stream_detection import LiveStreamDetector
+from src.yolo_detector import YoloDetector
 
 
 class InferenceTools:
@@ -20,14 +19,10 @@ class InferenceTools:
     minimise import side-effects and improve start-up performance.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialise lazy inference resources."""
         self.logger = logging.getLogger(__name__)
-        self._detector = None
-        self._shared_token = {
-            'access_token': '',
-            'refresh_token': '',
-            'is_refreshing': False,
-        }
+        self._detector: YoloDetector | None = None
 
     async def detect_frame(
         self,
@@ -36,13 +31,8 @@ class InferenceTools:
         # Compatibility params accepted but currently not used directly
         confidence_threshold: float = 0.5,
         track_objects: bool = False,
-        use_remote: bool = False,
-        model_key: str = 'yolo11n',
+        model_key: str = 'yolo26n',
         use_ultralytics: bool = True,
-        remote_tracker: str = 'centroid',
-        remote_cost_threshold: float = 0.7,
-        ws_frame_size: tuple[int, int] | None = None,
-        use_jpeg_ws: bool = True,
         movement_thr: float = 40.0,
     ) -> InferenceResponse:
         """Detect objects in a single image frame.
@@ -57,73 +47,47 @@ class InferenceTools:
                 own thresholding).
             track_objects: Whether to enable tracking in the detector (metadata
                 only if unsupported by the current engine).
-            use_remote: Use a remote detector (e.g. via WebSocket) rather than
-                a local engine.
             model_key: Identifier for the YOLO model to use.
             use_ultralytics: Prefer the Ultralytics engine locally.
-            remote_tracker: Tracking algorithm used remotely.
-            remote_cost_threshold: Cost threshold for association/matching.
-            ws_frame_size: Optional frame size when sending frames remotely.
-            use_jpeg_ws: Prefer JPEG encoding for WebSocket transfer.
             movement_thr: Movement threshold in pixels for tracking heuristics.
 
         Returns:
             dict[str, Any]: A mapping containing ``detections``, ``tracked``
             and a ``meta`` section describing the run.
         """
-        try:
-            # Validate inputs
-            if not image_base64 and not image_url:
-                raise ValueError(
-                    'Either image_base64 or image_url must be provided',
-                )
-
-            # Load image
-            frame = await self._load_image(image_base64, image_url)
-            if frame is None:
-                raise ValueError('Failed to load image')
-
-            # Initialise the detector lazily on first use to keep imports light
-            if self._detector is None:
-                await self._init_detector(
-                    use_remote,
-                    model_key,
-                    use_ultralytics,
-                    remote_tracker,
-                    remote_cost_threshold,
-                    ws_frame_size,
-                    use_jpeg_ws,
-                    movement_thr,
-                )
-
-            # Perform detection
-            detections, tracked = await self._detector.generate_detections(
-                frame,
+        if not image_base64 and not image_url:
+            raise ValueError(
+                'Either image_base64 or image_url must be provided',
             )
 
-            return {
-                'detections': detections,
-                'tracked': tracked,
-                'meta': {
-                    'model_key': model_key,
-                    'engine': (
-                        'remote'
-                        if use_remote
-                        else ('ultralytics' if use_ultralytics else 'sahi')
-                    ),
-                    'tracker': (
-                        remote_tracker if use_remote else 'ultralytics_builtin'
-                    ),
-                    'confidence_threshold': confidence_threshold,
-                    'track_objects': track_objects,
-                    # [width, height]
-                    'frame_size': list(frame.shape[:2][::-1]),
-                },
-            }
+        frame = await self._load_image(image_base64, image_url)
+        if frame is None:
+            raise ValueError('Failed to load image')
 
-        except Exception as e:
-            self.logger.error(f"Detection failed: {e}")
-            raise
+        if self._detector is None:
+            await self._init_detector(
+                model_key,
+                use_ultralytics,
+                movement_thr,
+            )
+        detector = self._detector
+        assert detector is not None
+
+        detections, tracked = await detector.generate_detections(frame)
+
+        return {
+            'detections': detections,
+            'tracked': tracked,
+            'meta': {
+                'model_key': model_key,
+                'engine': 'ultralytics' if use_ultralytics else 'sahi',
+                'tracker': 'ultralytics_builtin',
+                'confidence_threshold': confidence_threshold,
+                'track_objects': track_objects,
+                # [width, height]
+                'frame_size': list(frame.shape[:2][::-1]),
+            },
+        }
 
     async def _load_image(
         self,
@@ -153,15 +117,6 @@ class InferenceTools:
                 image_bytes = base64.b64decode(image_base64)
                 nparr = np.frombuffer(image_bytes, np.uint8)
                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if frame is None:
-                    # Fallback: try Pillow
-                    try:
-                        from io import BytesIO
-                        from PIL import Image
-                        img = Image.open(BytesIO(image_bytes)).convert('RGB')
-                        frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-                    except Exception:
-                        frame = None
 
             elif image_url:
                 # Download image from URL. Timeout removed to support very slow
@@ -172,17 +127,6 @@ class InferenceTools:
 
                 nparr = np.frombuffer(response.content, np.uint8)
                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if frame is None:
-                    # Fallback: try Pillow
-                    try:
-                        from io import BytesIO
-                        from PIL import Image
-                        img = Image.open(
-                            BytesIO(response.content),
-                        ).convert('RGB')
-                        frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-                    except Exception:
-                        frame = None
 
             else:
                 return None
@@ -197,39 +141,29 @@ class InferenceTools:
             return None
 
     async def _init_detector(
-        self, use_remote: bool, model_key: str, use_ultralytics: bool,
-        remote_tracker: str, remote_cost_threshold: float,
-        ws_frame_size: tuple[int, int] | None, use_jpeg_ws: bool,
+        self, model_key: str, use_ultralytics: bool,
         movement_thr: float,
-    ):
+    ) -> YoloDetector:
         """Initialise the detection system.
 
         The underlying detector is imported dynamically to avoid heavy import
         costs for users who only interact with configuration or non-inference
         tools.
         """
-        # Get API configuration
-        api_url = get_env_var('DETECT_API_URL')
-
         # Create detector
-        self._detector = LiveStreamDetector(
-            api_url=api_url,
+        self._detector = YoloDetector(
             model_key=model_key,
-            detect_with_server=use_remote,
-            shared_token=self._shared_token,
+            detect_with_server=False,
             use_ultralytics=use_ultralytics,
             movement_thr=movement_thr,
             fps=get_env_int('TARGET_FPS', 1),
             max_id_keep=get_env_int('MAX_ID_KEEP', 10),
-            ws_frame_size=ws_frame_size,
-            use_jpeg_ws=use_jpeg_ws,
-            remote_tracker=remote_tracker,
-            remote_cost_threshold=remote_cost_threshold,
         )
 
         self.logger.info(
-            f"Initialised detector: remote={use_remote}, model={model_key}",
+            f"Initialised detector: model={model_key}",
         )
+        return self._detector
 
     async def close(self) -> None:
         """Clean up resources.

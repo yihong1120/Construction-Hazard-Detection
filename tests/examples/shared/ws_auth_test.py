@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
@@ -14,6 +15,7 @@ class TestExtractionHelpers(unittest.TestCase):
     """
 
     def __init__(self, methodName: str = 'runTest') -> None:
+        """Support __init__."""
         super().__init__(methodName)
         # Factory for creating a minimal WebSocket-like object.
 
@@ -130,6 +132,7 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
     """
 
     def __init__(self, methodName: str = 'runTest') -> None:
+        """Support __init__."""
         super().__init__(methodName)
         # Factory for creating a minimal WebSocket-like object.
 
@@ -418,7 +421,15 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
         settings = self.settings
 
         class JankyCache(dict):
-            def get(self, key, default=None):
+            """Tests for JankyCache."""
+
+            def get(self, key: Any, default: Any = None) -> Any:
+                """Support get.
+
+                Args:
+                    key: Test helper value.
+                    default: Test helper value.
+                """
                 if key == 'jti_meta':
                     raise RuntimeError('boom')
                 return super().get(key, default)

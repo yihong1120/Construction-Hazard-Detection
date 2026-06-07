@@ -5,7 +5,6 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi_limiter import FastAPILimiter
 
 from examples.auth.cache import _DEFAULT_SERVICE
 from examples.auth.database import engine
@@ -30,7 +29,7 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Start the scheduler (e.g., for rotating JWT secret keys).
     scheduler = start_jwt_scheduler(app)
 
-    # Initialise Redis connection and rate limiter.
+    # Initialise Redis connection for auth cache scripts.
     redis_host: str = os.getenv('REDIS_HOST', '127.0.0.1')
     redis_port: str = os.getenv('REDIS_PORT', '6379')
     redis_password: str = os.getenv('REDIS_PASSWORD', '')
@@ -38,7 +37,6 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     app.state.redis_client = RedisClient(redis_url)
     redis_conn = await app.state.redis_client.connect()
-    await FastAPILimiter.init(redis_conn)
 
     # Preload Lua scripts into Redis (if any).
     try:

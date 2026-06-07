@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pydantic import BaseModel
+from pydantic import Field
 
 
 class SiteCreate(BaseModel):
     """Schema representing the data required to create a new site."""
 
     name: str
-    group_id: int | None = None
+    group_ids: list[int] = Field(default_factory=list)
 
 
 class SiteUpdate(BaseModel):
@@ -30,11 +31,18 @@ class SiteUserOp(BaseModel):
     user_id: int
 
 
+class SiteGroupOp(BaseModel):
+    """Operations involving adding or removing a group from a site."""
+
+    site_id: int
+    group_id: int
+
+
 class SiteRead(BaseModel):
     """Details of a site retrieved from the database."""
 
     id: int
     name: str
-    group_id: int | None = None
-    group_name: str | None = None
+    group_ids: list[int] = Field(default_factory=list)
+    group_names: list[str] = Field(default_factory=list)
     user_ids: list[int]

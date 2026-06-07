@@ -10,14 +10,10 @@ from PIL import Image
 
 
 class MessengerNotifier:
-    """
-    A class to handle sending notifications through Facebook Messenger
-    """
+    """Send notifications through Facebook Messenger."""
 
-    def __init__(self):
-        """
-        Initialises the MessengerNotifier.
-        """
+    def __init__(self) -> None:
+        """Load environment variables for Messenger credentials."""
         load_dotenv()
 
     def send_notification(
@@ -93,7 +89,8 @@ class MessengerNotifier:
 
 
 # Example usage
-def main():
+def main() -> None:
+    """Send a sample Messenger notification for direct script execution."""
     notifier = MessengerNotifier()
     recipient_id = 'your_recipient_id_here'
     message = 'Hello, Messenger!'
