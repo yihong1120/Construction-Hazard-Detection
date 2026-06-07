@@ -1,140 +1,73 @@
-
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
-# Violation Records Management Example
+# Violation Records Backend
 
-This example demonstrates how to build a comprehensive violation records management system using FastAPI, SQLAlchemy, and related technologies. It showcases:
+FastAPI service for storing, querying, and serving construction-hazard
+violation records. `src/violation_sender.py` uploads violation images and
+metadata here when the stream processor confirms a warning event.
 
-- CRUD operations for managing violation records.
-- Secure image handling and storage.
-- JWT-based user authentication and site-based access control.
-- Multi-language keyword search using synonym expansion.
-- Structured schemas using Pydantic for API responses and requests.
+## Responsibilities
 
-## Table of Contents
+- Store violation metadata in PostgreSQL.
+- Save uploaded violation images under a controlled `static/` directory.
+- Enforce JWT and site-based access control.
+- Provide filtered, paginated violation search.
+- Serve violation images by safe relative path.
+- Support multilingual keyword search through synonym expansion.
 
-1. [Overview](#overview)
-2. [Prerequisites](#prerequisites)
-3. [Directory Structure](#directory-structure)
-4. [Installation](#installation)
-5. [Configuration](#configuration)
-6. [Running the Example](#running-the-example)
-7. [API Endpoints](#api-endpoints)
-8. [Additional Notes](#additional-notes)
+## Files
 
-## Overview
+- `app.py`: FastAPI application.
+- `routers.py`: record list, detail, upload, site, and image routes.
+- `schemas.py`: Pydantic request and response models.
+- `violation_manager.py`: database and image-storage logic.
+- `path_utils.py`: safe static-path validation.
+- `search_utils.py`: multilingual search helpers.
+- `settings.py`: static-directory settings.
 
-The violation records management server provides a robust API to handle operations related to violations recorded at various sites. It features:
-
-- Retrieval of the accessible site list for each user.
-- Paginated retrieval and filtering of violation records by keyword, time range, and site.
-- Detailed view of individual violations, including metadata and associated images.
-- An upload function for new violations, supporting comprehensive metadata.
-
-## Prerequisites
-
-1. **Python 3.9+** – Recommended for FastAPI, asynchronous support, and typing.
-2. **Redis** – Optional, dependent on your overall project setup (not strictly required unless your application uses it).
-3. **SQLAlchemy and an asynchronous database** (e.g., PostgreSQL or MySQL) – for storing violation data.
-4. **FastAPI and dependencies** – for creating and handling APIs.
-
-## Directory Structure
-
-Below is an outline of the `examples/violation_records` directory:
-
-```
-examples/violation_records/
-├── app.py
-├── routers.py
-├── schemas.py
-├── search_utils.py
-├── violation_manager.py
-├── static/ (created automatically for images)
-└── README.md
-```
-
-- **`app.py`**: The main FastAPI application entry point.
-- **`routers.py`**: FastAPI route definitions for handling violation records.
-- **`schemas.py`**: Pydantic models defining request and response schemas.
-- **`search_utils.py`**: A keyword search utility featuring synonym expansion.
-- **`violation_manager.py`**: Manages storing violations and images to disk/database.
-- **`static/`**: Directory used to store uploaded violation images (created automatically).
-
-## Installation
-
-1. **Clone this repository** or copy the `examples/violation_records` folder into your project.
-2. **Create and activate** a Python virtual environment (optional, but recommended):
-
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # Linux/macOS
-   venv\Scripts\activate     # Windows
-   ```
-
-3. **Install the required packages**:
-
-   ```bash
-   pip install fastapi sqlalchemy databases[asyncpg] fastapi_jwt pydantic aiofiles uvicorn
-   ```
-
-## Configuration
-
-- **Database & JWT**: Configure your database connection and JWT settings (e.g., secret key, expiry times) via environment variables or a config file, depending on your project's requirements.
-- **Images & Static Directory**: By default, images are stored under the `static/` folder. In production, you may wish to use a cloud storage service or a dedicated CDN.
-
-## Running the Example
-
-To run the server locally using Uvicorn:
+## Run
 
 ```bash
-python examples/violation_records/app.py
+uvicorn examples.violation_records.app:app \
+  --host 127.0.0.1 \
+  --port 8002 \
+  --workers 2
 ```
 
-By default, this starts FastAPI at `0.0.0.0:8081`. Adjust the host and port as needed.
+The module `main()` still defaults to port `8081` for direct script execution,
+but the project runtime uses port `8002`.
 
-## API Endpoints
+## Required Settings
 
-### 1. Retrieve Accessible Sites
-
+```dotenv
+VIOLATION_RECORD_API_URL=http://127.0.0.1:8002
+DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection
+JWT_SECRET_KEY=replace-with-a-long-random-secret
 ```
-GET /my_sites
-```
-- Returns a list of sites accessible to the currently logged-in user.
 
-### 2. Retrieve Violation Records
+## Endpoints
 
-```
-GET /violations
-```
-- Supports filters such as `site_id`, `keyword`, `start_time`, `end_time`, and pagination via `limit`/`offset`.
+- `GET /my_sites`: sites visible to the authenticated user.
+- `GET /violations`: filtered and paginated violation list.
+- `GET /violations/{violation_id}`: single violation detail.
+- `GET /get_violation_image?image_path=...`: image response from `static/`.
+- `POST /upload`: image and metadata upload from the stream processor.
 
-### 3. Retrieve Single Violation
+## Retention
 
-```
-GET /violations/{violation_id}
-```
-- Returns detailed information about a specific violation record, including metadata and associated images.
+For local-disk deployments without archive storage, keep both image files and
+database records for the same retention window. The current recommendation is
+18 months unless legal or contract rules require a different period.
 
-### 4. Retrieve Violation Image
+When deleting old data, remove database rows and matching files together. Do
+not keep orphaned images in `static/`, and do not keep records whose image paths
+no longer exist.
 
-```
-GET /get_violation_image?image_path=...
-```
-- Returns the image stored for a particular violation record. The path must be relative to the `static/` directory.
+## Storage Notes
 
-### 5. Upload New Violation
-
-```
-POST /upload
-```
-- Allows the creation of a new violation record with associated metadata and an image to be stored in `static/`.
-
-## Additional Notes
-
-- **Security**: Ensure JWT tokens are properly validated and that each endpoint enforces user permissions (e.g., users may only access sites they are authorised to view).
-- **Performance**: Consider indexing frequently queried columns in your database. For large-scale deployments, also consider storing images in a cloud storage service rather than locally.
-- **Multi-Language Search**: The `search_utils.py` file can be extended to handle more languages or more complex synonym sets, depending on your project's scope.
-- **Further Enhancements**:
-  - Additional fields or logic in `violation_manager.py` (e.g., storing versioned images).
-  - Enhanced pagination strategies or sorting criteria.
-  - Webhooks or notifications upon new violation creation (integration with external systems).
+- The `static/` directory is operational evidence storage, not a live stream
+  buffer.
+- HLS/WebRTC live segments belong to MediaMTX and should have a much shorter
+  retention window.
+- If disk use approaches the host limit, reduce retention or export records
+  before deleting them.

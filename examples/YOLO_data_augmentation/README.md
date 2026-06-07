@@ -1,47 +1,53 @@
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
-# YOLO Data Augmentation Example
+# YOLO Data Augmentation
 
-This repository contains examples and scripts for performing data augmentation on image datasets, particularly aimed at enhancing the performance of YOLO object detection models. It is particularly useful for machine learning projects requiring enriched datasets for improved model training.
+Utilities for expanding YOLO-format construction-site datasets. The scripts
+expect the usual dataset layout:
 
-## Usage
-
-### Data Augmentation
-
-To perform data augmentation on your dataset, use the `data_augmentation.py` script. Specify the path to your training data and the number of augmentations per image:
-
-```bash
-python data_augmentation.py --train_path '../path/to/your/data' --num_augmentations 30
+```text
+dataset/
+  train/
+    images/
+    labels/
 ```
 
-### Moving and Renaming Augmented Files
+## Scripts
 
-After augmentation, you can use the `run_augmentation_and_move.sh` script to move and rename augmented images and label files to the main dataset directory:
+- `data_augmentation_albumentations.py`: creates augmented images and matching
+  YOLO label files with Albumentations and OpenCV.
+- `visualise_bounding_boxes.py`: draws YOLO labels onto one image for manual
+  inspection.
 
-```bash
-bash run_augmentation_and_move.sh
-```
+## Run Augmentation
 
-This script ensures that the augmented files are correctly sequenced and stored with the existing dataset files.
-
-### Visualising Bounding Boxes
-
-To visualise the bounding boxes on an image, use the `visualise_bounding_boxes.py` script. Provide the paths to the image and the corresponding label file:
+Run from the repository root:
 
 ```bash
-python src/visualise_bounding_boxes.py --image 'path/to/image.jpg' --label 'path/to/label.txt'
+python examples/YOLO_data_augmentation/data_augmentation_albumentations.py \
+  --train_path dataset/train \
+  --num_augmentations 30
 ```
 
-You can choose to save the visualised image by using the `--save` flag and specifying the `--output` path.
+The augmentation script writes additional image and label files next to the
+input training set. Review the generated samples before mixing them into a
+final training dataset.
 
-## Features
+## Check Labels Visually
 
-- **Data Augmentation**: Enhance your image datasets by applying a series of randomised transformations.
-- **Parallel Processing**: Utilise multi-threading for faster augmentation processing.
-- **Bounding Box Preservation**: Ensure that augmented images maintain accurate bounding box annotations.
-- **Shuffling**: Randomise the order of the dataset to prevent model overfitting.
-- **Visualisation**: Easily visualise bounding boxes on your images for verification purposes.
+```bash
+python examples/YOLO_data_augmentation/visualise_bounding_boxes.py \
+  --image dataset/train/images/example.jpg \
+  --label dataset/train/labels/example.txt \
+  --save \
+  --output visualised_image.jpg
+```
 
-## Configuration
+## Notes
 
-The data augmentation process can be customised by modifying the augmentation sequences within the `data_augmentation.py` script. You can add or remove transformations as per your dataset requirements.
+- Keep class ordering aligned with the `names` section in the training
+  `data.yaml`.
+- Very small and very large images are resized before augmentation so bounding
+  boxes remain usable.
+- Use this folder for dataset preparation only; runtime inference is handled by
+  `src/yolo_worker.py` and `src/yolo_detector.py`.

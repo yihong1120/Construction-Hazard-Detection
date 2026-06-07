@@ -1,77 +1,59 @@
-🇬🇧 [English](./src/README.md) | 🇹🇼 [繁體中文](./src/README-zh-tw.md)
+🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
-## 概述
+# Source Modules
 
-此存儲庫包含多個 Python 腳本，設計用於各種功能，包括即時串流檢測、繪圖管理、模型下載、日誌記錄，以及通過不同平台發送通知。該專案的結構有助於這些功能的簡易整合和使用。
+`src/` 是 `main.py` 使用的正式執行模組。這裡負責擷取影像、執行 YOLO 推論、
+產生安全警示、發布直播媒體、上傳違規紀錄，以及發送通知。
 
-## 目錄結構
+## 主流程
 
-```
-src
-├── danger_detector.py
-├── drawing_manager.py
-├── __init__.py
-├── lang_config.py
-├── live_stream_detection.py
-├── live_stream_tracker.py
-├── model_fetcher.py
-├── monitor_logger.py
-├── notifiers
-│   ├── broadcast_notifier.py
-│   ├── __init__.py
-│   ├── line_notifier.py
-│   ├── messenger_notifier.py
-│   ├── telegram_notifier.py
-│   └── wechat_notifier.py
-├── stream_capture.py
-└── stream_viewer.py
+```text
+stream_capture.py
+    -> yolo_detector.py / yolo_worker.py
+    -> danger_detector.py
+    -> stream_processor.py
+    -> media_stream_publisher.py / media_restreamer.py
+    -> violation_sender.py
+    -> notifiers/*
 ```
 
-## 文件描述
+## 主要模組
 
-### 主要模組
+- `stream_processor.py`：單一攝影機的執行 loop，負責擷取節奏、偵測呼叫、警示處理、
+  overlay 發布、metadata 清理與關閉流程。
+- `stream_capture.py`：讀取 RTSP、HTTP 或本機檔案影像，避免無限制 buffering，並將
+  重連邏輯集中在影像來源附近。
+- `yolo_worker.py`：multiprocessing worker 與 client。frame 會複製到 POSIX
+  shared memory，queue 訊息只包含 metadata。worker 會載入一次 YOLO 模型，並跨攝影機
+  batching。
+- `yolo_detector.py`：stream processor 使用的偵測 facade，可呼叫本機 worker 或可選的
+  遠端 detector API。
+- `danger_detector.py`：將 detection 轉成工地安全警示與管制區 polygon。
+- `media_stream_publisher.py`：透過 ffmpeg 將 clean 或 annotated frame 發布到
+  MediaMTX。
+- `media_restreamer.py`：不等待偵測，直接將原始來源 stream 轉發到 MediaMTX。
+- `violation_sender.py`：上傳違規圖片與 metadata 到 violation records API。
 
-- **danger_detector.py**：包含 [`DangerDetector`](./src/danger_detector.py) 類別，用於基於檢測數據發現潛在的安全隱患。
-- **drawing_manager.py**：包含 [`DrawingManager`](./src/drawing_manager.py) 類別，用於在影像上繪製檢測結果並保存它們。
-- **lang_config.py**：語言設置的配置文件。
-- **live_stream_detection.py**：包含 [`LiveStreamDetector`](./src/live_stream_detection.py) 類別，用於使用 YOLOv8 和 SAHI 進行即時串流檢測和追蹤。
-- **live_stream_tracker.py**：包含 [`LiveStreamDetector`](./src/live_stream_tracker.py) 類別，用於使用 YOLOv8 進行即時串流檢測和追蹤。
-- **model_fetcher.py**：包含下載模型文件的函數（如果模型文件尚未存在）。
-- **monitor_logger.py**：包含 [`LoggerConfig`](./src/monitor_logger.py) 類別，用於設置應用日誌記錄，支援控制台和文件輸出。
-- **stream_capture.py**：包含 [`StreamCapture`](./src/stream_capture.py) 類別，用於從視頻串流中捕獲影像。
-- **stream_viewer.py**：包含 [`StreamViewer`](./src/stream_viewer.py) 類別，用於觀看視頻串流。
+## 工具模組
 
-### 通知模組
+- `utils.py`：token、Redis、幾何、編碼與共用 helper。
+- `warning_types.py`：警示 payload type aliases。
+- `model_fetcher.py`：模型下載與更新 helper。
+- `monitor_logger.py`：logging 設定。
+- `net/net_client.py`：具驗證能力的 HTTP 與 WebSocket client helper。
+- `stream_viewer.py`：手動 OpenCV stream viewer，用於診斷。
 
-- **notifiers/broadcast_notifier.py**：包含 [`BroadcastNotifier`](./src/notifiers/broadcast_notifier.py) 類別，用於向廣播系統發送訊息。
-- **notifiers/line_notifier.py**：包含 [`LineNotifier`](./src/notifiers/line_notifier.py) 類別，用於通過 LINE Notify 發送通知。
-- **notifiers/messenger_notifier.py**：包含 [`MessengerNotifier`](./src/notifiers/messenger_notifier.py) 類別，用於通過 Facebook Messenger 發送通知。
-- **notifiers/telegram_notifier.py**：包含 [`TelegramNotifier`](./src/notifiers/telegram_notifier.py) 類別，用於通過 Telegram 發送通知。
-- **notifiers/wechat_notifier.py**：包含 [`WeChatNotifier`](./src/notifiers/wechat_notifier.py) 類別，用於通過 WeChat Work 發送通知。
+## 通知 Adapter
 
-## 使用方式
+`notifiers/` 包含 FCM、LINE Message API、Messenger、Telegram、WeChat 與 broadcast
+adapter。adapter 應保持薄層，只負責格式化與發送訊息；偵測與違規判斷應留在
+`stream_processor.py`。
 
-### 設定環境變數
+## 執行注意事項
 
-請確保在專案根目錄中有 `.env` 文件，並包含各通知模組所需的環境變數，例如：
-
-```
-WECHAT_CORP_ID=your_wechat_corp_id
-WECHAT_CORP_SECRET=your_wechat_corp_secret
-WECHAT_AGENT_ID=your_wechat_agent_id
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-FACEBOOK_PAGE_ACCESS_TOKEN=your_facebook_page_access_token
-LINE_NOTIFY_TOKEN=your_line_notify_token
-```
-
-### 執行腳本
-
-每個腳本可以單獨執行。例如，要執行 `live_stream_tracker.py` 腳本：
-
-```bash
-python live_stream_tracker.py --url <your_stream_url> --model <path_to_yolo_model>
-```
-
-### 使用範例
-
-請參考每個腳本中的 `main` 函數以了解使用範例。
+- Redis 不是 video frame store，只用於 compact metadata、auth cache、notification
+  token cache 與 overlay coordination。
+- MediaMTX 負責 live HLS/WebRTC playback。
+- YOLO worker queue size 會限制尚未完成的 inference request 數量。queue 滿時，caller
+  會 timeout 或略過過舊工作，避免記憶體無限制成長。
+- frame copy 應盡量只出現在 capture、shared memory 與 ffmpeg 邊界。

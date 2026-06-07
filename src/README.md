@@ -1,77 +1,66 @@
-🇬🇧 [English](./src/README.md) | 🇹🇼 [繁體中文](./src/README-zh-tw.md)
+# Source Modules
 
-## Overview
+[English](./README.md) | [繁體中文](./README-zh-tw.md)
 
-This repository contains a collection of Python scripts designed for various functionalities including live stream detection, drawing management, model fetching, logging, and sending notifications through different platforms. The project is structured to facilitate easy integration and usage of these functionalities.
+`src/` contains the production runtime used by `main.py`. The modules here
+capture frames, run YOLO inference, derive warnings, publish live media,
+upload violation records, and send notifications.
 
-## Directory Structure
+## Main Flow
 
-```
-src
-├── danger_detector.py
-├── drawing_manager.py
-├── __init__.py
-├── lang_config.py
-├── live_stream_detection.py
-├── live_stream_tracker.py
-├── model_fetcher.py
-├── monitor_logger.py
-├── notifiers
-│   ├── broadcast_notifier.py
-│   ├── __init__.py
-│   ├── line_notifier.py
-│   ├── messenger_notifier.py
-│   ├── telegram_notifier.py
-│   └── wechat_notifier.py
-├── stream_capture.py
-└── stream_viewer.py
+```text
+stream_capture.py
+    -> yolo_detector.py / yolo_worker.py
+    -> danger_detector.py
+    -> stream_processor.py
+    -> media_stream_publisher.py / media_restreamer.py
+    -> violation_sender.py
+    -> notifiers/*
 ```
 
-## File Descriptions
+## Key Modules
 
-### Main Modules
+- `stream_processor.py`: one-camera runtime loop. It owns capture pacing,
+  detection calls, warning handling, overlay publishing, metadata cleanup, and
+  shutdown.
+- `stream_capture.py`: reads frames from RTSP, HTTP, or local files. It avoids
+  unbounded buffering and keeps reconnect logic close to the capture source.
+- `yolo_worker.py`: multiprocessing worker and client. Frames are copied into
+  POSIX shared memory; queue messages contain metadata only. Workers load YOLO
+  models once and batch requests across cameras.
+- `yolo_detector.py`: detection facade used by stream processors. It can call
+  the local worker path or the optional remote detector API.
+- `danger_detector.py`: converts detections into construction-safety warnings
+  and controlled-area polygons.
+- `media_stream_publisher.py`: publishes clean or annotated frames to MediaMTX
+  through ffmpeg.
+- `media_restreamer.py`: publishes the original source stream to MediaMTX
+  without waiting for detection.
+- `violation_sender.py`: uploads violation images and metadata to the violation
+  records API.
 
-- **danger_detector.py**: Contains the [`DangerDetector`](./src/danger_detector.py) class for detecting potential safety hazards based on detection data.
-- **drawing_manager.py**: Contains the [`DrawingManager`](./src/drawing_manager.py) class for drawing detections on frames and saving them.
-- **lang_config.py**: Configuration file for language settings.
-- **live_stream_detection.py**: Contains the [`LiveStreamDetector`](./src/live_stream_detection.py) class for performing live stream detection and tracking using YOLOv8 with SAHI.
-- **live_stream_tracker.py**: Contains the [`LiveStreamDetector`](./src/live_stream_tracker.py) class for performing live stream detection and tracking using YOLOv8.
-- **model_fetcher.py**: Contains functions to download model files if they do not already exist.
-- **monitor_logger.py**: Contains the [`LoggerConfig`](./src/monitor_logger.py) class for setting up application logging with console and file handlers.
-- **stream_capture.py**: Contains the [`StreamCapture`](./src/stream_capture.py) class for capturing frames from a video stream.
-- **stream_viewer.py**: Contains the [`StreamViewer`](./src/stream_viewer.py) class for viewing video streams.
+## Utilities
 
-### Notifiers
+- `utils.py`: token handling, Redis helpers, geometry, encoding, and shared
+  helpers.
+- `warning_types.py`: warning payload type aliases.
+- `model_fetcher.py`: model download/update helpers.
+- `monitor_logger.py`: logging setup.
+- `net/net_client.py`: authenticated HTTP and WebSocket client helpers.
+- `stream_viewer.py`: manual OpenCV stream viewer for diagnostics.
 
-- **notifiers/broadcast_notifier.py**: Contains the [`BroadcastNotifier`](./src/notifiers/broadcast_notifier.py) class for sending messages to a broadcast system.
-- **notifiers/line_notifier.py**: Contains the [`LineNotifier`](./src/notifiers/line_notifier.py) class for sending notifications via LINE Notify.
-- **notifiers/messenger_notifier.py**: Contains the [`MessengerNotifier`](./src/notifiers/messenger_notifier.py) class for sending notifications via Facebook Messenger.
-- **notifiers/telegram_notifier.py**: Contains the [`TelegramNotifier`](./src/notifiers/telegram_notifier.py) class for sending notifications via Telegram.
-- **notifiers/wechat_notifier.py**: Contains the [`WeChatNotifier`](./src/notifiers/wechat_notifier.py) class for sending notifications via WeChat Work.
+## Notification Adapters
 
-## Usage
+`notifiers/` contains FCM, LINE Message API, Messenger, Telegram, WeChat, and
+broadcast adapters. Keep adapters thin: they should format and send messages,
+while detection and violation decisions stay in `stream_processor.py`.
 
-### Setting Up Environment Variables
+## Runtime Notes
 
-Ensure you have a `.env` file in the root directory with the necessary environment variables for the notifiers, such as:
-
-```
-WECHAT_CORP_ID=your_wechat_corp_id
-WECHAT_CORP_SECRET=your_wechat_corp_secret
-WECHAT_AGENT_ID=your_wechat_agent_id
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-FACEBOOK_PAGE_ACCESS_TOKEN=your_facebook_page_access_token
-LINE_NOTIFY_TOKEN=your_line_notify_token
-```
-
-### Running the Scripts
-
-Each script can be run individually. For example, to run the `live_stream_tracker.py` script:
-
-```bash
-python live_stream_tracker.py --url <your_stream_url> --model <path_to_yolo_model>
-```
-
-### Example Usage
-
-Refer to the `main` function in each script for example usage.
+- Redis is not a video frame store. It is used for compact metadata, auth cache,
+  notification token cache, and overlay coordination.
+- MediaMTX owns live HLS/WebRTC playback.
+- YOLO worker queue size limits outstanding inference requests. When the queue
+  is full, the caller times out or skips stale work rather than growing memory
+  without bound.
+- Keep frame copies near capture, shared memory, and ffmpeg boundaries only.
