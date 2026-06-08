@@ -55,6 +55,6 @@ Redis 不儲存直播影像 frame。
 - `examples/local_notification_server/`
 - `examples/streaming_web/`
 - `examples/violation_records/`
-- `examples/YOLO_server_api/backend/`
+- `examples/YOLO_server_api/`
 
 請直接啟動上述服務；它們會透過 lifespan 與 dependency wiring 匯入此目錄。

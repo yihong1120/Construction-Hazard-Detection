@@ -140,7 +140,7 @@ compact warning metadata, overlay demand keys, and overlay ready keys.
 - `examples/streaming_web/`: labels, playback URLs, metadata channels,
   media-session auth, and WebRTC ICE settings.
 - `examples/violation_records/`: violation record and image API.
-- `examples/YOLO_server_api/backend/`: optional standalone YOLO API.
+- `examples/YOLO_server_api/`: optional standalone YOLO API.
 - `examples/mcp_server/`: FastMCP tools for agents.
 - `examples/YOLO_train/`, `examples/YOLO_evaluation/`,
   `examples/YOLO_data_augmentation/`: model development utilities.
@@ -257,7 +257,7 @@ uvicorn examples.streaming_web.app:app --host 127.0.0.1 --port 8800 --workers 2
 Optional standalone detector API:
 
 ```bash
-uvicorn examples.YOLO_server_api.backend.app:app --host 127.0.0.1 --port 8000 --workers 2
+uvicorn examples.YOLO_server_api.app:app --host 127.0.0.1 --port 8000 --workers 2
 ```
 
 ### 6. Start Stream Processing

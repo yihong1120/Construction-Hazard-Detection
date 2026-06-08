@@ -87,7 +87,7 @@ A:
 导出完成后，启动 YOLO Server API 进行测试：
 
 ```bash
-uv run uvicorn examples.YOLO_server_api.backend.app:app --host 127.0.0.1 --port 8000
+uv run uvicorn examples.YOLO_server_api.app:app --host 127.0.0.1 --port 8000
 ```
 
 如果看到类似以下输出，说明导出成功：

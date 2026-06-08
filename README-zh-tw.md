@@ -137,7 +137,7 @@ FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready 
 - `examples/streaming_web/`：標籤、播放 URL、metadata channel、
   media session 授權與 WebRTC ICE 設定。
 - `examples/violation_records/`：違規紀錄與圖片 API。
-- `examples/YOLO_server_api/backend/`：可選的獨立 YOLO API。
+- `examples/YOLO_server_api/`：可選的獨立 YOLO API。
 - `examples/mcp_server/`：提供給 agent 使用的 FastMCP tools。
 - `examples/YOLO_train/`、`examples/YOLO_evaluation/`、
   `examples/YOLO_data_augmentation/`：模型開發工具。
@@ -247,7 +247,7 @@ uvicorn examples.streaming_web.app:app --host 127.0.0.1 --port 8800 --workers 2
 可選的獨立 YOLO API：
 
 ```bash
-uvicorn examples.YOLO_server_api.backend.app:app --host 127.0.0.1 --port 8000 --workers 2
+uvicorn examples.YOLO_server_api.app:app --host 127.0.0.1 --port 8000 --workers 2
 ```
 
 ### 6. 啟動影像處理

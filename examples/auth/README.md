@@ -58,7 +58,7 @@ Redis is not used for live video frames.
 - `examples/local_notification_server/`
 - `examples/streaming_web/`
 - `examples/violation_records/`
-- `examples/YOLO_server_api/backend/`
+- `examples/YOLO_server_api/`
 
 Start those services directly; they import this directory through their
 lifespan and dependency wiring.
