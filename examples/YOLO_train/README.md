@@ -9,7 +9,6 @@ files through the YOLO worker path.
 ## Main Scripts
 
 - `train.py`: trains, validates, predicts, and exports Ultralytics models.
-- `QAT.py`: quantisation-aware training experiment.
 - `test.py`: small prediction/testing helper.
 
 TensorRT engine rebuild helpers live in `scripts/rebuild_tensorrt_engines.py`

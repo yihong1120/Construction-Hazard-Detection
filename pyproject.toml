@@ -81,7 +81,6 @@ show_error_codes = true
 [tool.coverage.run]
 omit = [
   "*/examples/auth/cache copy.py",
-  "*/examples/YOLO_train/QAT.py",
   "*/examples/YOLO_train/test.py",
   "*/examples/line_chatbot/line_bot.py",
 ]
@@ -89,7 +88,6 @@ omit = [
 [tool.coverage.report]
 omit = [
   "*/examples/auth/cache copy.py",
-  "*/examples/YOLO_train/QAT.py",
   "*/examples/YOLO_train/test.py",
   "*/examples/line_chatbot/line_bot.py",
 ]

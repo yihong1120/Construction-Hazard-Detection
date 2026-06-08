@@ -8,7 +8,6 @@ YOLO worker 使用已匯出的 `.pt` 模型。
 ## 主要腳本
 
 - `train.py`：訓練、驗證、預測與匯出 Ultralytics 模型。
-- `QAT.py`：quantisation-aware training 實驗。
 - `test.py`：小型預測/測試 helper。
 
 TensorRT engine 重建工具位於 `scripts/rebuild_tensorrt_engines.py` 與
