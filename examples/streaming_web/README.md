@@ -14,7 +14,7 @@ main.py / src/stream_processor.py
         +--> publishes clean and annotated H.264 streams to MediaMTX
         +--> writes compact warning metadata to Redis
 
-streaming_web/backend
+streaming_web
         |
         +--> lists labels and streams from PostgreSQL
         +--> returns MediaMTX HLS/WebRTC playback URLs
@@ -37,7 +37,7 @@ streaming_web/backend
 ## Run
 
 ```bash
-uvicorn examples.streaming_web.backend.app:app \
+uvicorn examples.streaming_web.app:app \
   --host 127.0.0.1 \
   --port 8800 \
   --workers 2
@@ -127,5 +127,5 @@ relay port range.
 ## Testing
 
 ```bash
-pytest tests/examples/streaming_web/backend -q
+pytest tests/examples/streaming_web -q
 ```

@@ -137,7 +137,7 @@ compact warning metadata, overlay demand keys, and overlay ready keys.
 - `src/`: production runtime modules.
 - `examples/db_management/`: users, groups, sites, stream configuration API.
 - `examples/local_notification_server/`: FCM token and site notification API.
-- `examples/streaming_web/backend/`: labels, playback URLs, metadata channels,
+- `examples/streaming_web/`: labels, playback URLs, metadata channels,
   media-session auth, and WebRTC ICE settings.
 - `examples/violation_records/`: violation record and image API.
 - `examples/YOLO_server_api/backend/`: optional standalone YOLO API.
@@ -251,7 +251,7 @@ Run each service from the repository root:
 uvicorn examples.db_management.app:app --host 127.0.0.1 --port 8005 --workers 2
 uvicorn examples.local_notification_server.app:app --host 127.0.0.1 --port 8003 --workers 2
 uvicorn examples.violation_records.app:app --host 127.0.0.1 --port 8002 --workers 2
-uvicorn examples.streaming_web.backend.app:app --host 127.0.0.1 --port 8800 --workers 2
+uvicorn examples.streaming_web.app:app --host 127.0.0.1 --port 8800 --workers 2
 ```
 
 Optional standalone detector API:
@@ -295,7 +295,7 @@ and usually contains only current warning state. Detection boxes, polygons, and
 labels are rendered into backend-published annotated video streams.
 
 For public deployments, put MediaMTX behind Nginx `auth_request` and let
-`examples.streaming_web.backend` validate JWT and site access.
+`examples.streaming_web` validate JWT and site access.
 
 ## Storage Retention
 

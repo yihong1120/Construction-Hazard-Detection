@@ -6,13 +6,13 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-import examples.streaming_web.backend.app as app_module
+import examples.streaming_web.app as app_module
 
 
 class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
     """
     Test suite for the FastAPI application in
-    examples.streaming_web.backend.app.
+    examples.streaming_web.app.
     """
 
     def setUp(self) -> None:
@@ -22,7 +22,7 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         self.app = app_module.app
         self.client = TestClient(self.app)
 
-    @patch('examples.streaming_web.backend.app.CORSMiddleware')
+    @patch('examples.streaming_web.app.CORSMiddleware')
     def test_cors_initialization(self, mock_cors: MagicMock) -> None:
         """
         Tests that the CORS middleware is initialised with expected parameters.
@@ -98,7 +98,7 @@ if __name__ == '__main__':
 
 '''
 pytest \
-    --cov=examples.streaming_web.backend.app \
+    --cov=examples.streaming_web.app \
     --cov-report=term-missing \
-    tests/examples/streaming_web/backend/app_test.py
+    tests/examples/streaming_web/app_test.py
 '''

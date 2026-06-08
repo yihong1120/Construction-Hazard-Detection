@@ -21,9 +21,9 @@ from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.redis_pool import get_redis_pool
 from examples.auth.redis_pool import get_redis_pool_ws
-from examples.streaming_web.backend import routers
-from examples.streaming_web.backend.routers import _build_stream_listing
-from examples.streaming_web.backend.routers import router
+from examples.streaming_web import routers
+from examples.streaming_web.routers import _build_stream_listing
+from examples.streaming_web.routers import router
 
 
 class TestRouters(unittest.IsolatedAsyncioTestCase):
@@ -131,7 +131,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     # Test GET /api/labels
     # -----------------------------
     @patch(
-        'examples.streaming_web.backend.routers.get_user_and_sites',
+        'examples.streaming_web.routers.get_user_and_sites',
         new_callable=AsyncMock,
     )
     def test_get_labels_success(
@@ -154,7 +154,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
 
     @patch(
-        'examples.streaming_web.backend.routers.get_user_and_sites',
+        'examples.streaming_web.routers.get_user_and_sites',
         new_callable=AsyncMock,
     )
     def test_get_labels_with_non_admin_user(
@@ -181,7 +181,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json(), {'labels': ['label1']})
 
     @patch(
-        'examples.streaming_web.backend.routers.get_user_and_sites',
+        'examples.streaming_web.routers.get_user_and_sites',
         new_callable=AsyncMock,
     )
     def test_get_labels_error(
@@ -213,7 +213,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Invalid token', response.json()['detail'])
 
     @patch(
-        'examples.streaming_web.backend.routers._get_configured_media_streams',
+        'examples.streaming_web.routers._get_configured_media_streams',
         new_callable=AsyncMock,
     )
     def test_get_streams_returns_empty_without_configured_streams(
@@ -299,7 +299,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('supported_languages', response.json())
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_stream_playback_clean_returns_ready_url(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -330,7 +330,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.fake_redis.set.assert_not_called()
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_stream_playback_overlay_registers_shared_demand(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -372,7 +372,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.fake_redis.set.assert_awaited_once()
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_stream_playback_overlay_ready_returns_200(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -425,7 +425,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             self.assertIn(expected_path, websocket_paths)
 
     @patch(
-        'examples.streaming_web.backend.routers.get_public_ice_servers',
+        'examples.streaming_web.routers.get_public_ice_servers',
         return_value=[{'urls': ['turn:example.test:3478'], 'username': 'u'}],
     )
     def test_webrtc_ice_servers_requires_auth_and_returns_servers(
@@ -446,7 +446,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         mock_get_public_ice_servers.assert_called_once_with('testuser')
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_issue_media_session_sets_http_only_cookie(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -468,7 +468,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertIn('httponly', response.headers['set-cookie'].lower())
         self.assertIn('hazard_media_session=', response.headers['set-cookie'])
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_media_auth_allows_authorised_site(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -491,7 +491,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 204)
         mock_get_user_and_sites.assert_awaited_once()
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_media_auth_accepts_media_session_cookie(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -503,7 +503,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             'admin',
         )
         with patch(
-            'examples.streaming_web.backend.routers.'
+            'examples.streaming_web.routers.'
             'MEDIA_SESSION_COOKIE_SECURE',
             False,
         ):
@@ -524,7 +524,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             response.headers['x-media-auth-mode'], 'media_session',
         )
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_media_auth_denies_wrong_site(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -546,7 +546,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_media_auth_accepts_cookie_token(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -567,7 +567,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 204)
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_media_auth_accepts_original_uri_query_token(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -589,7 +589,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 204)
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_media_auth_allows_recently_expired_token_grace(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -675,7 +675,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()['detail'], 'invalid_media_session')
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_media_auth_rejects_inactive_user(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -738,7 +738,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         finally:
             routers.OVERLAY_LANGUAGE_DETAILS['fr'] = details
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     async def test_authorise_label_access_rejects_missing_or_denied_user(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -1064,7 +1064,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 401)
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_issue_media_session_rejects_invalid_or_inactive_user(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -1087,7 +1087,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         response = self.client.post('/api/media-session')
         self.assertEqual(response.status_code, 401)
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_issue_media_session_can_expose_token(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -1099,7 +1099,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             'admin',
         )
         with patch(
-            'examples.streaming_web.backend.routers.'
+            'examples.streaming_web.routers.'
             'MEDIA_SESSION_EXPOSE_TOKEN',
             True,
         ):
@@ -1108,7 +1108,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('media_session_token', response.json())
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_media_auth_rejects_invalid_media_path(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -1127,7 +1127,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_stream_playback_rejects_unsupported_language(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -1155,7 +1155,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 422)
 
-    @patch('examples.streaming_web.backend.routers.get_user_and_sites')
+    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_stream_playback_rejects_overlay_language_limit(
         self,
         mock_get_user_and_sites: AsyncMock,
@@ -1168,7 +1168,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.return_value = stream_result
 
         with patch(
-            'examples.streaming_web.backend.routers._active_overlay_languages',
+            'examples.streaming_web.routers._active_overlay_languages',
             new=AsyncMock(return_value={'zh-TW', 'ja', 'vi', 'id', 'fr'}),
         ):
             response = self.client.post(
@@ -1241,7 +1241,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Exercise this test."""
         with patch(
-            'examples.streaming_web.backend.routers.'
+            'examples.streaming_web.routers.'
             'handle_metadata_stream_id_ws',
             new=AsyncMock(),
         ) as handler:
@@ -1262,7 +1262,7 @@ if __name__ == '__main__':
 
 '''
 pytest \
-    --cov=examples.streaming_web.backend.routers \
+    --cov=examples.streaming_web.routers \
     --cov-report=term-missing \
-    tests/examples/streaming_web/backend/routers_test_new.py
+    tests/examples/streaming_web/routers_test_new.py
 '''

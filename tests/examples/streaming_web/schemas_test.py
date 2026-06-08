@@ -4,8 +4,8 @@ import unittest
 
 from pydantic import ValidationError
 
-from examples.streaming_web.backend.schemas import FramePostResponse
-from examples.streaming_web.backend.schemas import LabelListResponse
+from examples.streaming_web.schemas import FramePostResponse
+from examples.streaming_web.schemas import LabelListResponse
 
 
 class TestLabelListResponse(unittest.TestCase):
@@ -98,7 +98,7 @@ if __name__ == '__main__':
 
 """
 pytest \
-    --cov=examples.streaming_web.backend.schemas \
+    --cov=examples.streaming_web.schemas \
     --cov-report=term-missing \
-    tests/examples/streaming_web/backend/schemas_test.py
+    tests/examples/streaming_web/schemas_test.py
 """

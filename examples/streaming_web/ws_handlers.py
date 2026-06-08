@@ -24,11 +24,11 @@ from examples.shared.ws_utils import _is_websocket_connected
 from examples.shared.ws_utils import _safe_websocket_receive_text
 from examples.shared.ws_utils import _safe_websocket_send_json
 from examples.shared.ws_utils import _safe_websocket_send_text
-from examples.streaming_web.backend.redis_service import (
+from examples.streaming_web.redis_service import (
     fetch_latest_metadata_for_key,
 )
-from examples.streaming_web.backend.schemas import FrameOutData
-from examples.streaming_web.backend.utils import Utils
+from examples.streaming_web.schemas import FrameOutData
+from examples.streaming_web.utils import Utils
 
 # Module-level alias retained for test patching.
 get_user_and_sites = load_user_access_context

@@ -14,7 +14,7 @@ main.py / src/stream_processor.py
         +--> 發布 clean 與 annotated H.264 streams 到 MediaMTX
         +--> 將 compact warning metadata 寫入 Redis
 
-streaming_web/backend
+streaming_web
         |
         +--> 從 PostgreSQL 列出 labels 與 streams
         +--> 回傳 MediaMTX HLS/WebRTC playback URLs
@@ -37,7 +37,7 @@ streaming_web/backend
 ## 執行
 
 ```bash
-uvicorn examples.streaming_web.backend.app:app \
+uvicorn examples.streaming_web.app:app \
   --host 127.0.0.1 \
   --port 8800 \
   --workers 2
@@ -124,5 +124,5 @@ secret、firewall rules 與較窄的 relay port range 保護 coturn。
 ## 測試
 
 ```bash
-pytest tests/examples/streaming_web/backend -q
+pytest tests/examples/streaming_web -q
 ```

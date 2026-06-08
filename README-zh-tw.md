@@ -134,7 +134,7 @@ FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready 
 - `src/`：正式執行用的核心模組。
 - `examples/db_management/`：使用者、群組、工地、stream 設定 API。
 - `examples/local_notification_server/`：FCM token 與工地通知 API。
-- `examples/streaming_web/backend/`：標籤、播放 URL、metadata channel、
+- `examples/streaming_web/`：標籤、播放 URL、metadata channel、
   media session 授權與 WebRTC ICE 設定。
 - `examples/violation_records/`：違規紀錄與圖片 API。
 - `examples/YOLO_server_api/backend/`：可選的獨立 YOLO API。
@@ -241,7 +241,7 @@ MEDIA_PUBLISH_ANNOTATED_STREAM=true
 uvicorn examples.db_management.app:app --host 127.0.0.1 --port 8005 --workers 2
 uvicorn examples.local_notification_server.app:app --host 127.0.0.1 --port 8003 --workers 2
 uvicorn examples.violation_records.app:app --host 127.0.0.1 --port 8002 --workers 2
-uvicorn examples.streaming_web.backend.app:app --host 127.0.0.1 --port 8800 --workers 2
+uvicorn examples.streaming_web.app:app --host 127.0.0.1 --port 8800 --workers 2
 ```
 
 可選的獨立 YOLO API：
@@ -284,7 +284,7 @@ python main.py --config config/configuration.json
 警示狀態；偵測框、多邊形與文字標籤會被畫進後端發布的 annotated video stream。
 
 公開部署時，MediaMTX 建議放在 Nginx `auth_request` 後面，並由
-`examples.streaming_web.backend` 驗證 JWT 與工地權限。
+`examples.streaming_web` 驗證 JWT 與工地權限。
 
 ## 儲存與保留
 

@@ -6,20 +6,20 @@ import unittest
 import cv2
 import numpy as np
 
-from examples.streaming_web.backend import overlay_renderer as renderer
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web import overlay_renderer as renderer
+from examples.streaming_web.overlay_renderer import (
     has_warning,
 )
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.overlay_renderer import (
     normalise_label_language,
 )
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.overlay_renderer import (
     normalise_overlay_mode,
 )
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.overlay_renderer import (
     render_overlay_array,
 )
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.overlay_renderer import (
     render_overlay_frame,
 )
 
@@ -113,7 +113,7 @@ class OverlayRendererTest(unittest.TestCase):
         """Exercise this test."""
         frame_bytes = self._jpeg_frame()
         with unittest.mock.patch(
-            'examples.streaming_web.backend.overlay_renderer.cv2.imencode',
+            'examples.streaming_web.overlay_renderer.cv2.imencode',
             return_value=(False, np.array([], dtype=np.uint8)),
         ):
             rendered = render_overlay_frame(
@@ -718,7 +718,7 @@ class OverlayRendererTest(unittest.TestCase):
         """Exercise this test."""
         frame = np.zeros((20, 20, 3), dtype=np.uint8)
         with unittest.mock.patch(
-            'examples.streaming_web.backend.overlay_renderer.'
+            'examples.streaming_web.overlay_renderer.'
             '_load_overlay_font',
             return_value=None,
         ):
@@ -741,12 +741,12 @@ class OverlayRendererTest(unittest.TestCase):
         renderer._load_overlay_font.cache_clear()
         with (
             unittest.mock.patch(
-                'examples.streaming_web.backend.overlay_renderer.'
+                'examples.streaming_web.overlay_renderer.'
                 'ImageFont.truetype',
                 side_effect=RuntimeError,
             ),
             unittest.mock.patch(
-                'examples.streaming_web.backend.overlay_renderer.'
+                'examples.streaming_web.overlay_renderer.'
                 'ImageFont.load_default',
                 side_effect=RuntimeError,
             ),

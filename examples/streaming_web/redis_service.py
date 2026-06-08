@@ -4,7 +4,7 @@ import base64
 import re
 from typing import Any
 
-from examples.streaming_web.backend.utils import Utils
+from examples.streaming_web.utils import Utils
 
 _stream_scan_count = 500
 _metadata_key_pattern = re.compile(

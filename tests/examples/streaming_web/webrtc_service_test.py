@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from examples.streaming_web.backend.webrtc_service import (
+from examples.streaming_web.webrtc_service import (
     get_public_ice_servers,
 )
 

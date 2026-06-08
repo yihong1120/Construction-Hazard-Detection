@@ -13,17 +13,17 @@ from unittest.mock import patch
 
 from fastapi import WebSocketDisconnect
 
-from examples.streaming_web.backend.schemas import FrameOutData
-from examples.streaming_web.backend.ws_handlers import _build_metadata_payload
-from examples.streaming_web.backend.ws_handlers import _encode_sse_event
-from examples.streaming_web.backend.ws_handlers import (
+from examples.streaming_web.schemas import FrameOutData
+from examples.streaming_web.ws_handlers import _build_metadata_payload
+from examples.streaming_web.ws_handlers import _encode_sse_event
+from examples.streaming_web.ws_handlers import (
     handle_metadata_stream_id_ws,
 )
-from examples.streaming_web.backend.ws_handlers import (
+from examples.streaming_web.ws_handlers import (
     handle_metadata_ws,
 )
-from examples.streaming_web.backend.ws_handlers import metadata_push_loop
-from examples.streaming_web.backend.ws_handlers import (
+from examples.streaming_web.ws_handlers import metadata_push_loop
+from examples.streaming_web.ws_handlers import (
     metadata_stream_generator,
 )
 
@@ -94,7 +94,7 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         rds = MagicMock()
 
         with patch(
-            'examples.streaming_web.backend.ws_handlers.'
+            'examples.streaming_web.ws_handlers.'
             'fetch_latest_metadata_for_key',
             new=AsyncMock(return_value={'id': '2-0', 'has_warning': 'true'}),
         ):
@@ -114,12 +114,12 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'fetch_latest_metadata_for_key',
                 new=AsyncMock(side_effect=asyncio.TimeoutError),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.asyncio.sleep',
+                'examples.streaming_web.ws_handlers.asyncio.sleep',
                 new=AsyncMock(),
             ) as sleep,
         ):
@@ -141,12 +141,12 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'fetch_latest_metadata_for_key',
                 new=AsyncMock(side_effect=RuntimeError('redis down')),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.asyncio.sleep',
+                'examples.streaming_web.ws_handlers.asyncio.sleep',
                 new=AsyncMock(),
             ) as sleep,
         ):
@@ -170,12 +170,12 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'fetch_latest_metadata_for_key',
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.asyncio.'
+                'examples.streaming_web.ws_handlers.asyncio.'
                 'get_running_loop',
                 return_value=loop,
             ),
@@ -199,17 +199,17 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'fetch_latest_metadata_for_key',
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.asyncio.'
+                'examples.streaming_web.ws_handlers.asyncio.'
                 'get_running_loop',
                 return_value=loop,
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.asyncio.sleep',
+                'examples.streaming_web.ws_handlers.asyncio.sleep',
                 new=AsyncMock(),
             ) as sleep,
         ):
@@ -230,23 +230,23 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         rds = MagicMock()
 
         with patch(
-            'examples.streaming_web.backend.ws_handlers.'
+            'examples.streaming_web.ws_handlers.'
             '_safe_websocket_receive_text',
             new=AsyncMock(side_effect=['{"action":"ping"}', None]),
         ), patch(
-            'examples.streaming_web.backend.ws_handlers.'
+            'examples.streaming_web.ws_handlers.'
             '_safe_websocket_send_text',
             new=AsyncMock(return_value=True),
         ) as send_text, patch(
-            'examples.streaming_web.backend.ws_handlers.'
+            'examples.streaming_web.ws_handlers.'
             '_is_websocket_connected',
             return_value=True,
         ), patch(
-            'examples.streaming_web.backend.ws_handlers.'
+            'examples.streaming_web.ws_handlers.'
             'check_and_maybe_close_on_timeout',
             new=AsyncMock(return_value=False),
         ), patch(
-            'examples.streaming_web.backend.ws_handlers.'
+            'examples.streaming_web.ws_handlers.'
             'fetch_latest_metadata_for_key',
             new=AsyncMock(return_value=None),
         ):
@@ -271,12 +271,12 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_safe_websocket_receive_text',
                 side_effect=wait_forever,
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'check_and_maybe_close_on_timeout',
                 new=AsyncMock(return_value=True),
             ),
@@ -297,17 +297,17 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         """Exercise this test."""
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_safe_websocket_receive_text',
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'check_and_maybe_close_on_timeout',
                 new=AsyncMock(return_value=False),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_is_websocket_connected',
                 return_value=False,
             ),
@@ -336,32 +336,32 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_safe_websocket_receive_text',
                 new=AsyncMock(side_effect=['not-json', None]),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_safe_websocket_send_json',
                 new=AsyncMock(return_value=False),
             ) as send_json,
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_is_websocket_connected',
                 return_value=True,
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'check_and_maybe_close_on_timeout',
                 new=AsyncMock(return_value=False),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'fetch_latest_metadata_for_key',
                 new=fetch,
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.asyncio.sleep',
+                'examples.streaming_web.ws_handlers.asyncio.sleep',
                 new=AsyncMock(),
             ),
         ):
@@ -384,22 +384,22 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_safe_websocket_receive_text',
                 new=AsyncMock(side_effect=['not-json', None]),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_is_websocket_connected',
                 return_value=True,
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'check_and_maybe_close_on_timeout',
                 new=AsyncMock(side_effect=[False, True]),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'fetch_latest_metadata_for_key',
                 new=AsyncMock(return_value=None),
             ),
@@ -440,27 +440,27 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.asyncio.'
+                'examples.streaming_web.ws_handlers.asyncio.'
                 'create_task',
                 side_effect=close_coroutine_task,
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_is_websocket_connected',
                 return_value=True,
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'check_and_maybe_close_on_timeout',
                 new=AsyncMock(side_effect=[False, True]),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'fetch_latest_metadata_for_key',
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.asyncio.sleep',
+                'examples.streaming_web.ws_handlers.asyncio.sleep',
                 new=AsyncMock(),
             ),
         ):
@@ -484,27 +484,27 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_safe_websocket_receive_text',
                 side_effect=wait_forever,
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_safe_websocket_send_json',
                 new=AsyncMock(return_value=True),
             ) as send_json,
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 '_is_websocket_connected',
                 return_value=True,
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'check_and_maybe_close_on_timeout',
                 new=AsyncMock(side_effect=[False, True]),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'fetch_latest_metadata_for_key',
                 new=AsyncMock(
                     return_value={
@@ -533,12 +533,12 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'authenticate_ws_or_none',
                 new=AsyncMock(return_value=('alice', None)),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'get_user_and_sites',
                 new=AsyncMock(side_effect=RuntimeError('missing')),
             ),
@@ -560,12 +560,12 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'authenticate_ws_or_none',
                 new=AsyncMock(return_value=('alice', None)),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'get_user_and_sites',
                 new=AsyncMock(return_value=(None, ['other'], 'user')),
             ),
@@ -587,12 +587,12 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'authenticate_ws_or_none',
                 new=AsyncMock(return_value=('alice', None)),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'metadata_push_loop',
                 new=AsyncMock(side_effect=RuntimeError('boom')),
             ),
@@ -614,12 +614,12 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'authenticate_ws_or_none',
                 new=AsyncMock(return_value=('alice', None)),
             ),
             patch(
-                'examples.streaming_web.backend.ws_handlers.'
+                'examples.streaming_web.ws_handlers.'
                 'metadata_push_loop',
                 new=AsyncMock(side_effect=WebSocketDisconnect),
             ),
@@ -637,7 +637,7 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         ws = self.make_ws()
 
         with patch(
-            'examples.streaming_web.backend.ws_handlers.'
+            'examples.streaming_web.ws_handlers.'
             'authenticate_ws_or_none',
             new=AsyncMock(return_value=(None, None)),
         ):

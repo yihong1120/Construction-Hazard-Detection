@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from fastapi import WebSocket
 
-from examples.streaming_web.backend.utils import Utils
+from examples.streaming_web.utils import Utils
 
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):
@@ -159,7 +159,7 @@ if __name__ == '__main__':
 
 '''
 pytest \
-    --cov=examples.streaming_web.backend.utils \
+    --cov=examples.streaming_web.utils \
     --cov-report=term-missing \
-    tests/examples/streaming_web/backend/utils_test.py
+    tests/examples/streaming_web/utils_test.py
 '''

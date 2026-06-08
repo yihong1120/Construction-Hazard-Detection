@@ -56,7 +56,7 @@ Redis is not used for live video frames.
 
 - `examples/db_management/`
 - `examples/local_notification_server/`
-- `examples/streaming_web/backend/`
+- `examples/streaming_web/`
 - `examples/violation_records/`
 - `examples/YOLO_server_api/backend/`
 

@@ -17,7 +17,7 @@ import numpy as np
 
 import main
 import src.stream_processor as processor
-from examples.streaming_web.backend.media_paths import build_overlay_demand_key
+from examples.streaming_web.media_paths import build_overlay_demand_key
 from main import MainApp
 from main import process_single_stream
 from main import StreamConfig

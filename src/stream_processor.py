@@ -14,20 +14,20 @@ import cv2
 import numpy as np
 from dotenv import load_dotenv
 
-from examples.streaming_web.backend.media_paths import (
+from examples.streaming_web.media_paths import (
     build_annotated_media_path,
 )
-from examples.streaming_web.backend.media_paths import build_media_path
-from examples.streaming_web.backend.media_paths import build_overlay_ready_key
-from examples.streaming_web.backend.media_paths import decode_media_segment
-from examples.streaming_web.backend.media_paths import OVERLAY_DEMAND_PREFIX
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.media_paths import build_media_path
+from examples.streaming_web.media_paths import build_overlay_ready_key
+from examples.streaming_web.media_paths import decode_media_segment
+from examples.streaming_web.media_paths import OVERLAY_DEMAND_PREFIX
+from examples.streaming_web.overlay_renderer import (
     normalise_label_language,
 )
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.overlay_renderer import (
     render_overlay_array,
 )
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.overlay_renderer import (
     SUPPORTED_LABEL_LANGUAGES,
 )
 from src.danger_detector import DangerDetector

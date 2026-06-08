@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from examples.auth.lifespan import global_lifespan
-from examples.streaming_web.backend.routers import (
+from examples.streaming_web.routers import (
     router as streaming_web_router,
 )
 
@@ -75,9 +75,9 @@ if __name__ == '__main__':
     main()
 
 '''
-uvicorn examples.streaming_web.backend.app:app \
+uvicorn examples.streaming_web.app:app \
     --host 127.0.0.1 --port 8800 --workers 4
 
-uv run uvicorn examples.streaming_web.backend.app:app\
+uv run uvicorn examples.streaming_web.app:app\
     --host 127.0.0.1 --port 8800 --workers 4
 '''

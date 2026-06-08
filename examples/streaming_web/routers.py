@@ -37,46 +37,46 @@ from examples.auth.redis_pool import get_redis_pool
 from examples.auth.redis_pool import get_redis_pool_ws
 from examples.auth.user_service import load_user_access_context
 from examples.local_notification_server.lang_config import LANGUAGES
-from examples.streaming_web.backend.media_paths import (
+from examples.streaming_web.media_paths import (
     build_annotated_media_path,
 )
-from examples.streaming_web.backend.media_paths import build_media_hls_url
-from examples.streaming_web.backend.media_paths import build_media_path
-from examples.streaming_web.backend.media_paths import build_media_webrtc_url
-from examples.streaming_web.backend.media_paths import (
+from examples.streaming_web.media_paths import build_media_hls_url
+from examples.streaming_web.media_paths import build_media_path
+from examples.streaming_web.media_paths import build_media_webrtc_url
+from examples.streaming_web.media_paths import (
     build_overlay_demand_key,
 )
-from examples.streaming_web.backend.media_paths import build_overlay_ready_key
-from examples.streaming_web.backend.media_paths import decode_media_segment
-from examples.streaming_web.backend.media_paths import encode_media_segment
-from examples.streaming_web.backend.media_paths import OVERLAY_DEMAND_PREFIX
-from examples.streaming_web.backend.media_paths import (
+from examples.streaming_web.media_paths import build_overlay_ready_key
+from examples.streaming_web.media_paths import decode_media_segment
+from examples.streaming_web.media_paths import encode_media_segment
+from examples.streaming_web.media_paths import OVERLAY_DEMAND_PREFIX
+from examples.streaming_web.media_paths import (
     parse_annotated_media_path,
 )
-from examples.streaming_web.backend.overlay_renderer import CLASS_LABELS
-from examples.streaming_web.backend.overlay_renderer import LANGUAGE_ALIASES
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.overlay_renderer import CLASS_LABELS
+from examples.streaming_web.overlay_renderer import LANGUAGE_ALIASES
+from examples.streaming_web.overlay_renderer import (
     normalise_label_language,
 )
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.overlay_renderer import (
     normalise_overlay_mode,
 )
-from examples.streaming_web.backend.overlay_renderer import (
+from examples.streaming_web.overlay_renderer import (
     SUPPORTED_LABEL_LANGUAGES,
 )
-from examples.streaming_web.backend.overlay_renderer import WARNING_LABELS
-from examples.streaming_web.backend.schemas import LabelListResponse
-from examples.streaming_web.backend.schemas import OverlayLanguageInfo
-from examples.streaming_web.backend.schemas import OverlayLanguageListResponse
-from examples.streaming_web.backend.schemas import StreamPlaybackRequest
-from examples.streaming_web.backend.utils import Utils
-from examples.streaming_web.backend.webrtc_service import (
+from examples.streaming_web.overlay_renderer import WARNING_LABELS
+from examples.streaming_web.schemas import LabelListResponse
+from examples.streaming_web.schemas import OverlayLanguageInfo
+from examples.streaming_web.schemas import OverlayLanguageListResponse
+from examples.streaming_web.schemas import StreamPlaybackRequest
+from examples.streaming_web.utils import Utils
+from examples.streaming_web.webrtc_service import (
     get_public_ice_servers,
 )
-from examples.streaming_web.backend.ws_handlers import (
+from examples.streaming_web.ws_handlers import (
     handle_metadata_stream_id_ws,
 )
-from examples.streaming_web.backend.ws_handlers import (
+from examples.streaming_web.ws_handlers import (
     metadata_stream_generator,
 )
 

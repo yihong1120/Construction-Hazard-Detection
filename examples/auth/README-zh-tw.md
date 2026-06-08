@@ -53,7 +53,7 @@ Redis 不儲存直播影像 frame。
 
 - `examples/db_management/`
 - `examples/local_notification_server/`
-- `examples/streaming_web/backend/`
+- `examples/streaming_web/`
 - `examples/violation_records/`
 - `examples/YOLO_server_api/backend/`
 

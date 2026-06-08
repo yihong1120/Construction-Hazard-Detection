@@ -4,11 +4,11 @@ import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
-from examples.streaming_web.backend.redis_service import build_metadata_key
-from examples.streaming_web.backend.redis_service import (
+from examples.streaming_web.redis_service import build_metadata_key
+from examples.streaming_web.redis_service import (
     fetch_latest_metadata_for_key,
 )
-from examples.streaming_web.backend.redis_service import (
+from examples.streaming_web.redis_service import (
     get_metadata_keys_for_label,
 )
 
@@ -23,7 +23,7 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
     def test_build_metadata_key_uses_encoded_site_and_stream(self) -> None:
         """Exercise this test."""
         with patch(
-            'examples.streaming_web.backend.redis_service.Utils.encode',
+            'examples.streaming_web.redis_service.Utils.encode',
             side_effect=lambda value: f'encoded({value})',
         ):
             key = build_metadata_key('site-a', 'cam-1')
