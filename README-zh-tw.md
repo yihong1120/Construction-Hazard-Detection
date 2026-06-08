@@ -93,40 +93,10 @@ FastAPI 服務組成。
 
 <img width="100%" src="./assets/flowcharts/site_safety_monitor_zh.png" alt="工地危害偵測執行架構">
 
-```text
-PostgreSQL stream_configs
-        |
-        v
-main.py
-        |
-        v
-src/stream_processor.py
-        |
-        +--> src/stream_capture.py 讀取 RTSP/HTTP/檔案影像
-        |
-        +--> src/yolo_worker.py 本機 worker process
-        |       - frame 透過 POSIX shared memory 傳遞
-        |       - queue 只放 metadata
-        |       - 每個 worker process 只載入一次模型
-        |
-        +--> src/danger_detector.py 產生安全警示
-        |
-        +--> src/media_stream_publisher.py 發布 H.264 到 MediaMTX
-        |
-        +--> src/violation_sender.py 上傳違規紀錄
-        |
-        +--> notifiers 發送 FCM / LINE / Telegram / broadcast 通知
-
-Streaming Web Backend
-        |
-        +--> 回傳 MediaMTX HLS/WebRTC 播放 URL
-        +--> 透過 SSE/WebSocket 傳送小型警示 metadata
-        +--> Redis 只用於 auth cache、metadata、overlay demand keys
-```
-
-Redis 不儲存直播影像 frame。直播影像由 MediaMTX 負責，Redis 只保存登入快取、
-FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready key
-等小型狀態。
+圖中整理了直播資料流、11 個偵測類別、安全警示規則，以及影像與 metadata 輸出。
+Redis 不儲存直播影像 frame；直播影像由 MediaMTX 負責，Redis 只保存登入快取、
+FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready key 等小型
+協調狀態。
 
 ## 目錄說明
 
@@ -173,20 +143,7 @@ uv export --format=requirements-txt --no-dev -o requirements.lock
 pip install -r requirements.lock
 ```
 
-### 2. 啟動基礎服務
-
-```bash
-docker compose up -d redis postgres media-server
-```
-
-若 PostgreSQL container 第一次啟動時沒有掛載初始化 schema，可手動匯入：
-
-```bash
-cat ./scripts/init.postgres.sql | docker exec -i postgres-container \
-  psql -U username -d construction_hazard_detection
-```
-
-### 3. 下載模型
+### 2. 下載模型
 
 ```bash
 hf download yihong1120/Construction-Hazard-Detection \
@@ -198,7 +155,7 @@ hf download yihong1120/Construction-Hazard-Detection \
 worker 模型命名規則為 `models/pt/best_<model_key>.pt`，例如
 `models/pt/best_yolo26n.pt`。
 
-### 4. 建立 `.env`
+### 3. 建立 `.env`
 
 可從 `.env.example` 開始調整。重要設定如下：
 
@@ -233,7 +190,113 @@ MEDIA_PUBLISH_ANNOTATED_STREAM=true
 
 正式部署請使用穩定且高熵的 `JWT_SECRET_KEY`，不要提交真正的 secret。
 
-### 5. 啟動 API
+### 4. 啟動基礎服務
+
+正常 database-backed runtime 需要 Redis、PostgreSQL 與 MediaMTX：
+
+```bash
+docker compose up -d redis postgres media-server
+```
+
+確認 containers 已啟動：
+
+```bash
+docker compose ps redis postgres media-server
+docker compose logs -f redis postgres media-server
+```
+
+如果 Python services 在 host 上執行，`.env` 使用本機位址：
+
+```dotenv
+DATABASE_URL='postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection'
+REDIS_HOST='127.0.0.1'
+REDIS_PORT=6379
+REDIS_PASSWORD='password'
+MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
+```
+
+如果 `main.py` 或 FastAPI services 在 Docker Compose 內執行，使用 service names：
+
+```dotenv
+DATABASE_URL='postgresql+asyncpg://username:password@postgres/construction_hazard_detection'
+REDIS_HOST='redis'
+MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://media-server:8554'
+```
+
+基礎服務分工：
+
+- PostgreSQL 儲存 users、sites、stream settings 與 violation records。
+- Redis 儲存 authentication cache、token cache、小型 live metadata 與 overlay
+  demand keys。
+- MediaMTX 接收 `main.py` 發布的 RTSP streams，並提供 HLS/WebRTC 播放。
+
+Redis 與 MediaMTX 都不負責保存違規圖片或資料庫紀錄。
+
+若 PostgreSQL container 第一次啟動時沒有掛載初始化 schema，可手動匯入：
+
+```bash
+cat ./scripts/init.postgres.sql | docker exec -i postgres-container \
+  psql -U username -d construction_hazard_detection
+```
+
+### 5. 設定 MediaMTX
+
+MediaMTX 是直播 media server。`main.py` 會透過 RTSP 將處理後的 H.264 stream
+發布到 MediaMTX，觀看端再透過 HLS 或 WebRTC 播放。Redis 只保存小型 metadata 與
+demand keys，不傳送 video frames。
+
+Docker Compose service 預設只綁定本機 ports：
+
+```text
+127.0.0.1:8554  RTSP ingest，給 main.py / ffmpeg 發布影像
+127.0.0.1:8890  HLS playback，對應 MediaMTX port 8888
+127.0.0.1:8889  WebRTC/WHEP playback
+```
+
+如果 `main.py` 在 host 上執行，使用：
+
+```dotenv
+MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
+MEDIA_PUBLIC_HLS_BASE_URL='/hazard/media'
+MEDIA_PUBLIC_WEBRTC_BASE_URL='/hazard/media/webrtc'
+```
+
+如果 `main.py` 在 Docker 內執行，使用 Compose service name：
+
+```dotenv
+MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://media-server:8554'
+```
+
+streaming backend 回傳的播放 URL 形狀如下：
+
+```text
+/hazard/media/<media-path>/index.m3u8
+/hazard/media/webrtc/<media-path>/whep
+```
+
+公開部署時，建議透過 Nginx proxy MediaMTX，並交給 `examples.streaming_web`
+做 media authorisation。可從
+`examples/streaming_web/nginx.hazard-media.conf` 開始調整：
+
+```text
+Nginx /hazard/media/*        -> MediaMTX HLS port 8888
+Nginx /hazard/media/webrtc/* -> MediaMTX WebRTC port 8889
+Nginx /hazard/api/media-auth -> examples.streaming_web /media-auth
+```
+
+建議的 live-buffer 預設值已放在 `docker-compose.yml`：
+
+```dotenv
+MTX_HLSSEGMENTDURATION=2s
+MTX_HLSSEGMENTCOUNT=7
+MTX_HLSALWAYSREMUX=yes
+MTX_HLSMUXERCLOSEAFTER=60s
+```
+
+降低 `MTX_HLSSEGMENTCOUNT` 可減少硬碟與記憶體使用量。只有在觀看端需要更長直播
+緩衝時才提高。
+
+### 6. 啟動 API
 
 請從 repo 根目錄分別啟動：
 
@@ -250,7 +313,7 @@ uvicorn examples.streaming_web.app:app --host 127.0.0.1 --port 8800 --workers 2
 uvicorn examples.YOLO_server_api.app:app --host 127.0.0.1 --port 8000 --workers 2
 ```
 
-### 6. 啟動影像處理
+### 7. 啟動影像處理
 
 ```bash
 python main.py

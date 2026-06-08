@@ -96,40 +96,11 @@ Below are examples of real-time hazard detection by the system.
 
 <img width="100%" src="./assets/flowcharts/site_safety_monitor_en.png" alt="Construction hazard detection runtime architecture">
 
-```text
-PostgreSQL stream_configs
-        |
-        v
-main.py
-        |
-        v
-src/stream_processor.py
-        |
-        +--> src/stream_capture.py reads RTSP/HTTP/file frames
-        |
-        +--> src/yolo_worker.py local worker processes
-        |       - frames are passed through POSIX shared memory
-        |       - queue messages contain metadata only
-        |       - models are loaded once per worker process
-        |
-        +--> src/danger_detector.py derives safety warnings
-        |
-        +--> src/media_stream_publisher.py publishes H.264 to MediaMTX
-        |
-        +--> src/violation_sender.py uploads violation records
-        |
-        +--> notifiers send FCM / LINE / Telegram / broadcast messages
-
-Streaming Web Backend
-        |
-        +--> returns MediaMTX HLS/WebRTC playback URLs
-        +--> sends compact warning metadata through SSE/WebSocket
-        +--> uses Redis only for auth cache, metadata, and overlay demand keys
-```
-
-Redis is not used to store live video frames. Live video is published to
-MediaMTX. Redis keeps small state such as authentication cache, FCM token cache,
-compact warning metadata, overlay demand keys, and overlay ready keys.
+The diagram summarises the live data path, the 11 configured detection classes,
+the safety-warning rules, and the video/metadata outputs. Redis is not used to
+store live video frames; MediaMTX owns live playback, while Redis keeps only
+small coordination state such as authentication cache, FCM token cache, compact
+warning metadata, overlay demand keys, and overlay ready keys.
 
 ## Repository Map
 
@@ -179,21 +150,7 @@ uv export --format=requirements-txt --no-dev -o requirements.lock
 pip install -r requirements.lock
 ```
 
-### 2. Start Infrastructure
-
-```bash
-docker compose up -d redis postgres media-server
-```
-
-For a fresh PostgreSQL container, import the schema if it was not mounted at
-container creation time:
-
-```bash
-cat ./scripts/init.postgres.sql | docker exec -i postgres-container \
-  psql -U username -d construction_hazard_detection
-```
-
-### 3. Download Models
+### 2. Download Models
 
 ```bash
 hf download yihong1120/Construction-Hazard-Detection \
@@ -205,7 +162,7 @@ hf download yihong1120/Construction-Hazard-Detection \
 Expected worker model filenames are `models/pt/best_<model_key>.pt`, for
 example `models/pt/best_yolo26n.pt`.
 
-### 4. Create `.env`
+### 3. Create `.env`
 
 Start from `.env.example`, then adjust hostnames and secrets.
 
@@ -243,7 +200,118 @@ MEDIA_PUBLISH_ANNOTATED_STREAM=true
 Use one stable, high-entropy `JWT_SECRET_KEY` for a deployment. Do not commit
 real secrets.
 
-### 5. Start APIs
+### 4. Start Infrastructure
+
+Redis, PostgreSQL, and MediaMTX are required for the normal database-backed
+runtime:
+
+```bash
+docker compose up -d redis postgres media-server
+```
+
+Check that the containers are running:
+
+```bash
+docker compose ps redis postgres media-server
+docker compose logs -f redis postgres media-server
+```
+
+When the Python services run on the host, use local addresses in `.env`:
+
+```dotenv
+DATABASE_URL='postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection'
+REDIS_HOST='127.0.0.1'
+REDIS_PORT=6379
+REDIS_PASSWORD='password'
+MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
+```
+
+When `main.py` or the FastAPI services run inside Docker Compose, use service
+names instead:
+
+```dotenv
+DATABASE_URL='postgresql+asyncpg://username:password@postgres/construction_hazard_detection'
+REDIS_HOST='redis'
+MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://media-server:8554'
+```
+
+Infrastructure roles:
+
+- PostgreSQL stores users, sites, stream settings, and violation records.
+- Redis stores authentication cache, token cache, compact live metadata, and
+  overlay demand keys.
+- MediaMTX receives RTSP streams from `main.py` and exposes HLS/WebRTC
+  playback.
+
+Redis and MediaMTX do not store violation images or database records.
+
+For a fresh PostgreSQL container, import the schema if it was not mounted at
+container creation time:
+
+```bash
+cat ./scripts/init.postgres.sql | docker exec -i postgres-container \
+  psql -U username -d construction_hazard_detection
+```
+
+### 5. Configure MediaMTX
+
+MediaMTX is the live media server. `main.py` publishes processed H.264 streams
+to MediaMTX over RTSP, and viewers play those streams through HLS or WebRTC.
+Redis only stores compact metadata and demand keys; it does not carry video
+frames.
+
+The Docker Compose service exposes local-only ports:
+
+```text
+127.0.0.1:8554  RTSP ingest from main.py / ffmpeg
+127.0.0.1:8890  HLS playback, mapped to MediaMTX port 8888
+127.0.0.1:8889  WebRTC/WHEP playback
+```
+
+Use these settings when `main.py` runs on the host:
+
+```dotenv
+MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
+MEDIA_PUBLIC_HLS_BASE_URL='/hazard/media'
+MEDIA_PUBLIC_WEBRTC_BASE_URL='/hazard/media/webrtc'
+```
+
+Use the Compose service name when `main.py` runs inside Docker:
+
+```dotenv
+MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://media-server:8554'
+```
+
+The streaming backend returns playback URLs shaped like:
+
+```text
+/hazard/media/<media-path>/index.m3u8
+/hazard/media/webrtc/<media-path>/whep
+```
+
+For public deployments, proxy MediaMTX through Nginx and protect it with
+`examples.streaming_web` media authorisation. Use
+`examples/streaming_web/nginx.hazard-media.conf` as the starting point:
+
+```text
+Nginx /hazard/media/*        -> MediaMTX HLS port 8888
+Nginx /hazard/media/webrtc/* -> MediaMTX WebRTC port 8889
+Nginx /hazard/api/media-auth -> examples.streaming_web /media-auth
+```
+
+Recommended live-buffer defaults are already in `docker-compose.yml`:
+
+```dotenv
+MTX_HLSSEGMENTDURATION=2s
+MTX_HLSSEGMENTCOUNT=7
+MTX_HLSALWAYSREMUX=yes
+MTX_HLSMUXERCLOSEAFTER=60s
+```
+
+Lower `MTX_HLSSEGMENTCOUNT` reduces disk and memory use. Increase it only when
+clients need a longer live playback buffer.
+
+### 6. Start APIs
 
 Run each service from the repository root:
 
@@ -260,7 +328,7 @@ Optional standalone detector API:
 uvicorn examples.YOLO_server_api.app:app --host 127.0.0.1 --port 8000 --workers 2
 ```
 
-### 6. Start Stream Processing
+### 7. Start Stream Processing
 
 ```bash
 python main.py
