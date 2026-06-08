@@ -45,17 +45,38 @@ PushTaskResult = bool | FcmSendResult
 
 
 def _site_user_cache_key(site_name: str) -> str:
-    """Build the Redis set key for site notification recipients."""
+    """Build the Redis set key for site notification recipients.
+
+    Args:
+        site_name: Site name used by notification requests.
+
+    Returns:
+        Redis set key containing recipient user IDs.
+    """
     return f'site_notification_users:{site_name}'
 
 
 def _site_user_cache_ready_key(site_name: str) -> str:
-    """Build the Redis readiness key for a site recipient index."""
+    """Build the Redis readiness key for a site recipient index.
+
+    Args:
+        site_name: Site name used by notification requests.
+
+    Returns:
+        Redis key indicating that the recipient index is ready.
+    """
     return f'site_notification_users_ready:{site_name}'
 
 
 def _site_user_cache_lock_key(site_name: str) -> str:
-    """Build the Redis lock key used while rebuilding a site index."""
+    """Build the Redis lock key used while rebuilding a site index.
+
+    Args:
+        site_name: Site name used by notification requests.
+
+    Returns:
+        Redis lock key for recipient index rebuilds.
+    """
     return f'site_notification_users_lock:{site_name}'
 
 
@@ -63,7 +84,15 @@ async def _fetch_site_notification_user_ids_from_db(
     site_name: str,
     db: AsyncSession,
 ) -> list[int] | None:
-    """Load the current recipient user IDs for a site from the database."""
+    """Load current recipient user IDs for a site from the database.
+
+    Args:
+        site_name: Site name to look up.
+        db: Async database session dependency.
+
+    Returns:
+        Active recipient user IDs, or None when the site does not exist.
+    """
     stmt = select(Site.id).where(Site.name == site_name)
     site_id_row = (await db.execute(stmt)).first()
     if site_id_row is None:
@@ -87,7 +116,16 @@ async def refresh_site_notification_user_cache(
     db: AsyncSession,
     rds: redis.Redis,
 ) -> list[int] | None:
-    """Rebuild the Redis recipient index for a site from the database."""
+    """Rebuild the Redis recipient index for a site from the database.
+
+    Args:
+        site_name: Site name to rebuild.
+        db: Async database session dependency.
+        rds: Redis connection used to write the recipient index.
+
+    Returns:
+        Active recipient user IDs, or None when the site does not exist.
+    """
     user_ids = await _fetch_site_notification_user_ids_from_db(site_name, db)
     if user_ids is None:
         await invalidate_site_notification_user_cache([site_name], rds)
@@ -108,7 +146,15 @@ async def _get_site_user_index_members(
     site_name: str,
     rds: redis.Redis,
 ) -> list[int]:
-    """Read recipient IDs from the Redis set for a site."""
+    """Read recipient IDs from the Redis set for a site.
+
+    Args:
+        site_name: Site name to read.
+        rds: Redis connection used to read the recipient index.
+
+    Returns:
+        Recipient user IDs from Redis.
+    """
     members = cast(
         Awaitable[set[bytes | str]],
         rds.smembers(_site_user_cache_key(site_name)),
@@ -120,7 +166,12 @@ async def invalidate_site_notification_user_cache(
     site_names: list[str],
     rds: redis.Redis,
 ) -> None:
-    """Delete Redis recipient indexes for the given sites."""
+    """Delete Redis recipient indexes for the given sites.
+
+    Args:
+        site_names: Site names whose indexes should be removed.
+        rds: Redis connection used to delete cache keys.
+    """
     keys: list[str] = []
     for site_name in site_names:
         keys.extend([
@@ -286,7 +337,14 @@ def _iter_push_tasks(
 
 
 def _notification_data(req: SiteNotifyRequest) -> dict[str, str]:
-    """Build stable FCM data fields for notification navigation."""
+    """Build stable FCM data fields for notification navigation.
+
+    Args:
+        req: Validated notification request.
+
+    Returns:
+        String-only FCM data payload.
+    """
     return {
         'navigate': 'violation_list_page',
         'violation_id': str(req.violation_id or ''),
@@ -298,7 +356,16 @@ def _build_push_task(
     lang: str,
     tokens: list[str],
 ) -> Awaitable[PushTaskResult] | None:
-    """Build one FCM batch task for a supported language."""
+    """Build one FCM batch task for a supported language.
+
+    Args:
+        req: Validated notification request.
+        lang: Language code for the target tokens.
+        tokens: Device tokens in this batch.
+
+    Returns:
+        Awaitable send task, or None when the language/body cannot be sent.
+    """
     if not tokens:
         return None
 
@@ -335,14 +402,28 @@ def _build_push_task(
 
 
 def _push_task_succeeded(result: PushTaskResult) -> bool:
-    """Return whether a push task result represents success."""
+    """Return whether a push task result represents success.
+
+    Args:
+        result: Result returned by a push task.
+
+    Returns:
+        True when the push task succeeded.
+    """
     return bool(result)
 
 
 def _invalid_tokens_from_push_result(
     result: PushTaskResult,
 ) -> tuple[str, ...]:
-    """Return invalid FCM tokens collected from a push result."""
+    """Return invalid FCM tokens collected from a push result.
+
+    Args:
+        result: Result returned by a push task.
+
+    Returns:
+        Invalid tokens reported by Firebase.
+    """
     if isinstance(result, FcmSendResult):
         return result.invalid_tokens
     return ()
@@ -353,12 +434,19 @@ async def _iter_push_tasks_streaming(
     user_ids: list[int],
     rds: redis.Redis,
 ) -> AsyncIterator[Awaitable[PushTaskResult]]:
-    """
-    Stream Redis token chunks into FCM batch tasks.
+    """Stream Redis token chunks into FCM batch tasks.
 
     This avoids materialising all device tokens in a single
     ``lang_to_tokens`` map. Memory is bounded by the Redis chunk, one partial
     FCM batch per active language, and the executor's active tasks.
+
+    Args:
+        req: Validated notification request.
+        user_ids: Recipient user IDs to fetch tokens for.
+        rds: Redis connection used to read token hashes.
+
+    Yields:
+        Awaitable FCM batch send tasks.
     """
     pending_batches: DefaultDict[str, list[str]] = defaultdict(list)
 
@@ -392,12 +480,18 @@ def _build_push_tasks(
     req: SiteNotifyRequest,
     lang_to_tokens: DefaultDict[str, list[str]],
 ) -> list[Awaitable[PushTaskResult]]:
-    """
-    Build push tasks for compatibility with existing direct callers.
+    """Build push tasks for compatibility with existing direct callers.
 
     Request handlers should prefer ``_iter_push_tasks_streaming`` with
     ``_execute_push_tasks_bounded_streaming`` so large recipient lists do not
     materialize every device token or FCM coroutine at once.
+
+    Args:
+        req: Validated notification request.
+        lang_to_tokens: Tokens grouped by language.
+
+    Returns:
+        Awaitable FCM batch send tasks.
     """
     return list(_iter_push_tasks(req, lang_to_tokens))
 
@@ -410,10 +504,16 @@ async def _execute_push_tasks_bounded(
         Callable[[tuple[str, ...]], Awaitable[object]] | None
     ) = None,
 ) -> tuple[bool, int | None, int | None, str | None]:
-    """
-    Execute push tasks with bounded concurrency and aggregate counts.
+    """Execute push tasks with bounded concurrency and aggregate counts.
 
-    Returns ``(ok, total_batches, successful_batches, error_message)``.
+    Args:
+        push_tasks: Finite iterable of awaitable FCM batch send tasks.
+        timeout: Maximum execution time in seconds.
+        max_concurrency: Maximum number of active send tasks.
+        invalid_token_handler: Optional callback receiving invalid tokens.
+
+    Returns:
+        Tuple of `(ok, total_batches, successful_batches, error_message)`.
     """
     pending: set[asyncio.Future[PushTaskResult]] = set()
 
@@ -483,11 +583,19 @@ async def _execute_push_tasks_bounded_streaming(
         Callable[[tuple[str, ...]], Awaitable[object]] | None
     ) = None,
 ) -> tuple[bool, int | None, int | None, str | None]:
-    """
-    Execute streamed push tasks with bounded concurrency.
+    """Execute streamed push tasks with bounded concurrency.
 
     The async iterable may fetch Redis chunks while producing tasks, so this
     executor pulls only enough batches to fill the concurrency window.
+
+    Args:
+        push_tasks: Async iterable that yields awaitable FCM batch send tasks.
+        timeout: Maximum execution time in seconds.
+        max_concurrency: Maximum number of active send tasks.
+        invalid_token_handler: Optional callback receiving invalid tokens.
+
+    Returns:
+        Tuple of `(ok, total_batches, successful_batches, error_message)`.
     """
     pending: set[asyncio.Future[PushTaskResult]] = set()
     max_workers = max(1, max_concurrency)

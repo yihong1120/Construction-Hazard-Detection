@@ -25,9 +25,14 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def notification_lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """
-    Lifespan event handler for FastAPI app.
-    Initialise global resources (DB/Redis) and Firebase Admin SDK at startup.
+    """Initialise notification-server resources during application lifespan.
+
+    Args:
+        app: FastAPI application instance receiving shared resources.
+
+    Yields:
+        Control to FastAPI while shared database, Redis, and Firebase resources
+        are available.
     """
     cred_path = os.getenv(
         'FIREBASE_CRED_PATH',
@@ -47,7 +52,15 @@ async def validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
-    """Log request validation failures with enough context to fix callers."""
+    """Log request validation failures and return a structured response.
+
+    Args:
+        request: Incoming FastAPI request that failed validation.
+        exc: Validation exception raised by FastAPI.
+
+    Returns:
+        JSON response containing FastAPI's validation details.
+    """
     body = await request.body()
     body_preview = body[:2000].decode('utf-8', errors='replace')
     logger.warning(
@@ -72,9 +85,7 @@ app.include_router(notification_router)
 
 
 def main() -> None:
-    """
-    Main function to run the FastAPI application using Uvicorn.
-    """
+    """Run the notification FastAPI application with Uvicorn."""
     uvicorn.run(app, host='127.0.0.1', port=8003)
 
 

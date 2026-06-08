@@ -46,7 +46,14 @@ _dedupe_ttl_without_violation_id: int = 15
 
 
 def _notification_dedupe_key(req: SiteNotifyRequest) -> str:
-    """Build a stable Redis dedupe key for a notification request."""
+    """Build a stable Redis dedupe key for a notification request.
+
+    Args:
+        req: Validated notification request.
+
+    Returns:
+        Redis key used to suppress duplicate notification sends.
+    """
     if req.violation_id is not None:
         return (
             'fcm_notification_dedupe:'
@@ -69,7 +76,14 @@ def _notification_dedupe_key(req: SiteNotifyRequest) -> str:
 
 
 def _notification_dedupe_ttl(req: SiteNotifyRequest) -> int:
-    """Return the dedupe TTL for a notification request."""
+    """Return the dedupe TTL for a notification request.
+
+    Args:
+        req: Validated notification request.
+
+    Returns:
+        TTL in seconds for the request's dedupe key.
+    """
     if req.violation_id is not None:
         return _dedupe_ttl_with_violation_id
     return _dedupe_ttl_without_violation_id
@@ -79,7 +93,15 @@ async def _claim_notification_send(
     req: SiteNotifyRequest,
     rds: redis.Redis,
 ) -> bool:
-    """Claim a notification send slot across all notification servers."""
+    """Claim a notification send slot across all notification servers.
+
+    Args:
+        req: Validated notification request.
+        rds: Redis connection used to claim the dedupe key.
+
+    Returns:
+        True when this server owns the send slot.
+    """
     return bool(
         await rds.set(
             _notification_dedupe_key(req),
@@ -96,8 +118,7 @@ async def store_fcm_token(
     db: AsyncSession = Depends(get_db),
     rds: redis.Redis = Depends(get_redis_pool),
 ) -> dict[str, str]:
-    """
-    Store an FCM device token in Redis.
+    """Store an FCM device token in Redis.
 
     A Redis hash is used to store token-language pairs:
     - Key: "fcm_tokens:{user_id}"
@@ -105,19 +126,16 @@ async def store_fcm_token(
     - Value: Language code (e.g., 'en-GB')
 
     Args:
-        req (TokenRequest):
-            Data model containing the user's ID and device token.
-        db (AsyncSession):
-            Async database session dependency for querying user data.
-        rds (redis.Redis):
-            Redis connection dependency for storing and retrieving token data.
+        req: Payload containing the user ID, device token, and language.
+        db: Async database session dependency.
+        rds: Redis connection dependency.
 
     Raises:
-        HTTPException:
-            Raised with status code 404 if the specified user does not exist.
+        HTTPException: Raised when the user does not exist or the requested
+            device language is unsupported.
 
     Returns:
-        dict[str, str]: A success message indicating the token was stored.
+        Success message indicating that the token was stored.
     """
     # Validate user existence
     stmt_user = select(User.id).where(User.id == req.user_id)
@@ -148,19 +166,15 @@ async def delete_fcm_token(
     db: AsyncSession = Depends(get_db),
     rds: redis.Redis = Depends(get_redis_pool),
 ) -> dict[str, str]:
-    """
-    Delete an FCM device token from Redis with optimised validation.
+    """Delete an FCM device token from Redis.
 
     Args:
-        req (TokenRequest):
-            Data model containing the user's ID and device token.
-        db (AsyncSession):
-            Async database session dependency for querying user data.
-        rds (redis.Redis):
-            Redis connection dependency for storing and retrieving token data.
+        req: Payload containing the user ID and device token.
+        db: Async database session dependency.
+        rds: Redis connection dependency.
 
     Returns:
-        dict[str, str]: A message indicating the result of the deletion.
+        Message indicating whether the token was deleted.
     """
     # Validate user existence
     stmt_user = select(User.id).where(User.id == req.user_id)
@@ -196,24 +210,17 @@ async def send_fcm_notification(
     _cred: JwtAuthorizationCredentials = Security(jwt_access),
     rds: redis.Redis = Depends(get_redis_pool),
 ) -> dict[str, object]:
-    """
-    Send a Firebase Cloud Messaging (FCM) notification to all users of a site.
+    """Send an FCM notification to subscribed users for one site.
 
     Args:
-        req (SiteNotifyRequest):
-            The notification request, including site, stream name, body, image
-            path, and violation ID.
-        db (AsyncSession):
-            Async database session dependency for querying site and user data.
-        _cred (JwtAuthorizationCredentials):
-            JWT credentials for authentication (not used directly).
-        rds (redis.Redis):
-            Redis connection dependency for retrieving device tokens.
+        req: Notification request including site, stream name, warning body,
+            optional image path, and optional violation ID.
+        db: Async database session dependency.
+        _cred: JWT credentials required for authentication.
+        rds: Redis connection dependency.
 
     Returns:
-        dict[str, object]:
-            A dictionary indicating success and a message about
-            the notification process.
+        Response payload containing success status, message, and batch stats.
     """
     if not req.body:
         return {'success': False, 'message': 'Body is empty, nothing to send.'}
@@ -306,8 +313,17 @@ async def _list_notification_scope_sites(
     db: AsyncSession,
     me: User,
 ) -> list[Site]:
-    """Return the sites the current user may manage notification settings
-    for.
+    """Return sites the current user may manage notification settings for.
+
+    Args:
+        db: Async database session dependency.
+        me: Current authenticated user.
+
+    Returns:
+        Sites visible for notification preference management.
+
+    Raises:
+        HTTPException: Raised when a non-super-admin user has no group.
     """
     if is_super_admin(me):
         return await list_sites(db)
@@ -321,7 +337,16 @@ def _serialize_site_preferences(
     pref_map: dict[int, bool],
     access_site_ids: set[int],
 ) -> list[SiteNotificationPreferenceOut]:
-    """Build the unified response payload for notification preferences."""
+    """Build the unified response payload for notification preferences.
+
+    Args:
+        sites: Sites in the current user's notification-management scope.
+        pref_map: Explicit notification preference values by site ID.
+        access_site_ids: Sites enabled by effective site access.
+
+    Returns:
+        Serialised notification preference records.
+    """
     return [
         SiteNotificationPreferenceOut(
             site_id=site.id,
@@ -341,7 +366,15 @@ async def list_site_notification_preferences(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ) -> list[SiteNotificationPreferenceOut]:
-    """List sites the current user can subscribe to for notifications."""
+    """List notification preferences visible to the current user.
+
+    Args:
+        db: Async database session dependency.
+        me: Current authenticated user.
+
+    Returns:
+        Per-site notification preference records.
+    """
     sites = await _list_notification_scope_sites(db, me)
     if not sites:
         return []
@@ -384,7 +417,21 @@ async def update_site_notification_preferences(
     me: User = Depends(get_current_user),
     rds: redis.Redis = Depends(get_redis_pool),
 ) -> list[SiteNotificationPreferenceOut]:
-    """Replace the current user's site notification preferences."""
+    """Replace the current user's site notification preferences.
+
+    Args:
+        payload: Full preference replacement payload.
+        db: Async database session dependency.
+        me: Current authenticated user.
+        rds: Redis connection used to refresh recipient caches.
+
+    Returns:
+        Updated per-site notification preference records.
+
+    Raises:
+        HTTPException: Raised when the user requests a site outside their
+            management scope.
+    """
     sites = await _list_notification_scope_sites(db, me)
     allowed_site_ids = {site.id for site in sites}
     requested_site_ids = {item.site_id for item in payload.preferences}

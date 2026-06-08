@@ -304,7 +304,14 @@ LANGUAGE_ALIASES: dict[str, str] = {
 
 
 def normalize_language(language: str | None) -> str | None:
-    """Return the supported notification language code for a device value."""
+    """Return the supported notification language code for a device value.
+
+    Args:
+        language: Raw language value from a device or client request.
+
+    Returns:
+        Normalised BCP 47 language code, or None when unsupported.
+    """
     if not language:
         return None
     candidate = language.strip().replace('_', '-')
@@ -314,39 +321,31 @@ def normalize_language(language: str | None) -> str | None:
 
 
 class Translator:
-    """
-    A class to handle translations based on the provided language.
-    """
+    """Translate warning payloads into supported notification languages."""
 
     @staticmethod
     def translate_from_dict(
         body_dict: Warnings,
         language: str,
     ) -> list[str]:
-        """
-        Translate a dictionary of warning messages into the specified language.
+        """Translate warning payload entries into the requested language.
 
         Example:
-            body_dict = {
-                "warning_close_to_vehicle": {"count": "3"},
-                "warning_no_safety_vest": {}
-            }
-            language = "zh-TW"
-
-            => [
-                "警告: 有3人過於靠近車輛!",
-                "警告: 有人沒有穿安全背心!"
-            ]
+            ```python
+            Translator.translate_from_dict(
+                {'warning_close_to_vehicle': {'count': 3}},
+                'zh-TW',
+            )
+            ```
 
         Args:
-            body_dict:
-                A dictionary where each key corresponds to a warning message
-                and its value is a dictionary of placeholders to be replaced.
-            language (str):
-                The locale code (e.g. "en-GB", "zh-TW") to use.
+            body_dict: Warning-key mapping whose values contain template
+                placeholders such as `count`.
+            language: Requested locale code, such as `en-GB` or `zh-TW`.
 
         Returns:
-            list[str]: A list of translated warning messages.
+            Translated warning messages. Unsupported languages return an empty
+            list.
         """
         normalized_language = normalize_language(language)
         if normalized_language is None:
@@ -373,9 +372,7 @@ class Translator:
 
 
 def main() -> None:
-    """
-    Simple demonstration of the Translator class's translate_from_dict method.
-    """
+    """Print a small translation demonstration for local manual testing."""
     body_dict = {
         'warning_no_hardhat': {'count': 2},
         'warning_no_safety_vest': {'count': 1},

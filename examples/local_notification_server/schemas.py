@@ -6,15 +6,13 @@ from src.warning_types import MutableWarnings
 
 
 class TokenRequest(BaseModel):
-    """
-    Schema model for registering a device token for push notifications.
+    """Request payload for registering or deleting an FCM device token.
 
     Attributes:
-        user_id (int): Unique identifier of the user.
-        device_token (str): Device token used for sending notifications.
-        device_lang (Optional[str]):
-            Preferred device language. Required by ``/store_token`` and
-            ignored by ``/delete_token``.
+        user_id: Unique user identifier.
+        device_token: Device token used by Firebase Cloud Messaging.
+        device_lang: Preferred device language. Required by `/store_token` and
+            ignored by `/delete_token`.
     """
 
     user_id: int
@@ -23,18 +21,14 @@ class TokenRequest(BaseModel):
 
 
 class SiteNotifyRequest(BaseModel):
-    """
-    Schema model for notifying a site-based safety violation or event.
+    """Request payload for a site-based safety notification.
 
     Attributes:
-        site (str): Name or identifier of the site.
-        stream_name (str): Name of the video stream associated with the event.
-        body:
-            Detection result data structured by category and item.
-        image_path (Optional[str]):
-            URL or path to the image related to the notification.
-        violation_id (Optional[int]):
-            Unique identifier for the violation, if applicable.
+        site: Site name or identifier.
+        stream_name: Camera stream name associated with the event.
+        body: Warning payload grouped by warning key.
+        image_path: Optional URL or path to the violation image.
+        violation_id: Optional unique violation identifier.
     """
 
     site: str
@@ -45,20 +39,37 @@ class SiteNotifyRequest(BaseModel):
 
 
 class SiteNotificationPreferenceIn(BaseModel):
-    """Requested notification status for one site."""
+    """Requested notification status for one site.
+
+    Attributes:
+        site_id: Site identifier.
+        is_enabled: Whether notifications should be enabled for this user and
+            site.
+    """
 
     site_id: int
     is_enabled: bool
 
 
 class SiteNotificationPreferenceUpdateRequest(BaseModel):
-    """Full notification preference payload from the settings page."""
+    """Full notification preference payload from the settings page.
+
+    Attributes:
+        preferences: Requested per-site notification preferences.
+    """
 
     preferences: list[SiteNotificationPreferenceIn]
 
 
 class SiteNotificationPreferenceOut(BaseModel):
-    """Notification subscription status for one site."""
+    """Notification subscription status for one site.
+
+    Attributes:
+        site_id: Site identifier.
+        site_name: Human-readable site name.
+        group_name: Optional group name associated with the site.
+        is_enabled: Whether notifications are enabled for the current user.
+    """
 
     site_id: int
     site_name: str

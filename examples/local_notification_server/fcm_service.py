@@ -12,33 +12,36 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FcmSendResult:
-    """Result for one FCM batch send."""
+    """Result for one FCM batch send.
+
+    Attributes:
+        success_count: Number of successfully delivered messages.
+        failure_count: Number of failed message deliveries.
+        invalid_tokens: Device tokens that Firebase reported as unusable.
+    """
 
     success_count: int
     failure_count: int
     invalid_tokens: tuple[str, ...] = ()
 
     def __bool__(self) -> bool:
+        """Return whether every message in the batch was sent successfully.
+
+        Returns:
+            True when at least one message succeeded and none failed.
+        """
         return self.success_count > 0 and self.failure_count == 0
 
 
 def init_firebase_app(cred_path: str, project_id: str) -> None:
-    """
-    Initialises the Firebase Admin SDK application.
+    """Initialise the Firebase Admin SDK application once.
 
     Args:
-        cred_path (str): Path to the Firebase service account key JSON file.
-        project_id (str): The GCP/Firebase project ID.
+        cred_path: Path to the Firebase service account key JSON file.
+        project_id: GCP/Firebase project ID.
 
     Raises:
-        ValueError: If cred_path or project_id is empty.
-
-    Returns:
-        None
-
-    Note:
-        This function will only initialise the Firebase app if it has not
-        already been initialised.
+        ValueError: Raised when `cred_path` or `project_id` is empty.
     """
     # Validate input parameters
     if not cred_path:
@@ -84,38 +87,18 @@ async def send_fcm_notification_service(
     image_path: str | None = None,
     data: dict[str, str] | None = None,
 ) -> FcmSendResult:
-    """
-    Sends FCM notifications to a list of device tokens.
+    """Send one FCM notification payload to a batch of device tokens.
 
     Args:
-        device_tokens (list[str]):
-            A list of device tokens to which the notification will be sent.
-            These tokens should be valid FCM device tokens.
-        title (str):
-            The title of the notification.
-        body (str):
-            The body content of the notification.
-        image_path (str | None, optional):
-            Optional path to an image to include with the notification.
-            This can be a URL or a local file path. Defaults to None.
-        data (dict[str, str] | None, optional):
-            Optional additional data to include with the notification.
-            This can be used for custom payloads or extra information.
-            Defaults to None.
+        device_tokens: FCM device tokens receiving the notification.
+        title: Notification title.
+        body: Notification body text.
+        image_path: Optional image URL or path included in the notification.
+        data: Optional custom FCM data payload.
 
     Returns:
-        FcmSendResult:
-            Batch result. It is truthy only when all notifications in the
-            batch were sent successfully.
-
-    Raises:
-        None explicitly. Any exceptions during sending will be caught,
-        logged, and the function will return False.
-
-    Notes:
-        This function uses the Firebase Admin SDK to send notifications to
-        multiple devices. Android and iOS configurations are set for high
-        priority and default sounds.
+        Batch send result. It is truthy only when all messages in the batch
+        were sent successfully.
     """
     # Return early if no device tokens are provided
     if not device_tokens:
@@ -167,7 +150,14 @@ async def send_fcm_notification_service(
 
 
 def _is_invalid_registration_token_error(exc: object) -> bool:
-    """Return True only for FCM errors that mark a token as unusable."""
+    """Return whether an FCM exception marks a token as unusable.
+
+    Args:
+        exc: Firebase exception object or compatible error.
+
+    Returns:
+        True when the token should be removed from Redis.
+    """
     if isinstance(exc, messaging.UnregisteredError):
         return True
     if isinstance(exc, messaging.SenderIdMismatchError):
