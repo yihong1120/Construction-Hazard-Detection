@@ -8,10 +8,11 @@ YOLO worker 使用已匯出的 `.pt` 模型。
 ## 主要腳本
 
 - `train.py`：訓練、驗證、預測與匯出 Ultralytics 模型。
-- `export_int8_trt.py`：在有 calibration data 時匯出 TensorRT INT8 engine。
-- `int_gen.py`：準備 INT8 匯出的 calibration images。
 - `QAT.py`：quantisation-aware training 實驗。
 - `test.py`：小型預測/測試 helper。
+
+TensorRT engine 重建工具位於 `scripts/rebuild_tensorrt_engines.py` 與
+`scripts/rebuild_single_engine.py`。
 
 ## 訓練模型
 

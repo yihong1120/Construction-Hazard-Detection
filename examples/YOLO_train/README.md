@@ -9,11 +9,11 @@ files through the YOLO worker path.
 ## Main Scripts
 
 - `train.py`: trains, validates, predicts, and exports Ultralytics models.
-- `export_int8_trt.py`: exports TensorRT INT8 engines when calibration data is
-  available.
-- `int_gen.py`: prepares calibration images for INT8 export.
 - `QAT.py`: quantisation-aware training experiment.
 - `test.py`: small prediction/testing helper.
+
+TensorRT engine rebuild helpers live in `scripts/rebuild_tensorrt_engines.py`
+and `scripts/rebuild_single_engine.py`.
 
 ## Train A Model
 

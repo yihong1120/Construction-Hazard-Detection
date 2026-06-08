@@ -3,7 +3,7 @@
 
 批量重建 TensorRT INT8 engine。
 
-实现上参考 examples/YOLO_train/export_int8_trt.py：
+实现说明：
 - 使用 Ultralytics 的 model.export(format='engine', int8=True, data=...) 进行导出
 - dynamic=False, batch=1, workspace=4
 """

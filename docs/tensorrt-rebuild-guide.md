@@ -23,7 +23,7 @@ uv run python scripts/rebuild_tensorrt_engines.py
 1. 自动备份旧的 engine 文件到 `models/int8_engine_backup/`
 2. 从 PT 或 ONNX 文件重新导出所有模型
 3. 使用 INT8 量化以获得最佳性能
-4. 优先使用 `examples/YOLO_train/cv_dataset/*.yaml` 作为 INT8 校准数据（参考 `examples/YOLO_train/export_int8_trt.py`），若不存在才回退到 `coco128.yaml`
+4. 优先使用 `examples/YOLO_train/cv_dataset/*.yaml` 作为 INT8 校准数据，若不存在才回退到 `coco128.yaml`
 
 **预计时间**: 每个模型约 2-5 分钟，总计 10-25 分钟
 
