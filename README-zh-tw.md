@@ -31,8 +31,8 @@
    <a href="https://fastapi.tiangolo.com/">
       <img src="https://img.shields.io/badge/FastAPI-0.128.0-blue?logo=fastapi" alt="FastAPI 0.128.0">
    </a>
-   <a href="https://pypi.org/project/fastmcp/2.14.4/">
-      <img src="https://img.shields.io/badge/FastMCP-2.14.4-purple" alt="FastMCP 2.14.4">
+   <a href="https://pypi.org/project/mcp/1.25.0/">
+      <img src="https://img.shields.io/badge/MCP%20SDK-1.25.0-purple" alt="MCP Python SDK 1.25.0">
    </a>
    <a href="https://redis.io/">
       <img src="https://img.shields.io/badge/redis--py-7.1.0-red?logo=redis" alt="redis-py 7.1.0">

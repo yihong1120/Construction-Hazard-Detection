@@ -49,8 +49,8 @@ BROADCAST_URL=http://127.0.0.1:8080/broadcast
 API_REQUEST_TIMEOUT=30
 ```
 
-MCP server 會直接 import `mcp.server.fastmcp.FastMCP`。請透過專案 dependency set 安裝
-FastMCP package。
+MCP server 會直接從 MCP Python SDK import `mcp.server.fastmcp.FastMCP`。請透過專案
+dependency set 安裝 `mcp` package。
 
 ## 注意事項
 

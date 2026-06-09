@@ -20,11 +20,11 @@ dependencies = [
   "transformers==5.0.0",
   "cloudinary==1.44.1",
   "fastapi==0.128.0",
-  "fastmcp==2.14.4",
   "firebase_admin==7.1.0",
   "httpx==0.28.1",
   "huggingface_hub==1.3.5",
   "jsonschema==4.26.0",
+  "mcp==1.25.0",
   "numpy==2.4.1",
   "opencv_python==4.11.0.86",
   "opencv_python_headless==4.11.0.86",
@@ -42,7 +42,7 @@ dependencies = [
   "redis==7.1.0",
   "sahi==0.11.36",
   "schedule==1.2.2",
-  "scipy==1.13.1",
+  "scipy==1.16.3",
   "scikit-learn==1.8.0",
   "shapely==2.1.2",
   "speedtest-cli==2.1.3",
@@ -73,7 +73,10 @@ dev = [
 ]
 
 [tool.uv]
-# Keep default behavior; uv will use this pyproject for dependency resolution.
+# This project is deployed on Linux hosts with CUDA/TensorRT dependencies.
+environments = [
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [tool.mypy]
 show_error_codes = true

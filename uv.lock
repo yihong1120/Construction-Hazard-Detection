@@ -501,11 +501,11 @@ dependencies = [
     { name = "ckip-transformers" },
     { name = "cloudinary" },
     { name = "fastapi" },
-    { name = "fastmcp" },
     { name = "firebase-admin" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "jsonschema" },
+    { name = "mcp" },
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "opencv-python-headless" },
@@ -566,11 +566,11 @@ requires-dist = [
     { name = "cloudinary", specifier = "==1.44.1" },
     { name = "codecov", marker = "extra == 'dev'", specifier = "==2.1.13" },
     { name = "fastapi", specifier = "==0.128.0" },
-    { name = "fastmcp", specifier = "==2.14.4" },
     { name = "firebase-admin", specifier = "==7.1.0" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "huggingface-hub", specifier = "==1.3.5" },
     { name = "jsonschema", specifier = "==4.26.0" },
+    { name = "mcp", specifier = "==1.25.0" },
     { name = "numpy", specifier = "==2.4.1" },
     { name = "opencv-python", specifier = "==4.11.0.86" },
     { name = "opencv-python-headless", specifier = "==4.11.0.86" },
@@ -593,6 +593,7 @@ requires-dist = [
     { name = "sahi", specifier = "==0.11.36" },
     { name = "schedule", specifier = "==1.2.2" },
     { name = "scikit-learn", specifier = "==1.8.0" },
+    { name = "scipy", specifier = "==1.16.3" },
     { name = "shapely", specifier = "==2.1.2" },
     { name = "speedtest-cli", specifier = "==2.1.3" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.0.46" },
@@ -858,35 +859,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/52/08/8c8508db6c7b9aae8f7175046af41baad690771c9bcde676419965e338c7/fastapi-0.128.0.tar.gz", hash = "sha256:1cc179e1cef10a6be60ffe429f79b829dce99d8de32d7acb7e6c8dfdf7f2645a", size = 365682, upload-time = "2025-12-27T15:21:13.714Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/05/5cbb59154b093548acd0f4c7c474a118eda06da25aa75c616b72d8fcd92a/fastapi-0.128.0-py3-none-any.whl", hash = "sha256:aebd93f9716ee3b4f4fcfe13ffb7cf308d99c9f3ab5622d8877441072561582d", size = 103094, upload-time = "2025-12-27T15:21:12.154Z" },
-]
-
-[[package]]
-name = "fastmcp"
-version = "2.14.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "authlib" },
-    { name = "cyclopts" },
-    { name = "exceptiongroup" },
-    { name = "httpx" },
-    { name = "jsonref" },
-    { name = "jsonschema-path" },
-    { name = "mcp" },
-    { name = "openapi-pydantic" },
-    { name = "packaging" },
-    { name = "platformdirs" },
-    { name = "py-key-value-aio", extra = ["disk", "keyring", "memory"] },
-    { name = "pydantic", extra = ["email"] },
-    { name = "pydocket" },
-    { name = "pyperclip" },
-    { name = "python-dotenv" },
-    { name = "rich" },
-    { name = "uvicorn" },
-    { name = "websockets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/a9/a57d5e5629ebd4ef82b495a7f8e346ce29ef80cc86b15c8c40570701b94d/fastmcp-2.14.4.tar.gz", hash = "sha256:c01f19845c2adda0a70d59525c9193be64a6383014c8d40ce63345ac664053ff", size = 8302239, upload-time = "2026-01-22T17:29:37.024Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/41/c4d407e2218fd60d84acb6cc5131d28ff876afecf325e3fd9d27b8318581/fastmcp-2.14.4-py3-none-any.whl", hash = "sha256:5858cff5e4c8ea8107f9bca2609d71d6256e0fce74495912f6e51625e466c49a", size = 417788, upload-time = "2026-01-22T17:29:35.159Z" },
 ]
 
 [[package]]
