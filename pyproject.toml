@@ -15,7 +15,6 @@ dependencies = [
   "albumentationsx==2.0.15",
   "apscheduler==3.11.2",
   "asyncpg==0.31.0",
-  "authlib==1.6.6",
   "ckip_transformers==0.3.4",
   "transformers==5.0.0",
   "cloudinary==1.44.1",

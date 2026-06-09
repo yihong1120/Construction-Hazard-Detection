@@ -4,7 +4,6 @@ aiosqlite==0.22.1
 albumentationsx==2.3.1
 apscheduler==3.11.2
 asyncpg==0.31.0
-authlib==1.7.0
 ckip_transformers==0.3.4
 cloudinary==1.44.1
 codecov==2.1.13
