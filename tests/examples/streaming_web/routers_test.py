@@ -227,6 +227,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'streams': []})
+        self.assertIn('hazard_media_session=', response.headers['set-cookie'])
 
     def test_stream_listing_uses_clean_hls_by_default(self) -> None:
         """Use clean HLS by default; overlay playback is negotiated later."""
@@ -328,6 +329,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             body['playback_url'],
             '/hazard/media/hazard_bGFiZWwx_Q2FtMQ/index.m3u8',
         )
+        self.assertIn('hazard_media_session=', response.headers['set-cookie'])
         self.fake_redis.set.assert_not_called()
 
     @patch('examples.streaming_web.routers.get_user_and_sites')
@@ -370,6 +372,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             '/hazard/media/'
             'hazard_bGFiZWwx_Q2FtMQ_annotated_emgtVFc/index.m3u8',
         )
+        self.assertIn('hazard_media_session=', response.headers['set-cookie'])
         self.fake_redis.set.assert_awaited_once()
 
     @patch('examples.streaming_web.routers.get_user_and_sites')
@@ -404,6 +407,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['status'], 'ready')
+        self.assertIn('hazard_media_session=', response.headers['set-cookie'])
 
     # -----------------------------
     # Test WebSocket endpoints (basic endpoint existence)

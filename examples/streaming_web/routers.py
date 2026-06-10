@@ -448,6 +448,14 @@ def _set_media_session_cookie(response: Response, token: str) -> None:
     )
 
 
+def _set_media_session_cookie_for_user(
+    response: Response,
+    username: str,
+) -> None:
+    """Attach a fresh media session cookie for playback API responses."""
+    _set_media_session_cookie(response, _create_media_session_token(username))
+
+
 def _extract_media_path_from_uri(uri: str) -> str:
     """Extract the MediaMTX stream path from an external media URI."""
     path = uri.split('?', 1)[0]
@@ -735,6 +743,10 @@ async def request_stream_playback(
     rds: redis.Redis = Depends(get_redis_pool),
 ) -> JSONResponse:
     """Return a clean or shared overlay playback URL for one camera."""
+    username: str | None = credentials.subject.get('username')
+    if not username:
+        raise HTTPException(status_code=401, detail='Invalid token')
+
     await _authorise_label_access(
         credentials=credentials,
         db=db,
@@ -770,7 +782,9 @@ async def request_stream_playback(
         else 'none',
     )
     if overlay_mode != 'backend':
-        return JSONResponse(response_body)
+        response = JSONResponse(response_body)
+        _set_media_session_cookie_for_user(response, username)
+        return response
 
     language = normalise_label_language(
         request_body.language or request_body.lang,
@@ -808,10 +822,12 @@ async def request_stream_playback(
             'retry_after_seconds': 2 if not ready else 0,
         },
     )
-    return JSONResponse(
+    response = JSONResponse(
         response_body,
         status_code=200 if ready else 202,
     )
+    _set_media_session_cookie_for_user(response, username)
+    return response
 
 
 @router.get('/streams/{label}')
@@ -819,8 +835,12 @@ async def get_streams_for_label_route(
     label: str,
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
     db: AsyncSession = Depends(get_db),
-) -> dict[str, list[dict[str, str]]]:
+) -> JSONResponse:
     """Return stream display names and stable IDs for a site label."""
+    username: str | None = credentials.subject.get('username')
+    if not username:
+        raise HTTPException(status_code=401, detail='Invalid token')
+
     await _authorise_label_access(
         credentials=credentials,
         db=db,
@@ -828,7 +848,9 @@ async def get_streams_for_label_route(
     )
 
     streams = await _get_configured_media_streams(db, label)
-    return {'streams': streams}
+    response = JSONResponse({'streams': streams})
+    _set_media_session_cookie_for_user(response, username)
+    return response
 
 
 async def _get_configured_media_streams(
