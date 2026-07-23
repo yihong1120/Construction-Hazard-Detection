@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi.testclient import TestClient
+from starlette.routing import Match
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
@@ -821,19 +822,24 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     # -----------------------------
     def test_websocket_endpoints_exist(self) -> None:
         """Test that WebSocket endpoints are properly defined in the router."""
-        # Check that the router has the WebSocket routes
-        routes = [route for route in self.app.routes]
-        websocket_paths = [
-            route.path for route in routes
-            if hasattr(route, 'path') and route.path.startswith('/api/ws/')
-        ]
+        # FastAPI 0.139 keeps included routers as a route container, so the
+        # outer routes list no longer exposes each WebSocket route directly.
+        scope = {
+            'type': 'websocket',
+            'path': '/api/ws/metadata-id/label1/Q2FtMQ',
+            'root_path': '',
+            'scheme': 'ws',
+            'headers': [],
+            'query_string': b'',
+            'client': ('testclient', 50000),
+            'server': ('testserver', 80),
+            'subprotocols': [],
+        }
 
-        expected_paths = [
-            '/api/ws/metadata-id/{label}/{stream_id}',
-        ]
-
-        for expected_path in expected_paths:
-            self.assertIn(expected_path, websocket_paths)
+        self.assertIn(
+            Match.FULL,
+            [route.matches(scope)[0] for route in self.app.routes],
+        )
 
     @patch(
         'examples.streaming_web.routers.get_public_ice_servers',

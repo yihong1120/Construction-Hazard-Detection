@@ -35,6 +35,8 @@ def _build_turn_rest_credential(
     digest = hmac.new(
         shared_secret.encode('utf-8'),
         username.encode('utf-8'),
+        # coturn TURN REST credentials require this keyed HMAC-SHA1 format.
+        # codeql[py/weak-sensitive-data-hashing]
         hashlib.sha1,
     ).digest()
     credential = base64.b64encode(digest).decode('ascii')
