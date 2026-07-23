@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Build the shared base image
       run: docker build . --file scripts/base.Dockerfile --tag base:latest
     - name: Build the Docker image
