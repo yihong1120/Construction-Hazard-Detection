@@ -1,41 +1,62 @@
+# OS and editor files
 .DS_Store
-*.txt
-*.jpg
-*.png
-*.jpeg
-*.pt
-*.log
-*.onnx
-*.out
-*.yaml
-*.json
-*.ipynb
-*.csv
-*.zip
-*.yaml
+.vscode/
+.history/
+
+# Secrets and local configuration
 .env
-!assets/images/images(6).png
-!assets/images/sinya-1706871806.png
-!assets/sweep.yaml
-!assets/flowcharts/site_safety_monitor_en.png
-!assets/flowcharts/site_safety_monitor_zh.png
-# examples
-!examples/YOLOv8-Fine-Tune/dataset/**
-!examples/Stream-Web/
-# Ignore all local model artifacts
+.env.*
+!.env.example
+config/secrets/
+*.p8
+examples/local_notification_server/*firebase-adminsdk*.json
+config/configuration copy.*
+config/image_records.json
+config/test_webrtc_config.json
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Generated runtime output
+*.log
+*.out
+logs/
+**/logs/
+static/
+tmp/
+css-data/
+
+# Model and training artifacts
 models/
-test.py
-__pycache__
-**/logs
-!assets/images/**
-configuration.json
-app copy.py
-examples/streaming_web/frontend/node_modules/**
-examples/streaming_web/frontend/dist/**
-!examples/streaming_web/frontend/package.json
+*.engine
+*.cache
+examples/YOLO_train/runs/
+examples/YOLO_train/cv_dataset/images/
+examples/YOLO_train/cv_dataset/labels/
+examples/YOLO_train/cv_dataset/val/
+examples/YOLO_train/datasets/
+examples/YOLO_train/sahi_out/
+examples/YOLO_train/test_images/
+examples/YOLO_train/*.pt
+examples/YOLO_train/*.onnx
+examples/YOLO_train/test.py
+examples/YOLO_data_augmentation/dataset_aug/
+examples/YOLO_data_augmentation/visualised_image.jpg
+predictions.json
 
-.history
-.history/**
-.history/**/*
+# Local database migration history
+scripts/migrations/
 
+# Build artifacts
 build/
+frontend/web/
+examples/streaming_web/frontend/node_modules/
+examples/streaming_web/frontend/dist/
+
+# Local production deployment configuration; commit an .example variant instead.
+deploy/bff/nginx.changdar-server.complete.conf
