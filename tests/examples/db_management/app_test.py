@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any
-from typing import cast
 from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from examples.bff.router import router as bff_router
 from examples.db_management import app as app_module
 
 
@@ -127,11 +126,14 @@ class AppIntegrationTest(unittest.TestCase):
         This test verifies that all expected router tags are present in
         the application's route definitions.
         """
-        tags: set[str] = set()
-        for route in self.app.routes:
-            route_tags = getattr(cast(Any, route), 'tags', None)
-            if route_tags:
-                tags.add(route_tags[0])
+        paths = self.app.openapi()['paths']
+        tags = {
+            tag
+            for operations in paths.values()
+            for operation in operations.values()
+            if isinstance(operation, dict)
+            for tag in operation.get('tags', [])
+        }
         expected: set[str] = {
             'auth',
             'user-mgmt',
@@ -148,16 +150,14 @@ class AppIntegrationTest(unittest.TestCase):
         )
 
     def test_bff_module_and_playback_routes_are_registered(self) -> None:
-        paths = [
-            str(getattr(cast(Any, route), 'path', ''))
-            for route in self.app.routes
-        ]
+        paths = self.app.openapi()['paths']
+        bff_paths = [route.path for route in bff_router.routes]
 
         self.assertIn('/bff/auth/session', paths)
-        self.assertIn('/bff/{service}/{path:path}', paths)
         self.assertIn('/api/playback/walls', paths)
         self.assertNotIn('/api/media/sessions/batch', paths)
         self.assertNotIn('/bff/media/sessions/batch', paths)
+        self.assertIn('/bff/{service}/{path:path}', bff_paths)
 
     def test_main_calls_uvicorn_run(self) -> None:
         """

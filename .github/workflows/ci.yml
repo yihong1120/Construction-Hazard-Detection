@@ -8,6 +8,9 @@ on: [push, pull_request]
 jobs:
   run:
     runs-on: ubuntu-latest
+    env:
+      JWT_SECRET_KEY: ci-test-jwt-secret-not-for-production
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/construction_hazard_detection_test
     steps:
       - name: Checkout
         uses: actions/checkout@v7
