@@ -21,7 +21,6 @@ idna==3.15
 jsonschema==4.26.0
 # line-bot-sdk==3.19.0
 lxml==6.1.0
-mcp==1.25.0
 mcp==1.28.1
 msgpack==1.2.1
 numpy==2.4.6
