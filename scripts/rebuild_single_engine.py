@@ -64,7 +64,7 @@ def main() -> None:
         dynamic=False,
         batch=1,
         workspace=4,
-        int8=True,
+        quantize=8,
         data=calibration_data,
     )
 

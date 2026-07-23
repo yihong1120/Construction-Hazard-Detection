@@ -160,9 +160,8 @@ if __name__ == '__main__':
 
 """example
 python visualise_bounding_boxes.py \
-    --image './dataset_aug/train/images/'\
-        'maxresdefault_jpg.rf.d1b39feb98434e2d9b3675eef2e4b9ad_aug_9.jpg' \
-    --label './dataset_aug/train/labels/'\
-        'maxresdefault_jpg.rf.d1b39feb98434e2d9b3675eef2e4b9ad_aug_9.txt' \
-    --save --output './visualised_image.jpg'
+  --image './dataset_aug/train/images/-_jpeg.rf.b4ba444d690bb533133e22f1bd69442d_aug_6.jpg' \
+  --label './dataset_aug/train/labels/-_jpeg.rf.b4ba444d690bb533133e22f1bd69442d_aug_6.txt' \
+  --save \
+  --output './visualised_image.jpg'
 """

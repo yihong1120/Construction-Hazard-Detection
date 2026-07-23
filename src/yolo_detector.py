@@ -12,6 +12,8 @@ import numpy as np
 import torch
 from dotenv import load_dotenv
 
+from src.ultralytics_args import parse_quantize_value
+from src.ultralytics_args import precision_kwargs
 from src.yolo_worker import YoloWorkerClient
 
 # Load environment variables for configuration
@@ -117,6 +119,9 @@ class YoloDetector:
             'DETECT_LOCAL_HALF',
             'true',
         ).strip().lower() in {'1', 'true', 'yes', 'on'}
+        self.local_quantize = parse_quantize_value(
+            os.getenv('DETECT_LOCAL_QUANTIZE'),
+        )
 
         # Models (local inference path)
         if not detect_with_server:
@@ -229,7 +234,10 @@ class YoloDetector:
                     verbose=False,
                     device=self.local_device,
                     imgsz=self.local_imgsz,
-                    half=self.local_half,
+                    **precision_kwargs(
+                        self.local_half,
+                        self.local_quantize,
+                    ),
                 )
             except Exception as exc:
                 if not self._is_cuda_oom(exc):

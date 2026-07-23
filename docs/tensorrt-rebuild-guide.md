@@ -41,7 +41,7 @@ uv run python scripts/rebuild_single_engine.py best_yolo11m
 
 ```bash
 # 从 PT 文件导出
-uv run yolo export model=models/pt/best_yolo11m.pt format=engine device=0 int8=True data=coco128.yaml
+uv run yolo export model=models/pt/best_yolo11m.pt format=engine device=0 quantize=8 data=coco128.yaml
 
 # 然后移动生成的 .engine 文件到正确位置
 mv models/pt/best_yolo11m.engine models/int8_engine/
@@ -51,7 +51,7 @@ mv models/pt/best_yolo11m.engine models/int8_engine/
 
 - `format=engine`: 导出为 TensorRT engine 格式
 - `device=0`: 使用 GPU 0
-- `int8=True`: 启用 INT8 量化（需要校准数据）
+- `quantize=8`: 启用 INT8 量化（需要校准数据）
 - `half=True`: 使用 FP16 精度（更快但可能略微降低精度）
 - `data=...yaml`: INT8 校准数据集（建议使用 repo 内的 `examples/YOLO_train/cv_dataset/data.yaml` 或 `data_fold*.yaml`）
 
@@ -80,7 +80,7 @@ A: 脚本会优先使用 repo 内的 `examples/YOLO_train/cv_dataset/` 数据集
 A:
 1. 检查 TensorRT 是否正确安装: `uv pip show tensorrt`
 2. 确保有足够的 GPU 内存
-3. 尝试不使用 INT8: 删除 `int8=True` 和 `data=` 参数
+3. 尝试不使用 INT8: 删除 `quantize=8` 和 `data=` 参数
 
 ## 验证导出
 

@@ -145,15 +145,20 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
             self.detector.ultralytics_model,
             'track',
             return_value=[mock_results],
-        ):
-            datas, tracked = await self.detector.generate_detections(
-                mat_frame,
-            )
+        ) as mock_track:
+            with patch(
+                'src.yolo_detector.precision_kwargs',
+                return_value={'quantize': 8},
+            ):
+                datas, tracked = await self.detector.generate_detections(
+                    mat_frame,
+                )
             self.assertEqual(len(datas), 1)
             self.assertEqual(datas[0][5], 0)  # class_id
             self.assertEqual(len(tracked), 1)
             # track_id when no ID provided
             self.assertEqual(tracked[0][6], -1)
+            self.assertEqual(mock_track.call_args.kwargs['quantize'], 8)
 
         # Test server detection mode
         self.detector.detect_with_server = True
