@@ -3,13 +3,47 @@
 **/__pycache__
 **/.DS_Store
 **/*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .dockerignore
 # Dockerfile
 README.md
-*.git
+.git/
 *.gitignore
 venv/
-# examples/
 tests/
-__pycache__/
 *.log
+
+# Generated runtime output and local deployment files
+logs/
+static/
+tmp/
+css-data/
+scripts/migrations/
+deploy/bff/nginx.changdar-server.complete.conf
+
+# Models are mounted by Docker Compose and should not be baked into the image.
+models/
+*.engine
+*.cache
+
+# Training data, model exports, and evaluation output are not needed at runtime.
+examples/YOLO_train/runs/
+examples/YOLO_train/cv_dataset/images/
+examples/YOLO_train/cv_dataset/labels/
+examples/YOLO_train/cv_dataset/val/
+examples/YOLO_train/datasets/
+examples/YOLO_train/sahi_out/
+examples/YOLO_train/test_images/
+examples/YOLO_train/*.pt
+examples/YOLO_train/*.onnx
+examples/YOLO_data_augmentation/dataset_aug/
+examples/YOLO_data_augmentation/visualised_image.jpg
+
+# Other generated build output
+build/
+frontend/web/
+examples/streaming_web/frontend/node_modules/
+examples/streaming_web/frontend/dist/

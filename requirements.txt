@@ -63,7 +63,7 @@ streamlink==8.4.0
 streamlit==1.56.0
 structlog==25.5.0
 tenacity==9.1.4
-tensorrt==11.0.0.114
+tensorrt==11.1.0.106
 torch==2.13.0
 torchvision==0.28.0
 tornado==6.5.7

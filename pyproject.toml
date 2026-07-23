@@ -63,7 +63,7 @@ dependencies = [
   "streamlit==1.54.0",
   "structlog==25.5.0",
   "tenacity==9.1.2",
-  "tensorrt==10.14.1.48",
+  "tensorrt==11.1.0.106",
   "tornado==6.5.7",
   "torch==2.13.0",
   "torchvision==0.28.0",

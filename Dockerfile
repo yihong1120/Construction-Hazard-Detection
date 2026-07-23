@@ -1,6 +1,9 @@
 # Use the previously built base image
 FROM base:latest
 
+# The shared base image ends as appuser; package installation needs root.
+USER root
+
 # Set the working directory in the container
 WORKDIR /app
 

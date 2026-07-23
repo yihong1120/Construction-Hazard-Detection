@@ -17,5 +17,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Build the shared base image
+      run: docker build . --file scripts/base.Dockerfile --tag base:latest
     - name: Build the Docker image
       run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
