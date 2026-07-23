@@ -54,20 +54,25 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
 
     async def test_fetch_latest_metadata_for_key_no_messages(self) -> None:
         """Exercise this test."""
-        self.mock_rds.xrevrange.return_value = []
+        self.mock_rds.xread.return_value = []
 
         result = await fetch_latest_metadata_for_key(
             self.mock_rds,
             'stream_metadata:bGFiZWw=|Q2FtMQ==',
-            '0-0',
+            '$',
         )
 
         self.assertIsNone(result)
+        self.mock_rds.xread.assert_awaited_once_with(
+            {'stream_metadata:bGFiZWw=|Q2FtMQ==': '$'},
+            count=1,
+            block=2000,
+        )
 
-    async def test_fetch_latest_metadata_for_key_unchanged(self) -> None:
+    async def test_fetch_latest_metadata_for_key_empty_stream(self) -> None:
         """Exercise this test."""
-        self.mock_rds.xrevrange.return_value = [
-            (b'1678889999-0', {b'has_warning': b'true'}),
+        self.mock_rds.xread.return_value = [
+            (b'stream_metadata:bGFiZWw=|Q2FtMQ==', []),
         ]
 
         result = await fetch_latest_metadata_for_key(
@@ -80,8 +85,11 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
 
     async def test_fetch_latest_metadata_for_key_without_frame(self) -> None:
         """Exercise this test."""
-        self.mock_rds.xrevrange.return_value = [
-            (b'1678889999-0', {b'has_warning': b'true'}),
+        self.mock_rds.xread.return_value = [
+            (
+                b'stream_metadata:bGFiZWw=|Q2FtMQ==',
+                [(b'1678889999-0', {b'has_warning': b'1'})],
+            ),
         ]
 
         result = await fetch_latest_metadata_for_key(
@@ -95,7 +103,7 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['id'], '1678889999-0')
         self.assertEqual(result['key'], 'Cam1')
         self.assertEqual(result['stream_id'], 'Q2FtMQ==')
-        self.assertEqual(result['has_warning'], 'true')
+        self.assertEqual(result['has_warning'], '1')
 
 
 if __name__ == '__main__':

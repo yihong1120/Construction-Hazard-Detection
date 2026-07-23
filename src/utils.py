@@ -84,17 +84,23 @@ class TokenManager:
         # Load credentials from environment variables (supports .env)
         username: str = os.getenv('API_USERNAME', '')
         password: str = os.getenv('API_PASSWORD', '')
+        hcaptcha_bypass_key: str = os.getenv('HCAPTCHA_BYPASS_KEY', '')
 
         if not username or not password:
             raise ValueError('Missing API_USERNAME or API_PASSWORD')
 
         try:
+            headers: dict[str, str] = {}
+            if hcaptcha_bypass_key:
+                headers['X-HCaptcha-Bypass-Key'] = hcaptcha_bypass_key
+
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as session:
                 resp: aiohttp.ClientResponse = await session.post(
                     f"{self.api_url}/login",
-                    json={'username': username, 'password': password},
+                    json={'identifier': username, 'password': password},
+                    headers=headers,
                 )
                 if resp.status != 200:
                     error_text = await resp.text()

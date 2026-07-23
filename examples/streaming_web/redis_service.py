@@ -104,13 +104,22 @@ async def fetch_latest_metadata_for_key(
     rds: Any,
     redis_key: str,
     last_id: str,
+    block_ms: int = 2000,
 ) -> dict[str, Any] | None:
-    """Fetch the latest compact metadata message for one Redis key."""
-    messages = await rds.xrevrange(redis_key, min=last_id, count=1)
+    """Wait for the next compact metadata message for one Redis key."""
+    messages = await rds.xread(
+        {redis_key: last_id},
+        count=1,
+        block=block_ms,
+    )
     if not messages:
         return None
 
-    message_id, data = messages[0]
+    _stream_key, stream_messages = messages[0]
+    if not stream_messages:
+        return None
+
+    message_id, data = stream_messages[0]
     message_id_str = (
         message_id.decode('utf-8')
         if isinstance(message_id, bytes)

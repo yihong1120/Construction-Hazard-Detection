@@ -155,7 +155,11 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(
         os.environ,
-        {'API_USERNAME': 'test_user', 'API_PASSWORD': 'test_pass'},
+        {
+            'API_USERNAME': 'test_user',
+            'API_PASSWORD': 'test_pass',
+            'HCAPTCHA_BYPASS_KEY': 'server-only-key',
+        },
     )
     @patch('aiohttp.ClientSession')
     async def test_authenticate_success(self, m_session: AsyncMock) -> None:
@@ -176,6 +180,11 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.shared_token['access_token'], 'A')
         self.assertEqual(
             self.shared_token['refresh_token'], 'B',
+        )
+        mock_sessinst.post.assert_awaited_once_with(
+            'http://example.com/api/login',
+            json={'identifier': 'test_user', 'password': 'test_pass'},
+            headers={'X-HCaptcha-Bypass-Key': 'server-only-key'},
         )
 
     @patch.dict(

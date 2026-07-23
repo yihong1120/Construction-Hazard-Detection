@@ -27,6 +27,9 @@ class MediaStreamPublisher:
         fps: float | None = None,
         width: int | None = None,
         height: int | None = None,
+        bitrate: str | None = None,
+        maxrate: str | None = None,
+        bufsize: str | None = None,
     ) -> None:
         """Initialise a frame publisher.
 
@@ -35,6 +38,9 @@ class MediaStreamPublisher:
             fps: Target output frame rate.
             width: Optional fixed output width.
             height: Optional fixed output height.
+            bitrate: Optional target video bitrate for this rendition.
+            maxrate: Optional maximum video bitrate for this rendition.
+            bufsize: Optional video rate-control buffer for this rendition.
         """
         self.publish_url = publish_url
         self.fps = max(
@@ -43,11 +49,16 @@ class MediaStreamPublisher:
         )
         self.width = width
         self.height = height
+        self.bitrate = bitrate
+        self.maxrate = maxrate
+        self.bufsize = bufsize
         self._process: asyncio.subprocess.Process | None = None
         self._writer_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
         self._latest_frame: np.ndarray | None = None
         self._stream_size: tuple[int, int] | None = None
         self._started = False
+        self.last_error: str | None = None
         self._state_lock = asyncio.Lock()
 
     async def publish(self, frame: np.ndarray) -> None:
@@ -109,7 +120,11 @@ class MediaStreamPublisher:
         """Terminate the active ffmpeg process if one exists."""
         process = self._process
         self._process = None
+        stderr_task = self._stderr_task
+        self._stderr_task = None
         if process is None:
+            if stderr_task is not None and stderr_task is not asyncio.current_task():
+                stderr_task.cancel()
             return
         if process.stdin is not None and not process.stdin.is_closing():
             try:
@@ -123,6 +138,13 @@ class MediaStreamPublisher:
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
+        if stderr_task is not None and stderr_task is not asyncio.current_task():
+            if not stderr_task.done():
+                stderr_task.cancel()
+            try:
+                await stderr_task
+            except asyncio.CancelledError:
+                pass
 
     def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
         """Normalise size and dimensions before sending to ffmpeg."""
@@ -167,10 +189,39 @@ class MediaStreamPublisher:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
+        self._stderr_task = asyncio.create_task(
+            self._drain_stderr(self._process),
+        )
         self.width = width
         self.height = height
         self._stream_size = (width, height)
         self._started = True
+
+    async def _drain_stderr(
+        self,
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        """Drain ffmpeg stderr so an encoder error cannot block the pipe."""
+        stderr = getattr(process, 'stderr', None)
+        if stderr is None:
+            return
+        try:
+            while True:
+                raw_line = await stderr.readline()
+                if not raw_line:
+                    return
+                line = raw_line.decode('utf-8', errors='replace').strip()
+                if not line:
+                    continue
+                self.last_error = line[-1000:]
+                print(
+                    f'[media:{self.publish_url}] ffmpeg: {self.last_error}',
+                    flush=True,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.last_error = f'stderr reader failed: {exc}'
 
     async def _writer_loop(self) -> None:
         """Continuously feed ffmpeg so MediaMTX keeps the live path online."""
@@ -257,9 +308,21 @@ class MediaStreamPublisher:
             '-an',
         ]
         if encoder == 'h264_nvenc':
-            command.extend(_build_nvenc_options())
+            command.extend(
+                _build_nvenc_options(
+                    bitrate=self.bitrate,
+                    maxrate=self.maxrate,
+                    bufsize=self.bufsize,
+                ),
+            )
         else:
-            command.extend(_build_x264_options())
+            command.extend(
+                _build_x264_options(
+                    bitrate=self.bitrate,
+                    maxrate=self.maxrate,
+                    bufsize=self.bufsize,
+                ),
+            )
         command.extend([
             '-g',
             str(gop_size),
@@ -280,9 +343,14 @@ class MediaStreamPublisher:
         return command
 
 
-def _build_x264_options() -> list[str]:
+def _build_x264_options(
+    *,
+    bitrate: str | None = None,
+    maxrate: str | None = None,
+    bufsize: str | None = None,
+) -> list[str]:
     """Return ffmpeg options for CPU H.264 encoding."""
-    return [
+    options = [
         '-c:v',
         'libx264',
         '-preset',
@@ -291,12 +359,27 @@ def _build_x264_options() -> list[str]:
         'zerolatency',
         '-pix_fmt',
         'yuv420p',
-        '-crf',
-        str(int(os.getenv('MEDIA_PUBLISH_CRF', str(_default_crf)))),
     ]
+    if bitrate:
+        options.extend([
+            '-b:v', bitrate,
+            '-maxrate', maxrate or bitrate,
+            '-bufsize', bufsize or maxrate or bitrate,
+        ])
+    else:
+        options.extend([
+            '-crf',
+            str(int(os.getenv('MEDIA_PUBLISH_CRF', str(_default_crf)))),
+        ])
+    return options
 
 
-def _build_nvenc_options() -> list[str]:
+def _build_nvenc_options(
+    *,
+    bitrate: str | None = None,
+    maxrate: str | None = None,
+    bufsize: str | None = None,
+) -> list[str]:
     """Return ffmpeg options for NVIDIA H.264 encoding."""
     return [
         '-c:v',
@@ -310,11 +393,11 @@ def _build_nvenc_options() -> list[str]:
         '-cq',
         str(int(os.getenv('MEDIA_PUBLISH_NVENC_CQ', str(_default_nvenc_cq)))),
         '-b:v',
-        os.getenv('MEDIA_PUBLISH_NVENC_BITRATE', '0'),
+        bitrate or os.getenv('MEDIA_PUBLISH_NVENC_BITRATE', '0'),
         '-maxrate',
-        os.getenv('MEDIA_PUBLISH_NVENC_MAXRATE', '8M'),
+        maxrate or os.getenv('MEDIA_PUBLISH_NVENC_MAXRATE', '8M'),
         '-bufsize',
-        os.getenv('MEDIA_PUBLISH_NVENC_BUFSIZE', '16M'),
+        bufsize or os.getenv('MEDIA_PUBLISH_NVENC_BUFSIZE', '16M'),
         '-pix_fmt',
         'yuv420p',
     ]

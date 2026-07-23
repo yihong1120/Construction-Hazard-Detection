@@ -76,6 +76,16 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(b'id:', encoded)
         self.assertIn(b'"has_warning":false', encoded)
 
+    def test_encode_sse_event_supports_named_events(self) -> None:
+        """Exercise this test."""
+        encoded = _encode_sse_event(
+            {'state': 'ready'},
+            event_type='overlay_ready',
+        )
+
+        self.assertIn(b'event: overlay_ready', encoded)
+        self.assertIn(b'"state":"ready"', encoded)
+
     async def test_metadata_stream_yields_initial_retry(self) -> None:
         """Exercise this test."""
         request = MagicMock()
@@ -104,6 +114,66 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(b'id: 2-0', event)
         self.assertIn(b'"has_warning":true', event)
+
+    async def test_metadata_stream_yields_overlay_ready_event(self) -> None:
+        """Exercise this test."""
+        request = MagicMock()
+        request.is_disconnected = AsyncMock(side_effect=[False, True])
+        rds = MagicMock()
+        rds.exists = AsyncMock(return_value=1)
+
+        iterator = metadata_stream_generator(
+            request,
+            rds,
+            'metadata-key',
+            overlay_ready_key='media_overlay_ready:overlay-path',
+            overlay_ready_payload={
+                'state': 'ready',
+                'playback_url': '/hazard/media/overlay/index.m3u8',
+            },
+        )
+        await anext(iterator)
+        event = await anext(iterator)
+
+        self.assertIn(b'event: overlay_ready', event)
+        self.assertIn(b'"state":"ready"', event)
+        self.assertIn(b'/hazard/media/overlay/index.m3u8', event)
+
+    async def test_metadata_stream_refreshes_overlay_demand(self) -> None:
+        """Exercise this test."""
+        request = MagicMock()
+        request.is_disconnected = AsyncMock(side_effect=[False, True])
+        rds = MagicMock()
+        rds.set = AsyncMock()
+
+        with (
+            patch(
+                'examples.streaming_web.ws_handlers.'
+                'fetch_latest_metadata_for_key',
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                'examples.streaming_web.ws_handlers.asyncio.sleep',
+                new=AsyncMock(),
+            ),
+        ):
+            iterator = metadata_stream_generator(
+                request,
+                rds,
+                'metadata-key',
+                overlay_demand_key='media_overlay_demand:base:emgtVFc',
+                overlay_demand_ttl_seconds=90,
+                overlay_demand_refresh_seconds=1.0,
+            )
+            await anext(iterator)
+            with self.assertRaises(StopAsyncIteration):
+                await anext(iterator)
+
+        rds.set.assert_awaited_once_with(
+            'media_overlay_demand:base:emgtVFc',
+            b'1',
+            ex=90,
+        )
 
     async def test_metadata_stream_handles_timeout_then_disconnect(
         self,
@@ -156,9 +226,13 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
                 'metadata-key',
             )
             await anext(iterator)
+            event = await anext(iterator)
             with self.assertRaises(StopAsyncIteration):
                 await anext(iterator)
 
+        self.assertIn(b'event: redis_error', event)
+        self.assertIn(b'"source":"redis"', event)
+        self.assertIn(b'"code":"redis_unavailable"', event)
         sleep.assert_awaited_once_with(1.0)
 
     async def test_metadata_stream_yields_keepalive(self) -> None:

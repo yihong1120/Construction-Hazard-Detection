@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from typing import Literal
 from typing import TypedDict
 
 from pydantic import BaseModel
+
+MAX_STREAM_PLAYBACK_BATCH_STREAMS = 16
 
 
 class FrameOutData(TypedDict, total=False):
@@ -24,12 +27,24 @@ class LabelListResponse(BaseModel):
 class StreamPlaybackRequest(BaseModel):
     """Requested playback profile for one camera stream."""
 
-    label: str
+    label: str | None = None
     stream_id: str | None = None
     key: str | None = None
-    overlay: bool | str | None = False
+    session_id: str | None = None
+    profile: str = 'clean'
+    rendition: Literal['detail', 'preview'] = 'detail'
     language: str | None = None
-    lang: str | None = None
+    transport: str = 'hls'
+
+
+class StreamPlaybackBatchRequest(BaseModel):
+    """Requested playback sessions for a site overview or explicit streams."""
+
+    label: str | None = None
+    streams: list[StreamPlaybackRequest] | None = None
+    profile: str = 'overlay'
+    rendition: Literal['detail', 'preview'] = 'detail'
+    language: str | None = None
     transport: str = 'hls'
 
 
@@ -89,7 +104,9 @@ class WebRTCAnswerResponse(BaseModel):
 __all__ = [
     'FrameOutData',
     'LabelListResponse',
+    'MAX_STREAM_PLAYBACK_BATCH_STREAMS',
     'StreamPlaybackRequest',
+    'StreamPlaybackBatchRequest',
     'OverlayLanguageInfo',
     'OverlayLanguageListResponse',
     'FramePostResponse',
