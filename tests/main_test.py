@@ -220,35 +220,11 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             'store_in_redis': False,
         }
 
-    @patch('src.stream_processor.os.getenv')
-    def test_resolve_detect_with_server_force_local(
-            self, mock_getenv: Any,
+    def test_resolve_detect_with_server_ignores_configured_local(
+            self,
     ) -> None:
-        """Test deployment override forces local inference."""
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_FORCE_LOCAL': 'true',
-            'DETECT_FORCE_SERVER': 'false',
-        }.get(key)
-        self.assertFalse(processor._resolve_detect_with_server(True))
-
-    @patch('src.stream_processor.os.getenv')
-    def test_resolve_detect_with_server_force_server(
-            self, mock_getenv: Any,
-    ) -> None:
-        """Test deployment override forces server inference."""
-        mock_getenv.side_effect = lambda key: {
-            'DETECT_FORCE_LOCAL': 'false',
-            'DETECT_FORCE_SERVER': 'true',
-        }.get(key)
+        """Stream processing is server-only."""
         self.assertTrue(processor._resolve_detect_with_server(False))
-
-    @patch.dict(
-        os.environ,
-        {'DETECT_FORCE_LOCAL': 'true', 'DETECT_FORCE_SERVER': 'false'},
-    )
-    def test_resolve_detect_with_server_force_local_from_environ(self) -> None:
-        """Test local override from the real process environment."""
-        self.assertFalse(processor._resolve_detect_with_server(True))
 
     def test_validate_server_model_key_accepts_configured_model(self) -> None:
         """Server mode accepts configured YOLO server model keys."""
@@ -322,7 +298,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         })
         streaming_capture = AsyncMock()
         yolo_detector = AsyncMock()
-        clean_publisher = AsyncMock()
         redis_manager = MagicMock()
         redis_manager.delete = AsyncMock(side_effect=RuntimeError('gone'))
 
@@ -335,6 +310,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 'src.stream_processor.YoloDetector',
                 return_value=yolo_detector,
             ),
+            patch(
+                'src.stream_processor.YoloWorkerClient',
+                return_value=object(),
+            ),
             patch('src.stream_processor.DangerDetector'),
             patch('src.stream_processor.FCMSender'),
             patch('src.stream_processor.ViolationSender'),
@@ -342,10 +321,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 'src.stream_processor.RedisManager',
                 return_value=redis_manager,
             ),
-            patch(
-                'src.stream_processor.MediaStreamPublisher',
-                return_value=clean_publisher,
-            ),
+            patch('src.stream_processor.MediaStreamPublisher') as publisher_cls,
             patch(
                 'src.stream_processor._run_decoupled_media_server_loop',
                 new_callable=AsyncMock,
@@ -357,17 +333,19 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                     'MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM': 'false',
                     'MEDIA_PUBLISH_CLEAN_STREAM': 'true',
                     'MEDIA_PUBLISH_ANNOTATED_STREAM': 'true',
-                    'DETECT_FORCE_LOCAL': 'false',
-                    'DETECT_FORCE_SERVER': 'false',
                 },
             ),
         ):
-            await processor._run_single_stream(cfg)
+            await processor._run_single_stream(
+                cfg,
+                yolo_request_queue=object(),
+                yolo_result_store=object(),
+            )
 
         decoupled_loop.assert_awaited_once()
         yolo_detector.close.assert_awaited_once()
         streaming_capture.release_resources.assert_awaited_once()
-        clean_publisher.close.assert_awaited_once()
+        publisher_cls.assert_not_called()
         redis_manager.delete.assert_awaited_once()
 
     async def test_run_single_stream_requires_worker_for_server_mode(
@@ -397,8 +375,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 {
                     'YOLO_WORKER_ENABLED': 'true',
                     'DETECT_SERVER_MODEL_KEYS': 'yolo26n',
-                    'DETECT_FORCE_LOCAL': 'false',
-                    'DETECT_FORCE_SERVER': 'false',
                 },
             ),
         ):
@@ -446,8 +422,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                     'DETECT_SERVER_MODEL_KEYS': 'yolo26n',
                     'MEDIA_PUBLISH_CLEAN_STREAM': 'false',
                     'MEDIA_PUBLISH_ANNOTATED_STREAM': 'false',
-                    'DETECT_FORCE_LOCAL': 'false',
-                    'DETECT_FORCE_SERVER': 'false',
                 },
             ),
         ):
@@ -460,10 +434,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         inline_loop.assert_awaited_once()
         yolo_detector.close.assert_awaited_once()
 
-    async def test_run_single_stream_starts_and_closes_clean_restreamer(
+    async def test_run_single_stream_defers_clean_restreamer_until_requested(
             self,
     ) -> None:
-        """Exercise this test."""
+        """Clean restreaming is not started during stream bootstrap."""
         cfg = dict(self.dummy_cfg)
         cfg.update({
             'detect_with_server': False,
@@ -484,6 +458,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             patch(
                 'src.stream_processor.YoloDetector',
                 return_value=yolo_detector,
+            ),
+            patch(
+                'src.stream_processor.YoloWorkerClient',
+                return_value=object(),
             ),
             patch('src.stream_processor.DangerDetector'),
             patch('src.stream_processor.FCMSender'),
@@ -507,15 +485,17 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                     'MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM': 'true',
                     'MEDIA_PUBLISH_CLEAN_STREAM': 'true',
                     'MEDIA_PUBLISH_ANNOTATED_STREAM': 'false',
-                    'DETECT_FORCE_LOCAL': 'false',
-                    'DETECT_FORCE_SERVER': 'false',
                 },
             ),
         ):
-            await processor._run_single_stream(cfg)
+            await processor._run_single_stream(
+                cfg,
+                yolo_request_queue=object(),
+                yolo_result_store=object(),
+            )
 
-        restreamer.start.assert_awaited_once()
-        restreamer.close.assert_awaited_once()
+        restreamer.start.assert_not_awaited()
+        restreamer.close.assert_not_awaited()
 
     async def test_run_single_stream_uses_inline_loop_when_decoupled_disabled(
         self,
@@ -541,6 +521,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 'src.stream_processor.YoloDetector',
                 return_value=yolo_detector,
             ),
+            patch(
+                'src.stream_processor.YoloWorkerClient',
+                return_value=object(),
+            ),
             patch('src.stream_processor.DangerDetector'),
             patch('src.stream_processor.FCMSender'),
             patch('src.stream_processor.ViolationSender'),
@@ -558,12 +542,14 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                     'MEDIA_PUBLISH_DECOUPLED_ANNOTATED': 'false',
                     'MEDIA_PUBLISH_CLEAN_STREAM': 'false',
                     'MEDIA_PUBLISH_ANNOTATED_STREAM': 'false',
-                    'DETECT_FORCE_LOCAL': 'false',
-                    'DETECT_FORCE_SERVER': 'false',
                 },
             ),
         ):
-            await processor._run_single_stream(cfg)
+            await processor._run_single_stream(
+                cfg,
+                yolo_request_queue=object(),
+                yolo_result_store=object(),
+            )
 
         inline_loop.assert_awaited_once()
         yolo_detector.close.assert_awaited_once()
@@ -640,6 +626,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 work_start_hour=0,
                 work_end_hour=24,
                 metadata_key='stream_metadata:site|cam',
+                publish_clean_stream=False,
+                restream_clean_source=False,
+                video_url='rtsp://source',
             )
 
         self.assertEqual(publish_overlay.await_count, 2)
@@ -647,7 +636,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         streaming_capture.update_capture_interval.assert_called_once_with(0.2)
         streaming_capture.release_resources.assert_awaited_once()
 
-    async def test_inline_stream_loop_stores_media_metadata_on_success(
+    async def test_inline_stream_loop_stores_media_metadata_on_warning(
             self,
     ) -> None:
         """Exercise this test."""
@@ -664,36 +653,45 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         yolo_detector = AsyncMock()
         yolo_detector.generate_detections.return_value = ([], [])
         danger_detector = MagicMock()
-        danger_detector.detect_danger.return_value = ({}, [], [])
+        danger_detector.detect_danger.return_value = (
+            {'warning_no_hardhat': {'count': 1}},
+            [],
+            [],
+        )
         clean_media_publisher = AsyncMock()
         redis_manager = MagicMock()
-        pipe = MagicMock()
-        pipe.execute = AsyncMock()
-        redis_manager.redis.pipeline.return_value = pipe
+        redis_manager.redis.xadd = AsyncMock()
 
-        await processor._run_inline_stream_loop(
-            streaming_capture=streaming_capture,
-            yolo_detector=yolo_detector,
-            danger_detector=danger_detector,
-            fcm_sender=AsyncMock(),
-            violation_sender=AsyncMock(),
-            redis_manager=redis_manager,
-            clean_source_restreamer=None,
-            clean_media_publisher=clean_media_publisher,
-            overlay_media_publishers={},
-            media_publish_base='rtsp://media-server:8554',
-            media_path='hazard_site_cam',
-            publish_annotated_stream=False,
-            live_view_enabled=True,
-            site='SiteA',
-            stream_name='Cam1',
-            work_start_hour=0,
-            work_end_hour=24,
-            metadata_key='stream_metadata:site|cam',
+        with patch('src.stream_processor.Utils.should_notify', return_value=False):
+            await processor._run_inline_stream_loop(
+                streaming_capture=streaming_capture,
+                yolo_detector=yolo_detector,
+                danger_detector=danger_detector,
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=redis_manager,
+                clean_source_restreamer=None,
+                clean_media_publisher=clean_media_publisher,
+                overlay_media_publishers={},
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                publish_annotated_stream=False,
+                live_view_enabled=True,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                publish_clean_stream=False,
+                restream_clean_source=False,
+                video_url='rtsp://source',
+            )
+
+        redis_manager.redis.xadd.assert_awaited_once_with(
+            'stream_metadata:site|cam',
+            {'has_warning': '1'},
+            maxlen=10,
         )
-
-        pipe.xadd.assert_called_once()
-        pipe.execute.assert_awaited_once()
 
     async def test_detect_latest_frames_publishes_detected_frame(self) -> None:
         """Annotated publishing uses the same frame passed to detection."""
@@ -709,22 +707,22 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         yolo_detector.generate_detections = AsyncMock(
             return_value=([], [[1, 1, 4, 4, 0.9, 5]]),
         )
+        stop_event = asyncio.Event()
+
+        def detect_and_stop(*_args: object) -> tuple[dict, list, list]:
+            """Support detect_and_stop."""
+            stop_event.set()
+            return {}, [], []
+
         danger_detector = MagicMock()
-        danger_detector.detect_danger.return_value = ({}, [], [])
+        danger_detector.detect_danger.side_effect = detect_and_stop
         fcm_sender = AsyncMock()
         violation_sender = AsyncMock()
         latest_detection = processor._LatestDetectionState()
 
-        stop_event = asyncio.Event()
-
         pipe = MagicMock()
         pipe.xadd = MagicMock()
-
-        async def execute_once() -> None:
-            """Support execute_once."""
-            stop_event.set()
-
-        pipe.execute = AsyncMock(side_effect=execute_once)
+        pipe.execute = AsyncMock()
         redis_manager = MagicMock()
         redis_manager.redis.pipeline.return_value = pipe
 
@@ -792,7 +790,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 side_effect=stop_overlay,
             ) as publish_overlay,
             patch(
-                'src.stream_processor._publish_latest_clean_frames',
+                'src.stream_processor._publish_requested_clean_frames',
                 side_effect=stop_clean,
             ) as publish_clean,
         ):
@@ -812,12 +810,15 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 work_start_hour=0,
                 work_end_hour=24,
                 metadata_key='stream_metadata:site|cam',
+                publish_clean_stream=True,
+                restream_clean_source=False,
+                video_url='rtsp://source',
             )
 
         capture_latest.assert_called_once()
         detect_latest.assert_called_once()
-        publish_overlay.assert_called_once()
-        publish_clean.assert_called_once()
+        self.assertEqual(publish_overlay.call_count, 2)
+        self.assertEqual(publish_clean.call_count, 2)
 
     async def test_decoupled_loop_raises_child_task_exception(self) -> None:
         """Exercise this test."""
@@ -856,6 +857,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                     work_start_hour=0,
                     work_end_hour=24,
                     metadata_key='stream_metadata:site|cam',
+                    publish_clean_stream=False,
+                    restream_clean_source=False,
+                    video_url='rtsp://source',
                 )
 
     async def test_capture_latest_frames_returns_when_stop_event_is_set(
@@ -1019,9 +1023,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         warnings = {'warning_no_hardhat': {'count': 1}}
         danger_detector.detect_danger.return_value = (warnings, [], [])
         redis_manager = MagicMock()
-        pipe = MagicMock()
-        pipe.execute = AsyncMock()
-        redis_manager.redis.pipeline.return_value = pipe
+        redis_manager.redis.xadd = AsyncMock()
         stop_event = asyncio.Event()
 
         async def send_and_stop(**_kwargs) -> Any:
@@ -1578,10 +1580,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
     async def test_store_media_server_viewer_data(self) -> None:
         """Exercise this test."""
-        pipe = MagicMock()
-        pipe.execute = AsyncMock()
         redis_manager = MagicMock()
-        redis_manager.redis.pipeline.return_value = pipe
+        redis_manager.redis.xadd = AsyncMock()
 
         await processor._store_media_server_viewer_data(
             redis_manager,
@@ -1589,12 +1589,26 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             warnings={'warning': {'count': 1}},
         )
 
-        pipe.xadd.assert_called_once_with(
+        redis_manager.redis.xadd.assert_awaited_once_with(
             'stream_metadata:site|cam',
-            {'has_warning': 'true'},
+            {'has_warning': '1'},
             maxlen=10,
         )
-        pipe.execute.assert_awaited_once()
+
+    async def test_store_media_server_viewer_data_skips_empty_warnings(
+            self,
+    ) -> None:
+        """Exercise this test."""
+        redis_manager = MagicMock()
+        redis_manager.redis.xadd = AsyncMock()
+
+        await processor._store_media_server_viewer_data(
+            redis_manager,
+            'stream_metadata:site|cam',
+            warnings={},
+        )
+
+        redis_manager.redis.xadd.assert_not_awaited()
 
     def test_csv_env_and_allowed_overlay_languages(self) -> None:
         """Exercise this test."""
@@ -1678,13 +1692,15 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             ex=5,
         )
 
-    async def test_publish_latest_clean_frames_waits_for_first_frame(
+    async def test_publish_requested_clean_frames_waits_for_demand(
             self,
     ) -> None:
         """Exercise this test."""
         latest_frame = processor._LatestFrameState()
         stop_event = asyncio.Event()
         publisher = AsyncMock()
+        redis_manager = MagicMock()
+        redis_manager.redis.exists = AsyncMock(return_value=0)
 
         async def sleep_once(_delay: Any) -> None:
             """Support sleep_once.
@@ -1697,16 +1713,26 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         with patch(
             'src.stream_processor.asyncio.sleep',
             side_effect=sleep_once,
-        ):
-            await processor._publish_latest_clean_frames(
-                latest_frame,
-                publisher,
-                stop_event,
+        ), patch(
+            'src.stream_processor.MediaStreamPublisher',
+            return_value=publisher,
+        ) as publisher_factory:
+            await processor._publish_requested_clean_frames(
+                latest_frame=latest_frame,
+                redis_manager=redis_manager,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                source_url='rtsp://source',
+                use_source_restreamer=False,
+                stop_event=stop_event,
             )
 
+        publisher_factory.assert_not_called()
         publisher.publish.assert_not_called()
 
-    async def test_publish_latest_clean_frames_recovers_from_publish_errors(
+    async def test_publish_requested_clean_frames_recovers_from_publish_errors(
         self,
     ) -> None:
         """Exercise this test."""
@@ -1716,6 +1742,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         stop_event = asyncio.Event()
         publisher = AsyncMock()
         publisher.publish.side_effect = RuntimeError('ffmpeg busy')
+        redis_manager = MagicMock()
+        redis_manager.redis.exists = AsyncMock(return_value=1)
 
         async def sleep_once(_delay: Any) -> None:
             """Support sleep_once.
@@ -1728,11 +1756,20 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         with patch(
             'src.stream_processor.asyncio.sleep',
             side_effect=sleep_once,
+        ), patch(
+            'src.stream_processor.MediaStreamPublisher',
+            return_value=publisher,
         ):
-            await processor._publish_latest_clean_frames(
-                latest_frame,
-                publisher,
-                stop_event,
+            await processor._publish_requested_clean_frames(
+                latest_frame=latest_frame,
+                redis_manager=redis_manager,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                source_url='rtsp://source',
+                use_source_restreamer=False,
+                stop_event=stop_event,
             )
 
         publisher.publish.assert_awaited_once()

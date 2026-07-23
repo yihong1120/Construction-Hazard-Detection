@@ -12,6 +12,7 @@ from unittest.mock import patch
 import uvicorn
 from fastapi.testclient import TestClient
 
+from examples.local_notification_server.app import _redact_sensitive_payload
 from examples.local_notification_server.app import app
 from examples.local_notification_server.app import main
 
@@ -46,22 +47,21 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('redoc', response.text.lower())
 
-    def test_cors_headers(self) -> None:
-        """
-        Check that CORS headers are returned for OPTIONS requests.
-        """
-        headers = {
-            'Origin': 'http://example.com',
-            'Access-Control-Request-Method': 'GET',
-        }
-        response = self.client.options('/openapi.json', headers=headers)
-        self.assertEqual(response.status_code, 200)
-        # Check CORS headers
-        self.assertEqual(
-            response.headers.get('access-control-allow-origin'),
-            'http://example.com',
-        )
-        self.assertIn('access-control-allow-methods', response.headers)
+    def test_redact_sensitive_payload_handles_camel_case(self) -> None:
+        """Request logging redacts token fields regardless of casing style."""
+        redacted = _redact_sensitive_payload({
+            'deviceToken': 'raw-device-token',
+            'fcm_token': 'raw-fcm-token',
+            'nested': {
+                'accessToken': 'raw-access-token',
+                'safe': 'value',
+            },
+        })
+
+        self.assertEqual(redacted['deviceToken'], '<redacted>')
+        self.assertEqual(redacted['fcm_token'], '<redacted>')
+        self.assertEqual(redacted['nested']['accessToken'], '<redacted>')
+        self.assertEqual(redacted['nested']['safe'], 'value')
 
     def test_main(self) -> None:
         """

@@ -4,6 +4,8 @@ import unittest
 
 from pydantic import ValidationError
 
+from examples.local_notification_server.schemas import NotificationList
+from examples.local_notification_server.schemas import NotificationOut
 from examples.local_notification_server.schemas import SiteNotifyRequest
 from examples.local_notification_server.schemas import TokenRequest
 
@@ -160,6 +162,55 @@ class TestSiteNotifyRequest(unittest.TestCase):
         )
         # By default, Pydantic ignores unexpected fields
         self.assertFalse(hasattr(site_notify_request, 'extra_field'))
+
+    def test_notification_deep_link_fields(self) -> None:
+        """Site notifications accept notification-center metadata."""
+        data = {
+            'site': 'MySite',
+            'stream_name': 'Cam1',
+            'body': {'warning_no_hardhat': {'count': 1}},
+            'type': 'violation',
+            'title': 'Violation alert',
+            'deep_link': '/violations?violation_id=9',
+            'metadata': {'violation_id': 9},
+        }
+
+        req = SiteNotifyRequest(**data)
+
+        self.assertEqual(req.notification_type, 'violation')
+        self.assertEqual(req.title, 'Violation alert')
+        self.assertEqual(req.deep_link, '/violations?violation_id=9')
+        self.assertEqual(req.metadata, {'violation_id': 9})
+
+
+class TestNotificationSchemas(unittest.TestCase):
+    """Unit tests for notification-center response schemas."""
+
+    def test_notification_list_schema(self) -> None:
+        """Notification list exposes total, pagination, and items."""
+        from datetime import datetime
+        from datetime import timezone
+
+        item = NotificationOut(
+            id=1,
+            type='violation',
+            title='Alert',
+            body='Body',
+            deep_link='/violations?violation_id=1',
+            is_read=False,
+            created_at=datetime.now(timezone.utc),
+            metadata={'violation_id': 1},
+        )
+
+        result = NotificationList(
+            total=1,
+            page=1,
+            page_size=20,
+            items=[item],
+        )
+
+        self.assertEqual(result.total, 1)
+        self.assertEqual(result.items[0].metadata['violation_id'], 1)
 
 
 if __name__ == '__main__':

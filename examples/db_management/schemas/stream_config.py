@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from pydantic import AliasChoices
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 
 
@@ -61,6 +63,43 @@ class StreamConfigUpdate(BaseModel):
         ),
     )
     expire_date: datetime | None = None
+
+
+class SiteStreamConfigItem(BaseModel):
+    """Site-scoped stream config payload without frontend group selection."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: int | None = None
+    stream_name: str
+    video_url: str = Field(
+        validation_alias=AliasChoices('video_url', 'rtsp_url'),
+    )
+    model_key: str = 'yolo26n'
+    detect_with_server: bool = True
+    work_start_hour: int = 7
+    work_end_hour: int = 18
+
+    detect_no_safety_vest_or_helmet: bool = False
+    detect_near_machinery_or_vehicle: bool = False
+    detect_in_restricted_area: bool = False
+    detect_in_utility_pole_restricted_area: bool = False
+    detect_machinery_close_to_pole: bool = False
+
+    store_in_redis: bool = Field(
+        default=False,
+        description=(
+            'Enables live MediaMTX publishing; Redis is '
+            'used only for compact metadata and overlay coordination.'
+        ),
+    )
+    expire_date: datetime | None = None
+
+
+class SiteStreamConfigUpsert(BaseModel):
+    """Site-scoped stream config upsert request."""
+
+    streams: list[SiteStreamConfigItem]
 
 
 class StreamConfigRead(BaseModel):

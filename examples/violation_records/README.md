@@ -48,8 +48,21 @@ JWT_SECRET_KEY=replace-with-a-long-random-secret
 ## Endpoints
 
 - `GET /my_sites`: sites visible to the authenticated user.
-- `GET /violations`: filtered and paginated violation list.
+- `GET /violations/filter-options?site_id=...`: authorized cameras and fixed
+  violation types for one site. `stream_id` is the numeric camera config ID,
+  not a camera name.
+- `GET /violations`: filtered and paginated violation list with optional
+  `site_id`, `stream_id`, `violation_type`, and time-range filters. Admin
+  reviewers can add `flagged=true` and optional
+  `review_status=pending|resolved|dismissed`.
+- `GET /violations/analytics`: analytics using the same authorized `site_id`,
+  `stream_id`, `violation_type`, `start`, `end`, and `bucket` filters for all
+  aggregates. Available only to `admin` and `super_admin` users.
 - `GET /violations/{violation_id}`: single violation detail.
+- `POST /violations/{violation_id}/feedback`: structured false-positive,
+  missed-detection, wrong-class, or bad-bbox feedback for review.
+- `PATCH /violations/{violation_id}/review`: admin/super-admin review update
+  for a flagged record.
 - `GET /get_violation_image?image_path=...`: image response from `static/`.
 - `POST /upload`: image and metadata upload from the stream processor.
 

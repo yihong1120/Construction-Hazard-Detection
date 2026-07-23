@@ -9,6 +9,7 @@
    <a href="examples/mcp_server">MCP Server</a> |
    <a href="examples/local_notification_server">FCM Notification Server</a> |
    <a href="examples/violation_records">Violation Records Server</a> |
+   <a href="examples/bff">Web BFF</a> |
    <a href="examples/db_management">Data Management Server</a> |
    <a href="examples/streaming_web">Streaming Web</a> |
    <a href="examples/YOLO_data_augmentation">Data Augmentation</a> |
@@ -102,6 +103,7 @@ FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready 
 
 - `main.py`：監督 stream 設定與 worker process。
 - `src/`：正式執行用的核心模組。
+- `examples/bff/`：Web session、CSRF、media capability 與 API gateway。
 - `examples/db_management/`：使用者、群組、工地、stream 設定 API。
 - `examples/local_notification_server/`：FCM token 與工地通知 API。
 - `examples/streaming_web/`：標籤、播放 URL、metadata channel、
@@ -179,7 +181,8 @@ YOLO_WORKER_DEVICES=cuda:0,cuda:0
 YOLO_WORKER_QUEUE_SIZE=64
 YOLO_WORKER_BATCH_SIZE=8
 YOLO_WORKER_BATCH_WAIT_MS=10
-YOLO_WORKER_MODEL_DIR=models/pt
+YOLO_WORKER_PRECISION=f16
+# f32/f16 使用 models/pt/*.pt；int8 使用 models/int8_engine/*.engine。
 
 MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
 MEDIA_PUBLIC_HLS_BASE_URL='/hazard/media'
@@ -288,13 +291,13 @@ Nginx /hazard/api/media-auth -> examples.streaming_web /media-auth
 
 ```dotenv
 MTX_HLSSEGMENTDURATION=2s
-MTX_HLSSEGMENTCOUNT=7
+MTX_HLSSEGMENTCOUNT=14
 MTX_HLSALWAYSREMUX=yes
 MTX_HLSMUXERCLOSEAFTER=60s
 ```
 
-降低 `MTX_HLSSEGMENTCOUNT` 可減少硬碟與記憶體使用量。只有在觀看端需要更長直播
-緩衝時才提高。
+降低 `MTX_HLSSEGMENTCOUNT` 可減少硬碟與記憶體使用量。預設 14 個片段（每段 2 秒時約
+28 秒）可讓多鏡頭牆在短暫網路或發布中斷後恢復。
 
 ### 6. 啟動 API
 

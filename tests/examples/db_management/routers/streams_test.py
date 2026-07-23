@@ -9,6 +9,8 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from examples.db_management.routers import streams
+from examples.db_management.schemas.stream_config import SiteStreamConfigItem
+from examples.db_management.schemas.stream_config import SiteStreamConfigUpsert
 from examples.db_management.schemas.stream_config import StreamConfigCreate
 from examples.db_management.schemas.stream_config import StreamConfigUpdate
 
@@ -31,8 +33,11 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         group_mock: MagicMock = MagicMock()
         group_mock.id = 1
         group_mock.max_allowed_streams = 5
+        other_group_mock: MagicMock = MagicMock()
+        other_group_mock.id = 2
+        other_group_mock.max_allowed_streams = 5
         self.site_mock: MagicMock = MagicMock()
-        self.site_mock.groups = [group_mock]
+        self.site_mock.groups = [group_mock, other_group_mock]
 
     @patch('examples.db_management.routers.streams.list_stream_configs')
     @patch('examples.db_management.routers.streams.get_group_stream_limit')
@@ -81,6 +86,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(response), 1)
         self.assertEqual(response[0].stream_name, 'test')
+        mock_list.assert_awaited_once_with(1, self.db, group_id=1)
 
     @patch('examples.db_management.routers.streams.create_stream_config')
     @patch('examples.db_management.routers.streams.get_group_stream_limit')
@@ -105,6 +111,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
             site_id=1,
             stream_name='stream',
             video_url='url',
+            group_id=2,
         )
         self.db.get.return_value = self.site_mock
 
@@ -113,6 +120,8 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response['id'], 1)
+        created_payload = mock_create.await_args.args[0]
+        self.assertEqual(created_payload.group_id, 1)
 
     async def test_endpoint_create_stream_config_limit_reached(self) -> None:
         """Test creating a stream configuration when limit is reached.
@@ -137,6 +146,105 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(ctx.exception.status_code, 403)
 
+    @patch('examples.db_management.routers.streams.create_stream_config')
+    @patch('examples.db_management.routers.streams.update_stream_config')
+    @patch('examples.db_management.routers.streams.get_group_stream_limit')
+    @patch('examples.db_management.routers.streams.list_stream_configs')
+    @patch(
+        'examples.db_management.routers.streams.is_super_admin',
+        return_value=False,
+    )
+    async def test_endpoint_put_site_stream_config_uses_site_scope(
+        self,
+        mock_is_super_admin: MagicMock,
+        mock_list: AsyncMock,
+        mock_limit: AsyncMock,
+        mock_update: AsyncMock,
+        mock_create: AsyncMock,
+    ) -> None:
+        """Site-level upsert uses current admin group, not frontend group."""
+        existing = MagicMock(
+            id=11,
+            stream_name='Old Cam',
+            video_url='rtsp://old',
+            model_key='yolo26n',
+            detect_with_server=True,
+            store_in_redis=False,
+            work_start_hour=7,
+            work_end_hour=18,
+            detect_no_safety_vest_or_helmet=False,
+            detect_near_machinery_or_vehicle=False,
+            detect_in_restricted_area=False,
+            detect_in_utility_pole_restricted_area=False,
+            detect_machinery_close_to_pole=False,
+            expire_date=None,
+            updated_at=datetime.datetime.now(),
+            group_id=1,
+        )
+        created = MagicMock(id=12)
+        mock_create.return_value = created
+        mock_limit.return_value = (1, 5)
+        mock_list.side_effect = [[existing], [existing]]
+        self.db.get.return_value = self.site_mock
+        self.db.scalar.return_value = None
+        payload = SiteStreamConfigUpsert(
+            streams=[
+                SiteStreamConfigItem(
+                    id=11,
+                    stream_name='Old Cam',
+                    rtsp_url='rtsp://updated',
+                ),
+                SiteStreamConfigItem(
+                    stream_name='New Cam',
+                    rtsp_url='rtsp://new',
+                ),
+            ],
+        )
+
+        response = await streams.endpoint_put_site_stream_config(
+            1,
+            payload,
+            self.db,
+            self.current_user,
+        )
+
+        mock_list.assert_any_await(1, self.db, group_id=1)
+        mock_update.assert_awaited_once()
+        mock_create.assert_awaited_once()
+        created_payload = mock_create.await_args.args[0]
+        self.assertEqual(created_payload.site_id, 1)
+        self.assertEqual(created_payload.group_id, 1)
+        self.assertEqual(created_payload.video_url, 'rtsp://new')
+        self.assertEqual(len(response), 1)
+
+    async def test_endpoint_put_site_stream_config_rejects_duplicate_names(
+        self,
+    ) -> None:
+        """Site-level payload cannot contain duplicate stream names."""
+        self.db.get.return_value = self.site_mock
+        payload = SiteStreamConfigUpsert(
+            streams=[
+                SiteStreamConfigItem(
+                    stream_name='Cam1',
+                    rtsp_url='rtsp://one',
+                ),
+                SiteStreamConfigItem(
+                    stream_name='Cam1',
+                    rtsp_url='rtsp://two',
+                ),
+            ],
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await streams.endpoint_put_site_stream_config(
+                1,
+                payload,
+                self.db,
+                self.current_user,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+
     @patch('examples.db_management.routers.streams.update_stream_config')
     @patch(
         'examples.db_management.routers.streams.is_super_admin',
@@ -152,6 +260,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         Ensures the endpoint returns a success message when update is valid.
         """
         cfg_mock: MagicMock = MagicMock(site=self.site_mock, stream_name='old')
+        cfg_mock.group_id = 1
         self.db.get.return_value = cfg_mock
         self.db.scalar.return_value = None
 
@@ -179,6 +288,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         Should raise HTTP 400 if the new name already exists in the site.
         """
         cfg_mock: MagicMock = MagicMock(site=self.site_mock, stream_name='old')
+        cfg_mock.group_id = 1
         self.db.get.return_value = cfg_mock
         self.db.scalar.return_value = MagicMock()
 
@@ -208,6 +318,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         Ensures the endpoint returns a success message when deletion is valid.
         """
         cfg_mock: MagicMock = MagicMock(site=self.site_mock)
+        cfg_mock.group_id = 1
         self.db.get.return_value = cfg_mock
 
         response = await streams.endpoint_delete_stream_config(
@@ -291,6 +402,22 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(ctx.exception.status_code, 404)
 
+    async def test_update_stream_config_rejects_other_group_config(
+        self,
+    ) -> None:
+        """Admin cannot update another group's stream on a shared site."""
+        cfg_mock: MagicMock = MagicMock(site=self.site_mock, stream_name='old')
+        cfg_mock.group_id = 2
+        self.db.get.return_value = cfg_mock
+        payload: StreamConfigUpdate = StreamConfigUpdate(stream_name='new')
+
+        with self.assertRaises(HTTPException) as ctx:
+            await streams.endpoint_update_stream_config(
+                1, payload, self.db, self.current_user,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+
     async def test_delete_stream_config_not_found(self) -> None:
         """Should raise 404 if config not found when deleting.
 
@@ -303,6 +430,21 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
                 1, self.db, self.current_user,
             )
         self.assertEqual(ctx.exception.status_code, 404)
+
+    async def test_delete_stream_config_rejects_other_group_config(
+        self,
+    ) -> None:
+        """Admin cannot delete another group's stream on a shared site."""
+        cfg_mock: MagicMock = MagicMock(site=self.site_mock)
+        cfg_mock.group_id = 2
+        self.db.get.return_value = cfg_mock
+
+        with self.assertRaises(HTTPException) as ctx:
+            await streams.endpoint_delete_stream_config(
+                1, self.db, self.current_user,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
 
     @patch('examples.db_management.routers.streams.get_group_stream_limit')
     @patch(

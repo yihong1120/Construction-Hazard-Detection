@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.changdar.visionnaire",
+      "sha256_cert_fingerprints": [
+        "5E:79:A5:EE:8A:0E:28:91:CF:EF:B1:86:F6:E3:F1:2D:3A:D7:AD:49:24:0D:74:07:73:7B:56:98:B9:78:C8:85"
+      ]
+    }
+  }
+]

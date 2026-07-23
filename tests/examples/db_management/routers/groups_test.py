@@ -30,12 +30,28 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         self.example_group: Group = Group(
             id=1, name='Test Group', uniform_number='12345678',
         )
+        self.super_admin: MagicMock = MagicMock(
+            role='admin',
+            username='ChangDar',
+            group_id=None,
+        )
+        self.admin: MagicMock = MagicMock(
+            role='admin',
+            username='site-admin',
+            group_id=1,
+        )
 
     @patch('examples.db_management.routers.groups.list_groups')
+    @patch(
+        'examples.db_management.routers.groups.is_super_admin',
+        return_value=True,
+    )
     async def test_endpoint_list_groups(
-        self, mock_list_groups: AsyncMock,
+        self,
+        mock_is_super_admin: MagicMock,
+        mock_list_groups: AsyncMock,
     ) -> None:
-        """Test listing all groups.
+        """Test super admin lists all groups.
 
         Ensures that the endpoint returns a list of groups as expected.
         """
@@ -43,11 +59,35 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
 
         result: list[Group] = await groups.endpoint_list_groups(
             db=self.db_session,
+            me=self.super_admin,
         )
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].id, self.example_group.id)
         mock_list_groups.assert_awaited_once_with(self.db_session)
+
+    @patch(
+        'examples.db_management.routers.groups.is_super_admin',
+        return_value=False,
+    )
+    async def test_endpoint_list_groups_admin_returns_own_group(
+        self,
+        mock_is_super_admin: MagicMock,
+    ) -> None:
+        """Test regular admin receives only their own group."""
+        execute_result: MagicMock = MagicMock()
+        execute_result.unique.return_value.scalar_one_or_none.return_value = (
+            self.example_group
+        )
+        self.db_session.execute.return_value = execute_result
+
+        result: list[Group] = await groups.endpoint_list_groups(
+            db=self.db_session,
+            me=self.admin,
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, 1)
 
     @patch('examples.db_management.routers.groups.create_group')
     async def test_endpoint_create_group(

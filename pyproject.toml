@@ -18,6 +18,7 @@ dependencies = [
   "ckip_transformers==0.3.4",
   "transformers==5.0.0",
   "cloudinary==1.44.1",
+  "cryptography==46.0.3",
   "fastapi==0.128.0",
   "firebase_admin==7.1.0",
   "httpx==0.28.1",

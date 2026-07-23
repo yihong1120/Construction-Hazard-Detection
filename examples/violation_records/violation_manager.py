@@ -8,11 +8,17 @@ from typing import Any
 from typing import Final
 
 import aiofiles  # type: ignore[import-untyped]
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from examples.auth.models import Site
+from examples.auth.models import StreamConfig
 from examples.auth.models import Violation
 from examples.shared.filename_utils import sanitize_filename
 from examples.violation_records.settings import STATIC_DIR
+from examples.violation_records.violation_types import (
+    violation_type_codes_from_warnings,
+)
 
 _upload_chunk_size: Final[int] = 1024 * 1024
 
@@ -182,12 +188,21 @@ class ViolationManager:
         pole_polygon_json: str | None,
     ) -> Violation:
         """Insert the database row after the image has been persisted."""
+        stream_config_id = await self._find_stream_config_id(
+            db,
+            site,
+            stream_name,
+        )
         new_violation = Violation(
             site=site,
             stream_name=stream_name,
+            stream_config_id=stream_config_id,
             detection_time=detection_time,
             image_path=str(image_path),
             warnings_json=warnings_json,
+            violation_type_codes=violation_type_codes_from_warnings(
+                warnings_json,
+            ),
             detections_json=detections_json,
             cone_polygon_json=cone_polygon_json,
             pole_polygon_json=pole_polygon_json,
@@ -196,3 +211,20 @@ class ViolationManager:
         await db.commit()
         await db.refresh(new_violation)
         return new_violation
+
+    async def _find_stream_config_id(
+        self,
+        db: AsyncSession,
+        site: str,
+        stream_name: str,
+    ) -> int | None:
+        """Resolve the immutable camera ID while retaining legacy uploads."""
+        statement = (
+            select(StreamConfig.id)
+            .join(Site, StreamConfig.site_id == Site.id)
+            .where(
+                Site.name == site,
+                StreamConfig.stream_name == stream_name,
+            )
+        )
+        return (await db.execute(statement)).scalar_one_or_none()

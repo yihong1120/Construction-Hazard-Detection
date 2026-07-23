@@ -39,7 +39,7 @@ services:
       MTX_WEBRTC: 'yes'
       MTX_HLSALWAYSREMUX: ${MTX_HLSALWAYSREMUX:-yes}
       MTX_HLSSEGMENTDURATION: ${MTX_HLSSEGMENTDURATION:-2s}
-      MTX_HLSSEGMENTCOUNT: ${MTX_HLSSEGMENTCOUNT:-7}
+      MTX_HLSSEGMENTCOUNT: ${MTX_HLSSEGMENTCOUNT:-14}
       MTX_HLSDIRECTORY: ${MTX_HLSDIRECTORY:-/tmp/mediamtx-hls}
       MTX_HLSMUXERCLOSEAFTER: ${MTX_HLSMUXERCLOSEAFTER:-60s}
       MTX_READTIMEOUT: 60s
@@ -83,23 +83,40 @@ services:
   user-management:
     # Build the image from the specified Dockerfile
     build:
-      context: ./examples/db_management
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: examples/db_management/Dockerfile
     # Environment variables for database connection
     environment:
       DATABASE_URL: postgresql+asyncpg://username:password@postgres/construction_hazard_detection
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: password
+      BFF_CHAT_API_URL: http://host.docker.internal:8001
+      BFF_FILES_API_URL: http://host.docker.internal:8004
+      BFF_MANAGEMENT_API_URL: http://127.0.0.1:8005
+      BFF_DETECTION_API_URL: http://yolo-server-api:6000
+      BFF_FCM_API_URL: http://local-notification-server:8003
+      BFF_VIOLATIONS_API_URL: http://violation-records:8002
+      BFF_STREAMING_API_URL: http://streaming-web-backend:8000
+      PLAYBACK_STREAMING_API_URL: http://streaming-web-backend:8000
+    env_file:
+      - .env
     # Mount the examples directory for application access
     volumes:
       - ./examples:/app/examples
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     # Ensure the service starts only after PostgreSQL is healthy
     depends_on:
       base:
         condition: service_started
       postgres:
         condition: service_healthy
-    # Expose the user management service on port 8001
+      redis:
+        condition: service_healthy
+    # Expose the user management service on port 8005
     ports:
-      - '127.0.0.1:8001:8001'
+      - '127.0.0.1:8005:8005'
     # Attach the service to the custom network
     networks:
       - app_network
@@ -147,16 +164,23 @@ services:
       REDIS_PASSWORD: password
       MEDIA_PUBLIC_HLS_BASE_URL: ${MEDIA_PUBLIC_HLS_BASE_URL:-/hazard/media}
       MEDIA_PUBLIC_WEBRTC_BASE_URL: ${MEDIA_PUBLIC_WEBRTC_BASE_URL:-/hazard/media/webrtc}
+      MEDIA_INTERNAL_HLS_BASE_URL: ${MEDIA_INTERNAL_HLS_BASE_URL:-http://media-server:8888}
       MEDIA_REQUIRE_ANNOTATED_PLAYBACK: ${MEDIA_REQUIRE_ANNOTATED_PLAYBACK:-false}
       MEDIA_DEFAULT_OVERLAY_LANGUAGE: ${MEDIA_DEFAULT_OVERLAY_LANGUAGE:-zh-TW}
       MEDIA_OVERLAY_ALLOWED_LANGUAGES: ${MEDIA_OVERLAY_ALLOWED_LANGUAGES:-zh-TW,en,zh-CN,ja,vi,id,fr,th}
       MEDIA_OVERLAY_MAX_ACTIVE_LANGUAGES_PER_STREAM: ${MEDIA_OVERLAY_MAX_ACTIVE_LANGUAGES_PER_STREAM:-5}
       MEDIA_OVERLAY_DEMAND_TTL_SECONDS: ${MEDIA_OVERLAY_DEMAND_TTL_SECONDS:-90}
-      STREAMING_WEB_CORS_ORIGINS: ${STREAMING_WEB_CORS_ORIGINS:-https://changdar-server.mooo.com}
+      MEDIA_PUBLISHER_IDLE_GRACE_SECONDS: ${MEDIA_PUBLISHER_IDLE_GRACE_SECONDS:-180}
       HAZARD_MEDIA_SESSION_TTL_SECONDS: ${HAZARD_MEDIA_SESSION_TTL_SECONDS:-4500}
       HAZARD_MEDIA_SESSION_COOKIE_SECURE: ${HAZARD_MEDIA_SESSION_COOKIE_SECURE:-true}
       HAZARD_MEDIA_SESSION_COOKIE_SAMESITE: ${HAZARD_MEDIA_SESSION_COOKIE_SAMESITE:-lax}
+      MEDIA_SESSION_COOKIE_NAME: ${MEDIA_SESSION_COOKIE_NAME:-__Secure-vn_media}
+      MEDIA_SESSION_TTL_SECONDS: ${MEDIA_SESSION_TTL_SECONDS:-600}
+      HAZARD_LEGACY_MEDIA_AUTH_ENABLED: ${HAZARD_LEGACY_MEDIA_AUTH_ENABLED:-false}
       PYTHONPATH: /app
+      DATABASE_URL: postgresql+asyncpg://username:password@postgres/construction_hazard_detection
+    env_file:
+      - .env
     # Mount the examples directory for application access
     volumes:
       - ./examples:/app/examples
@@ -168,6 +192,8 @@ services:
         condition: service_healthy
       media-server:
         condition: service_started
+      postgres:
+        condition: service_healthy
     # Command to run the backend using Uvicorn
     command: ["uvicorn", "examples.streaming_web.app:app", "--host", "0.0.0.0", "--port", "8000"]
     # Expose the backend on port 8000
@@ -266,6 +292,12 @@ services:
       MEDIA_PUBLISH_FPS: ${MEDIA_PUBLISH_FPS:-15}
       MEDIA_PUBLISH_CRF: ${MEDIA_PUBLISH_CRF:-28}
       MEDIA_PUBLISH_PRESET: ${MEDIA_PUBLISH_PRESET:-veryfast}
+      MEDIA_PREVIEW_WIDTH: ${MEDIA_PREVIEW_WIDTH:-640}
+      MEDIA_PREVIEW_HEIGHT: ${MEDIA_PREVIEW_HEIGHT:-360}
+      MEDIA_PREVIEW_FPS: ${MEDIA_PREVIEW_FPS:-15}
+      MEDIA_PREVIEW_BITRATE: ${MEDIA_PREVIEW_BITRATE:-500k}
+      MEDIA_PREVIEW_MAXRATE: ${MEDIA_PREVIEW_MAXRATE:-700k}
+      MEDIA_PREVIEW_BUFSIZE: ${MEDIA_PREVIEW_BUFSIZE:-1400k}
     env_file:
       - .env
     # Mount the configuration directory for application access

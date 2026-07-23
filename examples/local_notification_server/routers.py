@@ -9,13 +9,17 @@ import redis.asyncio as redis
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Query
 from fastapi import Security
+from sqlalchemy import func
 from sqlalchemy import select
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.auth.models import Notification
 from examples.auth.models import Site
 from examples.auth.models import SiteNotificationPreference
 from examples.auth.models import User
@@ -24,19 +28,56 @@ from examples.auth.user_service import list_effective_sites_for_user
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
 from examples.db_management.services.site_services import list_sites
+from examples.local_notification_server.fcm_service import (
+    FcmSendResult,
+)
+from examples.local_notification_server.fcm_service import (
+    send_fcm_notification_service,
+)
 from examples.local_notification_server.lang_config import normalize_language
+from examples.local_notification_server.schemas import \
+    DeviceStatusResponse
+from examples.local_notification_server.schemas import \
+    DeviceTokenStatus
+from examples.local_notification_server.schemas import \
+    NotificationBulkReadResponse
+from examples.local_notification_server.schemas import NotificationList
+from examples.local_notification_server.schemas import NotificationOut
+from examples.local_notification_server.schemas import NotificationStatus
+from examples.local_notification_server.schemas import NotificationType
+from examples.local_notification_server.schemas import \
+    NotificationUnreadCount
 from examples.local_notification_server.schemas import \
     SiteNotificationPreferenceOut
 from examples.local_notification_server.schemas import \
     SiteNotificationPreferenceUpdateRequest
 from examples.local_notification_server.schemas import SiteNotifyRequest
+from examples.local_notification_server.schemas import TestNotificationResponse
 from examples.local_notification_server.schemas import TokenRequest
+from examples.local_notification_server.schemas import TokenStoreResponse
 from examples.local_notification_server.services import \
     _execute_push_tasks_bounded_streaming
 from examples.local_notification_server.services import \
     _iter_push_tasks_streaming
 from examples.local_notification_server.services import \
+    create_notification_records_for_users
+from examples.local_notification_server.services import delete_fcm_token_metadata
+from examples.local_notification_server.services import diagnose_push_preflight
+from examples.local_notification_server.services import \
     get_site_notification_user_ids_cached
+from examples.local_notification_server.services import list_fcm_device_status
+from examples.local_notification_server.services import \
+    load_active_fcm_device_tokens
+from examples.local_notification_server.services import \
+    mark_fcm_tokens_failure
+from examples.local_notification_server.services import \
+    mark_fcm_tokens_success
+from examples.local_notification_server.services import \
+    mark_invalid_fcm_tokens_for_users
+from examples.local_notification_server.services import \
+    record_fcm_token_registration
+from examples.local_notification_server.services import \
+    refresh_fcm_token_cache_for_users
 from examples.local_notification_server.services import \
     refresh_site_notification_user_cache
 
@@ -112,18 +153,13 @@ async def _claim_notification_send(
     )
 
 
-@router.post('/store_token')
+@router.post('/store_token', response_model=TokenStoreResponse)
 async def store_fcm_token(
     req: TokenRequest,
     db: AsyncSession = Depends(get_db),
     rds: redis.Redis = Depends(get_redis_pool),
-) -> dict[str, str]:
-    """Store an FCM device token in Redis.
-
-    A Redis hash is used to store token-language pairs:
-    - Key: "fcm_tokens:{user_id}"
-    - Field: Device token
-    - Value: Language code (e.g., 'en-GB')
+) -> TokenStoreResponse:
+    """Store an FCM device token in DB and refresh Redis send cache.
 
     Args:
         req: Payload containing the user ID, device token, and language.
@@ -143,21 +179,20 @@ async def store_fcm_token(
     if not result.scalar():
         raise HTTPException(status_code=404, detail='User not found')
 
-    key: str = f"fcm_tokens:{req.user_id}"
     device_lang = normalize_language(req.device_lang)
     if device_lang is None:
         raise HTTPException(status_code=422, detail='unsupported_device_lang')
 
-    # Use Redis pipeline for batch operations
-    pipe = rds.pipeline()
+    meta = await record_fcm_token_registration(req, device_lang, db, rds)
 
-    # Set token and expiration
-    pipe.hset(key, req.device_token, device_lang)
-    pipe.expire(key, 86400 * 30)  # 30 days expiration
-
-    await pipe.execute()
-
-    return {'message': 'Token stored successfully.'}
+    return TokenStoreResponse(
+        ok=True,
+        updated=True,
+        user_id=req.user_id,
+        device_lang=device_lang,
+        registered_at=meta['registered_at'],
+        last_seen_at=meta['last_seen_at'],
+    )
 
 
 @router.delete('/delete_token')
@@ -166,7 +201,7 @@ async def delete_fcm_token(
     db: AsyncSession = Depends(get_db),
     rds: redis.Redis = Depends(get_redis_pool),
 ) -> dict[str, str]:
-    """Delete an FCM device token from Redis.
+    """Disable an FCM device token in DB and remove it from Redis cache.
 
     Args:
         req: Payload containing the user ID and device token.
@@ -182,7 +217,15 @@ async def delete_fcm_token(
     if not result.scalar():
         return {'message': 'User not found.'}
 
-    # Use Redis pipeline for batch operations
+    deleted = await delete_fcm_token_metadata(
+        req.user_id,
+        req.device_token,
+        db,
+        rds,
+    )
+
+    # Use Redis pipeline for batch operations. Redis is only a send cache, so
+    # the API result is based on the DB update above.
     pipe = rds.pipeline()
     key: str = f"fcm_tokens:{req.user_id}"
 
@@ -190,15 +233,14 @@ async def delete_fcm_token(
     pipe.hlen(key)  # Check remaining token count
 
     results = await pipe.execute()
-    removed: int = results[0]
     remaining_tokens: int = results[1]
 
     # Delete key if no tokens remain
     if remaining_tokens == 0:
         await rds.delete(key)
 
-    if removed == 0:
-        return {'message': 'Token not found in Redis hash.'}
+    if not deleted:
+        return {'message': 'Token not found.'}
 
     return {'message': 'Token deleted.'}
 
@@ -248,6 +290,13 @@ async def send_fcm_notification(
             'message': f"Site '{req.site}' has no subscribed users.",
         }
 
+    notification_record_count = await create_notification_records_for_users(
+        req,
+        user_ids,
+        db,
+    )
+    await refresh_fcm_token_cache_for_users(user_ids, db, rds)
+
     start_time: float = time.time()
     push_tasks = _iter_push_tasks_streaming(req, user_ids, rds)
     translation_time: float = time.time() - start_time
@@ -259,6 +308,14 @@ async def send_fcm_notification(
         await _execute_push_tasks_bounded_streaming(
             push_tasks,
             timeout=30.0,
+            invalid_token_handler=(
+                lambda invalid_tokens: mark_invalid_fcm_tokens_for_users(
+                    user_ids,
+                    invalid_tokens,
+                    rds,
+                    db=db,
+                )
+            ),
         )
     )
     if not ok:
@@ -276,15 +333,30 @@ async def send_fcm_notification(
     assert total_batches is not None
     assert successful_batches is not None
     if total_batches == 0:
+        preflight_stats = await diagnose_push_preflight(req, user_ids, rds)
+        if preflight_stats['unique_tokens'] == 0:
+            skip_message = f"Site '{req.site}' has no device tokens."
+        else:
+            skip_message = (
+                f"Site '{req.site}' has no sendable device tokens."
+            )
         print(
             'FCM sending skipped: no sendable batches; '
             f"site={req.site!r}, stream={req.stream_name!r}, "
             f"subscribed_users={len(user_ids)}. "
-            'Check fcm_tokens, token languages, and notification body keys.',
+            f"diagnostics={preflight_stats!r}.",
         )
         return {
             'success': False,
-            'message': f"Site '{req.site}' has no device tokens.",
+            'message': skip_message,
+            'stats': {
+                'translation_time': translation_time,
+                'fcm_time': fcm_time,
+                'total_batches': total_batches,
+                'successful_batches': successful_batches,
+                'notification_records': notification_record_count,
+                'preflight': preflight_stats,
+            },
         }
 
     overall_success: bool = total_batches == successful_batches
@@ -305,8 +377,257 @@ async def send_fcm_notification(
             'fcm_time': fcm_time,
             'total_batches': total_batches,
             'successful_batches': successful_batches,
+            'notification_records': notification_record_count,
         },
     }
+
+
+def _notification_to_out(notification: Notification) -> NotificationOut:
+    """Convert a notification ORM object into its API response shape."""
+    return NotificationOut(
+        id=notification.id,
+        type=cast(NotificationType, notification.type),
+        title=notification.title,
+        body=notification.body,
+        deep_link=notification.deep_link,
+        is_read=notification.is_read,
+        created_at=notification.created_at,
+        metadata=dict(notification.metadata_json or {}),
+    )
+
+
+async def _get_owned_notification(
+    notification_id: int,
+    user_id: int,
+    db: AsyncSession,
+) -> Notification:
+    """Load one notification belonging to the current user."""
+    notification = await db.scalar(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == user_id,
+        ),
+    )
+    if notification is None:
+        raise HTTPException(status_code=404, detail='Notification not found.')
+    return notification
+
+
+@router.get('/notifications', response_model=NotificationList)
+async def list_notifications(
+    status: NotificationStatus | None = Query(default=None),
+    notification_type: NotificationType | None = Query(
+        default=None,
+        alias='type',
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
+) -> NotificationList:
+    """List current user's notification-center records."""
+    conditions = [Notification.user_id == me.id]
+    if status == 'unread':
+        conditions.append(Notification.is_read.is_(False))
+    elif status == 'read':
+        conditions.append(Notification.is_read.is_(True))
+
+    if notification_type is not None:
+        conditions.append(Notification.type == notification_type)
+
+    total_result = await db.execute(
+        select(func.count()).select_from(Notification).where(*conditions),
+    )
+    total = int(total_result.scalar() or 0)
+    offset = (page - 1) * page_size
+    item_result = await db.execute(
+        select(Notification)
+        .where(*conditions)
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .offset(offset)
+        .limit(page_size),
+    )
+    items = [
+        _notification_to_out(notification)
+        for notification in item_result.scalars().all()
+    ]
+    return NotificationList(
+        total=total,
+        page=page,
+        page_size=page_size,
+        items=items,
+    )
+
+
+@router.get(
+    '/notifications/unread_count',
+    response_model=NotificationUnreadCount,
+)
+async def get_notification_unread_count(
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
+) -> NotificationUnreadCount:
+    """Return the current user's unread notification count."""
+    result = await db.execute(
+        select(func.count())
+        .select_from(Notification)
+        .where(
+            Notification.user_id == me.id,
+            Notification.is_read.is_(False),
+        ),
+    )
+    return NotificationUnreadCount(unread_count=int(result.scalar() or 0))
+
+
+@router.get(
+    '/notifications/device-status',
+    response_model=DeviceStatusResponse,
+)
+async def get_notification_device_status(
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
+) -> DeviceStatusResponse:
+    """Return diagnostic metadata for the current user's notification tokens."""
+    rows = await list_fcm_device_status(me.id, db)
+    devices = [DeviceTokenStatus.model_validate(row) for row in rows]
+    active_count = sum(1 for device in devices if device.is_active)
+    return DeviceStatusResponse(
+        user_id=me.id,
+        has_fcm_token=active_count > 0,
+        token_count=active_count,
+        devices=devices,
+    )
+
+
+@router.post(
+    '/notifications/test',
+    response_model=TestNotificationResponse,
+)
+async def send_test_notification(
+    rds: redis.Redis = Depends(get_redis_pool),
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
+) -> TestNotificationResponse:
+    """Send a test push notification to the current user's active tokens."""
+    await refresh_fcm_token_cache_for_users([me.id], db, rds)
+    device_tokens = await load_active_fcm_device_tokens(me.id, db)
+    if not device_tokens:
+        return TestNotificationResponse(
+            success=False,
+            message='No FCM token registered for this user.',
+            attempted_tokens=0,
+        )
+
+    result = await send_fcm_notification_service(
+        device_tokens=device_tokens,
+        title='Visionnaire test notification',
+        body='This is a test notification.',
+        data={'type': 'system', 'test': 'true'},
+    )
+    if isinstance(result, FcmSendResult):
+        invalid_tokens = set(result.invalid_tokens)
+        if result.success_count > 0 and result.failure_count == 0:
+            await mark_fcm_tokens_success(me.id, device_tokens, rds, db=db)
+        elif result.failure_count > 0:
+            await mark_fcm_tokens_failure(
+                me.id,
+                device_tokens,
+                rds,
+                'fcm_error',
+                db=db,
+            )
+        if invalid_tokens:
+            await mark_invalid_fcm_tokens_for_users(
+                [me.id],
+                invalid_tokens,
+                rds,
+                db=db,
+            )
+        return TestNotificationResponse(
+            success=bool(result),
+            message=(
+                'Test notification sent.'
+                if bool(result)
+                else 'Test notification failed.'
+            ),
+            attempted_tokens=len(device_tokens),
+            success_count=result.success_count,
+            failure_count=result.failure_count,
+            invalid_tokens=len(invalid_tokens),
+        )
+
+    success = bool(result)
+    if success:
+        await mark_fcm_tokens_success(me.id, device_tokens, rds, db=db)
+    else:
+        await mark_fcm_tokens_failure(
+            me.id,
+            device_tokens,
+            rds,
+            'fcm_error',
+            db=db,
+        )
+    return TestNotificationResponse(
+        success=success,
+        message=(
+            'Test notification sent.'
+            if success
+            else 'Test notification failed.'
+        ),
+        attempted_tokens=len(device_tokens),
+        success_count=len(device_tokens) if success else 0,
+        failure_count=0 if success else len(device_tokens),
+    )
+
+
+@router.patch('/notifications/{notification_id}/read')
+async def mark_notification_read(
+    notification_id: int,
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
+) -> NotificationOut:
+    """Mark one notification as read."""
+    notification = await _get_owned_notification(notification_id, me.id, db)
+    notification.is_read = True
+    await db.commit()
+    await db.refresh(notification)
+    return _notification_to_out(notification)
+
+
+@router.patch(
+    '/notifications/read_all',
+    response_model=NotificationBulkReadResponse,
+)
+async def mark_all_notifications_read(
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
+) -> NotificationBulkReadResponse:
+    """Mark all current-user notifications as read."""
+    result = await db.execute(
+        update(Notification)
+        .where(
+            Notification.user_id == me.id,
+            Notification.is_read.is_(False),
+        )
+        .values(is_read=True),
+    )
+    await db.commit()
+    return NotificationBulkReadResponse(
+        updated_count=int(result.rowcount or 0),
+    )
+
+
+@router.delete('/notifications/{notification_id}')
+async def delete_notification(
+    notification_id: int,
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Delete one notification owned by the current user."""
+    notification = await _get_owned_notification(notification_id, me.id, db)
+    await db.delete(notification)
+    await db.commit()
+    return {'message': 'Notification deleted.'}
 
 
 async def _list_notification_scope_sites(

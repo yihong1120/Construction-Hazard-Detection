@@ -47,6 +47,18 @@ class TestServices(unittest.TestCase):
         self.assertEqual(got_dict['zh-TW'], ['t2'])
         self.assertEqual(got_dict['ja-JP'], ['t4'])
 
+    def test_decode_lang_token_map_accepts_str_values(self) -> None:
+        """It accepts decoded Redis hash values as well as bytes."""
+        raw = [
+            {'t1': 'en-US', 't2': 'zh_TW'},
+        ]
+
+        got = svc._decode_lang_token_map(raw)
+        got_dict = {k: list(v) for k, v in got.items()}
+
+        self.assertEqual(got_dict['en-GB'], ['t1'])
+        self.assertEqual(got_dict['zh-TW'], ['t2'])
+
     def test_decode_lang_token_map_normalises_and_deduplicates_tokens(
         self,
     ) -> None:
@@ -104,6 +116,68 @@ class TestServices(unittest.TestCase):
         self.assertEqual(rds.pipeline.call_count, 2)
         self.assertEqual(pipe_one.hgetall.call_count, 2)
         self.assertEqual(pipe_two.hgetall.call_count, 1)
+
+    def test_notification_data_includes_deep_link(self) -> None:
+        """FCM data and stored notifications share the same deep link."""
+        req = SiteNotifyRequest(
+            site='S1',
+            stream_name='Cam1',
+            body={'warning_no_hardhat': {'count': 1}},
+            violation_id=123,
+        )
+
+        data = svc._notification_data(req)
+
+        self.assertEqual(data['type'], 'violation')
+        self.assertEqual(data['violation_id'], '123')
+        self.assertEqual(data['deep_link'], '/violations?violation_id=123')
+
+    def test_notification_data_uses_request_deep_link(self) -> None:
+        """A request-provided deep link is preserved."""
+        req = SiteNotifyRequest(
+            site='S1',
+            stream_name='Cam1',
+            body={'warning_no_hardhat': {'count': 1}},
+            type='site_alert',
+            deep_link='/sites/1',
+        )
+
+        data = svc._notification_data(req)
+
+        self.assertEqual(data['type'], 'site_alert')
+        self.assertEqual(data['deep_link'], '/sites/1')
+
+    def test_create_notification_records_for_users(self) -> None:
+        """It writes one notification-center record per distinct recipient."""
+        req = SiteNotifyRequest(
+            site='S1',
+            stream_name='Cam1',
+            body={'warning_no_hardhat': {'count': 1}},
+            image_path='https://example.com/v.jpg',
+            violation_id=123,
+        )
+        db = MagicMock()
+        db.add_all = MagicMock()
+        db.commit = AsyncMock()
+
+        count = self._run_async(
+            svc.create_notification_records_for_users(
+                req,
+                [5, 5, 6],
+                db,
+            ),
+        )
+
+        self.assertEqual(count, 2)
+        records = db.add_all.call_args.args[0]
+        self.assertEqual([record.user_id for record in records], [5, 6])
+        self.assertEqual(records[0].type, 'violation')
+        self.assertEqual(
+            records[0].deep_link,
+            '/violations?violation_id=123',
+        )
+        self.assertEqual(records[0].metadata_json['violation_id'], 123)
+        db.commit.assert_awaited_once()
 
     @patch(
         'examples.local_notification_server.services.'
@@ -164,6 +238,39 @@ class TestServices(unittest.TestCase):
             mock_send.call_args_list[1].kwargs['device_tokens'],
             ['c'],
         )
+
+    def test_diagnose_push_preflight_reports_token_state(self) -> None:
+        """It explains why recipients do or do not produce push batches."""
+        req = SiteNotifyRequest(
+            site='S1',
+            stream_name='Cam1',
+            body={'warning_no_hardhat': {'count': 1}},
+        )
+        pipe = MagicMock()
+        pipe.hgetall = MagicMock()
+        pipe.execute = AsyncMock(
+            return_value=[
+                {b'a': b'zh', b'b': b'unknown'},
+                {},
+                {b'a': b'en'},
+            ],
+        )
+        rds = MagicMock()
+        rds.pipeline.return_value = pipe
+
+        stats = self._run_async(
+            svc.diagnose_push_preflight(req, [1, 2, 3], rds),
+        )
+
+        self.assertEqual(stats['recipient_users'], 3)
+        self.assertEqual(stats['users_with_tokens'], 2)
+        self.assertEqual(stats['token_entries'], 3)
+        self.assertEqual(stats['unique_tokens'], 2)
+        self.assertEqual(stats['duplicate_tokens'], 1)
+        self.assertEqual(stats['sendable_tokens'], 1)
+        self.assertEqual(stats['unsupported_language_tokens'], 1)
+        self.assertEqual(stats['tokens_by_language'], {'zh-TW': 1})
+        self.assertEqual(stats['unsupported_languages'], {'unknown': 1})
 
     def test_get_site_notification_user_ids_cached_hit(self) -> None:
         """It returns indexed user IDs from Redis when present."""

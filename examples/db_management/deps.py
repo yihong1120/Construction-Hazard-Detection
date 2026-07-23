@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from fastapi import Security
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
@@ -37,7 +38,15 @@ async def get_current_user(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token subject')
 
-    result = await db.execute(select(User).where(User.username == username))
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.group),
+            selectinload(User.profile),
+            selectinload(User.sites),
+        )
+        .where(User.username == username),
+    )
     user: User | None = result.unique().scalar_one_or_none()
 
     if user is None:

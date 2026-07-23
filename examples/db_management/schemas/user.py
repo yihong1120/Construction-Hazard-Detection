@@ -10,7 +10,13 @@ from pydantic import EmailStr
 
 from examples.db_management.schemas.group import GroupRead
 
-UserStatus = Literal['active', 'inactive', 'pending']
+UserStatus = Literal[
+    'active',
+    'email_unverified',
+    'pending_admin_approval',
+    'rejected',
+    'suspended',
+]
 
 
 # ──────────────────────────────────────────────────────────
@@ -63,6 +69,12 @@ class UserSignup(BaseModel):
     username: str
     password: str
     profile: UserProfileBase
+    accepted_terms: bool = False
+    terms_version: str | None = None
+    privacy_version: str | None = None
+    notification_consent: bool = False
+    ai_terms_accepted: bool = False
+    ai_terms_version: str | None = None
 
 
 class ApproveUserSignup(BaseModel):
@@ -72,6 +84,14 @@ class ApproveUserSignup(BaseModel):
     group_id: int | None = None
 
 
+class AdminUserApproval(BaseModel):
+    """Schema for approving or rejecting an email-verified signup."""
+
+    decision: Literal['approved', 'rejected'] = 'approved'
+    group_id: int | None = None
+    note: str | None = None
+
+
 class UserRead(BaseModel):
     """Schema representing detailed user information."""
 
@@ -79,6 +99,7 @@ class UserRead(BaseModel):
     username: str
     role: str
     status: UserStatus
+    email_verified_at: datetime | None = None
     group_id: int | None
     group: GroupRead | None
     profile:    UserProfileRead | None
@@ -95,6 +116,17 @@ class UserRead(BaseModel):
         return self.group.name if self.group else None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PendingUserReviewRead(UserRead):
+    """Admin review row for an email-verified signup."""
+
+    email: EmailStr | None = None
+    terms_version: str | None = None
+    privacy_version: str | None = None
+    ai_terms_version: str | None = None
+    notification_consent: bool | None = None
+    provider: str = 'password'
 
 
 class UpdateUsername(BaseModel):

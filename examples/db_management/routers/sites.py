@@ -16,6 +16,7 @@ from examples.auth.models import User
 from examples.auth.redis_pool import get_redis_pool
 from examples.auth.user_service import invalidate_effective_site_cache
 from examples.db_management.deps import _site_permission
+from examples.db_management.deps import ensure_admin_with_group
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
 from examples.db_management.deps import require_admin
@@ -60,14 +61,27 @@ async def _delete_matching_redis_keys(
         await rds.delete(*pending)
 
 
-def _site_to_read(site: Site) -> SiteRead:
+def _site_to_read(
+    site: Site,
+    visible_group_id: int | None = None,
+) -> SiteRead:
     """Convert a Site ORM instance to the API response model."""
+    groups = list(site.groups)
+    users = list(site.users)
+
+    if visible_group_id is not None:
+        groups = [group for group in groups if group.id == visible_group_id]
+        users = [
+            user for user in users
+            if getattr(user, 'group_id', None) == visible_group_id
+        ]
+
     return SiteRead(
         id=site.id,
         name=site.name,
-        group_ids=[g.id for g in site.groups],
-        group_names=[g.name for g in site.groups],
-        user_ids=[user.id for user in site.users],
+        group_ids=[g.id for g in groups],
+        group_names=[g.name for g in groups],
+        user_ids=[user.id for user in users],
     )
 
 
@@ -91,13 +105,19 @@ async def endpoint_list_sites(
     # Super admin retrieves all sites; admin retrieves group-specific sites
     if is_super_admin(me):
         sites = await list_sites(db)
+        visible_group_id = None
     elif me.role == 'admin':
+        ensure_admin_with_group(me)
         sites = await list_sites(db, group_id=me.group_id)
+        visible_group_id = me.group_id
     else:
         raise HTTPException(status_code=403, detail='Admin role required.')
 
     # Convert Site objects to SiteRead schemas for response
-    return [_site_to_read(site) for site in sites]
+    return [
+        _site_to_read(site, visible_group_id=visible_group_id)
+        for site in sites
+    ]
 
 
 @router.post(
@@ -125,16 +145,19 @@ async def endpoint_create_site(
     """
     if is_super_admin(me):
         group_ids: list[int] = payload.group_ids
+        visible_group_id = None
     else:
+        ensure_admin_with_group(me)
         # Validate any explicitly supplied group IDs before overriding
         for gid in payload.group_ids:
             _site_permission(me, group_id=gid)
         group_ids = [cast(int, me.group_id)]
+        visible_group_id = me.group_id
 
     site: Site = await create_site(payload.name, group_ids, db)
     invalidate_effective_site_cache()
 
-    return _site_to_read(site)
+    return _site_to_read(site, visible_group_id=visible_group_id)
 
 
 @router.put(
@@ -294,6 +317,13 @@ async def endpoint_add_user_to_site(
             detail="Cannot modify super admin's site membership.",
         )
 
+    if not is_super_admin(me) and user.group_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail='User and site must belong to the same group.',
+        )
+    _site_permission(me, group_id=user.group_id)
+
     if user.group_id not in {g.id for g in site.groups}:
         raise HTTPException(
             status_code=403,
@@ -356,6 +386,13 @@ async def endpoint_remove_user_from_site(
             status_code=403, detail='Cannot remove super admin from site.',
         )
 
+    if not is_super_admin(me) and user.group_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail='Cannot manage users outside your group.',
+        )
+    _site_permission(me, group_id=user.group_id)
+
     await remove_user_from_site(user.id, site.id, db)
     invalidate_effective_site_cache()
     await refresh_site_notification_user_cache(site.name, db, rds)
@@ -393,6 +430,7 @@ async def endpoint_add_group_to_site(
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')
 
+    _site_permission(me, site=site)
     _site_permission(me, group_id=payload.group_id)
 
     await add_group_to_site(site.id, payload.group_id, db)
@@ -431,6 +469,7 @@ async def endpoint_remove_group_from_site(
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')
 
+    _site_permission(me, site=site)
     _site_permission(me, group_id=payload.group_id)
 
     await remove_group_from_site(site.id, payload.group_id, db)

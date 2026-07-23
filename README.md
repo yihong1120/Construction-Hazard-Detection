@@ -9,6 +9,7 @@
    <a href="examples/mcp_server">MCP Server</a> |
    <a href="examples/local_notification_server">FCM Notification Server</a> |
    <a href="examples/violation_records">Violation Records Server</a> |
+   <a href="examples/bff">Web BFF</a> |
    <a href="examples/db_management">Data Management Server</a> |
    <a href="examples/streaming_web">Streaming Web</a> |
    <a href="examples/YOLO_data_augmentation">Data Augmentation</a> |
@@ -106,6 +107,7 @@ warning metadata, overlay demand keys, and overlay ready keys.
 
 - `main.py`: supervises configured streams and worker processes.
 - `src/`: production runtime modules.
+- `examples/bff/`: Web session, CSRF, media capability, and API gateway.
 - `examples/db_management/`: users, groups, sites, stream configuration API.
 - `examples/local_notification_server/`: FCM token and site notification API.
 - `examples/streaming_web/`: labels, playback URLs, metadata channels,
@@ -188,7 +190,8 @@ YOLO_WORKER_DEVICES=cuda:0,cuda:0
 YOLO_WORKER_QUEUE_SIZE=64
 YOLO_WORKER_BATCH_SIZE=8
 YOLO_WORKER_BATCH_WAIT_MS=10
-YOLO_WORKER_MODEL_DIR=models/pt
+YOLO_WORKER_PRECISION=f16
+# f32/f16 use models/pt/*.pt; int8 uses models/int8_engine/*.engine.
 
 MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
 MEDIA_PUBLIC_HLS_BASE_URL='/hazard/media'
@@ -303,13 +306,14 @@ Recommended live-buffer defaults are already in `docker-compose.yml`:
 
 ```dotenv
 MTX_HLSSEGMENTDURATION=2s
-MTX_HLSSEGMENTCOUNT=7
+MTX_HLSSEGMENTCOUNT=14
 MTX_HLSALWAYSREMUX=yes
 MTX_HLSMUXERCLOSEAFTER=60s
 ```
 
-Lower `MTX_HLSSEGMENTCOUNT` reduces disk and memory use. Increase it only when
-clients need a longer live playback buffer.
+Lower `MTX_HLSSEGMENTCOUNT` reduces disk and memory use. The default 14
+segments (about 28 seconds at 2-second segments) gives wall tiles enough room
+to recover from a short publisher or network interruption.
 
 ### 6. Start APIs
 

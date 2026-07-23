@@ -6,6 +6,7 @@ from typing import TypeAlias
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from examples.auth.models import Site
 from examples.auth.models import site_groups_table
@@ -41,7 +42,15 @@ async def _load_user_by_username(
     detail: str,
 ) -> User:
     """Load a user by username or raise the requested HTTP error."""
-    stmt_user = select(User).where(User.username == username)
+    stmt_user = (
+        select(User)
+        .options(
+            selectinload(User.group),
+            selectinload(User.profile),
+            selectinload(User.sites),
+        )
+        .where(User.username == username)
+    )
     user_obj: User | None = (
         (await db.execute(stmt_user)).unique().scalars().one_or_none()
     )

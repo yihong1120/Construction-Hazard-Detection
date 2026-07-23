@@ -12,16 +12,28 @@ class TestUserLogin(unittest.TestCase):
 
     def test_valid(self) -> None:
         """Test UserLogin with valid inputs."""
-        data: auth.UserLogin = auth.UserLogin(username='user', password='pw')
-        self.assertEqual(data.username, 'user')
+        data: auth.UserLogin = auth.UserLogin(
+            identifier='user',
+            password='pw',
+            hcaptcha_token='captcha-token',
+        )
+        self.assertEqual(data.identifier, 'user')
         self.assertEqual(data.password, 'pw')
+        self.assertEqual(data.hcaptcha_token, 'captcha-token')
+
+    def test_hcaptcha_token_defaults_to_none(self) -> None:
+        """Test UserLogin keeps hCaptcha validation in service layer."""
+        data: auth.UserLogin = auth.UserLogin(
+            identifier='user', password='pw',
+        )
+        self.assertIsNone(data.hcaptcha_token)
 
     def test_missing_field(self) -> None:
         """
         Test UserLogin raises ValidationError when required fields are missing.
         """
         with self.assertRaises(ValidationError):
-            auth.UserLogin(username='user')
+            auth.UserLogin(identifier='user')
 
         with self.assertRaises(ValidationError):
             auth.UserLogin(password='pw')
@@ -36,12 +48,9 @@ class TestLogoutRequest(unittest.TestCase):
         self.assertEqual(data.refresh_token, 'token')
 
     def test_missing(self) -> None:
-        """
-        Test LogoutRequest raises ValidationError
-        when refresh_token is missing.
-        """
-        with self.assertRaises(ValidationError):
-            auth.LogoutRequest()
+        """LogoutRequest can omit refresh_token for Web cookie logout."""
+        data = auth.LogoutRequest()
+        self.assertIsNone(data.refresh_token)
 
 
 class TestRefreshRequest(unittest.TestCase):
@@ -53,12 +62,9 @@ class TestRefreshRequest(unittest.TestCase):
         self.assertEqual(data.refresh_token, 'token')
 
     def test_missing(self) -> None:
-        """
-        Test RefreshRequest raises ValidationError
-        when refresh_token is missing.
-        """
-        with self.assertRaises(ValidationError):
-            auth.RefreshRequest()
+        """RefreshRequest can omit refresh_token for Web cookie refresh."""
+        data = auth.RefreshRequest()
+        self.assertIsNone(data.refresh_token)
 
 
 class TestTokenPair(unittest.TestCase):
@@ -88,9 +94,10 @@ class TestTokenPair(unittest.TestCase):
         Test TokenPair with optional fields omitted, using default values.
         """
         data: auth.TokenPair = auth.TokenPair(
-            access_token='a', refresh_token='r',
+            access_token='a',
         )
         self.assertIsNone(data.username)
+        self.assertIsNone(data.refresh_token)
         self.assertIsNone(data.role)
         self.assertIsNone(data.user_id)
         self.assertIsNone(data.group_id)
@@ -103,8 +110,8 @@ class TestTokenPair(unittest.TestCase):
         with self.assertRaises(ValidationError):
             auth.TokenPair(refresh_token='r')
 
-        with self.assertRaises(ValidationError):
-            auth.TokenPair(access_token='a')
+        data = auth.TokenPair(access_token='a')
+        self.assertIsNone(data.refresh_token)
 
 
 if __name__ == '__main__':

@@ -5,6 +5,8 @@ from datetime import datetime
 
 from pydantic import ValidationError
 
+from examples.db_management.schemas.stream_config import SiteStreamConfigItem
+from examples.db_management.schemas.stream_config import SiteStreamConfigUpsert
 from examples.db_management.schemas.stream_config import StreamConfigCreate
 from examples.db_management.schemas.stream_config import StreamConfigRead
 from examples.db_management.schemas.stream_config import StreamConfigUpdate
@@ -78,6 +80,33 @@ class TestStreamConfigUpdate(unittest.TestCase):
         self.assertEqual(data.stream_name, 'new_stream')
         self.assertEqual(data.work_end_hour, 20)
         self.assertIsNone(data.model_key)
+
+
+class TestSiteStreamConfigUpsert(unittest.TestCase):
+    """Unit tests for site-scoped stream config payloads."""
+
+    def test_rtsp_url_alias(self) -> None:
+        """Frontend can send rtsp_url without group_id or site_id."""
+        payload = SiteStreamConfigUpsert(
+            streams=[
+                SiteStreamConfigItem(
+                    stream_name='Cam1',
+                    rtsp_url='rtsp://camera/stream',
+                ),
+            ],
+        )
+
+        self.assertEqual(payload.streams[0].stream_name, 'Cam1')
+        self.assertEqual(payload.streams[0].video_url, 'rtsp://camera/stream')
+
+    def test_video_url_still_supported(self) -> None:
+        """The site-scoped payload also accepts video_url."""
+        item = SiteStreamConfigItem(
+            stream_name='Cam2',
+            video_url='rtsp://camera/two',
+        )
+
+        self.assertEqual(item.video_url, 'rtsp://camera/two')
 
 
 class TestStreamConfigRead(unittest.TestCase):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -10,7 +11,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from examples.auth.lifespan import global_lifespan
@@ -21,6 +21,53 @@ from examples.local_notification_server.routers import (
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+_sensitive_payload_keys = {
+    'device_token',
+    'fcm_token',
+    'token',
+    'access_token',
+    'refresh_token',
+}
+_sensitive_payload_key_aliases = {
+    key.replace('_', '').replace('-', '').lower()
+    for key in _sensitive_payload_keys
+}
+
+
+def _is_sensitive_payload_key(key: object) -> bool:
+    """Return whether a request-body key may contain token material."""
+    if not isinstance(key, str):
+        return False
+    normalised = key.replace('_', '').replace('-', '').lower()
+    return key.lower() in _sensitive_payload_keys or (
+        normalised in _sensitive_payload_key_aliases
+    )
+
+
+def _redact_sensitive_payload(value: object) -> object:
+    """Redact token-like values before logging request bodies."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                '<redacted>'
+                if _is_sensitive_payload_key(key)
+                else _redact_sensitive_payload(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive_payload(item) for item in value]
+    return value
+
+
+def _safe_body_preview(body: bytes) -> str:
+    """Return a bounded, token-redacted request body preview."""
+    try:
+        parsed = json.loads(body.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return body[:2000].decode('utf-8', errors='replace')
+    redacted = _redact_sensitive_payload(parsed)
+    return json.dumps(redacted, ensure_ascii=False)[:2000]
 
 
 @asynccontextmanager
@@ -62,7 +109,7 @@ async def validation_exception_handler(
         JSON response containing FastAPI's validation details.
     """
     body = await request.body()
-    body_preview = body[:2000].decode('utf-8', errors='replace')
+    body_preview = _safe_body_preview(body)
     logger.warning(
         'Request validation failed path=%s errors=%s body=%s',
         request.url.path,
@@ -70,15 +117,6 @@ async def validation_exception_handler(
         body_preview,
     )
     return JSONResponse(status_code=422, content={'detail': exc.errors()})
-
-# Add Cross-Origin Resource Sharing (CORS) middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=['*'],  # Allow all origins (adjust this in production)
-    allow_credentials=True,
-    allow_methods=['*'],  # Allow all HTTP methods
-    allow_headers=['*'],  # Allow all headers
-)
 
 # Include routers for  notification services
 app.include_router(notification_router)
