@@ -17,6 +17,7 @@ from examples.db_management.schemas.stream_config import StreamConfigUpdate
 async def list_stream_configs(
     site_id: int,
     db: AsyncSession,
+    group_id: int | None = None,
 ) -> list[StreamConfig]:
     """Retrieve a list of StreamConfig objects associated with a specific site.
 
@@ -27,9 +28,11 @@ async def list_stream_configs(
     Returns:
         List[StreamConfig]: A list of StreamConfig instances.
     """
-    result = await db.execute(
-        select(StreamConfig).where(StreamConfig.site_id == site_id),
-    )
+    query = select(StreamConfig).where(StreamConfig.site_id == site_id)
+    if group_id is not None:
+        query = query.where(StreamConfig.group_id == group_id)
+
+    result = await db.execute(query)
     return list(result.scalars().all())
 
 

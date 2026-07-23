@@ -24,7 +24,7 @@ streaming_web
 
 ## Files
 
-- `app.py`: FastAPI application and CORS setup.
+- `app.py`: FastAPI application setup.
 - `routers.py`: stream listing, metadata, media auth, overlay, and ICE routes.
 - `ws_handlers.py`: metadata-only WebSocket and SSE generators.
 - `redis_service.py`: reads compact live warning metadata.
@@ -50,6 +50,12 @@ uvicorn examples.streaming_web.app:app \
 - `GET /metadata/stream-id/{label}/{stream_id}`: SSE warning metadata.
 - `WebSocket /ws/metadata-id/{label}/{stream_id}`: metadata-only WebSocket.
 - `GET /overlay-languages`: available backend overlay languages.
+- `POST /stream-playback`: low-level single-camera playback primitive called
+  by the db_management playback facade.
+- `POST /stream-playback/batch`: creates up to 16 playback items for a
+  multi-camera wall.
+- `GET /stream-playback/sessions/{id}/index.m3u8`: stable playlist endpoint
+  that fetches the current MediaMTX playlist and appends `mt` to fragment URLs.
 - `POST /streams/{label}/{stream_id}/playback`: language and overlay-mode
   playback selection.
 - `GET /webrtc/ice-servers`: STUN/TURN settings for WebRTC clients.
@@ -61,6 +67,7 @@ uvicorn examples.streaming_web.app:app \
 STREAMING_API_URL=http://127.0.0.1:8800
 MEDIA_PUBLIC_HLS_BASE_URL=/hazard/media
 MEDIA_PUBLIC_WEBRTC_BASE_URL=/hazard/media/webrtc
+MEDIA_INTERNAL_HLS_BASE_URL=http://media-server:8888
 MEDIA_OVERLAY_ALLOWED_LANGUAGES=zh-TW,en,zh-CN,ja,vi,id,fr,th
 MEDIA_DEFAULT_OVERLAY_LANGUAGE=zh-TW
 DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection
@@ -76,6 +83,9 @@ violation-record services.
 ## Live Video Path
 
 - MediaMTX serves HLS and WebRTC.
+- Detail and preview HLS paths are published independently. Preview is capped
+  by `MEDIA_PREVIEW_*` (640x360, 15 FPS, 500–700 kb/s by default), while a
+  selected camera retains the detail rendition.
 - Annotated overlays are drawn before publishing to MediaMTX.
 - Redis keeps compact metadata and overlay demand/ready keys only.
 - SSE/WebSocket payloads are small metadata updates; they are not image frames.
@@ -86,20 +96,23 @@ the backend controls frame pacing and overlay rendering.
 ## MediaMTX And Nginx
 
 Public MediaMTX URLs should be protected by Nginx `auth_request`.
-Nginx forwards `Authorization`, cookies, and `X-Original-URI` to:
+Nginx forwards the dedicated media bearer/cookie and `X-Original-URI` to:
 
 ```text
 GET /media-auth
 ```
 
-The backend validates the JWT and site access before Nginx proxies the HLS or
-WebRTC request to MediaMTX.
+The backend resolves the opaque media capability created by the db_management
+playback facade from Redis, enforces its exact site/camera/profile scope, and
+rechecks current user/site access before Nginx proxies the request to MediaMTX.
+HLS URLs must carry the short-lived `mt` media token. Main access tokens,
+`token=` query strings, and old media-session cookies are no longer accepted.
 
 Keep the HLS live window short unless rewind is required:
 
 ```dotenv
 MTX_HLSSEGMENTDURATION=2s
-MTX_HLSSEGMENTCOUNT=7
+MTX_HLSSEGMENTCOUNT=14
 MTX_HLSALWAYSREMUX=no
 MTX_HLSMUXERCLOSEAFTER=60s
 ```

@@ -71,7 +71,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
                 # Act
                 result = await user_services.create_user(
                     'user',
-                    'pw',
+                    'password',
                     'admin',
                     1,
                     self.db,
@@ -80,10 +80,24 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
                 # Assert
                 self.assertEqual(result, mock_user)
-                mock_user.set_password.assert_called_once_with('pw')
+                mock_user.set_password.assert_called_once_with('password')
                 self.db.add.assert_any_call(mock_user)
                 self.db.commit.assert_awaited()
                 self.db.refresh.assert_awaited()
+
+    async def test_create_user_rejects_short_password(self) -> None:
+        """Reject user creation before any database writes for short password."""
+        with self.assertRaises(HTTPException) as cm:
+            await user_services.create_user(
+                'user', 'short', 'admin', 1, self.db,
+            )
+
+        self.assertEqual(cm.exception.status_code, 400)
+        self.assertEqual(
+            cm.exception.detail,
+            {'code': 'password_too_short', 'min_length': 8},
+        )
+        self.db.add.assert_not_called()
 
     async def test_create_user_inactive_success(self) -> None:
         """
@@ -104,7 +118,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
             await user_services.create_user(
                 'pending',
-                'pw',
+                'password',
                 'user',
                 None,
                 self.db,
@@ -132,7 +146,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
             with self.assertRaises(HTTPException) as cm:
                 await user_services.create_user(
-                    'user', 'pw', 'admin', 1, self.db,
+                    'user', 'password', 'admin', 1, self.db,
                 )
 
             self.assertEqual(cm.exception.status_code, 400)
@@ -154,7 +168,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
             with self.assertRaises(HTTPException) as cm:
                 await user_services.create_user(
-                    'user', 'pw', 'admin', 1, self.db,
+                    'user', 'password', 'admin', 1, self.db,
                 )
 
             self.assertEqual(cm.exception.status_code, 500)
@@ -179,7 +193,9 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         """
         Retrieve a single user by identifier when they exist.
         """
-        self.db.get = AsyncMock(return_value=self.user)
+        result = MagicMock()
+        result.unique.return_value.scalar_one_or_none.return_value = self.user
+        self.db.execute = AsyncMock(return_value=result)
 
         user = await user_services.get_user_by_id(1, self.db)
 
@@ -189,7 +205,9 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         """
         Raise *404 Not Found* when the requested user is missing.
         """
-        self.db.get = AsyncMock(return_value=None)
+        result = MagicMock()
+        result.unique.return_value.scalar_one_or_none.return_value = None
+        self.db.execute = AsyncMock(return_value=result)
 
         with self.assertRaises(HTTPException) as cm:
             await user_services.get_user_by_id(1, self.db)
@@ -271,10 +289,27 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         db.commit = AsyncMock()
         user.set_password = MagicMock()
 
-        await user_services.update_password(self.user, 'pw', self.db)
+        await user_services.update_password(self.user, 'password', self.db)
 
-        user.set_password.assert_called_once_with('pw')
+        user.set_password.assert_called_once_with('password')
         db.commit.assert_awaited()
+
+    async def test_update_password_rejects_short_password(self) -> None:
+        """Reject short replacement passwords without committing."""
+        db = cast(Any, self.db)
+        user = cast(Any, self.user)
+        user.set_password = MagicMock()
+
+        with self.assertRaises(HTTPException) as cm:
+            await user_services.update_password(self.user, 'short', self.db)
+
+        self.assertEqual(cm.exception.status_code, 400)
+        self.assertEqual(
+            cm.exception.detail,
+            {'code': 'password_too_short', 'min_length': 8},
+        )
+        user.set_password.assert_not_called()
+        db.commit.assert_not_awaited()
 
     async def test_update_password_exception(self) -> None:
         """
@@ -287,7 +322,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         user.set_password = MagicMock()
 
         with self.assertRaises(HTTPException) as cm:
-            await user_services.update_password(self.user, 'pw', self.db)
+            await user_services.update_password(self.user, 'password', self.db)
 
         self.assertEqual(cm.exception.status_code, 500)
         db.rollback.assert_awaited()
@@ -311,7 +346,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback = AsyncMock()
 
         with self.assertRaises(HTTPException) as cm:
-            await user_services.set_user_status(self.user, 'inactive', self.db)
+            await user_services.set_user_status(self.user, 'suspended', self.db)
 
         self.assertEqual(cm.exception.status_code, 500)
         self.db.rollback.assert_awaited()

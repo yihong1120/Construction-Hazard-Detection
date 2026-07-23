@@ -24,7 +24,7 @@ streaming_web
 
 ## 檔案
 
-- `app.py`：FastAPI application 與 CORS 設定。
+- `app.py`：FastAPI application 設定。
 - `routers.py`：stream listing、metadata、media auth、overlay 與 ICE routes。
 - `ws_handlers.py`：metadata-only WebSocket 與 SSE generators。
 - `redis_service.py`：讀取 compact live warning metadata。
@@ -50,6 +50,11 @@ uvicorn examples.streaming_web.app:app \
 - `GET /metadata/stream-id/{label}/{stream_id}`：SSE warning metadata。
 - `WebSocket /ws/metadata-id/{label}/{stream_id}`：metadata-only WebSocket。
 - `GET /overlay-languages`：可用的後端 overlay languages。
+- `POST /stream-playback`：底層單鏡頭 playback primitive，由 db_management
+  playback facade 呼叫。
+- `POST /stream-playback/batch`：為多鏡頭牆建立最多 16 個 playback items。
+- `GET /stream-playback/sessions/{id}/index.m3u8`：stable playlist endpoint，會
+  依目前 clean/overlay 狀態取 MediaMTX playlist，並將 `mt` 補到 fragment URL。
 - `POST /streams/{label}/{stream_id}/playback`：選擇 playback language 與 overlay mode。
 - `GET /webrtc/ice-servers`：WebRTC clients 使用的 STUN/TURN settings。
 - `GET /media-auth`：給 Nginx `auth_request` 驗證 MediaMTX paths。
@@ -60,6 +65,7 @@ uvicorn examples.streaming_web.app:app \
 STREAMING_API_URL=http://127.0.0.1:8800
 MEDIA_PUBLIC_HLS_BASE_URL=/hazard/media
 MEDIA_PUBLIC_WEBRTC_BASE_URL=/hazard/media/webrtc
+MEDIA_INTERNAL_HLS_BASE_URL=http://media-server:8888
 MEDIA_OVERLAY_ALLOWED_LANGUAGES=zh-TW,en,zh-CN,ja,vi,id,fr,th
 MEDIA_DEFAULT_OVERLAY_LANGUAGE=zh-TW
 DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection
@@ -74,6 +80,8 @@ JWT_SECRET_KEY=replace-with-a-long-random-secret
 ## 直播影像路徑
 
 - MediaMTX 負責 HLS 與 WebRTC。
+- detail 與 preview HLS path 分開發布。preview 預設由 `MEDIA_PREVIEW_*` 限制為
+  640x360、15 FPS、500–700 kb/s；使用者選定的單鏡頭才使用 detail rendition。
 - Annotated overlay 會在發布到 MediaMTX 前畫好。
 - Redis 只保存 compact metadata 與 overlay demand/ready keys。
 - SSE/WebSocket payload 是小型 metadata，不是影像 frame。
@@ -83,21 +91,23 @@ JWT_SECRET_KEY=replace-with-a-long-random-secret
 
 ## MediaMTX 與 Nginx
 
-公開 MediaMTX URL 建議放在 Nginx `auth_request` 後面。Nginx 將 `Authorization`、
-cookies 與 `X-Original-URI` 轉送至：
+公開 MediaMTX URL 建議放在 Nginx `auth_request` 後面。Nginx 將獨立的 media
+bearer/cookie 與 `X-Original-URI` 轉送至：
 
 ```text
 GET /media-auth
 ```
 
-backend 會先驗證 JWT 與 site access，再讓 Nginx proxy HLS 或 WebRTC request 到
-MediaMTX。
+backend 會從 Redis 解析 db_management playback facade 建立的 opaque media
+capability，強制限制指定的 site/camera/profile，並重新檢查目前 user/site 權限，
+再讓 Nginx proxy request 到 MediaMTX。HLS URL 必須帶短效 `mt` media token；
+主 access token、`token=` query、舊 media-session cookie 都不再接受。
 
 除非需要 rewind，HLS live window 請保持短：
 
 ```dotenv
 MTX_HLSSEGMENTDURATION=2s
-MTX_HLSSEGMENTCOUNT=7
+MTX_HLSSEGMENTCOUNT=14
 MTX_HLSALWAYSREMUX=no
 MTX_HLSMUXERCLOSEAFTER=60s
 ```

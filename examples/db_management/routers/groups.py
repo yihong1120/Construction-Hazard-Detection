@@ -8,6 +8,10 @@ from sqlalchemy.future import select
 
 from examples.auth.database import get_db
 from examples.auth.models import Group
+from examples.auth.models import User
+from examples.db_management.deps import ensure_admin_with_group
+from examples.db_management.deps import is_super_admin
+from examples.db_management.deps import require_admin
 from examples.db_management.deps import require_super_admin
 from examples.db_management.schemas.group import GroupCreate
 from examples.db_management.schemas.group import GroupDelete
@@ -24,12 +28,12 @@ router = APIRouter(tags=['group-mgmt'])
 @router.get(
     '/list_groups',
     response_model=list[GroupRead],
-    dependencies=[Depends(require_super_admin)],
 )
 async def endpoint_list_groups(
     db: AsyncSession = Depends(get_db),
+    me: User = Depends(require_admin),
 ) -> list[GroupRead]:
-    """Retrieve a list of all groups.
+    """Retrieve groups visible to the current admin.
 
     Args:
         db (AsyncSession): Database session dependency.
@@ -37,8 +41,14 @@ async def endpoint_list_groups(
     Returns:
         List[GroupRead]: A list containing the details of each group.
     """
-    # Fetch all groups from the database
-    groups = await list_groups(db)
+    if is_super_admin(me):
+        groups = await list_groups(db)
+    else:
+        ensure_admin_with_group(me)
+        group = (
+            await db.execute(select(Group).where(Group.id == me.group_id))
+        ).unique().scalar_one_or_none()
+        groups = [group] if group is not None else []
 
     # Format and return the group details as a list of GroupRead
     return [

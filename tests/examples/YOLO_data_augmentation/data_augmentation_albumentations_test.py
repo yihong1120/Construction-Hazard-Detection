@@ -197,6 +197,54 @@ class TestDataAugmentation(unittest.TestCase):
 
                 self.assertTrue(mock_imwrite.called)
 
+    @patch(
+        'examples.YOLO_data_augmentation.data_augmentation_albumentations.'
+        'cv2.imread',
+    )
+    @patch(
+        'examples.YOLO_data_augmentation.'
+        'data_augmentation_albumentations.cv2.cvtColor',
+    )
+    def test_augment_image_with_empty_labels(
+        self, mock_cvtColor: MagicMock, mock_imread: MagicMock,
+    ) -> None:
+        """
+        Test augment_image keeps intentionally object-free images.
+        """
+        mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        mock_imread.return_value = mock_image
+        mock_cvtColor.return_value = mock_image
+
+        with patch.object(
+            self.augmenter,
+            'read_label_file',
+            return_value=([], []),
+        ):
+            transformed = {
+                'image': mock_image,
+                'bboxes': [],
+                'class_labels': [],
+            }
+            with patch.object(
+                self.augmenter,
+                'process_image',
+                return_value=transformed,
+            ):
+                with patch.object(
+                    self.augmenter, 'write_label_file',
+                ) as mock_write_label_file:
+                    with patch(
+                        'examples.YOLO_data_augmentation.'
+                        'data_augmentation_albumentations.cv2.imwrite',
+                    ) as mock_imwrite:
+                        self.augmenter.augment_image(Path('empty.jpg'))
+
+        self.assertTrue(mock_imwrite.called)
+        mock_write_label_file.assert_called()
+        for call in mock_write_label_file.call_args_list:
+            self.assertEqual(call.args[0], [])
+            self.assertEqual(call.args[1], [])
+
     @_requires_albumentations
     @patch(
         'examples.YOLO_data_augmentation.data_augmentation_albumentations.'
@@ -258,14 +306,399 @@ class TestDataAugmentation(unittest.TestCase):
                 f"Resize {image_path} due to large size: {mock_image.shape}",
             )
 
-    def test_random_crop_with_random_size(self) -> None:
+    def test_random_bbox_safe_crop_transform_uses_bbox_aware_crop(self) -> None:
         """
-        Test random_crop_with_random_size method.
+        Test random crop augmentation uses an Albumentations bbox transform.
         """
-        image = np.random.randint(0, 255, (1000, 1000, 3), dtype=np.uint8)
-        cropped_image = self.augmenter.random_crop_with_random_size(image)
-        self.assertTrue(400 <= cropped_image.shape[0] <= 800)
-        self.assertTrue(400 <= cropped_image.shape[1] <= 800)
+        mock_crop = MagicMock(return_value='bbox_safe_crop')
+        with patch.object(
+            A, 'RandomSizedBBoxSafeCrop', mock_crop, create=True,
+        ):
+            with patch(
+                'examples.YOLO_data_augmentation.'
+                'data_augmentation_albumentations.random.randint',
+                side_effect=[512, 640],
+            ):
+                transform = self.augmenter.random_bbox_safe_crop_transform(
+                    (720, 1280),
+                )
+
+        self.assertEqual(transform, 'bbox_safe_crop')
+        mock_crop.assert_called_once_with(height=512, width=640, p=1)
+
+    def test_at_least_one_bbox_crop_transform_uses_supported_transform(
+        self,
+    ) -> None:
+        """
+        Test AtLeastOneBBoxRandomCrop is used when available.
+        """
+        mock_crop = MagicMock(return_value='at_least_one_crop')
+        with patch.object(
+            A, 'AtLeastOneBBoxRandomCrop', mock_crop, create=True,
+        ):
+            with patch(
+                'examples.YOLO_data_augmentation.'
+                'data_augmentation_albumentations.random.randint',
+                side_effect=[512, 640],
+            ):
+                transform = self.augmenter.at_least_one_bbox_crop_transform(
+                    (720, 1280),
+                )
+
+        self.assertEqual(transform, 'at_least_one_crop')
+        mock_crop.assert_called_once_with(
+            height=512,
+            width=640,
+            erosion_factor=0.2,
+            p=1,
+        )
+
+    def test_bbox_crop_transform_clamps_to_image_size(self) -> None:
+        """
+        Test random bbox crop never exceeds the current image dimensions.
+        """
+        mock_crop = MagicMock(return_value='bbox_safe_crop')
+        with patch.object(
+            A, 'RandomSizedBBoxSafeCrop', mock_crop, create=True,
+        ):
+            with patch(
+                'examples.YOLO_data_augmentation.'
+                'data_augmentation_albumentations.random.randint',
+                side_effect=[528, 637],
+            ):
+                transform = self.augmenter.random_bbox_safe_crop_transform(
+                    (480, 640),
+                )
+
+        self.assertEqual(transform, 'bbox_safe_crop')
+        mock_crop.assert_called_once_with(height=480, width=637, p=1)
+
+    def test_choose_bbox_transforms_keeps_crop_transform_single(self) -> None:
+        """
+        Test crop transforms are not combined with dimension-changing transforms.
+        """
+        with patch(
+            'examples.YOLO_data_augmentation.'
+            'data_augmentation_albumentations.random.random',
+            return_value=0.0,
+        ):
+            with patch(
+                'examples.YOLO_data_augmentation.'
+                'data_augmentation_albumentations.random.choice',
+                return_value='crop_b',
+            ) as mock_choice:
+                with patch(
+                    'examples.YOLO_data_augmentation.'
+                    'data_augmentation_albumentations.random.sample',
+                ) as mock_sample:
+                    transforms = self.augmenter._choose_bbox_transforms(
+                        ['rotate', 'affine'],
+                        ['crop_a', 'crop_b'],
+                    )
+
+        self.assertEqual(transforms, ['crop_b'])
+        mock_choice.assert_called_once_with(['crop_a', 'crop_b'])
+        mock_sample.assert_not_called()
+
+    def test_choose_bbox_transforms_combines_non_crop_transforms(self) -> None:
+        """
+        Test non-crop transforms can still be randomly combined.
+        """
+        with patch(
+            'examples.YOLO_data_augmentation.'
+            'data_augmentation_albumentations.random.random',
+            return_value=1.0,
+        ):
+            with patch(
+                'examples.YOLO_data_augmentation.'
+                'data_augmentation_albumentations.random.randint',
+                return_value=2,
+            ) as mock_randint:
+                with patch(
+                    'examples.YOLO_data_augmentation.'
+                    'data_augmentation_albumentations.random.sample',
+                    return_value=['rotate', 'affine'],
+                ) as mock_sample:
+                    transforms = self.augmenter._choose_bbox_transforms(
+                        ['rotate', 'affine', 'perspective'],
+                        ['crop'],
+                    )
+
+        self.assertEqual(transforms, ['rotate', 'affine'])
+        mock_randint.assert_called_once_with(1, 2)
+        mock_sample.assert_called_once_with(
+            ['rotate', 'affine', 'perspective'],
+            k=2,
+        )
+
+    def test_grid_shuffle_allows_boxes_inside_single_grid_cell(self) -> None:
+        """
+        Test RandomGridShuffle can be used when every bbox stays in one cell.
+        """
+        bboxes = [
+            [0.16, 0.16, 0.20, 0.20],
+            [0.50, 0.50, 0.20, 0.20],
+        ]
+
+        can_use = self.augmenter._can_use_random_grid_shuffle(
+            bboxes,
+            (3, 3),
+        )
+
+        self.assertTrue(can_use)
+
+    def test_grid_shuffle_rejects_boxes_crossing_grid_cell(self) -> None:
+        """
+        Test RandomGridShuffle is skipped when any bbox crosses a grid cell.
+        """
+        bboxes = [
+            [0.50, 0.50, 0.80, 0.20],
+        ]
+
+        can_use = self.augmenter._can_use_random_grid_shuffle(
+            bboxes,
+            (3, 3),
+        )
+
+        self.assertFalse(can_use)
+
+    def test_grid_shuffle_allows_boxes_touching_grid_boundary(self) -> None:
+        """
+        Test a bbox ending exactly on a grid boundary is not treated as crossing.
+        """
+        bboxes = [
+            [1 / 6, 1 / 6, 1 / 3, 1 / 3],
+        ]
+
+        can_use = self.augmenter._can_use_random_grid_shuffle(
+            bboxes,
+            (3, 3),
+        )
+
+        self.assertTrue(can_use)
+
+    def test_safe_rotate_transform_uses_supported_transform(self) -> None:
+        """
+        Test SafeRotate is created when available.
+        """
+        mock_rotate = MagicMock(return_value='safe_rotate')
+        with patch.object(A, 'SafeRotate', mock_rotate, create=True):
+            transform = self.augmenter.safe_rotate_transform()
+
+        self.assertEqual(transform, 'safe_rotate')
+        _, kwargs = mock_rotate.call_args
+        self.assertEqual(kwargs['limit'], (-45, 45))
+        self.assertEqual(kwargs['border_mode'], 4)
+        self.assertEqual(kwargs['p'], 1)
+
+    def test_symmetry_transform_prefers_d4(self) -> None:
+        """
+        Test D4 square symmetry is used when available.
+        """
+        mock_d4 = MagicMock(return_value='d4')
+        with patch.object(A, 'D4', mock_d4, create=True):
+            transform = self.augmenter.symmetry_transform()
+
+        self.assertEqual(transform, 'd4')
+        mock_d4.assert_called_once_with(p=1)
+
+    def test_random_scale_transform_uses_supported_transform(self) -> None:
+        """
+        Test RandomScale is created when available.
+        """
+        mock_scale = MagicMock(return_value='random_scale')
+        with patch.object(A, 'RandomScale', mock_scale, create=True):
+            transform = self.augmenter.random_scale_transform()
+
+        self.assertEqual(transform, 'random_scale')
+        _, kwargs = mock_scale.call_args
+        self.assertEqual(kwargs['scale_limit'], (-0.25, 0.35))
+        self.assertEqual(kwargs['p'], 1)
+
+    def test_pad_if_needed_transform_uses_supported_transform(self) -> None:
+        """
+        Test PadIfNeeded is created when available.
+        """
+        mock_pad = MagicMock(return_value='pad')
+        with patch.object(A, 'PadIfNeeded', mock_pad, create=True):
+            transform = self.augmenter.pad_if_needed_transform()
+
+        self.assertEqual(transform, 'pad')
+        _, kwargs = mock_pad.call_args
+        self.assertEqual(kwargs['min_height'], 640)
+        self.assertEqual(kwargs['min_width'], 640)
+        self.assertEqual(kwargs['p'], 1)
+
+    def test_create_sized_crop_transform_supports_size_argument(self) -> None:
+        """
+        Test Albumentations v2-style crop constructors are supported.
+        """
+        def fake_crop(*, size: tuple[int, int], p: int) -> tuple:
+            return size, p
+
+        transform = self.augmenter._create_sized_crop_transform(
+            fake_crop, 512, 640, p=1,
+        )
+
+        self.assertEqual(transform, ((512, 640), 1))
+
+    def test_create_bbox_params_filters_invalid_boxes(self) -> None:
+        """
+        Test bbox params request clipping and visibility filtering.
+        """
+        mock_params = MagicMock(return_value='bbox_params')
+        with patch.object(A, 'BboxParams', mock_params, create=True):
+            bbox_params = self.augmenter._create_bbox_params()
+
+        self.assertEqual(bbox_params, 'bbox_params')
+        _, kwargs = mock_params.call_args
+        self.assertEqual(kwargs['coord_format'], 'yolo')
+        self.assertTrue(kwargs['clip_after_transform'])
+        self.assertTrue(kwargs['clip_bboxes_on_input'])
+        self.assertTrue(kwargs['filter_invalid_bboxes'])
+        self.assertEqual(
+            kwargs['min_visibility'],
+            self.augmenter.min_bbox_visibility,
+        )
+
+    def test_random_resized_crop_transform_supports_size_argument(self) -> None:
+        """
+        Test RandomResizedCrop is created through the API-compatible helper.
+        """
+        def fake_crop(
+            *, size: tuple[int, int], scale: tuple[float, float], p: int,
+        ) -> tuple:
+            return size, scale, p
+
+        with patch.object(A, 'RandomResizedCrop', fake_crop, create=True):
+            transform = self.augmenter.random_resized_crop_transform()
+
+        self.assertEqual(transform, ((640, 640), (0.3, 1.0), 1))
+
+    @patch(
+        'examples.YOLO_data_augmentation.data_augmentation_albumentations.'
+        'cv2.imread',
+    )
+    @patch(
+        'examples.YOLO_data_augmentation.'
+        'data_augmentation_albumentations.cv2.cvtColor',
+    )
+    def test_get_fda_reference_images_resizes_to_target_shape(
+        self,
+        mock_cvtColor: MagicMock,
+        mock_imread: MagicMock,
+    ) -> None:
+        """
+        Test FDA references are resized to match the augmented input image.
+        """
+        mock_reference = np.random.randint(
+            0, 255, (722, 640, 3), dtype=np.uint8,
+        )
+        mock_imread.return_value = mock_reference
+        mock_cvtColor.return_value = mock_reference
+
+        with patch('pathlib.Path.glob', return_value=[Path('ref.jpg')]):
+            refs = self.augmenter.get_fda_reference_images(
+                count=1,
+                target_shape=(640, 640),
+            )
+
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].shape, (640, 640, 3))
+
+    def test_normalize_bboxes_uses_albumentations_bbox_params(self) -> None:
+        """
+        Test bbox normalization is delegated to Albumentations.
+        """
+        mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        mock_transform = MagicMock(
+            return_value={
+                'image': mock_image,
+                'bboxes': [[0.5, 0.5, 0.2, 0.2]],
+                'class_labels': [1],
+            },
+        )
+        mock_noop = MagicMock(return_value='noop')
+        with patch.object(A, 'BboxParams', MagicMock(), create=True):
+            with patch.object(A, 'NoOp', mock_noop, create=True):
+                with patch.object(
+                    A, 'Compose', return_value=mock_transform, create=True,
+                ) as compose:
+                    bboxes, class_labels = (
+                        self.augmenter.normalize_bboxes_with_albumentations(
+                            mock_image,
+                            [[0.5, 0.5, 0.2, 0.2]],
+                            [1],
+                        )
+                    )
+
+        mock_noop.assert_called_once_with(p=1)
+        compose.assert_called_once()
+        self.assertEqual(compose.call_args.args[0], ['noop'])
+        mock_transform.assert_called_once_with(
+            image=mock_image,
+            bboxes=[[0.5, 0.5, 0.2, 0.2]],
+            class_labels=[1],
+        )
+        self.assertEqual(bboxes, [[0.5, 0.5, 0.2, 0.2]])
+        self.assertEqual(class_labels, [1])
+
+    def test_process_image_marks_positive_images_as_having_bboxes(self) -> None:
+        """
+        Test object images pass the bbox-presence flag to augmentation choice.
+        """
+        mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        mock_transform = MagicMock(
+            return_value={
+                'image': mock_image,
+                'bboxes': [[0.5, 0.5, 0.2, 0.2]],
+                'class_labels': [1],
+            },
+        )
+        with patch.object(
+            self.augmenter,
+            'normalize_bboxes_with_albumentations',
+            side_effect=lambda image, bboxes, labels: (bboxes, labels),
+        ):
+            with patch.object(
+                self.augmenter, 'random_transform', return_value=mock_transform,
+            ) as mock_random_transform:
+                self.augmenter.process_image(
+                    mock_image, [[0.5, 0.5, 0.2, 0.2]], [1],
+                )
+
+        mock_random_transform.assert_called_once_with(
+            has_bboxes=True,
+            image_shape=mock_image.shape[:2],
+            bboxes=[[0.5, 0.5, 0.2, 0.2]],
+        )
+
+    def test_process_image_marks_empty_images_as_without_bboxes(self) -> None:
+        """
+        Test empty-label images pass the no-bbox flag to augmentation choice.
+        """
+        mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        mock_transform = MagicMock(
+            return_value={
+                'image': mock_image,
+                'bboxes': [], 'class_labels': [],
+            },
+        )
+        with patch.object(
+            self.augmenter,
+            'normalize_bboxes_with_albumentations',
+            side_effect=lambda image, bboxes, labels: (bboxes, labels),
+        ):
+            with patch.object(
+                self.augmenter, 'random_transform', return_value=mock_transform,
+            ) as mock_random_transform:
+                self.augmenter.process_image(mock_image, [], [])
+
+        mock_random_transform.assert_called_once_with(
+            has_bboxes=False,
+            image_shape=mock_image.shape[:2],
+            bboxes=[],
+        )
 
     @patch(
         'examples.YOLO_data_augmentation.data_augmentation_albumentations.'
@@ -292,9 +725,89 @@ class TestDataAugmentation(unittest.TestCase):
             'builtins.open',
             unittest.mock.mock_open(read_data=label_content),
         ):
-            class_labels, bboxes = self.augmenter.read_label_file(label_path)
+            with patch('pathlib.Path.exists', return_value=True):
+                class_labels, bboxes = self.augmenter.read_label_file(
+                    label_path,
+                )
             self.assertEqual(class_labels, [0])
             self.assertEqual(bboxes, [[0.5, 0.5, 0.2, 0.2]])
+
+    def test_read_empty_label_file(self) -> None:
+        """
+        Test an empty label file is treated as an object-free image.
+        """
+        label_path = Path('empty_label.txt')
+        with patch('pathlib.Path.exists', return_value=True):
+            with patch('builtins.open', unittest.mock.mock_open(read_data='\n')):
+                class_labels, bboxes = self.augmenter.read_label_file(
+                    label_path,
+                )
+
+        self.assertEqual(class_labels, [])
+        self.assertEqual(bboxes, [])
+
+    def test_read_missing_label_file(self) -> None:
+        """
+        Test a missing label file is treated as an object-free image.
+        """
+        class_labels, bboxes = self.augmenter.read_label_file(
+            Path('missing_label.txt'),
+        )
+
+        self.assertEqual(class_labels, [])
+        self.assertEqual(bboxes, [])
+
+    @patch(
+        'examples.YOLO_data_augmentation.data_augmentation_albumentations.'
+        'cv2.imread',
+    )
+    @patch(
+        'examples.YOLO_data_augmentation.'
+        'data_augmentation_albumentations.cv2.cvtColor',
+    )
+    def test_augment_image_writes_transformed_bboxes_without_quality_retry(
+        self, mock_cvtColor: MagicMock, mock_imread: MagicMock,
+    ) -> None:
+        """
+        Test augmentation writes the bbox returned by Albumentations.
+        """
+        mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        mock_bboxes = [[0.5, 0.5, 0.2, 0.2]]
+        mock_class_labels = [1]
+        mock_imread.return_value = mock_image
+        mock_cvtColor.return_value = mock_image
+
+        transformed = {
+            'image': mock_image,
+            'bboxes': [[0.5, 0.5, 0.9, 1.0]],
+            'class_labels': mock_class_labels,
+        }
+
+        with patch.object(
+            self.augmenter,
+            'read_label_file',
+            return_value=(mock_class_labels, mock_bboxes),
+        ):
+            with patch.object(
+                self.augmenter,
+                'process_image',
+                return_value=transformed,
+            ) as mock_process:
+                with patch.object(
+                    self.augmenter, 'write_label_file',
+                ) as mock_write_label_file:
+                    with patch(
+                        'examples.YOLO_data_augmentation.'
+                        'data_augmentation_albumentations.cv2.imwrite',
+                    ) as mock_imwrite:
+                        self.augmenter.augment_image(Path('image.jpg'))
+
+        self.assertEqual(mock_process.call_count, self.num_augmentations)
+        self.assertEqual(mock_imwrite.call_count, self.num_augmentations)
+        for call in mock_write_label_file.call_args_list:
+            np.testing.assert_allclose(
+                call.args[0], [[0.5, 0.5, 0.9, 1.0]],
+            )
 
     def test_write_label_file(self) -> None:
         """

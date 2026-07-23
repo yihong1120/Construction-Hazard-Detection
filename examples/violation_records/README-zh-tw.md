@@ -46,8 +46,20 @@ JWT_SECRET_KEY=replace-with-a-long-random-secret
 ## Endpoints
 
 - `GET /my_sites`：登入使用者可見的 sites。
-- `GET /violations`：filtered 與 paginated violation list。
+- `GET /violations/filter-options?site_id=...`：回傳登入者在所選工地可用的
+  鏡頭與固定違規項目。`stream_id` 是鏡頭設定的數字 ID，不是鏡頭名稱。
+- `GET /violations`：filtered 與 paginated violation list。支援選用的
+  `site_id`、`stream_id`、`violation_type`、時間範圍；審核者可加 `flagged=true`
+  與選用的 `review_status=pending|resolved|dismissed`。
+- `GET /violations/analytics`：違規趨勢、排行與時段統計；僅 `admin` 與
+  `super_admin` 可存取，支援與紀錄頁相同的 `site_id`、`stream_id`、
+  `violation_type`、`start`、`end`、`bucket` 條件，且所有聚合都會套用；
+  其他角色一律回傳 `403 violation_analytics_forbidden`。
 - `GET /violations/{violation_id}`：單筆違規細節。
+- `POST /violations/{violation_id}/feedback`：送出誤判、漏判、類別錯誤或 bbox
+  錯誤的結構化回饋，預設進入待審核狀態。
+- `PATCH /violations/{violation_id}/review`：admin / super_admin 更新 flagged record
+  的審核狀態。
 - `GET /get_violation_image?image_path=...`：從 `static/` 回傳圖片。
 - `POST /upload`：stream processor 上傳圖片與 metadata。
 

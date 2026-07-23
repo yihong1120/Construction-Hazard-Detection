@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import call
 from unittest.mock import MagicMock
@@ -42,6 +43,11 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
         self.mock_db.add = MagicMock()
         self.mock_db.commit = AsyncMock()
         self.mock_db.refresh = AsyncMock()
+        self.mock_db.execute = AsyncMock(
+            return_value=SimpleNamespace(
+                scalar_one_or_none=lambda: None,
+            ),
+        )
 
     @patch('examples.violation_records.violation_manager.uuid.uuid4')
     @patch('examples.violation_records.violation_manager.Path.mkdir')

@@ -6,11 +6,15 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from examples.auth.models import User
 from examples.auth.models import USER_STATUS_ACTIVE
 from examples.auth.models import USER_STATUS_VALUES
 from examples.auth.models import UserProfile
+from examples.db_management.services.password_policy import (
+    validate_password_minimum,
+)
 
 
 async def create_user(
@@ -43,6 +47,8 @@ async def create_user(
         HTTPException: If the username/email already exists (400) or a generic
             database error occurs (500).
     """
+    validate_password_minimum(password)
+
     try:
         new_user = User(
             username=username,
@@ -77,18 +83,29 @@ async def create_user(
         raise HTTPException(500, f"Database error: {e}") from e
 
 
-async def list_users(db: AsyncSession) -> list[User]:
+async def list_users(
+    db: AsyncSession,
+    group_id: int | None = None,
+) -> list[User]:
     """
-    Retrieve all users.
+    Retrieve users, optionally scoped to a group.
 
     Args:
         db: Async SQLAlchemy session.
+        group_id: Optional group identifier used to scope admin results.
 
     Returns:
         A list of ``User`` instances.
     """
-    # Fetch all users from the database.
-    result = await db.execute(select(User))
+    query = select(User).options(
+        selectinload(User.group),
+        selectinload(User.profile),
+        selectinload(User.sites),
+    )
+    if group_id is not None:
+        query = query.where(User.group_id == group_id)
+
+    result = await db.execute(query)
     return list(result.unique().scalars().all())
 
 
@@ -106,7 +123,17 @@ async def get_user_by_id(user_id: int, db: AsyncSession) -> User:
     Raises:
         HTTPException: If no user is found (404).
     """
-    user = await db.get(User, user_id)
+    user = (
+        await db.execute(
+            select(User)
+            .options(
+                selectinload(User.group),
+                selectinload(User.profile),
+                selectinload(User.sites),
+            )
+            .where(User.id == user_id),
+        )
+    ).unique().scalar_one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail='User not found.')
@@ -184,8 +211,11 @@ async def update_password(
         db: Async SQLAlchemy session.
 
     Raises:
-        HTTPException: If a database error occurs during password update (500).
+        HTTPException: If the password is too short (400) or a database error
+            occurs during password update (500).
     """
+    validate_password_minimum(new_password)
+
     # Securely hash and set the new password.
     user.set_password(new_password)
 

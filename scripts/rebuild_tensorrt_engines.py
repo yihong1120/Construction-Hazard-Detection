@@ -4,7 +4,7 @@
 批量重建 TensorRT INT8 engine。
 
 实现说明：
-- 使用 Ultralytics 的 model.export(format='engine', int8=True, data=...) 进行导出
+- 使用 Ultralytics 的 model.export(format='engine', quantize=8, data=...) 进行导出
 - dynamic=False, batch=1, workspace=4
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ def rebuild_engine(
             'dynamic': False,
             'batch': 1,
             'workspace': 4,
-            'int8': True,
+            'quantize': 8,
             'data': calibration_data,
         }
 

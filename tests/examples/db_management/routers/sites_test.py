@@ -101,7 +101,9 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         group_mock.id = 1
         group_mock.name = 'GroupName'
         site.groups = [group_mock]
-        site.users = [MagicMock(id=2)]
+        user_mock = MagicMock(id=2)
+        user_mock.group_id = 1
+        site.users = [user_mock]
         mock_create_site.return_value = site
         payload = SiteCreate(name='New Site')
         result = await endpoint_create_site(payload, self.db, self.user)
@@ -327,6 +329,26 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             await endpoint_add_user_to_site(payload, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 403)
 
+    async def test_add_user_to_shared_site_rejects_other_group_user(
+        self,
+    ) -> None:
+        """Admin cannot add another group's user to a shared site."""
+        site = MagicMock()
+        site.groups = [MagicMock(id=1), MagicMock(id=2)]
+        user_to_add = MagicMock()
+        user_to_add.username = 'other-group-user'
+        user_to_add.group_id = 2
+        mock_result = MagicMock()
+        mock_result.unique.return_value = mock_result
+        mock_result.scalar_one_or_none.side_effect = [site, user_to_add]
+        self.db.execute.return_value = mock_result
+        payload = SiteUserOp(site_id=1, user_id=2)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await endpoint_add_user_to_site(payload, self.db, self.user)
+
+        self.assertEqual(ctx.exception.status_code, 403)
+
     @patch(
         'examples.db_management.routers.sites.is_super_admin',
         return_value=False,
@@ -407,6 +429,40 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         result = await endpoint_list_sites(self.db, self.user)
         self.assertEqual(result, [])
         mock_list_sites.assert_called_once_with(self.db, group_id=42)
+
+    @patch('examples.db_management.routers.sites.list_sites')
+    async def test_endpoint_list_sites_admin_filters_shared_site_response(
+        self,
+        mock_list_sites: MagicMock,
+    ) -> None:
+        """Admin response hides other groups/users on shared sites."""
+        self.user.role = 'admin'
+        self.user.group_id = 42
+        own_group = MagicMock()
+        own_group.id = 42
+        own_group.name = 'Own Group'
+        other_group = MagicMock()
+        other_group.id = 99
+        other_group.name = 'Other Group'
+        own_user = MagicMock()
+        own_user.id = 7
+        own_user.group_id = 42
+        other_user = MagicMock()
+        other_user.id = 8
+        other_user.group_id = 99
+        site = MagicMock()
+        site.id = 3
+        site.name = 'Shared Site'
+        site.groups = [own_group, other_group]
+        site.users = [own_user, other_user]
+        mock_list_sites.return_value = [site]
+
+        result = await endpoint_list_sites(self.db, self.user)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].group_ids, [42])
+        self.assertEqual(result[0].group_names, ['Own Group'])
+        self.assertEqual(result[0].user_ids, [7])
 
     @patch(
         'examples.db_management.routers.sites.'

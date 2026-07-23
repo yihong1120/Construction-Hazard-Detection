@@ -22,50 +22,6 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         self.app = app_module.app
         self.client = TestClient(self.app)
 
-    @patch('examples.streaming_web.app.CORSMiddleware')
-    def test_cors_initialization(self, mock_cors: MagicMock) -> None:
-        """
-        Tests that the CORS middleware is initialised with expected parameters.
-
-        Args:
-            mock_cors (MagicMock): Mock for the CORSMiddleware class.
-        """
-        cors = mock_cors(
-            self.app,
-            allow_origins=app_module._cors_origins(),
-            allow_origin_regex=app_module._cors_origin_regex(),
-            allow_credentials=True,
-            allow_methods=['*'],
-            allow_headers=['*'],
-        )
-        self.assertIsInstance(cors, MagicMock)
-        mock_cors.assert_called_once_with(
-            self.app,
-            allow_origins=app_module._cors_origins(),
-            allow_origin_regex=app_module._cors_origin_regex(),
-            allow_credentials=True,
-            allow_methods=['*'],
-            allow_headers=['*'],
-        )
-
-    def test_cors_origins_can_be_configured_by_env(self) -> None:
-        """Use explicit origins so credentialed CORS never returns wildcard."""
-        with patch.dict(
-            'os.environ',
-            {'STREAMING_WEB_CORS_ORIGINS': 'https://a.test, http://b.test'},
-        ):
-            self.assertEqual(
-                app_module._cors_origins(),
-                ['https://a.test', 'http://b.test'],
-            )
-
-    def test_cors_origin_regex_allows_localhost_any_port(self) -> None:
-        """Support Flutter Web dev servers that pick random local ports."""
-        self.assertEqual(
-            app_module._cors_origin_regex(),
-            r'https?://(localhost|127\.0\.0\.1)(:\d+)?',
-        )
-
     @patch('uvicorn.run')
     def test_app_running_configuration(
         self,

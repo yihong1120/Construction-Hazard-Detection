@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from collections.abc import Awaitable
+from collections.abc import Mapping
 from typing import cast
 from typing import Final
 
@@ -36,6 +37,9 @@ get_user_and_sites = load_user_access_context
 AUTO_REGISTER_JTI: Final[bool] = get_auto_register_jti()
 _json_compact_separators: Final[tuple[str, str]] = (',', ':')
 _metadata_poll_interval: Final[float] = 0.01
+_metadata_read_block_ms: Final[int] = 2000
+_metadata_heartbeat_seconds: Final[float] = 15.0
+_metadata_redis_error_interval_seconds: Final[float] = 15.0
 
 
 def _metadata_has_warning(frame_data: FrameOutData) -> bool:
@@ -57,13 +61,16 @@ def _build_metadata_payload(frame_data: FrameOutData) -> dict[str, object]:
     }
 
 
-def _encode_sse_event(payload: dict[str, object]) -> bytes:
-    """Encode metadata as one Server-Sent Events message."""
+def _encode_sse_event(
+    payload: Mapping[str, object],
+    event_type: str = 'metadata',
+) -> bytes:
+    """Encode one Server-Sent Events message."""
     event_id = str(payload.get('id') or '')
     lines = []
     if event_id:
         lines.append(f'id: {event_id}')
-    lines.append('event: metadata')
+    lines.append(f'event: {event_type}')
     lines.append(
         'data: '
         + json.dumps(payload, separators=_json_compact_separators),
@@ -71,39 +78,130 @@ def _encode_sse_event(payload: dict[str, object]) -> bytes:
     return ('\n'.join(lines) + '\n\n').encode('utf-8')
 
 
+async def _refresh_overlay_demand(
+    rds: redis.Redis,
+    overlay_demand_key: str | None,
+    overlay_demand_ttl_seconds: int | None,
+) -> None:
+    """Keep an on-demand overlay stream alive for this SSE viewer."""
+    if not overlay_demand_key or not overlay_demand_ttl_seconds:
+        return
+    await rds.set(
+        overlay_demand_key,
+        b'1',
+        ex=overlay_demand_ttl_seconds,
+    )
+
+
+async def _overlay_ready_event(
+    rds: redis.Redis,
+    overlay_ready_key: str | None,
+    overlay_ready_payload: Mapping[str, object] | None,
+) -> bytes | None:
+    """Return an overlay-ready SSE message when the ready key is present."""
+    if not overlay_ready_key or overlay_ready_payload is None:
+        return None
+    if not await rds.exists(overlay_ready_key):
+        return None
+    return _encode_sse_event(overlay_ready_payload, event_type='overlay_ready')
+
+
 async def metadata_stream_generator(
     request: Request,
     rds: redis.Redis,
     redis_key: str,
+    overlay_ready_key: str | None = None,
+    overlay_ready_payload: Mapping[str, object] | None = None,
+    overlay_demand_key: str | None = None,
+    overlay_demand_ttl_seconds: int | None = None,
+    overlay_demand_refresh_seconds: float = 30.0,
 ) -> AsyncIterator[bytes]:
     """Yield compact warning metadata for native MediaMTX video viewers."""
-    last_id = '0'
+    last_id = '$'
     last_heartbeat = asyncio.get_running_loop().time()
+    last_overlay_demand_refresh = 0.0
+    last_redis_error_event = float('-inf')
+    last_redis_error_log = float('-inf')
+    overlay_ready_sent = False
     yield b'retry: 15000\n: connected\n\n'
     while not await request.is_disconnected():
+        now = asyncio.get_running_loop().time()
         try:
+            if (
+                overlay_demand_key
+                and now - last_overlay_demand_refresh
+                >= overlay_demand_refresh_seconds
+            ):
+                await _refresh_overlay_demand(
+                    rds,
+                    overlay_demand_key,
+                    overlay_demand_ttl_seconds,
+                )
+                last_overlay_demand_refresh = now
+
+            if not overlay_ready_sent:
+                overlay_event = await _overlay_ready_event(
+                    rds,
+                    overlay_ready_key,
+                    overlay_ready_payload,
+                )
+                if overlay_event is not None:
+                    overlay_ready_sent = True
+                    last_heartbeat = now
+                    yield overlay_event
+                    continue
+
             _aw_frame: Awaitable[FrameOutData | None] = cast(
                 Awaitable[FrameOutData | None],
-                fetch_latest_metadata_for_key(rds, redis_key, last_id),
+                fetch_latest_metadata_for_key(
+                    rds,
+                    redis_key,
+                    last_id,
+                    block_ms=_metadata_read_block_ms,
+                ),
             )
-            frame_data = await asyncio.wait_for(_aw_frame, timeout=2.0)
+            frame_data = await _aw_frame
         except asyncio.TimeoutError:
+            if now - last_heartbeat >= _metadata_heartbeat_seconds:
+                last_heartbeat = now
+                yield b': keepalive\n\n'
             await asyncio.sleep(_metadata_poll_interval)
             continue
         except Exception as exc:
-            print(f"[metadata] Redis read failed for {redis_key}: {exc}")
+            if now - last_redis_error_log >= _metadata_redis_error_interval_seconds:
+                print(
+                    f"[metadata] Redis read failed for {redis_key}: {exc}",
+                    flush=True,
+                )
+                last_redis_error_log = now
+            if now - last_redis_error_event >= _metadata_redis_error_interval_seconds:
+                last_redis_error_event = now
+                last_heartbeat = now
+                yield _encode_sse_event(
+                    {'source': 'redis', 'code': 'redis_unavailable'},
+                    event_type='redis_error',
+                )
+            elif now - last_heartbeat >= _metadata_heartbeat_seconds:
+                last_heartbeat = now
+                yield b': keepalive\n\n'
             await asyncio.sleep(1.0)
             continue
 
         if frame_data:
             last_id = str(frame_data['id'])
-            last_heartbeat = asyncio.get_running_loop().time()
+            last_heartbeat = now
             payload = _build_metadata_payload(frame_data)
             payload['id'] = last_id
+            print(
+                (
+                    f'[SSE-Metadata] send {redis_key} id={last_id} '
+                    f'payload={payload}'
+                ),
+                flush=True,
+            )
             yield _encode_sse_event(payload)
         else:
-            now = asyncio.get_running_loop().time()
-            if now - last_heartbeat >= 15.0:
+            if now - last_heartbeat >= _metadata_heartbeat_seconds:
                 last_heartbeat = now
                 yield b': keepalive\n\n'
             await asyncio.sleep(_metadata_poll_interval)
@@ -118,7 +216,7 @@ async def metadata_push_loop(
 ) -> int:
     """Push lightweight stream metadata as JSON whenever Redis advances."""
     update_count = 0
-    last_id = '0'
+    last_id = '$'
     session_start = start_session_timer()
     receive_task: asyncio.Task[str | None] | None = asyncio.create_task(
         _safe_websocket_receive_text(websocket, f"{client_ip} ({username})"),
@@ -164,22 +262,35 @@ async def metadata_push_loop(
             try:
                 _aw_frame: Awaitable[FrameOutData | None] = cast(
                     Awaitable[FrameOutData | None],
-                    fetch_latest_metadata_for_key(rds, redis_key, last_id),
+                    fetch_latest_metadata_for_key(
+                        rds,
+                        redis_key,
+                        last_id,
+                        block_ms=_metadata_read_block_ms,
+                    ),
                 )
-                frame_data = await asyncio.wait_for(_aw_frame, timeout=2.0)
+                frame_data = await _aw_frame
             except asyncio.TimeoutError:
                 await asyncio.sleep(_metadata_poll_interval)
                 continue
 
             if frame_data:
                 last_id = str(frame_data['id'])
+                payload = _build_metadata_payload(frame_data)
                 sent = await _safe_websocket_send_json(
                     websocket,
-                    _build_metadata_payload(frame_data),
+                    payload,
                     f"{client_ip} ({username})",
                 )
                 if not sent:
                     break
+                print(
+                    (
+                        f'[WebSocket-Metadata] send {redis_key} '
+                        f'id={last_id} payload={payload}'
+                    ),
+                    flush=True,
+                )
                 update_count += 1
                 log_every_n(
                     f"[WebSocket-Metadata] {client_ip} ({username})",

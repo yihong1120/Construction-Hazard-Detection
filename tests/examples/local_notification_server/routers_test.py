@@ -2,17 +2,33 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import AsyncIterator
+from datetime import datetime
+from datetime import timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
+from examples.auth.models import FcmDeviceToken
 from examples.auth.redis_pool import get_redis_pool
+from examples.local_notification_server.routers import delete_notification
+from examples.local_notification_server.routers import \
+    get_notification_device_status
+from examples.local_notification_server.routers import \
+    get_notification_unread_count
+from examples.local_notification_server.routers import list_notifications
+from examples.local_notification_server.routers import \
+    mark_all_notifications_read
+from examples.local_notification_server.routers import mark_notification_read
 from examples.local_notification_server.routers import router
+from examples.local_notification_server.routers import send_test_notification
+from examples.local_notification_server.services import fcm_token_hash
 
 
 def mock_jwt_access() -> MagicMock:
@@ -46,8 +62,12 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.mock_redis.exists = AsyncMock(return_value=0)
         self.mock_redis.smembers = AsyncMock(return_value=set())
         self.mock_redis.set = AsyncMock()
+        self.mock_redis.delete = AsyncMock()
+        self.mock_redis.hget = AsyncMock(return_value=None)
+        self.mock_redis.hgetall = AsyncMock(return_value={})
         self.mock_redis.hset = AsyncMock()
         self.mock_redis.hdel = AsyncMock()
+        self.mock_redis.srem = AsyncMock()
         # pipeline mock will be set in each test as needed
 
         async def override_get_db() -> AsyncIterator[AsyncMock]:
@@ -179,11 +199,12 @@ class TestLocalNotificationServer(unittest.TestCase):
         """Test successful token storage for an existing user."""
         self.mock_user_in_db(user_id=123)
         # Patch pipeline
-        pipe_mock = MagicMock()
-        pipe_mock.hset = MagicMock()
-        pipe_mock.expire = MagicMock()
-        pipe_mock.execute = AsyncMock()
-        self.mock_redis.pipeline.return_value = pipe_mock
+        token_pipe_mock = MagicMock()
+        token_pipe_mock.hset = MagicMock()
+        token_pipe_mock.expire = MagicMock()
+        token_pipe_mock.execute = AsyncMock()
+        token_pipe_mock.sadd = MagicMock()
+        self.mock_redis.pipeline.return_value = token_pipe_mock
         data: dict[str, object] = {
             'user_id': 123,
             'device_token': 'my-test-token',
@@ -191,14 +212,23 @@ class TestLocalNotificationServer(unittest.TestCase):
         }
         response = self.client.post('/fcm/store_token', json=data)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(), {
-                'message': 'Token stored successfully.',
-            },
-        )
-        pipe_mock.hset.assert_called_once_with(
+        payload = response.json()
+        self.assertTrue(payload['ok'])
+        self.assertTrue(payload['updated'])
+        self.assertEqual(payload['user_id'], 123)
+        self.assertEqual(payload['device_lang'], 'en-GB')
+        self.assertNotIn('token_hash', payload)
+        self.assertIn('registered_at', payload)
+        self.assertIn('last_seen_at', payload)
+        token_pipe_mock.hset.assert_any_call(
             'fcm_tokens:123', 'my-test-token', 'en-GB',
         )
+        token_pipe_mock.sadd.assert_called_once_with(
+            'fcm_token_index:123',
+            fcm_token_hash('my-test-token'),
+        )
+        self.assertEqual(token_pipe_mock.hset.call_count, 2)
+        self.mock_session.commit.assert_awaited()
 
     def test_store_fcm_token_requires_device_lang(self) -> None:
         """Token registration requires an explicit supported language."""
@@ -221,24 +251,26 @@ class TestLocalNotificationServer(unittest.TestCase):
         Test token storage with a specific device language specified.
         """
         self.mock_user_in_db(user_id=123)
-        pipe_mock = MagicMock()
-        pipe_mock.hset = MagicMock()
-        pipe_mock.expire = MagicMock()
-        pipe_mock.execute = AsyncMock()
-        self.mock_redis.pipeline.return_value = pipe_mock
+        token_pipe_mock = MagicMock()
+        token_pipe_mock.hset = MagicMock()
+        token_pipe_mock.expire = MagicMock()
+        token_pipe_mock.execute = AsyncMock()
+        token_pipe_mock.sadd = MagicMock()
+        self.mock_redis.pipeline.return_value = token_pipe_mock
         data: dict[str, object] = {
             'user_id': 123, 'device_token': 'test-token', 'device_lang': 'zh',
         }
         response = self.client.post('/fcm/store_token', json=data)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(), {
-                'message': 'Token stored successfully.',
-            },
-        )
-        pipe_mock.hset.assert_called_once_with(
+        payload = response.json()
+        self.assertTrue(payload['ok'])
+        self.assertTrue(payload['updated'])
+        self.assertEqual(payload['device_lang'], 'zh-TW')
+        self.assertNotIn('token_hash', payload)
+        token_pipe_mock.hset.assert_any_call(
             'fcm_tokens:123', 'test-token', 'zh-TW',
         )
+        self.assertEqual(token_pipe_mock.hset.call_count, 2)
 
     def test_store_fcm_token_with_unsupported_device_lang(self) -> None:
         """Unsupported device languages are rejected instead of retry."""
@@ -285,7 +317,13 @@ class TestLocalNotificationServer(unittest.TestCase):
         """
         Test attempting to delete a token that does not exist in Redis.
         """
-        self.mock_user_in_db(user_id=10)
+        user_result = MagicMock()
+        user_result.scalar.return_value = 10
+        update_result = MagicMock()
+        update_result.rowcount = 0
+        self.mock_session.execute = AsyncMock(
+            side_effect=[user_result, update_result],
+        )
         pipe_mock = MagicMock()
         pipe_mock.hdel = MagicMock()
         pipe_mock.hlen = MagicMock()
@@ -301,7 +339,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(), {
-                'message': 'Token not found in Redis hash.',
+                'message': 'Token not found.',
             },
         )
 
@@ -309,7 +347,13 @@ class TestLocalNotificationServer(unittest.TestCase):
         """
         Test successfully deleting an existing token in Redis.
         """
-        self.mock_user_in_db(user_id=10)
+        user_result = MagicMock()
+        user_result.scalar.return_value = 10
+        update_result = MagicMock()
+        update_result.rowcount = 1
+        self.mock_session.execute = AsyncMock(
+            side_effect=[user_result, update_result],
+        )
         pipe_mock = MagicMock()
         pipe_mock.hdel = MagicMock()
         pipe_mock.hlen = MagicMock()
@@ -333,7 +377,13 @@ class TestLocalNotificationServer(unittest.TestCase):
         Test that the Redis key is deleted
         when no tokens remain after deletion.
         """
-        self.mock_user_in_db(user_id=10)
+        user_result = MagicMock()
+        user_result.scalar.return_value = 10
+        update_result = MagicMock()
+        update_result.rowcount = 1
+        self.mock_session.execute = AsyncMock(
+            side_effect=[user_result, update_result],
+        )
         pipe_mock = MagicMock()
         pipe_mock.hdel = MagicMock()
         pipe_mock.hlen = MagicMock()
@@ -349,7 +399,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'message': 'Token deleted.'})
-        self.mock_redis.delete.assert_awaited_once_with('fcm_tokens:10')
+        self.assertEqual(self.mock_redis.delete.await_count, 2)
+        self.mock_redis.delete.assert_any_await('fcm_tokens:10')
 
     # ------------------------------------------------------------------------
     # Tests for /send_fcm_notification (POST) - sending notifications
@@ -464,12 +515,19 @@ class TestLocalNotificationServer(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        resp_json = response.json()
+        self.assertFalse(resp_json['success'])
         self.assertEqual(
-            response.json(), {
-                'success': False,
-                'message': "Site 'SiteWithNoTokens' has no device tokens.",
-            },
+            resp_json['message'],
+            "Site 'SiteWithNoTokens' has no device tokens.",
         )
+        self.assertEqual(resp_json['stats']['total_batches'], 0)
+        self.assertEqual(resp_json['stats']['successful_batches'], 0)
+        self.assertEqual(
+            resp_json['stats']['preflight']['recipient_users'],
+            2,
+        )
+        self.assertEqual(resp_json['stats']['preflight']['unique_tokens'], 0)
 
     @patch(
         'examples.local_notification_server.services.'
@@ -706,6 +764,212 @@ class TestLocalNotificationServer(unittest.TestCase):
                 'message': 'Body is empty, nothing to send.',
             },
         )
+
+
+class TestNotificationCenterRoutes(unittest.IsolatedAsyncioTestCase):
+    """Unit tests for notification-center route helpers."""
+
+    def setUp(self) -> None:
+        """Prepare a current user and async session mock."""
+        self.db: AsyncMock = AsyncMock()
+        self.user: MagicMock = MagicMock()
+        self.user.id = 9
+
+    def _notification(self, **overrides: object) -> SimpleNamespace:
+        """Build a lightweight notification object for serialization."""
+        values: dict[str, object] = {
+            'id': 1,
+            'user_id': 9,
+            'type': 'violation',
+            'title': 'Alert',
+            'body': 'Site - Cam\nWarning',
+            'deep_link': '/violations?violation_id=1',
+            'is_read': False,
+            'created_at': datetime.now(timezone.utc),
+            'metadata_json': {'violation_id': 1},
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    async def test_list_notifications_filters_and_paginates(self) -> None:
+        """List notifications returns total, pagination, and items."""
+        count_result = MagicMock()
+        count_result.scalar.return_value = 1
+        item_result = MagicMock()
+        item_result.scalars.return_value.all.return_value = [
+            self._notification(),
+        ]
+        self.db.execute = AsyncMock(side_effect=[count_result, item_result])
+
+        result = await list_notifications(
+            status='unread',
+            notification_type='violation',
+            page=1,
+            page_size=20,
+            db=self.db,
+            me=self.user,
+        )
+
+        self.assertEqual(result.total, 1)
+        self.assertEqual(result.page, 1)
+        self.assertEqual(
+            result.items[0].deep_link,
+            '/violations?violation_id=1',
+        )
+        self.assertEqual(self.db.execute.await_count, 2)
+
+    async def test_get_notification_unread_count(self) -> None:
+        """Unread badge returns only the current user's unread total."""
+        result_mock = MagicMock()
+        result_mock.scalar.return_value = 7
+        self.db.execute = AsyncMock(return_value=result_mock)
+
+        result = await get_notification_unread_count(self.db, self.user)
+
+        self.assertEqual(result.unread_count, 7)
+
+    async def test_get_notification_device_status(self) -> None:
+        """Device-status exposes current token diagnostic metadata."""
+        token_hash = fcm_token_hash('token-a')
+        token = FcmDeviceToken(
+            user_id=9,
+            device_token_encrypted='encrypted',
+            device_token_hash=token_hash,
+            platform='web',
+            device_lang='zh-TW',
+            permission_status='granted',
+            created_at=datetime(2026, 6, 27, tzinfo=timezone.utc),
+            last_seen_at=datetime(2026, 6, 27, 0, 1, tzinfo=timezone.utc),
+            web_vapid_key_available=True,
+            web_service_worker_registered=True,
+        )
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = [token]
+        self.db.execute = AsyncMock(return_value=result_mock)
+
+        result = await get_notification_device_status(self.db, self.user)
+
+        self.assertTrue(result.has_fcm_token)
+        self.assertEqual(result.token_count, 1)
+        self.assertEqual(result.devices[0].token_hash, token_hash)
+        self.assertEqual(result.devices[0].platform, 'web')
+        self.assertEqual(result.devices[0].device_lang, 'zh-TW')
+        self.assertTrue(result.devices[0].web_vapid_key_available)
+
+    @patch(
+        'examples.local_notification_server.routers.'
+        'send_fcm_notification_service',
+        new_callable=AsyncMock,
+    )
+    async def test_send_test_notification_success(
+        self,
+        mock_send: AsyncMock,
+    ) -> None:
+        """Test notification sends to the current user's stored tokens."""
+        mock_send.return_value = True
+        rds = MagicMock()
+        db = AsyncMock()
+
+        with (
+            patch(
+                'examples.local_notification_server.routers.'
+                'refresh_fcm_token_cache_for_users',
+                new=AsyncMock(return_value=1),
+            ),
+            patch(
+                'examples.local_notification_server.routers.'
+                'load_active_fcm_device_tokens',
+                new=AsyncMock(return_value=['token-a']),
+            ),
+            patch(
+                'examples.local_notification_server.routers.'
+                'mark_fcm_tokens_success',
+                new=AsyncMock(),
+            ) as mock_mark_success,
+        ):
+            result = await send_test_notification(rds, db, self.user)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.attempted_tokens, 1)
+        self.assertEqual(result.success_count, 1)
+        mock_send.assert_awaited_once()
+        mock_mark_success.assert_awaited_once_with(
+            9,
+            ['token-a'],
+            rds,
+            db=db,
+        )
+
+    async def test_send_test_notification_without_token(self) -> None:
+        """Test notification reports missing FCM token clearly."""
+        rds = MagicMock()
+        db = AsyncMock()
+
+        with (
+            patch(
+                'examples.local_notification_server.routers.'
+                'refresh_fcm_token_cache_for_users',
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
+                'examples.local_notification_server.routers.'
+                'load_active_fcm_device_tokens',
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = await send_test_notification(rds, db, self.user)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.attempted_tokens, 0)
+        self.assertIn('No FCM token', result.message)
+
+    async def test_mark_notification_read(self) -> None:
+        """Marking one notification updates only an owned record."""
+        notification = self._notification(is_read=False)
+        self.db.scalar = AsyncMock(return_value=notification)
+        self.db.commit = AsyncMock()
+        self.db.refresh = AsyncMock()
+
+        result = await mark_notification_read(1, self.db, self.user)
+
+        self.assertTrue(notification.is_read)
+        self.assertTrue(result.is_read)
+        self.db.commit.assert_awaited_once()
+        self.db.refresh.assert_awaited_once_with(notification)
+
+    async def test_mark_notification_read_not_found(self) -> None:
+        """Unknown or unowned notifications return 404."""
+        self.db.scalar = AsyncMock(return_value=None)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await mark_notification_read(404, self.db, self.user)
+
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    async def test_mark_all_notifications_read(self) -> None:
+        """Read-all returns the number of updated rows."""
+        result_mock = MagicMock()
+        result_mock.rowcount = 3
+        self.db.execute = AsyncMock(return_value=result_mock)
+        self.db.commit = AsyncMock()
+
+        result = await mark_all_notifications_read(self.db, self.user)
+
+        self.assertEqual(result.updated_count, 3)
+        self.db.commit.assert_awaited_once()
+
+    async def test_delete_notification(self) -> None:
+        """Deleting one notification removes only an owned record."""
+        notification = self._notification()
+        self.db.scalar = AsyncMock(return_value=notification)
+        self.db.delete = AsyncMock()
+        self.db.commit = AsyncMock()
+
+        result = await delete_notification(1, self.db, self.user)
+
+        self.assertEqual(result, {'message': 'Notification deleted.'})
+        self.db.delete.assert_awaited_once_with(notification)
+        self.db.commit.assert_awaited_once()
 
 
 if __name__ == '__main__':

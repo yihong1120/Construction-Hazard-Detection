@@ -5,8 +5,10 @@ import os
 from urllib.parse import quote
 
 
+CLEAN_DEMAND_PREFIX = 'media_clean_demand'
 OVERLAY_DEMAND_PREFIX = 'media_overlay_demand'
 OVERLAY_READY_PREFIX = 'media_overlay_ready'
+PREVIEW_MEDIA_PATH_SUFFIX = '_preview'
 
 
 def encode_media_segment(value: str) -> str:
@@ -38,6 +40,11 @@ def build_annotated_media_path(
     return f'{path}_annotated_{encode_media_segment(label_language)}'
 
 
+def build_preview_media_path(path: str) -> str:
+    """Build the MediaMTX path for the low-bitrate preview rendition."""
+    return f'{path}{PREVIEW_MEDIA_PATH_SUFFIX}'
+
+
 def parse_annotated_media_path(path: str) -> tuple[str, str] | None:
     """Return base media path and label language for an overlay stream path."""
     marker = '_annotated_'
@@ -59,6 +66,11 @@ def build_overlay_demand_key(media_path: str, label_language: str) -> str:
         f'{media_path}:'
         f'{encode_media_segment(label_language)}'
     )
+
+
+def build_clean_demand_key(media_path: str) -> str:
+    """Build the Redis key used to keep a clean stream requested."""
+    return f'{CLEAN_DEMAND_PREFIX}:{media_path}'
 
 
 def build_overlay_ready_key(overlay_media_path: str) -> str:

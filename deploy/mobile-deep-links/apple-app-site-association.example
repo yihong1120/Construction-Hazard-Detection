@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": [
+          "APPLE_TEAM_ID.IOS_BUNDLE_ID"
+        ],
+        "components": [
+          {
+            "/": "/reset_password",
+            "?": {
+              "token": "*"
+            },
+            "comment": "Open password reset links in the app."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -120,9 +120,17 @@ class TestUserSignup(unittest.TestCase):
         )
         data: user.UserSignup = user.UserSignup(
             username='u', password='p', profile=profile,
+            accepted_terms=True,
+            terms_version='2026-06-27',
+            privacy_version='2026-06-27',
+            notification_consent=True,
+            ai_terms_accepted=True,
+            ai_terms_version='2026-06-27',
         )
         self.assertEqual(data.username, 'u')
         self.assertEqual(data.profile.email, 'a@b.com')
+        self.assertTrue(data.accepted_terms)
+        self.assertEqual(data.terms_version, '2026-06-27')
 
     def test_missing_profile(self) -> None:
         """Test validation error when profile is missing."""
@@ -178,7 +186,7 @@ class TestUserRead(unittest.TestCase):
         """Test UserRead instance with no group or profile."""
         now: datetime = datetime.now()
         data: user.UserRead = user.UserRead(
-            id=2, username='u', role='user', status='inactive',
+            id=2, username='u', role='user', status='suspended',
             group_id=None, group=None, profile=None,
             created_at=now, updated_at=now,
         )

@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from starlette.middleware.cors import CORSMiddleware
 
 from examples.db_management import app as app_module
 
@@ -60,33 +59,6 @@ class AppIntegrationTest(unittest.TestCase):
 
     # ---------- Tests ----------
 
-    def test_cors_middleware_present(self) -> None:
-        """
-        The application should load CORSMiddleware and allow all origins.
-
-        This test checks that CORSMiddleware is present in the app's middleware
-        stack and that CORS headers are set correctly for OPTIONS requests.
-        """
-        cors = [
-            m for m in self.app.user_middleware if m.cls is CORSMiddleware
-        ]
-        self.assertTrue(cors, msg='CORSMiddleware not found on app')
-
-        # Simple check for CORS headers
-        resp = self.client.options(
-            '/openapi.json',
-            headers={
-                'Origin': 'http://example.com',
-                'Access-Control-Request-Method': 'GET',
-            },
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(
-            resp.headers.get(
-                'access-control-allow-origin',
-            ), 'http://example.com',
-        )
-
     def test_openapi_available(self) -> None:
         """
         The OpenAPI schema endpoint should return 200
@@ -104,8 +76,14 @@ class AppIntegrationTest(unittest.TestCase):
             '/list_sites',
             '/list_stream_configs',
             '/list_users',
+            '/sites/{site_id}/stream-config',
             '/approve_user_signup',
             '/signup',
+            '/password/forgot',
+            '/password/reset',
+            '/auth/google',
+            '/auth/apple',
+            '/legal/documents',
         ]
         for p in expected_paths:
             self.assertIn(p, data['paths'])
@@ -120,6 +98,27 @@ class AppIntegrationTest(unittest.TestCase):
         resp = self.client.get('/docs')
         self.assertEqual(resp.status_code, 200)
         self.assertIn('text/html', resp.headers['content-type'])
+
+    def test_cors_preflight_allows_web_credentials(self) -> None:
+        """Browser preflight should be handled before auth routes."""
+        resp = self.client.options(
+            '/login',
+            headers={
+                'Origin': 'https://changdar-server.mooo.com',
+                'Access-Control-Request-Method': 'POST',
+                'Access-Control-Request-Headers': 'content-type',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.headers.get('access-control-allow-origin'),
+            'https://changdar-server.mooo.com',
+        )
+        self.assertEqual(
+            resp.headers.get('access-control-allow-credentials'),
+            'true',
+        )
 
     def test_router_tags_registered(self) -> None:
         """
@@ -140,11 +139,25 @@ class AppIntegrationTest(unittest.TestCase):
             'feature-mgmt',
             'group-mgmt',
             'stream-config',
+            'legal',
+            'playback',
         }
         self.assertTrue(
             expected.issubset(tags),
             msg=f"Missing router tag(s): {expected - tags}",
         )
+
+    def test_bff_module_and_playback_routes_are_registered(self) -> None:
+        paths = [
+            str(getattr(cast(Any, route), 'path', ''))
+            for route in self.app.routes
+        ]
+
+        self.assertIn('/bff/auth/session', paths)
+        self.assertIn('/bff/{service}/{path:path}', paths)
+        self.assertIn('/api/playback/walls', paths)
+        self.assertNotIn('/api/media/sessions/batch', paths)
+        self.assertNotIn('/bff/media/sessions/batch', paths)
 
     def test_main_calls_uvicorn_run(self) -> None:
         """

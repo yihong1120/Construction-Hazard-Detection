@@ -483,11 +483,13 @@ def test_handle_batch_converts_yolo_box_data(monkeypatch: Any) -> None:
         lambda _requests: ([frame], [request]),
     )
     monkeypatch.setattr(worker, '_get_model', lambda _model_key: model)
+    monkeypatch.setattr(worker, 'precision_args', {'quantize': 8})
 
     worker._handle_batch([request])
 
     assert worker.result_store['1']['detections'] == [[1, 2, 3, 4, 0.8, 5]]
     assert model.calls[0]['batch'] == 1
+    assert model.calls[0]['quantize'] == 8
 
 
 def test_read_batch_frames_records_missing_shared_memory(

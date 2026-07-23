@@ -27,14 +27,26 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         """
         self.db: AsyncMock = AsyncMock()
         self.redis_pool: AsyncMock = AsyncMock()
+        self._original_hcaptcha_enabled = (
+            auth_services.settings.hcaptcha_enabled
+        )
+        auth_services.settings.hcaptcha_enabled = True
+
+    def tearDown(self) -> None:
+        """Restore module-level settings changed during tests."""
+        auth_services.settings.hcaptcha_enabled = (
+            self._original_hcaptcha_enabled
+        )
 
     @patch('examples.db_management.services.auth_services._authenticate')
     @patch('examples.db_management.services.auth_services._load_feature_names')
     @patch('examples.db_management.services.auth_services.jwt_access')
     @patch('examples.db_management.services.auth_services.jwt_refresh')
     @patch('examples.db_management.services.auth_services.set_user_data')
+    @patch('examples.db_management.services.auth_services._verify_hcaptcha')
     async def test_login_user_success(
         self,
+        mock_verify_hcaptcha: AsyncMock,
         mock_set_user_data: AsyncMock,
         mock_jwt_refresh: MagicMock,
         mock_jwt_access: MagicMock,
@@ -63,9 +75,15 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
             '"group_id": 1, "status": "active"}, "jti_list": [], '
             '"refresh_tokens": []}'
         )
-        self.redis_pool.get = AsyncMock(return_value=mock_redis_data)
+        self.redis_pool.get = AsyncMock(
+            side_effect=[None, None, mock_redis_data, mock_redis_data],
+        )
 
-        payload: UserLogin = UserLogin(username='user', password='pass')
+        payload: UserLogin = UserLogin(
+            identifier='user',
+            password='pass',
+            hcaptcha_token='captcha-token',
+        )
         result = (
             await auth_services.login_user(
                 payload, self.db, self.redis_pool,
@@ -76,7 +94,232 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['refresh_token'], 'refresh_token')
         self.assertEqual(result['username'], 'user')
         self.assertEqual(result['feature_names'], ['feature1', 'feature2'])
+        mock_verify_hcaptcha.assert_awaited_once_with('captcha-token', None)
         mock_set_user_data.assert_awaited()
+
+    @patch('examples.db_management.services.auth_services._authenticate')
+    @patch('examples.db_management.services.auth_services._verify_hcaptcha')
+    async def test_login_user_invalid_credentials_reports_remaining_attempts(
+        self,
+        mock_verify_hcaptcha: AsyncMock,
+        mock_authenticate: AsyncMock,
+    ) -> None:
+        """Test wrong credentials return structured remaining attempts."""
+        self.redis_pool.get = AsyncMock(side_effect=[None, None])
+        self.redis_pool.incr = AsyncMock(side_effect=[1, 1])
+        self.redis_pool.sadd = AsyncMock()
+        self.redis_pool.expire = AsyncMock()
+        mock_authenticate.side_effect = HTTPException(
+            status_code=401,
+            detail='Wrong username/e-mail or password',
+        )
+        payload = UserLogin(
+            identifier='user',
+            password='bad',
+            hcaptcha_token='captcha-token',
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await auth_services.login_user(
+                payload,
+                self.db,
+                self.redis_pool,
+                client_ip='127.0.0.1',
+            )
+
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertEqual(
+            ctx.exception.detail,
+            {'code': 'invalid_credentials', 'remaining_attempts': 4},
+        )
+        mock_verify_hcaptcha.assert_awaited_once_with('captcha-token', None)
+        self.redis_pool.sadd.assert_awaited_once()
+        self.assertEqual(self.redis_pool.expire.await_count, 3)
+
+    @patch('examples.db_management.services.auth_services.settings')
+    @patch('examples.db_management.services.auth_services._authenticate')
+    @patch('examples.db_management.services.auth_services._verify_hcaptcha')
+    async def test_login_user_enters_cooldown(
+        self,
+        mock_verify_hcaptcha: AsyncMock,
+        mock_authenticate: AsyncMock,
+        mock_settings: MagicMock,
+    ) -> None:
+        """Test hitting cooldown threshold returns HTTP 429."""
+        mock_settings.login_failure_window_seconds = 1800
+        mock_settings.login_cooldown_threshold = 5
+        mock_settings.login_cooldown_seconds = 300
+        mock_settings.login_lock_threshold = 10
+        mock_settings.login_lock_seconds = 1800
+        self.redis_pool.get = AsyncMock(side_effect=[None, None])
+        self.redis_pool.incr = AsyncMock(side_effect=[5, 5])
+        self.redis_pool.sadd = AsyncMock()
+        self.redis_pool.expire = AsyncMock()
+        self.redis_pool.set = AsyncMock()
+        mock_authenticate.side_effect = HTTPException(
+            status_code=401,
+            detail='Wrong username/e-mail or password',
+        )
+        payload = UserLogin(
+            identifier='user',
+            password='bad',
+            hcaptcha_token='captcha-token',
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await auth_services.login_user(
+                payload,
+                self.db,
+                self.redis_pool,
+                client_ip='127.0.0.1',
+            )
+
+        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(
+            ctx.exception.detail,
+            {'code': 'login_cooldown', 'retry_after_seconds': 300},
+        )
+        self.assertEqual(ctx.exception.headers, {'Retry-After': '300'})
+        self.redis_pool.set.assert_awaited_once()
+        self.redis_pool.sadd.assert_awaited_once()
+        mock_verify_hcaptcha.assert_awaited_once_with('captcha-token', None)
+
+    @patch('examples.db_management.services.auth_services.settings')
+    @patch('examples.db_management.services.auth_services._verify_hcaptcha')
+    async def test_login_user_rejects_existing_cooldown(
+        self,
+        mock_verify_hcaptcha: AsyncMock,
+        mock_settings: MagicMock,
+    ) -> None:
+        """Test existing cooldown is rejected before credential check."""
+        mock_settings.login_cooldown_seconds = 300
+        self.redis_pool.get = AsyncMock(side_effect=[None, '1'])
+        self.redis_pool.ttl = AsyncMock(return_value=123)
+        payload = UserLogin(
+            identifier='user',
+            password='pw',
+            hcaptcha_token='captcha-token',
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await auth_services.login_user(
+                payload,
+                self.db,
+                self.redis_pool,
+                client_ip='127.0.0.1',
+            )
+
+        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(
+            ctx.exception.detail,
+            {'code': 'login_cooldown', 'retry_after_seconds': 123},
+        )
+        self.redis_pool.ttl.assert_awaited_once()
+        mock_verify_hcaptcha.assert_awaited_once_with('captcha-token', None)
+
+    @patch('examples.db_management.services.auth_services._verify_hcaptcha')
+    async def test_login_user_rejects_existing_lock(
+        self,
+        mock_verify_hcaptcha: AsyncMock,
+    ) -> None:
+        """Test existing account lock returns HTTP 423."""
+        locked_until = '2026-06-19T12:30:00Z'
+        self.redis_pool.get = AsyncMock(return_value=locked_until)
+        payload = UserLogin(
+            identifier='user',
+            password='pw',
+            hcaptcha_token='captcha-token',
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            await auth_services.login_user(
+                payload,
+                self.db,
+                self.redis_pool,
+                client_ip='127.0.0.1',
+            )
+
+        self.assertEqual(ctx.exception.status_code, 423)
+        self.assertEqual(
+            ctx.exception.detail,
+            {'code': 'account_locked', 'locked_until': locked_until},
+        )
+        mock_verify_hcaptcha.assert_awaited_once_with('captcha-token', None)
+
+    async def test_verify_hcaptcha_missing_token(self) -> None:
+        """Test missing hCaptcha token raises HTTP 400."""
+        with self.assertRaises(HTTPException) as ctx:
+            await auth_services._verify_hcaptcha('')
+
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    @patch(
+        'examples.db_management.services.auth_services.HCAPTCHA_BYPASS_KEY',
+        'server-only-key',
+    )
+    @patch('examples.db_management.services.auth_services.httpx.AsyncClient')
+    async def test_verify_hcaptcha_backend_bypass(
+        self, mock_async_client: MagicMock,
+    ) -> None:
+        """Test trusted backend bypass skips external hCaptcha call."""
+        await auth_services._verify_hcaptcha(None, 'server-only-key')
+
+        mock_async_client.assert_not_called()
+
+    @patch(
+        'examples.db_management.services.auth_services.HCAPTCHA_SITE_KEY',
+        'site-key',
+    )
+    @patch(
+        'examples.db_management.services.auth_services.HCAPTCHA_SECRET_KEY',
+        'secret-key',
+    )
+    @patch('examples.db_management.services.auth_services.httpx.AsyncClient')
+    async def test_verify_hcaptcha_success(
+        self, mock_async_client: MagicMock,
+    ) -> None:
+        """Test successful hCaptcha verification returns without error."""
+        mock_response: MagicMock = MagicMock()
+        mock_response.json.return_value = {'success': True}
+        mock_client: AsyncMock = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_async_client.return_value.__aenter__.return_value = mock_client
+
+        await auth_services._verify_hcaptcha('captcha-token')
+
+        mock_client.post.assert_awaited_once_with(
+            auth_services.HCAPTCHA_VERIFY_URL,
+            data={
+                'secret': 'secret-key',
+                'response': 'captcha-token',
+                'sitekey': 'site-key',
+            },
+        )
+        mock_response.raise_for_status.assert_called_once()
+
+    @patch(
+        'examples.db_management.services.auth_services.HCAPTCHA_SITE_KEY',
+        'site-key',
+    )
+    @patch(
+        'examples.db_management.services.auth_services.HCAPTCHA_SECRET_KEY',
+        'secret-key',
+    )
+    @patch('examples.db_management.services.auth_services.httpx.AsyncClient')
+    async def test_verify_hcaptcha_failure(
+        self, mock_async_client: MagicMock,
+    ) -> None:
+        """Test failed hCaptcha verification raises HTTP 403."""
+        mock_response: MagicMock = MagicMock()
+        mock_response.json.return_value = {'success': False}
+        mock_client: AsyncMock = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_async_client.return_value.__aenter__.return_value = mock_client
+
+        with self.assertRaises(HTTPException) as ctx:
+            await auth_services._verify_hcaptcha('captcha-token')
+
+        self.assertEqual(ctx.exception.status_code, 403)
 
     async def test_authenticate_invalid_credentials(self) -> None:
         """Test authentication with wrong credentials.
@@ -90,6 +333,20 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
                 self.db, 'wronguser', 'wrongpass',
             )
         self.assertEqual(ctx.exception.status_code, 401)
+
+    async def test_authenticate_with_email(self) -> None:
+        """Test authentication falls back to profile e-mail lookup."""
+        mock_user: AsyncMock = AsyncMock()
+        mock_user.check_password = AsyncMock(return_value=True)
+        mock_user.status = 'active'
+        self.db.scalar = AsyncMock(side_effect=[None, mock_user])
+
+        result = await auth_services._authenticate(
+            self.db, 'USER@example.com', 'pass',
+        )
+
+        self.assertIs(result, mock_user)
+        self.assertEqual(self.db.scalar.await_count, 2)
 
     async def test_authenticate_inactive_user(self) -> None:
         """Test authentication with inactive user.
@@ -350,6 +607,7 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
                 'jti_list': ['jti456'],
                 'refresh_tokens': ['token456'],
                 'jti_meta': {},
+                'refresh_token_hashes': [],
             },
         )
 
@@ -414,14 +672,67 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         assert 'jti_meta' in cache_arg
         assert 456 in cache_arg['jti_meta'].values()
 
+    @patch('examples.db_management.services.auth_services.set_user_data')
+    @patch('examples.db_management.services.auth_services.jwt_refresh')
+    @patch('examples.db_management.services.auth_services.jwt_access')
+    @patch('examples.db_management.services.auth_services.get_user_data')
+    @patch(
+        'examples.db_management.services.'
+        'auth_services.verify_refresh_token',
+    )
+    @patch('examples.db_management.services.auth_services.jwt.decode')
+    async def test_refresh_tokens_hashes_web_refresh_token(
+        self,
+        mock_jwt_decode: MagicMock,
+        mock_verify_refresh_token: MagicMock,
+        mock_get_user_data: MagicMock,
+        mock_jwt_access: MagicMock,
+        mock_jwt_refresh: MagicMock,
+        mock_set_user_data: AsyncMock,
+    ) -> None:
+        """Web refresh rotation stores only refresh token hashes."""
+        old_hash = auth_services._hash_refresh_token('old_refresh')
+        mock_verify_refresh_token.return_value = {
+            'subject': {'username': 'user'},
+        }
+        mock_get_user_data.return_value = {
+            'db_user': {'id': 1, 'role': 'user'},
+            'refresh_tokens': [],
+            'refresh_token_hashes': [old_hash],
+            'feature_names': ['feature1'],
+            'jti_list': [],
+        }
+        mock_jwt_access.create_access_token.return_value = 'new_access'
+        mock_jwt_refresh.create_access_token.return_value = 'new_refresh'
+        mock_jwt_decode.return_value = {'exp': 456}
+
+        result = await auth_services.refresh_tokens(
+            RefreshRequest(refresh_token='old_refresh'),
+            self.redis_pool,
+            hash_refresh_token=True,
+        )
+
+        self.assertEqual(result['refresh_token'], 'new_refresh')
+        await_call = mock_set_user_data.await_args
+        assert await_call is not None
+        cache_arg = await_call.args[2]
+        self.assertEqual(cache_arg['refresh_tokens'], [])
+        self.assertNotIn(old_hash, cache_arg['refresh_token_hashes'])
+        self.assertIn(
+            auth_services._hash_refresh_token('new_refresh'),
+            cache_arg['refresh_token_hashes'],
+        )
+
     @patch('examples.db_management.services.auth_services.jwt.decode')
     @patch('examples.db_management.services.auth_services._load_feature_names')
     @patch('examples.db_management.services.auth_services.jwt_access')
     @patch('examples.db_management.services.auth_services.jwt_refresh')
     @patch('examples.db_management.services.auth_services.set_user_data')
     @patch('examples.db_management.services.auth_services._authenticate')
+    @patch('examples.db_management.services.auth_services._verify_hcaptcha')
     async def test_login_user_jti_meta_decode_success(
         self,
+        mock_verify_hcaptcha: AsyncMock,
         mock_authenticate: AsyncMock,
         mock_set_user_data: AsyncMock,
         mock_jwt_refresh: MagicMock,
@@ -443,9 +754,14 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_jwt_refresh.create_access_token.return_value = 'ref'
         mock_jwt_decode.return_value = {'exp': 123}
         self.redis_pool.get = AsyncMock(return_value=None)
-        payload: UserLogin = UserLogin(username='user', password='pw')
+        payload: UserLogin = UserLogin(
+            identifier='user',
+            password='pw',
+            hcaptcha_token='captcha-token',
+        )
         await auth_services.login_user(payload, self.db, self.redis_pool)
 
+        mock_verify_hcaptcha.assert_awaited_once_with('captcha-token', None)
         mock_set_user_data.assert_awaited()
         await_call = mock_set_user_data.await_args
         assert await_call is not None
@@ -461,8 +777,10 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
     @patch('examples.db_management.services.auth_services.jwt_refresh')
     @patch('examples.db_management.services.auth_services.set_user_data')
     @patch('examples.db_management.services.auth_services._authenticate')
+    @patch('examples.db_management.services.auth_services._verify_hcaptcha')
     async def test_login_user_jti_meta_decode_failure(
         self,
+        mock_verify_hcaptcha: AsyncMock,
         mock_authenticate: AsyncMock,
         mock_set_user_data: AsyncMock,
         mock_jwt_refresh: MagicMock,
@@ -486,7 +804,11 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_jwt_decode.side_effect = Exception('decode-fail')
         self.redis_pool.get = AsyncMock(return_value=None)
 
-        payload: UserLogin = UserLogin(username='user', password='pw')
+        payload: UserLogin = UserLogin(
+            identifier='user',
+            password='pw',
+            hcaptcha_token='captcha-token',
+        )
         result = await auth_services.login_user(
             payload, self.db, self.redis_pool,
         )
@@ -494,6 +816,7 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['access_token'], 'acc')
         self.assertEqual(result['refresh_token'], 'ref')
         self.assertEqual(result['feature_names'], ['f1'])
+        mock_verify_hcaptcha.assert_awaited_once_with('captcha-token', None)
         mock_set_user_data.assert_awaited()
 
     @patch('examples.db_management.services.auth_services.set_user_data')

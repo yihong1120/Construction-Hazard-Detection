@@ -4,14 +4,11 @@ FROM base:latest
 # 設定工作目錄
 WORKDIR /app
 
-# Copy the application code into the container
-COPY examples/db_management /app
-
-# 安裝依賴
-RUN pip install --no-cache-dir -r /app/requirements.txt
-
-# 複製 db_management 目錄內容到容器
-# COPY . /app/examples/db_management
+# Dependencies are installed by the shared base image. Copy every Python
+# package used by this deployable so the image also works without bind mounts.
+COPY --chown=appuser:appuser examples/auth /app/examples/auth
+COPY --chown=appuser:appuser examples/bff /app/examples/bff
+COPY --chown=appuser:appuser examples/db_management /app/examples/db_management
 
 # Expose the application port
 EXPOSE 8005

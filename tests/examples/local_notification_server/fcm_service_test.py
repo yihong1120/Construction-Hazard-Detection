@@ -11,6 +11,7 @@ from examples.local_notification_server.fcm_service import init_firebase_app
 from examples.local_notification_server.fcm_service import (
     send_fcm_notification_service,
 )
+from examples.local_notification_server.fcm_service import WEBPUSH_CFG
 
 patch(
     'firebase_admin.credentials.Certificate',
@@ -119,6 +120,8 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.success_count, 1)
         self.assertEqual(result.failure_count, 0)
         self.assertEqual(result.invalid_tokens, ())
+        message = mock_send_each.call_args.args[0][0]
+        self.assertEqual(message.webpush, WEBPUSH_CFG)
 
     @patch('firebase_admin.messaging.send_each')
     async def test_partial_fail(self, mock_send_each: MagicMock) -> None:

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 from typing import cast
+from typing import Final
 from typing import TYPE_CHECKING
 from typing import TypedDict
 
@@ -17,8 +18,11 @@ from dotenv import load_dotenv
 from examples.streaming_web.media_paths import (
     build_annotated_media_path,
 )
+from examples.streaming_web.media_paths import build_clean_demand_key
 from examples.streaming_web.media_paths import build_media_path
 from examples.streaming_web.media_paths import build_overlay_ready_key
+from examples.streaming_web.media_paths import build_preview_media_path
+from examples.streaming_web.media_paths import CLEAN_DEMAND_PREFIX
 from examples.streaming_web.media_paths import decode_media_segment
 from examples.streaming_web.media_paths import OVERLAY_DEMAND_PREFIX
 from examples.streaming_web.overlay_renderer import (
@@ -47,6 +51,8 @@ if TYPE_CHECKING:
     RedisPrimitive = bytes | bytearray | memoryview[int] | str | int | float
 else:
     RedisPrimitive = bytes | bytearray | memoryview | str | int | float
+
+_default_warning_event_throttle_seconds: Final[int] = 30
 
 
 class StreamConfig(TypedDict, total=False):
@@ -103,6 +109,42 @@ class _OverlaySnapshot:
     track_data: object = None
 
 
+def _preview_publisher_kwargs() -> dict[str, object]:
+    """Return the bounded encoder budget used by multi-camera walls."""
+    return {
+        'fps': max(
+            1.0,
+            float(
+                os.getenv(
+                    'MEDIA_PREVIEW_FPS',
+                    os.getenv('MEDIA_PUBLISH_FPS', '15'),
+                ),
+            ),
+        ),
+        'width': max(2, int(os.getenv('MEDIA_PREVIEW_WIDTH', '640'))),
+        'height': max(2, int(os.getenv('MEDIA_PREVIEW_HEIGHT', '360'))),
+        'bitrate': os.getenv('MEDIA_PREVIEW_BITRATE', '500k'),
+        'maxrate': os.getenv('MEDIA_PREVIEW_MAXRATE', '700k'),
+        'bufsize': os.getenv('MEDIA_PREVIEW_BUFSIZE', '1400k'),
+    }
+
+
+def _media_publisher(
+    publish_url: str,
+    *,
+    rendition: str,
+) -> MediaStreamPublisher:
+    """Create a publisher for exactly one detail or preview rendition."""
+    if rendition == 'preview':
+        return MediaStreamPublisher(
+            publish_url=publish_url,
+            **_preview_publisher_kwargs(),
+        )
+    if rendition == 'detail':
+        return MediaStreamPublisher(publish_url=publish_url)
+    raise ValueError(f'unsupported media rendition: {rendition}')
+
+
 async def delete_stream_live_metadata(cfg: StreamConfig) -> None:
     """Delete compact live metadata for one configured camera."""
     redis_manager = RedisManager()
@@ -147,8 +189,7 @@ async def _run_single_stream(
         flush=True,
     )
     print(
-        f'[{site}:{stream_name}] Detection mode: '
-        f'{"server" if detect_with_server else "local"}',
+        f'[{site}:{stream_name}] Detection mode: server',
         flush=True,
     )
 
@@ -214,41 +255,15 @@ async def _run_single_stream(
         'MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM',
         'true',
     ).strip().lower() in {'1', 'true', 'yes', 'on'}
-    clean_source_restreamer = (
-        MediaSourceRestreamer(
-            source_url=video_url,
-            publish_url=f'{media_publish_base}/{media_path}',
-        )
-        if (
-            live_view_enabled
-            and publish_clean_stream
-            and restream_clean_source
-        )
-        else None
-    )
-    clean_media_publisher = (
-        MediaStreamPublisher(
-            publish_url=f'{media_publish_base}/{media_path}',
-        )
-        if (
-            live_view_enabled
-            and publish_clean_stream
-            and clean_source_restreamer is None
-        )
-        else None
-    )
+    clean_source_restreamer: MediaSourceRestreamer | None = None
+    clean_media_publisher: MediaStreamPublisher | None = None
     overlay_media_publishers: dict[str, MediaStreamPublisher] = {}
-    if clean_source_restreamer is not None:
+    preview_clean_media_publisher: MediaStreamPublisher | None = None
+    preview_overlay_media_publishers: dict[str, MediaStreamPublisher] = {}
+    if live_view_enabled and publish_clean_stream:
         print(
-            f'[{site}:{stream_name}] Restreaming clean source media to '
-            f'{media_publish_base}/{media_path}',
-            flush=True,
-        )
-        await clean_source_restreamer.start()
-    elif clean_media_publisher is not None:
-        print(
-            f'[{site}:{stream_name}] Publishing clean media stream to '
-            f'{media_publish_base}/{media_path}',
+            f'[{site}:{stream_name}] Clean media stream is on-demand; '
+            f'path {media_path}',
             flush=True,
         )
     if live_view_enabled and publish_annotated_stream:
@@ -285,6 +300,9 @@ async def _run_single_stream(
                 work_start_hour=work_start_hour,
                 work_end_hour=work_end_hour,
                 metadata_key=metadata_key,
+                publish_clean_stream=publish_clean_stream,
+                restream_clean_source=restream_clean_source,
+                video_url=video_url,
             )
             return
 
@@ -298,6 +316,8 @@ async def _run_single_stream(
             clean_source_restreamer=clean_source_restreamer,
             clean_media_publisher=clean_media_publisher,
             overlay_media_publishers=overlay_media_publishers,
+            preview_clean_media_publisher=preview_clean_media_publisher,
+            preview_overlay_media_publishers=preview_overlay_media_publishers,
             media_publish_base=media_publish_base,
             media_path=media_path,
             publish_annotated_stream=publish_annotated_stream,
@@ -307,6 +327,9 @@ async def _run_single_stream(
             work_start_hour=work_start_hour,
             work_end_hour=work_end_hour,
             metadata_key=metadata_key,
+            publish_clean_stream=publish_clean_stream,
+            restream_clean_source=restream_clean_source,
+            video_url=video_url,
         )
     finally:
         await yolo_detector.close()
@@ -316,6 +339,9 @@ async def _run_single_stream(
         if clean_media_publisher is not None:
             await clean_media_publisher.close()
         await _close_overlay_publishers(overlay_media_publishers)
+        if preview_clean_media_publisher is not None:
+            await preview_clean_media_publisher.close()
+        await _close_overlay_publishers(preview_overlay_media_publishers)
         if redis_manager is not None:
             try:
                 await redis_manager.delete(metadata_key)
@@ -342,9 +368,24 @@ async def _run_inline_stream_loop(
     work_start_hour: int,
     work_end_hour: int,
     metadata_key: str,
+    publish_clean_stream: bool,
+    restream_clean_source: bool,
+    video_url: str,
+    preview_clean_media_publisher: MediaStreamPublisher | None = None,
+    preview_overlay_media_publishers: dict[
+        str,
+        MediaStreamPublisher,
+    ] | None = None,
 ) -> None:
     """Process capture/detection in a single loop for one camera."""
+    if preview_overlay_media_publishers is None:
+        preview_overlay_media_publishers = {}
     last_notification_time = 0
+    last_warning_event_time: int | None = None
+    warning_event_throttle_seconds = _warning_event_throttle_seconds()
+    overlay_ready_started_at: dict[str, float] = {}
+    preview_overlay_ready_started_at: dict[str, float] = {}
+    preview_media_path = build_preview_media_path(media_path)
     async for frame, ts in streaming_capture.execute_capture():
         detection_time = datetime.fromtimestamp(int(ts))
         is_working = work_start_hour <= detection_time.hour < work_end_hour
@@ -372,6 +413,23 @@ async def _run_inline_stream_loop(
                     cone_polys=None,
                     pole_polys=None,
                     track_data=None,
+                    overlay_ready_started_at=overlay_ready_started_at,
+                    rendition='detail',
+                )
+                await _publish_requested_overlay_snapshot(
+                    redis_manager=redis_manager,
+                    overlay_media_publishers=preview_overlay_media_publishers,
+                    media_publish_base=media_publish_base,
+                    media_path=preview_media_path,
+                    site=site,
+                    stream_name=stream_name,
+                    source_frame=frame,
+                    warnings=None,
+                    cone_polys=None,
+                    pole_polys=None,
+                    track_data=None,
+                    overlay_ready_started_at=preview_overlay_ready_started_at,
+                    rendition='preview',
                 )
             except Exception as e:
                 print(
@@ -395,10 +453,76 @@ async def _run_inline_stream_loop(
             clean_source_restreamer is not None
             or clean_media_publisher is not None
             or publish_annotated_stream
+            or publish_clean_stream
         ):
             try:
-                if clean_media_publisher is not None:
-                    await clean_media_publisher.publish(frame)
+                clean_requested = (
+                    publish_clean_stream
+                    and await _clean_stream_requested(
+                        redis_manager,
+                        media_path,
+                    )
+                )
+                if clean_requested:
+                    if clean_source_restreamer is None and (
+                        restream_clean_source
+                    ):
+                        clean_source_restreamer = MediaSourceRestreamer(
+                            source_url=video_url,
+                            publish_url=f'{media_publish_base}/{media_path}',
+                        )
+                        print(
+                            f'[{site}:{stream_name}] Starting clean source '
+                            f'restream: {media_publish_base}/{media_path}',
+                            flush=True,
+                        )
+                        await clean_source_restreamer.start()
+                    elif (
+                        clean_media_publisher is None
+                        and clean_source_restreamer is None
+                    ):
+                        clean_media_publisher = _media_publisher(
+                            f'{media_publish_base}/{media_path}',
+                            rendition='detail',
+                        )
+                        print(
+                            f'[{site}:{stream_name}] Starting clean stream: '
+                            f'{media_publish_base}/{media_path}',
+                            flush=True,
+                        )
+                    if clean_media_publisher is not None:
+                        await clean_media_publisher.publish(frame)
+                else:
+                    if clean_source_restreamer is not None:
+                        await clean_source_restreamer.close()
+                        clean_source_restreamer = None
+                    if clean_media_publisher is not None:
+                        await clean_media_publisher.close()
+                        clean_media_publisher = None
+
+                preview_clean_requested = (
+                    publish_clean_stream
+                    and await _clean_stream_requested(
+                        redis_manager,
+                        preview_media_path,
+                    )
+                )
+                if preview_clean_requested:
+                    if preview_clean_media_publisher is None:
+                        preview_clean_media_publisher = _media_publisher(
+                            f'{media_publish_base}/{preview_media_path}',
+                            rendition='preview',
+                        )
+                        print(
+                            f'[{site}:{stream_name}] Starting preview clean '
+                            f'stream: {media_publish_base}/'
+                            f'{preview_media_path}',
+                            flush=True,
+                        )
+                    await preview_clean_media_publisher.publish(frame)
+                elif preview_clean_media_publisher is not None:
+                    await preview_clean_media_publisher.close()
+                    preview_clean_media_publisher = None
                 if publish_annotated_stream:
                     await _publish_requested_overlay_snapshot(
                         redis_manager=redis_manager,
@@ -412,12 +536,40 @@ async def _run_inline_stream_loop(
                         cone_polys=cone_polys,
                         pole_polys=pole_polys,
                         track_data=track_data,
+                        overlay_ready_started_at=overlay_ready_started_at,
+                        rendition='detail',
                     )
-                await _store_media_server_viewer_data(
-                    redis_manager=redis_manager,
-                    metadata_key=metadata_key,
-                    warnings=warnings,
-                )
+                    await _publish_requested_overlay_snapshot(
+                        redis_manager=redis_manager,
+                        overlay_media_publishers=(
+                            preview_overlay_media_publishers
+                        ),
+                        media_publish_base=media_publish_base,
+                        media_path=preview_media_path,
+                        site=site,
+                        stream_name=stream_name,
+                        source_frame=frame,
+                        warnings=warnings,
+                        cone_polys=cone_polys,
+                        pole_polys=pole_polys,
+                        track_data=track_data,
+                        overlay_ready_started_at=(
+                            preview_overlay_ready_started_at
+                        ),
+                        rendition='preview',
+                    )
+                if _warning_event_due(
+                    warnings,
+                    current_timestamp,
+                    last_warning_event_time,
+                    warning_event_throttle_seconds,
+                ):
+                    await _store_media_server_viewer_data(
+                        redis_manager=redis_manager,
+                        metadata_key=metadata_key,
+                        warnings=warnings,
+                    )
+                    last_warning_event_time = current_timestamp
             except Exception as e:
                 print(f'[{site}:{stream_name}] Media publish error: {e}')
 
@@ -438,6 +590,12 @@ async def _run_inline_stream_loop(
 
         streaming_capture.update_capture_interval(0.2)
 
+    if clean_source_restreamer is not None:
+        await clean_source_restreamer.close()
+    if clean_media_publisher is not None:
+        await clean_media_publisher.close()
+    if preview_clean_media_publisher is not None:
+        await preview_clean_media_publisher.close()
     await streaming_capture.release_resources()
 
 
@@ -457,6 +615,9 @@ async def _run_decoupled_media_server_loop(
     work_start_hour: int,
     work_end_hour: int,
     metadata_key: str,
+    publish_clean_stream: bool,
+    restream_clean_source: bool,
+    video_url: str,
 ) -> None:
     """Run capture, detection, and overlay publishing independently."""
     latest_frame = _LatestFrameState()
@@ -500,16 +661,55 @@ async def _run_decoupled_media_server_loop(
                     site=site,
                     stream_name=stream_name,
                     stop_event=stop_event,
+                    rendition='detail',
                 ),
             ),
         )
-    if clean_media_publisher is not None:
         tasks.add(
             asyncio.create_task(
-                _publish_latest_clean_frames(
+                _publish_requested_overlay_frames(
                     latest_frame=latest_frame,
-                    clean_media_publisher=clean_media_publisher,
+                    latest_detection=latest_detection,
+                    redis_manager=redis_manager,
+                    media_publish_base=media_publish_base,
+                    media_path=build_preview_media_path(media_path),
+                    site=site,
+                    stream_name=stream_name,
                     stop_event=stop_event,
+                    rendition='preview',
+                ),
+            ),
+        )
+    if publish_clean_stream:
+        tasks.add(
+            asyncio.create_task(
+                _publish_requested_clean_frames(
+                    latest_frame=latest_frame,
+                    redis_manager=redis_manager,
+                    media_publish_base=media_publish_base,
+                    media_path=media_path,
+                    site=site,
+                    stream_name=stream_name,
+                    source_url=video_url,
+                    use_source_restreamer=restream_clean_source,
+                    stop_event=stop_event,
+                    rendition='detail',
+                ),
+            ),
+        )
+        tasks.add(
+            asyncio.create_task(
+                _publish_requested_clean_frames(
+                    latest_frame=latest_frame,
+                    redis_manager=redis_manager,
+                    media_publish_base=media_publish_base,
+                    media_path=build_preview_media_path(media_path),
+                    site=site,
+                    stream_name=stream_name,
+                    source_url=video_url,
+                    use_source_restreamer=False,
+                    stop_event=stop_event,
+                    rendition='preview',
                 ),
             ),
         )
@@ -572,6 +772,8 @@ async def _detect_latest_frames(
     """Run YOLO and publish overlays on the same frame that was detected."""
     last_sequence = 0
     last_notification_time = 0
+    last_warning_event_time: int | None = None
+    warning_event_throttle_seconds = _warning_event_throttle_seconds()
     while not stop_event.is_set():
         try:
             await asyncio.wait_for(latest_frame.event.wait(), timeout=1.0)
@@ -628,11 +830,18 @@ async def _detect_latest_frames(
                 current_timestamp,
                 last_notification_time,
             )
-            await _store_media_server_viewer_data(
-                redis_manager=redis_manager,
-                metadata_key=metadata_key,
-                warnings=warnings,
-            )
+            if _warning_event_due(
+                warnings,
+                current_timestamp,
+                last_warning_event_time,
+                warning_event_throttle_seconds,
+            ):
+                await _store_media_server_viewer_data(
+                    redis_manager=redis_manager,
+                    metadata_key=metadata_key,
+                    warnings=warnings,
+                )
+                last_warning_event_time = current_timestamp
             if should_send_violation:
                 last_notification_time = await (
                     _send_violation_and_notification(
@@ -711,12 +920,18 @@ async def _publish_requested_overlay_frames(
     site: str,
     stream_name: str,
     stop_event: asyncio.Event,
+    rendition: str = 'detail',
 ) -> None:
-    """Publish only the shared overlay languages currently demanded."""
-    fps = max(1.0, float(os.getenv('MEDIA_PUBLISH_FPS', '15.0')))
+    """Publish only the shared overlay languages for one rendition."""
+    fps = (
+        float(_preview_publisher_kwargs()['fps'])
+        if rendition == 'preview'
+        else max(1.0, float(os.getenv('MEDIA_PUBLISH_FPS', '15.0')))
+    )
     frame_interval = 1.0 / fps
     overlay_publishers: dict[str, MediaStreamPublisher] = {}
     rendered_overlay_cache: dict[str, tuple[int, np.ndarray]] = {}
+    overlay_ready_started_at: dict[str, float] = {}
     try:
         while not stop_event.is_set():
             try:
@@ -730,6 +945,10 @@ async def _publish_requested_overlay_frames(
                 )
                 _drop_unrequested_overlay_cache(
                     rendered_overlay_cache,
+                    requested_languages,
+                )
+                _drop_unrequested_overlay_start_times(
+                    overlay_ready_started_at,
                     requested_languages,
                 )
                 if requested_languages:
@@ -756,6 +975,8 @@ async def _publish_requested_overlay_frames(
                             stream_name=stream_name,
                             label_language=language,
                             snapshot=snapshot,
+                            overlay_ready_started_at=overlay_ready_started_at,
+                            rendition=rendition,
                         )
             except Exception as exc:
                 print(
@@ -830,6 +1051,8 @@ async def _publish_requested_overlay_snapshot(
     cone_polys: object,
     pole_polys: object,
     track_data: object,
+    overlay_ready_started_at: dict[str, float] | None = None,
+    rendition: str = 'detail',
 ) -> None:
     """Publish one snapshot to all currently requested overlay languages."""
     requested_languages = await _requested_overlay_languages(
@@ -841,6 +1064,11 @@ async def _publish_requested_overlay_snapshot(
         overlay_media_publishers,
         requested_languages,
     )
+    if overlay_ready_started_at is not None:
+        _drop_unrequested_overlay_start_times(
+            overlay_ready_started_at,
+            requested_languages,
+        )
     snapshot = _OverlaySnapshot(
         sequence=0,
         frame=source_frame,
@@ -860,6 +1088,8 @@ async def _publish_requested_overlay_snapshot(
             stream_name=stream_name,
             label_language=language,
             snapshot=snapshot,
+            overlay_ready_started_at=overlay_ready_started_at,
+            rendition=rendition,
         )
 
 
@@ -873,13 +1103,16 @@ async def _publish_overlay_language_snapshot(
     stream_name: str,
     label_language: str,
     snapshot: _OverlaySnapshot,
+    overlay_ready_started_at: dict[str, float] | None = None,
+    rendition: str = 'detail',
 ) -> None:
     """Render and publish one language variant backed by a shared publisher."""
     overlay_path = build_annotated_media_path(media_path, label_language)
     publisher = overlay_media_publishers.get(label_language)
     if publisher is None:
-        publisher = MediaStreamPublisher(
-            publish_url=f'{media_publish_base}/{overlay_path}',
+        publisher = _media_publisher(
+            f'{media_publish_base}/{overlay_path}',
+            rendition=rendition,
         )
         overlay_media_publishers[label_language] = publisher
         print(
@@ -908,7 +1141,35 @@ async def _publish_overlay_language_snapshot(
                 publish_frame,
             )
     await publisher.publish(publish_frame)
-    await _mark_overlay_ready(redis_manager, overlay_path)
+    if _overlay_ready_grace_elapsed(overlay_ready_started_at, label_language):
+        await _mark_overlay_ready(redis_manager, overlay_path)
+
+
+def _overlay_ready_grace_elapsed(
+    overlay_ready_started_at: dict[str, float] | None,
+    label_language: str,
+) -> bool:
+    """Return True once a new overlay publisher had time to open HLS."""
+    if overlay_ready_started_at is None:
+        return True
+    loop = asyncio.get_running_loop()
+    now = loop.time()
+    first_publish_at = overlay_ready_started_at.setdefault(
+        label_language,
+        now,
+    )
+    return now - first_publish_at >= _overlay_ready_grace_seconds()
+
+
+def _overlay_ready_grace_seconds() -> float:
+    """Return how long to wait before advertising a new overlay as ready."""
+    try:
+        return max(
+            0.0,
+            float(os.getenv('MEDIA_OVERLAY_READY_GRACE_SECONDS', '2.0')),
+        )
+    except ValueError:
+        return 2.0
 
 
 def _drop_unrequested_overlay_cache(
@@ -919,6 +1180,16 @@ def _drop_unrequested_overlay_cache(
     for language in list(rendered_overlay_cache):
         if language not in requested_languages:
             rendered_overlay_cache.pop(language, None)
+
+
+def _drop_unrequested_overlay_start_times(
+    overlay_ready_started_at: dict[str, float],
+    requested_languages: set[str],
+) -> None:
+    """Forget readiness timing for overlay languages no longer requested."""
+    for language in list(overlay_ready_started_at):
+        if language not in requested_languages:
+            overlay_ready_started_at.pop(language, None)
 
 
 async def _mark_overlay_ready(
@@ -963,30 +1234,99 @@ async def _close_overlay_publishers(
         await publisher.close()
 
 
-async def _publish_latest_clean_frames(
+async def _publish_requested_clean_frames(
     latest_frame: _LatestFrameState,
-    clean_media_publisher: MediaStreamPublisher,
+    redis_manager: RedisManager,
+    media_publish_base: str,
+    media_path: str,
+    site: str,
+    stream_name: str,
+    source_url: str,
+    use_source_restreamer: bool,
     stop_event: asyncio.Event,
+    rendition: str = 'detail',
 ) -> None:
-    """Publish clean video at a fixed FPS from the latest captured frame."""
-    fps = max(1.0, float(os.getenv('MEDIA_PUBLISH_FPS', '15.0')))
+    """Publish one clean detail or preview rendition while requested."""
+    fps = (
+        float(_preview_publisher_kwargs()['fps'])
+        if rendition == 'preview'
+        else max(1.0, float(os.getenv('MEDIA_PUBLISH_FPS', '15.0')))
+    )
     frame_interval = 1.0 / fps
-    while not stop_event.is_set():
-        async with latest_frame.lock:
-            frame = latest_frame.frame
-        if frame is None:
-            await asyncio.sleep(frame_interval)
-            continue
+    clean_publisher: MediaStreamPublisher | None = None
+    clean_restreamer: MediaSourceRestreamer | None = None
+    publish_url = f'{media_publish_base}/{media_path}'
+    try:
+        while not stop_event.is_set():
+            try:
+                requested = await _clean_stream_requested(
+                    redis_manager,
+                    media_path,
+                )
+                if not requested:
+                    if clean_restreamer is not None:
+                        await clean_restreamer.close()
+                        clean_restreamer = None
+                    if clean_publisher is not None:
+                        await clean_publisher.close()
+                        clean_publisher = None
+                    await asyncio.sleep(frame_interval)
+                    continue
 
-        try:
-            await clean_media_publisher.publish(frame)
-        except Exception as exc:
-            print(
-                f'Clean media publish error, keeping stream alive: {exc}',
-                flush=True,
-            )
-            await asyncio.sleep(0.5)
-        await asyncio.sleep(frame_interval)
+                if use_source_restreamer and rendition == 'detail':
+                    if clean_restreamer is None:
+                        clean_restreamer = MediaSourceRestreamer(
+                            source_url=source_url,
+                            publish_url=publish_url,
+                        )
+                        print(
+                            f'[{site}:{stream_name}] Starting clean source '
+                            f'restream: {publish_url}',
+                            flush=True,
+                        )
+                        await clean_restreamer.start()
+                    await asyncio.sleep(frame_interval)
+                    continue
+
+                if clean_publisher is None:
+                    clean_publisher = _media_publisher(
+                        publish_url,
+                        rendition=rendition,
+                    )
+                    print(
+                        f'[{site}:{stream_name}] Starting {rendition} clean '
+                        f'stream: '
+                        f'{publish_url}',
+                        flush=True,
+                    )
+
+                async with latest_frame.lock:
+                    frame = latest_frame.frame
+                if frame is not None:
+                    await clean_publisher.publish(frame)
+            except Exception as exc:
+                print(
+                    f'[{site}:{stream_name}] Clean media publish error, '
+                    f'keeping stream alive: {exc}',
+                    flush=True,
+                )
+                await asyncio.sleep(0.5)
+            await asyncio.sleep(frame_interval)
+    finally:
+        if clean_restreamer is not None:
+            await clean_restreamer.close()
+        if clean_publisher is not None:
+            await clean_publisher.close()
+
+
+async def _clean_stream_requested(
+    redis_manager: RedisManager,
+    media_path: str,
+) -> bool:
+    """Return True while at least one viewer wants the clean stream."""
+    return bool(
+        await redis_manager.redis.exists(build_clean_demand_key(media_path)),
+    )
 
 
 def _live_view_enabled(cfg: StreamConfig) -> bool:
@@ -999,18 +1339,61 @@ def _stream_metadata_key(site: str, stream_name: str) -> str:
     return f'stream_metadata:{Utils.encode(site)}|{Utils.encode(stream_name)}'
 
 
+def _warning_event_throttle_seconds() -> int:
+    """Return the minimum spacing between live warning metadata events."""
+    raw_value = os.getenv(
+        'WARNING_EVENT_THROTTLE_SECONDS',
+        str(_default_warning_event_throttle_seconds),
+    )
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return _default_warning_event_throttle_seconds
+
+
+def _warning_event_due(
+    warnings: object,
+    current_timestamp: int,
+    last_warning_event_time: int | None,
+    throttle_seconds: int,
+) -> bool:
+    """Return whether a warning event should be emitted to live viewers."""
+    if not warnings:
+        return False
+    return (
+        last_warning_event_time is None
+        or current_timestamp - last_warning_event_time >= throttle_seconds
+    )
+
+
 async def _store_media_server_viewer_data(
     redis_manager: RedisManager,
     metadata_key: str,
     warnings: object,
 ) -> None:
-    """Store compact live metadata for MediaMTX viewers."""
+    """Store one compact warning event for MediaMTX viewers."""
+    if not warnings:
+        return
     metadata: dict[RedisPrimitive, RedisPrimitive] = {
-        'has_warning': str(bool(warnings)).lower(),
+        'has_warning': '1',
     }
-    pipe = redis_manager.redis.pipeline()
-    pipe.xadd(metadata_key, metadata, maxlen=10)
-    await pipe.execute()
+    event_id = await redis_manager.redis.xadd(
+        metadata_key,
+        metadata,
+        maxlen=10,
+    )
+    warning_keys = (
+        ','.join(sorted(str(key) for key in warnings))
+        if isinstance(warnings, Mapping)
+        else type(warnings).__name__
+    )
+    print(
+        (
+            f'[Warning-Metadata] XADD {metadata_key} id={event_id} '
+            f'has_warning=1 warnings={warning_keys}'
+        ),
+        flush=True,
+    )
 
 
 def _build_media_publish_frame(
@@ -1114,17 +1497,14 @@ def _mark_frame_readonly(frame: np.ndarray) -> None:
         pass
 
 
-def _resolve_detect_with_server(configured: bool) -> bool:
-    """Apply deployment-level overrides for local or remote inference."""
-    if (
-        os.getenv('DETECT_FORCE_LOCAL') or 'false'
-    ).strip().lower() in {'1', 'true', 'yes', 'on'}:
-        return False
-    if (
-        os.getenv('DETECT_FORCE_SERVER') or 'false'
-    ).strip().lower() in {'1', 'true', 'yes', 'on'}:
-        return True
-    return configured
+def _resolve_detect_with_server(_configured: bool) -> bool:
+    """Return the runtime detection mode for streams.
+
+    Stream processing is server-only. The database ``detect_with_server`` value
+    is still accepted for compatibility with existing records, but local
+    inference is disabled for the main runtime path.
+    """
+    return True
 
 
 def _validate_server_model_key(model_key: str) -> None:

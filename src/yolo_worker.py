@@ -21,11 +21,60 @@ from typing import TypedDict
 import numpy as np
 from numpy.typing import NDArray
 
+from src.ultralytics_args import parse_quantize_value
+from src.ultralytics_args import precision_kwargs
+from src.ultralytics_args import PrecisionValue
+
 
 YOLO_WORKER_STOP_MESSAGE = '__stop__'
+_WORKER_PRECISION_ALIASES = {
+    '32': 'f32',
+    'float32': 'f32',
+    'fp32': 'f32',
+    'f32': 'f32',
+    '16': 'f16',
+    'float16': 'f16',
+    'fp16': 'f16',
+    'f16': 'f16',
+    '8': 'int8',
+    'engine': 'int8',
+    'int8': 'int8',
+}
 
 Detection: TypeAlias = list[float]
 FrameArray: TypeAlias = NDArray[np.uint8]
+WorkerPrecisionMode: TypeAlias = str
+
+
+def _parse_worker_precision(raw_value: str | None) -> WorkerPrecisionMode | None:
+    """Return a simplified worker precision mode from environment text."""
+    if raw_value is None:
+        return None
+    value = raw_value.strip().lower()
+    if value in {'', 'none', 'null', 'default', 'auto', 'legacy'}:
+        return None
+    try:
+        return _WORKER_PRECISION_ALIASES[value]
+    except KeyError as exc:
+        supported = ', '.join(sorted(set(_WORKER_PRECISION_ALIASES)))
+        raise ValueError(
+            f'Unsupported YOLO_WORKER_PRECISION: {raw_value!r}. '
+            f'Use f32, f16, or int8. Supported aliases: {supported}.',
+        ) from exc
+
+
+def _worker_precision_config(
+    mode: WorkerPrecisionMode,
+) -> tuple[Path, str, dict[str, PrecisionValue]]:
+    """Map a simplified precision mode to model path and predict kwargs."""
+    if mode == 'f32':
+        return Path('models/pt'), '.pt', precision_kwargs(False, 32)
+    if mode == 'f16':
+        return Path('models/pt'), '.pt', precision_kwargs(True, 16)
+    if mode == 'int8':
+        # TensorRT engine precision is baked into the .engine file.
+        return Path('models/int8_engine'), '.engine', {}
+    raise AssertionError(f'unhandled YOLO worker precision mode: {mode}')
 
 
 class WorkerRequestPayload(TypedDict):
@@ -120,8 +169,8 @@ class YoloModelLike(Protocol):
         verbose: bool,
         device: str,
         imgsz: int,
-        half: bool,
         batch: int,
+        **kwargs: PrecisionValue,
     ) -> Iterable[object]:
         """Run model inference and return Ultralytics-style results."""
 
@@ -353,8 +402,28 @@ class YoloWorker:
         self.device = device or os.getenv('YOLO_WORKER_DEVICE') or 'cuda:0'
         self.logger = logging.getLogger(__name__)
         self.model_cache: dict[str, YoloModelLike] = {}
-        self.model_dir = Path(os.getenv('YOLO_WORKER_MODEL_DIR', 'models/pt'))
-        self.model_suffix = os.getenv('YOLO_WORKER_MODEL_SUFFIX', '.pt')
+        self.precision_mode = _parse_worker_precision(
+            os.getenv('YOLO_WORKER_PRECISION'),
+        )
+        if self.precision_mode is None:
+            self.model_dir = Path(
+                os.getenv('YOLO_WORKER_MODEL_DIR', 'models/pt'),
+            )
+            self.model_suffix = os.getenv('YOLO_WORKER_MODEL_SUFFIX', '.pt')
+            use_half = os.getenv(
+                'YOLO_WORKER_HALF',
+                'true',
+            ).strip().lower() in {'1', 'true', 'yes', 'on'}
+            quantize = parse_quantize_value(
+                os.getenv('YOLO_WORKER_QUANTIZE'),
+            )
+            self.precision_args = precision_kwargs(use_half, quantize)
+            self.precision_label = 'legacy'
+        else:
+            self.model_dir, self.model_suffix, self.precision_args = (
+                _worker_precision_config(self.precision_mode)
+            )
+            self.precision_label = self.precision_mode
         self.pending: dict[str, _WorkerRequest] = {}
         self.batch_size = max(
             1,
@@ -365,15 +434,17 @@ class YoloWorker:
             int(os.getenv('YOLO_WORKER_BATCH_WAIT_MS', '10')) / 1000.0,
         )
         self.imgsz = int(os.getenv('YOLO_WORKER_IMGSZ', '640'))
-        self.use_half = os.getenv(
-            'YOLO_WORKER_HALF',
-            'true',
-        ).strip().lower() in {'1', 'true', 'yes', 'on'}
 
     def run(self) -> None:
         """Run the worker loop until a stop message is received."""
         logging.basicConfig(level=logging.INFO)
-        self.logger.info('[YOLO-Worker] started on %s', self.device)
+        self.logger.info(
+            '[YOLO-Worker] started on %s precision=%s model_dir=%s suffix=%s',
+            self.device,
+            self.precision_label,
+            self.model_dir,
+            self.model_suffix,
+        )
         while True:
             message: object | None = None
             timeout = 1.0 if not self.pending else self.batch_wait_seconds
@@ -469,8 +540,8 @@ class YoloWorker:
                 verbose=False,
                 device=self.device,
                 imgsz=self.imgsz,
-                half=self.use_half,
                 batch=len(frames),
+                **self.precision_args,
             )
         except Exception as exc:
             self.logger.exception('[YOLO-Worker] batch request failed')

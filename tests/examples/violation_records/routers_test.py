@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import time
 import unittest
 from datetime import datetime
+from datetime import timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from typing import ClassVar
@@ -12,6 +16,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
@@ -19,6 +24,7 @@ from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.user_service import _cache_ttl
 from examples.auth.user_service import _user_sites_cache
 from examples.shared.filename_utils import sanitize_filename
+from examples.violation_records.routers import _validate_analytics_range
 from examples.violation_records.routers import get_user_sites_cached
 from examples.violation_records.routers import router
 
@@ -44,6 +50,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         cls.fake_db = SimpleNamespace(
             execute=AsyncMock(),
             scalars=AsyncMock(),
+            add=MagicMock(),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+            rollback=AsyncMock(),
         )
 
         async def override_get_db() -> Any:
@@ -74,6 +84,13 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.fake_db.execute.side_effect = None
         self.fake_db.scalars.reset_mock()
         self.fake_db.scalars.side_effect = None
+        self.fake_db.add.reset_mock()
+        self.fake_db.commit.reset_mock()
+        self.fake_db.commit.side_effect = None
+        self.fake_db.refresh.reset_mock()
+        self.fake_db.refresh.side_effect = None
+        self.fake_db.rollback.reset_mock()
+        self.fake_db.rollback.side_effect = None
 
     ###################################################
     # Helper methods for simulating DB results
@@ -166,6 +183,14 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """Return an object with all() -> values."""
         return SimpleNamespace(all=lambda: values)
 
+    def _exec_scalars_feedbacks(self, values: list) -> Any:
+        """Return an object with scalars().all() -> feedback rows."""
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: values))
+
+    def _exec_first(self, value: Any) -> Any:
+        """Return an object with first() -> value."""
+        return SimpleNamespace(first=lambda: value)
+
     def _violation_row(self, violation: Any) -> Any:
         """Return a selected-column row matching the violations query."""
         return (
@@ -179,6 +204,15 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             violation.warnings_json,
             violation.cone_polygon_json,
             violation.pole_polygon_json,
+            violation.is_flagged,
+            violation.flag_reason,
+            violation.flagged_by,
+            violation.flagged_at,
+            violation.review_status,
+            violation.review_note,
+            violation.reviewed_by,
+            violation.reviewed_at,
+            violation.feedback_note,
         )
 
     def _violation_row_with_total(self, violation: Any, total: int) -> Any:
@@ -236,6 +270,60 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             warnings_json='some warning',
             cone_polygon_json='some cone polygons',
             pole_polygon_json='some pole polygons',
+            is_flagged=False,
+            flag_reason=None,
+            flagged_by=None,
+            flagged_at=None,
+            review_status='pending',
+            review_note=None,
+            reviewed_by=None,
+            reviewed_at=None,
+            feedback_note=None,
+        )
+
+    def make_feedback(
+        self,
+        feedback_id: int,
+        violation_id: int,
+        note: str | None = None,
+    ) -> Any:
+        """Support make_feedback."""
+        return SimpleNamespace(
+            id=feedback_id,
+            violation_id=violation_id,
+            feedback_type='false_positive',
+            note=note,
+            target_detection_id='det_0',
+            original_label='class-5',
+            corrected_label=None,
+            original_bbox=[40, 40, 180, 210],
+            corrected_bbox=None,
+            model_version='yolo-v1',
+            confidence=0.93,
+            status='pending',
+            user_id=9,
+            created_at=datetime(2026, 6, 26, 1, 0, 0),
+        )
+
+    def make_review_audit(
+        self,
+        audit_id: int,
+        violation_id: int,
+        *,
+        old_status: str | None = 'pending',
+        new_status: str = 'resolved',
+    ) -> Any:
+        """Support make_review_audit."""
+        return SimpleNamespace(
+            id=audit_id,
+            violation_id=violation_id,
+            action='review_status_changed',
+            old_status=old_status,
+            new_status=new_status,
+            review_note='Confirmed violation',
+            flagged_reason='false_positive',
+            reviewed_by=7,
+            reviewed_at=datetime(2026, 6, 27, 10, 0, 0),
         )
 
     ###################################################
@@ -469,10 +557,16 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.get('/api/get_violation_image?image_path=some.jpg')
         self.assertEqual(resp.status_code, 404)
 
+    @patch(
+        'examples.violation_records.routers.get_user_sites_cached',
+        new_callable=AsyncMock,
+        return_value=['SiteA'],
+    )
     @patch('examples.violation_records.routers.Path')
     def test_get_violation_image_success_png(
         self,
         mock_path: MagicMock,
+        mock_get_user_sites: AsyncMock,
     ) -> None:
         """
         If the file exists,
@@ -492,15 +586,23 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         path_mock.suffix.lower.return_value = '.png'
         path_mock.name = 'image.png'
         mock_path.return_value = path_mock
+        mock_get_user_sites.return_value = ['SiteA']
+        self.fake_db.execute.return_value = self._exec_scalar(1)
 
         resp = self.client.get('/api/get_violation_image?image_path=image.png')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers['content-type'], 'image/png')
 
+    @patch(
+        'examples.violation_records.routers.get_user_sites_cached',
+        new_callable=AsyncMock,
+        return_value=['SiteA'],
+    )
     @patch('examples.violation_records.routers.Path')
     def test_get_violation_image_success_jpeg_and_header_sanitised(
         self,
         mock_path: MagicMock,
+        mock_get_user_sites: AsyncMock,
     ) -> None:
         """
         If the file exists with a .jpg/.jpeg, return 200 and ensure
@@ -520,6 +622,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         unsafe_name = 'my image(1).JPG'
         path_mock.name = unsafe_name
         mock_path.return_value = path_mock
+        mock_get_user_sites.return_value = ['SiteA']
+        self.fake_db.execute.return_value = self._exec_scalar(1)
 
         resp = self.client.get('/api/get_violation_image?image_path=image.jpg')
         self.assertEqual(resp.status_code, 200)
@@ -565,10 +669,16 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()['detail'], 'Invalid path segment')
 
+    @patch(
+        'examples.violation_records.routers.get_user_sites_cached',
+        new_callable=AsyncMock,
+        return_value=['SiteA'],
+    )
     @patch('examples.violation_records.routers.Path')
     def test_get_violation_image_leading_static_normalised(
         self,
         mock_path: MagicMock,
+        mock_get_user_sites: AsyncMock,
     ) -> None:
         """
         If image_path starts with 'static/', it should be normalised to avoid
@@ -585,6 +695,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         path_mock.suffix.lower.return_value = '.png'
         path_mock.name = 'img.png'
         mock_path.return_value = path_mock
+        mock_get_user_sites.return_value = ['SiteA']
+        self.fake_db.execute.return_value = self._exec_scalar(1)
 
         resp = self.client.get(
             '/api/get_violation_image?image_path=static/2025-01-01/img.png',
@@ -613,6 +725,66 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()['detail'], 'Invalid path')
+
+    @patch(
+        'examples.violation_records.routers.get_user_sites_cached',
+        new_callable=AsyncMock,
+        return_value=['SiteA'],
+    )
+    def test_get_violation_image_forbidden_when_not_owned(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """Image endpoints require the path to belong to an accessible record."""
+        mock_get_user_sites.return_value = ['SiteA']
+        self.fake_db.execute.return_value = self._exec_scalar(None)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+            source = base_dir / '2026-06-28' / 'image.png'
+            source.parent.mkdir(parents=True)
+            Image.new('RGB', (24, 24), color='white').save(source)
+            with patch('examples.violation_records.routers.STATIC_DIR', base_dir):
+                resp = self.client.get(
+                    '/api/get_violation_image'
+                    '?image_path=2026-06-28/image.png',
+                )
+
+        self.assertEqual(resp.status_code, 403)
+
+    @patch(
+        'examples.violation_records.routers.get_user_sites_cached',
+        new_callable=AsyncMock,
+        return_value=['SiteA'],
+    )
+    def test_get_violation_thumbnail_generates_cached_jpeg(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """Thumbnail endpoint generates a small cached JPEG for list cards."""
+        mock_get_user_sites.return_value = ['SiteA']
+        self.fake_db.execute.return_value = self._exec_scalar(1)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+            source = base_dir / '2026-06-28' / 'image.png'
+            source.parent.mkdir(parents=True)
+            Image.new('RGB', (800, 600), color='white').save(source)
+
+            with patch('examples.violation_records.routers.STATIC_DIR', base_dir):
+                resp = self.client.get(
+                    '/api/get_violation_thumbnail'
+                    '?image_path=2026-06-28/image.png',
+                )
+                thumbnail = (
+                    base_dir
+                    / '_thumbnails'
+                    / '2026-06-28'
+                    / 'image.jpg'
+                )
+                thumbnail_exists = thumbnail.exists()
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers['content-type'], 'image/jpeg')
+        self.assertTrue(thumbnail_exists)
 
     ###################################################
     # /api/violations Tests
@@ -644,7 +816,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         mock_get_user_sites.return_value = []
         resp = self.client.get('/api/violations')
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), {'total': 0, 'items': []})
+        self.assertEqual(
+            resp.json(),
+            {'total': 0, 'items': [], 'next_cursor': None},
+        )
 
     @patch('examples.violation_records.routers.get_user_sites_cached')
     async def test_get_violations_site_id_403(
@@ -694,6 +869,109 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['total'], 2)
         self.assertEqual(len(data['items']), 2)
 
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_with_camera_and_type_filters(
+        self,
+        mock_get_user_sites: AsyncMock,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Camera IDs and canonical type codes can narrow the list together."""
+        site_a = self.make_site(1, 'SiteA')
+        admin = self.make_user('test_user', [site_a], role='admin')
+        mock_get_user_sites.return_value = ['SiteA']
+        mock_load_user.return_value = (admin, [site_a])
+        violation = self.make_violation(101, 'SiteA')
+        self.fake_db.execute.side_effect = [
+            self._exec_first((10, 1, 'SiteA')),
+            self._exec_all([self._violation_row_with_total(violation, 1)]),
+        ]
+
+        resp = self.client.get(
+            '/api/violations',
+            params={
+                'stream_id': '10',
+                'violation_type': 'near_vehicle',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['total'], 1)
+        self.assertEqual(self.fake_db.execute.await_count, 2)
+
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_rejects_non_numeric_stream_id(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """The API accepts only stable numeric stream configuration IDs."""
+        mock_get_user_sites.return_value = ['SiteA']
+        site_a = self.make_site(1, 'SiteA')
+        admin = self.make_user('test_user', [site_a], role='admin')
+        with patch(
+            'examples.violation_records.routers.load_user_with_effective_sites',
+            new=AsyncMock(return_value=(admin, [site_a])),
+        ):
+            resp = self.client.get('/api/violations?stream_id=Cam1')
+
+        self.assertEqual(resp.status_code, 422)
+        self.assertEqual(
+            resp.json()['detail'],
+            'stream_id must be a positive stream configuration ID',
+        )
+
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_get_violation_filter_options_success(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Filter options expose only cameras in the selected site scope."""
+        site_a = self.make_site(1, 'SiteA')
+        admin = self.make_user('test_user', [site_a], role='admin')
+        mock_load_user.return_value = (admin, [site_a])
+        self.fake_db.execute.return_value = self._exec_all([
+            (10, 'Cam A'),
+            (11, 'Cam B'),
+        ])
+
+        resp = self.client.get('/api/violations/filter-options?site_id=1')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.json()['cameras'], [
+                {'stream_id': '10', 'name': 'Cam A'},
+                {'stream_id': '11', 'name': 'Cam B'},
+            ],
+        )
+        self.assertEqual(
+            resp.json()['violation_types'][0], {
+                'code': 'no_safety_helmet',
+                'label': '未戴安全帽',
+            },
+        )
+
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_get_violation_filter_options_rejects_other_group(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """A non-super-admin cannot select another group's cameras."""
+        site_a = self.make_site(1, 'SiteA')
+        admin = self.make_user(
+            'test_user',
+            [site_a],
+            role='admin',
+            group_id=1,
+        )
+        mock_load_user.return_value = (admin, [site_a])
+
+        resp = self.client.get(
+            '/api/violations/filter-options?site_id=1&group_id=2',
+        )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()['detail'], 'No access to group_id')
+
     @patch('examples.violation_records.routers.get_user_sites_cached')
     async def test_get_violations_success(
         self,
@@ -716,6 +994,59 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['total'], 1)
         self.assertEqual(len(data['items']), 1)
         self.assertEqual(data['items'][0]['id'], 101)
+        self.assertIn(
+            '/api/get_violation_thumbnail',
+            data['items'][0]['thumbnail_url'],
+        )
+        self.assertIn(
+            '/api/get_violation_image',
+            data['items'][0]['image_url'],
+        )
+
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_cursor_pagination_returns_next_cursor(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """Cursor pagination returns one page plus a next cursor."""
+        mock_get_user_sites.return_value = ['SiteA']
+        first = self.make_violation(
+            456,
+            'SiteA',
+            detection_time=datetime(2026, 6, 28, 12, 0, 0),
+        )
+        second = self.make_violation(
+            123,
+            'SiteA',
+            detection_time=datetime(2026, 6, 28, 11, 0, 0),
+        )
+        self.fake_db.execute.return_value = self._exec_all([
+            self._violation_row_with_total(first, 2),
+            self._violation_row_with_total(second, 2),
+        ])
+
+        resp = self.client.get('/api/violations?limit=1')
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['total'], 2)
+        self.assertEqual(len(data['items']), 1)
+        self.assertEqual(data['items'][0]['id'], 456)
+        self.assertIsInstance(data['next_cursor'], str)
+        self.assertTrue(data['next_cursor'])
+
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_violations_invalid_cursor(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """Invalid cursor payloads are rejected."""
+        mock_get_user_sites.return_value = ['SiteA']
+
+        resp = self.client.get('/api/violations?cursor=not-a-cursor')
+
+        self.assertEqual(resp.status_code, 422)
+        self.assertEqual(resp.json()['detail'], 'Invalid cursor')
 
     @patch('examples.violation_records.routers.get_user_sites_cached')
     async def test_get_violations_empty_tail_page_counts_total(
@@ -732,8 +1063,397 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.get('/api/violations?offset=100')
 
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), {'total': 3, 'items': []})
+        self.assertEqual(
+            resp.json(),
+            {'total': 3, 'items': [], 'next_cursor': None},
+        )
         self.assertEqual(self.fake_db.execute.await_count, 2)
+
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_get_flagged_violations_admin_success(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Admins can list flagged records inside their effective sites."""
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user(
+            'test_user',
+            [siteA],
+            user_id=7,
+            role='admin',
+            group_id=1,
+        )
+        mock_load_user.return_value = (user, [siteA])
+
+        viol = self.make_violation(101, 'SiteA')
+        viol.is_flagged = True
+        viol.flag_reason = 'false_positive'
+        viol.flagged_by = 9
+        viol.flagged_at = datetime(2026, 6, 25, 10, 0, 0)
+        viol.review_status = 'pending'
+        self.fake_db.execute.return_value = self._exec_all([
+            self._violation_row_with_total(viol, 1),
+        ])
+
+        resp = self.client.get(
+            '/api/violations?flagged=true&review_status=pending',
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['total'], 1)
+        self.assertTrue(data['items'][0]['is_flagged'])
+        self.assertEqual(data['items'][0]['flag_reason'], 'false_positive')
+        self.assertEqual(data['items'][0]['review_status'], 'pending')
+
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_get_flagged_violations_regular_user_forbidden(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Regular users cannot access the review queue."""
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA], role='user')
+        mock_load_user.return_value = (user, [siteA])
+
+        resp = self.client.get('/api/violations?flagged=true')
+
+        self.assertEqual(resp.status_code, 403)
+        self.fake_db.execute.assert_not_called()
+
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_get_next_review_violation_success(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Admins can fetch the next pending record inside their scope."""
+        siteA = self.make_site(1, 'SiteA')
+        reviewer = self.make_user(
+            'test_user',
+            [siteA],
+            user_id=7,
+            role='admin',
+            group_id=1,
+        )
+        mock_load_user.return_value = (reviewer, [siteA])
+
+        viol = self.make_violation(77, 'SiteA')
+        viol.is_flagged = True
+        viol.flag_reason = 'false_positive'
+        viol.flagged_at = datetime(2026, 6, 26, 1, 0, 0)
+        viol.feedback_note = '測試'
+        feedback = self.make_feedback(1, 77, note='測試')
+        self.fake_db.execute.side_effect = [
+            self._exec_first(self._violation_row(viol)),
+            self._exec_scalars_feedbacks([feedback]),
+            self._exec_scalars_feedbacks([]),
+        ]
+
+        resp = self.client.get('/api/violations/next?review_status=pending')
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['id'], 77)
+        self.assertEqual(data['feedback_note'], '測試')
+        self.assertEqual(data['feedbacks'][0]['note'], '測試')
+        self.assertEqual(data['review_audit_logs'], [])
+
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_get_next_review_violation_empty(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Next pending returns null when the review queue is empty."""
+        siteA = self.make_site(1, 'SiteA')
+        reviewer = self.make_user('test_user', [siteA], role='admin')
+        mock_load_user.return_value = (reviewer, [siteA])
+        self.fake_db.execute.return_value = self._exec_first(None)
+
+        resp = self.client.get('/api/violations/next?review_status=pending')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.json())
+
+    ###################################################
+    # /api/violations/analytics Tests
+    ###################################################
+    @patch(
+        'examples.violation_records.routers.load_user_with_effective_sites',
+    )
+    async def test_get_violation_analytics_success(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Analytics returns aggregate counts without row-level details."""
+        site_a = self.make_site(1, 'SiteA')
+        site_b = self.make_site(2, 'SiteB')
+        admin = self.make_user(
+            'test_user',
+            [site_a, site_b],
+            role='admin',
+        )
+        mock_load_user.return_value = (admin, [site_a, site_b])
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(128),
+            self._exec_scalar(12),
+            self._exec_all([
+                (datetime(2026, 6, 20), 18),
+                (datetime(2026, 6, 21), 22),
+            ]),
+            self._exec_all([
+                (1, 'SiteA', 80),
+                (2, 'SiteB', 48),
+            ]),
+            self._exec_all([(8, 12), (9, 21), (10, 9)]),
+            self._exec_scalar(64),
+            self._exec_scalar(30),
+            self._exec_scalar(34),
+            self._exec_scalar(0),
+            self._exec_scalar(0),
+            self._exec_scalar(0),
+            self._exec_scalar(0),
+        ]
+
+        resp = self.client.get(
+            '/api/violations/analytics',
+            params={
+                'start': '2026-06-01T00:00:00Z',
+                'end': '2026-06-24T23:59:59Z',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['summary']['total'], 128)
+        self.assertEqual(data['summary']['today'], 12)
+        self.assertEqual(data['summary']['top_site']['site_id'], 1)
+        self.assertEqual(
+            data['summary']['top_type']['type'],
+            'no_safety_helmet',
+        )
+        self.assertEqual(
+            data['trend'][0], {
+                'bucket': '2026-06-20',
+                'count': 18,
+            },
+        )
+        self.assertEqual(data['by_type'][0]['count'], 64)
+        self.assertEqual(data['by_site'][1]['site_name'], 'SiteB')
+        self.assertEqual(data['by_hour'][1], {'hour': 9, 'count': 21})
+        self.assertNotIn('items', data)
+        self.assertNotIn('image_path', str(data))
+
+    @patch(
+        'examples.violation_records.routers.load_user_with_effective_sites',
+    )
+    async def test_get_violation_analytics_applies_camera_and_type_everywhere(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Every analytics aggregate shares the requested camera/type scope."""
+        site_a = self.make_site(1, 'SiteA')
+        admin = self.make_user(
+            'test_user',
+            [site_a],
+            role='admin',
+            group_id=1,
+        )
+        mock_load_user.return_value = (admin, [site_a])
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar('SiteA'),
+            self._exec_first((10, 1, 'SiteA')),
+            self._exec_scalar(7),
+            self._exec_scalar(2),
+            self._exec_all([(datetime(2026, 7, 22), 7)]),
+            self._exec_all([(1, 'SiteA', 7)]),
+            self._exec_all([(9, 7)]),
+            self._exec_scalar(7),
+        ]
+
+        resp = self.client.get(
+            '/api/violations/analytics',
+            params={
+                'site_id': 1,
+                'stream_id': '10',
+                'violation_type': 'near_vehicle',
+                'start': '2026-07-01T00:00:00Z',
+                'end': '2026-07-23T00:00:00Z',
+                'bucket': 'day',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['summary']['total'], 7)
+        self.assertEqual(data['summary']['today'], 2)
+        self.assertEqual(
+            data['by_type'], [{
+                'type': 'near_vehicle',
+                'label': '人員靠近車輛',
+                'count': 7,
+            }],
+        )
+
+        aggregate_statements = [
+            str(execute_call.args[0])
+            for execute_call in self.fake_db.execute.await_args_list[2:]
+        ]
+        for statement in aggregate_statements:
+            self.assertIn('violations.stream_config_id', statement)
+            self.assertIn('violations.violation_type_codes', statement)
+
+    @patch(
+        'examples.violation_records.routers.load_user_with_effective_sites',
+    )
+    async def test_get_violation_analytics_empty(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """No matching rows returns 200 with empty aggregate arrays."""
+        site_a = self.make_site(1, 'SiteA')
+        admin = self.make_user('test_user', [site_a], role='admin')
+        mock_load_user.return_value = (admin, [site_a])
+        self.fake_db.execute.return_value = self._exec_scalar(0)
+
+        resp = self.client.get(
+            '/api/violations/analytics',
+            params={
+                'start': '2026-06-01T00:00:00Z',
+                'end': '2026-06-24T23:59:59Z',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.json(),
+            {
+                'summary': {
+                    'total': 0,
+                    'today': 0,
+                    'top_site': None,
+                    'top_type': None,
+                },
+                'trend': [],
+                'by_type': [],
+                'by_site': [],
+                'by_hour': [],
+            },
+        )
+
+    @patch(
+        'examples.violation_records.routers.load_user_with_effective_sites',
+    )
+    async def test_get_violation_analytics_prefix_stripped_alias(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """The nginx /hazard/api/violations prefix maps to /analytics."""
+        site_a = self.make_site(1, 'SiteA')
+        super_admin = self.make_user(
+            'test_user',
+            [site_a],
+            role='super_admin',
+        )
+        mock_load_user.return_value = (super_admin, [site_a])
+        self.fake_db.execute.return_value = self._exec_scalar(0)
+
+        resp = self.client.get(
+            '/api/analytics',
+            params={
+                'start': '2026-06-01T00:00:00Z',
+                'end': '2026-06-24T23:59:59Z',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['summary']['total'], 0)
+
+    @patch(
+        'examples.violation_records.routers.load_user_with_effective_sites',
+    )
+    async def test_get_violation_analytics_site_id_403(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Filtering by an inaccessible site_id is rejected."""
+        site_a = self.make_site(1, 'SiteA')
+        admin = self.make_user('test_user', [site_a], role='admin')
+        mock_load_user.return_value = (admin, [site_a])
+        self.fake_db.execute.return_value = self._exec_scalar('SiteB')
+
+        resp = self.client.get(
+            '/api/violations/analytics',
+            params={
+                'start': '2026-06-01T00:00:00Z',
+                'end': '2026-06-24T23:59:59Z',
+                'site_id': 2,
+            },
+        )
+
+        self.assertEqual(resp.status_code, 403)
+
+    @patch(
+        'examples.violation_records.routers.load_user_with_effective_sites',
+    )
+    async def test_get_violation_analytics_range_too_large(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Analytics queries are capped to five calendar years."""
+        site_a = self.make_site(1, 'SiteA')
+        admin = self.make_user('test_user', [site_a], role='admin')
+        mock_load_user.return_value = (admin, [site_a])
+
+        resp = self.client.get(
+            '/api/violations/analytics',
+            params={
+                'start': '2020-01-01T00:00:00Z',
+                'end': '2026-06-24T23:59:59Z',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 422)
+        self.fake_db.execute.assert_not_called()
+
+    async def test_validate_analytics_range_allows_five_calendar_years(
+        self,
+    ) -> None:
+        """An exact five-year range remains valid across a leap day."""
+        start = datetime(2020, 2, 29, tzinfo=timezone.utc)
+        end = datetime(2025, 2, 28, tzinfo=timezone.utc)
+
+        start_utc, end_utc = _validate_analytics_range(start, end)
+
+        self.assertEqual(start_utc, start)
+        self.assertEqual(end_utc, end)
+
+    @patch(
+        'examples.violation_records.routers.load_user_with_effective_sites',
+    )
+    async def test_get_violation_analytics_regular_user_forbidden(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """A normal user cannot retrieve aggregate data by calling the API."""
+        site_a = self.make_site(1, 'SiteA')
+        regular_user = self.make_user('test_user', [site_a], role='user')
+        mock_load_user.return_value = (regular_user, [site_a])
+
+        resp = self.client.get(
+            '/api/violations/analytics',
+            params={
+                'start': '2026-06-01T00:00:00Z',
+                'end': '2026-06-24T23:59:59Z',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(
+            resp.json(), {
+                'detail': 'violation_analytics_forbidden',
+            },
+        )
+        self.fake_db.execute.assert_not_called()
 
     ###################################################
     # /api/violations/{violation_id} Tests
@@ -793,7 +1513,15 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """
         mock_get_user_sites.return_value = ['SiteA']
         viol = self.make_violation(77, 'SiteA')
-        self.fake_db.execute.return_value = self._exec_scalar(viol)
+        viol.feedback_note = '測試'
+        viol.detections_json = json.dumps([
+            [40, 40, 180, 210, 0.93, 5, 12],
+        ])
+        feedback = self.make_feedback(1, 77, note='測試')
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(viol),
+            self._exec_scalars_feedbacks([feedback]),
+        ]
         resp = self.client.get('/api/violations/77')
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
@@ -803,6 +1531,77 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertIn('warnings', data)
         self.assertIn('cone_polygons', data)
         self.assertIn('pole_polygons', data)
+        self.assertEqual(data['feedback_note'], '測試')
+        self.assertIsNone(data['review_status'])
+        self.assertEqual(data['detections'][0]['id'], 'det_0')
+        self.assertEqual(data['feedbacks'][0]['note'], '測試')
+        self.assertEqual(data['feedbacks'][0]['target_detection_id'], 'det_0')
+
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_single_violation_includes_normalized_overlay_objects(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """Detail response exposes normalized overlay objects for painters."""
+        mock_get_user_sites.return_value = ['SiteA']
+        viol = self.make_violation(77, 'SiteA')
+        viol.detections_json = json.dumps([
+            [40, 40, 180, 210, 0.93, 5, 12],
+        ])
+        feedback = self.make_feedback(1, 77, note='測試')
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(viol),
+            self._exec_scalars_feedbacks([feedback]),
+        ]
+
+        with patch(
+            'examples.violation_records.routers._image_size_for_violation',
+            return_value=(400, 400),
+        ):
+            resp = self.client.get('/api/violations/77')
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        overlay = data['overlay_objects'][0]
+        self.assertEqual(overlay['object_id'], 'det_0')
+        self.assertTrue(overlay['is_flagged'])
+        self.assertEqual(overlay['flag_reason'], 'false_positive')
+        self.assertEqual(overlay['flag_note'], '測試')
+        self.assertEqual(overlay['bbox']['x'], 0.1)
+        self.assertEqual(overlay['bbox']['y'], 0.1)
+        self.assertEqual(overlay['bbox']['w'], 0.35)
+
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_get_single_flagged_violation_includes_audit_logs(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """Flagged record details include review audit history."""
+        mock_get_user_sites.return_value = ['SiteA']
+        viol = self.make_violation(77, 'SiteA')
+        viol.is_flagged = True
+        viol.flag_reason = 'false_positive'
+        feedback = self.make_feedback(1, 77, note='測試')
+        audit = self.make_review_audit(5, 77)
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(viol),
+            self._exec_scalars_feedbacks([feedback]),
+            self._exec_scalars_all([audit]),
+        ]
+
+        resp = self.client.get('/api/violations/77')
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['review_audit_logs'][0]['id'], 5)
+        self.assertEqual(
+            data['review_audit_logs'][0]['actor_user_id'],
+            7,
+        )
+        self.assertEqual(
+            data['review_audit_logs'][0]['flagged_reason'],
+            'false_positive',
+        )
 
     async def test_get_violations_missing_username(self) -> None:
         """
@@ -847,6 +1646,303 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
                 subject={'username': 'test_user'},
             )
         )
+
+    ###################################################
+    # /api/violations/{violation_id}/feedback Tests
+    ###################################################
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_submit_violation_feedback_success(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """A valid feedback request creates a pending feedback row."""
+        mock_get_user_sites.return_value = ['SiteA']
+        viol = self.make_violation(77, 'SiteA')
+        viol.detections_json = json.dumps([
+            [40, 40, 180, 210, 0.93, 5, 12],
+        ])
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(viol),
+            self._exec_scalar(9),
+        ]
+
+        def refresh_feedback(feedback: Any) -> None:
+            feedback.id = 321
+
+        self.fake_db.refresh.side_effect = refresh_feedback
+
+        resp = self.client.post(
+            '/api/violations/77/feedback',
+            json={
+                'type': 'false_positive',
+                'target_detection_id': 'det_0',
+                'original_label': 'class-5',
+                'original_bbox': [40, 40, 180, 210],
+                'confidence': 0.93,
+                'model_version': 'yolo-v1',
+                'note': 'shadow',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()
+        self.assertEqual(data['id'], 321)
+        self.assertEqual(data['violation_id'], 77)
+        self.assertEqual(data['type'], 'false_positive')
+        self.assertEqual(data['status'], 'pending')
+
+        feedback = self.fake_db.add.call_args.args[0]
+        self.assertEqual(feedback.feedback_type, 'false_positive')
+        self.assertEqual(feedback.user_id, 9)
+        self.assertEqual(feedback.target_detection_id, 'det_0')
+        self.assertEqual(feedback.original_bbox, [40.0, 40.0, 180.0, 210.0])
+        self.assertEqual(feedback.note, 'shadow')
+        self.fake_db.commit.assert_awaited_once()
+
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_submit_violation_feedback_accepts_note_only(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """A false-positive feedback can be a record-level note."""
+        mock_get_user_sites.return_value = ['SiteA']
+        viol = self.make_violation(77, 'SiteA')
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(viol),
+            self._exec_scalar(9),
+        ]
+
+        def refresh_feedback(feedback: Any) -> None:
+            feedback.id = 322
+
+        self.fake_db.refresh.side_effect = refresh_feedback
+
+        resp = self.client.post(
+            '/api/violations/77/feedback',
+            json={
+                'type': 'false_positive',
+                'note': '測試',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()
+        self.assertEqual(data['note'], '測試')
+        self.assertEqual(data['status'], 'pending')
+
+        feedback = self.fake_db.add.call_args.args[0]
+        self.assertEqual(feedback.feedback_type, 'false_positive')
+        self.assertEqual(feedback.note, '測試')
+        self.assertIsNone(feedback.target_detection_id)
+        self.assertTrue(viol.is_flagged)
+        self.assertEqual(viol.review_status, 'pending')
+
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_submit_violation_feedback_forbidden_record(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """Feedback cannot be submitted for an inaccessible record."""
+        mock_get_user_sites.return_value = ['SiteA']
+        self.fake_db.execute.return_value = self._exec_scalar(None)
+
+        resp = self.client.post(
+            '/api/violations/77/feedback',
+            json={
+                'type': 'false_positive',
+                'original_bbox': [40, 40, 180, 210],
+            },
+        )
+
+        self.assertEqual(resp.status_code, 403)
+        self.fake_db.add.assert_not_called()
+
+    @patch('examples.violation_records.routers.get_user_sites_cached')
+    async def test_submit_violation_feedback_rejects_unknown_detection(
+        self,
+        mock_get_user_sites: AsyncMock,
+    ) -> None:
+        """A target_detection_id must belong to parsed record detections."""
+        mock_get_user_sites.return_value = ['SiteA']
+        viol = self.make_violation(77, 'SiteA')
+        viol.detections_json = json.dumps([
+            [40, 40, 180, 210, 0.93, 5, 12],
+        ])
+        self.fake_db.execute.return_value = self._exec_scalar(viol)
+
+        resp = self.client.post(
+            '/api/violations/77/feedback',
+            json={
+                'type': 'false_positive',
+                'target_detection_id': 'det_99',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 422)
+        self.assertEqual(
+            resp.json()['detail'],
+            'target_detection_id does not belong to this violation',
+        )
+        self.fake_db.add.assert_not_called()
+
+    async def test_submit_violation_feedback_missing_username(self) -> None:
+        """Feedback submission requires an authenticated username."""
+        def override_jwt_no_username() -> Any:
+            """Support override_jwt_no_username."""
+            return JwtAuthorizationCredentials(subject={})
+        self.client.app.dependency_overrides[jwt_access] = (
+            override_jwt_no_username
+        )
+
+        resp = self.client.post(
+            '/api/violations/77/feedback',
+            json={
+                'type': 'false_positive',
+                'original_bbox': [40, 40, 180, 210],
+            },
+        )
+        self.assertEqual(resp.status_code, 401)
+
+        self.client.app.dependency_overrides[jwt_access] = (
+            lambda: JwtAuthorizationCredentials(
+                subject={'username': 'test_user'},
+            )
+        )
+
+    ###################################################
+    # /api/violations/{violation_id}/audit-log Tests
+    ###################################################
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_get_violation_audit_log_admin_success(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Admins can read audit logs for records in scope."""
+        siteA = self.make_site(1, 'SiteA')
+        reviewer = self.make_user(
+            'test_user',
+            [siteA],
+            user_id=7,
+            role='admin',
+            group_id=1,
+        )
+        mock_load_user.return_value = (reviewer, [siteA])
+        audit = self.make_review_audit(5, 77)
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(77),
+            self._exec_scalars_all([audit]),
+        ]
+
+        resp = self.client.get('/api/violations/77/audit-log')
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data[0]['action'], 'review_status_changed')
+        self.assertEqual(data[0]['actor_user_id'], 7)
+        self.assertEqual(data[0]['note'], 'Confirmed violation')
+
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_get_violation_audit_log_regular_user_forbidden(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Regular users cannot read review audit logs."""
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA], role='user')
+        mock_load_user.return_value = (user, [siteA])
+
+        resp = self.client.get('/api/violations/77/audit-log')
+
+        self.assertEqual(resp.status_code, 403)
+        self.fake_db.execute.assert_not_called()
+
+    ###################################################
+    # /api/violations/{violation_id}/review Tests
+    ###################################################
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_review_violation_admin_success(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Admins can update review status for records in scope."""
+        siteA = self.make_site(1, 'SiteA')
+        reviewer = self.make_user(
+            'test_user',
+            [siteA],
+            user_id=7,
+            role='admin',
+            group_id=1,
+        )
+        mock_load_user.return_value = (reviewer, [siteA])
+
+        viol = self.make_violation(77, 'SiteA')
+        viol.is_flagged = True
+        viol.flag_reason = 'false_positive'
+        viol.review_status = 'pending'
+        self.fake_db.execute.side_effect = [
+            self._exec_scalar(viol),
+            self._exec_scalar('測試'),
+        ]
+
+        resp = self.client.patch(
+            '/api/violations/77/review',
+            json={
+                'review_status': 'resolved',
+                'review_note': 'Confirmed violation',
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['review_status'], 'resolved')
+        self.assertEqual(data['review_note'], 'Confirmed violation')
+        self.assertEqual(data['reviewed_by'], 7)
+        self.assertEqual(data['feedback_note'], '測試')
+
+        audit_log = self.fake_db.add.call_args.args[0]
+        self.assertEqual(audit_log.violation_id, 77)
+        self.assertEqual(audit_log.action, 'review_status_changed')
+        self.assertEqual(audit_log.old_status, 'pending')
+        self.assertEqual(audit_log.new_status, 'resolved')
+        self.assertEqual(audit_log.flagged_reason, 'false_positive')
+        self.fake_db.commit.assert_awaited_once()
+
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_review_violation_regular_user_forbidden(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Regular users cannot update review status."""
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA], role='user')
+        mock_load_user.return_value = (user, [siteA])
+
+        resp = self.client.patch(
+            '/api/violations/77/review',
+            json={'review_status': 'dismissed'},
+        )
+
+        self.assertEqual(resp.status_code, 403)
+        self.fake_db.add.assert_not_called()
+
+    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    async def test_review_violation_forbidden_record(
+        self,
+        mock_load_user: AsyncMock,
+    ) -> None:
+        """Admins cannot review records outside their scope."""
+        siteA = self.make_site(1, 'SiteA')
+        reviewer = self.make_user('test_user', [siteA], role='admin')
+        mock_load_user.return_value = (reviewer, [siteA])
+        self.fake_db.execute.return_value = self._exec_scalar(None)
+
+        resp = self.client.patch(
+            '/api/violations/77/review',
+            json={'review_status': 'resolved'},
+        )
+
+        self.assertEqual(resp.status_code, 403)
+        self.fake_db.add.assert_not_called()
 
     @patch('examples.violation_records.routers.Path')
     def test_get_violation_image_missing_username(

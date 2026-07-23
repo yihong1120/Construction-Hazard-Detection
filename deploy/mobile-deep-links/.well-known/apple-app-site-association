@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": [
+          "5DU8R27949.com.changdar.visionnaire"
+        ],
+        "components": [
+          {
+            "/": "/reset_password",
+            "?": {
+              "token": "*"
+            },
+            "comment": "Open password reset links in the Visionnaire app."
+          }
+        ]
+      }
+    ]
+  }
+}

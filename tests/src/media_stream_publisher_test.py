@@ -336,6 +336,29 @@ def test_build_ffmpeg_command_uses_nvenc_options(monkeypatch: Any) -> None:
     assert '16' in command
 
 
+def test_build_ffmpeg_command_honours_preview_rate_budget(
+        monkeypatch: Any,
+) -> None:
+    """A preview publisher gets an independent capped bitrate."""
+    monkeypatch.setenv('MEDIA_PUBLISH_ENCODER', 'libx264')
+    stream = publisher.MediaStreamPublisher(
+        'rtsp://127.0.0.1:8554/preview',
+        fps=15,
+        width=640,
+        height=360,
+        bitrate='500k',
+        maxrate='700k',
+        bufsize='1400k',
+    )
+
+    command = stream._build_ffmpeg_command('/bin/ffmpeg', 640, 360)
+
+    assert '500k' in command
+    assert '700k' in command
+    assert '1400k' in command
+    assert '30' in command
+
+
 def test_ffmpeg_has_encoder_handles_subprocess_failure(
         monkeypatch: Any,
 ) -> None:

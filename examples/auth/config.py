@@ -21,6 +21,33 @@ def _postgres_async_url(database_url: str) -> str:
     return database_url
 
 
+def _join_env_values(*names: str) -> str:
+    """Return comma-separated non-empty environment values."""
+    return ','.join(
+        value
+        for name in names
+        if (value := os.getenv(name, '').strip())
+    )
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Parse common boolean environment variable values."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+DEFAULT_GOOGLE_CLIENT_IDS = (
+    '860473757501-c1gtkrqr4lsa52vgoq7vclprm8atjvtv.apps.googleusercontent.com,'
+    '860473757501-s53qldp7i294qbg1ia8aq822oa0rudj2.apps.googleusercontent.com,'
+    '860473757501-088t4flpgv0kdds6pu4a5m1fntamf1ht.apps.googleusercontent.com'
+)
+
+DEFAULT_APPLE_BUNDLE_ID = 'com.changdar.visionnaire'
+DEFAULT_APPLE_SERVICE_ID = 'com.changdar.visionnaire.signin'
+
+
 class Settings(BaseSettings):
     """
     Configuration settings for the application.
@@ -37,6 +64,131 @@ class Settings(BaseSettings):
     """
 
     authjwt_secret_key: str = os.getenv('JWT_SECRET_KEY', '')
+    hcaptcha_enabled: bool = _env_bool('HCAPTCHA_ENABLED', True)
+    hcaptcha_secret_key: str = os.getenv('HCAPTCHA_SECRET_KEY', '')
+    hcaptcha_site_key: str = os.getenv('HCAPTCHA_SITE_KEY', '')
+    hcaptcha_bypass_key: str = os.getenv('HCAPTCHA_BYPASS_KEY', '')
+    web_refresh_cookie_name: str = os.getenv(
+        'WEB_REFRESH_COOKIE_NAME',
+        'refresh_session',
+    )
+    web_refresh_cookie_path: str = os.getenv(
+        'WEB_REFRESH_COOKIE_PATH',
+        '/hazard/api/db_management',
+    )
+    web_refresh_cookie_domain: str = os.getenv(
+        'WEB_REFRESH_COOKIE_DOMAIN',
+        '',
+    )
+    web_refresh_cookie_secure: bool = _env_bool(
+        'WEB_REFRESH_COOKIE_SECURE',
+        True,
+    )
+    web_refresh_cookie_samesite: str = os.getenv(
+        'WEB_REFRESH_COOKIE_SAMESITE',
+        'lax',
+    ).lower()
+    web_refresh_cookie_max_age_seconds: int = int(
+        os.getenv('WEB_REFRESH_COOKIE_MAX_AGE_SECONDS', str(30 * 24 * 3600)),
+    )
+    fcm_token_encryption_key: str = os.getenv(
+        'FCM_TOKEN_ENCRYPTION_KEY',
+        '',
+    )
+    brevo_api_key: str = os.getenv('BREVO_API_KEY', '')
+    mail_from: str = os.getenv('MAIL_FROM', '')
+    mail_from_name: str = os.getenv('MAIL_FROM_NAME', 'Visionnaire')
+    app_public_url: str = os.getenv(
+        'APP_PUBLIC_URL',
+        'https://changdar-server.mooo.com',
+    )
+    password_reset_token_ttl_seconds: int = int(
+        os.getenv('PASSWORD_RESET_TOKEN_TTL_SECONDS', '1800'),
+    )
+    password_reset_email_rate_limit_seconds: int = int(
+        os.getenv('PASSWORD_RESET_EMAIL_RATE_LIMIT_SECONDS', '60'),
+    )
+    password_reset_ip_rate_limit_window_seconds: int = int(
+        os.getenv('PASSWORD_RESET_IP_RATE_LIMIT_WINDOW_SECONDS', '600'),
+    )
+    password_reset_ip_rate_limit_max: int = int(
+        os.getenv('PASSWORD_RESET_IP_RATE_LIMIT_MAX', '5'),
+    )
+    email_verification_token_ttl_seconds: int = int(
+        os.getenv('EMAIL_VERIFICATION_TOKEN_TTL_SECONDS', '86400'),
+    )
+    email_verification_resend_rate_limit_seconds: int = int(
+        os.getenv('EMAIL_VERIFICATION_RESEND_RATE_LIMIT_SECONDS', '60'),
+    )
+    email_verification_daily_limit: int = int(
+        os.getenv('EMAIL_VERIFICATION_DAILY_LIMIT', '5'),
+    )
+    email_verification_daily_limit_window_seconds: int = int(
+        os.getenv('EMAIL_VERIFICATION_DAILY_LIMIT_WINDOW_SECONDS', '86400'),
+    )
+    brevo_email_verification_template_id: int = int(
+        os.getenv('BREVO_EMAIL_VERIFICATION_TEMPLATE_ID', '0') or '0',
+    )
+    login_failure_window_seconds: int = int(
+        os.getenv('LOGIN_FAILURE_WINDOW_SECONDS', '1800'),
+    )
+    login_cooldown_threshold: int = int(
+        os.getenv('LOGIN_COOLDOWN_THRESHOLD', '5'),
+    )
+    login_cooldown_seconds: int = int(
+        os.getenv('LOGIN_COOLDOWN_SECONDS', '300'),
+    )
+    login_lock_threshold: int = int(
+        os.getenv('LOGIN_LOCK_THRESHOLD', '10'),
+    )
+    login_lock_seconds: int = int(
+        os.getenv('LOGIN_LOCK_SECONDS', '1800'),
+    )
+    google_client_ids: str = (
+        os.getenv('GOOGLE_CLIENT_IDS')
+        or _join_env_values(
+            'GOOGLE_WEB_CLIENT_ID',
+            'GOOGLE_IOS_CLIENT_ID',
+            'GOOGLE_ANDROID_CLIENT_ID',
+        )
+        or DEFAULT_GOOGLE_CLIENT_IDS
+    )
+    apple_client_ids: str = (
+        os.getenv('APPLE_CLIENT_IDS')
+        or _join_env_values('APPLE_BUNDLE_ID', 'APPLE_SERVICE_ID')
+        or f'{DEFAULT_APPLE_BUNDLE_ID},{DEFAULT_APPLE_SERVICE_ID}'
+    )
+    apple_team_id: str = os.getenv('APPLE_TEAM_ID', '5DU8R27949')
+    apple_key_id: str = os.getenv('APPLE_KEY_ID', 'NGC4QBS7ZY')
+    apple_private_key: str = os.getenv('APPLE_PRIVATE_KEY', '')
+    apple_private_key_path: str = os.getenv(
+        'APPLE_PRIVATE_KEY_PATH',
+        'config/secrets/apple/AuthKey_NGC4QBS7ZY.p8',
+    )
+    apple_service_id: str = os.getenv(
+        'APPLE_SERVICE_ID',
+        DEFAULT_APPLE_SERVICE_ID,
+    )
+    apple_bundle_id: str = os.getenv(
+        'APPLE_BUNDLE_ID',
+        DEFAULT_APPLE_BUNDLE_ID,
+    )
+    apple_redirect_uri: str = os.getenv(
+        'APPLE_REDIRECT_URI',
+        (
+            'https://changdar-server.mooo.com/'
+            'hazard/api/db_management/auth/apple/callback'
+        ),
+    )
+    cors_allowed_origins: str = os.getenv(
+        'CORS_ALLOWED_ORIGINS',
+        (
+            'https://changdar-server.mooo.com,'
+            'http://localhost:3000,http://127.0.0.1:3000,'
+            'http://localhost:5000,http://127.0.0.1:5000,'
+            'http://localhost:8080,http://127.0.0.1:8080'
+        ),
+    )
     sqlalchemy_database_uri: str = _postgres_async_url(
         os.getenv(
             'DATABASE_URL',

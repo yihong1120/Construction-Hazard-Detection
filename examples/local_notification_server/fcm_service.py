@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 
@@ -8,6 +9,13 @@ from firebase_admin import credentials
 from firebase_admin import messaging
 
 logger = logging.getLogger(__name__)
+
+
+def _token_log_id(device_token: str | None) -> str:
+    """Return a non-sensitive identifier for an FCM token in logs."""
+    if not device_token:
+        return '<missing-token>'
+    return hashlib.sha256(device_token.encode('utf-8')).hexdigest()[:12]
 
 
 @dataclass(frozen=True)
@@ -80,6 +88,14 @@ APNS_CFG: messaging.APNSConfig = messaging.APNSConfig(
 )
 
 
+WEBPUSH_CFG: messaging.WebpushConfig = messaging.WebpushConfig(
+    headers={
+        'Urgency': 'high',
+        'TTL': '3600',
+    },
+)
+
+
 async def send_fcm_notification_service(
     device_tokens: list[str],
     title: str,
@@ -119,6 +135,7 @@ async def send_fcm_notification_service(
             data=data or {},
             android=ANDROID_CFG,
             apns=APNS_CFG,
+            webpush=WEBPUSH_CFG,
         )
         messages.append(msg)
 
@@ -130,8 +147,8 @@ async def send_fcm_notification_service(
             if not res.success:
                 token = messages[idx].token
                 logger.error(
-                    'Failed to send message to token %s: %s',
-                    token,
+                    'Failed to send message to token_hash=%s: %s',
+                    _token_log_id(token),
                     res.exception,
                 )
                 if _is_invalid_registration_token_error(res.exception):
