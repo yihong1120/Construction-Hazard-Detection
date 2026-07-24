@@ -25,6 +25,10 @@ standalone application.
 
 ```dotenv
 DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection
+DB_POOL_SIZE=2
+DB_MAX_OVERFLOW=1
+DB_POOL_TIMEOUT_SECONDS=10
+DB_POOL_RECYCLE_SECONDS=1800
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=password

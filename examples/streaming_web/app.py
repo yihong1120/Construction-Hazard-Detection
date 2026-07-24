@@ -30,8 +30,8 @@ if __name__ == '__main__':
 
 '''
 uvicorn examples.streaming_web.app:app \
-    --host 127.0.0.1 --port 8800 --workers 4
+    --host 127.0.0.1 --port 8800 --workers 2
 
 uv run uvicorn examples.streaming_web.app:app\
-    --host 127.0.0.1 --port 8800 --workers 4
+    --host 127.0.0.1 --port 8800 --workers 2
 '''
