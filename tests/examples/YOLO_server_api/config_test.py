@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import importlib
 import inspect
 import os
@@ -253,9 +254,20 @@ class TestYoloServerConfigCoverage(unittest.TestCase):
 
     def test_inference_device_falls_back_when_torch_import_fails(self) -> None:
         """CUDA probe failures produce a warning and retain a CPU fallback."""
+        original_import = builtins.__import__
+
+        def unavailable_torch(
+            name: str,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            if name == 'torch':
+                raise ImportError('torch is unavailable')
+            return original_import(name, *args, **kwargs)
+
         with (
             patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
-            patch.dict(sys.modules, {'torch': None}),
+            patch('builtins.__import__', side_effect=unavailable_torch),
             self.assertWarnsRegex(UserWarning, 'falling back to CPU'),
         ):
             self.assertEqual(config.get_inference_device(), 'cpu')
