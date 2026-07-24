@@ -253,6 +253,39 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
             out = await self.client.ws_send_and_receive('/ws', b'payload')
         self.assertIsNone(out)
 
+    async def test_ws_send_and_receive_uses_reconnected_socket(self) -> None:
+        """A closed socket should be replaced before sending the payload."""
+        closed_ws = MagicMock()
+        type(closed_ws).closed = property(lambda _: True)
+        reconnected_ws = MagicMock()
+
+        with (
+            patch.object(
+                self.client,
+                'ensure_ws',
+                new=AsyncMock(return_value=closed_ws),
+            ),
+            patch.object(
+                self.client,
+                '_reconnect_ws',
+                new=AsyncMock(return_value=reconnected_ws),
+            ),
+            patch.object(
+                self.client,
+                '_send_ws_bytes',
+                new=AsyncMock(return_value=True),
+            ) as send_bytes,
+            patch.object(
+                self.client,
+                '_receive_ws_json_until',
+                new=AsyncMock(return_value={'ok': True}),
+            ),
+        ):
+            output = await self.client.ws_send_and_receive('/ws', b'payload')
+
+        self.assertEqual(output, {'ok': True})
+        send_bytes.assert_awaited_once_with(reconnected_ws, b'payload')
+
     async def test_ws_send_and_receive_send_fail(self) -> None:
         """If send returns False, return None."""
         fake_ws = MagicMock()

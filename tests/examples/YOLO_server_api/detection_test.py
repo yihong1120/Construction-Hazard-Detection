@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from collections.abc import Sequence
 from io import BytesIO
+from unittest.mock import ANY
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import cv2
 import numpy as np
+import pytest
 from PIL import Image
 
+from examples.YOLO_server_api import detection
 from examples.YOLO_server_api.detection import _calc_and_filter
 from examples.YOLO_server_api.detection import area
 from examples.YOLO_server_api.detection import compile_detection_data
@@ -443,3 +449,86 @@ pytest \
     --cov-report=term-missing \
     tests/examples/YOLO_server_api/detection_test.py
 '''
+
+
+class Tensor:
+    """Minimal tensor adapter matching the Ultralytics box access contract."""
+
+    def __init__(
+        self,
+        value: Sequence[Sequence[float]] | Sequence[float],
+    ) -> None:
+        self.value = np.asarray(value)
+
+    def cpu(self) -> Tensor:
+        return self
+
+    def numpy(self) -> np.ndarray:
+        return self.value
+
+
+def test_conversion_and_standard_prediction_cover_invalid_and_cpu_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bad image bytes fail clearly and standard inference gets a device."""
+    monkeypatch.setattr(detection.cv2, 'imdecode', lambda *_args: None)
+    with pytest.raises(cv2.error, match='Unable to decode'):
+        detection.convert_to_image(b'not-an-image')
+
+    model = MagicMock()
+    result = MagicMock()
+    model.predict.return_value = [result]
+    monkeypatch.setattr(detection, 'USE_SAHI', False)
+    monkeypatch.setattr(detection, 'USE_TENSORRT', False)
+    monkeypatch.setattr(detection, 'get_inference_device', lambda: 'cpu')
+    image = np.zeros((1, 1, 3))
+
+    assert asyncio.run(detection.get_prediction_result(image, model)) is result
+    model.predict.assert_called_once_with(
+        source=image,
+        verbose=False,
+        device='cpu',
+    )
+
+
+def test_ultralytics_empty_boxes_and_detection_timing_pipeline() -> None:
+    """Empty boxes are valid and the byte pipeline returns timing phases."""
+    boxes = MagicMock()
+    boxes.xyxy = Tensor(np.empty((0, 4)))
+    assert detection._compile_ultralytics_detection_data(boxes) == []
+
+    image = np.zeros((2, 2, 3), dtype=np.uint8)
+    prediction = MagicMock()
+    compiled = [[1, 2, 3, 4, 0.9, 1]]
+    processed = [[1, 2, 3, 4, 0.9, 1]]
+    with (
+        patch.object(detection, 'convert_to_image', return_value=image),
+        patch.object(
+            detection,
+            'get_prediction_result',
+            AsyncMock(return_value=prediction),
+        ) as get_prediction,
+        patch.object(
+            detection,
+            'compile_detection_data',
+            return_value=compiled,
+        ),
+        patch.object(
+            detection,
+            'process_labels',
+            AsyncMock(return_value=processed),
+        ),
+    ):
+        labels, timing = asyncio.run(
+            detection.run_detection_from_bytes(
+                b'image',
+                MagicMock(),
+                semaphore=asyncio.Semaphore(1),
+            ),
+        )
+
+    assert labels == processed
+    assert set(timing) == {'inference', 'post'}
+    assert timing['inference'] >= 0
+    assert timing['post'] >= 0
+    get_prediction.assert_awaited_once_with(image, ANY)

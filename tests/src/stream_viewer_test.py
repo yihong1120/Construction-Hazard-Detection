@@ -97,6 +97,25 @@ class TestStreamViewer(unittest.TestCase):
         # Check if destroyAllWindows was called
         mock_destroy_all_windows.assert_called_once()
 
+    @patch('src.stream_viewer.cv2.destroyAllWindows')
+    @patch('src.stream_viewer.cv2.VideoCapture')
+    @patch('src.stream_viewer.cv2.waitKey', return_value=ord('q'))
+    @patch('src.stream_viewer.cv2.imshow')
+    def test_display_stream_stops_when_user_presses_q(
+        self,
+        _imshow: MagicMock,
+        _wait_key: MagicMock,
+        mock_video_capture: MagicMock,
+        _destroy_all_windows: MagicMock,
+    ) -> None:
+        """The viewer exits immediately when OpenCV receives the q key."""
+        mock_video_capture.return_value.read.return_value = (True, MagicMock())
+
+        viewer = StreamViewer('https://example.com/stream')
+        viewer.display_stream()
+
+        mock_video_capture.return_value.read.assert_called_once()
+
     @patch('src.stream_viewer.StreamViewer.display_stream')
     @patch('src.stream_viewer.StreamViewer.__init__', return_value=None)
     def test_main(

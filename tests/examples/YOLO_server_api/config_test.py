@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import importlib
 import inspect
 import os
+import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from examples.YOLO_server_api import config
@@ -220,3 +223,66 @@ pytest \
     --cov-report=term-missing \
     tests/examples/YOLO_server_api/config_test.py
 """
+
+
+class TestYoloServerConfigCoverage(unittest.TestCase):
+    def test_inference_device_honours_explicit_and_auto_detection(
+        self,
+    ) -> None:
+        """Explicit devices win; automatic mode mirrors CUDA availability."""
+        with patch.object(config, 'YOLO_INFERENCE_DEVICE', 'cuda:2'):
+            self.assertEqual(config.get_inference_device(), 'cuda:2')
+
+        cuda_available = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True),
+        )
+        with (
+            patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
+            patch.dict(sys.modules, {'torch': cuda_available}),
+        ):
+            self.assertEqual(config.get_inference_device(), 'cuda:0')
+
+        cuda_unavailable = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: False),
+        )
+        with (
+            patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
+            patch.dict(sys.modules, {'torch': cuda_unavailable}),
+        ):
+            self.assertEqual(config.get_inference_device(), 'cpu')
+
+    def test_inference_device_falls_back_when_torch_import_fails(self) -> None:
+        """CUDA probe failures produce a warning and retain a CPU fallback."""
+        with (
+            patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
+            patch.dict(sys.modules, {'torch': None}),
+            self.assertWarnsRegex(UserWarning, 'falling back to CPU'),
+        ):
+            self.assertEqual(config.get_inference_device(), 'cpu')
+
+    def test_sahi_tensorrt_conflict_warns_during_configuration_load(
+        self,
+    ) -> None:
+        """Reloading the module validates mutually incompatible model modes."""
+        original_environment = {
+            'USE_SAHI': os.environ.get('USE_SAHI'),
+            'USE_TENSORRT': os.environ.get('USE_TENSORRT'),
+        }
+        try:
+            with patch.dict(
+                os.environ,
+                {'USE_SAHI': 'true', 'USE_TENSORRT': 'true'},
+                clear=False,
+            ):
+                with self.assertWarnsRegex(
+                    UserWarning,
+                    'USE_SAHI=True forces .pt model usage',
+                ):
+                    importlib.reload(config)
+        finally:
+            for name, value in original_environment.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+            importlib.reload(config)

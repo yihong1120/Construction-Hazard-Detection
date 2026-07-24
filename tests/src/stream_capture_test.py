@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 import time
 import unittest
+from types import SimpleNamespace
 from typing import cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
@@ -11,7 +13,9 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
+from src import stream_capture
 from src.stream_capture import main as stream_capture_main
 from src.stream_capture import StreamCapture
 
@@ -611,3 +615,37 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_redact_stream_url_hides_credentials_and_invalid_urls() -> None:
+    """Logs never expose a camera password or malformed source URL."""
+    assert stream_capture._redact_stream_url(
+        'rtsp://admin:secret@camera.example:554/live',
+    ) == 'rtsp://<credentials>@camera.example:554/live'
+    assert stream_capture._redact_stream_url(
+        'rtsp://[invalid',
+    ) == '<invalid-url>'
+
+
+def test_generic_capture_retries_when_quality_refresh_returns_none() -> None:
+    """A failed quality refresh leaves the generic reader retrying safely."""
+    async def run_case() -> None:
+        capture = stream_capture.StreamCapture('https://camera.example/live')
+        capture.cap = SimpleNamespace(
+            read=MagicMock(
+                side_effect=[(False, None)] * 5 +
+                [RuntimeError('stop reader')],
+            ),
+        )
+        capture.initialise_stream = AsyncMock()
+        capture.release_resources = AsyncMock()
+        capture.select_quality_based_on_speed = MagicMock(
+            side_effect=['https://camera.example/selected', None],
+        )
+
+        with patch.object(stream_capture.asyncio, 'sleep', AsyncMock()):
+            generator = capture.capture_generic_frames()
+            with pytest.raises(RuntimeError, match='stop reader'):
+                await generator.__anext__()
+
+    asyncio.run(run_case())

@@ -94,6 +94,44 @@ class TestBoundingBoxVisualiser(unittest.TestCase):
 
     @patch(
         'examples.YOLO_data_augmentation.'
+        'visualise_bounding_boxes.cv2.putText',
+    )
+    @patch(
+        'examples.YOLO_data_augmentation.'
+        'visualise_bounding_boxes.cv2.rectangle',
+    )
+    @patch(
+        'examples.YOLO_data_augmentation.'
+        'visualise_bounding_boxes.cv2.imread',
+    )
+    def test_draw_bounding_boxes_skips_invalid_rows_and_labels_unknown_class(
+        self,
+        mock_imread: Any,
+        _mock_rectangle: Any,
+        mock_put_text: Any,
+    ) -> None:
+        """Malformed labels are ignored while unknown IDs stay inspectable."""
+        mock_imread.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+        with patch(
+            'pathlib.Path.open',
+            mock_open(
+                read_data=(
+                    'bad row\nnot-a-number 0 0 0 0\n'
+                    '99 0.5 0.5 0.2 0.2\n'
+                ),
+            ),
+        ):
+            self.visualiser = BoundingBoxVisualiser(
+                self.image_path,
+                self.label_path,
+                self.class_names,
+            )
+            self.visualiser.draw_bounding_boxes()
+
+        self.assertEqual(mock_put_text.call_args.args[1], 'class_99')
+
+    @patch(
+        'examples.YOLO_data_augmentation.'
         'visualise_bounding_boxes.cv2.imwrite',
     )
     @patch(

@@ -190,6 +190,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             nonlocal asyncio_run_called
             asyncio_run_called = True
             assert asyncio.iscoroutine(coro)
+            coro.close()
         mock_run.side_effect = fake_run
         # Should not raise
         asyncio.run(main_entry())
@@ -218,6 +219,172 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             'work_start_hour': 0,
             'work_end_hour': 24,
         }
+
+    async def test_ensure_config_listener_reserves_connection(self) -> None:
+        """The listener reserves one pool connection for PostgreSQL events."""
+        connection = MagicMock()
+        connection.add_listener = AsyncMock()
+        pool = MagicMock()
+        pool.acquire = AsyncMock(return_value=connection)
+        self.app.db_pool = pool
+
+        with patch.object(
+                self.app,
+                '_ensure_db_pool',
+                new_callable=AsyncMock,
+        ) as mock_ensure_pool:
+            await self.app._ensure_config_listener()
+
+        mock_ensure_pool.assert_awaited_once()
+        connection.add_listener.assert_awaited_once_with(
+            'stream_config_changed',
+            self.app._on_stream_config_changed,
+        )
+        self.assertIs(self.app._config_listener_connection, connection)
+
+    async def test_ensure_config_listener_skips_existing_or_missing_pool(
+            self,
+    ) -> None:
+        """Existing listeners and unavailable pools do not acquire again."""
+        existing_connection = object()
+        self.app._config_listener_connection = existing_connection
+
+        with patch.object(
+                self.app,
+                '_ensure_db_pool',
+                new_callable=AsyncMock,
+        ) as mock_ensure_pool:
+            await self.app._ensure_config_listener()
+            mock_ensure_pool.assert_not_awaited()
+
+            self.app._config_listener_connection = None
+            self.app.db_pool = None
+            await self.app._ensure_config_listener()
+
+        mock_ensure_pool.assert_awaited_once()
+
+    async def test_ensure_config_listener_releases_on_registration_error(
+            self,
+    ) -> None:
+        """A failed LISTEN registration returns the connection to its pool."""
+        connection = MagicMock()
+        connection.add_listener = AsyncMock(
+            side_effect=RuntimeError('listen failed'),
+        )
+        pool = MagicMock()
+        pool.acquire = AsyncMock(return_value=connection)
+        pool.release = AsyncMock()
+        self.app.db_pool = pool
+
+        with self.assertRaisesRegex(RuntimeError, 'listen failed'):
+            await self.app._ensure_config_listener()
+
+        pool.release.assert_awaited_once_with(connection)
+        self.assertIsNone(self.app._config_listener_connection)
+
+    async def test_config_change_reloads_and_logs_failure(self) -> None:
+        """A notification starts one reload and records a reload failure."""
+        self.app.reload_configurations = AsyncMock(
+            side_effect=RuntimeError('reload failed'),
+        )
+
+        self.app._on_stream_config_changed(
+            object(),
+            1,
+            'stream_config_changed',
+            '',
+        )
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        self.app.reload_configurations.assert_awaited_once()
+        self.mock_logger.error.assert_called_once_with(
+            '[config] Immediate reload failed: reload failed',
+        )
+        self.assertTrue(self.app._config_reload_task.done())
+
+    def test_config_change_does_not_overlap_existing_reload(self) -> None:
+        """A notification does not schedule another reload while one runs."""
+        pending_task = MagicMock()
+        pending_task.done.return_value = False
+        self.app._config_reload_task = pending_task
+
+        with patch('main.asyncio.create_task') as mock_create_task:
+            self.app._on_stream_config_changed(
+                object(),
+                1,
+                'stream_config_changed',
+                '',
+            )
+
+        mock_create_task.assert_not_called()
+
+    def test_log_config_reload_failure_ignores_cancelled_task(self) -> None:
+        """Cancelled callback tasks do not create misleading error logs."""
+        cancelled_task = MagicMock()
+        cancelled_task.cancelled.return_value = True
+
+        self.app._log_config_reload_failure(cancelled_task)
+
+        self.mock_logger.error.assert_not_called()
+
+    async def test_cancel_config_reload_task_cancels_pending_task(
+        self,
+    ) -> None:
+        """Shutdown cancels an in-flight notification-triggered reload."""
+        pending_task = asyncio.create_task(asyncio.sleep(60))
+        self.app._config_reload_task = pending_task
+
+        await self.app._cancel_config_reload_task()
+
+        self.assertTrue(pending_task.cancelled())
+        self.assertIsNone(self.app._config_reload_task)
+
+    async def test_close_config_listener_unregisters_and_releases(
+        self,
+    ) -> None:
+        """Closing unregisters the listener before releasing its connection."""
+        connection = MagicMock()
+        connection.remove_listener = AsyncMock()
+        pool = MagicMock()
+        pool.release = AsyncMock()
+        self.app._config_listener_connection = connection
+
+        await self.app._close_config_listener(pool)
+
+        connection.remove_listener.assert_awaited_once_with(
+            'stream_config_changed',
+            self.app._on_stream_config_changed,
+        )
+        pool.release.assert_awaited_once_with(connection)
+        self.assertIsNone(self.app._config_listener_connection)
+
+    async def test_close_config_listener_handles_missing_pool(self) -> None:
+        """Closing after a pool reset safely drops the listener reference."""
+        self.app._config_listener_connection = MagicMock()
+        self.app.db_pool = None
+
+        await self.app._close_config_listener()
+
+        self.assertIsNone(self.app._config_listener_connection)
+
+    async def test_reload_stops_yolo_workers_without_runnable_streams(
+            self,
+    ) -> None:
+        """Disabled recognition stops the shared worker pool immediately."""
+        disabled_config = self.dummy_cfg.copy()
+        disabled_config['recognition_enabled'] = False
+        self.app.yolo_worker_processes = [MagicMock()]
+
+        with patch.object(
+                self.app,
+                'fetch_stream_configs',
+                new_callable=AsyncMock,
+                return_value=[disabled_config],
+        ), patch.object(self.app, '_stop_yolo_worker') as mock_stop:
+            await self.app.reload_configurations()
+
+        mock_stop.assert_called_once()
 
     def test_validate_server_model_key_accepts_configured_model(self) -> None:
         """Server mode accepts configured YOLO server model keys."""
@@ -1769,6 +1936,391 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         publisher.publish.assert_awaited_once()
 
+    def test_media_publisher_presets_and_invalid_rendition(self) -> None:
+        """Detail and preview renditions use their intended encoder budgets."""
+        with patch.dict(
+            os.environ,
+            {
+                'MEDIA_PREVIEW_FPS': '12',
+                'MEDIA_PREVIEW_WIDTH': '800',
+                'MEDIA_PREVIEW_HEIGHT': '450',
+                'MEDIA_PREVIEW_BITRATE': '600k',
+                'MEDIA_PREVIEW_MAXRATE': '800k',
+                'MEDIA_PREVIEW_BUFSIZE': '1600k',
+            },
+        ):
+            self.assertEqual(
+                processor._preview_publisher_kwargs(),
+                {
+                    'fps': 12.0,
+                    'width': 800,
+                    'height': 450,
+                    'bitrate': '600k',
+                    'maxrate': '800k',
+                    'bufsize': '1600k',
+                },
+            )
+            with patch(
+                'src.stream_processor.MediaStreamPublisher',
+            ) as publisher_factory:
+                detail = processor._media_publisher(
+                    'rtsp://media/detail',
+                    rendition='detail',
+                )
+                preview = processor._media_publisher(
+                    'rtsp://media/preview',
+                    rendition='preview',
+                )
+
+        self.assertIs(detail, publisher_factory.return_value)
+        self.assertIs(preview, publisher_factory.return_value)
+        self.assertEqual(
+            publisher_factory.call_args_list[0].kwargs,
+            {'publish_url': 'rtsp://media/detail'},
+        )
+        self.assertEqual(
+            publisher_factory.call_args_list[1].kwargs,
+            {
+                'publish_url': 'rtsp://media/preview',
+                'fps': 12.0,
+                'width': 800,
+                'height': 450,
+                'bitrate': '600k',
+                'maxrate': '800k',
+                'bufsize': '1600k',
+            },
+        )
+        with self.assertRaisesRegex(ValueError, 'unsupported media rendition'):
+            processor._media_publisher('rtsp://media/unknown', rendition='raw')
+
+    async def test_overlay_snapshot_prunes_stale_ready_times(self) -> None:
+        """A disconnected overlay language no longer keeps a ready timer."""
+        ready_started_at = {'en': 1.0, 'zh-TW': 2.0}
+        publishers: dict[str, processor.MediaStreamPublisher] = {}
+        with (
+            patch(
+                'src.stream_processor._requested_overlay_languages',
+                new_callable=AsyncMock,
+                return_value={'en'},
+            ),
+            patch(
+                'src.stream_processor._close_unrequested_overlay_publishers',
+                new_callable=AsyncMock,
+            ),
+            patch(
+                'src.stream_processor._publish_overlay_language_snapshot',
+                new_callable=AsyncMock,
+            ),
+        ):
+            await processor._publish_requested_overlay_snapshot(
+                redis_manager=MagicMock(),
+                overlay_media_publishers=publishers,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                source_frame=np.zeros((2, 2, 3), dtype=np.uint8),
+                warnings={},
+                cone_polys=[],
+                pole_polys=[],
+                track_data=[],
+                overlay_ready_started_at=ready_started_at,
+            )
+
+        self.assertEqual(ready_started_at, {'en': 1.0})
+
+    def test_media_timing_configuration_falls_back_on_invalid_values(
+        self,
+    ) -> None:
+        """Malformed timing values retain conservative production defaults."""
+        with patch.dict(
+            os.environ,
+            {
+                'MEDIA_OVERLAY_READY_GRACE_SECONDS': 'not-a-number',
+                'WARNING_EVENT_THROTTLE_SECONDS': 'not-a-number',
+            },
+        ):
+            self.assertEqual(processor._overlay_ready_grace_seconds(), 2.0)
+            self.assertEqual(
+                processor._warning_event_throttle_seconds(),
+                30,
+            )
+
+    async def test_inline_clean_publishers_follow_viewer_demand(self) -> None:
+        """Detail and preview encoders stop promptly when viewers leave."""
+        frames = [
+            np.zeros((2, 2, 3), dtype=np.uint8),
+            np.ones((2, 2, 3), dtype=np.uint8),
+            np.full((2, 2, 3), 2, dtype=np.uint8),
+        ]
+
+        async def execute_capture() -> Any:
+            for index, frame in enumerate(frames):
+                yield frame, 1_640_995_200 + index
+
+        streaming_capture = MagicMock()
+        streaming_capture.execute_capture = execute_capture
+        streaming_capture.update_capture_interval = MagicMock()
+        streaming_capture.release_resources = AsyncMock()
+        redis_manager = MagicMock()
+        redis_manager.redis.exists = AsyncMock(
+            side_effect=[1, 1, 0, 0, 1, 1],
+        )
+        detail_first = AsyncMock()
+        preview_first = AsyncMock()
+        detail_second = AsyncMock()
+        preview_second = AsyncMock()
+
+        with patch(
+            'src.stream_processor.MediaStreamPublisher',
+            side_effect=[
+                detail_first,
+                preview_first,
+                detail_second,
+                preview_second,
+            ],
+        ):
+            await processor._run_inline_stream_loop(
+                streaming_capture=streaming_capture,
+                yolo_detector=AsyncMock(
+                    generate_detections=AsyncMock(return_value=([], [])),
+                ),
+                danger_detector=MagicMock(
+                    detect_danger=MagicMock(return_value=({}, [], [])),
+                ),
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=redis_manager,
+                clean_source_restreamer=None,
+                clean_media_publisher=None,
+                overlay_media_publishers={},
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                publish_annotated_stream=False,
+                live_view_enabled=True,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                publish_clean_stream=True,
+                restream_clean_source=False,
+                video_url='rtsp://source',
+            )
+
+        for publisher in (
+            detail_first,
+            preview_first,
+            detail_second,
+            preview_second,
+        ):
+            publisher.publish.assert_awaited_once()
+            publisher.close.assert_awaited_once()
+        streaming_capture.release_resources.assert_awaited_once()
+
+    async def test_inline_clean_source_restreamer_restarts_on_new_demand(
+        self,
+    ) -> None:
+        """Source restreaming is released and recreated with demand changes."""
+        frames = [
+            np.zeros((2, 2, 3), dtype=np.uint8),
+            np.ones((2, 2, 3), dtype=np.uint8),
+            np.full((2, 2, 3), 2, dtype=np.uint8),
+        ]
+
+        async def execute_capture() -> Any:
+            for index, frame in enumerate(frames):
+                yield frame, 1_640_995_200 + index
+
+        streaming_capture = MagicMock()
+        streaming_capture.execute_capture = execute_capture
+        streaming_capture.update_capture_interval = MagicMock()
+        streaming_capture.release_resources = AsyncMock()
+        redis_manager = MagicMock()
+        redis_manager.redis.exists = AsyncMock(
+            side_effect=[1, 0, 0, 0, 1, 0],
+        )
+        first_restreamer = AsyncMock()
+        second_restreamer = AsyncMock()
+
+        with patch(
+            'src.stream_processor.MediaSourceRestreamer',
+            side_effect=[first_restreamer, second_restreamer],
+        ):
+            await processor._run_inline_stream_loop(
+                streaming_capture=streaming_capture,
+                yolo_detector=AsyncMock(
+                    generate_detections=AsyncMock(return_value=([], [])),
+                ),
+                danger_detector=MagicMock(
+                    detect_danger=MagicMock(return_value=({}, [], [])),
+                ),
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=redis_manager,
+                clean_source_restreamer=None,
+                clean_media_publisher=None,
+                overlay_media_publishers={},
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                publish_annotated_stream=False,
+                live_view_enabled=True,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                publish_clean_stream=True,
+                restream_clean_source=True,
+                video_url='rtsp://source',
+            )
+
+        first_restreamer.start.assert_awaited_once()
+        first_restreamer.close.assert_awaited_once()
+        second_restreamer.start.assert_awaited_once()
+        second_restreamer.close.assert_awaited_once()
+
+    async def test_inline_stream_publishes_both_overlay_renditions(
+        self,
+    ) -> None:
+        """One capture frame primes and updates detail and preview overlays."""
+        frame = np.zeros((2, 2, 3), dtype=np.uint8)
+
+        async def execute_capture() -> Any:
+            yield frame, 1_640_995_200
+
+        streaming_capture = MagicMock()
+        streaming_capture.execute_capture = execute_capture
+        streaming_capture.update_capture_interval = MagicMock()
+        streaming_capture.release_resources = AsyncMock()
+        publish_overlay = AsyncMock()
+
+        with patch(
+            'src.stream_processor._publish_requested_overlay_snapshot',
+            publish_overlay,
+        ):
+            await processor._run_inline_stream_loop(
+                streaming_capture=streaming_capture,
+                yolo_detector=AsyncMock(
+                    generate_detections=AsyncMock(return_value=([], [])),
+                ),
+                danger_detector=MagicMock(
+                    detect_danger=MagicMock(return_value=({}, [], [])),
+                ),
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=MagicMock(),
+                clean_source_restreamer=None,
+                clean_media_publisher=None,
+                overlay_media_publishers={},
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                publish_annotated_stream=True,
+                live_view_enabled=True,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                publish_clean_stream=False,
+                restream_clean_source=False,
+                video_url='rtsp://source',
+            )
+
+        self.assertEqual(publish_overlay.await_count, 4)
+
+    async def test_clean_frame_loop_releases_restreamers_on_demand_changes(
+        self,
+    ) -> None:
+        """Source restreamers are closed between viewers and at shutdown."""
+        stop_event = asyncio.Event()
+        latest_frame = processor._LatestFrameState()
+        redis_manager = MagicMock()
+        redis_manager.redis.exists = AsyncMock(side_effect=[1, 0, 1])
+        first_restreamer = AsyncMock()
+        second_restreamer = AsyncMock()
+        sleep_calls = 0
+
+        async def stop_after_third_sleep(_delay: float) -> None:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls == 3:
+                stop_event.set()
+
+        with (
+            patch(
+                'src.stream_processor.MediaSourceRestreamer',
+                side_effect=[first_restreamer, second_restreamer],
+            ),
+            patch(
+                'src.stream_processor.asyncio.sleep',
+                side_effect=stop_after_third_sleep,
+            ),
+        ):
+            await processor._publish_requested_clean_frames(
+                latest_frame=latest_frame,
+                redis_manager=redis_manager,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                source_url='rtsp://source',
+                use_source_restreamer=True,
+                stop_event=stop_event,
+            )
+
+        first_restreamer.start.assert_awaited_once()
+        first_restreamer.close.assert_awaited_once()
+        second_restreamer.start.assert_awaited_once()
+        second_restreamer.close.assert_awaited_once()
+
+    async def test_clean_frame_loop_releases_publishers_on_demand_changes(
+        self,
+    ) -> None:
+        """Frame encoders are released between viewers and at shutdown."""
+        stop_event = asyncio.Event()
+        latest_frame = processor._LatestFrameState()
+        async with latest_frame.lock:
+            latest_frame.frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        redis_manager = MagicMock()
+        redis_manager.redis.exists = AsyncMock(side_effect=[1, 0, 1])
+        first_publisher = AsyncMock()
+        second_publisher = AsyncMock()
+        sleep_calls = 0
+
+        async def stop_after_third_sleep(_delay: float) -> None:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls == 3:
+                stop_event.set()
+
+        with (
+            patch(
+                'src.stream_processor.MediaStreamPublisher',
+                side_effect=[first_publisher, second_publisher],
+            ),
+            patch(
+                'src.stream_processor.asyncio.sleep',
+                side_effect=stop_after_third_sleep,
+            ),
+        ):
+            await processor._publish_requested_clean_frames(
+                latest_frame=latest_frame,
+                redis_manager=redis_manager,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                source_url='rtsp://source',
+                use_source_restreamer=False,
+                stop_event=stop_event,
+            )
+
+        first_publisher.publish.assert_awaited_once()
+        first_publisher.close.assert_awaited_once()
+        second_publisher.publish.assert_awaited_once()
+        second_publisher.close.assert_awaited_once()
+
     @patch('main.create_pool', new_callable=AsyncMock)
     async def test_ensure_db_pool_rewrites_mysql_default_port(
         self,
@@ -2374,8 +2926,12 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.app.db_pool)
 
     async def test_app_run_method(self) -> None:
-        """Test the run method calls poll_and_reload."""
-        with patch.object(self.app, 'poll_and_reload') as mock_poll, \
+        """Test the run method initializes the listener then polls."""
+        with patch.object(
+                self.app,
+                '_ensure_config_listener',
+        ) as mock_listener, \
+                patch.object(self.app, 'poll_and_reload') as mock_poll, \
                 patch.object(self.app, 'cleanup_resources') as mock_cleanup:
             mock_poll.side_effect = KeyboardInterrupt()
             mock_cleanup.return_value = None
@@ -2384,6 +2940,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             # so no exception should be raised
             await self.app.run()
 
+            mock_listener.assert_awaited_once()
             mock_poll.assert_called_once()
             mock_cleanup.assert_called_once()
 

@@ -99,6 +99,18 @@ class TestMessengerNotifier(unittest.TestCase):
         self.assertEqual(files['filedata'][0], 'image.png')
         self.assertEqual(files['filedata'][2], 'image/png')
 
+    @patch('src.notifiers.messenger_notifier.os.getenv', return_value=None)
+    def test_send_notification_requires_page_access_token(
+        self,
+        mock_getenv: Any,
+    ) -> None:
+        """A missing page token should be reported instead of calling Meta."""
+        with self.assertRaisesRegex(ValueError, 'FACEBOOK_PAGE_ACCESS_TOKEN'):
+            self.messenger_notifier.send_notification(
+                'test_recipient_id',
+                'Hello, Messenger!',
+            )
+
     @patch(
         'src.notifiers.messenger_notifier.MessengerNotifier.send_notification',
         return_value=200,

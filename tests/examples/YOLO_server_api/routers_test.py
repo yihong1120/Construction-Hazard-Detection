@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Callable
+from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import AsyncMock
@@ -10,6 +13,7 @@ from unittest.mock import Mock
 from unittest.mock import patch
 
 from fastapi import FastAPI
+from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
 from examples.YOLO_server_api import routers as routers_mod
@@ -329,6 +333,17 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.app.dependency_overrides[jwt_access] = (
             self._override_jwt_role_factory('admin')
         )
+
+    async def test_stream_upload_rejects_empty_files(self) -> None:
+        """Model uploads must contain at least one byte."""
+        upload = UploadFile(filename='empty.pt', file=BytesIO())
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'Empty upload file'):
+                await routers_mod._stream_upload_to_path(
+                    upload,
+                    Path(directory) / 'model.pt',
+                )
 
     async def test_websocket_route_delegates_to_handler(self) -> None:
         """

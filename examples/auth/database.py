@@ -27,6 +27,19 @@ def _positive_float_env(name: str, default: float) -> float:
         return default
 
 
+def _as_asyncpg_database_uri(database_uri: str) -> str:
+    """Convert legacy PostgreSQL URI schemes to SQLAlchemy's async driver."""
+    if database_uri.startswith('postgres://'):
+        return database_uri.replace('postgres://', 'postgresql+asyncpg://', 1)
+    if database_uri.startswith('postgresql://'):
+        return database_uri.replace(
+            'postgresql://',
+            'postgresql+asyncpg://',
+            1,
+        )
+    return database_uri
+
+
 DB_POOL_SIZE = max(1, _nonnegative_int_env('DB_POOL_SIZE', 2))
 DB_MAX_OVERFLOW = _nonnegative_int_env('DB_MAX_OVERFLOW', 1)
 DB_POOL_TIMEOUT_SECONDS = _positive_float_env(
@@ -43,15 +56,9 @@ settings: Settings = Settings()
 
 # Create an asynchronous SQLAlchemy engine
 # using the database URI from settings.
-sqlalchemy_database_uri = settings.sqlalchemy_database_uri
-if sqlalchemy_database_uri.startswith('postgres://'):
-    sqlalchemy_database_uri = sqlalchemy_database_uri.replace(
-        'postgres://', 'postgresql+asyncpg://', 1,
-    )
-elif sqlalchemy_database_uri.startswith('postgresql://'):
-    sqlalchemy_database_uri = sqlalchemy_database_uri.replace(
-        'postgresql://', 'postgresql+asyncpg://', 1,
-    )
+sqlalchemy_database_uri = _as_asyncpg_database_uri(
+    settings.sqlalchemy_database_uri,
+)
 
 engine = create_async_engine(
     sqlalchemy_database_uri,

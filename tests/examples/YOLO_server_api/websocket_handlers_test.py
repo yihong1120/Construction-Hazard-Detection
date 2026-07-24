@@ -64,6 +64,18 @@ class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs.get('code'), 1008)
 
 
+class TestWebsocketEnvironmentHelpers(unittest.TestCase):
+    def test_local_auth_bypass_handles_unset_and_non_ip_clients(self) -> None:
+        """Local-only bypass handles absent flags and host names safely."""
+        with patch.dict('os.environ', {}, clear=False):
+            self.assertTrue(ws_mod._env_bool('MISSING_WS_SWITCH', True))
+        with patch.dict(
+            'os.environ',
+            {'YOLO_WS_ALLOW_LOCALHOST_BYPASS': 'true'},
+        ):
+            self.assertTrue(ws_mod._should_bypass_local_auth('localhost'))
+
+
 class TestSendReadyConfig(unittest.IsolatedAsyncioTestCase):
     """Tests for sending initial ready/handshake configuration."""
 

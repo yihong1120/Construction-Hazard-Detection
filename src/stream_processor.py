@@ -338,13 +338,7 @@ async def _run_single_stream(
     finally:
         await yolo_detector.close()
         await streaming_capture.release_resources()
-        if clean_source_restreamer is not None:
-            await clean_source_restreamer.close()
-        if clean_media_publisher is not None:
-            await clean_media_publisher.close()
         await _close_overlay_publishers(overlay_media_publishers)
-        if preview_clean_media_publisher is not None:
-            await preview_clean_media_publisher.close()
         await _close_overlay_publishers(preview_overlay_media_publishers)
         if redis_manager is not None:
             try:

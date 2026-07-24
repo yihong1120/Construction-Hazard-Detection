@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from types import ModuleType
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -51,3 +52,18 @@ def test_precision_kwargs_falls_back_to_half_when_needed(
     assert precision_kwargs(False) == {'half': False}
     assert precision_kwargs(True, 8) == {'half': True}
     assert precision_kwargs(True, 32) == {'half': False}
+
+
+def test_precision_kwargs_uses_legacy_half_when_ultralytics_cfg_is_unavailable(
+) -> None:
+    """The fallback supports installs without ``ultralytics.cfg``."""
+    original_import = __import__
+
+    def fail_cfg_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'ultralytics.cfg':
+            raise ImportError('ultralytics config is unavailable')
+        return original_import(name, *args, **kwargs)
+
+    with patch('builtins.__import__', side_effect=fail_cfg_import):
+        assert precision_kwargs(True) == {'half': True}
+        assert precision_kwargs(False, 'fp32') == {'half': False}

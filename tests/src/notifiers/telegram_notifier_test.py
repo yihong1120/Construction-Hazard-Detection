@@ -97,6 +97,18 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs['caption'], message)
         self.assertIsInstance(kwargs['photo'], BytesIO)
 
+    @patch('src.notifiers.telegram_notifier.os.getenv', return_value=None)
+    async def test_send_notification_requires_bot_token(
+        self,
+        mock_getenv: Any,
+    ) -> None:
+        """A missing configured token must fail before making an API call."""
+        with self.assertRaisesRegex(ValueError, 'Telegram bot token'):
+            await self.telegram_notifier.send_notification(
+                'test_chat_id',
+                'Hello, Telegram!',
+            )
+
     @patch(
         'src.notifiers.telegram_notifier.TelegramNotifier.send_notification',
         new_callable=AsyncMock,

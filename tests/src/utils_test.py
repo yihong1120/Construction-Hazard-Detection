@@ -891,6 +891,15 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             'Expected empty bytes when encoding fails.',
         )
 
+    def test_encode_frame_returns_empty_bytes_when_opencv_raises(self) -> None:
+        """Unexpected OpenCV errors are contained at the encoding boundary."""
+        frame: np.ndarray = np.zeros((1, 1, 3), dtype=np.uint8)
+        with unittest.mock.patch(
+            'src.utils.cv2.imencode',
+            side_effect=RuntimeError('codec unavailable'),
+        ):
+            self.assertEqual(Utils.encode_frame(frame), b'')
+
     def test_filter_warnings_by_working_hour_working_hours(self) -> None:
         """
         Test filtering warnings during working hours.

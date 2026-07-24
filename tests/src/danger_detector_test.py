@@ -485,6 +485,55 @@ class TestDangerDetector(unittest.TestCase):
                 'pole_polygons: [<POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))>]',
             )
 
+    def test_proximity_skips_driver_and_handles_degenerate_inputs(
+        self,
+    ) -> None:
+        """Drivers and zero-area machinery cannot produce proximity alerts."""
+        person = [100, 100, 105, 110, 0.95, 5, 9, 0]
+        machinery = [95, 95, 125, 125, 0.85, 8, 1, 1]
+        warnings: dict[str, dict[str, object]] = {}
+
+        with (
+            patch.object(
+                self.detector,
+                '_nearby_machinery_vehicles',
+                return_value=iter([machinery]),
+            ),
+            patch.object(
+                self.detector,
+                '_is_driver_detection',
+                return_value=True,
+            ),
+        ):
+            self.detector.check_proximity_violations(
+                [person],
+                [machinery],
+                warnings,
+            )
+
+        self.assertEqual(warnings, {})
+        self.assertEqual(self.detector._spatial_cell_size([]), 64.0)
+        self.assertFalse(
+            self.detector._is_dangerously_close_detection(
+                person,
+                [10, 10, 10, 20, 0.9, 8],
+                'machinery',
+            ),
+        )
+        self.assertEqual(
+            self.detector._filter_static_machinery(
+                [
+                    [0, 0, 10, 10, 0.9, 8, -1, 0],
+                    [0, 0, 10, 10, 0.9, 8, 5, 0],
+                    [0, 0, 10, 10, 0.9, 5, -1, 0],
+                ],
+            ),
+            [
+                [0, 0, 10, 10, 0.9, 8, 5, 0],
+                [0, 0, 10, 10, 0.9, 5, -1, 0],
+            ],
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

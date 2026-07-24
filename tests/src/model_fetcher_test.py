@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -24,7 +25,8 @@ class TestModelFetcher(unittest.TestCase):
         Set up the test environment.
         """
         self.api_url: str = 'http://test-server/get_new_model'
-        self.local_dir: str = 'test_models/pt'
+        self._temporary_directory = tempfile.TemporaryDirectory()
+        self.local_dir: str = str(Path(self._temporary_directory.name) / 'pt')
         self.models: list[str] = ['test_model1', 'test_model2']
         self.fetcher: ModelFetcher = ModelFetcher(
             api_url=self.api_url,
@@ -39,11 +41,7 @@ class TestModelFetcher(unittest.TestCase):
         """
         Clean up the test environment.
         """
-        test_dir = Path(self.local_dir)
-        if test_dir.exists():
-            for file in test_dir.glob('*'):
-                file.unlink()  # Delete all files in the directory
-            test_dir.rmdir()  # Delete the directory
+        self._temporary_directory.cleanup()
 
     @patch('src.model_fetcher.Path.stat')
     def test_get_last_update_time_existing_file(

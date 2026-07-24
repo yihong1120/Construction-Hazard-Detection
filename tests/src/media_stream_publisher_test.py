@@ -146,6 +146,19 @@ class _ErrorStdin(_FakeStdin):
         raise RuntimeError('closed')
 
 
+class _FakeStderr:
+    """Minimal asynchronous stderr reader for publisher tests."""
+
+    def __init__(self, lines: list[object]) -> None:
+        self.lines = iter(lines)
+
+    async def readline(self) -> object:
+        item = next(self.lines)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
 def test_prepare_frame_resizes_and_crops_to_even_dimensions() -> None:
     """Exercise this test."""
     stream = publisher.MediaStreamPublisher(
@@ -419,6 +432,70 @@ def test_stop_process_ignores_stdin_close_pipe_errors() -> None:
     asyncio.run(stream._stop_process())
 
     assert stream._process is None
+
+
+def test_stop_process_cancels_stderr_tasks() -> None:
+    """The publisher releases pending stderr readers while stopping."""
+    async def run_case() -> tuple[_FakeTask, bool]:
+        stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+        no_process_task = _FakeTask()
+        stream._stderr_task = no_process_task  # type: ignore[assignment]
+        await stream._stop_process()
+
+        process = _FakeProcess(returncode=0)
+        stderr_task = asyncio.create_task(asyncio.sleep(60))
+        stream._process = process
+        stream._stderr_task = stderr_task
+        await stream._stop_process()
+        return no_process_task, stderr_task.cancelled()
+
+    no_process_task, stderr_cancelled = asyncio.run(run_case())
+
+    assert no_process_task.cancelled is True
+    assert stderr_cancelled is True
+
+
+def test_drain_stderr_records_ffmpeg_errors(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """FFmpeg stderr remains drained and retains its latest useful message."""
+    stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+    process = SimpleNamespace(stderr=_FakeStderr([b'warning\n', b'\n', b'']))
+
+    asyncio.run(stream._drain_stderr(process))
+
+    assert stream.last_error == 'warning'
+    assert 'ffmpeg: warning' in capsys.readouterr().out
+
+
+def test_drain_stderr_handles_missing_or_failing_reader() -> None:
+    """An unavailable stderr pipe cannot crash a publisher task."""
+    stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+    asyncio.run(stream._drain_stderr(SimpleNamespace()))
+
+    process = SimpleNamespace(
+        stderr=_FakeStderr([RuntimeError('reader lost')]),
+    )
+    asyncio.run(stream._drain_stderr(process))
+
+    assert stream.last_error == 'stderr reader failed: reader lost'
+
+
+def test_drain_stderr_propagates_task_cancellation() -> None:
+    """Stopping a publisher does not turn cancellation into a fake error."""
+    async def run_case() -> None:
+        stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+        wait_for_read = asyncio.Event()
+        process = SimpleNamespace(
+            stderr=SimpleNamespace(readline=lambda: wait_for_read.wait()),
+        )
+        task = asyncio.create_task(stream._drain_stderr(process))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run_case())
 
 
 def test_close_clears_state_without_process() -> None:
