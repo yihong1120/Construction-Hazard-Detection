@@ -139,6 +139,20 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.cfg.stream_name, 'updated_stream')
         self.assertEqual(self.cfg.video_url, 'http://test/updated')
 
+    async def test_update_stream_config_can_disable_recognition(self) -> None:
+        """Recognition can be disabled without changing the detection mode."""
+        self.db.commit = AsyncMock()
+        updates = StreamConfigUpdate(recognition_enabled=False)
+
+        await stream_config_services.update_stream_config(
+            cfg=self.cfg,
+            updates=updates,
+            db=self.db,
+        )
+
+        self.assertFalse(self.cfg.recognition_enabled)
+        self.db.commit.assert_awaited_once()
+
     async def test_update_stream_config_exception(self) -> None:
         """Test stream configuration update handling database exception.
 

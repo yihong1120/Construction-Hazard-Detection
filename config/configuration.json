@@ -8,7 +8,6 @@
           "line_token_1": "language_1",
           "line_token_2": "language_2"
         },
-        "detect_with_server": true,
         "expire_date": "2024-12-31T23:59:59",
         "detection_items": {
           "detect_no_safety_vest_or_helmet": true,
@@ -16,8 +15,7 @@
           "detect_in_restricted_area": true
         },
         "work_start_hour": 7,
-        "work_end_hour": 18,
-        "store_in_redis": true
+        "work_end_hour": 18
     },
     {
         "video_url": "streaming URL",
@@ -28,7 +26,6 @@
           "line_token_3": "language_3",
           "line_token_4": "language_4"
         },
-        "detect_with_server": false,
         "expire_date": "No Expire Date",
         "detection_items": {
           "detect_no_safety_vest_or_helmet": true,
@@ -36,7 +33,6 @@
           "detect_in_restricted_area": true
         },
         "work_start_hour": 0,
-        "work_end_hour": 24,
-        "store_in_redis": true
+        "work_end_hour": 24
       }
 ]

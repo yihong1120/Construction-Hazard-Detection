@@ -817,11 +817,10 @@ class StreamConfig(Base):
         detect_in_restricted_area (bool): Detection capability.
         detect_in_utility_pole_restricted_area (bool): Detection capability.
         detect_machinery_close_to_pole (bool): Detection capability.
-        detect_with_server (bool): Whether to use server-side detection.
+        recognition_enabled (bool): Whether recognition processing is enabled.
         expire_date (datetime | None): Expiration date for the configuration.
         work_start_hour (int): Start hour for work scheduling.
         work_end_hour (int): End hour for work scheduling.
-        store_in_redis (bool): Whether to store data in Redis.
         created_at (datetime): Timestamp of creation.
         updated_at (datetime): Timestamp of last update.
     """
@@ -859,15 +858,18 @@ class StreamConfig(Base):
         Boolean, default=False,
     )
 
-    detect_with_server: Mapped[bool] = mapped_column(Boolean, default=True)
+    recognition_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        server_default=text('TRUE'),
+        nullable=False,
+    )
     expire_date:        Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
     )
 
     work_start_hour: Mapped[int] = mapped_column(Integer)
     work_end_hour:   Mapped[int] = mapped_column(Integer)
-
-    store_in_redis: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),

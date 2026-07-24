@@ -420,11 +420,10 @@ CREATE TABLE stream_configs (
     detect_in_restricted_area BOOLEAN DEFAULT FALSE,
     detect_in_utility_pole_restricted_area BOOLEAN DEFAULT FALSE,
     detect_machinery_close_to_pole BOOLEAN DEFAULT FALSE,
-    detect_with_server BOOLEAN DEFAULT TRUE,
+    recognition_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     expire_date TIMESTAMP WITH TIME ZONE,
     work_start_hour INTEGER,
     work_end_hour INTEGER,
-    store_in_redis BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_sc_group
@@ -592,6 +591,23 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_stream_configs_updated_at
 BEFORE UPDATE ON stream_configs
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE FUNCTION notify_stream_config_changed()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('stream_config_changed', OLD.id::TEXT);
+        RETURN OLD;
+    END IF;
+
+    PERFORM pg_notify('stream_config_changed', NEW.id::TEXT);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_stream_configs_changed
+AFTER INSERT OR UPDATE OR DELETE ON stream_configs
+FOR EACH ROW EXECUTE FUNCTION notify_stream_config_changed();
 
 CREATE TRIGGER trg_fcm_device_tokens_updated_at
 BEFORE UPDATE ON fcm_device_tokens

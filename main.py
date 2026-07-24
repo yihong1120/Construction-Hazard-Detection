@@ -8,6 +8,7 @@ import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import suppress
+from datetime import datetime
 from multiprocessing import Process
 from multiprocessing.managers import SyncManager
 from typing import Any
@@ -52,6 +53,8 @@ class MainApp:
         self.running_processes: dict[str, dict] = {}
         self.lock = asyncio.Lock()  # Prevent overlapping reloads
         self.db_pool: Pool | None = None  # PostgreSQL async connection pool
+        self._config_listener_connection: Any | None = None
+        self._config_reload_task: asyncio.Task[None] | None = None
 
         # Process pool management to improve performance
         self.max_workers = min(multiprocessing.cpu_count(), 8)
@@ -91,12 +94,88 @@ class MainApp:
                 },
             )
 
+    async def _ensure_config_listener(self) -> None:
+        """Listen for committed stream-config changes between poll cycles."""
+        if self._config_listener_connection is not None:
+            return
+
+        await self._ensure_db_pool()
+        if self.db_pool is None:
+            return
+
+        connection = await self.db_pool.acquire()
+        try:
+            await connection.add_listener(
+                'stream_config_changed',
+                self._on_stream_config_changed,
+            )
+        except Exception:
+            await self.db_pool.release(connection)
+            raise
+        self._config_listener_connection = connection
+
+    def _on_stream_config_changed(
+        self,
+        _connection: object,
+        _pid: int,
+        _channel: str,
+        _payload: str,
+    ) -> None:
+        """Schedule a reload when PostgreSQL signals a config change."""
+        if (
+            self._config_reload_task is None
+            or self._config_reload_task.done()
+        ):
+            reload_task = asyncio.create_task(
+                self.reload_configurations(),
+            )
+            reload_task.add_done_callback(
+                self._log_config_reload_failure,
+            )
+            self._config_reload_task = reload_task
+
+    def _log_config_reload_failure(self, task: asyncio.Task[None]) -> None:
+        """Log callback reload failures instead of losing the task error."""
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            self.logger.error(f"[config] Immediate reload failed: {error}")
+
+    async def _cancel_config_reload_task(self) -> None:
+        """Cancel an in-flight callback reload before process shutdown."""
+        task = self._config_reload_task
+        self._config_reload_task = None
+        if task is None or task.done() or task is asyncio.current_task():
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    async def _close_config_listener(self, pool: Pool | None = None) -> None:
+        """Release the reserved LISTEN connection before closing its pool."""
+        connection = self._config_listener_connection
+        self._config_listener_connection = None
+        if connection is None:
+            return
+
+        target_pool = pool or self.db_pool
+        if target_pool is None:
+            return
+        with suppress(Exception):
+            await connection.remove_listener(
+                'stream_config_changed',
+                self._on_stream_config_changed,
+            )
+        with suppress(Exception):
+            await target_pool.release(connection)
+
     async def fetch_stream_configs(self) -> list[StreamConfig]:
         """
         Query the database for current stream configurations.
 
         Returns:
-            list[StreamConfig]: All active stream configuration records.
+            list[StreamConfig]: All configured stream records.
         """
         await self._ensure_db_pool()
         if self.db_pool is None:
@@ -110,11 +189,10 @@ class MainApp:
                sc.model_key,
                s.name              AS site,
                sc.stream_name,
-               sc.detect_with_server,
+               sc.recognition_enabled,
                sc.expire_date,
                sc.work_start_hour,
                sc.work_end_hour,
-               sc.store_in_redis,
                sc.detect_no_safety_vest_or_helmet,
                sc.detect_near_machinery_or_vehicle,
                sc.detect_in_restricted_area,
@@ -131,8 +209,9 @@ class MainApp:
         for row in rows:
             (
                 video_url, updated_at, model_key, site, stream_name,
-                detect_with_server, expire_date, work_start, work_end,
-                store_in_redis, vest_helmet, near_vehicle, in_area,
+                recognition_enabled, expire_date,
+                work_start, work_end,
+                vest_helmet, near_vehicle, in_area,
                 in_pole_area, machine_close_pole,
             ) = row
 
@@ -152,14 +231,17 @@ class MainApp:
                     model_key=model_key,
                     site=site,
                     stream_name=stream_name,
-                    detect_with_server=bool(detect_with_server),
+                    recognition_enabled=bool(recognition_enabled),
                     expire_date=(
                         expire_date.isoformat() if expire_date else None
                     ),
                     detection_items=detection_items,
-                    work_start_hour=int(work_start or 7),
-                    work_end_hour=int(work_end or 18),
-                    store_in_redis=bool(store_in_redis),
+                    work_start_hour=(
+                        int(work_start) if work_start is not None else 7
+                    ),
+                    work_end_hour=(
+                        int(work_end) if work_end is not None else 18
+                    ),
                 ),
             )
 
@@ -183,30 +265,40 @@ class MainApp:
     async def reload_configurations(self) -> None:
         """
         Main configuration reload logic:
-            - Stops expired or deleted stream processes
+            - Stops disabled, unscheduled, expired, or deleted stream processes
             - Restarts modified streams (based on updated_at)
             - Starts newly added streams not yet tracked
         """
         async with self.lock:
             configs = await self.fetch_stream_configs()
-            workers_restarted = (
-                self._ensure_yolo_worker()
-                if self.yolo_worker_processes
-                else False
-            )
             cfg_map = {c['video_url']: c for c in configs}
+            now = datetime.now()
+            runnable_configs = {
+                video_url: cfg
+                for video_url, cfg in cfg_map.items()
+                if self._can_run_recognition(cfg, now)
+            }
+            if runnable_configs:
+                workers_restarted = (
+                    self._ensure_yolo_worker()
+                    if self.yolo_worker_processes
+                    else False
+                )
+            else:
+                workers_restarted = False
+                if self.yolo_worker_processes:
+                    self._stop_yolo_worker()
 
-            # 1. Stop removed or expired streams
+            # 1. Stop streams that are removed or cannot currently run.
             for video_url in list(self.running_processes.keys()):
                 proc_info = self.running_processes[video_url]
                 cfg = cfg_map.get(video_url)
 
-                if not cfg or Utils.is_expired(cfg.get('expire_date')):
+                if video_url not in runnable_configs:
                     self.logger.info(f"Stop stream {video_url}")
                     self.stop_process(proc_info['process'])
 
-                    if proc_info['cfg'].get('store_in_redis'):
-                        await self._delete_stream_redis_keys(proc_info['cfg'])
+                    await self._delete_stream_redis_keys(proc_info['cfg'])
 
                     del self.running_processes[video_url]
                     continue
@@ -222,10 +314,8 @@ class MainApp:
                         cfg,
                     )
 
-            # 3. Start any new streams
-            for video_url, cfg in cfg_map.items():
-                if Utils.is_expired(cfg.get('expire_date')):
-                    continue
+            # 2. Start any newly runnable streams.
+            for video_url, cfg in runnable_configs.items():
                 if video_url not in self.running_processes:
                     self.logger.info(
                         f"Launch new stream {video_url}",
@@ -236,6 +326,22 @@ class MainApp:
                         'updated_at': cfg['updated_at'],
                         'cfg': cfg,
                     }
+
+    @staticmethod
+    def _can_run_recognition(
+        cfg: StreamConfig,
+        now: datetime | None = None,
+    ) -> bool:
+        """Return whether this stream is currently eligible for recognition."""
+        if not cfg.get('recognition_enabled', True):
+            return False
+        if Utils.is_expired(cfg.get('expire_date')):
+            return False
+
+        current_hour = (now or datetime.now()).hour
+        work_start_hour = int(cfg.get('work_start_hour', 7))
+        work_end_hour = int(cfg.get('work_end_hour', 18))
+        return work_start_hour <= current_hour < work_end_hour
 
     def start_process(self, cfg: StreamConfig) -> Process:
         """
@@ -312,8 +418,7 @@ class MainApp:
         reason = self._restart_reason(proc_info, cfg)
         self.logger.info(f"Restart stream {video_url} ({reason})")
         self.stop_process(proc_info['process'])
-        if proc_info['cfg'].get('store_in_redis'):
-            await self._delete_stream_redis_keys(proc_info['cfg'])
+        await self._delete_stream_redis_keys(proc_info['cfg'])
         new_proc = self.start_process(cfg)
         self.running_processes[video_url] = {
             'process': new_proc,
@@ -396,9 +501,11 @@ class MainApp:
             self.process_executor.shutdown(wait=True)
 
         self._stop_yolo_worker()
+        await self._cancel_config_reload_task()
 
         # Close database connection pool
         if self.db_pool:
+            await self._close_config_listener(self.db_pool)
             await self.db_pool.close()
             self.db_pool = None
 
@@ -406,7 +513,9 @@ class MainApp:
         """Close the current database pool so the next poll reconnects."""
         pool = self.db_pool
         self.db_pool = None
+        await self._cancel_config_reload_task()
         if pool is not None:
+            await self._close_config_listener(pool)
             with suppress(Exception):
                 await pool.close()
 
@@ -434,6 +543,7 @@ class MainApp:
         Start the application loop that continuously checks the stream configs.
         """
         try:
+            await self._ensure_config_listener()
             await self.poll_and_reload()
         except KeyboardInterrupt:
             self.logger.info('Received keyboard interrupt, shutting down...')
@@ -465,10 +575,14 @@ async def main() -> None:
         with open(args.config, encoding='utf-8') as f:
             configs = json.load(f)
         app = MainApp(poll_interval=args.poll)
-        app._ensure_yolo_worker()
-        # Start a process for each config
+        runnable_configs = [
+            cfg for cfg in configs if app._can_run_recognition(cfg)
+        ]
+        if runnable_configs:
+            app._ensure_yolo_worker()
+        # Start a process for each currently runnable config.
         procs = []
-        for cfg in configs:
+        for cfg in runnable_configs:
             yolo_request_queue, yolo_result_store = app._yolo_worker_slot(cfg)
             proc = Process(
                 target=process_single_stream,

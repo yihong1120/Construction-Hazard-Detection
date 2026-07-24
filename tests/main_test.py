@@ -206,7 +206,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             'model_key': 'model-abc',
             'site': 'SiteA',
             'stream_name': 'StreamOne',
-            'detect_with_server': True,
+            'recognition_enabled': True,
             'expire_date': None,
             'detection_items': {
                 'detect_no_safety_vest_or_helmet': True,
@@ -215,16 +215,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 'detect_in_utility_pole_restricted_area': False,
                 'detect_machinery_close_to_pole': False,
             },
-            'work_start_hour': 7,
-            'work_end_hour': 18,
-            'store_in_redis': False,
+            'work_start_hour': 0,
+            'work_end_hour': 24,
         }
-
-    def test_resolve_detect_with_server_ignores_configured_local(
-            self,
-    ) -> None:
-        """Stream processing is server-only."""
-        self.assertTrue(processor._resolve_detect_with_server(False))
 
     def test_validate_server_model_key_accepts_configured_model(self) -> None:
         """Server mode accepts configured YOLO server model keys."""
@@ -292,8 +285,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         """Exercise this test."""
         cfg = dict(self.dummy_cfg)
         cfg.update({
-            'detect_with_server': False,
-            'store_in_redis': True,
             'model_key': 'yolo26n',
         })
         streaming_capture = AsyncMock()
@@ -321,7 +312,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 'src.stream_processor.RedisManager',
                 return_value=redis_manager,
             ),
-            patch('src.stream_processor.MediaStreamPublisher') as publisher_cls,
+            patch(
+                'src.stream_processor.MediaStreamPublisher',
+            ) as publisher_cls,
             patch(
                 'src.stream_processor._run_decoupled_media_server_loop',
                 new_callable=AsyncMock,
@@ -348,14 +341,26 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         publisher_cls.assert_not_called()
         redis_manager.delete.assert_awaited_once()
 
+    async def test_run_single_stream_skips_disabled_recognition(self) -> None:
+        """Disabled configs do not initialise capture or inference clients."""
+        cfg = dict(self.dummy_cfg)
+        cfg['recognition_enabled'] = False
+
+        with (
+            patch('src.stream_processor.StreamCapture') as capture_cls,
+            patch('src.stream_processor.YoloDetector') as detector_cls,
+        ):
+            await processor._run_single_stream(cfg)
+
+        capture_cls.assert_not_called()
+        detector_cls.assert_not_called()
+
     async def test_run_single_stream_requires_worker_for_server_mode(
             self,
     ) -> None:
         """Exercise this test."""
         cfg = dict(self.dummy_cfg)
         cfg.update({
-            'detect_with_server': True,
-            'store_in_redis': False,
             'model_key': 'yolo26n',
         })
         streaming_capture = AsyncMock()
@@ -388,8 +393,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         """Exercise this test."""
         cfg = dict(self.dummy_cfg)
         cfg.update({
-            'detect_with_server': True,
-            'store_in_redis': False,
             'model_key': 'yolo26n',
         })
         streaming_capture = AsyncMock()
@@ -440,8 +443,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         """Clean restreaming is not started during stream bootstrap."""
         cfg = dict(self.dummy_cfg)
         cfg.update({
-            'detect_with_server': False,
-            'store_in_redis': True,
             'model_key': 'yolo26n',
         })
         streaming_capture = AsyncMock()
@@ -503,8 +504,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         """Exercise this test."""
         cfg = dict(self.dummy_cfg)
         cfg.update({
-            'detect_with_server': False,
-            'store_in_redis': True,
             'model_key': 'yolo26n',
         })
         streaming_capture = AsyncMock()
@@ -662,7 +661,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         redis_manager = MagicMock()
         redis_manager.redis.xadd = AsyncMock()
 
-        with patch('src.stream_processor.Utils.should_notify', return_value=False):
+        with patch(
+            'src.stream_processor.Utils.should_notify',
+            return_value=False,
+        ):
             await processor._run_inline_stream_loop(
                 streaming_capture=streaming_capture,
                 yolo_detector=yolo_detector,
@@ -1648,13 +1650,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         frame.setflags.assert_called_once_with(write=False)
 
-    def test_resolve_detect_with_server_returns_configured_default(
-            self,
-    ) -> None:
-        """Exercise this test."""
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertTrue(processor._resolve_detect_with_server(True))
-
     def test_build_media_publish_frame_delegates_to_overlay_renderer(
             self,
     ) -> None:
@@ -1918,7 +1913,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         old_proc = MagicMock()
         new_proc = MagicMock()
         old_cfg = dict(self.dummy_cfg)
-        old_cfg['store_in_redis'] = True
         proc_info = {
             'process': old_proc,
             'updated_at': old_cfg['updated_at'],
@@ -2040,6 +2034,11 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 self.app,
+                '_ensure_config_listener',
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                self.app,
                 'poll_and_reload',
                 new_callable=AsyncMock,
                 side_effect=RuntimeError('boom'),
@@ -2125,6 +2124,64 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             mock_start.assert_called_once()
 
     @patch('main.MainApp.fetch_stream_configs')
+    async def test_reload_config_skips_recognition_disabled_config(
+        self,
+        mock_fetch: Any,
+    ) -> None:
+        """A saved but disabled config must not start a stream process."""
+        cfg = self.dummy_cfg.copy()
+        cfg['recognition_enabled'] = False
+        mock_fetch.return_value = [cfg]
+
+        with patch('main.MainApp.start_process') as mock_start:
+            await self.app.reload_configurations()
+
+        self.assertNotIn(cfg['video_url'], self.app.running_processes)
+        mock_start.assert_not_called()
+
+    @patch('main.MainApp.fetch_stream_configs')
+    async def test_reload_config_stops_recognition_disabled_stream(
+        self,
+        mock_fetch: Any,
+    ) -> None:
+        """Disabling recognition stops the already-running child process."""
+        cfg = self.dummy_cfg.copy()
+        cfg['recognition_enabled'] = False
+        proc = MagicMock()
+        self.app.running_processes[cfg['video_url']] = {
+            'process': proc,
+            'updated_at': cfg['updated_at'],
+            'cfg': self.dummy_cfg.copy(),
+        }
+        mock_fetch.return_value = [cfg]
+
+        await self.app.reload_configurations()
+
+        self.assertNotIn(cfg['video_url'], self.app.running_processes)
+        proc.terminate.assert_called_once()
+
+    def test_can_run_recognition_requires_enabled_schedule_and_validity(
+        self,
+    ) -> None:
+        """The supervisor applies all recognition startup gates."""
+        cfg = self.dummy_cfg.copy()
+        now = datetime(2026, 7, 24, 10)
+
+        self.assertTrue(self.app._can_run_recognition(cfg, now))
+
+        cfg['recognition_enabled'] = False
+        self.assertFalse(self.app._can_run_recognition(cfg, now))
+
+        cfg['recognition_enabled'] = True
+        cfg['work_start_hour'] = 11
+        self.assertFalse(self.app._can_run_recognition(cfg, now))
+
+        cfg['work_start_hour'] = 0
+        cfg['work_end_hour'] = 24
+        cfg['expire_date'] = '2020-01-01T00:00:00'
+        self.assertFalse(self.app._can_run_recognition(cfg, now))
+
+    @patch('main.MainApp.fetch_stream_configs')
     async def test_reload_config_stops_expired_stream(
             self, mock_fetch: Any,
     ) -> None:
@@ -2132,7 +2189,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         expired_date = (datetime.now() - timedelta(days=1)).isoformat()
         mock_cfg = self.dummy_cfg.copy()
         mock_cfg['expire_date'] = expired_date
-        mock_cfg['store_in_redis'] = True
 
         self.app.running_processes[mock_cfg['video_url']] = {
             'process': MagicMock(),
@@ -2332,16 +2388,14 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             mock_cleanup.assert_called_once()
 
     @patch('main.MainApp.fetch_stream_configs')
-    async def test_reload_config_with_store_redis_false(
+    async def test_reload_config_cleans_metadata_for_stopped_stream(
             self, mock_fetch: Any,
     ) -> None:
-        """Test reload_configurations with store_in_redis=False."""
+        """Stopping a stream always clears its live metadata."""
         expired_cfg = self.dummy_cfg.copy()
         expired_cfg['expire_date'] = (
             datetime.now() - timedelta(days=1)
         ).isoformat()
-        expired_cfg['store_in_redis'] = False
-
         self.app.running_processes[expired_cfg['video_url']] = {
             'process': MagicMock(),
             'updated_at': expired_cfg['updated_at'],
@@ -2350,27 +2404,23 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         mock_fetch.return_value = []
 
-        # Should not delete live metadata since store_in_redis is False
         with patch('main.delete_stream_live_metadata') as mock_redis_class:
             await self.app.reload_configurations()
-            mock_redis_class.assert_not_called()
+            mock_redis_class.assert_awaited_once_with(expired_cfg)
 
     @patch('main.MainApp.fetch_stream_configs')
     async def test_reload_config_redis_cleanup_on_restart(
             self, mock_fetch: Any,
     ) -> None:
         """
-        Test Redis cleanup during stream restart when store_in_redis=True.
+        Test Redis cleanup during stream restart.
         """
         video_url = self.dummy_cfg['video_url']
         old_cfg = self.dummy_cfg.copy()
-        old_cfg['store_in_redis'] = True
         new_cfg = self.dummy_cfg.copy()
         new_cfg['updated_at'] = (
             datetime.now() + timedelta(seconds=5)
         ).isoformat()
-        new_cfg['store_in_redis'] = True
-
         mock_proc = MagicMock()
         self.app.running_processes[video_url] = {
             'process': mock_proc,
@@ -2669,11 +2719,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 'model_key': 'model-123',
                 'site': 'TestSite',
                 'stream_name': 'TestStream',
-                'detect_with_server': True,
                 'expire_date': '2025-12-31T23:59:59',
                 'work_start_hour': 8,
                 'work_end_hour': 17,
-                'store_in_redis': True,
                 'detection_items': {
                     'detect_no_safety_vest_or_helmet': True,
                     'detect_near_machinery_or_vehicle': False,
@@ -2692,10 +2740,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(config['video_url'], 'rtsp://test.com/stream')
             self.assertEqual(config['site'], 'TestSite')
             self.assertEqual(config['stream_name'], 'TestStream')
-            self.assertTrue(config['detect_with_server'])
             self.assertEqual(config['work_start_hour'], 8)
             self.assertEqual(config['work_end_hour'], 17)
-            self.assertTrue(config['store_in_redis'])
 
             # Test detection items
             detection_items = config['detection_items']
@@ -2725,11 +2771,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 'model_key': 'model-456',
                 'site': 'TestSite2',
                 'stream_name': 'TestStream2',
-                'detect_with_server': False,
                 'expire_date': None,
                 'work_start_hour': 7,  # Default value
                 'work_end_hour': 18,  # Default value
-                'store_in_redis': False,
                 'detection_items': {
                     'detect_no_safety_vest_or_helmet': False,
                     'detect_near_machinery_or_vehicle': True,
@@ -2746,11 +2790,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(configs), 1)
             config = configs[0]
             self.assertEqual(config['video_url'], 'rtsp://test.com/stream2')
-            self.assertFalse(config['detect_with_server'])
             self.assertIsNone(config['expire_date'])
             self.assertEqual(config['work_start_hour'], 7)  # Default value
             self.assertEqual(config['work_end_hour'], 18)  # Default value
-            self.assertFalse(config['store_in_redis'])
 
     @patch('main.create_pool', new_callable=AsyncMock)
     async def test_fetch_stream_configs_database_operations(
@@ -2769,11 +2811,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             'model-123',  # model_key
             'TestSite',  # site
             'TestStream',  # stream_name
-            1,  # detect_with_server
+            1,  # recognition_enabled
             datetime(2025, 12, 31, 23, 59, 59),  # expire_date
             8,  # work_start_hour
             17,  # work_end_hour
-            1,  # store_in_redis
             1,  # vest_helmet
             0,  # near_vehicle
             1,  # in_area
@@ -2814,7 +2855,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         config = configs[0]
         self.assertEqual(config['video_url'], 'rtsp://test.com/stream')
         self.assertEqual(config['site'], 'TestSite')
-        self.assertTrue(config['detect_with_server'])
+        self.assertTrue(config['recognition_enabled'])
 
         # Verify detection items were processed correctly
         detection_items = config['detection_items']

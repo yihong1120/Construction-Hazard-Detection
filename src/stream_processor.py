@@ -22,7 +22,6 @@ from examples.streaming_web.media_paths import build_clean_demand_key
 from examples.streaming_web.media_paths import build_media_path
 from examples.streaming_web.media_paths import build_overlay_ready_key
 from examples.streaming_web.media_paths import build_preview_media_path
-from examples.streaming_web.media_paths import CLEAN_DEMAND_PREFIX
 from examples.streaming_web.media_paths import decode_media_segment
 from examples.streaming_web.media_paths import OVERLAY_DEMAND_PREFIX
 from examples.streaming_web.overlay_renderer import (
@@ -63,12 +62,11 @@ class StreamConfig(TypedDict, total=False):
     model_key: str
     site: str
     stream_name: str
-    detect_with_server: bool
+    recognition_enabled: bool
     expire_date: str | None
     detection_items: dict[str, bool]
     work_start_hour: int
     work_end_hour: int
-    store_in_redis: bool
 
 
 @dataclass
@@ -175,15 +173,23 @@ async def _run_single_stream(
     yolo_result_store: object | None = None,
 ) -> None:
     """Run one stream processing coroutine for the given configuration."""
+    if not cfg.get('recognition_enabled', True):
+        print(
+            f"[{cfg['site']}:{cfg['stream_name']}] Recognition disabled; "
+            'skipping stream processor startup',
+            flush=True,
+        )
+        return
+
     video_url = cfg['video_url']
     model_key = cfg['model_key']
     site = cfg['site']
     stream_name = cfg['stream_name']
-    detect_with_server = _resolve_detect_with_server(cfg['detect_with_server'])
     detection_items = cfg['detection_items']
     work_start_hour = cfg['work_start_hour']
     work_end_hour = cfg['work_end_hour']
-    live_view_enabled = _live_view_enabled(cfg)
+    # Every active recognition stream also publishes its MediaMTX live view.
+    live_view_enabled = True
     print(
         f'[{site}:{stream_name}] Streaming output mode: media_server',
         flush=True,
@@ -204,8 +210,7 @@ async def _run_single_stream(
             ),
         )
         if (
-            detect_with_server
-            and os.getenv(
+            os.getenv(
                 'YOLO_WORKER_ENABLED',
                 'true',
             ).strip().lower() in {'1', 'true', 'yes', 'on'}
@@ -218,20 +223,19 @@ async def _run_single_stream(
     yolo_detector = YoloDetector(
         model_key=model_key,
         output_folder=site,
-        detect_with_server=detect_with_server,
+        detect_with_server=True,
         worker_client=worker_client,
     )
-    if detect_with_server:
-        _validate_server_model_key(model_key)
-        if worker_client is None:
-            raise RuntimeError(
-                'YOLO_WORKER_ENABLED=true and shared worker queues are '
-                'required for server detection mode',
-            )
-        print(
-            f'[{site}:{stream_name}] YOLO detection worker enabled',
-            flush=True,
+    _validate_server_model_key(model_key)
+    if worker_client is None:
+        raise RuntimeError(
+            'YOLO_WORKER_ENABLED=true and shared worker queues are '
+            'required for server detection mode',
         )
+    print(
+        f'[{site}:{stream_name}] YOLO detection worker enabled',
+        flush=True,
+    )
     danger_detector = DangerDetector(detection_items)
     fcm_sender = FCMSender(api_url=os.getenv('FCM_API_URL') or '')
     violation_sender = ViolationSender(
@@ -1329,11 +1333,6 @@ async def _clean_stream_requested(
     )
 
 
-def _live_view_enabled(cfg: StreamConfig) -> bool:
-    """Return whether this stream should publish live MediaMTX outputs."""
-    return bool(cfg.get('store_in_redis'))
-
-
 def _stream_metadata_key(site: str, stream_name: str) -> str:
     """Build the compact live metadata stream key."""
     return f'stream_metadata:{Utils.encode(site)}|{Utils.encode(stream_name)}'
@@ -1495,16 +1494,6 @@ def _mark_frame_readonly(frame: np.ndarray) -> None:
         frame.setflags(write=False)
     except ValueError:
         pass
-
-
-def _resolve_detect_with_server(_configured: bool) -> bool:
-    """Return the runtime detection mode for streams.
-
-    Stream processing is server-only. The database ``detect_with_server`` value
-    is still accepted for compatibility with existing records, but local
-    inference is disabled for the main runtime path.
-    """
-    return True
 
 
 def _validate_server_model_key(model_key: str) -> None:

@@ -24,11 +24,10 @@ class TestStreamConfigCreate(unittest.TestCase):
         self.assertEqual(data.stream_name, 'stream1')
         self.assertEqual(data.video_url, 'http://video.url')
         self.assertEqual(data.model_key, 'yolo26n')
-        self.assertTrue(data.detect_with_server)
+        self.assertTrue(data.recognition_enabled)
         self.assertEqual(data.work_start_hour, 7)
         self.assertEqual(data.work_end_hour, 18)
         self.assertFalse(data.detect_no_safety_vest_or_helmet)
-        self.assertFalse(data.store_in_redis)
         self.assertIsNone(data.expire_date)
 
     def test_optional_fields(self) -> None:
@@ -38,19 +37,30 @@ class TestStreamConfigCreate(unittest.TestCase):
             stream_name='stream2',
             video_url='http://video.url',
             model_key='custom_model',
-            detect_with_server=False,
+            recognition_enabled=False,
             work_start_hour=8,
             work_end_hour=20,
             detect_no_safety_vest_or_helmet=True,
-            store_in_redis=True,
             expire_date=None,
         )
         self.assertEqual(data.model_key, 'custom_model')
-        self.assertFalse(data.detect_with_server)
+        self.assertFalse(data.recognition_enabled)
         self.assertEqual(data.work_start_hour, 8)
         self.assertEqual(data.work_end_hour, 20)
         self.assertTrue(data.detect_no_safety_vest_or_helmet)
-        self.assertTrue(data.store_in_redis)
+
+    def test_legacy_flags_are_ignored(self) -> None:
+        """Older clients cannot restore removed stream configuration fields."""
+        data = StreamConfigCreate(
+            site_id=1,
+            stream_name='stream1',
+            video_url='rtsp://camera/stream',
+            detect_with_server=False,
+            store_in_redis=False,
+        )
+
+        self.assertNotIn('detect_with_server', data.model_dump())
+        self.assertNotIn('store_in_redis', data.model_dump())
 
     def test_missing_required_fields(self) -> None:
         """Test validation error when required fields are missing."""
@@ -69,7 +79,7 @@ class TestStreamConfigUpdate(unittest.TestCase):
         self.assertIsNone(data.stream_name)
         self.assertIsNone(data.video_url)
         self.assertIsNone(data.model_key)
-        self.assertIsNone(data.detect_with_server)
+        self.assertIsNone(data.recognition_enabled)
         self.assertIsNone(data.work_start_hour)
 
     def test_partial_fields_provided(self) -> None:
@@ -104,9 +114,11 @@ class TestSiteStreamConfigUpsert(unittest.TestCase):
         item = SiteStreamConfigItem(
             stream_name='Cam2',
             video_url='rtsp://camera/two',
+            recognition_enabled=False,
         )
 
         self.assertEqual(item.video_url, 'rtsp://camera/two')
+        self.assertFalse(item.recognition_enabled)
 
 
 class TestStreamConfigRead(unittest.TestCase):
@@ -120,8 +132,7 @@ class TestStreamConfigRead(unittest.TestCase):
             stream_name='stream1',
             video_url='http://video.url',
             model_key='model1',
-            detect_with_server=True,
-            store_in_redis=False,
+            recognition_enabled=True,
             work_start_hour=7,
             work_end_hour=18,
             detect_no_safety_vest_or_helmet=True,
@@ -137,8 +148,7 @@ class TestStreamConfigRead(unittest.TestCase):
         self.assertEqual(data.id, 1)
         self.assertEqual(data.stream_name, 'stream1')
         self.assertEqual(data.model_key, 'model1')
-        self.assertTrue(data.detect_with_server)
-        self.assertFalse(data.store_in_redis)
+        self.assertTrue(data.recognition_enabled)
         self.assertEqual(data.total_stream_in_group, 2)
         self.assertEqual(data.max_allowed_streams, 10)
         self.assertEqual(data.updated_at, now)

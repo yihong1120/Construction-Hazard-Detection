@@ -62,8 +62,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
             stream_name='test',
             video_url='url',
             model_key='yolo',
-            detect_with_server=True,
-            store_in_redis=False,
+            recognition_enabled=True,
             work_start_hour=8,
             work_end_hour=17,
             detect_no_safety_vest_or_helmet=True,
@@ -86,6 +85,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(response), 1)
         self.assertEqual(response[0].stream_name, 'test')
+        self.assertTrue(response[0].recognition_enabled)
         mock_list.assert_awaited_once_with(1, self.db, group_id=1)
 
     @patch('examples.db_management.routers.streams.create_stream_config')
@@ -168,8 +168,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
             stream_name='Old Cam',
             video_url='rtsp://old',
             model_key='yolo26n',
-            detect_with_server=True,
-            store_in_redis=False,
+            recognition_enabled=True,
             work_start_hour=7,
             work_end_hour=18,
             detect_no_safety_vest_or_helmet=False,
@@ -193,6 +192,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
                     id=11,
                     stream_name='Old Cam',
                     rtsp_url='rtsp://updated',
+                    recognition_enabled=False,
                 ),
                 SiteStreamConfigItem(
                     stream_name='New Cam',
@@ -215,6 +215,9 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created_payload.site_id, 1)
         self.assertEqual(created_payload.group_id, 1)
         self.assertEqual(created_payload.video_url, 'rtsp://new')
+        self.assertTrue(created_payload.recognition_enabled)
+        updated_payload = mock_update.await_args.args[1]
+        self.assertFalse(updated_payload.recognition_enabled)
         self.assertEqual(len(response), 1)
 
     async def test_endpoint_put_site_stream_config_rejects_duplicate_names(

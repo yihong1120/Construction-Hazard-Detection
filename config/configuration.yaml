@@ -6,7 +6,6 @@
   notifications:  # List of line tokens, and languages for notifications
     line_token_1: language_1
     line_token_2: language_2
-  detect_with_server: True  # Run objection detection with server
   expire_date: "2024-12-31T23:59:59"  # Expire date in ISO 8601 format
   detection_items:  # Detection items
     detect_no_safety_vest_or_helmet: True       # Detect if no safety vest or helmet is worn
@@ -19,7 +18,6 @@
   notifications:
     line_token_3: language_3
     line_token_4: language_4
-  detect_with_server: False
   expire_date: "No Expire Date"
   detection_items:
     detect_no_safety_vest_or_helmet: True

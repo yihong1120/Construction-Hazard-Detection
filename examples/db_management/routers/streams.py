@@ -15,7 +15,6 @@ from examples.db_management.deps import ensure_admin_with_group
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
 from examples.db_management.deps import require_admin
-from examples.db_management.schemas.stream_config import SiteStreamConfigItem
 from examples.db_management.schemas.stream_config import SiteStreamConfigUpsert
 from examples.db_management.schemas.stream_config import StreamConfigCreate
 from examples.db_management.schemas.stream_config import StreamConfigRead
@@ -106,8 +105,7 @@ async def _stream_config_to_read(
         stream_name=cfg.stream_name,
         video_url=cfg.video_url,
         model_key=cfg.model_key,
-        detect_with_server=cfg.detect_with_server,
-        store_in_redis=cfg.store_in_redis,
+        recognition_enabled=cfg.recognition_enabled,
         work_start_hour=cfg.work_start_hour,
         work_end_hour=cfg.work_end_hour,
         detect_no_safety_vest_or_helmet=(
