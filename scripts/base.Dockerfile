@@ -1,12 +1,12 @@
 # Use a lightweight Python image as the base
-FROM python:3.12.13-slim
+FROM python:3.12.13-slim-bookworm
 
 # Set the working directory
 WORKDIR /app
 
 # Install minimal system dependencies and NVIDIA CUDA runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget curl libgl1-mesa-glx libglib2.0-0 libffi-dev libssl-dev libpq-dev \
+    wget curl libgl1 libglib2.0-0 libffi-dev libssl-dev libpq-dev \
     build-essential gcc python3-dev fonts-noto-core fonts-noto-cjk \
     fonts-noto-extra && \
     wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb && \
