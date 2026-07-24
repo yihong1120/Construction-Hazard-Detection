@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import builtins
 import importlib
 import inspect
 import os
-import sys
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
+
+import torch
 
 from examples.YOLO_server_api import config
 
@@ -234,40 +233,27 @@ class TestYoloServerConfigCoverage(unittest.TestCase):
         with patch.object(config, 'YOLO_INFERENCE_DEVICE', 'cuda:2'):
             self.assertEqual(config.get_inference_device(), 'cuda:2')
 
-        cuda_available = SimpleNamespace(
-            cuda=SimpleNamespace(is_available=lambda: True),
-        )
         with (
             patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
-            patch.dict(sys.modules, {'torch': cuda_available}),
+            patch.object(torch.cuda, 'is_available', return_value=True),
         ):
             self.assertEqual(config.get_inference_device(), 'cuda:0')
 
-        cuda_unavailable = SimpleNamespace(
-            cuda=SimpleNamespace(is_available=lambda: False),
-        )
         with (
             patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
-            patch.dict(sys.modules, {'torch': cuda_unavailable}),
+            patch.object(torch.cuda, 'is_available', return_value=False),
         ):
             self.assertEqual(config.get_inference_device(), 'cpu')
 
-    def test_inference_device_falls_back_when_torch_import_fails(self) -> None:
+    def test_inference_device_falls_back_when_cuda_probe_fails(self) -> None:
         """CUDA probe failures produce a warning and retain a CPU fallback."""
-        original_import = builtins.__import__
-
-        def unavailable_torch(
-            name: str,
-            *args: object,
-            **kwargs: object,
-        ) -> object:
-            if name == 'torch':
-                raise ImportError('torch is unavailable')
-            return original_import(name, *args, **kwargs)
-
         with (
             patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
-            patch('builtins.__import__', side_effect=unavailable_torch),
+            patch.object(
+                torch.cuda,
+                'is_available',
+                side_effect=RuntimeError('CUDA probe failed'),
+            ),
             self.assertWarnsRegex(UserWarning, 'falling back to CPU'),
         ):
             self.assertEqual(config.get_inference_device(), 'cpu')
