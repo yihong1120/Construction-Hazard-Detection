@@ -168,13 +168,19 @@ async def metadata_stream_generator(
             await asyncio.sleep(_metadata_poll_interval)
             continue
         except Exception as exc:
-            if now - last_redis_error_log >= _metadata_redis_error_interval_seconds:
+            if (
+                now - last_redis_error_log
+                >= _metadata_redis_error_interval_seconds
+            ):
                 print(
                     f"[metadata] Redis read failed for {redis_key}: {exc}",
                     flush=True,
                 )
                 last_redis_error_log = now
-            if now - last_redis_error_event >= _metadata_redis_error_interval_seconds:
+            if (
+                now - last_redis_error_event
+                >= _metadata_redis_error_interval_seconds
+            ):
                 last_redis_error_event = now
                 last_heartbeat = now
                 yield _encode_sse_event(
@@ -347,6 +353,9 @@ async def handle_metadata_ws(
         except Exception:
             await websocket.close(code=4001, reason='User not found')
             return
+        finally:
+            # Metadata messages use Redis after authorization completes.
+            await db.close()
         if user_role != 'super_admin' and label not in user_site_names:
             print(
                 f"[WebSocket-Metadata] {client_ip} ({username}): "

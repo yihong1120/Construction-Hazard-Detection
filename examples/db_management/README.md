@@ -42,6 +42,10 @@ OpenAPI docs are available at `http://127.0.0.1:8005/docs`.
 
 ```dotenv
 DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection
+DB_POOL_SIZE=2
+DB_MAX_OVERFLOW=1
+DB_POOL_TIMEOUT_SECONDS=10
+DB_POOL_RECYCLE_SECONDS=1800
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=password
@@ -162,7 +166,9 @@ player after a successful renewal.
 
 The older Web/Native public media-session APIs have been removed. Flutter no
 longer creates a Cookie or Bearer media session before playback. Wall scopes
-are limited to 16 unique cameras and never accept wildcards.
+are limited to 24 unique cameras and never accept wildcards.
+Only configurations with `recognition_enabled` enabled are returned to
+live-view clients.
 
 ```dotenv
 GOOGLE_WEB_CLIENT_ID=860473757501-c1gtkrqr4lsa52vgoq7vclprm8atjvtv.apps.googleusercontent.com
@@ -203,7 +209,8 @@ session data is removed from Redis.
 
 ## Stream Configuration And Runtime
 
-Active stream rows drive the main detection workflow:
+Stream rows with recognition enabled during their configured working hours
+drive the main detection workflow:
 
 ```text
 database stream_configs -> main.py -> src/stream_processor.py
@@ -214,6 +221,8 @@ Key fields include:
 - source URL and stream display name;
 - site label and stream ID;
 - `model_key`, which maps to `models/pt/best_<model_key>.pt`;
+- `recognition_enabled`, which saves a camera configuration without starting
+  capture, inference, or violation processing when disabled;
 - detection item switches and warning thresholds;
 - working-hour schedule;
 - clean and annotated MediaMTX publishing options.

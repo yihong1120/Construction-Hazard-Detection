@@ -142,7 +142,7 @@ class PlaybackRouterTest(unittest.TestCase):
                 },
             ],
             'count': 2,
-            'max_streams': 16,
+            'max_streams': 24,
         }
 
         with patch.object(

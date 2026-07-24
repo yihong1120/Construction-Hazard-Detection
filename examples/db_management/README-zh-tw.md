@@ -39,6 +39,10 @@ OpenAPI docs：`http://127.0.0.1:8005/docs`。
 
 ```dotenv
 DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection
+DB_POOL_SIZE=2
+DB_MAX_OVERFLOW=1
+DB_POOL_TIMEOUT_SECONDS=10
+DB_POOL_RECYCLE_SECONDS=1800
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=password
@@ -149,7 +153,8 @@ media capability 的 TTL，`hls_url` 與 `items[*].preview_hls_url` 不會改變
 續租成功後不可重建播放器。
 
 舊的 Web/Native media-session 公開 API 已移除；Flutter 不需要先建立 Cookie
-或 Bearer media session。多鏡頭牆最多 16 個不重複鏡頭，不支援 wildcard。
+或 Bearer media session。多鏡頭牆最多 24 個不重複鏡頭，不支援 wildcard。
+即時影像只會回傳已開啟 `recognition_enabled` 的設定。
 
 ```dotenv
 GOOGLE_WEB_CLIENT_ID=860473757501-c1gtkrqr4lsa52vgoq7vclprm8atjvtv.apps.googleusercontent.com
@@ -190,7 +195,7 @@ Redis reset token，並移除該使用者既有 JWT session cache。
 
 ## Stream 設定與 Runtime
 
-啟用的 stream rows 會驅動主偵測流程：
+開啟辨識且位於設定工作時段內的 stream rows 會驅動主偵測流程：
 
 ```text
 database stream_configs -> main.py -> src/stream_processor.py
@@ -201,6 +206,7 @@ database stream_configs -> main.py -> src/stream_processor.py
 - source URL 與 stream display name；
 - site label 與 stream ID；
 - `model_key`，對應 `models/pt/best_<model_key>.pt`；
+- `recognition_enabled`：關閉時仍保存攝影機設定，但不會啟動擷取、辨識或違規處理；
 - detection item switches 與 warning thresholds；
 - working-hour schedule；
 - clean 與 annotated MediaMTX publishing options。

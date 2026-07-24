@@ -52,8 +52,13 @@ uvicorn examples.streaming_web.app:app \
 - `GET /overlay-languages`: available backend overlay languages.
 - `POST /stream-playback`: low-level single-camera playback primitive called
   by the db_management playback facade.
-- `POST /stream-playback/batch`: creates up to 16 playback items for a
+- `POST /stream-playback/batch`: creates up to 24 playback items for a
   multi-camera wall.
+- Playback listings and walls include only streams with `recognition_enabled`
+  enabled; disabled streams do not reserve a wall tile.
+- Media playback uses a short-lived, revocable Redis capability. Its user
+  status and site access are checked when the capability is issued, so HLS
+  segment authorization does not query PostgreSQL.
 - `GET /stream-playback/sessions/{id}/index.m3u8`: stable playlist endpoint
   that fetches the current MediaMTX playlist and appends `mt` to fragment URLs.
 - `POST /streams/{label}/{stream_id}/playback`: language and overlay-mode

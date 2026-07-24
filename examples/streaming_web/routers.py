@@ -298,7 +298,9 @@ async def _authorise_label_access(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    _, user_site_names, user_role = await get_user_and_sites(db, username)
+    user, user_site_names, user_role = await get_user_and_sites(db, username)
+    if getattr(user, 'status', USER_STATUS_ACTIVE) != USER_STATUS_ACTIVE:
+        raise _media_auth_401('inactive_user')
     if user_role != 'super_admin' and label not in user_site_names:
         raise HTTPException(status_code=403, detail='Access denied')
 
@@ -428,11 +430,27 @@ def _rewrite_hls_playlist_media_urls(
     return '\n'.join(rewritten_lines) + suffix
 
 
+def _media_hls_session_cookie(
+    media_path: str,
+    session_value: object,
+) -> str | None:
+    """Build the browser cookie required by MediaMTX HLS child requests."""
+    if not isinstance(session_value, str):
+        return None
+    if not re.fullmatch(r'[A-Za-z0-9._~-]+', session_value):
+        return None
+    public_path = f'/hazard/media/{quote(media_path, safe="")}/'
+    return (
+        f'hlsSession={session_value}; Path={public_path}; '
+        'Secure; HttpOnly; SameSite=None; Partitioned'
+    )
+
+
 async def _fetch_internal_hls_playlist(
     media_path: str,
     *,
     media_query: str,
-) -> str:
+) -> tuple[str, str | None]:
     """Fetch the current MediaMTX playlist for a stream path."""
     url = (
         f'{MEDIA_INTERNAL_HLS_BASE_URL}/'
@@ -463,7 +481,10 @@ async def _fetch_internal_hls_playlist(
             status_code=503,
             detail='media_playlist_not_ready',
         )
-    return response.text
+    # MediaMTX v1.18+ establishes the HLS session on index.m3u8.  The
+    # browser must receive that same cookie before it fetches child playlists.
+    hls_session = response.cookies.get('hlsSession')
+    return response.text, _media_hls_session_cookie(media_path, hls_session)
 
 
 def _extract_media_path_from_uri(uri: str) -> str:
@@ -1029,13 +1050,25 @@ def _normalise_stream_id(value: str) -> str:
         return value
 
 
+def _visible_stream_names_query(label: str):
+    """Select streams currently enabled for live playback."""
+    return (
+        select(StreamConfigModel.stream_name)
+        .join(Site)
+        .where(
+            Site.name == label,
+            StreamConfigModel.recognition_enabled.is_(True),
+        )
+    )
+
+
 async def _resolve_configured_stream_name(
     db: AsyncSession,
     label: str,
     stream_id: str | None,
     key: str | None,
 ) -> str:
-    """Resolve and validate a stream name configured for a site."""
+    """Resolve and validate a stream name enabled for live playback."""
     requested_name = key or (
         _normalise_stream_id(
             stream_id,
@@ -1046,11 +1079,7 @@ async def _resolve_configured_stream_name(
             status_code=422, detail='stream_id_or_key_required',
         )
 
-    result = await db.execute(
-        select(StreamConfigModel.stream_name).join(Site).where(
-            Site.name == label,
-        ),
-    )
+    result = await db.execute(_visible_stream_names_query(label))
     stream_names = set(result.scalars().all())
     if requested_name not in stream_names:
         raise HTTPException(status_code=404, detail='stream_not_found')
@@ -1136,10 +1165,9 @@ async def get_stream_playback_languages(
 @router.get('/media-auth', include_in_schema=False)
 async def authorise_media_request(
     request: Request,
-    db: AsyncSession = Depends(get_db),
     rds: redis.Redis = Depends(get_redis_pool),
 ) -> Response:
-    """Authorise Nginx auth_request subrequests for MediaMTX playback."""
+    """Authorise MediaMTX requests from a scoped Redis capability."""
     original_uri = (
         request.headers.get('x-original-uri')
         or request.headers.get('x-forwarded-uri')
@@ -1155,34 +1183,23 @@ async def authorise_media_request(
     opaque_session = await get_media_session(rds, opaque_token)
     if opaque_session is None:
         raise _media_auth_401('expired_media_session')
+    if opaque_session.get('user_active') is False:
+        raise _media_auth_401('inactive_user')
     if not _opaque_media_session_allows_path(opaque_session, media_path):
         raise HTTPException(status_code=403, detail='media_scope_denied')
-    username = str(opaque_session['username'])
-
-    user, user_site_names, user_role = await get_user_and_sites(db, username)
-    if getattr(user, 'status', USER_STATUS_ACTIVE) != USER_STATUS_ACTIVE:
-        raise _media_auth_401('inactive_user')
-
-    if user_role == 'super_admin' or any(
-        _media_path_matches_site(media_path, site)
-        for site in user_site_names
-    ):
-        await _touch_media_demand_from_media_path(
-            rds,
-            media_path,
-            ttl_seconds=_media_session_demand_ttl(opaque_session),
-        )
-        await _refresh_playback_sessions_for_media_path(rds, media_path)
-        response = Response(
-            status_code=204,
-            headers={
-                'Cache-Control': 'no-store',
-                'X-Media-Auth-Mode': 'opaque_media_session',
-            },
-        )
-        return response
-
-    raise HTTPException(status_code=403, detail='Access denied')
+    await _touch_media_demand_from_media_path(
+        rds,
+        media_path,
+        ttl_seconds=_media_session_demand_ttl(opaque_session),
+    )
+    await _refresh_playback_sessions_for_media_path(rds, media_path)
+    return Response(
+        status_code=204,
+        headers={
+            'Cache-Control': 'no-store',
+            'X-Media-Auth-Mode': 'opaque_media_session',
+        },
+    )
 
 
 @router.get('/stream-playback/sessions/{session_id}/index.m3u8')
@@ -1207,7 +1224,7 @@ async def stream_playback_session_playlist(
     media_path = _extract_media_path_from_uri(target_url)
     if not media_path.startswith('hazard_'):
         raise HTTPException(status_code=502, detail='invalid_media_playlist')
-    playlist = await _fetch_internal_hls_playlist(
+    playlist, hls_session_cookie = await _fetch_internal_hls_playlist(
         media_path,
         media_query=media_query,
     )
@@ -1221,7 +1238,7 @@ async def stream_playback_session_playlist(
         for line in rewritten.splitlines()
     ) or 'URI="/hazard/media/' in rewritten
     has_media_uri_header = 'true' if has_media_uri else 'false'
-    return Response(
+    response = Response(
         content=rewritten,
         media_type='application/vnd.apple.mpegurl',
         headers={
@@ -1233,6 +1250,9 @@ async def stream_playback_session_playlist(
             'X-HLS-Playlist-Has-Media-URI': has_media_uri_header,
         },
     )
+    if hls_session_cookie:
+        response.headers.append('Set-Cookie', hls_session_cookie)
+    return response
 
 
 async def _negotiate_stream_playback(
@@ -1401,9 +1421,7 @@ async def _build_batch_playback_requests(
         raise HTTPException(status_code=422, detail='label_required')
 
     result = await db.execute(
-        select(StreamConfigModel.stream_name).join(Site).where(
-            Site.name == request_body.label,
-        ),
+        _visible_stream_names_query(request_body.label),
     )
     stream_names = list(result.scalars().all())
     return [
@@ -1551,11 +1569,7 @@ async def get_streams_for_label_route(
     profile = 'overlay' if overlay_mode == 'backend' else 'clean'
     language = overlay_language if profile == 'overlay' else None
     try:
-        result = await db.execute(
-            select(StreamConfigModel.stream_name).join(Site).where(
-                Site.name == label,
-            ),
-        )
+        result = await db.execute(_visible_stream_names_query(label))
         stream_names = list(result.scalars().all())
     except Exception:
         stream_names = []
@@ -1589,11 +1603,7 @@ async def _get_configured_media_streams(
 ) -> list[dict[str, object]]:
     """Return DB-configured streams with media-server playback URLs."""
     try:
-        result = await db.execute(
-            select(StreamConfigModel.stream_name).join(Site).where(
-                Site.name == label,
-            ),
-        )
+        result = await db.execute(_visible_stream_names_query(label))
         stream_names = list(result.scalars().all())
     except Exception:
         return []
@@ -1698,6 +1708,8 @@ async def metadata_stream_id(
 ) -> StreamingResponse:
     """Stream warning/time metadata by stable stream id as SSE."""
     await _authorise_label_access(credentials, db, label)
+    # The SSE generator uses Redis only; do not hold a DB connection open.
+    await db.close()
     redis_key = f"stream_metadata:{Utils.encode(label)}|{stream_id}"
     overlay_ready_key: str | None = None
     overlay_ready_payload: dict[str, object] | None = None

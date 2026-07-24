@@ -52,7 +52,11 @@ uvicorn examples.streaming_web.app:app \
 - `GET /overlay-languages`：可用的後端 overlay languages。
 - `POST /stream-playback`：底層單鏡頭 playback primitive，由 db_management
   playback facade 呼叫。
-- `POST /stream-playback/batch`：為多鏡頭牆建立最多 16 個 playback items。
+- `POST /stream-playback/batch`：為多鏡頭牆建立最多 24 個 playback items。
+- 播放清單與播放牆只會回傳已開啟 `recognition_enabled` 的串流；關閉的串流不會
+  佔用播放牆站位。
+- 播放使用短效、可撤銷的 Redis capability；建立 capability 時會驗證使用者狀態
+  與工地權限，因此 HLS segment 授權不會查詢 PostgreSQL。
 - `GET /stream-playback/sessions/{id}/index.m3u8`：stable playlist endpoint，會
   依目前 clean/overlay 狀態取 MediaMTX playlist，並將 `mt` 補到 fragment URL。
 - `POST /streams/{label}/{stream_id}/playback`：選擇 playback language 與 overlay mode。

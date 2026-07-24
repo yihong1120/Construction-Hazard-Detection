@@ -604,6 +604,7 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Exercise this test."""
         ws = self.make_ws()
+        db = AsyncMock()
 
         with (
             patch(
@@ -623,14 +624,16 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
                 key='cam-a',
                 rds=MagicMock(),
                 settings=MagicMock(),
-                db=MagicMock(),
+                db=db,
             )
 
         ws.close.assert_awaited_once_with(code=4001, reason='User not found')
+        db.close.assert_awaited_once()
 
     async def test_handle_metadata_ws_closes_on_site_denied(self) -> None:
         """Exercise this test."""
         ws = self.make_ws()
+        db = AsyncMock()
 
         with (
             patch(
@@ -650,10 +653,11 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
                 key='cam-a',
                 rds=MagicMock(),
                 settings=MagicMock(),
-                db=MagicMock(),
+                db=db,
             )
 
         ws.close.assert_awaited_once_with(code=4003, reason='Access denied')
+        db.close.assert_awaited_once()
 
     async def test_handle_metadata_ws_logs_disconnect(self) -> None:
         """Exercise this test."""

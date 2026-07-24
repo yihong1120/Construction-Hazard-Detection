@@ -252,6 +252,7 @@ async def create_media_session(
         'profile': profile,
         'parent': parent,
         'platform': platform,
+        'user_active': True,
         'created_at': now,
         'expires_at': now + MEDIA_SESSION_TTL_SECONDS,
     }
@@ -301,7 +302,9 @@ def media_session_cameras(session: Mapping[str, object]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(cameras))
 
 
-def media_session_demand_keys(session: Mapping[str, object]) -> tuple[str, ...]:
+def media_session_demand_keys(
+    session: Mapping[str, object],
+) -> tuple[str, ...]:
     """Return the producer-demand leases owned by a media capability."""
     raw_keys = session.get('demand_keys')
     if not isinstance(raw_keys, (list, tuple)):

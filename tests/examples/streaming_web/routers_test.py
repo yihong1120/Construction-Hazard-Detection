@@ -272,6 +272,18 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(stream['profile'], 'clean')
 
+    def test_visible_stream_query_excludes_disabled_recognition_streams(
+        self,
+    ) -> None:
+        """Only recognition-enabled streams appear in walls."""
+        statement = routers._visible_stream_names_query('label1')
+        where_clause = str(statement.whereclause)
+
+        self.assertIn(
+            'stream_configs.recognition_enabled IS true',
+            where_clause,
+        )
+
     def test_overlay_languages_returns_frontend_contract(self) -> None:
         """Expose canonical codes and translations for Flutter clients."""
         response = self.client.get('/api/overlay-languages')
@@ -503,7 +515,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             'examples.streaming_web.routers._fetch_internal_hls_playlist',
-            new=AsyncMock(return_value='#EXTM3U\n#EXTINF:2,\nseg0.ts\n'),
+            new=AsyncMock(
+                return_value=('#EXTM3U\n#EXTINF:2,\nseg0.ts\n', None),
+            ),
         ) as fetch_playlist:
             response = self.client.get(
                 '/api/stream-playback/sessions/session-1/index.m3u8'
@@ -521,6 +535,51 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.fake_redis.expire.assert_awaited_once()
 
+    def test_stream_playback_session_playlist_forwards_hls_session_cookie(
+        self,
+    ) -> None:
+        """The client needs MediaMTX's HLS session for child playlists."""
+        session = {
+            'session_id': 'session-1',
+            'username': 'testuser',
+            'label': 'label1',
+            'stream_name': 'Cam1',
+            'stream_id': 'Q2FtMQ',
+            'profile': 'clean',
+            'language': None,
+            'base_media_path': 'hazard_bGFiZWwx_Q2FtMQ',
+        }
+        self.fake_redis.get = AsyncMock(return_value=json.dumps(session))
+        self.fake_redis.expire = AsyncMock()
+
+        with patch(
+            'examples.streaming_web.routers._fetch_internal_hls_playlist',
+            new=AsyncMock(
+                return_value=(
+                    '#EXTM3U\n#EXTINF:2,\nseg0.ts\n',
+                    routers._media_hls_session_cookie(
+                        'hazard_bGFiZWwx_Q2FtMQ',
+                        'session-123',
+                    ),
+                ),
+            ),
+        ):
+            response = self.client.get(
+                '/api/stream-playback/sessions/session-1/index.m3u8'
+                '?mt=opaque-token',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('hlsSession=session-123', response.headers['set-cookie'])
+        self.assertIn(
+            'Path=/hazard/media/hazard_bGFiZWwx_Q2FtMQ/',
+            response.headers['set-cookie'],
+        )
+        self.assertIn('Secure', response.headers['set-cookie'])
+        self.assertIn('HttpOnly', response.headers['set-cookie'])
+        self.assertIn('SameSite=None', response.headers['set-cookie'])
+        self.assertIn('Partitioned', response.headers['set-cookie'])
+
     async def test_internal_hls_playlist_follows_mediamtx_cookie_redirect(
         self,
     ) -> None:
@@ -528,6 +587,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         upstream_response = MagicMock()
         upstream_response.status_code = 200
         upstream_response.text = '#EXTM3U\n#EXTINF:2,\nseg0.ts\n'
+        upstream_response.cookies = {'hlsSession': 'session-456'}
         upstream_client = MagicMock()
         upstream_client.get = AsyncMock(return_value=upstream_response)
         upstream_context = MagicMock()
@@ -545,7 +605,15 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 media_query='_HLS_msn=3',
             )
 
-        self.assertEqual(playlist, upstream_response.text)
+        self.assertEqual(
+            playlist,
+            (
+                upstream_response.text,
+                'hlsSession=session-456; '
+                'Path=/hazard/media/hazard_bGFiZWwx_Q2FtMQ/; '
+                'Secure; HttpOnly; SameSite=None; Partitioned',
+            ),
+        )
         async_client.assert_called_once_with(
             timeout=routers.MEDIA_INTERNAL_HLS_TIMEOUT_SECONDS,
             follow_redirects=True,
@@ -613,7 +681,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             patch(
                 'examples.streaming_web.routers.'
                 '_fetch_internal_hls_playlist',
-                new=AsyncMock(return_value='#EXTM3U\nseg0.ts\n'),
+                new=AsyncMock(return_value=('#EXTM3U\nseg0.ts\n', None)),
             ),
         ):
             response = self.client.get(
@@ -655,7 +723,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 202)
         body = response.json()
         self.assertEqual(body['count'], 2)
-        self.assertEqual(body['max_streams'], 16)
+        self.assertEqual(body['max_streams'], 24)
         self.assertEqual(
             body['stream_playback_endpoint'],
             '/hazard/api/stream-playback',
@@ -672,13 +740,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 item['playback_url'],
             )
 
-    def test_stream_playback_batch_rejects_more_than_16_site_streams(
+    def test_stream_playback_batch_rejects_more_than_24_site_streams(
         self,
     ) -> None:
-        """Site overview rejects locations with more than 16 streams."""
+        """Site overview rejects locations with more than 24 streams."""
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = [
-            f'Cam{index}' for index in range(17)
+            f'Cam{index}' for index in range(25)
         ]
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
@@ -697,21 +765,21 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             response.json()['detail'],
             {
                 'code': 'stream_batch_limit_exceeded',
-                'count': 17,
-                'max_streams': 16,
+                'count': 25,
+                'max_streams': 24,
             },
         )
 
-    def test_stream_playback_batch_rejects_more_than_16_explicit_streams(
+    def test_stream_playback_batch_rejects_more_than_24_explicit_streams(
         self,
     ) -> None:
-        """Explicit batch requests share the same 16-stream wall limit."""
+        """Explicit batch requests share the same 24-stream wall limit."""
         response = self.client.post(
             '/api/stream-playback/batch',
             json={
                 'streams': [
                     {'label': 'label1', 'key': f'Cam{index}'}
-                    for index in range(17)
+                    for index in range(25)
                 ],
                 'profile': 'overlay',
                 'language': 'zh-TW',
@@ -723,8 +791,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             response.json()['detail'],
             {
                 'code': 'stream_batch_limit_exceeded',
-                'count': 17,
-                'max_streams': 16,
+                'count': 25,
+                'max_streams': 24,
             },
         )
 
@@ -863,7 +931,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         mock_get_public_ice_servers.assert_called_once_with('testuser')
 
-    @patch('examples.streaming_web.routers.get_user_and_sites')
     @patch(
         'examples.streaming_web.routers.get_media_session',
         new_callable=AsyncMock,
@@ -871,14 +938,12 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     def test_media_auth_denies_wrong_site(
         self,
         mock_get_media_session: AsyncMock,
-        mock_get_user_and_sites: AsyncMock,
     ) -> None:
-        """Denies MediaMTX requests outside the viewer's site scope."""
-        mock_get_user_and_sites.return_value = (None, ['other-site'], 'admin')
+        """Denies MediaMTX requests outside the media capability scope."""
         mock_get_media_session.return_value = {
             'id': 'media-session-1',
             'username': 'testuser',
-            'site': 'label1',
+            'site': 'other-site',
             'cameras': ['Cam1'],
             'profile': 'overlay',
         }
@@ -896,7 +961,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    @patch('examples.streaming_web.routers.get_user_and_sites')
     @patch(
         'examples.streaming_web.routers.get_media_session',
         new_callable=AsyncMock,
@@ -904,10 +968,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     def test_media_auth_refreshes_playback_session_for_media_path(
         self,
         mock_get_media_session: AsyncMock,
-        mock_get_user_and_sites: AsyncMock,
     ) -> None:
         """HLS media reads keep their playback session alive."""
-        mock_get_user_and_sites.return_value = (None, ['label1'], 'admin')
         media_path = 'hazard_bGFiZWwx_Q2FtMQ'
         mock_get_media_session.return_value = {
             'id': 'media-session-1',
@@ -961,18 +1023,11 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         'examples.streaming_web.routers.get_media_session',
         new_callable=AsyncMock,
     )
-    @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_media_auth_accepts_opaque_mt_query_token(
         self,
-        mock_get_user_and_sites: AsyncMock,
         mock_get_media_session: AsyncMock,
     ) -> None:
         """Signed playback URLs authorise HLS reads with the mt query token."""
-        mock_get_user_and_sites.return_value = (
-            SimpleNamespace(status='active'),
-            ['label1'],
-            'admin',
-        )
         mock_get_media_session.return_value = {
             'id': 'media-session-1',
             'username': 'testuser',
@@ -1050,7 +1105,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             'Bearer error="expired_media_session"',
         )
 
-    @patch('examples.streaming_web.routers.get_user_and_sites')
     @patch(
         'examples.streaming_web.routers.get_media_session',
         new_callable=AsyncMock,
@@ -1058,14 +1112,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     def test_media_auth_rejects_inactive_user(
         self,
         mock_get_media_session: AsyncMock,
-        mock_get_user_and_sites: AsyncMock,
     ) -> None:
-        """Opaque media tokens still require an active user account."""
-        mock_get_user_and_sites.return_value = (
-            SimpleNamespace(status='inactive'),
-            ['label1'],
-            'admin',
-        )
+        """Inactive users are rejected without DB I/O."""
         mock_get_media_session.return_value = {
             'id': 'media-session-1',
             'username': 'testuser',
@@ -1073,6 +1121,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             'cameras': ['Cam1'],
             'profile': 'overlay',
             'quality': 'detail',
+            'user_active': False,
         }
 
         response = self.client.get(
@@ -1325,7 +1374,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_and_sites: AsyncMock,
     ) -> None:
-        """One opaque media token may access only its verified camera set."""
+        """Media auth checks scoped Redis capabilities without database I/O."""
         mock_get_user_and_sites.return_value = (
             SimpleNamespace(status='active'),
             ['Site A'],
@@ -1385,6 +1434,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(denied.json()['detail'], 'media_scope_denied')
+        mock_get_user_and_sites.assert_not_awaited()
+        self.mock_db_session.execute.assert_not_awaited()
 
     @patch('examples.streaming_web.routers.get_user_and_sites')
     def test_stream_playback_rejects_unsupported_language(
@@ -1545,6 +1596,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             self.mock_db_session,
             'label1',
         )
+        self.mock_db_session.close.assert_awaited_once()
 
     def test_metadata_stream_id_rejects_missing_subject(self) -> None:
         """Reject SSE clients that do not carry a valid JWT subject."""

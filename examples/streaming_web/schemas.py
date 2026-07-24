@@ -5,7 +5,7 @@ from typing import TypedDict
 
 from pydantic import BaseModel
 
-MAX_STREAM_PLAYBACK_BATCH_STREAMS = 16
+MAX_STREAM_PLAYBACK_BATCH_STREAMS = 24
 
 
 class FrameOutData(TypedDict, total=False):
