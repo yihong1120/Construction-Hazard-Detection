@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -27,6 +28,9 @@ from examples.shared.filename_utils import sanitize_filename
 from examples.violation_records.routers import _validate_analytics_range
 from examples.violation_records.routers import get_user_sites_cached
 from examples.violation_records.routers import router
+from examples.violation_records.routers import upload_violation
+from examples.violation_records.violation_manager import EmptyViolationImageError
+from examples.violation_records.violation_manager import ViolationImageReadError
 
 
 class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
@@ -1980,19 +1984,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         'examples.violation_records.routers.violation_manager.save_violation',
         new_callable=AsyncMock,
     )
-    @patch('examples.violation_records.routers.UploadFile')
     async def test_upload_violation_success(
         self,
-        mock_file_cls: MagicMock,
         mock_save_violation: AsyncMock,
     ) -> None:
-        """
-        A successful upload should return 200 with the violation_id.
-
-        Args:
-            mock_file_cls (MagicMock): Mocked UploadFile class.
-            mock_save_violation (AsyncMock): Mocked save_violation function.
-        """
+        """A successful upload returns the violation ID from the manager."""
         # 1) User can access "SiteA"
         siteA = self.make_site(1, 'SiteA')
         user = self.make_user('test_user', [siteA])
@@ -2001,21 +1997,27 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         # 2) Simulate reading normal bytes from the image
         mock_file_obj = MagicMock()
         mock_file_obj.read = AsyncMock(return_value=b'some_image_bytes')
-        mock_file_cls.return_value = mock_file_obj
 
         # 3) The manager returns a new violation ID
         mock_save_violation.return_value = 123
 
-        payload = {
-            'site': 'SiteA',
-            'stream_name': 'Cam1',
-        }
-        files = {'image': ('test.png', b'some_image_bytes', 'image/png')}
-        resp = self.client.post('/api/upload', data=payload, files=files)
+        response = await upload_violation(
+            site='SiteA',
+            stream_name='Cam1',
+            detection_time=None,
+            warnings_json=None,
+            detections_json=None,
+            cone_polygon_json=None,
+            pole_polygon_json=None,
+            image=mock_file_obj,
+            db=self.fake_db,
+            credentials=JwtAuthorizationCredentials(
+                subject={'username': 'test_user'},
+            ),
+        )
 
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertEqual(data['violation_id'], 123)
+        self.assertEqual(response.violation_id, 123)
+        mock_save_violation.assert_awaited_once()
 
     async def test_upload_violation_missing_username(self) -> None:
         """
@@ -2043,125 +2045,149 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-    @patch('examples.violation_records.routers.UploadFile')
     async def test_upload_violation_no_access_site(
         self,
-        mock_file_cls: MagicMock,
     ) -> None:
-        """
-        If the user can only access "SiteA" but requests "SiteB", return 403.
-
-        Args:
-            mock_file_cls (MagicMock): Mocked UploadFile class.
-        """
-        siteA = self.make_site(1, 'SiteA')
-        user = self.make_user('test_user', [siteA])
-        self.simulate_user_query(user)
-
-        # The second DB call for site check returns None => triggers 403
-        self.append_site_query(None)
-
-        # Provide non-empty bytes so we don't fail with "empty image file"
-        mock_file_obj = MagicMock()
-        mock_file_obj.read = AsyncMock(return_value=b'dummy_image')
-        mock_file_cls.return_value = mock_file_obj
-
-        resp = self.client.post(
-            '/api/upload',
-            data={'site': 'SiteB', 'stream_name': 'Cam1'},
-            files={'image': ('test.png', b'dummy_image', 'image/png')},
-        )
-        self.assertEqual(resp.status_code, 403)
-
-    @patch('examples.violation_records.routers.UploadFile')
-    async def test_upload_violation_empty_image(
-        self,
-        mock_file_cls: MagicMock,
-    ) -> None:
-        """
-        Simulate reading empty bytes from the file => triggers 400,
-        with detail 'Failed to read image file' after re-raising.
-
-        Args:
-            mock_file_cls (MagicMock): Mocked UploadFile class.
-        """
+        """A user cannot upload a violation for a site outside their scope."""
         siteA = self.make_site(1, 'SiteA')
         user = self.make_user('test_user', [siteA])
         self.simulate_user_query(user)
 
         mock_file_obj = MagicMock()
-        mock_file_obj.read = AsyncMock(return_value=b'')
-        mock_file_cls.return_value = mock_file_obj
-
-        resp = self.client.post(
-            '/api/upload',
-            data={'site': 'SiteA', 'stream_name': 'Cam1'},
-            files={'image': ('test.png', b'', 'image/png')},
-        )
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn('Failed to read image file', resp.text)
-
-    @patch('examples.violation_records.routers.UploadFile')
-    async def test_upload_violation_read_error(
-        self,
-        mock_file_cls: MagicMock,
-    ) -> None:
-        """
-        Simulate an exception when reading the file => 400 with
-        'Failed to read image file'.
-
-        Args:
-            mock_file_cls (MagicMock): Mocked UploadFile class.
-        """
-        siteA = self.make_site(1, 'SiteA')
-        user = self.make_user('test_user', [siteA])
-        self.simulate_user_query(user)
-
-        mock_file_obj = MagicMock()
-        mock_file_obj.read = AsyncMock(
-            side_effect=Exception('Some read error'),
-        )
-        mock_file_cls.return_value = mock_file_obj
-
-        resp = self.client.post(
-            '/api/upload',
-            data={'site': 'SiteA', 'stream_name': 'Cam1'},
-            files={'image': ('test.png', b'', 'image/png')},
-        )
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn('Failed to read image file', resp.text)
+        with self.assertRaisesRegex(
+                HTTPException,
+                'No access to this site',
+        ) as raised:
+            await upload_violation(
+                site='SiteB',
+                stream_name='Cam1',
+                detection_time=None,
+                warnings_json=None,
+                detections_json=None,
+                cone_polygon_json=None,
+                pole_polygon_json=None,
+                image=mock_file_obj,
+                db=self.fake_db,
+                credentials=JwtAuthorizationCredentials(
+                    subject={'username': 'test_user'},
+                ),
+            )
+        self.assertEqual(raised.exception.status_code, 403)
 
     @patch(
         'examples.violation_records.routers.violation_manager.save_violation',
         new_callable=AsyncMock,
     )
-    @patch('examples.violation_records.routers.UploadFile')
-    async def test_upload_violation_save_fail(
+    async def test_upload_violation_empty_image(
         self,
-        mock_file_cls: MagicMock,
         mock_save_violation: AsyncMock,
     ) -> None:
-        """
-        If save_violation returns None, /api/upload should return 500.
-        """
+        """An empty image is reported as HTTP 400."""
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA])
+        self.simulate_user_query(user)
+
+        mock_file_obj = MagicMock()
+        mock_save_violation.side_effect = EmptyViolationImageError(
+            'Empty image file',
+        )
+
+        with self.assertRaisesRegex(
+                HTTPException,
+                'Failed to read image file',
+        ) as raised:
+            await upload_violation(
+                site='SiteA',
+                stream_name='Cam1',
+                detection_time=None,
+                warnings_json=None,
+                detections_json=None,
+                cone_polygon_json=None,
+                pole_polygon_json=None,
+                image=mock_file_obj,
+                db=self.fake_db,
+                credentials=JwtAuthorizationCredentials(
+                    subject={'username': 'test_user'},
+                ),
+            )
+        self.assertEqual(raised.exception.status_code, 400)
+
+    @patch(
+        'examples.violation_records.routers.violation_manager.save_violation',
+        new_callable=AsyncMock,
+    )
+    async def test_upload_violation_read_error(
+        self,
+        mock_save_violation: AsyncMock,
+    ) -> None:
+        """A manager image-read error is reported as HTTP 400."""
+        siteA = self.make_site(1, 'SiteA')
+        user = self.make_user('test_user', [siteA])
+        self.simulate_user_query(user)
+
+        mock_file_obj = MagicMock()
+        mock_save_violation.side_effect = ViolationImageReadError(
+            'Failed to read image file',
+        )
+
+        with self.assertRaisesRegex(
+                HTTPException,
+                'Failed to read image file',
+        ) as raised:
+            await upload_violation(
+                site='SiteA',
+                stream_name='Cam1',
+                detection_time=None,
+                warnings_json=None,
+                detections_json=None,
+                cone_polygon_json=None,
+                pole_polygon_json=None,
+                image=mock_file_obj,
+                db=self.fake_db,
+                credentials=JwtAuthorizationCredentials(
+                    subject={'username': 'test_user'},
+                ),
+            )
+        self.assertEqual(raised.exception.status_code, 400)
+
+    @patch(
+        'examples.violation_records.routers.violation_manager.save_violation',
+        new_callable=AsyncMock,
+    )
+    async def test_upload_violation_save_fail(
+        self,
+        mock_save_violation: AsyncMock,
+    ) -> None:
+        """A missing violation ID from the manager is reported as HTTP 500."""
         siteA = self.make_site(1, 'SiteA')
         user = self.make_user('test_user', [siteA])
         self.simulate_user_query(user)
 
         mock_file_obj = MagicMock()
         mock_file_obj.read = AsyncMock(return_value=b'some_image_bytes')
-        mock_file_cls.return_value = mock_file_obj
 
         # Force the violation_manager to return None => 500
         mock_save_violation.return_value = None
 
-        resp = self.client.post(
-            '/api/upload',
-            data={'site': 'SiteA', 'stream_name': 'Cam1'},
-            files={'image': ('test.png', b'some_image_bytes', 'image/png')},
-        )
-        self.assertEqual(resp.status_code, 500)
-        self.assertIn('Failed to create violation record', resp.text)
+        with self.assertRaisesRegex(
+                HTTPException,
+                'Failed to create violation record',
+        ) as raised:
+            await upload_violation(
+                site='SiteA',
+                stream_name='Cam1',
+                detection_time=None,
+                warnings_json=None,
+                detections_json=None,
+                cone_polygon_json=None,
+                pole_polygon_json=None,
+                image=mock_file_obj,
+                db=self.fake_db,
+                credentials=JwtAuthorizationCredentials(
+                    subject={'username': 'test_user'},
+                ),
+            )
+        self.assertEqual(raised.exception.status_code, 500)
 
 
 if __name__ == '__main__':

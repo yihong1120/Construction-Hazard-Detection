@@ -34,3 +34,21 @@ class TestViolationTypes(unittest.TestCase):
             ), 'near_vehicle',
         )
         self.assertIsNone(normalise_violation_type('free-text warning'))
+
+    def test_invalid_and_inactive_warning_values_are_ignored(self) -> None:
+        """Malformed, empty, and zero-count warning payloads are harmless."""
+        self.assertIsNone(normalise_violation_type('   '))
+        self.assertEqual(violation_type_codes_from_warnings('{bad json'), [])
+        self.assertEqual(
+            violation_type_codes_from_warnings(['not-a-mapping']), [],
+        )
+        self.assertEqual(
+            violation_type_codes_from_warnings(
+                {
+                    'warning_no_hardhat': {'count': False},
+                    'warning_no_safety_vest': {'count': 0},
+                    'warning_close_to_vehicle': {'count': 1.5},
+                },
+            ),
+            ['near_vehicle'],
+        )

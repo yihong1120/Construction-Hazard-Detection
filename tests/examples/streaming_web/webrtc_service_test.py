@@ -68,6 +68,32 @@ class WebRtcServiceTest(unittest.TestCase):
             ],
         )
 
+    @patch.dict(
+        'os.environ',
+        {
+            'STREAMING_WEBRTC_STUN_URLS': 'stun:relay',
+            'STREAMING_WEBRTC_TURN_URLS': 'turn:relay',
+            'STREAMING_WEBRTC_TURN_SHARED_SECRET': 'turn-secret',
+            'STREAMING_WEBRTC_TURN_TTL_SECONDS': 'not-an-integer',
+        },
+        clear=False,
+    )
+    @patch('examples.streaming_web.webrtc_service.time.time', return_value=1_700_000_000)
+    def test_get_public_ice_servers_uses_turn_rest_credentials(
+        self,
+        mock_time: MagicMock,
+    ) -> None:
+        """TURN REST credentials use the default TTL when env input is invalid."""
+        servers = get_public_ice_servers('alice')
+
+        self.assertEqual(servers[0], {'urls': ['stun:relay']})
+        self.assertEqual(servers[1]['username'], '1700000600:alice')
+        self.assertEqual(
+            servers[1]['credential'],
+            'XHKohCPbA/hq/kAmxP3/ALxaTSI=',
+        )
+        mock_time.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

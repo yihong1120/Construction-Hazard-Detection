@@ -198,6 +198,28 @@ class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertEqual(res['records_count'], 5)
 
+    async def test_backup_handles_unsupported_and_synchronous_sender_apis(self) -> None:
+        """Backup gracefully supports older sender implementations."""
+        tool = RecordTools()
+        with patch.object(
+            tool,
+            '_ensure_violation_sender',
+            new=AsyncMock(return_value=object()),
+        ):
+            unsupported = await tool.backup_local_records('/tmp/backup.json')
+        self.assertFalse(unsupported['success'])
+
+        sender = MagicMock()
+        sender.backup_to_local.return_value = (True, 2)
+        with patch.object(
+            tool,
+            '_ensure_violation_sender',
+            new=AsyncMock(return_value=sender),
+        ):
+            synchronous = await tool.backup_local_records('/tmp/backup.json')
+        self.assertTrue(synchronous['success'])
+        self.assertEqual(synchronous['records_count'], 2)
+
     async def test_backup_default_path_failure(self) -> None:
         """Should handle backup failure and construct default path."""
         fake_sender = AsyncMock()

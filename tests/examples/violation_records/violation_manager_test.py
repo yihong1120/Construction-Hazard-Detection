@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 import uuid
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import call
@@ -199,3 +201,96 @@ pytest \
     --cov-report=term-missing \
     tests/examples/violation_records/violation_manager_test.py
 '''
+
+
+class TestViolationManagerFailureRecovery(unittest.IsolatedAsyncioTestCase):
+    """Exercise cleanup behaviour around failed violation image writes."""
+
+    async def test_empty_image_payload_is_rejected_without_conversion(self) -> None:
+        """Empty byte payloads retain their specific client-facing error."""
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ViolationManager(base_dir=directory)
+            with self.assertRaisesRegex(ValueError, 'Empty image'):
+                await manager.save_violation(
+                    db=SimpleNamespace(),
+                    site='SiteA',
+                    stream_name='Cam1',
+                    detection_time=datetime(2026, 7, 24),
+                    image_bytes=b'',
+                )
+
+    async def test_write_helpers_clean_up_read_errors_and_empty_uploads(
+        self,
+    ) -> None:
+        """Streaming upload failures remove incomplete files before re-raising."""
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ViolationManager(base_dir=directory)
+            empty_path = Path(directory) / 'empty.png'
+            with self.assertRaisesRegex(ValueError, 'Empty image'):
+                await manager._write_image_bytes(None, empty_path)
+
+            context = AsyncMock()
+            context.__aenter__.return_value = AsyncMock()
+            context.__aexit__.return_value = False
+            failing_upload = SimpleNamespace(
+                read=AsyncMock(side_effect=OSError('camera disconnected')),
+            )
+            with patch(
+                'examples.violation_records.violation_manager.aiofiles.open',
+                return_value=context,
+            ), self.assertRaisesRegex(OSError, 'Failed to read image file'):
+                await manager._write_upload_file(
+                    failing_upload,
+                    Path(directory) / 'failed.png',
+                    1024,
+                )
+
+            empty_upload = SimpleNamespace(read=AsyncMock(return_value=b''))
+            with patch(
+                'examples.violation_records.violation_manager.aiofiles.open',
+                return_value=context,
+            ), self.assertRaisesRegex(ValueError, 'Empty image'):
+                await manager._write_upload_file(
+                    empty_upload,
+                    Path(directory) / 'empty-upload.png',
+                    1024,
+                )
+
+    async def test_save_failure_survives_rollback_error(self) -> None:
+        """A failed rollback does not conceal the original write failure."""
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ViolationManager(base_dir=directory)
+            db = SimpleNamespace(
+                rollback=AsyncMock(
+                    side_effect=RuntimeError('rollback unavailable'),
+                ),
+            )
+            image_path = Path(directory) / 'failed.png'
+
+            with (
+                patch.object(
+                    manager, '_build_image_path',
+                    return_value=image_path,
+                ),
+                patch.object(
+                    manager,
+                    '_write_image_bytes',
+                    new_callable=AsyncMock,
+                    side_effect=OSError('disk full'),
+                ),
+                patch('builtins.print'),
+            ):
+                result = await manager.save_violation(
+                    db=db,
+                    site='SiteA',
+                    stream_name='Cam1',
+                    detection_time=datetime(2026, 7, 24),
+                    image_bytes=b'image',
+                )
+
+        self.assertIsNone(result)
+        db.rollback.assert_awaited_once()
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from fastapi import WebSocketDisconnect
 
+from examples.streaming_web import ws_handlers as handlers
 from examples.streaming_web.schemas import FrameOutData
 from examples.streaming_web.ws_handlers import _build_metadata_payload
 from examples.streaming_web.ws_handlers import _encode_sse_event
@@ -86,6 +87,23 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'event: overlay_ready', encoded)
         self.assertIn(b'"state":"ready"', encoded)
 
+    async def test_overlay_helpers_skip_absent_demand_and_ready_keys(self) -> None:
+        """Overlay helper calls are harmless when optional Redis keys are absent."""
+        rds = MagicMock()
+        rds.set = AsyncMock()
+        rds.exists = AsyncMock(return_value=0)
+
+        await handlers._refresh_overlay_demand(rds, None, 30)
+        self.assertIsNone(await handlers._overlay_ready_event(rds, None, {'state': 'ready'}))
+        self.assertIsNone(
+            await handlers._overlay_ready_event(
+                rds,
+                'media_overlay_ready:missing',
+                {'state': 'ready'},
+            ),
+        )
+        rds.set.assert_not_awaited()
+
     async def test_metadata_stream_yields_initial_retry(self) -> None:
         """Exercise this test."""
         request = MagicMock()
@@ -138,6 +156,29 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'event: overlay_ready', event)
         self.assertIn(b'"state":"ready"', event)
         self.assertIn(b'/hazard/media/overlay/index.m3u8', event)
+
+    async def test_metadata_stream_continues_after_overlay_ready_event(self) -> None:
+        """Sending overlay readiness does not stop later metadata polling."""
+        request = MagicMock()
+        request.is_disconnected = AsyncMock(side_effect=[False, False, True])
+        rds = MagicMock()
+        rds.exists = AsyncMock(return_value=1)
+
+        with patch(
+            'examples.streaming_web.ws_handlers.fetch_latest_metadata_for_key',
+            new=AsyncMock(return_value=None),
+        ):
+            iterator = metadata_stream_generator(
+                request,
+                rds,
+                'metadata-key',
+                overlay_ready_key='media_overlay_ready:stream',
+                overlay_ready_payload={'state': 'ready'},
+            )
+            await anext(iterator)
+            await anext(iterator)
+            with self.assertRaises(StopAsyncIteration):
+                await anext(iterator)
 
     async def test_metadata_stream_refreshes_overlay_demand(self) -> None:
         """Exercise this test."""
@@ -203,6 +244,56 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
                 await anext(iterator)
 
         sleep.assert_awaited_once()
+
+    async def test_metadata_stream_timeout_emits_keepalive(self) -> None:
+        """A long metadata poll emits an SSE heartbeat before retrying."""
+        request = MagicMock()
+        request.is_disconnected = AsyncMock(return_value=False)
+        loop = MagicMock()
+        loop.time.side_effect = [0.0, 16.0]
+
+        with (
+            patch(
+                'examples.streaming_web.ws_handlers.fetch_latest_metadata_for_key',
+                new=AsyncMock(side_effect=asyncio.TimeoutError),
+            ),
+            patch(
+                'examples.streaming_web.ws_handlers.asyncio.get_running_loop',
+                return_value=loop,
+            ),
+        ):
+            iterator = metadata_stream_generator(
+                request, MagicMock(), 'metadata-key',
+            )
+            await anext(iterator)
+            self.assertEqual(await anext(iterator), b': keepalive\n\n')
+
+    async def test_metadata_stream_read_error_emits_suppressed_error_keepalive(self) -> None:
+        """Rate-limited Redis errors fall back to heartbeats between error events."""
+        request = MagicMock()
+        request.is_disconnected = AsyncMock(return_value=False)
+        loop = MagicMock()
+        loop.time.side_effect = [0.0, 0.0, 16.0]
+
+        with (
+            patch(
+                'examples.streaming_web.ws_handlers.fetch_latest_metadata_for_key',
+                new=AsyncMock(side_effect=RuntimeError('redis down')),
+            ),
+            patch(
+                'examples.streaming_web.ws_handlers.asyncio.get_running_loop',
+                return_value=loop,
+            ),
+            patch.object(
+                handlers, '_metadata_redis_error_interval_seconds', 30.0,
+            ),
+        ):
+            iterator = metadata_stream_generator(
+                request, MagicMock(), 'metadata-key',
+            )
+            await anext(iterator)
+            await anext(iterator)
+            self.assertEqual(await anext(iterator), b': keepalive\n\n')
 
     async def test_metadata_stream_handles_read_error(self) -> None:
         """Exercise this test."""

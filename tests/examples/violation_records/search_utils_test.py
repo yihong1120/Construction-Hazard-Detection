@@ -143,6 +143,15 @@ class TestSearchUtils(unittest.TestCase):
                 "Each condition should contain a 'wildcard' key.",
             )
 
+    def test_synonym_index_skips_empty_terms(self) -> None:
+        """An empty configured synonym key cannot be used for substring lookup."""
+        index = SearchUtils._build_synonym_index([
+            ('', ['ignored']),
+            ('Helmet', ['hardhat']),
+        ])
+
+        self.assertEqual(index, {'h': (('helmet', ('hardhat',)),)})
+
 
 if __name__ == '__main__':
     unittest.main()

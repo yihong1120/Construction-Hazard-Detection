@@ -327,6 +327,36 @@ class ViewerTests(unittest.IsolatedAsyncioTestCase):
                 await tool.stop_stream_viewer()
             logger.error.assert_called_once()
 
+    async def test_viewer_optional_methods_support_sync_and_fallback_modes(self) -> None:
+        """Viewers without rich APIs use local task and resource fallbacks."""
+        tool = StreamingTools()
+        self.assertIsNone(
+            await tool._call_viewer_method(MagicMock(spec=[]), 'start_viewer'),
+        )
+
+        sync_viewer = MagicMock()
+        sync_viewer.start_viewer.return_value = 'synchronous result'
+        self.assertEqual(
+            await tool._call_viewer_method(sync_viewer, 'start_viewer'),
+            'synchronous result',
+        )
+
+        fallback_viewer = MagicMock(
+            spec=['display_stream', 'release_resources'],
+        )
+        fallback_viewer.display_stream.return_value = None
+        tool._stream_viewer = fallback_viewer
+        started = await tool.start_stream_viewer('rtsp://cam', viewer_port=8181)
+        self.assertTrue(started['success'])
+        await tool._viewer_tasks[8181]
+
+        task = MagicMock()
+        tool._viewer_tasks[8181] = task
+        stopped = await tool.stop_stream_viewer(8181)
+        self.assertTrue(stopped['success'])
+        fallback_viewer.release_resources.assert_called_once()
+        task.cancel.assert_called_once()
+
 
 class EnsureMethodsTests(unittest.IsolatedAsyncioTestCase):
     """Tests for _ensure_* methods."""

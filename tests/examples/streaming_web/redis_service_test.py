@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
+from examples.streaming_web import redis_service as service
 from examples.streaming_web.redis_service import build_metadata_key
 from examples.streaming_web.redis_service import (
     fetch_latest_metadata_for_key,
@@ -29,6 +30,37 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
             key = build_metadata_key('site-a', 'cam-1')
 
         self.assertEqual(key, 'stream_metadata:encoded(site-a)|encoded(cam-1)')
+
+    def test_metadata_key_helpers_handle_cache_and_invalid_values(self) -> None:
+        """Metadata display names tolerate malformed or repeated Redis keys."""
+        service._stream_name_cache.clear()
+        self.assertEqual(service._extract_stream_id('invalid-key'), '')
+        self.assertEqual(service._decode_stream_name('invalid-key'), 'Unknown')
+        self.assertEqual(
+            service._decode_stream_name('stream_metadata:site|not-base64'),
+            'Unknown',
+        )
+
+        encoded_name = 'Q2FtMQ=='
+        service._stream_name_cache[encoded_name] = 'Cached camera'
+        self.assertEqual(
+            service._decode_stream_name(
+                f'stream_metadata:site|{encoded_name}',
+            ),
+            'Cached camera',
+        )
+
+        service._stream_name_cache.clear()
+        service._stream_name_cache.update(
+            {f'cached-{index}': 'value' for index in range(512)},
+        )
+        self.assertEqual(
+            service._decode_stream_name(
+                f'stream_metadata:site|{encoded_name}',
+            ),
+            'Cam1',
+        )
+        self.assertEqual(service._stream_name_cache, {encoded_name: 'Cam1'})
 
     async def test_get_metadata_keys_for_label_empty(self) -> None:
         """Exercise this test."""
@@ -104,6 +136,23 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['key'], 'Cam1')
         self.assertEqual(result['stream_id'], 'Q2FtMQ==')
         self.assertEqual(result['has_warning'], '1')
+
+    async def test_fetch_latest_metadata_skips_repeated_message_id(self) -> None:
+        """The SSE poller ignores the Redis item it has already sent."""
+        self.mock_rds.xread.return_value = [
+            (
+                b'stream_metadata:bGFiZWw=|Q2FtMQ==',
+                [(b'1678889999-0', {b'has_warning': b'1'})],
+            ),
+        ]
+
+        self.assertIsNone(
+            await fetch_latest_metadata_for_key(
+                self.mock_rds,
+                'stream_metadata:bGFiZWw=|Q2FtMQ==',
+                '1678889999-0',
+            ),
+        )
 
 
 if __name__ == '__main__':

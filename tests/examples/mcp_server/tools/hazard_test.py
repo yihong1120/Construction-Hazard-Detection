@@ -141,6 +141,30 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
 
             inst.detect_danger.assert_called_once_with(expected)
 
+    async def test_detect_violations_invalid_numeric_strings_fall_back_to_zero(
+        self,
+    ) -> None:
+        """Unparseable string confidence and class values are harmless."""
+        detections = [
+            {'bbox': [0, 0, 1, 1]},
+            {
+                'bbox': [0, 0, 1, 1],
+                'confidence': 'not-a-number',
+                'class_': 'not-a-class',
+            },
+        ]
+        with patch(
+            'examples.mcp_server.tools.hazard.DangerDetector',
+        ) as mock_dd:
+            detector = mock_dd.return_value
+            detector.detect_danger.return_value = ({}, [], [])
+            tool = HazardTools()
+            await tool.detect_violations(detections=cast(list, detections))
+
+        detector.detect_danger.assert_called_once_with(
+            [[0.0, 0.0, 1.0, 1.0, 0.0, 0.0]],
+        )
+
     async def test_detect_violations_propagates_detector_exception(
         self,
     ) -> None:

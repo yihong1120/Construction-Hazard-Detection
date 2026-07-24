@@ -6,6 +6,10 @@ from unittest.mock import patch
 
 from firebase_admin import messaging
 
+from examples.local_notification_server.fcm_service import (
+    _is_invalid_registration_token_error,
+)
+from examples.local_notification_server.fcm_service import _token_log_id
 from examples.local_notification_server.fcm_service import FcmSendResult
 from examples.local_notification_server.fcm_service import init_firebase_app
 from examples.local_notification_server.fcm_service import (
@@ -79,6 +83,43 @@ class TestInitFirebaseApp(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             init_firebase_app('dummy/path.json', '')
         self.assertIn('project_id', str(ctx.exception))
+
+
+class TestFcmTokenHelpers(unittest.TestCase):
+    """Tests for safe token logging and Firebase error compatibility."""
+
+    def test_token_log_id_never_returns_the_raw_token(self) -> None:
+        """Token logs expose a bounded hash and handle absent values."""
+        self.assertEqual(_token_log_id(None), '<missing-token>')
+        self.assertNotEqual(
+            _token_log_id(
+                'raw-device-token',
+            ), 'raw-device-token',
+        )
+        self.assertEqual(len(_token_log_id('raw-device-token')), 12)
+
+    def test_invalid_token_errors_support_exception_code_and_messages(self) -> None:
+        """Invalid registration tokens are recognized across SDK error shapes."""
+        self.assertTrue(
+            _is_invalid_registration_token_error(
+                messaging.SenderIdMismatchError('mismatch'),
+            ),
+        )
+        self.assertTrue(
+            _is_invalid_registration_token_error(
+                MagicMock(code='not-found'),
+            ),
+        )
+        self.assertTrue(
+            _is_invalid_registration_token_error(
+                RuntimeError('Registration token is not registered'),
+            ),
+        )
+        self.assertFalse(
+            _is_invalid_registration_token_error(
+                RuntimeError('timeout'),
+            ),
+        )
 
 
 @patch(

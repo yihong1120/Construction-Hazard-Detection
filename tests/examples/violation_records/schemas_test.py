@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import math
 import unittest
 from datetime import datetime
 
 from pydantic import ValidationError
 
+from examples.violation_records.schemas import NormalizedBBox
 from examples.violation_records.schemas import SiteOut
 from examples.violation_records.schemas import UploadViolationResponse
 from examples.violation_records.schemas import ViolationFeedbackCreate
@@ -304,3 +306,59 @@ pytest --cov=examples.violation_records.schemas \
        --cov-report=term-missing \
        tests/examples/violation_records/schemas_test.py
 """
+
+
+class TestViolationSchemaCoverage(unittest.TestCase):
+    def test_normalized_bbox_rejects_out_of_range_ratio(self) -> None:
+        with self.assertRaises(ValidationError):
+            NormalizedBBox(x=-0.1, y=0, w=1, h=1)
+        with self.assertRaises(ValidationError):
+            NormalizedBBox(x=0, y=0, w=1.1, h=1)
+
+    def test_feedback_bbox_validation_rejects_nonfinite_negative_and_reversed(self) -> None:
+        self.assertIsNone(
+            ViolationFeedbackCreate(
+                type='false_positive', original_bbox=None,
+            ).original_bbox,
+        )
+        for bbox in [
+            [0, 0, math.nan, 1],
+            [-1, 0, 1, 1],
+            [2, 0, 1, 1],
+        ]:
+            with self.assertRaises(ValidationError):
+                ViolationFeedbackCreate(
+                    type='false_positive', original_bbox=bbox,
+                )
+
+    def test_feedback_confidence_and_type_requirements(self) -> None:
+        self.assertIsNone(
+            ViolationFeedbackCreate(
+                type='false_positive', confidence=None,
+            ).confidence,
+        )
+        for confidence in [-0.1, 1.1]:
+            with self.assertRaises(ValidationError):
+                ViolationFeedbackCreate(
+                    type='false_positive', confidence=confidence,
+                )
+        with self.assertRaises(ValidationError):
+            ViolationFeedbackCreate(
+                type='wrong_class', corrected_label='worker',
+            )
+        with self.assertRaises(ValidationError):
+            ViolationFeedbackCreate(
+                type='wrong_class', target_detection_id='det_0',
+            )
+        with self.assertRaises(ValidationError):
+            ViolationFeedbackCreate(
+                type='bad_bbox', target_detection_id='det_0',
+            )
+        with self.assertRaises(ValidationError):
+            ViolationFeedbackCreate(
+                type='bad_bbox', corrected_bbox=[0, 0, 1, 1],
+            )
+
+
+if __name__ == '__main__':
+    unittest.main()

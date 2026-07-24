@@ -17,6 +17,8 @@ from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
 from examples.auth.models import FcmDeviceToken
 from examples.auth.redis_pool import get_redis_pool
+from examples.local_notification_server import routers
+from examples.local_notification_server.fcm_service import FcmSendResult
 from examples.local_notification_server.routers import delete_notification
 from examples.local_notification_server.routers import \
     get_notification_device_status
@@ -28,6 +30,10 @@ from examples.local_notification_server.routers import \
 from examples.local_notification_server.routers import mark_notification_read
 from examples.local_notification_server.routers import router
 from examples.local_notification_server.routers import send_test_notification
+from examples.local_notification_server.schemas import SiteNotificationPreferenceIn
+from examples.local_notification_server.schemas import \
+    SiteNotificationPreferenceUpdateRequest
+from examples.local_notification_server.schemas import SiteNotifyRequest
 from examples.local_notification_server.services import fcm_token_hash
 
 
@@ -981,3 +987,425 @@ pytest \
     --cov-report=term-missing \
     tests/examples/local_notification_server/routers_test.py
 """
+
+
+class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.db = MagicMock()
+        self.db.execute = AsyncMock()
+        self.db.commit = AsyncMock()
+        self.user = SimpleNamespace(id=7, username='operator', role='admin')
+        self.redis = MagicMock()
+
+    async def test_notification_reports_non_sendable_tokens(self) -> None:
+        """A preflight result distinguishes unavailable from absent tokens."""
+        request = SiteNotifyRequest(
+            site='Roadwork',
+            stream_name='Cam 1',
+            body={'en': {'helmet': 1}},
+        )
+        with (
+            patch.object(
+                routers,
+                '_claim_notification_send',
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                routers,
+                'get_site_notification_user_ids_cached',
+                new=AsyncMock(return_value=[7]),
+            ),
+            patch.object(
+                routers,
+                'create_notification_records_for_users',
+                new=AsyncMock(return_value=1),
+            ),
+            patch.object(
+                routers,
+                'refresh_fcm_token_cache_for_users',
+                new=AsyncMock(),
+            ),
+            patch.object(
+                routers, '_iter_push_tasks_streaming',
+                return_value=[],
+            ),
+            patch.object(
+                routers,
+                '_execute_push_tasks_bounded_streaming',
+                new=AsyncMock(return_value=(True, 0, 0, None)),
+            ),
+            patch.object(
+                routers,
+                'diagnose_push_preflight',
+                new=AsyncMock(return_value={'unique_tokens': 1}),
+            ),
+        ):
+            result = await routers.send_fcm_notification(
+                request,
+                self.db,
+                MagicMock(),
+                self.redis,
+            )
+
+        self.assertFalse(result['success'])
+        self.assertEqual(
+            result['message'],
+            "Site 'Roadwork' has no sendable device tokens.",
+        )
+
+    async def test_list_notifications_accepts_read_filter(self) -> None:
+        """Read notifications use the dedicated read condition."""
+        count_result = MagicMock()
+        count_result.scalar.return_value = 0
+        item_result = MagicMock()
+        item_result.scalars.return_value.all.return_value = []
+        self.db.execute.side_effect = [count_result, item_result]
+
+        result = await routers.list_notifications(
+            status='read',
+            page=2,
+            page_size=10,
+            db=self.db,
+            me=self.user,
+        )
+
+        self.assertEqual(result.total, 0)
+        self.assertEqual(result.page, 2)
+        self.assertEqual(result.items, [])
+
+    async def test_structured_fcm_results_track_success_failure_and_invalidity(
+        self,
+    ) -> None:
+        """Structured Firebase responses update delivery state accurately."""
+        tokens = ['valid-token', 'invalid-token']
+        with (
+            patch.object(
+                routers,
+                'refresh_fcm_token_cache_for_users',
+                new=AsyncMock(),
+            ),
+            patch.object(
+                routers,
+                'load_active_fcm_device_tokens',
+                new=AsyncMock(return_value=tokens),
+            ),
+            patch.object(
+                routers,
+                'send_fcm_notification_service',
+                new=AsyncMock(
+                    side_effect=[
+                        FcmSendResult(success_count=2, failure_count=0),
+                        FcmSendResult(
+                            success_count=0,
+                            failure_count=2,
+                            invalid_tokens=('invalid-token',),
+                        ),
+                    ],
+                ),
+            ),
+            patch.object(
+                routers,
+                'mark_fcm_tokens_success',
+                new=AsyncMock(),
+            ) as mark_success,
+            patch.object(
+                routers,
+                'mark_fcm_tokens_failure',
+                new=AsyncMock(),
+            ) as mark_failure,
+            patch.object(
+                routers,
+                'mark_invalid_fcm_tokens_for_users',
+                new=AsyncMock(),
+            ) as mark_invalid,
+        ):
+            successful = await routers.send_test_notification(
+                self.redis,
+                self.db,
+                self.user,
+            )
+            failed = await routers.send_test_notification(
+                self.redis,
+                self.db,
+                self.user,
+            )
+
+        self.assertTrue(successful.success)
+        self.assertFalse(failed.success)
+        self.assertEqual(failed.invalid_tokens, 1)
+        mark_success.assert_awaited_once_with(
+            7, tokens, self.redis, db=self.db,
+        )
+        mark_failure.assert_awaited_once_with(
+            7,
+            tokens,
+            self.redis,
+            'fcm_error',
+            db=self.db,
+        )
+        mark_invalid.assert_awaited_once_with(
+            [7],
+            {'invalid-token'},
+            self.redis,
+            db=self.db,
+        )
+
+    async def test_legacy_fcm_failure_is_recorded(self) -> None:
+        """Boolean FCM failures retain the legacy token failure bookkeeping."""
+        with (
+            patch.object(
+                routers,
+                'refresh_fcm_token_cache_for_users',
+                new=AsyncMock(),
+            ),
+            patch.object(
+                routers,
+                'load_active_fcm_device_tokens',
+                new=AsyncMock(return_value=['token']),
+            ),
+            patch.object(
+                routers,
+                'send_fcm_notification_service',
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                routers,
+                'mark_fcm_tokens_failure',
+                new=AsyncMock(),
+            ) as mark_failure,
+        ):
+            result = await routers.send_test_notification(
+                self.redis,
+                self.db,
+                self.user,
+            )
+
+        self.assertFalse(result.success)
+        mark_failure.assert_awaited_once()
+
+    async def test_notification_scope_handles_admin_and_missing_group(self) -> None:
+        """Super admins see all sites; group-less users have no management scope."""
+        sites = [SimpleNamespace(id=1, name='All sites')]
+        super_admin = SimpleNamespace(
+            id=1,
+            username='ChangDar',
+            role='admin',
+            group_id=None,
+        )
+        group_less = SimpleNamespace(
+            id=2,
+            username='operator',
+            role='admin',
+            group_id=None,
+        )
+        with patch.object(
+            routers,
+            'list_sites',
+            new=AsyncMock(return_value=sites),
+        ) as list_sites:
+            result = await routers._list_notification_scope_sites(
+                self.db,
+                super_admin,
+            )
+
+        self.assertEqual(result, sites)
+        list_sites.assert_awaited_once_with(self.db)
+        with self.assertRaises(HTTPException) as raised:
+            await routers._list_notification_scope_sites(self.db, group_less)
+        self.assertEqual(raised.exception.status_code, 403)
+
+    async def test_notification_scope_filters_regular_user_by_group(self) -> None:
+        """Regular managers receive only sites belonging to their group."""
+        user = SimpleNamespace(
+            id=3,
+            username='manager',
+            role='admin',
+            group_id=12,
+        )
+        sites = [SimpleNamespace(id=4, name='Group site')]
+        with patch.object(
+            routers,
+            'list_sites',
+            new=AsyncMock(return_value=sites),
+        ) as list_sites:
+            result = await routers._list_notification_scope_sites(self.db, user)
+
+        self.assertEqual(result, sites)
+        list_sites.assert_awaited_once_with(self.db, group_id=12)
+
+    async def test_list_preferences_uses_explicit_and_effective_values(self) -> None:
+        """Explicit preferences override effective site-access defaults."""
+        site = SimpleNamespace(
+            id=1,
+            name='Roadwork',
+            groups=[SimpleNamespace(name='Team A')],
+        )
+        pref_rows = MagicMock()
+        pref_rows.all.return_value = [(1, False)]
+        self.db.execute.return_value = pref_rows
+        with (
+            patch.object(
+                routers,
+                '_list_notification_scope_sites',
+                new=AsyncMock(return_value=[site]),
+            ),
+            patch.object(
+                routers,
+                'list_effective_sites_for_user',
+                new=AsyncMock(return_value=[site]),
+            ),
+        ):
+            result = await routers.list_site_notification_preferences(
+                self.db,
+                self.user,
+            )
+
+        self.assertEqual(len(result), 1)
+        self.assertFalse(result[0].is_enabled)
+        self.assertEqual(result[0].group_name, 'Team A')
+
+    async def test_empty_preference_scope_needs_no_database_queries(self) -> None:
+        """Users with no visible sites receive an empty preference list."""
+        with patch.object(
+            routers,
+            '_list_notification_scope_sites',
+            new=AsyncMock(return_value=[]),
+        ):
+            result = await routers.list_site_notification_preferences(
+                self.db,
+                self.user,
+            )
+
+        self.assertEqual(result, [])
+        self.db.execute.assert_not_awaited()
+
+    async def test_preference_update_ignores_sites_omitted_from_payload(self) -> None:
+        """A partial request preserves a second allowed site's preference."""
+        sites = [
+            SimpleNamespace(id=1, name='Included site'),
+            SimpleNamespace(id=2, name='Unchanged site'),
+        ]
+        pref_result = MagicMock()
+        pref_result.scalars.return_value.all.return_value = []
+        self.db.execute.return_value = pref_result
+        payload = SiteNotificationPreferenceUpdateRequest(
+            preferences=[
+                SiteNotificationPreferenceIn(site_id=1, is_enabled=True),
+            ],
+        )
+        with (
+            patch.object(
+                routers,
+                '_list_notification_scope_sites',
+                new=AsyncMock(return_value=sites),
+            ),
+            patch.object(
+                routers,
+                'list_effective_sites_for_user',
+                new=AsyncMock(return_value=[sites[0]]),
+            ),
+            patch.object(
+                routers,
+                'list_site_notification_preferences',
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = await routers.update_site_notification_preferences(
+                payload,
+                self.db,
+                self.user,
+                self.redis,
+            )
+
+        self.assertEqual(result, [])
+        self.assertEqual(self.db.add.call_count, 1)
+        self.db.commit.assert_awaited_once()
+
+    async def test_preference_update_handles_empty_and_invalid_requests(
+        self,
+    ) -> None:
+        """Empty updates delegate to listing and out-of-scope IDs are rejected."""
+        site = SimpleNamespace(id=1, name='Allowed site')
+        empty = SiteNotificationPreferenceUpdateRequest(preferences=[])
+        invalid = SiteNotificationPreferenceUpdateRequest(
+            preferences=[
+                SiteNotificationPreferenceIn(site_id=2, is_enabled=True),
+            ],
+        )
+        with (
+            patch.object(
+                routers,
+                '_list_notification_scope_sites',
+                new=AsyncMock(return_value=[site]),
+            ),
+            patch.object(
+                routers,
+                'list_site_notification_preferences',
+                new=AsyncMock(return_value=[]),
+            ) as list_preferences,
+        ):
+            result = await routers.update_site_notification_preferences(
+                empty,
+                self.db,
+                self.user,
+                self.redis,
+            )
+            with self.assertRaises(HTTPException) as raised:
+                await routers.update_site_notification_preferences(
+                    invalid,
+                    self.db,
+                    self.user,
+                    self.redis,
+                )
+
+        self.assertEqual(result, [])
+        list_preferences.assert_awaited_once_with(self.db, self.user)
+        self.assertEqual(raised.exception.status_code, 403)
+
+    async def test_preference_update_changes_existing_value_and_refreshes_cache(
+        self,
+    ) -> None:
+        """Changed explicit preferences update their row and recipient cache."""
+        site = SimpleNamespace(id=1, name='Changed site')
+        preference = SimpleNamespace(site_id=1, is_enabled=False)
+        pref_result = MagicMock()
+        pref_result.scalars.return_value.all.return_value = [preference]
+        self.db.execute.return_value = pref_result
+        payload = SiteNotificationPreferenceUpdateRequest(
+            preferences=[
+                SiteNotificationPreferenceIn(site_id=1, is_enabled=True),
+            ],
+        )
+        with (
+            patch.object(
+                routers,
+                '_list_notification_scope_sites',
+                new=AsyncMock(return_value=[site]),
+            ),
+            patch.object(
+                routers,
+                'list_effective_sites_for_user',
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                routers,
+                'refresh_site_notification_user_cache',
+                new=AsyncMock(),
+            ) as refresh_cache,
+            patch.object(
+                routers,
+                'list_site_notification_preferences',
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            await routers.update_site_notification_preferences(
+                payload,
+                self.db,
+                self.user,
+                self.redis,
+            )
+
+        self.assertTrue(preference.is_enabled)
+        refresh_cache.assert_awaited_once_with(
+            'Changed site', self.db, self.redis,
+        )

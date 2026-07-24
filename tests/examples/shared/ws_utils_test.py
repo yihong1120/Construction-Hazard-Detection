@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from fastapi import WebSocketDisconnect
+
 import examples.shared.ws_utils as ws_utils
 
 
@@ -69,6 +71,14 @@ class TestWSUtils(unittest.IsolatedAsyncioTestCase):
         # hasattr raises a non-AttributeError; ws_utils catches it and
         # returns False via the exception handler.
         self.assertFalse(ws_utils._is_websocket_connected(Exploding()))
+
+    def test_expected_websocket_disconnect_is_suppressed(self) -> None:
+        """Routine client disconnects are not reported as unexpected errors."""
+        self.assertTrue(
+            ws_utils._is_expected_websocket_close_error(
+                WebSocketDisconnect(),
+            ),
+        )
 
     async def test_safe_websocket_send_json_success(self) -> None:
         """Sending JSON succeeds when connected and no exception is raised."""

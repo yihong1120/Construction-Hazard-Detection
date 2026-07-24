@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from collections import defaultdict
 from collections.abc import Awaitable
 from collections.abc import Coroutine
 from collections.abc import Iterable
+from datetime import datetime
+from datetime import timezone
+from types import SimpleNamespace
 from typing import Any
 from typing import DefaultDict
 from typing import TypeVar
@@ -12,8 +16,11 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from cryptography.fernet import Fernet
+
 from examples.local_notification_server import services as svc
 from examples.local_notification_server.schemas import SiteNotifyRequest
+from examples.local_notification_server.schemas import TokenRequest
 
 # Generic type variable for async helpers
 T = TypeVar('T')
@@ -693,3 +700,411 @@ pytest \
     --cov-report=term-missing \
     tests/examples/local_notification_server/services_test.py
 """
+
+
+def _row(token: str = 'device-token') -> svc.FcmDeviceToken:
+    now = datetime(2026, 7, 24, 8, 0, tzinfo=timezone.utc)
+    return svc.FcmDeviceToken(
+        user_id=7,
+        device_token_encrypted=svc.encrypt_fcm_token(token),
+        device_token_hash=svc.fcm_token_hash(token),
+        platform='web',
+        device_lang='en-GB',
+        permission_status='granted',
+        last_seen_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
+    def test_token_crypto_and_serialisation_helpers(self) -> None:
+        valid_key = Fernet.generate_key().decode('utf-8')
+        with patch.object(
+            svc,
+            'settings',
+            SimpleNamespace(
+                fcm_token_encryption_key=valid_key,
+                authjwt_secret_key='fallback-secret',
+            ),
+        ):
+            encrypted = svc.encrypt_fcm_token('device-token')
+            self.assertEqual(svc.decrypt_fcm_token(encrypted), 'device-token')
+            self.assertEqual(svc.decrypt_fcm_token('not-a-token'), '')
+
+        with patch.object(
+            svc,
+            'settings',
+            SimpleNamespace(
+                fcm_token_encryption_key='invalid-key',
+                authjwt_secret_key='fallback-secret',
+            ),
+        ):
+            self.assertEqual(
+                svc.decrypt_fcm_token(svc.encrypt_fcm_token('fallback-token')),
+                'fallback-token',
+            )
+
+        self.assertEqual(svc._decode_redis_string(None), '')
+        self.assertEqual(svc._decode_redis_string(b'value'), 'value')
+        self.assertEqual(svc._decode_redis_bool('TRUE'), True)
+        self.assertEqual(svc._decode_redis_bool('false'), False)
+        self.assertIsNone(svc._decode_redis_bool(None))
+        self.assertEqual(svc._encode_optional_bool(None), '')
+        self.assertEqual(svc._encode_optional_bool(True), 'true')
+        self.assertEqual(svc._encode_optional_bool(False), 'false')
+        self.assertEqual(
+            svc._datetime_to_api(datetime(2026, 7, 24, 8, 0)),
+            '2026-07-24T08:00:00Z',
+        )
+        self.assertTrue(svc._utc_now_iso().endswith('Z'))
+
+    def test_token_row_status_result_and_cache_write(self) -> None:
+        row = _row()
+        row.last_success_at = datetime(2026, 7, 24, 8, 1, tzinfo=timezone.utc)
+        row.web_vapid_key_available = True
+        row.web_service_worker_registered = False
+        status = svc._fcm_token_status_row(row)
+        self.assertEqual(status['platform'], 'web')
+        self.assertTrue(status['is_active'])
+        self.assertEqual(status['last_success_at'], '2026-07-24T08:01:00Z')
+
+        result = SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [row]),
+        )
+        self.assertEqual(svc._result_scalars_all(result), [row])
+        self.assertEqual(svc._result_scalars_all(SimpleNamespace()), [])
+
+        class _Awaitable:
+            def __await__(self):
+                yield
+                return None
+
+        async def async_scalars() -> object:
+            return SimpleNamespace(all=lambda: [])
+
+        async def async_all() -> list[object]:
+            return []
+
+        self.assertEqual(
+            svc._result_scalars_all(SimpleNamespace(scalars=async_scalars)),
+            [],
+        )
+        self.assertEqual(
+            svc._result_scalars_all(
+                SimpleNamespace(
+                    scalars=lambda: _Awaitable(),
+                ),
+            ),
+            [],
+        )
+        self.assertEqual(
+            svc._result_scalars_all(SimpleNamespace(scalars=lambda: object())),
+            [],
+        )
+        self.assertEqual(
+            svc._result_scalars_all(
+                SimpleNamespace(
+                    scalars=lambda: SimpleNamespace(all=async_all),
+                ),
+            ),
+            [],
+        )
+        self.assertEqual(
+            svc._result_scalars_all(
+                SimpleNamespace(
+                    scalars=lambda: SimpleNamespace(all=lambda: _Awaitable()),
+                ),
+            ),
+            [],
+        )
+
+        pipe = MagicMock()
+        svc._queue_token_cache_write(pipe, row, 'device-token')
+        pipe.hset.assert_any_call('fcm_tokens:7', 'device-token', 'en-GB')
+        pipe.sadd.assert_called_once_with(
+            svc._token_index_key(7),
+            svc.fcm_token_hash('device-token'),
+        )
+
+    async def test_registers_and_updates_device_tokens(self) -> None:
+        request = TokenRequest(
+            user_id=7,
+            device_token='device-token',
+            platform='web',
+            permission_status='granted',
+            app_version='1.0.0',
+            web_vapid_key_available=True,
+            web_service_worker_registered=True,
+        )
+        db = MagicMock()
+        db.scalar = AsyncMock(return_value=None)
+        db.add = MagicMock()
+        db.commit = AsyncMock()
+        pipe = MagicMock()
+        pipe.execute = AsyncMock()
+        rds = MagicMock()
+        rds.pipeline.return_value = pipe
+
+        response = await svc.record_fcm_token_registration(
+            request,
+            'en-GB',
+            db,
+            rds,
+        )
+        self.assertEqual(
+            response['token_hash'],
+            svc.fcm_token_hash('device-token'),
+        )
+        created = db.add.call_args.args[0]
+        self.assertEqual(created.platform, 'web')
+        self.assertEqual(created.permission_status, 'granted')
+        pipe.execute.assert_awaited_once()
+
+        existing = _row()
+        db.scalar.return_value = existing
+        await svc.record_fcm_token_registration(request, 'zh-TW', db, rds)
+        self.assertEqual(existing.device_lang, 'zh-TW')
+        self.assertIsNone(existing.disabled_at)
+
+        async_db = MagicMock()
+        async_db.scalar = AsyncMock(return_value=None)
+        async_db.add = AsyncMock()
+        async_db.commit = AsyncMock()
+        await svc.record_fcm_token_registration(request, 'en-GB', async_db, rds)
+        async_db.add.assert_awaited_once()
+
+    async def test_device_status_loading_and_cache_refresh(self) -> None:
+        row = _row()
+        result = SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [row, object()]),
+        )
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=result)
+
+        status = await svc.list_fcm_device_status(7, db)
+        self.assertEqual(status[0]['token_hash'], row.device_token_hash)
+        self.assertEqual(await svc.load_active_fcm_device_tokens(7, db), ['device-token'])
+
+        pipe = MagicMock()
+        pipe.execute = AsyncMock()
+        rds = MagicMock()
+        rds.pipeline.return_value = pipe
+        self.assertEqual(await svc.refresh_fcm_token_cache_for_users([], db, rds), 0)
+        self.assertEqual(
+            await svc.refresh_fcm_token_cache_for_users([7, 7], db, rds),
+            1,
+        )
+        pipe.execute.assert_awaited_once()
+
+    async def test_marks_token_delivery_success_failure_and_invalidity(self) -> None:
+        db = MagicMock()
+        db.execute = AsyncMock()
+        db.commit = AsyncMock()
+        pipe = MagicMock()
+        pipe.execute = AsyncMock()
+        rds = MagicMock()
+        rds.pipeline.return_value = pipe
+        rds.hgetall = AsyncMock(return_value={b'invalid-token': b'en-GB'})
+
+        await svc.mark_fcm_tokens_success(7, ['ok-token'], rds, db)
+        await svc.mark_fcm_tokens_failure(7, ['failed-token'], rds, 'offline', db)
+        await svc.mark_invalid_fcm_tokens_for_users(
+            [7],
+            ['invalid-token'],
+            rds,
+            db=db,
+        )
+        await svc.mark_invalid_fcm_tokens_for_users([7], [], rds)
+
+        self.assertGreaterEqual(db.execute.await_count, 3)
+        self.assertGreaterEqual(pipe.execute.await_count, 3)
+        pipe.hdel.assert_called_once_with('fcm_tokens:7', 'invalid-token')
+
+        rds.hgetall.return_value = {b'other-token': b'en-GB'}
+        await svc.mark_invalid_fcm_tokens_for_users(
+            [7],
+            ['invalid-token'],
+            rds,
+        )
+
+    async def test_token_deletion_and_cache_builder_fallback(self) -> None:
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+        db.commit = AsyncMock()
+        rds = AsyncMock()
+        self.assertTrue(
+            await svc.delete_fcm_token_metadata(7, 'device-token', db, rds),
+        )
+
+        db.execute.return_value = SimpleNamespace(rowcount='unknown')
+        self.assertFalse(
+            await svc.delete_fcm_token_metadata(7, 'device-token', db, rds),
+        )
+
+        rds.exists = AsyncMock(return_value=False)
+        rds.set = AsyncMock(return_value=False)
+        with patch.object(svc, '_recipient_index_wait_attempts', 0):
+            with patch.object(
+                svc,
+                'refresh_site_notification_user_cache',
+                AsyncMock(return_value=[7]),
+            ) as refresh:
+                self.assertEqual(
+                    await svc.get_site_notification_user_ids_cached('S1', db, rds),
+                    [7],
+                )
+        refresh.assert_awaited_once_with('S1', db, rds)
+
+    async def test_notification_content_and_push_task_fallbacks(self) -> None:
+        request = SiteNotifyRequest(site='S1', stream_name='Cam1', body={})
+        self.assertEqual(svc._translate_title('unsupported'), '')
+        with patch.object(svc, '_translate_title', return_value=''):
+            self.assertEqual(
+                svc._notification_record_title(
+                    request,
+                ), 'Notification',
+            )
+        titled_request = SiteNotifyRequest(
+            site='S1',
+            stream_name='Cam1',
+            body={},
+            title='Custom title',
+        )
+        self.assertEqual(
+            svc._notification_record_title(
+                titled_request,
+            ), 'Custom title',
+        )
+        self.assertEqual(svc._notification_record_body(request), 'S1 - Cam1')
+
+        db = MagicMock()
+        db.add_all = AsyncMock()
+        db.commit = AsyncMock()
+        self.assertEqual(
+            await svc.create_notification_records_for_users(request, [], db),
+            0,
+        )
+        self.assertEqual(
+            await svc.create_notification_records_for_users(request, [7], db),
+            1,
+        )
+        db.add_all.assert_awaited_once()
+
+        self.assertIsNone(svc._build_push_task(request, 'en-GB', []))
+        self.assertIsNone(
+            svc._build_push_task(
+                request, 'unsupported', ['token'],
+            ),
+        )
+        self.assertIsNone(svc._build_push_task(request, 'en-GB', ['token']))
+
+    async def test_refresh_skips_undecryptable_rows(self) -> None:
+        row = _row()
+        result = SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [row]),
+        )
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=result)
+        rds = MagicMock()
+        rds.pipeline.return_value = MagicMock()
+        with patch.object(svc, 'decrypt_fcm_token', return_value=''):
+            self.assertEqual(
+                await svc.refresh_fcm_token_cache_for_users([7], db, rds),
+                0,
+            )
+
+    async def test_preflight_and_streaming_builder_handle_empty_tokens(self) -> None:
+        request = SiteNotifyRequest(
+            site='S1',
+            stream_name='Cam1',
+            body={'warning_no_hardhat': {'count': 1}},
+        )
+        pipe = MagicMock()
+        pipe.hgetall = MagicMock()
+        pipe.execute = AsyncMock(return_value=[{b'': b'en-GB'}])
+        rds = MagicMock()
+        rds.pipeline.return_value = pipe
+        stats = await svc.diagnose_push_preflight(request, [7], rds)
+        self.assertEqual(stats['token_entries'], 0)
+
+        async def complete_task() -> bool:
+            return True
+
+        pipe.execute.return_value = [{b'token': b'en-GB'}]
+        with patch.object(svc, '_fcm_batch_size', 1):
+            with patch.object(svc, '_build_push_task', return_value=complete_task()):
+                generator = svc._iter_push_tasks_streaming(request, [7], rds)
+                task = await generator.__anext__()
+                self.assertTrue(await task)
+                with self.assertRaises(StopAsyncIteration):
+                    await generator.__anext__()
+
+    async def test_bounded_executors_cleanup_and_error_results(self) -> None:
+        cleanup = AsyncMock()
+
+        async def invalid_task() -> svc.FcmSendResult:
+            return svc.FcmSendResult(0, 1, ('invalid-token',))
+
+        result = await svc._execute_push_tasks_bounded(
+            [invalid_task()],
+            invalid_token_handler=cleanup,
+        )
+        self.assertEqual(result, (True, 1, 0, None))
+        cleanup.assert_awaited_once_with(('invalid-token',))
+
+        async def pending_task() -> bool:
+            await asyncio.Event().wait()
+            return True
+
+        timeout_result = await svc._execute_push_tasks_bounded(
+            [pending_task()],
+            timeout=0.01,
+        )
+        self.assertEqual(
+            timeout_result,
+            (False, None, None, 'FCM notification sending timed out.'),
+        )
+
+        async def raising_task() -> bool:
+            raise RuntimeError('send failed')
+
+        error_result = await svc._execute_push_tasks_bounded(
+            [raising_task()],
+        )
+        self.assertEqual(error_result, (False, None, None, 'internal_error'))
+
+    async def test_streaming_bounded_executor_handles_empty_timeout_and_error(self) -> None:
+        async def empty_stream():
+            if False:
+                yield asyncio.sleep(0)
+
+        self.assertEqual(
+            await svc._execute_push_tasks_bounded_streaming(empty_stream()),
+            (True, 0, 0, None),
+        )
+
+        async def pending_stream():
+            yield asyncio.Event().wait()
+
+        timeout_result = await svc._execute_push_tasks_bounded_streaming(
+            pending_stream(),
+            timeout=0.01,
+        )
+        self.assertEqual(
+            timeout_result,
+            (False, None, None, 'FCM notification sending timed out.'),
+        )
+
+        async def failing_stream():
+            raise RuntimeError('stream failed')
+            yield asyncio.sleep(0)
+
+        error_result = await svc._execute_push_tasks_bounded_streaming(
+            failing_stream(),
+        )
+        self.assertEqual(error_result, (False, None, None, 'internal_error'))
+
+
+if __name__ == '__main__':
+    unittest.main()

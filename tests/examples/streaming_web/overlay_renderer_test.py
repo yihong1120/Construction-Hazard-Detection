@@ -70,6 +70,8 @@ class OverlayRendererTest(unittest.TestCase):
                 renderer._env_int('STREAMING_OVERLAY_TEST_INT', 7),
                 7,
             )
+        self.assertTrue(renderer._env_bool('MISSING_OVERLAY_BOOL', True))
+        self.assertEqual(renderer._env_int('MISSING_OVERLAY_INT', 7), 7)
 
     def test_has_warning(self) -> None:
         """Exercise this test."""
