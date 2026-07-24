@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import runpy
 import sys
 from pathlib import Path
@@ -12,31 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-
-def _install_optional_onnx_stubs() -> None:
-    """Provide only the import-time APIs needed when CI lacks ONNX wheels."""
-    try:
-        importlib.import_module('onnx')
-    except ModuleNotFoundError:
-        sys.modules['onnx'] = ModuleType('onnx')
-
-    try:
-        importlib.import_module('onnxruntime.quantization')
-    except ModuleNotFoundError:
-        onnxruntime = ModuleType('onnxruntime')
-        quantization = ModuleType('onnxruntime.quantization')
-        quantization.CalibrationDataReader = type(
-            'CalibrationDataReader',
-            (),
-            {},
-        )
-        onnxruntime.quantization = quantization
-        sys.modules['onnxruntime'] = onnxruntime
-        sys.modules['onnxruntime.quantization'] = quantization
-
-
-_install_optional_onnx_stubs()
-subject = importlib.import_module('examples.YOLO_train.export_int8_trt')
+from examples.YOLO_train import export_int8_trt as subject
 
 
 class ResettableDataLoader:
