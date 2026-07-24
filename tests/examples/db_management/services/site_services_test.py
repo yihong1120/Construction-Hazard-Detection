@@ -68,6 +68,35 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sites, ['site3'])
 
+    async def test_group_user_and_preference_helpers_handle_empty_and_chunked_inputs(
+        self,
+    ) -> None:
+        """Preference seeding skips empties and flushes a full bulk chunk."""
+        self.assertEqual(
+            await site_services._list_user_ids_for_groups([], self.db),
+            [],
+        )
+        self.db.execute = AsyncMock()
+        await site_services.seed_site_notification_preferences(
+            list(range(site_services._bulk_insert_chunk_size)),
+            [self.site.id],
+            self.db,
+        )
+        self.db.execute.assert_awaited_once()
+
+    async def test_list_site_ids_for_group_returns_scalar_ids(self) -> None:
+        """Group membership lookup returns the association-table site IDs."""
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [4, 9]
+        self.db.execute = AsyncMock(return_value=result)
+
+        site_ids = await site_services.list_site_ids_for_group(
+            self.group_id,
+            self.db,
+        )
+
+        self.assertEqual(site_ids, [4, 9])
+
     async def test_create_site_success(self) -> None:
         """Test successful creation of a new site.
 

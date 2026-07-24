@@ -65,6 +65,22 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(configs, ['cfg1', 'cfg2'])
 
+    async def test_list_stream_configs_filters_by_group(self) -> None:
+        """A requested group ID must be included in the stream query."""
+        mock_result: MagicMock = MagicMock()
+        mock_result.scalars.return_value.all.return_value = ['group-cfg']
+        self.db.execute = AsyncMock(return_value=mock_result)
+
+        configs = await stream_config_services.list_stream_configs(
+            site_id=self.site_id,
+            group_id=self.group_id,
+            db=self.db,
+        )
+
+        self.assertEqual(configs, ['group-cfg'])
+        query = self.db.execute.await_args.args[0]
+        self.assertIn('stream_configs.group_id', str(query))
+
     async def test_create_stream_config_success(self) -> None:
         """Test successful creation of a stream configuration.
 

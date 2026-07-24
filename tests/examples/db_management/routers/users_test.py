@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -11,6 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.db_management.routers import users
+from examples.db_management.schemas.user import AdminUserApproval
 from examples.db_management.schemas.user import ApproveUserSignup
 from examples.db_management.schemas.user import PendingUserReviewRead
 from examples.db_management.schemas.user import SetUserStatus
@@ -881,3 +883,254 @@ pytest --cov=examples.db_management.routers.users\
     --cov-report=term-missing\
         tests/examples/db_management/routers/users_test.py
 '''
+
+
+class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
+    """Cover the user-management authorization and alias edge cases."""
+
+    def setUp(self) -> None:
+        self.admin = SimpleNamespace(group_id=10, role='admin')
+        self.db = AsyncMock()
+
+    async def test_group_lookup_and_scope_failures(self) -> None:
+        """Missing groups and cross-group actions return their HTTP errors."""
+        missing_result = MagicMock()
+        missing_result.unique.return_value.scalar_one_or_none.return_value = None
+        self.db.execute.return_value = missing_result
+
+        with self.assertRaisesRegex(HTTPException, 'Group not found'):
+            await users._get_group_or_404(999, self.db)
+
+        group = SimpleNamespace(id=10)
+        found_result = MagicMock()
+        found_result.unique.return_value.scalar_one_or_none.return_value = group
+        self.db.execute.return_value = found_result
+        self.assertIs(await users._get_group_or_404(10, self.db), group)
+
+        with patch.object(users, 'is_super_admin', return_value=False), patch.object(
+            users,
+            'ensure_admin_with_group',
+        ):
+            with self.assertRaisesRegex(HTTPException, 'group_id is required'):
+                users._resolve_target_group_id(None, self.admin)
+            with self.assertRaisesRegex(
+                HTTPException,
+                'Cannot manage users outside your group',
+            ):
+                users._ensure_user_management_scope(
+                    SimpleNamespace(group_id=11),
+                    self.admin,
+                )
+
+        with patch.object(users, 'is_super_admin', return_value=True):
+            self.assertEqual(
+                users._resolve_target_group_id(99, self.admin), 99,
+            )
+
+    async def test_add_user_seeds_group_sites_and_commits(self) -> None:
+        """Adding a grouped user persists notification preferences."""
+        payload = UserCreate(
+            username='new-user',
+            password='secret',
+            group_id=10,
+        )
+        new_user = SimpleNamespace(id=42)
+        expected = SimpleNamespace(id=42)
+
+        with (
+            patch.object(users, 'is_super_admin', return_value=False),
+            patch.object(users, 'ensure_admin_with_group'),
+            patch.object(
+                users, 'create_user',
+                AsyncMock(return_value=new_user),
+            ),
+            patch.object(
+                users,
+                'list_site_ids_for_group',
+                AsyncMock(return_value=[7, 8]),
+            ) as list_sites,
+            patch.object(
+                users,
+                'seed_site_notification_preferences',
+                AsyncMock(),
+            ) as seed_preferences,
+            patch.object(
+                users,
+                '_load_user_read',
+                AsyncMock(return_value=expected),
+            ),
+            patch.object(users, 'invalidate_effective_site_cache'),
+        ):
+            result = await users.add_user(payload, self.db, self.admin)
+
+        self.assertIs(result, expected)
+        list_sites.assert_awaited_once_with(10, self.db)
+        seed_preferences.assert_awaited_once_with(
+            user_ids=[42],
+            site_ids=[7, 8],
+            db=self.db,
+        )
+        self.db.commit.assert_awaited_once()
+
+    async def test_registration_and_pending_list_aliases_delegate(self) -> None:
+        """Public registration and admin pending-list aliases share logic."""
+        payload = MagicMock()
+        request = MagicMock()
+        redis = MagicMock()
+        expected = SimpleNamespace(id=3)
+
+        with patch.object(
+            users,
+            '_register_signup_user',
+            AsyncMock(return_value=expected),
+        ) as register:
+            result = await users.register_user(payload, request, self.db, redis)
+
+        self.assertIs(result, expected)
+        register.assert_awaited_once_with(payload, request, self.db, redis)
+
+        rows = [SimpleNamespace(id=1)]
+        with patch.object(
+            users,
+            'list_pending_users',
+            AsyncMock(return_value=rows),
+        ) as list_pending:
+            result = await users.admin_list_pending_users(self.db)
+
+        self.assertIs(result, rows)
+        list_pending.assert_awaited_once_with(self.db)
+
+    async def test_signup_approval_routes_cover_rejection_and_approval(self) -> None:
+        """Reviewing a pending signup either rejects or delegates approval."""
+        pending_user = SimpleNamespace(
+            id=8,
+            role='user',
+            status='pending_admin_approval',
+            email_verified_at=datetime(2026, 7, 24),
+            group_id=None,
+        )
+        rejected_result = SimpleNamespace(id=8, status='rejected')
+
+        with (
+            patch.object(
+                users,
+                'get_user_by_id',
+                AsyncMock(return_value=pending_user),
+            ),
+            patch.object(users, 'ensure_not_super'),
+            patch.object(
+                users,
+                '_load_user_read',
+                AsyncMock(return_value=rejected_result),
+            ),
+            patch.object(users, 'invalidate_effective_site_cache'),
+        ):
+            result = await users.review_user_signup(
+                8,
+                AdminUserApproval(decision='rejected'),
+                self.db,
+                self.admin,
+            )
+
+        self.assertIs(result, rejected_result)
+        self.assertEqual(pending_user.status, 'rejected')
+        self.db.commit.assert_awaited_once()
+
+        pending_user.status = 'pending_admin_approval'
+        approved_result = SimpleNamespace(id=8, status='active')
+        with (
+            patch.object(
+                users,
+                'get_user_by_id',
+                AsyncMock(return_value=pending_user),
+            ),
+            patch.object(users, 'ensure_not_super'),
+            patch.object(
+                users,
+                '_approve_signup_user',
+                AsyncMock(return_value=approved_result),
+            ) as approve,
+        ):
+            result = await users.review_user_signup(
+                8,
+                AdminUserApproval(decision='approved', group_id=10),
+                self.db,
+                self.admin,
+            )
+
+        self.assertIs(result, approved_result)
+        approve.assert_awaited_once_with(pending_user, 10, self.db, self.admin)
+
+    async def test_approval_and_group_change_require_a_resolved_group(self) -> None:
+        """A resolved group is mandatory before activating or moving a user."""
+        with patch.object(users, '_resolve_target_group_id', return_value=None):
+            with self.assertRaisesRegex(HTTPException, 'group_id is required'):
+                await users._approve_signup_user(
+                    SimpleNamespace(id=5),
+                    None,
+                    self.db,
+                    self.admin,
+                )
+
+        target = SimpleNamespace(id=5, group_id=10)
+        with (
+            patch.object(
+                users,
+                'get_user_by_id',
+                AsyncMock(return_value=target),
+            ),
+            patch.object(users, 'ensure_not_super'),
+            patch.object(users, '_ensure_user_management_scope'),
+            patch.object(users, '_resolve_target_group_id', return_value=None),
+        ):
+            with self.assertRaisesRegex(HTTPException, 'group_id is required'):
+                await users.change_group(
+                    SimpleNamespace(user_id=5, new_group_id=10),
+                    self.db,
+                    self.admin,
+                )
+
+        invalid_user = SimpleNamespace(
+            id=6,
+            role='user',
+            status='active',
+            email_verified_at=datetime(2026, 7, 24),
+            group_id=None,
+        )
+        with (
+            patch.object(
+                users,
+                'get_user_by_id',
+                AsyncMock(return_value=invalid_user),
+            ),
+            patch.object(users, 'ensure_not_super'),
+        ):
+            with self.assertRaisesRegex(
+                HTTPException,
+                'not awaiting signup approval',
+            ):
+                await users.review_user_signup(
+                    6,
+                    AdminUserApproval(decision='approved', group_id=10),
+                    self.db,
+                    self.admin,
+                )
+
+    async def test_super_admin_lists_all_users(self) -> None:
+        """Super administrators call the unscoped user-list service."""
+        with (
+            patch.object(users, 'is_super_admin', return_value=True),
+            patch.object(
+                users,
+                'list_users_service',
+                AsyncMock(return_value=[]),
+            ) as list_users_service,
+        ):
+            result = await users.list_users(self.db, self.admin)
+
+        self.assertEqual(result, [])
+        list_users_service.assert_awaited_once_with(self.db)
+
+
+if __name__ == '__main__':
+    unittest.main()

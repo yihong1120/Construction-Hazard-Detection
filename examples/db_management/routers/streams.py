@@ -74,12 +74,6 @@ def _resolve_stream_group_id(
         ensure_admin_with_group(me)
         group_id = me.group_id
 
-    if group_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail='group_id is required to create a stream.',
-        )
-
     if group_id not in _site_group_ids(site):
         raise HTTPException(
             status_code=403,

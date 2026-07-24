@@ -65,6 +65,29 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
             'legal_documents_not_found',
         )
 
+    async def test_get_active_legal_documents_merges_default_locale(self) -> None:
+        """A non-default locale inherits required documents from zh-TW."""
+        requested_result = MagicMock()
+        requested_result.scalars.return_value.all.return_value = [
+            _doc('terms', '2026-07-01'),
+        ]
+        fallback_result = MagicMock()
+        fallback_result.scalars.return_value.all.return_value = [
+            _doc('terms'),
+            _doc('privacy'),
+            _doc('ai_terms'),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(
+            side_effect=[requested_result, fallback_result],
+        )
+
+        docs = await svc.get_active_legal_documents(db, 'en-US')
+
+        self.assertEqual(docs['terms'].version, '2026-07-01')
+        self.assertIn('privacy', docs)
+        self.assertIn('ai_terms', docs)
+
     async def test_validate_signup_consents_success(self) -> None:
         """It accepts matching versions and mandatory booleans."""
         db = _db_with_docs([
@@ -110,6 +133,30 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
             'legal_version_mismatch',
         )
 
+    async def test_validate_signup_consents_requires_all_mandatory_flags(self) -> None:
+        """Each mandatory consent produces its dedicated validation error."""
+        complete_payload = {
+            'accepted_terms': True,
+            'terms_version': '2026-06-27',
+            'privacy_version': '2026-06-27',
+            'notification_consent': True,
+            'ai_terms_accepted': True,
+            'ai_terms_version': '2026-06-27',
+        }
+        for field, expected_message in [
+            ('accepted_terms', 'accepted_terms is required.'),
+            ('notification_consent', 'notification_consent is required.'),
+            ('ai_terms_accepted', 'ai_terms_accepted is required.'),
+        ]:
+            values = dict(complete_payload)
+            values[field] = False
+            with self.assertRaises(HTTPException) as missing:
+                await svc.validate_signup_consents(
+                    SimpleNamespace(**values),
+                    AsyncMock(),
+                )
+            self.assertEqual(missing.exception.detail, expected_message)
+
     async def test_record_user_consent(self) -> None:
         """It stores consent versions, timestamps, IP, and user-agent."""
         payload = SimpleNamespace(
@@ -143,6 +190,23 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
         db.add.assert_called_once_with(consent)
         db.commit.assert_awaited_once()
         db.refresh.assert_awaited_once_with(consent)
+
+    def test_request_metadata_helpers_handle_missing_and_direct_clients(self) -> None:
+        """Consent metadata supports reverse proxies and bare requests safely."""
+        self.assertIsNone(svc._client_ip(None))
+        self.assertIsNone(svc._user_agent(None))
+        self.assertIsNone(
+            svc._client_ip(SimpleNamespace(headers={}, client=None)),
+        )
+        self.assertEqual(
+            svc._client_ip(
+                SimpleNamespace(
+                    headers={},
+                    client=SimpleNamespace(host='198.51.100.22'),
+                ),
+            ),
+            '198.51.100.22',
+        )
 
 
 if __name__ == '__main__':

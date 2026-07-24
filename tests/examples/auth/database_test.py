@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -30,6 +31,41 @@ class TestDatabaseEngine(unittest.TestCase):
         self.assertTrue(
             hasattr(Base, 'metadata'),
             "Base should have a 'metadata' attribute.",
+        )
+
+    def test_environment_number_helpers_fall_back_on_invalid_values(self) -> None:
+        """Malformed pool settings retain the documented safe defaults."""
+        from examples.auth import database
+
+        with patch.dict(
+            os.environ,
+            {'DB_POOL_SIZE': 'bad', 'DB_POOL_TIMEOUT_SECONDS': 'bad'},
+        ):
+            self.assertEqual(
+                database._nonnegative_int_env('DB_POOL_SIZE', 2), 2,
+            )
+            self.assertEqual(
+                database._positive_float_env('DB_POOL_TIMEOUT_SECONDS', 10.0),
+                10.0,
+            )
+
+    def test_legacy_postgres_uris_use_the_asyncpg_driver(self) -> None:
+        """Legacy PostgreSQL URI forms remain usable by the async engine."""
+        from examples.auth import database
+
+        self.assertEqual(
+            database._as_asyncpg_database_uri('postgres://user:pass@db/app'),
+            'postgresql+asyncpg://user:pass@db/app',
+        )
+        self.assertEqual(
+            database._as_asyncpg_database_uri(
+                'postgresql://user:pass@db/app',
+            ),
+            'postgresql+asyncpg://user:pass@db/app',
+        )
+        self.assertEqual(
+            database._as_asyncpg_database_uri('sqlite+aiosqlite:///app.db'),
+            'sqlite+aiosqlite:///app.db',
         )
 
 

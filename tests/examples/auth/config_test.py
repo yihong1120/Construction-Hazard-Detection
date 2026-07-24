@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import unittest
 
+from examples.auth.config import _env_bool
+from examples.auth.config import _postgres_async_url
 from examples.auth.config import Settings
 
 
@@ -69,6 +71,28 @@ class TestSettings(unittest.TestCase):
         # Assert that the SQLAlchemy track modifications setting is
         # correctly loaded.
         self.assertFalse(settings.sqlalchemy_track_modifications)
+
+    def test_configuration_helpers_normalise_urls_and_missing_booleans(self) -> None:
+        """Low-level settings helpers keep legacy URLs and defaults predictable."""
+        self.assertEqual(
+            _postgres_async_url('postgres://user:password@host/database'),
+            'postgresql+asyncpg://user:password@host/database',
+        )
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            self.assertTrue(_env_bool('MISSING_BOOLEAN_SWITCH', True))
+
+    def test_settings_requires_non_empty_jwt_secret(self) -> None:
+        """An explicitly empty JWT secret prevents an unsafe application start."""
+        field = Settings.model_fields['authjwt_secret_key']
+        original_default = field.default
+        try:
+            field.default = ''
+            Settings.model_rebuild(force=True)
+            with self.assertRaisesRegex(RuntimeError, 'JWT_SECRET_KEY'):
+                Settings()
+        finally:
+            field.default = original_default
+            Settings.model_rebuild(force=True)
 
 
 if __name__ == '__main__':

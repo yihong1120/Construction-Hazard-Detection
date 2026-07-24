@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Response
 from fastapi.testclient import TestClient
 
@@ -195,6 +196,43 @@ class BffRouterTest(unittest.TestCase):
         )
         self.assertEqual(old_path.status_code, 404)
         self.assertEqual(old_path.json()['detail'], 'bff_route_not_allowed')
+
+    def test_session_helpers_reject_expired_sessions_and_missing_users(self) -> None:
+        """BFF session helpers do not continue with deleted server-side data."""
+        request = SimpleNamespace(cookies={})
+        with patch(
+            'examples.bff.router.get_auth_session',
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            with self.assertRaises(HTTPException) as expired:
+                asyncio.run(bff._session(request, self.redis))
+        self.assertEqual(expired.exception.status_code, 401)
+
+        self.db.scalar.return_value = None
+        with self.assertRaises(HTTPException) as missing_user:
+            asyncio.run(bff._user_summary(self.db, 999))
+        self.assertEqual(missing_user.exception.detail, 'user_not_found')
+
+    def test_proxy_post_requires_csrf_token(self) -> None:
+        """Mutating BFF proxy requests always pass through CSRF enforcement."""
+        access = jwt_access.create_access_token({'username': 'alice'})
+        refresh = jwt_refresh.create_access_token({'username': 'alice'})
+        session_id, _ = asyncio.run(
+            create_auth_session(
+                self.redis,  # type: ignore[arg-type]
+                {'access_token': access, 'refresh_token': refresh},
+                {'id': 1, 'username': 'alice'},
+            ),
+        )
+
+        response = self.client.post(
+            '/bff/chat/messages',
+            cookies={bff.SESSION_COOKIE: session_id},
+            headers={'Origin': self.origin},
+        )
+
+        self.assertEqual(response.status_code, 403)
 
 
 if __name__ == '__main__':

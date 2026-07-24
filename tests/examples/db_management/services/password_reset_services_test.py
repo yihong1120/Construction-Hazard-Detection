@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import httpx
 from fastapi import HTTPException
 
+from examples.db_management.services import password_reset_services as service
 from examples.db_management.services import password_reset_services as svc
 
 
@@ -233,3 +236,176 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         self.redis.getdel.assert_awaited_once_with(
             f"password_reset:{svc._hash_token('raw-token')}",
         )
+
+
+def _mail_settings() -> SimpleNamespace:
+    """Return the minimum configuration used by the Brevo sender."""
+    return SimpleNamespace(
+        brevo_api_key='test-key',
+        mail_from='no-reply@example.com',
+        mail_from_name='Visionnaire',
+    )
+
+
+def _http_client(response: MagicMock) -> tuple[AsyncMock, AsyncMock]:
+    """Build an async HTTP client context manager and its request mock."""
+    client = AsyncMock()
+    client.post.return_value = response
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+    context.__aexit__.return_value = False
+    return context, client
+
+
+class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
+    """Exercise password-reset operational failures and validation guards."""
+
+    def setUp(self) -> None:
+        self.db = AsyncMock()
+        self.redis = AsyncMock()
+        self.redis.getdel = AsyncMock()
+
+    async def test_send_reset_email_requires_configuration_and_sends_request(
+        self,
+    ) -> None:
+        """Mail configuration is mandatory and valid mail builds a Brevo call."""
+        with patch.object(
+            service,
+            'settings',
+            SimpleNamespace(brevo_api_key='', mail_from='sender@example.com'),
+        ):
+            with self.assertRaisesRegex(HTTPException, 'not configured'):
+                await service._send_password_reset_email(
+                    'user@example.com',
+                    'https://app.example/reset',
+                )
+
+        response = MagicMock()
+        context, client = _http_client(response)
+        with (
+            patch.object(service, 'settings', _mail_settings()),
+            patch.object(service.httpx, 'AsyncClient', return_value=context),
+        ):
+            await service._send_password_reset_email(
+                'user@example.com',
+                'https://app.example/reset',
+            )
+
+        client.post.assert_awaited_once()
+        request = client.post.call_args
+        self.assertEqual(request.args[0], service.BREVO_SEND_EMAIL_URL)
+        self.assertEqual(
+            request.kwargs['json']['to'], [
+                {'email': 'user@example.com'},
+            ],
+        )
+        response.raise_for_status.assert_called_once()
+
+    async def test_send_reset_email_translates_brevo_failures(self) -> None:
+        """HTTP status and connection failures become a stable API response."""
+        response = MagicMock()
+        response.text = 'recipient rejected'
+        response.status_code = 422
+        status_error = httpx.HTTPStatusError(
+            'unprocessable',
+            request=httpx.Request('POST', service.BREVO_SEND_EMAIL_URL),
+            response=response,
+        )
+        response.raise_for_status.side_effect = status_error
+        context, _client = _http_client(response)
+        with (
+            patch.object(service, 'settings', _mail_settings()),
+            patch.object(service.httpx, 'AsyncClient', return_value=context),
+        ):
+            with self.assertRaisesRegex(HTTPException, 'Failed to send') as error:
+                await service._send_password_reset_email(
+                    'user@example.com',
+                    'https://app.example/reset',
+                )
+        self.assertEqual(error.exception.status_code, 502)
+
+        response = MagicMock()
+        context, client = _http_client(response)
+        client.post.side_effect = httpx.ConnectError('network unavailable')
+        with (
+            patch.object(service, 'settings', _mail_settings()),
+            patch.object(service.httpx, 'AsyncClient', return_value=context),
+        ):
+            with self.assertRaisesRegex(HTTPException, 'Failed to send') as error:
+                await service._send_password_reset_email(
+                    'user@example.com',
+                    'https://app.example/reset',
+                )
+        self.assertEqual(error.exception.status_code, 502)
+
+    async def test_reset_password_rejects_blank_token_and_unknown_user(self) -> None:
+        """Whitespace-only tokens and stale reset users cannot reset passwords."""
+        with self.assertRaisesRegex(HTTPException, 'invalid or expired'):
+            await service.reset_password('   ', 'password', self.db, self.redis)
+        self.redis.getdel.assert_not_awaited()
+
+        self.redis.getdel.return_value = json.dumps({
+            'user_id': 77,
+            'email': 'user@example.com',
+        })
+        self.db.get.return_value = None
+        with self.assertRaisesRegex(HTTPException, 'invalid or expired'):
+            await service.reset_password(
+                'valid-token',
+                'password',
+                self.db,
+                self.redis,
+            )
+
+    async def test_reset_password_rolls_back_a_failed_commit(self) -> None:
+        """Database errors roll back the password update and return a 500."""
+        user = MagicMock(username='user')
+        self.redis.getdel.return_value = json.dumps({
+            'user_id': 88,
+            'email': 'user@example.com',
+        })
+        self.db.get.return_value = user
+        self.db.commit.side_effect = RuntimeError('database unavailable')
+
+        with self.assertRaisesRegex(HTTPException, 'Database error') as error:
+            await service.reset_password(
+                'valid-token',
+                'password',
+                self.db,
+                self.redis,
+            )
+
+        self.assertEqual(error.exception.status_code, 500)
+        user.set_password.assert_called_once_with('password')
+        self.db.rollback.assert_awaited_once()
+
+    async def test_ip_rate_limit_and_email_lookup_use_their_service_paths(
+        self,
+    ) -> None:
+        """IP throttling and active-user lookup both delegate to storage."""
+        redis = AsyncMock()
+        redis.incr = AsyncMock(side_effect=[1, 3])
+        settings = SimpleNamespace(
+            password_reset_email_rate_limit_seconds=60,
+            password_reset_ip_rate_limit_window_seconds=60,
+            password_reset_ip_rate_limit_max=2,
+        )
+        with patch.object(service, 'settings', settings):
+            with self.assertRaisesRegex(HTTPException, 'Too many requests'):
+                await service._enforce_forgot_password_rate_limits(
+                    'user@example.com',
+                    '127.0.0.1',
+                    redis,
+                )
+
+        user = MagicMock()
+        self.db.scalar.return_value = user
+        self.assertIs(
+            await service._find_user_by_email('USER@example.com', self.db),
+            user,
+        )
+        self.db.scalar.assert_awaited_once()
+
+
+if __name__ == '__main__':
+    unittest.main()

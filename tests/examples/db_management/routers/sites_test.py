@@ -10,14 +10,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.models import User
 from examples.db_management.deps import SUPER_ADMIN_NAME
+from examples.db_management.routers.sites import _delete_matching_redis_keys
+from examples.db_management.routers.sites import endpoint_add_group_to_site
 from examples.db_management.routers.sites import endpoint_add_user_to_site
 from examples.db_management.routers.sites import endpoint_create_site
 from examples.db_management.routers.sites import endpoint_delete_site
 from examples.db_management.routers.sites import endpoint_list_sites
+from examples.db_management.routers.sites import endpoint_remove_group_from_site
 from examples.db_management.routers.sites import endpoint_remove_user_from_site
 from examples.db_management.routers.sites import endpoint_update_site
 from examples.db_management.schemas.site import SiteCreate
 from examples.db_management.schemas.site import SiteDelete
+from examples.db_management.schemas.site import SiteGroupOp
 from examples.db_management.schemas.site import SiteUpdate
 from examples.db_management.schemas.site import SiteUserOp
 
@@ -118,6 +122,35 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as ctx:
             await endpoint_create_site(payload, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 403)
+
+    @patch(
+        'examples.db_management.routers.sites.is_super_admin',
+        return_value=True,
+    )
+    @patch('examples.db_management.routers.sites.create_site')
+    async def test_super_admin_creates_site_for_requested_groups(
+        self,
+        mock_create_site: MagicMock,
+        _mock_is_super_admin: MagicMock,
+    ) -> None:
+        """Super administrators retain explicitly selected site groups."""
+        site = MagicMock()
+        site.id = 4
+        site.name = 'Shared Site'
+        site.groups = []
+        site.users = []
+        mock_create_site.return_value = site
+
+        result = await endpoint_create_site(
+            SiteCreate(name='Shared Site', group_ids=[1, 2]),
+            self.db,
+            self.user,
+        )
+
+        self.assertEqual(result.group_ids, [])
+        mock_create_site.assert_awaited_once_with(
+            'Shared Site', [1, 2], self.db,
+        )
 
     @patch(
         'examples.db_management.routers.sites.'
@@ -329,6 +362,54 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             await endpoint_add_user_to_site(payload, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 403)
 
+    async def test_add_user_to_site_rejects_user_without_group(self) -> None:
+        """Group-scoped admins cannot attach an ungrouped user to a site."""
+        site = MagicMock(groups=[MagicMock(id=1)])
+        user_to_add = MagicMock(username='ungrouped', group_id=None)
+        result = MagicMock()
+        result.unique.return_value = result
+        result.scalar_one_or_none.side_effect = [site, user_to_add]
+        self.db.execute.return_value = result
+
+        with self.assertRaises(HTTPException) as raised:
+            await endpoint_add_user_to_site(
+                SiteUserOp(site_id=1, user_id=2),
+                self.db,
+                self.user,
+            )
+
+        self.assertEqual(raised.exception.status_code, 403)
+
+    @patch(
+        'examples.db_management.routers.sites.is_super_admin',
+        return_value=True,
+    )
+    async def test_super_admin_rejects_user_outside_site_groups(
+        self,
+        _mock_is_super_admin: MagicMock,
+    ) -> None:
+        """Even super admins cannot link a user to a non-member site group."""
+        self.user.username = SUPER_ADMIN_NAME
+        self.user.role = 'admin'
+        site = MagicMock()
+        site.groups = [MagicMock(id=1)]
+        user_to_add = MagicMock()
+        user_to_add.username = 'other-group'
+        user_to_add.group_id = 2
+        result = MagicMock()
+        result.unique.return_value = result
+        result.scalar_one_or_none.side_effect = [site, user_to_add]
+        self.db.execute.return_value = result
+
+        with self.assertRaises(HTTPException) as raised:
+            await endpoint_add_user_to_site(
+                SiteUserOp(site_id=1, user_id=2),
+                self.db,
+                self.user,
+            )
+
+        self.assertEqual(raised.exception.status_code, 403)
+
     async def test_add_user_to_shared_site_rejects_other_group_user(
         self,
     ) -> None:
@@ -417,6 +498,24 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as ctx:
             await endpoint_remove_user_from_site(payload, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 403)
+
+    async def test_remove_user_from_site_rejects_user_without_group(self) -> None:
+        """Group-scoped admins cannot remove an ungrouped user from a site."""
+        site = MagicMock(groups=[MagicMock(id=1)])
+        user_to_remove = MagicMock(username='ungrouped', group_id=None)
+        result = MagicMock()
+        result.unique.return_value = result
+        result.scalar_one_or_none.side_effect = [site, user_to_remove]
+        self.db.execute.return_value = result
+
+        with self.assertRaises(HTTPException) as raised:
+            await endpoint_remove_user_from_site(
+                SiteUserOp(site_id=1, user_id=2),
+                self.db,
+                self.user,
+            )
+
+        self.assertEqual(raised.exception.status_code, 403)
 
     @patch('examples.db_management.routers.sites.list_sites')
     async def test_endpoint_list_sites_admin(
@@ -513,6 +612,94 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             self.db,
             mock_redis,
         )
+
+    async def test_delete_matching_redis_keys_flushes_full_batches(self) -> None:
+        """Redis SCAN deletes complete batches without a blocking KEYS call."""
+        rds = MagicMock()
+        rds.scan_iter.return_value = AsyncKeyIterator([b'first', b'second'])
+        rds.delete = AsyncMock()
+
+        await _delete_matching_redis_keys(rds, 'stream_metadata:*', batch_size=1)
+
+        self.assertEqual(rds.delete.await_count, 2)
+        rds.delete.assert_any_await(b'first')
+        rds.delete.assert_any_await(b'second')
+
+    @patch('examples.db_management.routers.sites.add_group_to_site')
+    async def test_add_group_to_site_handles_success_and_missing_site(
+        self,
+        mock_add_group: MagicMock,
+    ) -> None:
+        """Group links use site permissions and distinguish a missing site."""
+        site = MagicMock()
+        site.id = 1
+        site.groups = [MagicMock(id=1)]
+        found_result = MagicMock()
+        found_result.unique.return_value = found_result
+        found_result.scalar_one_or_none.return_value = site
+        self.db.execute.return_value = found_result
+
+        result = await endpoint_add_group_to_site(
+            SiteGroupOp(site_id=1, group_id=1),
+            self.db,
+            self.user,
+        )
+
+        self.assertEqual(
+            result['message'],
+            'Group linked to site successfully.',
+        )
+        mock_add_group.assert_awaited_once_with(1, 1, self.db)
+
+        missing_result = MagicMock()
+        missing_result.unique.return_value = missing_result
+        missing_result.scalar_one_or_none.return_value = None
+        self.db.execute.return_value = missing_result
+        with self.assertRaises(HTTPException) as raised:
+            await endpoint_add_group_to_site(
+                SiteGroupOp(site_id=1, group_id=1),
+                self.db,
+                self.user,
+            )
+        self.assertEqual(raised.exception.status_code, 404)
+
+    @patch('examples.db_management.routers.sites.remove_group_from_site')
+    async def test_remove_group_from_site_handles_success_and_missing_site(
+        self,
+        mock_remove_group: MagicMock,
+    ) -> None:
+        """Group unlinks use site permissions and distinguish a missing site."""
+        site = MagicMock()
+        site.id = 1
+        site.groups = [MagicMock(id=1)]
+        found_result = MagicMock()
+        found_result.unique.return_value = found_result
+        found_result.scalar_one_or_none.return_value = site
+        self.db.execute.return_value = found_result
+
+        result = await endpoint_remove_group_from_site(
+            SiteGroupOp(site_id=1, group_id=1),
+            self.db,
+            self.user,
+        )
+
+        self.assertEqual(
+            result['message'],
+            'Group unlinked from site successfully.',
+        )
+        mock_remove_group.assert_awaited_once_with(1, 1, self.db)
+
+        missing_result = MagicMock()
+        missing_result.unique.return_value = missing_result
+        missing_result.scalar_one_or_none.return_value = None
+        self.db.execute.return_value = missing_result
+        with self.assertRaises(HTTPException) as raised:
+            await endpoint_remove_group_from_site(
+                SiteGroupOp(site_id=1, group_id=1),
+                self.db,
+                self.user,
+            )
+        self.assertEqual(raised.exception.status_code, 404)
 
 
 if __name__ == '__main__':

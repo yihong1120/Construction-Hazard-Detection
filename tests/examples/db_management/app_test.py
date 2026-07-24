@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import FastAPI
+from fastapi import Response
 from fastapi.testclient import TestClient
 
 from examples.bff.router import router as bff_router
@@ -158,6 +161,21 @@ class AppIntegrationTest(unittest.TestCase):
         self.assertNotIn('/api/media/sessions/batch', paths)
         self.assertNotIn('/bff/media/sessions/batch', paths)
         self.assertIn('/bff/{service}/{path:path}', bff_paths)
+
+    def test_sensitive_playback_responses_disable_caching(self) -> None:
+        """Playback responses should never be retained by browser caches."""
+        request = SimpleNamespace(
+            url=SimpleNamespace(path='/api/playback/walls'),
+        )
+
+        async def call_next(_request: object) -> Response:
+            return Response()
+
+        response = asyncio.run(
+            app_module.prevent_sensitive_response_caching(request, call_next),
+        )
+
+        self.assertEqual(response.headers.get('cache-control'), 'no-store')
 
     def test_main_calls_uvicorn_run(self) -> None:
         """

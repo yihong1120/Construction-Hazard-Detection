@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime
 import unittest
+from datetime import datetime as DateTime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -481,3 +483,221 @@ pytest --cov=examples.db_management.routers.streams\
     --cov-report=term-missing\
         tests/examples/db_management/routers/streams_test.py
 '''
+
+
+def _site(*group_ids: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        groups=[SimpleNamespace(id=group_id) for group_id in group_ids],
+    )
+
+
+class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
+    """Exercise stream ownership and batch upsert guardrails."""
+
+    def setUp(self) -> None:
+        self.db = AsyncMock()
+        self.admin = SimpleNamespace(
+            role='admin', group_id=1, username='admin',
+        )
+        self.site = _site(1, 2)
+
+    def test_stream_group_helpers_reject_invalid_group_ownership(self) -> None:
+        """A stream must have a site group and remain inside that site scope."""
+        with self.assertRaisesRegex(HTTPException, 'must have a group'):
+            streams._primary_site_group_id(_site())
+        self.assertEqual(streams._primary_site_group_id(_site(2, 1)), 1)
+
+        with patch(
+            'examples.db_management.routers.streams.is_super_admin',
+            return_value=True,
+        ):
+            self.assertEqual(
+                streams._resolve_stream_group_id(self.site, self.admin, 2),
+                2,
+            )
+            with self.assertRaisesRegex(
+                HTTPException,
+                'not associated',
+            ):
+                streams._resolve_stream_group_id(self.site, self.admin, 99)
+
+    async def test_stream_name_uniqueness_supports_exclusion_and_conflicts(
+        self,
+    ) -> None:
+        """Renaming excludes itself but still rejects an existing sibling name."""
+        self.db.scalar = AsyncMock(return_value=None)
+        await streams._ensure_stream_name_available(
+            1,
+            'Camera A',
+            self.db,
+            exclude_config_id=7,
+        )
+        self.assertIn(
+            'stream_configs.id !=',
+            str(self.db.scalar.await_args.args[0]),
+        )
+
+        self.db.scalar = AsyncMock(return_value=object())
+        with self.assertRaisesRegex(HTTPException, 'already exists'):
+            await streams._ensure_stream_name_available(1, 'Camera A', self.db)
+
+    async def test_site_stream_alias_uses_the_shared_listing_logic(self) -> None:
+        """The site-scoped GET is a thin alias of the listing helper."""
+        with patch(
+            'examples.db_management.routers.streams._list_site_stream_config_reads',
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as list_reads:
+            result = await streams.endpoint_get_site_stream_config(
+                5,
+                self.db,
+                self.admin,
+            )
+
+        self.assertEqual(result, [])
+        list_reads.assert_awaited_once_with(5, self.db, self.admin)
+
+    async def test_site_upsert_rejects_limits_and_unknown_config_ids(
+        self,
+    ) -> None:
+        """Batch upserts stop before creating beyond a quota or updating ghosts."""
+        self.db.get = AsyncMock(return_value=self.site)
+        new_stream = SiteStreamConfigUpsert(
+            streams=[
+                SiteStreamConfigItem(
+                    stream_name='New', rtsp_url='rtsp://new',
+                ),
+            ],
+        )
+
+        with (
+            patch(
+                'examples.db_management.routers.streams.is_super_admin',
+                return_value=False,
+            ),
+            patch(
+                'examples.db_management.routers.streams.list_stream_configs',
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                'examples.db_management.routers.streams._ensure_stream_name_available',
+                new_callable=AsyncMock,
+            ),
+            patch(
+                'examples.db_management.routers.streams.get_group_stream_limit',
+                new_callable=AsyncMock,
+                return_value=(5, 5),
+            ),
+        ):
+            with self.assertRaisesRegex(HTTPException, 'Stream limit reached'):
+                await streams.endpoint_put_site_stream_config(
+                    1,
+                    new_stream,
+                    self.db,
+                    self.admin,
+                )
+
+        missing_stream = SiteStreamConfigUpsert(
+            streams=[
+                SiteStreamConfigItem(
+                    id=999,
+                    stream_name='Missing',
+                    rtsp_url='rtsp://missing',
+                ),
+            ],
+        )
+        with (
+            patch(
+                'examples.db_management.routers.streams.is_super_admin',
+                return_value=False,
+            ),
+            patch(
+                'examples.db_management.routers.streams.list_stream_configs',
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            with self.assertRaisesRegex(
+                HTTPException,
+                'not found',
+            ):
+                await streams.endpoint_put_site_stream_config(
+                    1,
+                    missing_stream,
+                    self.db,
+                    self.admin,
+                )
+
+    async def test_site_upsert_checks_name_before_updating_existing_stream(
+        self,
+    ) -> None:
+        """Changing a saved camera name validates its replacement name first."""
+        existing = SimpleNamespace(
+            id=7,
+            stream_name='Old',
+            group_id=1,
+            video_url='rtsp://old',
+            model_key='yolo26n',
+            recognition_enabled=True,
+            work_start_hour=7,
+            work_end_hour=18,
+            detect_no_safety_vest_or_helmet=False,
+            detect_near_machinery_or_vehicle=False,
+            detect_in_restricted_area=False,
+            detect_in_utility_pole_restricted_area=False,
+            detect_machinery_close_to_pole=False,
+            expire_date=None,
+            updated_at=DateTime(2026, 7, 24),
+        )
+        self.db.get = AsyncMock(return_value=self.site)
+        payload = SiteStreamConfigUpsert(
+            streams=[
+                SiteStreamConfigItem(
+                    id=7,
+                    stream_name='Renamed',
+                    rtsp_url='rtsp://renamed',
+                ),
+            ],
+        )
+
+        with (
+            patch(
+                'examples.db_management.routers.streams.is_super_admin',
+                return_value=False,
+            ),
+            patch(
+                'examples.db_management.routers.streams.list_stream_configs',
+                new_callable=AsyncMock,
+                return_value=[existing],
+            ),
+            patch(
+                'examples.db_management.routers.streams._ensure_stream_name_available',
+                new_callable=AsyncMock,
+            ) as ensure_name,
+            patch(
+                'examples.db_management.routers.streams.update_stream_config',
+                new_callable=AsyncMock,
+            ) as update,
+            patch(
+                'examples.db_management.routers.streams._list_site_stream_config_reads',
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await streams.endpoint_put_site_stream_config(
+                1,
+                payload,
+                self.db,
+                self.admin,
+            )
+
+        self.assertEqual(result, [])
+        ensure_name.assert_awaited_once_with(
+            1, 'Renamed', self.db, exclude_config_id=7,
+        )
+        update.assert_awaited_once()
+
+
+if __name__ == '__main__':
+    unittest.main()

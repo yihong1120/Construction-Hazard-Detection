@@ -119,6 +119,18 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         redis_pool.script_load.assert_awaited_once()
         redis_pool.evalsha.assert_awaited_once()
 
+    async def test_incr_get_ttl_rejects_invalid_initial_response_shape(
+        self,
+    ) -> None:
+        """Malformed Lua replies must not be mistaken for rate-limit data."""
+        service = RateLimiterService()
+        redis_pool = AsyncMock(spec=Redis)
+        redis_pool.script_load = AsyncMock(return_value='sha-invalid')
+        redis_pool.evalsha = AsyncMock(return_value=[1])
+
+        with self.assertRaisesRegex(ValueError, 'Invalid evalsha response'):
+            await service._incr_and_get_ttl(redis_pool, 'invalid', 60)
+
     async def test_incr_get_ttl_noscript_reload(self) -> None:
         """
         Cover the NoScriptError branch that reloads script and retries.

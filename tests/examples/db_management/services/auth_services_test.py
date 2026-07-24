@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import httpx
 import jwt
 from fastapi import HTTPException
 
@@ -12,6 +14,7 @@ from examples.db_management.schemas.auth import RefreshRequest
 from examples.db_management.schemas.auth import RefreshTokenPayload
 from examples.db_management.schemas.auth import UserLogin
 from examples.db_management.services import auth_services
+from examples.db_management.services import auth_services as svc
 
 
 class TestAuthServices(unittest.IsolatedAsyncioTestCase):
@@ -899,3 +902,240 @@ pytest --cov=examples.db_management.services.auth_services\
     --cov-report=term-missing\
         tests/examples/db_management/services/auth_services_test.py
 '''
+
+
+class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
+    async def test_login_guard_helpers_and_identifier_cleanup(self) -> None:
+        self.assertTrue(svc._login_fail_pair_key('pair').endswith('pair'))
+        self.assertTrue(svc._login_cooldown_pair_key('pair').endswith('pair'))
+        self.assertEqual(svc._decode_redis_value(None), None)
+        self.assertEqual(svc._decode_redis_value(b'value'), 'value')
+        self.assertEqual(svc._decode_redis_value('value'), 'value')
+        self.assertEqual(svc._decode_redis_value(42), '42')
+        self.assertEqual(svc._decode_redis_members(object()), [])
+        self.assertEqual(
+            svc._decode_redis_members([b'one', 'two', None]),
+            ['one', 'two'],
+        )
+
+        redis = AsyncMock()
+        redis.smembers.return_value = [b'first', 'second']
+        await svc.clear_login_guard_for_identifier(redis, 'alice')
+        deleted = redis.delete.await_args.args
+        self.assertIn(svc._login_fail_pair_key('first'), deleted)
+        self.assertIn(svc._login_cooldown_pair_key('second'), deleted)
+
+        with patch.object(svc, 'clear_login_guard_for_identifier', AsyncMock()) as clear:
+            await svc.clear_login_guard_for_identifiers(
+                redis,
+                [' Alice ', 'alice', '', 'BOB'],
+            )
+        self.assertEqual(clear.await_args_list[0].args[1], 'alice')
+        self.assertEqual(clear.await_args_list[1].args[1], 'bob')
+
+    async def test_failed_login_locks_account(self) -> None:
+        redis = AsyncMock()
+        redis.incr.side_effect = [1, 3]
+        settings = SimpleNamespace(
+            login_failure_window_seconds=60,
+            login_cooldown_seconds=30,
+            login_lock_seconds=120,
+            login_cooldown_threshold=5,
+            login_lock_threshold=3,
+        )
+        with patch.object(svc, 'settings', settings):
+            with self.assertRaises(HTTPException) as raised:
+                await svc._record_failed_login(redis, 'alice', '127.0.0.1')
+        self.assertEqual(raised.exception.status_code, 423)
+        self.assertEqual(raised.exception.detail['code'], 'account_locked')
+        self.assertTrue(raised.exception.detail['locked_until'].endswith('Z'))
+        redis.delete.assert_awaited_once()
+
+    async def test_authenticate_rejects_each_nonactive_status(self) -> None:
+        for status, code in [
+            (svc.USER_STATUS_EMAIL_UNVERIFIED, 'email_unverified'),
+            (svc.USER_STATUS_PENDING, 'pending_admin_approval'),
+            (svc.USER_STATUS_REJECTED, 'account_rejected'),
+            (svc.USER_STATUS_SUSPENDED, 'account_suspended'),
+        ]:
+            user = SimpleNamespace(
+                status=status,
+                check_password=AsyncMock(return_value=True),
+            )
+            db = AsyncMock()
+            db.scalar.return_value = user
+            with self.assertRaises(HTTPException) as raised:
+                await svc._authenticate(db, 'alice', 'password')
+            self.assertEqual(raised.exception.detail['code'], code)
+
+    async def test_hcaptcha_disabled_unconfigured_and_transport_failure(self) -> None:
+        with patch.object(svc.settings, 'hcaptcha_enabled', False):
+            await svc._verify_hcaptcha(None)
+
+        with patch.object(svc.settings, 'hcaptcha_enabled', True):
+            with patch.object(svc, 'HCAPTCHA_SECRET_KEY', ''):
+                with patch.object(svc, 'HCAPTCHA_SITE_KEY', ''):
+                    with self.assertRaises(HTTPException) as raised:
+                        await svc._verify_hcaptcha('token')
+        self.assertEqual(raised.exception.status_code, 500)
+
+        client = AsyncMock()
+        client.post.side_effect = httpx.ConnectError('unavailable')
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=client)
+        context.__aexit__ = AsyncMock(return_value=None)
+        with patch.object(svc.settings, 'hcaptcha_enabled', True):
+            with patch.object(svc, 'HCAPTCHA_SECRET_KEY', 'secret'):
+                with patch.object(svc, 'HCAPTCHA_SITE_KEY', 'site'):
+                    with patch.object(svc.httpx, 'AsyncClient', return_value=context):
+                        with self.assertRaises(HTTPException) as raised:
+                            await svc._verify_hcaptcha('token')
+        self.assertEqual(raised.exception.status_code, 403)
+
+    async def test_refresh_token_reuse_protection(self) -> None:
+        redis = AsyncMock()
+        with patch.object(svc.jwt, 'decode', return_value={'subject': {'username': 'alice', 'family_id': 'family'}}):
+            redis.get.return_value = '1'
+            with self.assertRaises(HTTPException) as raised:
+                await svc.verify_refresh_token('refresh', redis)
+        self.assertEqual(raised.exception.detail, 'Refresh token reused')
+
+        redis.get.return_value = None
+        with patch.object(svc.jwt, 'decode', return_value={'subject': {'username': 'alice', 'family_id': 'family'}}):
+            with patch.object(svc, 'prune_user_cache', AsyncMock()):
+                with patch.object(svc, 'get_user_data', AsyncMock(return_value={'refresh_tokens': []})):
+                    with patch.object(svc, '_revoke_refresh_family', AsyncMock()) as revoke:
+                        with self.assertRaises(HTTPException) as raised:
+                            await svc.verify_refresh_token('refresh', redis)
+        self.assertEqual(raised.exception.detail, 'Refresh token reused')
+        revoke.assert_awaited_once_with(redis, 'family')
+
+    async def test_refresh_state_registration_and_consumption(self) -> None:
+        redis = AsyncMock()
+        redis.get.return_value = '1'
+        with self.assertRaises(HTTPException) as raised:
+            await svc._register_refresh_token_state(
+                redis,
+                'refresh',
+                'alice',
+                'family',
+                enforce_family_active=True,
+            )
+        self.assertEqual(raised.exception.detail, 'Refresh token reused')
+
+        await svc._revoke_refresh_family(redis, 'family')
+        self.assertEqual(
+            redis.set.await_args.args[0], svc._refresh_family_revoked_key(
+                'family',
+            ),
+        )
+
+        redis.get.return_value = None
+        redis.set.return_value = False
+        with patch.object(svc, '_revoke_refresh_family', AsyncMock()) as revoke:
+            with self.assertRaises(HTTPException) as raised:
+                await svc._consume_refresh_token_state(redis, 'refresh', 'family')
+        self.assertEqual(raised.exception.detail, 'Refresh token reused')
+        revoke.assert_awaited_once_with(redis, 'family')
+
+        redis.get.return_value = '1'
+        with self.assertRaises(HTTPException) as raised:
+            await svc._consume_refresh_token_state(redis, 'refresh', 'family')
+        self.assertEqual(raised.exception.detail, 'Refresh token reused')
+
+        redis.set.return_value = True
+        redis.get.side_effect = [None, b'not-json']
+        with patch.object(svc, '_revoke_refresh_family', AsyncMock()) as revoke:
+            with self.assertRaises(HTTPException) as raised:
+                await svc._consume_refresh_token_state(redis, 'refresh', 'family')
+        self.assertEqual(raised.exception.detail, 'Refresh token reused')
+        revoke.assert_awaited_once_with(redis, 'family')
+
+        redis.get.side_effect = [
+            None, '{"status":"active","family_id":"family"}',
+        ]
+        await svc._consume_refresh_token_state(redis, 'refresh', 'family')
+        self.assertIn('"status":"used"', redis.set.await_args.args[1])
+
+    async def test_login_and_logout_fallback_paths(self) -> None:
+        payload = SimpleNamespace(
+            hcaptcha_token=None, identifier='alice', password='pw',
+        )
+        with patch.object(svc, '_verify_hcaptcha', AsyncMock()):
+            with patch.object(svc, '_check_login_guard', AsyncMock()):
+                with patch.object(
+                    svc,
+                    '_authenticate',
+                    AsyncMock(
+                        side_effect=HTTPException(
+                        status_code=403, detail='denied',
+                        ),
+                    ),
+                ):
+                    with self.assertRaises(HTTPException) as raised:
+                        await svc.login_user(payload, AsyncMock(), AsyncMock())
+        self.assertEqual(raised.exception.status_code, 403)
+
+        redis = AsyncMock()
+        cache = {'jti_list': ['jti'], 'refresh_tokens': ['refresh']}
+        with patch.object(svc.jwt, 'decode', side_effect=[jwt.PyJWTError(), {'subject': {'username': 'alice'}}]):
+            with patch.object(svc, 'prune_user_cache', AsyncMock()):
+                with patch.object(svc, 'get_user_data', AsyncMock(return_value=cache)):
+                    with patch.object(svc, 'set_user_data', AsyncMock()) as store:
+                        await svc.logout_user('refresh', 'Bearer invalid', redis)
+        self.assertEqual(store.await_args.args[1], 'alice')
+
+        with patch.object(svc.jwt, 'decode', return_value={'subject': {}}):
+            await svc.logout_user('refresh', None, redis)
+
+    async def test_refresh_cache_reuse_with_family(self) -> None:
+        redis = AsyncMock()
+        with patch.object(
+            svc,
+            'verify_refresh_token',
+            AsyncMock(
+                return_value={
+                    'subject': {
+                        'username': 'alice', 'family_id': 'family',
+                    },
+                },
+            ),
+        ):
+            with patch.object(svc, 'prune_user_cache', AsyncMock()):
+                with patch.object(svc, 'get_user_data', AsyncMock(return_value={'refresh_tokens': []})):
+                    with patch.object(svc, '_revoke_refresh_family', AsyncMock()) as revoke:
+                        with self.assertRaises(HTTPException) as raised:
+                            await svc.refresh_tokens(RefreshRequest(refresh_token='old'), redis)
+        self.assertEqual(raised.exception.detail, 'Refresh token reused')
+        revoke.assert_awaited_once_with(redis, 'family')
+
+        cache = {
+            'db_user': {'id': 1, 'role': 'user'},
+            'refresh_tokens': ['old'],
+            'feature_names': [],
+            'jti_list': [],
+        }
+        with patch.object(
+            svc,
+            'verify_refresh_token',
+            AsyncMock(
+                return_value={
+                    'subject': {
+                        'username': 'alice', 'family_id': 'family',
+                    },
+                },
+            ),
+        ):
+            with patch.object(svc, 'prune_user_cache', AsyncMock()):
+                with patch.object(svc, 'get_user_data', AsyncMock(return_value=cache)):
+                    with patch.object(svc, '_consume_refresh_token_state', AsyncMock()) as consume:
+                        with patch.object(svc, 'set_user_data', AsyncMock()):
+                            with patch.object(svc, '_register_refresh_token_state', AsyncMock()):
+                                with patch.object(svc.jwt_access, 'create_access_token', return_value='access'):
+                                    with patch.object(svc.jwt_refresh, 'create_access_token', return_value='new-refresh'):
+                                        await svc.refresh_tokens(RefreshRequest(refresh_token='old'), redis)
+        consume.assert_awaited_once_with(redis, 'old', 'family')
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -189,6 +189,20 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(users, ['user1', 'user2'])
 
+    async def test_list_users_filters_by_group(self) -> None:
+        """An administrator list can be restricted to its own group."""
+        mock_result: MagicMock = MagicMock()
+        mock_result.unique.return_value.scalars.return_value.all.return_value = [
+            'group-user',
+        ]
+        self.db.execute = AsyncMock(return_value=mock_result)
+
+        users = await user_services.list_users(self.db, group_id=9)
+
+        self.assertEqual(users, ['group-user'])
+        query = self.db.execute.await_args.args[0]
+        self.assertIn('users.group_id', str(query))
+
     async def test_get_user_by_id_found(self) -> None:
         """
         Retrieve a single user by identifier when they exist.

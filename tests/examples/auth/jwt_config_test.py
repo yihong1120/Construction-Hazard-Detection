@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import unittest
+from datetime import timedelta
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
+
+from fastapi import HTTPException
+from jwt.exceptions import InvalidTokenError
 
 from examples.auth.config import Settings
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import jwt_refresh
+from examples.auth.jwt_config import PyJWTBearer
 
 
 class TestJwtConfig(unittest.TestCase):
@@ -76,3 +83,71 @@ pytest \
     --cov=examples.auth.jwt_config \
     --cov-report=term-missing tests/examples/auth/jwt_config_test.py
 '''
+
+
+class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
+    """Exercise JWT authorization subjects and invalid credential handling."""
+
+    def setUp(self) -> None:
+        self.bearer = PyJWTBearer('test-secret-key-with-at-least-32-bytes')
+        self.request = MagicMock()
+
+    async def test_bearer_returns_full_subject_and_legacy_sub_fallback(self) -> None:
+        """Both current and legacy token payloads expose a username subject."""
+        self.bearer.oauth2_scheme = AsyncMock(return_value='current-token')
+        self.bearer.decode_token = MagicMock(
+            return_value={
+                'subject': {'username': 'alice', 'role': 'admin'},
+            },
+        )
+
+        credentials = await self.bearer(self.request)
+
+        self.assertEqual(
+            credentials.subject, {
+                'username': 'alice',
+                'role': 'admin',
+            },
+        )
+        self.assertEqual(credentials.token, 'current-token')
+
+        self.bearer.oauth2_scheme = AsyncMock(return_value='legacy-token')
+        self.bearer.decode_token = MagicMock(return_value={'sub': 'legacy'})
+        credentials = await self.bearer(self.request)
+
+        self.assertEqual(credentials.subject, {'username': 'legacy'})
+        self.assertEqual(credentials.payload, {'sub': 'legacy'})
+
+    async def test_bearer_rejects_missing_invalid_or_subjectless_tokens(self) -> None:
+        """Every malformed credential path returns the same 401 contract."""
+        for token, decoded in [
+            (None, None),
+            ('invalid-token', InvalidTokenError('signature failed')),
+            ('subjectless-token', {'subject': {}}),
+        ]:
+            self.bearer.oauth2_scheme = AsyncMock(return_value=token)
+            if isinstance(decoded, Exception):
+                self.bearer.decode_token = MagicMock(side_effect=decoded)
+            else:
+                self.bearer.decode_token = MagicMock(return_value=decoded)
+
+            with self.assertRaises(HTTPException) as error:
+                await self.bearer(self.request)
+
+            self.assertEqual(error.exception.status_code, 401)
+            self.assertEqual(
+                error.exception.headers,
+                {'WWW-Authenticate': 'Bearer'},
+            )
+
+    async def test_bearer_round_trips_a_signed_access_token(self) -> None:
+        """PyJWT decoding validates tokens created with the configured secret."""
+        token = self.bearer.create_access_token(
+            {'username': 'alice'},
+            expires_delta=timedelta(minutes=1),
+        )
+
+        payload = self.bearer.decode_token(token)
+
+        self.assertEqual(payload['sub'], 'alice')
+        self.assertEqual(payload['subject'], {'username': 'alice'})
