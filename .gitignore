@@ -3,6 +3,11 @@
 .vscode/
 .history/
 
+# Local lint/pre-commit configuration
+.flake8
+.pre-commit-config.yaml
+.pre-commit-hooks.yaml
+
 # Secrets and local configuration
 .env
 .env.*

@@ -1,4 +1,0 @@
-[flake8]
-# Test fixtures legitimately contain long URLs, payloads, and cryptographic data.
-per-file-ignores =
-    tests/*: E501
