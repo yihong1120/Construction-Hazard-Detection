@@ -17,7 +17,7 @@ class _FakeProcess:
         self.returncode = returncode
         self.terminated = False
         self.killed = False
-        self.wait = AsyncMock(return_value=returncode)
+        self.wait: Any = AsyncMock(return_value=returncode)
 
     def terminate(self) -> None:
         """Support terminate."""
@@ -189,6 +189,22 @@ def test_stop_process_kills_after_timeout() -> None:
     assert process.killed
 
 
+def test_restart_terminates_live_process_without_closing_monitor() -> None:
+    """A frozen-frame signal can reconnect the source restreamer."""
+    stream = restreamer.MediaSourceRestreamer(
+        'rtsp://camera/stream',
+        'rtsp://127.0.0.1:8554/out',
+    )
+    process = _FakeProcess()
+    stream._process = process
+
+    asyncio.run(stream.restart())
+
+    assert stream._closed is False
+    assert stream._process is None
+    assert process.terminated
+
+
 def test_start_creates_monitor_task() -> None:
     """Exercise this test."""
     async def run_case() -> restreamer.MediaSourceRestreamer:
@@ -217,7 +233,7 @@ def test_monitor_loop_runs_one_process(monkeypatch: Any) -> None:
         stream._closed = True
         return _OneShotProcess()
 
-    calls = []
+    calls: list[tuple[object, ...]] = []
     stream = restreamer.MediaSourceRestreamer(
         'rtsp://camera/stream',
         'rtsp://127.0.0.1:8554/out',
@@ -247,7 +263,7 @@ def test_monitor_loop_sleeps_before_restart(monkeypatch: Any) -> None:
         sleeps.append(True)
         stream._closed = True
 
-    sleeps = []
+    sleeps: list[bool] = []
     stream = restreamer.MediaSourceRestreamer(
         'rtsp://camera/stream',
         'rtsp://127.0.0.1:8554/out',

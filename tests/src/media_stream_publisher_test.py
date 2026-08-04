@@ -18,7 +18,7 @@ class _FakeStdin:
         """Support __init__."""
         self.closed = False
         self.writes: list[memoryview] = []
-        self.drain = AsyncMock()
+        self.drain: Any = AsyncMock()
 
     def is_closing(self) -> bool:
         """Support is_closing."""
@@ -42,7 +42,7 @@ class _FakeProcess:
         self.stdin = _FakeStdin()
         self.terminated = False
         self.killed = False
-        self.wait = AsyncMock(return_value=returncode)
+        self.wait: Any = AsyncMock(return_value=returncode)
 
     def terminate(self) -> None:
         """Support terminate."""
@@ -223,6 +223,7 @@ def test_publish_starts_writer_for_first_frame(monkeypatch: Any) -> None:
     async def fake_start(width: int, height: int) -> None:
         """Support fake_start."""
         starts.append((width, height))
+        stream._process = _FakeProcess()
         stream._started = True
         stream._stream_size = (width, height)
 
@@ -235,7 +236,7 @@ def test_publish_starts_writer_for_first_frame(monkeypatch: Any) -> None:
         coro.close()
         return _FakeTask()
 
-    starts = []
+    starts: list[tuple[int, int]] = []
     stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     monkeypatch.setattr(stream, '_start', fake_start)
     monkeypatch.setattr(publisher.asyncio, 'create_task', fake_create_task)
@@ -269,8 +270,8 @@ def test_publish_resets_dead_process(monkeypatch: Any) -> None:
         coro.close()
         return _FakeTask()
 
-    resets = []
-    starts = []
+    resets: list[bool] = []
+    starts: list[tuple[int, int]] = []
     stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     stream._started = True
     stream._process = _FakeProcess(returncode=1)
@@ -337,6 +338,7 @@ def test_build_ffmpeg_command_contains_rawvideo_and_rtsp(
 def test_build_ffmpeg_command_uses_nvenc_options(monkeypatch: Any) -> None:
     """Exercise this test."""
     monkeypatch.setenv('MEDIA_PUBLISH_ENCODER', 'h264_nvenc')
+    monkeypatch.setenv('MEDIA_PUBLISH_KEYFRAME_INTERVAL_SECONDS', '2')
     monkeypatch.setattr(publisher, '_ffmpeg_has_encoder', lambda *_: True)
     stream = publisher.MediaStreamPublisher(
         'rtsp://127.0.0.1:8554/out',
@@ -354,6 +356,7 @@ def test_build_ffmpeg_command_honours_preview_rate_budget(
 ) -> None:
     """A preview publisher gets an independent capped bitrate."""
     monkeypatch.setenv('MEDIA_PUBLISH_ENCODER', 'libx264')
+    monkeypatch.setenv('MEDIA_PUBLISH_KEYFRAME_INTERVAL_SECONDS', '2')
     stream = publisher.MediaStreamPublisher(
         'rtsp://127.0.0.1:8554/preview',
         fps=15,
@@ -551,7 +554,7 @@ def test_start_uses_environment_ffmpeg(monkeypatch: Any) -> None:
         calls.append(args)
         return _FakeProcess()
 
-    calls = []
+    calls: list[tuple[object, ...]] = []
     monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
     monkeypatch.setenv('MEDIA_PUBLISH_ENCODER', 'libx264')
     monkeypatch.setattr(

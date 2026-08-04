@@ -734,7 +734,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         """
         called: list[str] = []
 
-        def callback() -> None:
+        async def callback() -> None:
             """Mock callback function to track invocations."""
             called.append('called')
 
@@ -755,6 +755,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         with patch('asyncio.run_coroutine_threadsafe') as mock_run:
             handler.on_modified(event)
             mock_run.assert_called()
+            mock_run.call_args.args[0].close()
 
         # Simulate event with non-matching path
         event.src_path = '/tmp/otherfile'

@@ -19,14 +19,10 @@ from examples.violation_records.schemas import ViolationReviewUpdate
 
 
 class TestSchemas(unittest.TestCase):
-    """
-    Test suite for the Pydantic models defined in schemas.py.
-    """
+    """Test suite for the Pydantic models defined in schemas.py."""
 
     def test_site_out_success(self) -> None:
-        """
-        Ensure SiteOut can be instantiated with valid data.
-        """
+        """Ensure SiteOut can be instantiated with valid data."""
         data = {
             'id': 1,
             'name': 'Test Site',
@@ -40,10 +36,8 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(site.updated_at, data['updated_at'])
 
     def test_site_out_missing_field(self) -> None:
-        """
-        If a required field is missing (e.g., 'name'),
-        a ValidationError is expected.
-        """
+        """If a required field is missing (e.g., 'name'), a ValidationError is
+        expected."""
         data = {
             'id': 1,
             # 'name' is missing
@@ -57,19 +51,19 @@ class TestSchemas(unittest.TestCase):
         """Camera and type options retain their public API shape."""
         options = ViolationFilterOptions(
             cameras=[{'stream_id': '10', 'name': 'Cam A'}],
-            violation_types=[{
-                'code': 'near_vehicle',
-                'label': '人員靠近車輛',
-            }],
+            violation_types=[
+                {
+                    'code': 'near_vehicle',
+                    'label': '人員靠近車輛',
+                },
+            ],
         )
 
         self.assertEqual(options.cameras[0].stream_id, '10')
         self.assertEqual(options.violation_types[0].code, 'near_vehicle')
 
     def test_violation_item_success(self) -> None:
-        """
-        Ensure ViolationItem can be instantiated with valid data.
-        """
+        """Ensure ViolationItem can be instantiated with valid data."""
         data = {
             'id': 123,
             'site_name': 'Example Site',
@@ -77,7 +71,9 @@ class TestSchemas(unittest.TestCase):
             'detection_time': datetime(2023, 5, 1, 12, 0, 0),
             'detected_at': datetime(2023, 5, 1, 12, 0, 0),
             'image_path': 'path/to/image.jpg',
-            'image_url': '/get_violation_image?image_path=path%2Fto%2Fimage.jpg',
+            'image_url': (
+                '/get_violation_image?image_path=path%2Fto%2F' 'image.jpg'
+            ),
             'thumbnail_url': (
                 '/get_violation_thumbnail?image_path=path%2Fto%2Fimage.jpg'
             ),
@@ -125,6 +121,8 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(violation.detection_time, data['detection_time'])
         self.assertEqual(violation.detected_at, data['detected_at'])
         self.assertEqual(violation.image_path, 'path/to/image.jpg')
+        assert violation.image_url is not None
+        assert violation.thumbnail_url is not None
         self.assertIn('get_violation_image', violation.image_url)
         self.assertIn('get_violation_thumbnail', violation.thumbnail_url)
         self.assertEqual(violation.created_at, data['created_at'])
@@ -133,6 +131,7 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(violation.cone_polygons, '[]')
         self.assertIsNone(violation.pole_polygons)
         self.assertEqual(violation.feedback_note, '測試')
+        assert violation.detections is not None
         self.assertEqual(violation.detections[0].id, 'det_0')
         assert violation.overlay_objects is not None
         self.assertTrue(violation.overlay_objects[0].is_flagged)
@@ -141,10 +140,8 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(violation.feedbacks[0].note, '測試')
 
     def test_violation_item_invalid_field_type(self) -> None:
-        """
-        If a field type is incorrect, e.g. 'id' is a string instead of int,
-        a ValidationError should be raised.
-        """
+        """If a field type is incorrect, e.g. 'id' is a string instead of int,
+        a ValidationError should be raised."""
         data = {
             'id': 'bad_id_type',
             'site_name': 'Example Site',
@@ -157,10 +154,8 @@ class TestSchemas(unittest.TestCase):
             ViolationItem(**data)
 
     def test_violation_list_success(self) -> None:
-        """
-        Ensure ViolationList can be instantiated with a 'total' count and
-        a list of ViolationItem objects.
-        """
+        """Ensure ViolationList can be instantiated with a 'total' count and a
+        list of ViolationItem objects."""
         violation_data = {
             'id': 2,
             'site_name': 'Another Site',
@@ -183,9 +178,7 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(first_item.stream_name, 'CamY')
 
     def test_violation_list_empty_items(self) -> None:
-        """
-        If 'items' is an empty list, the schema should still work.
-        """
+        """If 'items' is an empty list, the schema should still work."""
         data = {
             'total': 0,
             'items': [],
@@ -195,9 +188,8 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(result.items, [])
 
     def test_upload_violation_response_success(self) -> None:
-        """
-        Ensure UploadViolationResponse can be instantiated with valid data.
-        """
+        """Ensure UploadViolationResponse can be instantiated with valid
+        data."""
         data = {
             'message': 'Violation uploaded successfully.',
             'violation_id': 999,
@@ -207,10 +199,8 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(response.violation_id, 999)
 
     def test_upload_violation_response_missing_field(self) -> None:
-        """
-        If a required field is missing (e.g., 'violation_id'),
-        a ValidationError is expected.
-        """
+        """If a required field is missing (e.g., 'violation_id'), a
+        ValidationError is expected."""
         data = {
             'message': 'OK',
             # violation_id missing
@@ -301,12 +291,6 @@ class TestSchemas(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
-"""
-pytest --cov=examples.violation_records.schemas \
-       --cov-report=term-missing \
-       tests/examples/violation_records/schemas_test.py
-"""
-
 
 class TestViolationSchemaCoverage(unittest.TestCase):
     def test_normalized_bbox_rejects_out_of_range_ratio(self) -> None:
@@ -315,10 +299,13 @@ class TestViolationSchemaCoverage(unittest.TestCase):
         with self.assertRaises(ValidationError):
             NormalizedBBox(x=0, y=0, w=1.1, h=1)
 
-    def test_feedback_bbox_validation_rejects_nonfinite_negative_and_reversed(self) -> None:
+    def test_feedback_bbox_validation_rejects_nonfinite_negative_and_reversed(
+        self,
+    ) -> None:
         self.assertIsNone(
             ViolationFeedbackCreate(
-                type='false_positive', original_bbox=None,
+                type='false_positive',
+                original_bbox=None,
             ).original_bbox,
         )
         for bbox in [
@@ -328,35 +315,42 @@ class TestViolationSchemaCoverage(unittest.TestCase):
         ]:
             with self.assertRaises(ValidationError):
                 ViolationFeedbackCreate(
-                    type='false_positive', original_bbox=bbox,
+                    type='false_positive',
+                    original_bbox=bbox,
                 )
 
     def test_feedback_confidence_and_type_requirements(self) -> None:
         self.assertIsNone(
             ViolationFeedbackCreate(
-                type='false_positive', confidence=None,
+                type='false_positive',
+                confidence=None,
             ).confidence,
         )
         for confidence in [-0.1, 1.1]:
             with self.assertRaises(ValidationError):
                 ViolationFeedbackCreate(
-                    type='false_positive', confidence=confidence,
+                    type='false_positive',
+                    confidence=confidence,
                 )
         with self.assertRaises(ValidationError):
             ViolationFeedbackCreate(
-                type='wrong_class', corrected_label='worker',
+                type='wrong_class',
+                corrected_label='worker',
             )
         with self.assertRaises(ValidationError):
             ViolationFeedbackCreate(
-                type='wrong_class', target_detection_id='det_0',
+                type='wrong_class',
+                target_detection_id='det_0',
             )
         with self.assertRaises(ValidationError):
             ViolationFeedbackCreate(
-                type='bad_bbox', target_detection_id='det_0',
+                type='bad_bbox',
+                target_detection_id='det_0',
             )
         with self.assertRaises(ValidationError):
             ViolationFeedbackCreate(
-                type='bad_bbox', corrected_bbox=[0, 0, 1, 1],
+                type='bad_bbox',
+                corrected_bbox=[0, 0, 1, 1],
             )
 
 

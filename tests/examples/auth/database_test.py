@@ -24,7 +24,8 @@ class TestDatabaseEngine(unittest.TestCase):
         """
         engine_url_str: str = str(engine.url)
         self.assertIn(
-            'postgresql+asyncpg://', engine_url_str,
+            'postgresql+asyncpg://',
+            engine_url_str,
             msg='Engine should use asyncpg in the URL.',
         )
         self.assertIsNotNone(engine, 'Engine instance should not be None.')
@@ -33,7 +34,9 @@ class TestDatabaseEngine(unittest.TestCase):
             "Base should have a 'metadata' attribute.",
         )
 
-    def test_environment_number_helpers_fall_back_on_invalid_values(self) -> None:
+    def test_environment_number_helpers_fall_back_on_invalid_values(
+        self,
+    ) -> None:
         """Malformed pool settings retain the documented safe defaults."""
         from examples.auth import database
 
@@ -42,7 +45,8 @@ class TestDatabaseEngine(unittest.TestCase):
             {'DB_POOL_SIZE': 'bad', 'DB_POOL_TIMEOUT_SECONDS': 'bad'},
         ):
             self.assertEqual(
-                database._nonnegative_int_env('DB_POOL_SIZE', 2), 2,
+                database._nonnegative_int_env('DB_POOL_SIZE', 2),
+                2,
             )
             self.assertEqual(
                 database._positive_float_env('DB_POOL_TIMEOUT_SECONDS', 10.0),
@@ -94,7 +98,8 @@ class TestGetDb(unittest.IsolatedAsyncioTestCase):
         # Use get_db() and check the yielded session
         async for db_session in get_db():
             self.assertEqual(
-                db_session, mock_session,
+                db_session,
+                mock_session,
                 'get_db should yield the mock_session',
             )
 
@@ -120,8 +125,8 @@ class TestGetDb(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-'''
+"""
 pytest \
     --cov=examples.auth.database \
     --cov-report=term-missing tests/examples/auth/database_test.py
-'''
+"""

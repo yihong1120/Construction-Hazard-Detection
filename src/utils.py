@@ -445,7 +445,6 @@ class Utils:
             return b''
 
     @staticmethod
-    @staticmethod
     def filter_warnings_by_working_hour(
         warnings: Warnings,
         is_working_hour: bool,

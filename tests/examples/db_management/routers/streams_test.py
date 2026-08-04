@@ -10,6 +10,9 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
+from examples.auth.models import Group
+from examples.auth.models import Site
+from examples.auth.models import User
 from examples.db_management.routers import streams
 from examples.db_management.schemas.stream_config import SiteStreamConfigItem
 from examples.db_management.schemas.stream_config import SiteStreamConfigUpsert
@@ -18,9 +21,7 @@ from examples.db_management.schemas.stream_config import StreamConfigUpdate
 
 
 class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for stream configuration router endpoints.
-    """
+    """Unit tests for stream configuration router endpoints."""
 
     def setUp(self) -> None:
         """Set up common mocks for each test.
@@ -82,7 +83,9 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.db.get.return_value = self.site_mock
 
         response = await streams.endpoint_list_stream_configs(
-            1, self.db, self.current_user,
+            1,
+            self.db,
+            self.current_user,
         )
 
         self.assertEqual(len(response), 1)
@@ -118,10 +121,13 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.db.get.return_value = self.site_mock
 
         response = await streams.endpoint_create_stream_config(
-            payload, self.db, self.current_user,
+            payload,
+            self.db,
+            self.current_user,
         )
 
         self.assertEqual(response['id'], 1)
+        assert mock_create.await_args is not None
         created_payload = mock_create.await_args.args[0]
         self.assertEqual(created_payload.group_id, 1)
 
@@ -143,7 +149,9 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
             )
             with self.assertRaises(HTTPException) as ctx:
                 await streams.endpoint_create_stream_config(
-                    payload, self.db, self.current_user,
+                    payload,
+                    self.db,
+                    self.current_user,
                 )
 
             self.assertEqual(ctx.exception.status_code, 403)
@@ -213,11 +221,13 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_list.assert_any_await(1, self.db, group_id=1)
         mock_update.assert_awaited_once()
         mock_create.assert_awaited_once()
+        assert mock_create.await_args is not None
         created_payload = mock_create.await_args.args[0]
         self.assertEqual(created_payload.site_id, 1)
         self.assertEqual(created_payload.group_id, 1)
         self.assertEqual(created_payload.video_url, 'rtsp://new')
         self.assertTrue(created_payload.recognition_enabled)
+        assert mock_update.await_args is not None
         updated_payload = mock_update.await_args.args[1]
         self.assertFalse(updated_payload.recognition_enabled)
         self.assertEqual(len(response), 1)
@@ -272,7 +282,10 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         payload: StreamConfigUpdate = StreamConfigUpdate(stream_name='new')
 
         response = await streams.endpoint_update_stream_config(
-            1, payload, self.db, self.current_user,
+            1,
+            payload,
+            self.db,
+            self.current_user,
         )
 
         self.assertEqual(
@@ -303,7 +316,10 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as ctx:
             await streams.endpoint_update_stream_config(
-                1, payload, self.db, self.current_user,
+                1,
+                payload,
+                self.db,
+                self.current_user,
             )
 
         self.assertEqual(ctx.exception.status_code, 400)
@@ -327,7 +343,9 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.db.get.return_value = cfg_mock
 
         response = await streams.endpoint_delete_stream_config(
-            1, self.db, self.current_user,
+            1,
+            self.db,
+            self.current_user,
         )
 
         mock_delete.assert_awaited_with(cfg_mock, self.db)
@@ -348,15 +366,17 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Test retrieving group stream limit successfully.
 
-        Ensures the endpoint returns correct stream count
-        and limit for the group.
+        Ensures the endpoint returns correct stream count and limit for the
+        group.
         """
         mock_limit.return_value = (3, 10)
         self.current_user.role = 'admin'
         self.current_user.group_id = 1
 
         response = await streams.endpoint_group_stream_limit(
-            1, self.db, self.current_user,
+            1,
+            self.db,
+            self.current_user,
         )
 
         self.assertEqual(response['max_allowed_streams'], 10)
@@ -365,21 +385,23 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
     async def test_list_stream_configs_site_not_found(self) -> None:
         """Should raise 404 if site not found.
 
-        This test ensures the endpoint returns HTTP 404
-        if the site does not exist.
+        This test ensures the endpoint returns HTTP 404 if the site does not
+        exist.
         """
         self.db.get.return_value = None
         with self.assertRaises(HTTPException) as ctx:
             await streams.endpoint_list_stream_configs(
-                1, self.db, self.current_user,
+                1,
+                self.db,
+                self.current_user,
             )
         self.assertEqual(ctx.exception.status_code, 404)
 
     async def test_create_stream_config_site_not_found(self) -> None:
         """Should raise 404 if site not found when creating config.
 
-        This test ensures the endpoint returns HTTP 404
-        if the site does not exist when creating a config.
+        This test ensures the endpoint returns HTTP 404 if the site does not
+        exist when creating a config.
         """
         self.db.get.return_value = None
         payload: StreamConfigCreate = StreamConfigCreate(
@@ -389,21 +411,26 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(HTTPException) as ctx:
             await streams.endpoint_create_stream_config(
-                payload, self.db, self.current_user,
+                payload,
+                self.db,
+                self.current_user,
             )
         self.assertEqual(ctx.exception.status_code, 404)
 
     async def test_update_stream_config_not_found(self) -> None:
         """Should raise 404 if config not found when updating.
 
-        This test ensures the endpoint returns HTTP 404
-        if the config does not exist when updating.
+        This test ensures the endpoint returns HTTP 404 if the config does not
+        exist when updating.
         """
         self.db.get.return_value = None
         payload: StreamConfigUpdate = StreamConfigUpdate(stream_name='new')
         with self.assertRaises(HTTPException) as ctx:
             await streams.endpoint_update_stream_config(
-                1, payload, self.db, self.current_user,
+                1,
+                payload,
+                self.db,
+                self.current_user,
             )
         self.assertEqual(ctx.exception.status_code, 404)
 
@@ -418,7 +445,10 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as ctx:
             await streams.endpoint_update_stream_config(
-                1, payload, self.db, self.current_user,
+                1,
+                payload,
+                self.db,
+                self.current_user,
             )
 
         self.assertEqual(ctx.exception.status_code, 403)
@@ -426,13 +456,15 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
     async def test_delete_stream_config_not_found(self) -> None:
         """Should raise 404 if config not found when deleting.
 
-        This test ensures the endpoint returns HTTP 404
-        if the config does not exist when deleting.
+        This test ensures the endpoint returns HTTP 404 if the config does not
+        exist when deleting.
         """
         self.db.get.return_value = None
         with self.assertRaises(HTTPException) as ctx:
             await streams.endpoint_delete_stream_config(
-                1, self.db, self.current_user,
+                1,
+                self.db,
+                self.current_user,
             )
         self.assertEqual(ctx.exception.status_code, 404)
 
@@ -446,7 +478,9 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as ctx:
             await streams.endpoint_delete_stream_config(
-                1, self.db, self.current_user,
+                1,
+                self.db,
+                self.current_user,
             )
 
         self.assertEqual(ctx.exception.status_code, 403)
@@ -463,14 +497,16 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Should raise 403 if not super admin and not group admin.
 
-        This test ensures the endpoint returns HTTP 403
-        if the user is neither super admin nor group admin.
+        This test ensures the endpoint returns HTTP 403 if the user is neither
+        super admin nor group admin.
         """
         self.current_user.role = 'user'
         self.current_user.group_id = 2
         with self.assertRaises(HTTPException) as ctx:
             await streams.endpoint_group_stream_limit(
-                1, self.db, self.current_user,
+                1,
+                self.db,
+                self.current_user,
             )
         self.assertEqual(ctx.exception.status_code, 403)
 
@@ -478,17 +514,11 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-'''
-pytest --cov=examples.db_management.routers.streams\
-    --cov-report=term-missing\
-        tests/examples/db_management/routers/streams_test.py
-'''
 
-
-def _site(*group_ids: int) -> SimpleNamespace:
-    return SimpleNamespace(
-        groups=[SimpleNamespace(id=group_id) for group_id in group_ids],
-    )
+def _site(*group_ids: int) -> Site:
+    site = Site()
+    site.groups = [Group(id=group_id) for group_id in group_ids]
+    return site
 
 
 class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
@@ -496,13 +526,17 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.db = AsyncMock()
-        self.admin = SimpleNamespace(
-            role='admin', group_id=1, username='admin',
+        self.admin = User(
+            role='admin',
+            group_id=1,
+            username='admin',
+            password_hash='unused-in-helper-tests',
         )
         self.site = _site(1, 2)
 
     def test_stream_group_helpers_reject_invalid_group_ownership(self) -> None:
-        """A stream must have a site group and remain inside that site scope."""
+        """A stream must have a site group and remain inside that site
+        scope."""
         with self.assertRaisesRegex(HTTPException, 'must have a group'):
             streams._primary_site_group_id(_site())
         self.assertEqual(streams._primary_site_group_id(_site(2, 1)), 1)
@@ -524,7 +558,8 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_stream_name_uniqueness_supports_exclusion_and_conflicts(
         self,
     ) -> None:
-        """Renaming excludes itself but still rejects an existing sibling name."""
+        """Renaming excludes itself but still rejects an existing sibling
+        name."""
         self.db.scalar = AsyncMock(return_value=None)
         await streams._ensure_stream_name_available(
             1,
@@ -539,12 +574,19 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         self.db.scalar = AsyncMock(return_value=object())
         with self.assertRaisesRegex(HTTPException, 'already exists'):
-            await streams._ensure_stream_name_available(1, 'Camera A', self.db)
+            await streams._ensure_stream_name_available(
+                1,
+                'Camera A',
+                self.db,
+            )
 
-    async def test_site_stream_alias_uses_the_shared_listing_logic(self) -> None:
+    async def test_site_stream_alias_uses_the_shared_listing_logic(
+        self,
+    ) -> None:
         """The site-scoped GET is a thin alias of the listing helper."""
         with patch(
-            'examples.db_management.routers.streams._list_site_stream_config_reads',
+            'examples.db_management.routers.streams.'
+            '_list_site_stream_config_reads',
             new_callable=AsyncMock,
             return_value=[],
         ) as list_reads:
@@ -560,12 +602,14 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_site_upsert_rejects_limits_and_unknown_config_ids(
         self,
     ) -> None:
-        """Batch upserts stop before creating beyond a quota or updating ghosts."""
+        """Batch upserts stop before creating beyond a quota or updating
+        ghosts."""
         self.db.get = AsyncMock(return_value=self.site)
         new_stream = SiteStreamConfigUpsert(
             streams=[
                 SiteStreamConfigItem(
-                    stream_name='New', rtsp_url='rtsp://new',
+                    stream_name='New',
+                    rtsp_url='rtsp://new',
                 ),
             ],
         )
@@ -581,11 +625,13 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 return_value=[],
             ),
             patch(
-                'examples.db_management.routers.streams._ensure_stream_name_available',
+                'examples.db_management.routers.streams.'
+                '_ensure_stream_name_available',
                 new_callable=AsyncMock,
             ),
             patch(
-                'examples.db_management.routers.streams.get_group_stream_limit',
+                'examples.db_management.routers.streams.'
+                'get_group_stream_limit',
                 new_callable=AsyncMock,
                 return_value=(5, 5),
             ),
@@ -632,7 +678,8 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_site_upsert_checks_name_before_updating_existing_stream(
         self,
     ) -> None:
-        """Changing a saved camera name validates its replacement name first."""
+        """Changing a saved camera name validates its replacement name
+        first."""
         existing = SimpleNamespace(
             id=7,
             stream_name='Old',
@@ -672,7 +719,8 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 return_value=[existing],
             ),
             patch(
-                'examples.db_management.routers.streams._ensure_stream_name_available',
+                'examples.db_management.routers.streams.'
+                '_ensure_stream_name_available',
                 new_callable=AsyncMock,
             ) as ensure_name,
             patch(
@@ -680,7 +728,8 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock,
             ) as update,
             patch(
-                'examples.db_management.routers.streams._list_site_stream_config_reads',
+                'examples.db_management.routers.streams.'
+                '_list_site_stream_config_reads',
                 new_callable=AsyncMock,
                 return_value=[],
             ),
@@ -694,7 +743,10 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, [])
         ensure_name.assert_awaited_once_with(
-            1, 'Renamed', self.db, exclude_config_id=7,
+            1,
+            'Renamed',
+            self.db,
+            exclude_config_id=7,
         )
         update.assert_awaited_once()
 

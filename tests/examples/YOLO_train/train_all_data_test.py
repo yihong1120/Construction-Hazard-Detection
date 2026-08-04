@@ -49,18 +49,21 @@ def test_train_on_all_data_writes_filtered_temporary_config(
         'names: [worker, cone]\nnc: 2\n',
     )
     handler = _handler()
-    handler.load_model = MagicMock()
     observed: list[str] = []
 
     def train_model(data_config: str, **_kwargs: object) -> None:
         observed.append(Path(data_config).read_text())
 
-    handler.train_model = MagicMock(side_effect=train_model)
+    with patch.object(handler, 'load_model') as load_model:
+        with patch.object(
+            handler,
+            'train_model',
+            side_effect=train_model,
+        ) as train_model_mock:
+            handler.train_on_all_data(str(config), 3, 'SGD')
 
-    handler.train_on_all_data(str(config), 3, 'SGD')
-
-    handler.load_model.assert_called_once()
-    handler.train_model.assert_called_once_with(
+    load_model.assert_called_once()
+    train_model_mock.assert_called_once_with(
         data_config=str(tmp_path / 'all_data_train.yaml'),
         epochs=3,
         optimizer='SGD',

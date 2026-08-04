@@ -57,10 +57,11 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
             ) as mock_logger,
         ):
             tool = NotifyTools()
-            tool.logger = mock_logger.return_value
+            logger = mock_logger.return_value
+            tool.logger = logger
             with self.assertRaises(RuntimeError):
                 await tool.line_push('u', 'msg')
-            tool.logger.error.assert_called_once()
+            logger.error.assert_called_once()
 
 
 class BroadcastSendTests(unittest.IsolatedAsyncioTestCase):
@@ -108,10 +109,11 @@ class BroadcastSendTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             tool = NotifyTools()
-            tool.logger = mock_logger.return_value
+            logger = mock_logger.return_value
+            tool.logger = logger
             with self.assertRaises(RuntimeError):
                 await tool.broadcast_send('fail')
-            tool.logger.error.assert_called_once()
+            logger.error.assert_called_once()
 
 
 class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
@@ -199,10 +201,11 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
             ) as mock_logger,
         ):
             tool = NotifyTools()
-            tool.logger = mock_logger.return_value
+            logger = mock_logger.return_value
+            tool.logger = logger
             with self.assertRaises(RuntimeError):
                 await tool.telegram_send('id', 'msg')
-            tool.logger.error.assert_called_once()
+            logger.error.assert_called_once()
 
     async def test_telegram_send_text_only_success(self) -> None:
         """Should succeed when sending text-only without image_base64."""

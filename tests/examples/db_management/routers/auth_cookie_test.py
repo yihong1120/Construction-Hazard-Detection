@@ -63,7 +63,8 @@ class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.refresh_token)
 
     async def test_web_login_sets_refresh_cookie(self) -> None:
-        """Legacy-compatible Web login stores refresh tokens in HttpOnly cookie."""
+        """Legacy-compatible Web login stores refresh tokens in HttpOnly
+        cookie."""
         response = Response()
         request = make_request(headers={'x-client-platform': 'web'})
         with (
@@ -172,6 +173,7 @@ class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.access_token, 'new-access')
         self.assertIsNone(result.refresh_token)
+        assert refresh_tokens.await_args is not None
         self.assertEqual(
             refresh_tokens.await_args.args[0].refresh_token,
             'old-refresh',
@@ -182,7 +184,8 @@ class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_apple_callback_accepts_posted_form_data(self) -> None:
-        """Apple POST callbacks retain form parameters in the Android intent."""
+        """Apple POST callbacks retain form parameters in the Android
+        intent."""
 
         class FormRequest:
             method = 'POST'

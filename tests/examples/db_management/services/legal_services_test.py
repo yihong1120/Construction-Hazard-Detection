@@ -20,7 +20,7 @@ def _doc(doc_type: str, version: str = '2026-06-27') -> LegalDocument:
         version=version,
         locale='zh-TW',
         title=doc_type,
-        content=f'{doc_type} content',
+        content=f"{doc_type} content",
         effective_at=datetime(2026, 6, 27),
         is_active=True,
     )
@@ -40,11 +40,13 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_active_legal_documents_success(self) -> None:
         """It returns all active legal document types."""
-        db = _db_with_docs([
-            _doc('terms'),
-            _doc('privacy'),
-            _doc('ai_terms'),
-        ])
+        db = _db_with_docs(
+            [
+                _doc('terms'),
+                _doc('privacy'),
+                _doc('ai_terms'),
+            ],
+        )
 
         docs = await svc.get_active_legal_documents(db, 'zh-TW')
 
@@ -65,7 +67,9 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
             'legal_documents_not_found',
         )
 
-    async def test_get_active_legal_documents_merges_default_locale(self) -> None:
+    async def test_get_active_legal_documents_merges_default_locale(
+        self,
+    ) -> None:
         """A non-default locale inherits required documents from zh-TW."""
         requested_result = MagicMock()
         requested_result.scalars.return_value.all.return_value = [
@@ -90,11 +94,13 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
 
     async def test_validate_signup_consents_success(self) -> None:
         """It accepts matching versions and mandatory booleans."""
-        db = _db_with_docs([
-            _doc('terms'),
-            _doc('privacy'),
-            _doc('ai_terms'),
-        ])
+        db = _db_with_docs(
+            [
+                _doc('terms'),
+                _doc('privacy'),
+                _doc('ai_terms'),
+            ],
+        )
         payload = SimpleNamespace(
             accepted_terms=True,
             terms_version='2026-06-27',
@@ -110,11 +116,13 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
 
     async def test_validate_signup_consents_version_mismatch(self) -> None:
         """It rejects stale legal document versions."""
-        db = _db_with_docs([
-            _doc('terms'),
-            _doc('privacy'),
-            _doc('ai_terms'),
-        ])
+        db = _db_with_docs(
+            [
+                _doc('terms'),
+                _doc('privacy'),
+                _doc('ai_terms'),
+            ],
+        )
         payload = SimpleNamespace(
             accepted_terms=True,
             terms_version='old',
@@ -133,7 +141,9 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
             'legal_version_mismatch',
         )
 
-    async def test_validate_signup_consents_requires_all_mandatory_flags(self) -> None:
+    async def test_validate_signup_consents_requires_all_mandatory_flags(
+        self,
+    ) -> None:
         """Each mandatory consent produces its dedicated validation error."""
         complete_payload = {
             'accepted_terms': True,
@@ -191,8 +201,11 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
         db.commit.assert_awaited_once()
         db.refresh.assert_awaited_once_with(consent)
 
-    def test_request_metadata_helpers_handle_missing_and_direct_clients(self) -> None:
-        """Consent metadata supports reverse proxies and bare requests safely."""
+    def test_request_metadata_helpers_handle_missing_and_direct_clients(
+        self,
+    ) -> None:
+        """Consent metadata supports reverse proxies and bare requests
+        safely."""
         self.assertIsNone(svc._client_ip(None))
         self.assertIsNone(svc._user_agent(None))
         self.assertIsNone(

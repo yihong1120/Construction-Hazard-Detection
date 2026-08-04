@@ -114,9 +114,7 @@ class BffRouterTest(unittest.TestCase):
         get_proxy_access_token.assert_awaited_once_with(self.redis, session_id)
         self.assertIn('HttpOnly', response.headers['set-cookie'])
         self.assertEqual(
-            self.redis.ttls[
-                f'bff:session:{session["session_id_hash"]}'
-            ],
+            self.redis.ttls[f'bff:session:{session["session_id_hash"]}'],
             AUTH_SESSION_TTL_SECONDS,
         )
 
@@ -187,6 +185,7 @@ class BffRouterTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 204)
+        assert proxy_request.await_args is not None
         self.assertEqual(proxy_request.await_args.args[3], 'chat/messages')
         self.assertIn('HttpOnly', response.headers['set-cookie'])
 
@@ -197,8 +196,11 @@ class BffRouterTest(unittest.TestCase):
         self.assertEqual(old_path.status_code, 404)
         self.assertEqual(old_path.json()['detail'], 'bff_route_not_allowed')
 
-    def test_session_helpers_reject_expired_sessions_and_missing_users(self) -> None:
-        """BFF session helpers do not continue with deleted server-side data."""
+    def test_session_helpers_reject_expired_sessions_and_missing_users(
+        self,
+    ) -> None:
+        """BFF session helpers do not continue with deleted server-side
+        data."""
         request = SimpleNamespace(cookies={})
         with patch(
             'examples.bff.router.get_auth_session',

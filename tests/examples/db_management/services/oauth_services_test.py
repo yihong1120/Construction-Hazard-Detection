@@ -138,7 +138,9 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(ctx.exception.detail['code'], 'account_link_required')
 
-    async def test_unverified_email_existing_user_requires_binding(self) -> None:
+    async def test_unverified_email_existing_user_requires_binding(
+        self,
+    ) -> None:
         self.db.scalar.side_effect = [None, MagicMock()]
 
         with self.assertRaises(HTTPException) as ctx:
@@ -249,7 +251,9 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
             'identity_already_linked_to_another_user',
         )
 
-    async def test_link_provider_creates_identity_for_current_user(self) -> None:
+    async def test_link_provider_creates_identity_for_current_user(
+        self,
+    ) -> None:
         user = MagicMock(id=1)
         self.db.scalar.side_effect = [None, None]
         identity = MagicMock(
@@ -263,6 +267,7 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
 
         def add_side_effect(obj: object) -> None:
             self.assertIsInstance(obj, UserIdentity)
+            assert isinstance(obj, UserIdentity)
             obj.id = identity.id
             obj.provider = identity.provider
             obj.email = identity.email
@@ -309,7 +314,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(
-            ctx.exception.detail['code'], 'provider_already_linked',
+            ctx.exception.detail['code'],
+            'provider_already_linked',
         )
 
     async def test_unlink_rejects_last_login_method(self) -> None:
@@ -323,7 +329,9 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertEqual(ctx.exception.detail['code'], 'last_login_method')
 
-    @patch.object(svc, '_exchange_apple_authorization_code', new_callable=AsyncMock)
+    @patch.object(
+        svc, '_exchange_apple_authorization_code', new_callable=AsyncMock,
+    )
     @patch.object(svc, '_verify_jwt_with_jwks')
     async def test_apple_nonce_mismatch_is_rejected(
         self,
@@ -352,7 +360,7 @@ if __name__ == '__main__':
 
 
 def _settings(**values: object) -> SimpleNamespace:
-    defaults = {
+    defaults: dict[str, object] = {
         'google_client_ids': '',
         'apple_client_ids': '',
         'apple_private_key': '',
@@ -390,12 +398,15 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         self.assertEqual(
             svc._normalise_email(
                 ' User@Example.COM ',
-            ), 'user@example.com',
+            ),
+            'user@example.com',
         )
         self.assertIsNone(svc._normalise_email('  '))
         self.assertIsNone(svc._normalise_email(None))
 
-    def test_verify_jwt_rejects_unconfigured_invalid_and_missing_subject(self) -> None:
+    def test_verify_jwt_rejects_unconfigured_invalid_and_missing_subject(
+        self,
+    ) -> None:
         with self.assertRaises(HTTPException) as missing_audience:
             svc._verify_jwt_with_jwks('token', 'jwks', [], ['issuer'])
         self.assertEqual(missing_audience.exception.status_code, 500)
@@ -407,7 +418,10 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         ):
             with self.assertRaises(HTTPException) as invalid_token:
                 svc._verify_jwt_with_jwks(
-                    'token', 'jwks', ['client'], ['issuer'],
+                    'token',
+                    'jwks',
+                    ['client'],
+                    ['issuer'],
                 )
         self.assertEqual(invalid_token.exception.status_code, 401)
 
@@ -415,10 +429,15 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         jwk_client = MagicMock()
         jwk_client.get_signing_key_from_jwt.return_value = signing_key
         with patch.object(svc.jwt, 'PyJWKClient', return_value=jwk_client):
-            with patch.object(svc.jwt, 'decode', return_value={'aud': 'client'}):
+            with patch.object(
+                svc.jwt, 'decode', return_value={'aud': 'client'},
+            ):
                 with self.assertRaises(HTTPException) as missing_subject:
                     svc._verify_jwt_with_jwks(
-                        'token', 'jwks', ['client'], ['issuer'],
+                        'token',
+                        'jwks',
+                        ['client'],
+                        ['issuer'],
                     )
         self.assertEqual(missing_subject.exception.status_code, 401)
 
@@ -428,9 +447,14 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         jwk_client.get_signing_key_from_jwt.return_value = signing_key
         claims = {'sub': 'provider-user', 'email': 'user@example.com'}
         with patch.object(svc.jwt, 'PyJWKClient', return_value=jwk_client):
-            with patch.object(svc.jwt, 'decode', return_value=claims) as decode:
+            with patch.object(
+                svc.jwt, 'decode', return_value=claims,
+            ) as decode:
                 result = svc._verify_jwt_with_jwks(
-                    'token', 'jwks', ['client'], ['issuer'],
+                    'token',
+                    'jwks',
+                    ['client'],
+                    ['issuer'],
                 )
 
         self.assertEqual(result, claims)
@@ -442,7 +466,9 @@ class TestOAuthHelperCoverage(unittest.TestCase):
             issuer=['issuer'],
         )
 
-    def test_load_apple_private_key_from_value_file_and_missing_config(self) -> None:
+    def test_load_apple_private_key_from_value_file_and_missing_config(
+        self,
+    ) -> None:
         with patch.object(
             svc,
             'settings',
@@ -478,7 +504,9 @@ class TestOAuthHelperCoverage(unittest.TestCase):
             apple_private_key='private-key',
         )
         with patch.object(svc, 'settings', settings):
-            with patch.object(svc.jwt, 'encode', return_value='client-secret') as encode:
+            with patch.object(
+                svc.jwt, 'encode', return_value='client-secret',
+            ) as encode:
                 self.assertEqual(
                     svc._build_apple_client_secret('service-id'),
                     'client-secret',
@@ -517,7 +545,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         )
         self.assertEqual(
             svc._profile_names(
-                'google', {'given_name': 'Given', 'family_name': 'Family'},
+                'google',
+                {'given_name': 'Given', 'family_name': 'Family'},
             ),
             ('Family', 'Given'),
         )
@@ -558,7 +587,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         self.assertEqual(
             svc._status_error(
                 'other',
-            ).detail['code'], 'user_not_active',
+            ).detail['code'],
+            'user_not_active',
         )
 
         with self.assertRaises(HTTPException):
@@ -585,7 +615,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         self.assertEqual(
             svc._identity_read(
                 identity,
-            ).linked_at, '2026-07-24T00:00:00Z',
+            ).linked_at,
+            '2026-07-24T00:00:00Z',
         )
 
     def test_new_identity_and_claim_update(self) -> None:
@@ -645,7 +676,9 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
             'to_thread',
             new=AsyncMock(
                 return_value={
-                'sub': 'google-user', 'email_verified': True, 'email': 'user@example.com',
+                    'sub': 'google-user',
+                    'email_verified': True,
+                    'email': 'user@example.com',
                 },
             ),
         ):
@@ -654,17 +687,22 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
 
         for claims in [
             {
-                'sub': 'google-user', 'email_verified': False,
+                'sub': 'google-user',
+                'email_verified': False,
                 'email': 'user@example.com',
             },
             {'sub': 'google-user', 'email_verified': True},
         ]:
-            with patch.object(svc.asyncio, 'to_thread', new=AsyncMock(return_value=claims)):
+            with patch.object(
+                svc.asyncio, 'to_thread', new=AsyncMock(return_value=claims),
+            ):
                 with self.assertRaises(HTTPException) as invalid_claims:
                     await svc.verify_google_id_token('id-token')
             self.assertEqual(invalid_claims.exception.status_code, 401)
 
-    async def test_verify_apple_identity_token_all_exchange_paths(self) -> None:
+    async def test_verify_apple_identity_token_all_exchange_paths(
+        self,
+    ) -> None:
         settings = _settings(
             apple_client_ids='web-client, native-client',
             apple_service_id='web-client',
@@ -676,7 +714,11 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
                 'to_thread',
                 new=AsyncMock(
                     side_effect=[
-                        {'sub': 'apple-user', 'aud': 'web-client', 'nonce': 'nonce'},
+                        {
+                            'sub': 'apple-user',
+                            'aud': 'web-client',
+                            'nonce': 'nonce',
+                        },
                         {'sub': 'apple-user', 'aud': 'web-client'},
                     ],
                 ),
@@ -687,7 +729,9 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
                     new=AsyncMock(return_value={'id_token': 'exchanged'}),
                 ) as exchange:
                     result = await svc.verify_apple_identity_token(
-                        'identity', 'code', expected_nonce='nonce',
+                        'identity',
+                        'code',
+                        expected_nonce='nonce',
                     )
         self.assertEqual(result['sub'], 'apple-user')
         exchange.assert_awaited_once_with('code', ['web-client'])
@@ -705,10 +749,13 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
                     '_exchange_apple_authorization_code',
                     new=AsyncMock(return_value={'id_token': 'exchanged'}),
                 ) as exchange:
-                    result = await svc.verify_apple_identity_token(None, 'code')
+                    result = await svc.verify_apple_identity_token(
+                        None, 'code',
+                    )
         self.assertEqual(result['sub'], 'apple-user')
         exchange.assert_awaited_once_with(
-            'code', ['web-client', 'native-client'],
+            'code',
+            ['web-client', 'native-client'],
         )
 
         with patch.object(svc, 'settings', settings):
@@ -739,8 +786,12 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
                     '_exchange_apple_authorization_code',
                     new=AsyncMock(return_value={'id_token': 'exchanged'}),
                 ):
-                    with self.assertRaises(HTTPException) as mismatched_subject:
-                        await svc.verify_apple_identity_token('identity', 'code')
+                    with self.assertRaises(
+                        HTTPException,
+                    ) as mismatched_subject:
+                        await svc.verify_apple_identity_token(
+                            'identity', 'code',
+                        )
         self.assertEqual(mismatched_subject.exception.status_code, 401)
 
         with patch.object(svc, 'settings', settings):
@@ -753,7 +804,9 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
                     await svc.verify_apple_identity_token(None, 'code')
         self.assertEqual(missing_identity.exception.status_code, 401)
 
-    async def test_apple_code_exchange_retries_and_validates_response(self) -> None:
+    async def test_apple_code_exchange_retries_and_validates_response(
+        self,
+    ) -> None:
         error = HTTPException(status_code=401, detail='Invalid provider token')
         with patch.object(
             svc,
@@ -761,7 +814,9 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(side_effect=[error, {'id_token': 'id'}]),
         ):
             self.assertEqual(
-                await svc._exchange_apple_authorization_code('code', ['one', 'two']),
+                await svc._exchange_apple_authorization_code(
+                    'code', ['one', 'two'],
+                ),
                 {'id_token': 'id'},
             )
         with patch.object(
@@ -788,9 +843,15 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
             apple_redirect_uri='https://app/callback',
         )
         with patch.object(svc, 'settings', settings):
-            with patch.object(svc, '_build_apple_client_secret', return_value='secret'):
-                with patch.object(svc.httpx, 'AsyncClient', return_value=context):
-                    result = await svc._exchange_apple_authorization_code_once('code', 'web-client')
+            with patch.object(
+                svc, '_build_apple_client_secret', return_value='secret',
+            ):
+                with patch.object(
+                    svc.httpx, 'AsyncClient', return_value=context,
+                ):
+                    result = await svc._exchange_apple_authorization_code_once(
+                        'code', 'web-client',
+                    )
         self.assertEqual(result, {'id_token': 'id'})
         self.assertEqual(
             client.post.call_args.kwargs['data']['redirect_uri'],
@@ -803,10 +864,16 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
         bad_context = MagicMock()
         bad_context.__aenter__ = AsyncMock(return_value=bad_client)
         bad_context.__aexit__ = AsyncMock(return_value=None)
-        with patch.object(svc, '_build_apple_client_secret', return_value='secret'):
-            with patch.object(svc.httpx, 'AsyncClient', return_value=bad_context):
+        with patch.object(
+            svc, '_build_apple_client_secret', return_value='secret',
+        ):
+            with patch.object(
+                svc.httpx, 'AsyncClient', return_value=bad_context,
+            ):
                 with self.assertRaises(HTTPException) as rejected:
-                    await svc._exchange_apple_authorization_code_once('code', 'native')
+                    await svc._exchange_apple_authorization_code_once(
+                        'code', 'native',
+                    )
         self.assertEqual(rejected.exception.status_code, 401)
 
         invalid_json_response = MagicMock(status_code=200)
@@ -820,16 +887,25 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
             return_value=invalid_json_client,
         )
         invalid_json_context.__aexit__ = AsyncMock(return_value=None)
-        with patch.object(svc, '_build_apple_client_secret', return_value='secret'):
-            with patch.object(svc.httpx, 'AsyncClient', return_value=invalid_json_context):
+        with patch.object(
+            svc, '_build_apple_client_secret', return_value='secret',
+        ):
+            with patch.object(
+                svc.httpx, 'AsyncClient', return_value=invalid_json_context,
+            ):
                 with self.assertRaises(HTTPException) as invalid_json:
-                    await svc._exchange_apple_authorization_code_once('code', 'native')
+                    await svc._exchange_apple_authorization_code_once(
+                        'code', 'native',
+                    )
         self.assertEqual(invalid_json.exception.status_code, 401)
 
     async def test_database_lookup_and_new_pending_user(self) -> None:
         with self.assertRaises(HTTPException) as missing_provider_subject:
             await svc.authenticate_provider_user(
-                'google', {}, self.db, MagicMock(),
+                'google',
+                {},
+                self.db,
+                MagicMock(),
             )
         self.assertEqual(missing_provider_subject.exception.status_code, 401)
 
@@ -840,7 +916,9 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
             'user',
         )
         self.db.scalar.return_value = None
-        self.assertIsNone(await svc._find_identity_user(self.db, 'google', 'provider-user'))
+        self.assertIsNone(
+            await svc._find_identity_user(self.db, 'google', 'provider-user'),
+        )
         self.db.scalar.return_value = 'email-user'
         self.assertEqual(
             await svc._find_user_by_email(self.db, 'USER@example.com'),
@@ -849,7 +927,9 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
         self.db.scalar.side_effect = [True, True, None]
         self.assertEqual(
             await svc._unique_username(
-                self.db, 'google', {'email': 'name@example.com'},
+                self.db,
+                'google',
+                {'email': 'name@example.com'},
             ),
             'name_3',
         )
@@ -872,14 +952,18 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
                         result = await svc._create_pending_user_with_identity(
                             self.db,
                             'google',
-                            {'sub': 'provider-user', 'email': 'user@example.com'},
+                            {
+                                'sub': 'provider-user',
+                                'email': 'user@example.com',
+                            },
                         )
         self.assertIs(result, user)
         self.assertEqual(make_user.call_args.kwargs['username'], 'unique')
         self.db.flush.assert_awaited()
         self.db.commit.assert_awaited()
         self.db.refresh.assert_awaited_once_with(
-            user, attribute_names=['profile', 'group'],
+            user,
+            attribute_names=['profile', 'group'],
         )
 
     async def test_login_wrappers_and_identity_list(self) -> None:
@@ -895,13 +979,18 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value={'access_token': 'token'}),
             ) as authenticate:
                 result = await svc.login_with_google(
-                    'id-token', self.db, MagicMock(), display_name='User', device_lang='zh-TW',
+                    'id-token',
+                    self.db,
+                    MagicMock(),
+                    display_name='User',
+                    device_lang='zh-TW',
                 )
         self.assertEqual(result['access_token'], 'token')
         self.assertEqual(google_claims['name'], 'User')
         self.assertEqual(google_claims['device_lang'], 'zh-TW')
         self.assertEqual(
-            authenticate.call_args.args[:2], ('google', google_claims),
+            authenticate.call_args.args[:2],
+            ('google', google_claims),
         )
 
         apple_claims = {'sub': 'apple-user'}
@@ -1000,7 +1089,9 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value='apple-linked'),
             ):
                 self.assertEqual(
-                    await svc.link_apple_identity(user, None, 'code', self.db, 'nonce'),
+                    await svc.link_apple_identity(
+                        user, None, 'code', self.db, 'nonce',
+                    ),
                     'apple-linked',
                 )
 

@@ -20,26 +20,31 @@ from examples.auth.redis_pool import get_redis_pool
 from examples.local_notification_server import routers
 from examples.local_notification_server.fcm_service import FcmSendResult
 from examples.local_notification_server.routers import delete_notification
-from examples.local_notification_server.routers import \
-    get_notification_device_status
-from examples.local_notification_server.routers import \
-    get_notification_unread_count
+from examples.local_notification_server.routers import (
+    get_notification_device_status,
+)
+from examples.local_notification_server.routers import (
+    get_notification_unread_count,
+)
 from examples.local_notification_server.routers import list_notifications
-from examples.local_notification_server.routers import \
-    mark_all_notifications_read
+from examples.local_notification_server.routers import (
+    mark_all_notifications_read,
+)
 from examples.local_notification_server.routers import mark_notification_read
 from examples.local_notification_server.routers import router
 from examples.local_notification_server.routers import send_test_notification
-from examples.local_notification_server.schemas import SiteNotificationPreferenceIn
-from examples.local_notification_server.schemas import \
-    SiteNotificationPreferenceUpdateRequest
+from examples.local_notification_server.schemas import (
+    SiteNotificationPreferenceIn,
+)
+from examples.local_notification_server.schemas import (
+    SiteNotificationPreferenceUpdateRequest,
+)
 from examples.local_notification_server.schemas import SiteNotifyRequest
 from examples.local_notification_server.services import fcm_token_hash
 
 
 def mock_jwt_access() -> MagicMock:
-    """
-    Mock JWT credentials to avoid the need for a real token in tests.
+    """Mock JWT credentials to avoid the need for a real token in tests.
 
     Returns:
         MagicMock: A mock object with dummy jti and sub attributes.
@@ -48,19 +53,17 @@ def mock_jwt_access() -> MagicMock:
 
 
 class TestLocalNotificationServer(unittest.TestCase):
-    """
-    Unit test suite for routes in the local notification server.
-    """
+    """Unit test suite for routes in the local notification server."""
 
     def setUp(self) -> None:
-        """
-        Set up a FastAPI app, test client,
-        and mock dependencies before each test.
-        """
+        """Set up a FastAPI app, test client, and mock dependencies before each
+        test."""
         self.app: FastAPI = FastAPI()
         self.app.include_router(router, prefix='/fcm')
         self.client: TestClient = TestClient(self.app)
         self.mock_session: AsyncMock = AsyncMock()
+        self.mock_session.add = MagicMock()
+        self.mock_session.add_all = MagicMock()
 
         # Redis mock: use MagicMock for correct pipeline chain
         self.mock_redis: MagicMock = MagicMock()
@@ -77,9 +80,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         # pipeline mock will be set in each test as needed
 
         async def override_get_db() -> AsyncIterator[AsyncMock]:
-            """
-            Override dependency for database session,
-            returning a mock session object.
+            """Override dependency for database session, returning a mock
+            session object.
 
             Yields:
                 AsyncMock: The mocked database session.
@@ -87,9 +89,8 @@ class TestLocalNotificationServer(unittest.TestCase):
             yield self.mock_session
 
         async def override_get_redis_pool() -> MagicMock:
-            """
-            Override dependency for Redis connection,
-            returning a mock Redis object.
+            """Override dependency for Redis connection, returning a mock Redis
+            object.
 
             Returns:
                 MagicMock: The mocked Redis connection.
@@ -102,19 +103,16 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.app.dependency_overrides[jwt_access] = mock_jwt_access
 
     def tearDown(self) -> None:
-        """
-        Clear overrides after each test to avoid leakage between test cases.
-        """
+        """Clear overrides after each test to avoid leakage between test
+        cases."""
         self.app.dependency_overrides.clear()
 
     # ------------------------------------------------------------------------
     # Helper functions for simulating database queries
     # ------------------------------------------------------------------------
     def mock_no_user_in_db(self) -> None:
-        """
-        Simulate a scenario where the queried user is not found
-        in the database.
-        """
+        """Simulate a scenario where the queried user is not found in the
+        database."""
         result: MagicMock = MagicMock()
         result.unique.return_value = result
         result.scalar_one_or_none.return_value = None
@@ -122,8 +120,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.mock_session.execute = AsyncMock(return_value=result)
 
     def mock_user_in_db(self, user_id: int) -> MagicMock:
-        """
-        Simulate a scenario where the queried user is found in the database.
+        """Simulate a scenario where the queried user is found in the database.
 
         Args:
             user_id (int): The ID of the user to mock.
@@ -146,8 +143,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         site_name: str,
         users: list[MagicMock] | None = None,
     ) -> MagicMock:
-        """
-        Simulate a scenario where a Site is found in the database.
+        """Simulate a scenario where a Site is found in the database.
 
         Args:
             site_name (str):
@@ -182,8 +178,8 @@ class TestLocalNotificationServer(unittest.TestCase):
     # Tests for /store_token (POST) - storing an FCM token
     # ------------------------------------------------------------------------
     def test_store_fcm_token_user_not_found(self) -> None:
-        """
-        Test storing a token when the user is not found in the database.
+        """Test storing a token when the user is not found in the database.
+
         Expect a 404 error response.
         """
         self.mock_no_user_in_db()
@@ -227,7 +223,9 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertIn('registered_at', payload)
         self.assertIn('last_seen_at', payload)
         token_pipe_mock.hset.assert_any_call(
-            'fcm_tokens:123', 'my-test-token', 'en-GB',
+            'fcm_tokens:123',
+            'my-test-token',
+            'en-GB',
         )
         token_pipe_mock.sadd.assert_called_once_with(
             'fcm_token_index:123',
@@ -248,14 +246,13 @@ class TestLocalNotificationServer(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(
-            response.json(), {'detail': 'unsupported_device_lang'},
+            response.json(),
+            {'detail': 'unsupported_device_lang'},
         )
         self.mock_redis.pipeline.assert_not_called()
 
     def test_store_fcm_token_with_device_lang(self) -> None:
-        """
-        Test token storage with a specific device language specified.
-        """
+        """Test token storage with a specific device language specified."""
         self.mock_user_in_db(user_id=123)
         token_pipe_mock = MagicMock()
         token_pipe_mock.hset = MagicMock()
@@ -264,7 +261,9 @@ class TestLocalNotificationServer(unittest.TestCase):
         token_pipe_mock.sadd = MagicMock()
         self.mock_redis.pipeline.return_value = token_pipe_mock
         data: dict[str, object] = {
-            'user_id': 123, 'device_token': 'test-token', 'device_lang': 'zh',
+            'user_id': 123,
+            'device_token': 'test-token',
+            'device_lang': 'zh',
         }
         response = self.client.post('/fcm/store_token', json=data)
         self.assertEqual(response.status_code, 200)
@@ -274,7 +273,9 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(payload['device_lang'], 'zh-TW')
         self.assertNotIn('token_hash', payload)
         token_pipe_mock.hset.assert_any_call(
-            'fcm_tokens:123', 'test-token', 'zh-TW',
+            'fcm_tokens:123',
+            'test-token',
+            'zh-TW',
         )
         self.assertEqual(token_pipe_mock.hset.call_count, 2)
 
@@ -291,7 +292,8 @@ class TestLocalNotificationServer(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(
-            response.json(), {'detail': 'unsupported_device_lang'},
+            response.json(),
+            {'detail': 'unsupported_device_lang'},
         )
         self.mock_redis.pipeline.assert_not_called()
 
@@ -299,8 +301,8 @@ class TestLocalNotificationServer(unittest.TestCase):
     # Tests for /delete_token (DELETE) - removing an FCM token from Redis
     # ------------------------------------------------------------------------
     def test_delete_fcm_token_user_not_found(self) -> None:
-        """
-        Test deleting a token when the user is not found in the database.
+        """Test deleting a token when the user is not found in the database.
+
         The route returns 200 with a message indicating the user is not found.
         """
         self.mock_no_user_in_db()
@@ -314,15 +316,15 @@ class TestLocalNotificationServer(unittest.TestCase):
             'device_token': 'unknown-token',
         }
         response = self.client.request(
-            'DELETE', '/fcm/delete_token', json=data,
+            'DELETE',
+            '/fcm/delete_token',
+            json=data,
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'message': 'User not found.'})
 
     def test_delete_fcm_token_not_in_redis(self) -> None:
-        """
-        Test attempting to delete a token that does not exist in Redis.
-        """
+        """Test attempting to delete a token that does not exist in Redis."""
         user_result = MagicMock()
         user_result.scalar.return_value = 10
         update_result = MagicMock()
@@ -340,19 +342,20 @@ class TestLocalNotificationServer(unittest.TestCase):
             'device_token': 'non-existent-token',
         }
         response = self.client.request(
-            'DELETE', '/fcm/delete_token', json=data,
+            'DELETE',
+            '/fcm/delete_token',
+            json=data,
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            response.json(), {
+            response.json(),
+            {
                 'message': 'Token not found.',
             },
         )
 
     def test_delete_fcm_token_success(self) -> None:
-        """
-        Test successfully deleting an existing token in Redis.
-        """
+        """Test successfully deleting an existing token in Redis."""
         user_result = MagicMock()
         user_result.scalar.return_value = 10
         update_result = MagicMock()
@@ -370,19 +373,20 @@ class TestLocalNotificationServer(unittest.TestCase):
             'device_token': 'existing-token',
         }
         response = self.client.request(
-            'DELETE', '/fcm/delete_token', json=data,
+            'DELETE',
+            '/fcm/delete_token',
+            json=data,
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'message': 'Token deleted.'})
         pipe_mock.hdel.assert_called_once_with(
-            'fcm_tokens:10', 'existing-token',
+            'fcm_tokens:10',
+            'existing-token',
         )
 
     def test_delete_fcm_token_delete_key_when_no_tokens(self) -> None:
-        """
-        Test that the Redis key is deleted
-        when no tokens remain after deletion.
-        """
+        """Test that the Redis key is deleted when no tokens remain after
+        deletion."""
         user_result = MagicMock()
         user_result.scalar.return_value = 10
         update_result = MagicMock()
@@ -401,7 +405,9 @@ class TestLocalNotificationServer(unittest.TestCase):
             'device_token': 'existing-token',
         }
         response = self.client.request(
-            'DELETE', '/fcm/delete_token', json=data,
+            'DELETE',
+            '/fcm/delete_token',
+            json=data,
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'message': 'Token deleted.'})
@@ -421,8 +427,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         self,
         mock_get_user_ids: AsyncMock,
     ) -> None:
-        """
-        Test sending a notification for a non-existent site.
+        """Test sending a notification for a non-existent site.
+
         Expects a 200 response with success=False and a specific message.
         """
         _ = mock_get_user_ids
@@ -437,12 +443,15 @@ class TestLocalNotificationServer(unittest.TestCase):
         }
         headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
-            '/fcm/send_fcm_notification', json=data, headers=headers,
+            '/fcm/send_fcm_notification',
+            json=data,
+            headers=headers,
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            response.json(), {
+            response.json(),
+            {
                 'success': False,
                 'message': "Site 'MissingSite' not found.",
             },
@@ -458,8 +467,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         self,
         mock_get_user_ids: AsyncMock,
     ) -> None:
-        """
-        Test sending a notification for a site that has no users.
+        """Test sending a notification for a site that has no users.
+
         Expects a 200 response with success=False and a relevant message.
         """
         _ = mock_get_user_ids
@@ -474,12 +483,15 @@ class TestLocalNotificationServer(unittest.TestCase):
         }
         headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
-            '/fcm/send_fcm_notification', json=data, headers=headers,
+            '/fcm/send_fcm_notification',
+            json=data,
+            headers=headers,
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            response.json(), {
+            response.json(),
+            {
                 'success': False,
                 'message': "Site 'EmptySite' has no subscribed users.",
             },
@@ -495,10 +507,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         self,
         mock_get_user_ids: AsyncMock,
     ) -> None:
-        """
-        Test sending a notification where users exist,
-        but none have tokens in Redis.
-        """
+        """Test sending a notification where users exist, but none have tokens
+        in Redis."""
         _ = mock_get_user_ids
         self.mock_redis.set = AsyncMock(return_value=True)
 
@@ -517,7 +527,9 @@ class TestLocalNotificationServer(unittest.TestCase):
         }
         headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
-            '/fcm/send_fcm_notification', json=data, headers=headers,
+            '/fcm/send_fcm_notification',
+            json=data,
+            headers=headers,
         )
 
         self.assertEqual(response.status_code, 200)
@@ -544,9 +556,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         self,
         mock_send_fcm: AsyncMock,
     ) -> None:
-        """
-        Test successfully sending a notification when a site, users,
-        and user tokens in Redis are all available.
+        """Test successfully sending a notification when a site, users, and
+        user tokens in Redis are all available.
 
         Args:
             mock_send_fcm (AsyncMock): Mocked FCM notification sending service.
@@ -576,7 +587,9 @@ class TestLocalNotificationServer(unittest.TestCase):
             new=AsyncMock(return_value=[42]),
         ):
             response = self.client.post(
-                '/fcm/send_fcm_notification', json=data, headers=headers,
+                '/fcm/send_fcm_notification',
+                json=data,
+                headers=headers,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -600,8 +613,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self,
         mock_send_fcm: AsyncMock,
     ) -> None:
-        """
-        Test overall failure when all notifications fail to send.
+        """Test overall failure when all notifications fail to send.
 
         Args:
             mock_send_fcm (AsyncMock): Mocked FCM notification sending service.
@@ -630,7 +642,9 @@ class TestLocalNotificationServer(unittest.TestCase):
             new=AsyncMock(return_value=[99]),
         ):
             response = self.client.post(
-                '/fcm/send_fcm_notification', json=data, headers=headers,
+                '/fcm/send_fcm_notification',
+                json=data,
+                headers=headers,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -646,11 +660,10 @@ class TestLocalNotificationServer(unittest.TestCase):
         new_callable=AsyncMock,
     )
     def test_send_fcm_notification_timeout(
-        self, mock_send_fcm: AsyncMock,
+        self,
+        mock_send_fcm: AsyncMock,
     ) -> None:
-        """
-        Test FCM notification sending timeout branch.
-        """
+        """Test FCM notification sending timeout branch."""
         _ = mock_send_fcm
         self.mock_redis.set = AsyncMock(return_value=True)
         pipe_mock: MagicMock = MagicMock()
@@ -659,6 +672,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.mock_redis.pipeline.return_value = pipe_mock
         # Patch asyncio.wait_for to raise TimeoutError
         import asyncio as real_asyncio
+
         with patch('asyncio.wait_for', side_effect=real_asyncio.TimeoutError):
             with patch(
                 'examples.local_notification_server.routers.'
@@ -686,11 +700,10 @@ class TestLocalNotificationServer(unittest.TestCase):
         new_callable=AsyncMock,
     )
     def test_send_fcm_notification_exception(
-        self, mock_send_fcm: AsyncMock,
+        self,
+        mock_send_fcm: AsyncMock,
     ) -> None:
-        """
-        Test FCM notification sending exception branch.
-        """
+        """Test FCM notification sending exception branch."""
         _ = mock_send_fcm
         self.mock_redis.set = AsyncMock(return_value=True)
         pipe_mock: MagicMock = MagicMock()
@@ -711,7 +724,9 @@ class TestLocalNotificationServer(unittest.TestCase):
                 }
                 headers = {'Authorization': 'Bearer dummy-token'}
                 response = self.client.post(
-                    '/fcm/send_fcm_notification', json=data, headers=headers,
+                    '/fcm/send_fcm_notification',
+                    json=data,
+                    headers=headers,
                 )
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()['success'])
@@ -733,7 +748,9 @@ class TestLocalNotificationServer(unittest.TestCase):
         }
         headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
-            '/fcm/send_fcm_notification', json=data, headers=headers,
+            '/fcm/send_fcm_notification',
+            json=data,
+            headers=headers,
         )
 
         self.assertEqual(response.status_code, 200)
@@ -747,8 +764,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.mock_session.execute.assert_not_called()
 
     def test_send_fcm_notification_body_empty(self) -> None:
-        """
-        Test sending a notification with an empty body.
+        """Test sending a notification with an empty body.
+
         Expects a 200 response with success=False and a specific message.
         """
         data: dict[str, object] = {
@@ -760,12 +777,15 @@ class TestLocalNotificationServer(unittest.TestCase):
         }
         headers: dict[str, str] = {'Authorization': 'Bearer dummy-token'}
         response = self.client.post(
-            '/fcm/send_fcm_notification', json=data, headers=headers,
+            '/fcm/send_fcm_notification',
+            json=data,
+            headers=headers,
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            response.json(), {
+            response.json(),
+            {
                 'success': False,
                 'message': 'Body is empty, nothing to send.',
             },
@@ -981,11 +1001,11 @@ class TestNotificationCenterRoutes(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-"""
-pytest \
-    --cov=examples.local_notification_server.routers \
-    --cov-report=term-missing \
-    tests/examples/local_notification_server/routers_test.py
+"""Pytest \
+
+--cov=examples.local_notification_server.routers \
+--cov-report=term-missing \
+tests/examples/local_notification_server/routers_test.py
 """
 
 
@@ -1026,7 +1046,8 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(),
             ),
             patch.object(
-                routers, '_iter_push_tasks_streaming',
+                routers,
+                '_iter_push_tasks_streaming',
                 return_value=[],
             ),
             patch.object(
@@ -1134,7 +1155,10 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(failed.success)
         self.assertEqual(failed.invalid_tokens, 1)
         mark_success.assert_awaited_once_with(
-            7, tokens, self.redis, db=self.db,
+            7,
+            tokens,
+            self.redis,
+            db=self.db,
         )
         mark_failure.assert_awaited_once_with(
             7,
@@ -1183,8 +1207,11 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.success)
         mark_failure.assert_awaited_once()
 
-    async def test_notification_scope_handles_admin_and_missing_group(self) -> None:
-        """Super admins see all sites; group-less users have no management scope."""
+    async def test_notification_scope_handles_admin_and_missing_group(
+        self,
+    ) -> None:
+        """Super admins see all sites; group-less users have no management
+        scope."""
         sites = [SimpleNamespace(id=1, name='All sites')]
         super_admin = SimpleNamespace(
             id=1,
@@ -1214,7 +1241,9 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
             await routers._list_notification_scope_sites(self.db, group_less)
         self.assertEqual(raised.exception.status_code, 403)
 
-    async def test_notification_scope_filters_regular_user_by_group(self) -> None:
+    async def test_notification_scope_filters_regular_user_by_group(
+        self,
+    ) -> None:
         """Regular managers receive only sites belonging to their group."""
         user = SimpleNamespace(
             id=3,
@@ -1228,12 +1257,16 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
             'list_sites',
             new=AsyncMock(return_value=sites),
         ) as list_sites:
-            result = await routers._list_notification_scope_sites(self.db, user)
+            result = await routers._list_notification_scope_sites(
+                self.db, user,
+            )
 
         self.assertEqual(result, sites)
         list_sites.assert_awaited_once_with(self.db, group_id=12)
 
-    async def test_list_preferences_uses_explicit_and_effective_values(self) -> None:
+    async def test_list_preferences_uses_explicit_and_effective_values(
+        self,
+    ) -> None:
         """Explicit preferences override effective site-access defaults."""
         site = SimpleNamespace(
             id=1,
@@ -1264,7 +1297,9 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result[0].is_enabled)
         self.assertEqual(result[0].group_name, 'Team A')
 
-    async def test_empty_preference_scope_needs_no_database_queries(self) -> None:
+    async def test_empty_preference_scope_needs_no_database_queries(
+        self,
+    ) -> None:
         """Users with no visible sites receive an empty preference list."""
         with patch.object(
             routers,
@@ -1279,7 +1314,9 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
         self.db.execute.assert_not_awaited()
 
-    async def test_preference_update_ignores_sites_omitted_from_payload(self) -> None:
+    async def test_preference_update_ignores_sites_omitted_from_payload(
+        self,
+    ) -> None:
         """A partial request preserves a second allowed site's preference."""
         sites = [
             SimpleNamespace(id=1, name='Included site'),
@@ -1324,7 +1361,8 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
     async def test_preference_update_handles_empty_and_invalid_requests(
         self,
     ) -> None:
-        """Empty updates delegate to listing and out-of-scope IDs are rejected."""
+        """Empty updates delegate to listing and out-of-scope IDs are
+        rejected."""
         site = SimpleNamespace(id=1, name='Allowed site')
         empty = SiteNotificationPreferenceUpdateRequest(preferences=[])
         invalid = SiteNotificationPreferenceUpdateRequest(
@@ -1362,10 +1400,11 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
         list_preferences.assert_awaited_once_with(self.db, self.user)
         self.assertEqual(raised.exception.status_code, 403)
 
-    async def test_preference_update_changes_existing_value_and_refreshes_cache(
+    async def test_preference_update_changes_value_and_refreshes_cache(
         self,
     ) -> None:
-        """Changed explicit preferences update their row and recipient cache."""
+        """Changed explicit preferences update their row and recipient
+        cache."""
         site = SimpleNamespace(id=1, name='Changed site')
         preference = SimpleNamespace(site_id=1, is_enabled=False)
         pref_result = MagicMock()
@@ -1407,5 +1446,7 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(preference.is_enabled)
         refresh_cache.assert_awaited_once_with(
-            'Changed site', self.db, self.redis,
+            'Changed site',
+            self.db,
+            self.redis,
         )

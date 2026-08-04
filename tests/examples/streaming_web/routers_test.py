@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from collections.abc import AsyncIterator
 from datetime import datetime
 from datetime import timezone
 from types import SimpleNamespace
@@ -372,7 +373,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
 
-        async def empty_scan_iter(**_kwargs) -> None:
+        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
             """Support empty_scan_iter."""
             if False:
                 yield b''
@@ -420,7 +421,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
 
-        async def empty_scan_iter(**_kwargs) -> None:
+        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
             if False:
                 yield b''
 
@@ -462,7 +463,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
 
-        async def empty_scan_iter(**_kwargs) -> None:
+        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
             """Support empty_scan_iter."""
             if False:
                 yield b''
@@ -534,6 +535,58 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             media_query='_HLS_msn=3',
         )
         self.fake_redis.expire.assert_awaited_once()
+
+    def test_stream_playlist_restores_missing_session_from_media_capability(
+        self,
+    ) -> None:
+        """A valid media capability restores a lost stable HLS session."""
+        media_session = {
+            'username': 'testuser',
+            'site': 'label1',
+            'cameras': ['Cam1'],
+            'profile': 'clean',
+            'quality': 'detail',
+            'user_active': True,
+            'playback_sessions': {
+                'session-1': {
+                    'label': 'label1',
+                    'stream_name': 'Cam1',
+                    'profile': 'clean',
+                    'rendition': 'detail',
+                    'language': None,
+                },
+            },
+        }
+        self.fake_redis.get = AsyncMock(return_value=None)
+        self.fake_redis.expire = AsyncMock()
+
+        with (
+            patch(
+                'examples.streaming_web.routers.get_media_session',
+                new=AsyncMock(return_value=media_session),
+            ),
+            patch(
+                'examples.streaming_web.routers._fetch_internal_hls_playlist',
+                new=AsyncMock(
+                    return_value=('#EXTM3U\n#EXTINF:2,\nseg0.ts\n', None),
+                ),
+            ),
+        ):
+            response = self.client.get(
+                '/api/stream-playback/sessions/session-1/index.m3u8'
+                '?mt=opaque-token',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            '/hazard/media/hazard_bGFiZWwx_Q2FtMQ/seg0.ts?mt=opaque-token',
+            response.text,
+        )
+        self.fake_redis.set.assert_any_await(
+            'stream_playback_session:session-1',
+            ANY,
+            ex=routers.STREAM_PLAYBACK_SESSION_TTL_SECONDS,
+        )
 
     def test_stream_playback_session_playlist_forwards_hls_session_cookie(
         self,
@@ -704,7 +757,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
 
-        async def empty_scan_iter(**_kwargs) -> None:
+        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
             if False:
                 yield b''
 
@@ -839,7 +892,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         }
         self.fake_redis.get = AsyncMock(return_value=json.dumps(session))
 
-        async def empty_scan_iter(**_kwargs) -> None:
+        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
             if False:
                 yield b''
 
@@ -1257,7 +1310,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
     async def test_active_overlay_languages_skips_bad_keys(self) -> None:
         """Exercise this test."""
-        async def scan_iter(**_kwargs) -> None:
+        async def scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
             """Support scan_iter."""
             yield b'media_overlay_demand:hazard_site_cam:not-base64'
             yield b'media_overlay_demand:hazard_site_cam:emgtVFc'

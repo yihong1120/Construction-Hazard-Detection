@@ -11,12 +11,12 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _run_as_script(relative_path: str) -> dict[str, object]:
-    """Execute a project script exactly as ``python path/to/script.py`` would."""
+    """Execute a project script exactly as ``python path/to/script.py``
+    would."""
     return runpy.run_path(
         str(PROJECT_ROOT / relative_path),
         run_name='__main__',
@@ -43,7 +43,8 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(run_server.call_count, len(scripts))
 
     def test_async_entrypoints_delegate_to_asyncio_runner(self) -> None:
-        """Async scripts should schedule their main coroutine when run directly."""
+        """Async scripts should schedule their main coroutine when run
+        directly."""
         scripts = (
             'src/notifiers/telegram_notifier.py',
             'src/notifiers/line_notifier_message_api.py',
@@ -53,7 +54,9 @@ class ScriptEntrypointTests(unittest.TestCase):
 
         def close_coroutine(coroutine: object) -> None:
             close = getattr(coroutine, 'close', None)
-            self.assertTrue(callable(close))
+            if not callable(close):
+                self.fail('asyncio.run received a non-coroutine')
+                return
             close()
 
         with patch('asyncio.run', side_effect=close_coroutine) as run_async:
@@ -65,7 +68,8 @@ class ScriptEntrypointTests(unittest.TestCase):
     def test_cli_entrypoints_support_help_without_starting_workloads(
         self,
     ) -> None:
-        """Direct CLI execution should expose help before any workload starts."""
+        """Direct CLI execution should expose help before any workload
+        starts."""
         scripts = (
             'src/stream_viewer.py',
             'examples/YOLO_train/export_int8_engine.py',
@@ -97,7 +101,8 @@ class ScriptEntrypointTests(unittest.TestCase):
         response = MagicMock()
         response.status_code = 200
         response.json.return_value = {
-            'access_token': 'token', 'media_id': 'id',
+            'access_token': 'token',
+            'media_id': 'id',
         }
 
         with (
@@ -114,7 +119,9 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertGreaterEqual(post_request.call_count, 3)
         configure_logging.assert_called()
 
-    def test_model_fetcher_entrypoint_registers_then_runs_scheduler(self) -> None:
+    def test_model_fetcher_entrypoint_registers_then_runs_scheduler(
+        self,
+    ) -> None:
         """The scheduler entrypoint registers work before entering its loop."""
         schedule_job = MagicMock()
 

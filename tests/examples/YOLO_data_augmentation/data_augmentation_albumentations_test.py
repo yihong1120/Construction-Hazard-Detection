@@ -23,18 +23,15 @@ _requires_albumentations = unittest.skipUnless(
 
 
 class TestDataAugmentation(unittest.TestCase):
-    """
-    Unit tests for the DataAugmentation class.
-    """
+    """Unit tests for the DataAugmentation class."""
 
     def setUp(self) -> None:
-        """
-        Set up the test environment.
-        """
+        """Set up the test environment."""
         self.train_path = 'tests/cv_dataset'
         self.num_augmentations = 2
         self.augmenter = DataAugmentation(
-            self.train_path, self.num_augmentations,
+            self.train_path,
+            self.num_augmentations,
         )
 
     @patch(
@@ -43,10 +40,11 @@ class TestDataAugmentation(unittest.TestCase):
     )
     @patch('builtins.print')
     def test_augment_image_exception(
-        self, mock_print: MagicMock, mock_imread: MagicMock,
+        self,
+        mock_print: MagicMock,
+        mock_imread: MagicMock,
     ) -> None:
-        """
-        Test augment_image when an exception occurs during image reading.
+        """Test augment_image when an exception occurs during image reading.
 
         Args:
             mock_print (MagicMock): Mocked print function.
@@ -68,8 +66,7 @@ class TestDataAugmentation(unittest.TestCase):
 
     @patch('builtins.print')
     def test_augment_image_none(self, mock_print: MagicMock) -> None:
-        """
-        Test augment_image method when the image is None.
+        """Test augment_image method when the image is None.
 
         Args:
             mock_print (MagicMock): Mocked print function.
@@ -87,10 +84,11 @@ class TestDataAugmentation(unittest.TestCase):
         'data_augmentation_albumentations.cv2.cvtColor',
     )
     def test_augment_image(
-        self, mock_cvtColor: MagicMock, mock_imread: MagicMock,
+        self,
+        mock_cvtColor: MagicMock,
+        mock_imread: MagicMock,
     ) -> None:
-        """
-        Test augment_image method with valid image data.
+        """Test augment_image method with valid image data.
 
         Args:
             mock_cvtColor (MagicMock): Mocked cv2.cvtColor function.
@@ -120,7 +118,8 @@ class TestDataAugmentation(unittest.TestCase):
                 return_value=transformed,
             ):
                 with patch.object(
-                    self.augmenter, 'write_label_file',
+                    self.augmenter,
+                    'write_label_file',
                 ) as mock_write_label_file:
                     with patch(
                         'examples.YOLO_data_augmentation.'
@@ -150,8 +149,7 @@ class TestDataAugmentation(unittest.TestCase):
         mock_cvtColor: MagicMock,
         mock_imread: MagicMock,
     ) -> None:
-        """
-        Test augment_image method with an image that has an alpha channel.
+        """Test augment_image method with an image that has an alpha channel.
 
         Args:
             mock_imwrite (MagicMock): Mocked cv2.imwrite function.
@@ -171,10 +169,15 @@ class TestDataAugmentation(unittest.TestCase):
             return_value=(mock_class_labels, mock_bboxes),
         ):
             # Simulate cv2.cvtColor behaviour to remove alpha channel
-            mock_cvtColor.side_effect = lambda img, code: img[
-                :,
-                :, :3,
-            ] if img.shape[2] == 4 else img
+            mock_cvtColor.side_effect = lambda img, code: (
+                img[
+                    :,
+                    :,
+                    :3,
+                ]
+                if img.shape[2] == 4
+                else img
+            )
 
             transformed = {
                 'image': mock_image[:, :, :3],
@@ -206,11 +209,11 @@ class TestDataAugmentation(unittest.TestCase):
         'data_augmentation_albumentations.cv2.cvtColor',
     )
     def test_augment_image_with_empty_labels(
-        self, mock_cvtColor: MagicMock, mock_imread: MagicMock,
+        self,
+        mock_cvtColor: MagicMock,
+        mock_imread: MagicMock,
     ) -> None:
-        """
-        Test augment_image keeps intentionally object-free images.
-        """
+        """Test augment_image keeps intentionally object-free images."""
         mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
         mock_imread.return_value = mock_image
         mock_cvtColor.return_value = mock_image
@@ -231,7 +234,8 @@ class TestDataAugmentation(unittest.TestCase):
                 return_value=transformed,
             ):
                 with patch.object(
-                    self.augmenter, 'write_label_file',
+                    self.augmenter,
+                    'write_label_file',
                 ) as mock_write_label_file:
                     with patch(
                         'examples.YOLO_data_augmentation.'
@@ -251,9 +255,7 @@ class TestDataAugmentation(unittest.TestCase):
         'A.Compose',
     )
     def test_resize_small_image(self, mock_compose: MagicMock) -> None:
-        """
-        Test resize_image_and_bboxes method with a small image.
-        """
+        """Test resize_image_and_bboxes method with a small image."""
         mock_image = np.random.randint(0, 255, (20, 20, 3), dtype=np.uint8)
         mock_bboxes = [[0.5, 0.5, 0.2, 0.2]]
         class_labels = [1]
@@ -269,13 +271,18 @@ class TestDataAugmentation(unittest.TestCase):
         mock_compose.return_value = mock_transform
 
         resized_image, resized_bboxes = self.augmenter.resize_image_and_bboxes(
-            mock_image, mock_bboxes, class_labels, image_path,
+            mock_image,
+            mock_bboxes,
+            class_labels,
+            image_path,
         )
 
         # Verify that the Compose and BboxParams were called correctly
         mock_compose.assert_called()
         mock_transform.assert_called_once_with(
-            image=mock_image, bboxes=mock_bboxes, class_labels=class_labels,
+            image=mock_image,
+            bboxes=mock_bboxes,
+            class_labels=class_labels,
         )
 
         # Verify the transformation result
@@ -284,9 +291,7 @@ class TestDataAugmentation(unittest.TestCase):
 
     @_requires_albumentations
     def test_resize_large_image(self) -> None:
-        """
-        Test resize_image_and_bboxes method with a large image.
-        """
+        """Test resize_image_and_bboxes method with a large image."""
         mock_image = np.random.randint(0, 255, (2000, 2000, 3), dtype=np.uint8)
         mock_bboxes = [[0.5, 0.5, 0.2, 0.2]]
         mock_class_labels = [1]
@@ -306,13 +311,17 @@ class TestDataAugmentation(unittest.TestCase):
                 f"Resize {image_path} due to large size: {mock_image.shape}",
             )
 
-    def test_random_bbox_safe_crop_transform_uses_bbox_aware_crop(self) -> None:
-        """
-        Test random crop augmentation uses an Albumentations bbox transform.
-        """
+    def test_random_bbox_safe_crop_transform_uses_bbox_aware_crop(
+        self,
+    ) -> None:
+        """Test random crop augmentation uses an Albumentations bbox
+        transform."""
         mock_crop = MagicMock(return_value='bbox_safe_crop')
         with patch.object(
-            A, 'RandomSizedBBoxSafeCrop', mock_crop, create=True,
+            A,
+            'RandomSizedBBoxSafeCrop',
+            mock_crop,
+            create=True,
         ):
             with patch(
                 'examples.YOLO_data_augmentation.'
@@ -329,12 +338,13 @@ class TestDataAugmentation(unittest.TestCase):
     def test_at_least_one_bbox_crop_transform_uses_supported_transform(
         self,
     ) -> None:
-        """
-        Test AtLeastOneBBoxRandomCrop is used when available.
-        """
+        """Test AtLeastOneBBoxRandomCrop is used when available."""
         mock_crop = MagicMock(return_value='at_least_one_crop')
         with patch.object(
-            A, 'AtLeastOneBBoxRandomCrop', mock_crop, create=True,
+            A,
+            'AtLeastOneBBoxRandomCrop',
+            mock_crop,
+            create=True,
         ):
             with patch(
                 'examples.YOLO_data_augmentation.'
@@ -354,12 +364,13 @@ class TestDataAugmentation(unittest.TestCase):
         )
 
     def test_bbox_crop_transform_clamps_to_image_size(self) -> None:
-        """
-        Test random bbox crop never exceeds the current image dimensions.
-        """
+        """Test random bbox crop never exceeds the current image dimensions."""
         mock_crop = MagicMock(return_value='bbox_safe_crop')
         with patch.object(
-            A, 'RandomSizedBBoxSafeCrop', mock_crop, create=True,
+            A,
+            'RandomSizedBBoxSafeCrop',
+            mock_crop,
+            create=True,
         ):
             with patch(
                 'examples.YOLO_data_augmentation.'
@@ -374,9 +385,8 @@ class TestDataAugmentation(unittest.TestCase):
         mock_crop.assert_called_once_with(height=480, width=637, p=1)
 
     def test_choose_bbox_transforms_keeps_crop_transform_single(self) -> None:
-        """
-        Test crop transforms are not combined with dimension-changing transforms.
-        """
+        """Test crop transforms are not combined with dimension-changing
+        transforms."""
         with patch(
             'examples.YOLO_data_augmentation.'
             'data_augmentation_albumentations.random.random',
@@ -401,9 +411,7 @@ class TestDataAugmentation(unittest.TestCase):
         mock_sample.assert_not_called()
 
     def test_choose_bbox_transforms_combines_non_crop_transforms(self) -> None:
-        """
-        Test non-crop transforms can still be randomly combined.
-        """
+        """Test non-crop transforms can still be randomly combined."""
         with patch(
             'examples.YOLO_data_augmentation.'
             'data_augmentation_albumentations.random.random',
@@ -432,9 +440,8 @@ class TestDataAugmentation(unittest.TestCase):
         )
 
     def test_grid_shuffle_allows_boxes_inside_single_grid_cell(self) -> None:
-        """
-        Test RandomGridShuffle can be used when every bbox stays in one cell.
-        """
+        """Test RandomGridShuffle can be used when every bbox stays in one
+        cell."""
         bboxes = [
             [0.16, 0.16, 0.20, 0.20],
             [0.50, 0.50, 0.20, 0.20],
@@ -448,9 +455,8 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertTrue(can_use)
 
     def test_grid_shuffle_rejects_boxes_crossing_grid_cell(self) -> None:
-        """
-        Test RandomGridShuffle is skipped when any bbox crosses a grid cell.
-        """
+        """Test RandomGridShuffle is skipped when any bbox crosses a grid
+        cell."""
         bboxes = [
             [0.50, 0.50, 0.80, 0.20],
         ]
@@ -463,9 +469,8 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertFalse(can_use)
 
     def test_grid_shuffle_allows_boxes_touching_grid_boundary(self) -> None:
-        """
-        Test a bbox ending exactly on a grid boundary is not treated as crossing.
-        """
+        """Test a bbox ending exactly on a grid boundary is not treated as
+        crossing."""
         bboxes = [
             [1 / 6, 1 / 6, 1 / 3, 1 / 3],
         ]
@@ -478,9 +483,7 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertTrue(can_use)
 
     def test_safe_rotate_transform_uses_supported_transform(self) -> None:
-        """
-        Test SafeRotate is created when available.
-        """
+        """Test SafeRotate is created when available."""
         mock_rotate = MagicMock(return_value='safe_rotate')
         with patch.object(A, 'SafeRotate', mock_rotate, create=True):
             transform = self.augmenter.safe_rotate_transform()
@@ -492,9 +495,7 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(kwargs['p'], 1)
 
     def test_symmetry_transform_prefers_d4(self) -> None:
-        """
-        Test D4 square symmetry is used when available.
-        """
+        """Test D4 square symmetry is used when available."""
         mock_d4 = MagicMock(return_value='d4')
         with patch.object(A, 'D4', mock_d4, create=True):
             transform = self.augmenter.symmetry_transform()
@@ -503,9 +504,7 @@ class TestDataAugmentation(unittest.TestCase):
         mock_d4.assert_called_once_with(p=1)
 
     def test_random_scale_transform_uses_supported_transform(self) -> None:
-        """
-        Test RandomScale is created when available.
-        """
+        """Test RandomScale is created when available."""
         mock_scale = MagicMock(return_value='random_scale')
         with patch.object(A, 'RandomScale', mock_scale, create=True):
             transform = self.augmenter.random_scale_transform()
@@ -516,9 +515,7 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(kwargs['p'], 1)
 
     def test_pad_if_needed_transform_uses_supported_transform(self) -> None:
-        """
-        Test PadIfNeeded is created when available.
-        """
+        """Test PadIfNeeded is created when available."""
         mock_pad = MagicMock(return_value='pad')
         with patch.object(A, 'PadIfNeeded', mock_pad, create=True):
             transform = self.augmenter.pad_if_needed_transform()
@@ -530,22 +527,22 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(kwargs['p'], 1)
 
     def test_create_sized_crop_transform_supports_size_argument(self) -> None:
-        """
-        Test Albumentations v2-style crop constructors are supported.
-        """
+        """Test Albumentations v2-style crop constructors are supported."""
+
         def fake_crop(*, size: tuple[int, int], p: int) -> tuple:
             return size, p
 
         transform = self.augmenter._create_sized_crop_transform(
-            fake_crop, 512, 640, p=1,
+            fake_crop,
+            512,
+            640,
+            p=1,
         )
 
         self.assertEqual(transform, ((512, 640), 1))
 
     def test_create_bbox_params_filters_invalid_boxes(self) -> None:
-        """
-        Test bbox params request clipping and visibility filtering.
-        """
+        """Test bbox params request clipping and visibility filtering."""
         mock_params = MagicMock(return_value='bbox_params')
         with patch.object(A, 'BboxParams', mock_params, create=True):
             bbox_params = self.augmenter._create_bbox_params()
@@ -561,12 +558,17 @@ class TestDataAugmentation(unittest.TestCase):
             self.augmenter.min_bbox_visibility,
         )
 
-    def test_random_resized_crop_transform_supports_size_argument(self) -> None:
-        """
-        Test RandomResizedCrop is created through the API-compatible helper.
-        """
+    def test_random_resized_crop_transform_supports_size_argument(
+        self,
+    ) -> None:
+        """Test RandomResizedCrop is created through the API-compatible
+        helper."""
+
         def fake_crop(
-            *, size: tuple[int, int], scale: tuple[float, float], p: int,
+            *,
+            size: tuple[int, int],
+            scale: tuple[float, float],
+            p: int,
         ) -> tuple:
             return size, scale, p
 
@@ -588,11 +590,13 @@ class TestDataAugmentation(unittest.TestCase):
         mock_cvtColor: MagicMock,
         mock_imread: MagicMock,
     ) -> None:
-        """
-        Test FDA references are resized to match the augmented input image.
-        """
+        """Test FDA references are resized to match the augmented input
+        image."""
         mock_reference = np.random.randint(
-            0, 255, (722, 640, 3), dtype=np.uint8,
+            0,
+            255,
+            (722, 640, 3),
+            dtype=np.uint8,
         )
         mock_imread.return_value = mock_reference
         mock_cvtColor.return_value = mock_reference
@@ -607,9 +611,7 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(refs[0].shape, (640, 640, 3))
 
     def test_normalize_bboxes_uses_albumentations_bbox_params(self) -> None:
-        """
-        Test bbox normalization is delegated to Albumentations.
-        """
+        """Test bbox normalization is delegated to Albumentations."""
         mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
         mock_transform = MagicMock(
             return_value={
@@ -622,7 +624,10 @@ class TestDataAugmentation(unittest.TestCase):
         with patch.object(A, 'BboxParams', MagicMock(), create=True):
             with patch.object(A, 'NoOp', mock_noop, create=True):
                 with patch.object(
-                    A, 'Compose', return_value=mock_transform, create=True,
+                    A,
+                    'Compose',
+                    return_value=mock_transform,
+                    create=True,
                 ) as compose:
                     bboxes, class_labels = (
                         self.augmenter.normalize_bboxes_with_albumentations(
@@ -643,10 +648,11 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(bboxes, [[0.5, 0.5, 0.2, 0.2]])
         self.assertEqual(class_labels, [1])
 
-    def test_process_image_marks_positive_images_as_having_bboxes(self) -> None:
-        """
-        Test object images pass the bbox-presence flag to augmentation choice.
-        """
+    def test_process_image_marks_positive_images_as_having_bboxes(
+        self,
+    ) -> None:
+        """Test object images pass the bbox-presence flag to augmentation
+        choice."""
         mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
         mock_transform = MagicMock(
             return_value={
@@ -661,10 +667,14 @@ class TestDataAugmentation(unittest.TestCase):
             side_effect=lambda image, bboxes, labels: (bboxes, labels),
         ):
             with patch.object(
-                self.augmenter, 'random_transform', return_value=mock_transform,
+                self.augmenter,
+                'random_transform',
+                return_value=mock_transform,
             ) as mock_random_transform:
                 self.augmenter.process_image(
-                    mock_image, [[0.5, 0.5, 0.2, 0.2]], [1],
+                    mock_image,
+                    [[0.5, 0.5, 0.2, 0.2]],
+                    [1],
                 )
 
         mock_random_transform.assert_called_once_with(
@@ -674,14 +684,14 @@ class TestDataAugmentation(unittest.TestCase):
         )
 
     def test_process_image_marks_empty_images_as_without_bboxes(self) -> None:
-        """
-        Test empty-label images pass the no-bbox flag to augmentation choice.
-        """
+        """Test empty-label images pass the no-bbox flag to augmentation
+        choice."""
         mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
         mock_transform = MagicMock(
             return_value={
                 'image': mock_image,
-                'bboxes': [], 'class_labels': [],
+                'bboxes': [],
+                'class_labels': [],
             },
         )
         with patch.object(
@@ -690,7 +700,9 @@ class TestDataAugmentation(unittest.TestCase):
             side_effect=lambda image, bboxes, labels: (bboxes, labels),
         ):
             with patch.object(
-                self.augmenter, 'random_transform', return_value=mock_transform,
+                self.augmenter,
+                'random_transform',
+                return_value=mock_transform,
             ) as mock_random_transform:
                 self.augmenter.process_image(mock_image, [], [])
 
@@ -705,8 +717,7 @@ class TestDataAugmentation(unittest.TestCase):
         'ProcessPoolExecutor',
     )
     def test_augment_data(self, mock_executor: MagicMock) -> None:
-        """
-        Test augment_data method.
+        """Test augment_data method.
 
         Args:
             mock_executor (MagicMock): Mocked ProcessPoolExecutor.
@@ -716,9 +727,7 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertTrue(mock_executor.called)
 
     def test_read_label_file(self) -> None:
-        """
-        Test read_label_file method.
-        """
+        """Test read_label_file method."""
         label_content = '0 0.5 0.5 0.2 0.2\n'
         label_path = Path('label.txt')
         with patch(
@@ -733,12 +742,12 @@ class TestDataAugmentation(unittest.TestCase):
             self.assertEqual(bboxes, [[0.5, 0.5, 0.2, 0.2]])
 
     def test_read_empty_label_file(self) -> None:
-        """
-        Test an empty label file is treated as an object-free image.
-        """
+        """Test an empty label file is treated as an object-free image."""
         label_path = Path('empty_label.txt')
         with patch('pathlib.Path.exists', return_value=True):
-            with patch('builtins.open', unittest.mock.mock_open(read_data='\n')):
+            with patch(
+                'builtins.open', unittest.mock.mock_open(read_data='\n'),
+            ):
                 class_labels, bboxes = self.augmenter.read_label_file(
                     label_path,
                 )
@@ -747,9 +756,7 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(bboxes, [])
 
     def test_read_missing_label_file(self) -> None:
-        """
-        Test a missing label file is treated as an object-free image.
-        """
+        """Test a missing label file is treated as an object-free image."""
         class_labels, bboxes = self.augmenter.read_label_file(
             Path('missing_label.txt'),
         )
@@ -766,11 +773,11 @@ class TestDataAugmentation(unittest.TestCase):
         'data_augmentation_albumentations.cv2.cvtColor',
     )
     def test_augment_image_writes_transformed_bboxes_without_quality_retry(
-        self, mock_cvtColor: MagicMock, mock_imread: MagicMock,
+        self,
+        mock_cvtColor: MagicMock,
+        mock_imread: MagicMock,
     ) -> None:
-        """
-        Test augmentation writes the bbox returned by Albumentations.
-        """
+        """Test augmentation writes the bbox returned by Albumentations."""
         mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
         mock_bboxes = [[0.5, 0.5, 0.2, 0.2]]
         mock_class_labels = [1]
@@ -794,7 +801,8 @@ class TestDataAugmentation(unittest.TestCase):
                 return_value=transformed,
             ) as mock_process:
                 with patch.object(
-                    self.augmenter, 'write_label_file',
+                    self.augmenter,
+                    'write_label_file',
                 ) as mock_write_label_file:
                     with patch(
                         'examples.YOLO_data_augmentation.'
@@ -806,19 +814,20 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(mock_imwrite.call_count, self.num_augmentations)
         for call in mock_write_label_file.call_args_list:
             np.testing.assert_allclose(
-                call.args[0], [[0.5, 0.5, 0.9, 1.0]],
+                call.args[0],
+                [[0.5, 0.5, 0.9, 1.0]],
             )
 
     def test_write_label_file(self) -> None:
-        """
-        Test write_label_file method.
-        """
+        """Test write_label_file method."""
         bboxes_aug = [(0.5, 0.5, 0.2, 0.2)]
         class_labels_aug = [0]
         label_path = Path('label_aug.txt')
         with patch('builtins.open', unittest.mock.mock_open()) as mock_file:
             self.augmenter.write_label_file(
-                bboxes_aug, class_labels_aug, label_path,
+                bboxes_aug,
+                class_labels_aug,
+                label_path,
             )
             mock_file().write.assert_called_with('0 0.5 0.5 0.2 0.2\n')
 
@@ -827,19 +836,19 @@ class TestDataAugmentation(unittest.TestCase):
         'random.shuffle',
     )
     def test_shuffle_data(self, mock_shuffle: MagicMock) -> None:
-        """
-        Test shuffle_data method.
+        """Test shuffle_data method.
 
         Args:
             mock_shuffle (MagicMock): Mocked random.shuffle function.
         """
         image_dir = Path(self.train_path) / 'images'
         label_dir = Path(self.train_path) / 'labels'
-        image_paths = [image_dir / f'image_{i}.jpg' for i in range(5)]
-        label_paths = [label_dir / f'label_{i}.txt' for i in range(5)]
+        image_paths = [image_dir / f"image_{i}.jpg" for i in range(5)]
+        label_paths = [label_dir / f"label_{i}.txt" for i in range(5)]
 
         with patch.object(
-            Path, 'glob',
+            Path,
+            'glob',
             side_effect=[image_paths, label_paths],
         ):
             with patch.object(Path, 'rename') as mock_rename:
@@ -853,10 +862,11 @@ class TestDataAugmentation(unittest.TestCase):
     )
     @patch('argparse.ArgumentParser.parse_args')
     def test_main(
-        self, mock_parse_args: MagicMock, MockDataAugmentation: MagicMock,
+        self,
+        mock_parse_args: MagicMock,
+        MockDataAugmentation: MagicMock,
     ) -> None:
-        """
-        Test main function.
+        """Test main function.
 
         Args:
             mock_parse_args (MagicMock):
@@ -891,10 +901,11 @@ class TestDataAugmentation(unittest.TestCase):
     )
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_exception(
-        self, mock_parse_args: MagicMock, MockDataAugmentation: MagicMock,
+        self,
+        mock_parse_args: MagicMock,
+        MockDataAugmentation: MagicMock,
     ) -> None:
-        """
-        Test main function when an exception occurs.
+        """Test main function when an exception occurs.
 
         Args:
             mock_parse_args (MagicMock):

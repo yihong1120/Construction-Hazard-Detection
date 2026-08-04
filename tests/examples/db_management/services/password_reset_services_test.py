@@ -53,7 +53,7 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         )
         token_hash = svc._hash_token('raw-token')
         self.redis.set.assert_awaited_once_with(
-            f'password_reset:{token_hash}',
+            f"password_reset:{token_hash}",
             json.dumps({'user_id': 123, 'email': 'user@example.com'}),
             ex=svc.settings.password_reset_token_ttl_seconds,
         )
@@ -210,7 +210,7 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         )
         user.set_password.assert_called_once_with('password')
         self.db.commit.assert_awaited_once()
-        user_cache_key = f'{svc.PROJECT_PREFIX}:user_cache:user'
+        user_cache_key = f"{svc.PROJECT_PREFIX}:user_cache:user"
         self.redis.getdel.assert_awaited_once_with(
             f"password_reset:{svc._hash_token('raw-token')}",
         )
@@ -268,7 +268,8 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_send_reset_email_requires_configuration_and_sends_request(
         self,
     ) -> None:
-        """Mail configuration is mandatory and valid mail builds a Brevo call."""
+        """Mail configuration is mandatory and valid mail builds a Brevo
+        call."""
         with patch.object(
             service,
             'settings',
@@ -295,7 +296,8 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
         request = client.post.call_args
         self.assertEqual(request.args[0], service.BREVO_SEND_EMAIL_URL)
         self.assertEqual(
-            request.kwargs['json']['to'], [
+            request.kwargs['json']['to'],
+            [
                 {'email': 'user@example.com'},
             ],
         )
@@ -317,7 +319,9 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
             patch.object(service, 'settings', _mail_settings()),
             patch.object(service.httpx, 'AsyncClient', return_value=context),
         ):
-            with self.assertRaisesRegex(HTTPException, 'Failed to send') as error:
+            with self.assertRaisesRegex(
+                HTTPException, 'Failed to send',
+            ) as error:
                 await service._send_password_reset_email(
                     'user@example.com',
                     'https://app.example/reset',
@@ -331,23 +335,32 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
             patch.object(service, 'settings', _mail_settings()),
             patch.object(service.httpx, 'AsyncClient', return_value=context),
         ):
-            with self.assertRaisesRegex(HTTPException, 'Failed to send') as error:
+            with self.assertRaisesRegex(
+                HTTPException, 'Failed to send',
+            ) as error:
                 await service._send_password_reset_email(
                     'user@example.com',
                     'https://app.example/reset',
                 )
         self.assertEqual(error.exception.status_code, 502)
 
-    async def test_reset_password_rejects_blank_token_and_unknown_user(self) -> None:
-        """Whitespace-only tokens and stale reset users cannot reset passwords."""
+    async def test_reset_password_rejects_blank_token_and_unknown_user(
+        self,
+    ) -> None:
+        """Whitespace-only tokens and stale reset users cannot reset
+        passwords."""
         with self.assertRaisesRegex(HTTPException, 'invalid or expired'):
-            await service.reset_password('   ', 'password', self.db, self.redis)
+            await service.reset_password(
+                '   ', 'password', self.db, self.redis,
+            )
         self.redis.getdel.assert_not_awaited()
 
-        self.redis.getdel.return_value = json.dumps({
-            'user_id': 77,
-            'email': 'user@example.com',
-        })
+        self.redis.getdel.return_value = json.dumps(
+            {
+                'user_id': 77,
+                'email': 'user@example.com',
+            },
+        )
         self.db.get.return_value = None
         with self.assertRaisesRegex(HTTPException, 'invalid or expired'):
             await service.reset_password(
@@ -360,10 +373,12 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_reset_password_rolls_back_a_failed_commit(self) -> None:
         """Database errors roll back the password update and return a 500."""
         user = MagicMock(username='user')
-        self.redis.getdel.return_value = json.dumps({
-            'user_id': 88,
-            'email': 'user@example.com',
-        })
+        self.redis.getdel.return_value = json.dumps(
+            {
+                'user_id': 88,
+                'email': 'user@example.com',
+            },
+        )
         self.db.get.return_value = user
         self.db.commit.side_effect = RuntimeError('database unavailable')
 

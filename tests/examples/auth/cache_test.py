@@ -38,6 +38,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
 
         user_data = await get_user_data(redis_pool, 'test_user')
         self.assertIsInstance(user_data, dict)
+        assert user_data is not None
         self.assertEqual(user_data['username'], 'test_user')
         self.assertEqual(user_data['role'], 'user')
 
@@ -68,7 +69,10 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         # Make sure set is also an async method
         redis_pool.set = AsyncMock(return_value=True)
 
-        user_data_dict = {'username': 'test_user', 'role': 'user'}
+        user_data_dict: dict[str, object] = {
+            'username': 'test_user',
+            'role': 'user',
+        }
         await set_user_data(redis_pool, 'test_user', user_data_dict)
 
         redis_pool.set.assert_awaited_once_with(

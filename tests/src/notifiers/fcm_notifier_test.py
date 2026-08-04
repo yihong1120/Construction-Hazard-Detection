@@ -130,16 +130,19 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         """A disabled retry loop fails safely without posting a request."""
         self.sender.max_retries = -1
         mock_get_valid_token.return_value = 'valid_token'
-        self.sender._get_client = AsyncMock(return_value=MagicMock())
-
-        result = await self.sender.send_fcm_message_to_site(
-            site=self.site,
-            stream_name=self.stream_name,
-            message=self.mock_message,
-        )
+        with patch.object(
+            self.sender,
+            '_get_client',
+            new=AsyncMock(return_value=MagicMock()),
+        ) as get_client:
+            result = await self.sender.send_fcm_message_to_site(
+                site=self.site,
+                stream_name=self.stream_name,
+                message=self.mock_message,
+            )
 
         self.assertFalse(result)
-        self.sender._get_client.assert_awaited_once()
+        get_client.assert_awaited_once()
 
     @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)

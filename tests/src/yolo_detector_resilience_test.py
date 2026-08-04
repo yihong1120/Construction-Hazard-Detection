@@ -28,18 +28,22 @@ class TestYoloDetectorResilience(unittest.IsolatedAsyncioTestCase):
                 return 'sahi-model'
 
         sahi_module = ModuleType('sahi')
-        sahi_module.AutoDetectionModel = DetectionFactory
+        setattr(sahi_module, 'AutoDetectionModel', DetectionFactory)
         predict_module = ModuleType('sahi.predict')
-        predict_module.get_sliced_prediction = lambda *args: args
+        setattr(predict_module, 'get_sliced_prediction', lambda *args: args)
         scipy_module = ModuleType('scipy')
         optimize_module = ModuleType('scipy.optimize')
-        optimize_module.linear_sum_assignment = lambda cost: ('rows', cost)
+        setattr(
+            optimize_module,
+            'linear_sum_assignment',
+            lambda cost: ('rows', cost),
+        )
         ultralytics_module = ModuleType('ultralytics')
 
         class FakeYolo:
             pass
 
-        ultralytics_module.YOLO = FakeYolo
+        setattr(ultralytics_module, 'YOLO', FakeYolo)
 
         with patch.dict(
             sys.modules,

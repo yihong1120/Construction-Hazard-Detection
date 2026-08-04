@@ -5,6 +5,7 @@ import asyncio
 import sys
 import time
 import unittest
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import cast
 from unittest import IsolatedAsyncioTestCase
@@ -106,7 +107,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         # should execute and reinitialise `self.cap`
         frame2, ts2 = await generator.__anext__()
         self.assertIsNotNone(
-            frame2, 'Second frame should not be None after reinitialisation',
+            frame2,
+            'Second frame should not be None after reinitialisation',
         )
 
         # Close the generator to avoid warnings
@@ -143,13 +145,14 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self.stream_capture.successfully_captured = False
 
         # Start the coroutine generator.
-        async def mock_generic() -> None:
+        async def mock_generic() -> AsyncIterator[tuple[MagicMock, float]]:
             """Support mock_generic."""
             for i in range(2):
                 frame_mock = MagicMock()
                 # Explicitly set frame name
                 frame_mock.name = f"GenericFrame{i}"
                 yield (frame_mock, float(i))
+
         mock_capture_generic.side_effect = mock_generic
 
         # Set capture interval to 0 to avoid delays during the test.
@@ -218,6 +221,34 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
 
         # Assert that cap object is set to None
         self.assertIsNone(stream_capture.cap)
+
+    def test_frozen_frame_watchdog_requests_reconnect(self) -> None:
+        """A static Video Loss-style frame eventually causes a reconnect."""
+        self.stream_capture.freeze_reconnect_seconds = 2
+        self.stream_capture.freeze_sample_seconds = 1
+        self.stream_capture.freeze_frame_delta = 0
+        frame = np.zeros((36, 64, 3), dtype=np.uint8)
+
+        with patch.object(
+            stream_capture.time,
+            'monotonic',
+            side_effect=[0.0, 1.0, 2.0],
+        ):
+            self.assertFalse(
+                self.stream_capture._should_reconnect_after_frozen_frame(
+                    frame,
+                ),
+            )
+            self.assertFalse(
+                self.stream_capture._should_reconnect_after_frozen_frame(
+                    frame,
+                ),
+            )
+            self.assertTrue(
+                self.stream_capture._should_reconnect_after_frozen_frame(
+                    frame,
+                ),
+            )
 
     @patch('cv2.VideoCapture')
     @patch('cv2.Mat')
@@ -385,7 +416,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self.assertIsNone(selected_quality)
 
     @patch(
-        'streamlink.streams', return_value={
+        'streamlink.streams',
+        return_value={
             'best': MagicMock(url='http://best.stream'),
             '720p': MagicMock(url='http://720p.stream'),
             '480p': MagicMock(url='http://480p.stream'),
@@ -461,16 +493,22 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
         mock_timestamp = 1234567890.0
 
-        async def mock_execute_capture(self) -> None:
+        async def mock_execute_capture(
+            self,
+        ) -> AsyncIterator[tuple[np.ndarray, float]]:
             """Support mock_execute_capture."""
             yield mock_frame, mock_timestamp
 
         # Execute main function and verify print and gc.collect calls
         with patch.object(
-            StreamCapture, 'execute_capture', mock_execute_capture,
+            StreamCapture,
+            'execute_capture',
+            mock_execute_capture,
         ):
             with patch.object(
-                sys, 'argv', ['stream_capture.py', '--url', 'test_stream_url'],
+                sys,
+                'argv',
+                ['stream_capture.py', '--url', 'test_stream_url'],
             ):
                 await stream_capture_main()
 
@@ -498,7 +536,9 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         instance.isOpened.return_value = True
 
         # Mock capture_generic_frames method and execute
-        async def mock_generic_frames() -> None:
+        async def mock_generic_frames() -> (
+            AsyncIterator[tuple[np.ndarray, float]]
+        ):
             """Support mock_generic_frames."""
             for _ in range(3):
                 yield np.zeros((480, 640, 3), dtype=np.uint8), time.time()
@@ -521,7 +561,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         return_value=None,
     )
     async def test_capture_generic_frames_no_quality(
-        self, mock_quality: MagicMock,
+        self,
+        mock_quality: MagicMock,
     ) -> None:
         """
         Test that capture_generic_frames handles no suitable quality.
@@ -566,14 +607,15 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         """
         # Set up the StreamCapture instance with a capture interval of 0
         self.stream_capture = StreamCapture(
-            'http://example.com/stream', capture_interval=0,
+            'http://example.com/stream',
+            capture_interval=0,
         )
 
         # Mock VideoCapture object's read method to
         # return False 5 times and then True
-        mock_video_capture.return_value.read.side_effect = (
-            [(False, None)] * 5 + [(True, MagicMock())] * 5
-        )
+        mock_video_capture.return_value.read.side_effect = [
+            (False, None),
+        ] * 5 + [(True, MagicMock())] * 5
         mock_video_capture.return_value.isOpened.return_value = True
 
         # Use the generic frame capture method to
@@ -582,7 +624,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         frame, timestamp = await generator.__anext__()
 
         self.assertIsNotNone(
-            frame, 'Frame should not be None after reinitialisation',
+            frame,
+            'Frame should not be None after reinitialisation',
         )
         self.assertIsInstance(timestamp, float, 'Timestamp should be a float')
 
@@ -619,31 +662,46 @@ if __name__ == '__main__':
 
 def test_redact_stream_url_hides_credentials_and_invalid_urls() -> None:
     """Logs never expose a camera password or malformed source URL."""
-    assert stream_capture._redact_stream_url(
-        'rtsp://admin:secret@camera.example:554/live',
-    ) == 'rtsp://<credentials>@camera.example:554/live'
-    assert stream_capture._redact_stream_url(
-        'rtsp://[invalid',
-    ) == '<invalid-url>'
+    assert (
+        stream_capture._redact_stream_url(
+            'rtsp://admin:secret@camera.example:554/live',
+        )
+        == 'rtsp://<credentials>@camera.example:554/live'
+    )
+    assert (
+        stream_capture._redact_stream_url(
+            'rtsp://[invalid',
+        )
+        == '<invalid-url>'
+    )
 
 
 def test_generic_capture_retries_when_quality_refresh_returns_none() -> None:
     """A failed quality refresh leaves the generic reader retrying safely."""
+
     async def run_case() -> None:
         capture = stream_capture.StreamCapture('https://camera.example/live')
         capture.cap = SimpleNamespace(
             read=MagicMock(
-                side_effect=[(False, None)] * 5 +
-                [RuntimeError('stop reader')],
+                side_effect=[(False, None)] * 5
+                + [RuntimeError('stop reader')],
             ),
         )
-        capture.initialise_stream = AsyncMock()
-        capture.release_resources = AsyncMock()
-        capture.select_quality_based_on_speed = MagicMock(
-            side_effect=['https://camera.example/selected', None],
-        )
-
-        with patch.object(stream_capture.asyncio, 'sleep', AsyncMock()):
+        with (
+            patch.object(capture, 'initialise_stream', new=AsyncMock()),
+            patch.object(capture, 'release_resources', new=AsyncMock()),
+            patch.object(
+                capture,
+                'select_quality_based_on_speed',
+                new=MagicMock(
+                    side_effect=[
+                        'https://camera.example/selected',
+                        None,
+                    ],
+                ),
+            ),
+            patch.object(stream_capture.asyncio, 'sleep', new=AsyncMock()),
+        ):
             generator = capture.capture_generic_frames()
             with pytest.raises(RuntimeError, match='stop reader'):
                 await generator.__anext__()

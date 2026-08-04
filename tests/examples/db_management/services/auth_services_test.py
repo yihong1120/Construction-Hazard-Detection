@@ -87,10 +87,10 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
             password='pass',
             hcaptcha_token='captcha-token',
         )
-        result = (
-            await auth_services.login_user(
-                payload, self.db, self.redis_pool,
-            )
+        result = await auth_services.login_user(
+            payload,
+            self.db,
+            self.redis_pool,
         )
 
         self.assertEqual(result['access_token'], 'access_token')
@@ -262,7 +262,8 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
     )
     @patch('examples.db_management.services.auth_services.httpx.AsyncClient')
     async def test_verify_hcaptcha_backend_bypass(
-        self, mock_async_client: MagicMock,
+        self,
+        mock_async_client: MagicMock,
     ) -> None:
         """Test trusted backend bypass skips external hCaptcha call."""
         await auth_services._verify_hcaptcha(None, 'server-only-key')
@@ -279,7 +280,8 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
     )
     @patch('examples.db_management.services.auth_services.httpx.AsyncClient')
     async def test_verify_hcaptcha_success(
-        self, mock_async_client: MagicMock,
+        self,
+        mock_async_client: MagicMock,
     ) -> None:
         """Test successful hCaptcha verification returns without error."""
         mock_response: MagicMock = MagicMock()
@@ -310,7 +312,8 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
     )
     @patch('examples.db_management.services.auth_services.httpx.AsyncClient')
     async def test_verify_hcaptcha_failure(
-        self, mock_async_client: MagicMock,
+        self,
+        mock_async_client: MagicMock,
     ) -> None:
         """Test failed hCaptcha verification raises HTTP 403."""
         mock_response: MagicMock = MagicMock()
@@ -333,7 +336,9 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         self.db.scalar = AsyncMock(return_value=None)
         with self.assertRaises(HTTPException) as ctx:
             await auth_services._authenticate(
-                self.db, 'wronguser', 'wrongpass',
+                self.db,
+                'wronguser',
+                'wrongpass',
             )
         self.assertEqual(ctx.exception.status_code, 401)
 
@@ -345,7 +350,9 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         self.db.scalar = AsyncMock(side_effect=[None, mock_user])
 
         result = await auth_services._authenticate(
-            self.db, 'USER@example.com', 'pass',
+            self.db,
+            'USER@example.com',
+            'pass',
         )
 
         self.assertIs(result, mock_user)
@@ -375,9 +382,13 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         result: list = await auth_services._load_feature_names(self.db, None)
         self.assertEqual(result, [])
 
-    @patch('examples.db_management.services.auth_services.jwt.decode')
+    @patch(
+        'examples.db_management.services.auth_services.'
+        'jwt_refresh.decode_token',
+    )
     async def test_verify_refresh_token_expired(
-        self, mock_decode: MagicMock,
+        self,
+        mock_decode: MagicMock,
     ) -> None:
         """Test expired refresh token raises HTTPException.
 
@@ -387,13 +398,18 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_decode.side_effect = jwt.ExpiredSignatureError()
         with self.assertRaises(HTTPException) as ctx:
             await auth_services.verify_refresh_token(
-                'expired', self.redis_pool,
+                'expired',
+                self.redis_pool,
             )
         self.assertEqual(ctx.exception.status_code, 401)
 
-    @patch('examples.db_management.services.auth_services.jwt.decode')
+    @patch(
+        'examples.db_management.services.auth_services.'
+        'jwt_refresh.decode_token',
+    )
     async def test_verify_refresh_token_invalid(
-        self, mock_decode: MagicMock,
+        self,
+        mock_decode: MagicMock,
     ) -> None:
         """Test invalid refresh token raises HTTPException.
 
@@ -403,39 +419,44 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_decode.side_effect = jwt.InvalidTokenError()
         with self.assertRaises(HTTPException) as ctx:
             await auth_services.verify_refresh_token(
-                'invalid', self.redis_pool,
+                'invalid',
+                self.redis_pool,
             )
         self.assertEqual(ctx.exception.status_code, 401)
 
-    @patch('examples.db_management.services.auth_services.jwt')
+    @patch('examples.db_management.services.auth_services.jwt_refresh')
     async def test_verify_refresh_token_missing_username(
-        self, mock_jwt: MagicMock,
+        self,
+        mock_jwt: MagicMock,
     ) -> None:
         """Test missing username in payload raises HTTPException.
 
         Ensures that an HTTPException with status 401 is raised if the
         username is missing from the token payload.
         """
-        mock_jwt.decode.return_value = {'subject': {}}
+        mock_jwt.decode_token.return_value = {'subject': {}}
         with self.assertRaises(HTTPException) as ctx:
             await auth_services.verify_refresh_token('token', self.redis_pool)
         self.assertEqual(ctx.exception.status_code, 401)
 
-    @patch('examples.db_management.services.auth_services.jwt')
+    @patch('examples.db_management.services.auth_services.jwt_refresh')
     @patch('examples.db_management.services.auth_services.get_user_data')
     async def test_verify_refresh_token_not_recognised(
-        self, mock_get_user_data: MagicMock, mock_jwt: MagicMock,
+        self,
+        mock_get_user_data: MagicMock,
+        mock_jwt: MagicMock,
     ) -> None:
         """Test unrecognised refresh token raises HTTPException.
 
         Ensures that an HTTPException with status 401 is raised if the
         refresh token is not recognised in the cache.
         """
-        mock_jwt.decode.return_value = {'subject': {'username': 'user'}}
+        mock_jwt.decode_token.return_value = {'subject': {'username': 'user'}}
         mock_get_user_data.return_value = {'refresh_tokens': []}
         with self.assertRaises(HTTPException) as ctx:
             await auth_services.verify_refresh_token(
-                'unknown', self.redis_pool,
+                'unknown',
+                self.redis_pool,
             )
         self.assertEqual(ctx.exception.status_code, 401)
 
@@ -455,12 +476,18 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         header is malformed.
         """
         await auth_services.logout_user(
-            'token', 'invalidtoken', self.redis_pool,
+            'token',
+            'invalidtoken',
+            self.redis_pool,
         )
 
-    @patch('examples.db_management.services.auth_services.jwt.decode')
+    @patch(
+        'examples.db_management.services.auth_services.'
+        'jwt_access.decode_token',
+    )
     async def test_logout_user_invalid_jwt(
-        self, mock_decode: MagicMock,
+        self,
+        mock_decode: MagicMock,
     ) -> None:
         """Test logout_user with invalid JWT returns early.
 
@@ -468,25 +495,34 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         """
         mock_decode.side_effect = jwt.PyJWTError()
         await auth_services.logout_user(
-            'token', 'Bearer abc.def.ghi', self.redis_pool,
+            'token',
+            'Bearer abc.def.ghi',
+            self.redis_pool,
         )
 
     @patch(
         'examples.db_management.services.auth_services.get_user_data',
     )
-    @patch('examples.db_management.services.auth_services.jwt')
+    @patch('examples.db_management.services.auth_services.jwt_access')
     async def test_logout_user_no_cache(
-        self, mock_jwt: MagicMock, mock_get_user_data: MagicMock,
+        self,
+        mock_jwt: MagicMock,
+        mock_get_user_data: MagicMock,
     ) -> None:
         """Test logout_user with no cache found returns early.
 
         Ensures that logout_user returns early if no cache is found for
         the user.
         """
-        mock_jwt.decode.return_value = {'username': 'user', 'jti': 'id'}
+        mock_jwt.decode_token.return_value = {
+            'username': 'user',
+            'jti': 'id',
+        }
         mock_get_user_data.return_value = None
         await auth_services.logout_user(
-            'token', 'Bearer valid.token', self.redis_pool,
+            'token',
+            'Bearer valid.token',
+            self.redis_pool,
         )
 
     async def test_refresh_tokens_missing_token(self) -> None:
@@ -507,7 +543,9 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         'examples.db_management.services.auth_services.verify_refresh_token',
     )
     async def test_refresh_tokens_invalid_cache(
-        self, mock_verify: MagicMock, mock_get_user_data: MagicMock,
+        self,
+        mock_verify: MagicMock,
+        mock_get_user_data: MagicMock,
     ) -> None:
         """Test refresh_tokens raises if cache is invalid or missing token.
 
@@ -532,14 +570,16 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         """
         mock_result: MagicMock = MagicMock()
         mock_result.__iter__.return_value = [
-            MagicMock(feature_name='feature1'), MagicMock(
+            MagicMock(feature_name='feature1'),
+            MagicMock(
                 feature_name='feature2',
             ),
         ]
         self.db.execute = AsyncMock(return_value=mock_result)
 
         features: list[str] = await auth_services._load_feature_names(
-            self.db, group_id=1,
+            self.db,
+            group_id=1,
         )
         self.assertEqual(features, ['feature1', 'feature2'])
 
@@ -555,13 +595,19 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         self.db.scalar = AsyncMock(return_value=mock_user)
 
         user = await auth_services._authenticate(
-            self.db, 'valid_user', 'valid_password',
+            self.db,
+            'valid_user',
+            'valid_password',
         )
         self.assertEqual(user, mock_user)
 
-    @patch('examples.db_management.services.auth_services.jwt.decode')
+    @patch(
+        'examples.db_management.services.auth_services.'
+        'jwt_refresh.decode_token',
+    )
     async def test_verify_refresh_token_success(
-        self, mock_decode: MagicMock,
+        self,
+        mock_decode: MagicMock,
     ) -> None:
         """Test verify_refresh_token returns payload correctly.
 
@@ -573,16 +619,21 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         self.redis_pool.get = AsyncMock(return_value=mock_cache_data)
         payload: RefreshTokenPayload = (
             await auth_services.verify_refresh_token(
-                'valid_token', self.redis_pool,
+                'valid_token',
+                self.redis_pool,
             )
         )
         self.assertEqual(
-            payload, {'subject': {'username': 'user'}},
+            payload,
+            {'subject': {'username': 'user'}},
         )
 
     @patch('examples.db_management.services.auth_services.set_user_data')
     @patch('examples.db_management.services.auth_services.get_user_data')
-    @patch('examples.db_management.services.auth_services.jwt.decode')
+    @patch(
+        'examples.db_management.services.auth_services.'
+        'jwt_access.decode_token',
+    )
     async def test_logout_user_success(
         self,
         mock_decode: MagicMock,
@@ -601,11 +652,14 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         }
 
         await auth_services.logout_user(
-            'token123', 'Bearer jwt.token.here', self.redis_pool,
+            'token123',
+            'Bearer jwt.token.here',
+            self.redis_pool,
         )
 
         mock_set_user_data.assert_awaited_with(
-            self.redis_pool, 'user',
+            self.redis_pool,
+            'user',
             {
                 'jti_list': ['jti456'],
                 'refresh_tokens': ['token456'],
@@ -622,10 +676,8 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         'examples.db_management.services.'
         'auth_services.verify_refresh_token',
     )
-    @patch('examples.db_management.services.auth_services.jwt.decode')
     async def test_refresh_tokens_success(
         self,
-        mock_jwt_decode: MagicMock,
         mock_verify_refresh_token: MagicMock,
         mock_get_user_data: MagicMock,
         mock_jwt_access: MagicMock,
@@ -650,18 +702,17 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_jwt_refresh.create_access_token.return_value = 'new_refresh'
 
         # Simulate decode success with known exp
-        mock_jwt_decode.return_value = {'exp': 456}
+        mock_jwt_access.decode_token.return_value = {'exp': 456}
 
         payload: RefreshRequest = RefreshRequest(refresh_token='old_refresh')
-        result = (
-            await auth_services.refresh_tokens(
-                payload,
-                self.redis_pool,
-            )
+        result = await auth_services.refresh_tokens(
+            payload,
+            self.redis_pool,
         )
 
         self.assertEqual(
-            result, {
+            result,
+            {
                 'access_token': 'new_access',
                 'refresh_token': 'new_refresh',
                 'feature_names': ['feature1'],
@@ -683,10 +734,8 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         'examples.db_management.services.'
         'auth_services.verify_refresh_token',
     )
-    @patch('examples.db_management.services.auth_services.jwt.decode')
     async def test_refresh_tokens_hashes_web_refresh_token(
         self,
-        mock_jwt_decode: MagicMock,
         mock_verify_refresh_token: MagicMock,
         mock_get_user_data: MagicMock,
         mock_jwt_access: MagicMock,
@@ -707,7 +756,7 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         }
         mock_jwt_access.create_access_token.return_value = 'new_access'
         mock_jwt_refresh.create_access_token.return_value = 'new_refresh'
-        mock_jwt_decode.return_value = {'exp': 456}
+        mock_jwt_access.decode_token.return_value = {'exp': 456}
 
         result = await auth_services.refresh_tokens(
             RefreshRequest(refresh_token='old_refresh'),
@@ -726,7 +775,6 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
             cache_arg['refresh_token_hashes'],
         )
 
-    @patch('examples.db_management.services.auth_services.jwt.decode')
     @patch('examples.db_management.services.auth_services._load_feature_names')
     @patch('examples.db_management.services.auth_services.jwt_access')
     @patch('examples.db_management.services.auth_services.jwt_refresh')
@@ -741,7 +789,6 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_jwt_refresh: MagicMock,
         mock_jwt_access: MagicMock,
         mock_load_features: MagicMock,
-        mock_jwt_decode: MagicMock,
     ) -> None:
         """Cover success path when decoding access token for jti_meta.
 
@@ -749,13 +796,17 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         succeeds.
         """
         user_mock: AsyncMock = AsyncMock(
-            id=1, username='user', role='user', group_id=1, status='active',
+            id=1,
+            username='user',
+            role='user',
+            group_id=1,
+            status='active',
         )
         mock_authenticate.return_value = user_mock
         mock_load_features.return_value = ['f1']
         mock_jwt_access.create_access_token.return_value = 'acc'
         mock_jwt_refresh.create_access_token.return_value = 'ref'
-        mock_jwt_decode.return_value = {'exp': 123}
+        mock_jwt_access.decode_token.return_value = {'exp': 123}
         self.redis_pool.get = AsyncMock(return_value=None)
         payload: UserLogin = UserLogin(
             identifier='user',
@@ -774,7 +825,6 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         # Should contain exactly one JTI mapped to the exp 123
         assert 123 in cache_arg['jti_meta'].values()
 
-    @patch('examples.db_management.services.auth_services.jwt.decode')
     @patch('examples.db_management.services.auth_services._load_feature_names')
     @patch('examples.db_management.services.auth_services.jwt_access')
     @patch('examples.db_management.services.auth_services.jwt_refresh')
@@ -789,7 +839,6 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_jwt_refresh: MagicMock,
         mock_jwt_access: MagicMock,
         mock_load_features: MagicMock,
-        mock_jwt_decode: MagicMock,
     ) -> None:
         """Cover exception path when decoding access token for jti_meta.
 
@@ -797,14 +846,18 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         during access-token decoding used only for jti expiry bookkeeping.
         """
         user_mock: AsyncMock = AsyncMock(
-            id=1, username='user', role='user', group_id=1, status='active',
+            id=1,
+            username='user',
+            role='user',
+            group_id=1,
+            status='active',
         )
         mock_authenticate.return_value = user_mock
         mock_load_features.return_value = ['f1']
         mock_jwt_access.create_access_token.return_value = 'acc'
         mock_jwt_refresh.create_access_token.return_value = 'ref'
         # Force decode failure inside login_user jti_meta block
-        mock_jwt_decode.side_effect = Exception('decode-fail')
+        mock_jwt_access.decode_token.side_effect = Exception('decode-fail')
         self.redis_pool.get = AsyncMock(return_value=None)
 
         payload: UserLogin = UserLogin(
@@ -813,7 +866,9 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
             hcaptcha_token='captcha-token',
         )
         result = await auth_services.login_user(
-            payload, self.db, self.redis_pool,
+            payload,
+            self.db,
+            self.redis_pool,
         )
 
         self.assertEqual(result['access_token'], 'acc')
@@ -824,7 +879,10 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.services.auth_services.set_user_data')
     @patch('examples.db_management.services.auth_services.get_user_data')
-    @patch('examples.db_management.services.auth_services.jwt.decode')
+    @patch(
+        'examples.db_management.services.auth_services.'
+        'jwt_access.decode_token',
+    )
     async def test_logout_user_jti_meta_pop_failure(
         self,
         mock_jwt_decode: MagicMock,
@@ -837,7 +895,8 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         the broad ``except`` is exercised.
         """
         mock_jwt_decode.return_value = {
-            'username': 'user', 'jti': 'abc',
+            'username': 'user',
+            'jti': 'abc',
         }
         mock_get_user_data.return_value = {
             'jti_list': ['abc'],
@@ -846,7 +905,9 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         }
 
         await auth_services.logout_user(
-            'tok', 'Bearer x.y.z', self.redis_pool,
+            'tok',
+            'Bearer x.y.z',
+            self.redis_pool,
         )
 
         mock_set_user_data.assert_awaited()
@@ -858,10 +919,8 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
     @patch(
         'examples.db_management.services.auth_services.verify_refresh_token',
     )
-    @patch('examples.db_management.services.auth_services.jwt.decode')
     async def test_refresh_tokens_jti_meta_decode_failure(
         self,
-        mock_jwt_decode: MagicMock,
         mock_verify: MagicMock,
         mock_get_user_data: MagicMock,
         mock_jwt_access: MagicMock,
@@ -883,7 +942,7 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_jwt_access.create_access_token.return_value = 'new_acc'
         mock_jwt_refresh.create_access_token.return_value = 'new_ref'
         # Force decode failure inside refresh_tokens jti_meta block
-        mock_jwt_decode.side_effect = Exception('decode-fail')
+        mock_jwt_access.decode_token.side_effect = Exception('decode-fail')
 
         req = RefreshRequest(refresh_token='old')
         result = await auth_services.refresh_tokens(req, self.redis_pool)
@@ -897,11 +956,11 @@ class TestAuthServices(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-'''
+"""
 pytest --cov=examples.db_management.services.auth_services\
     --cov-report=term-missing\
         tests/examples/db_management/services/auth_services_test.py
-'''
+"""
 
 
 class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
@@ -925,7 +984,9 @@ class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertIn(svc._login_fail_pair_key('first'), deleted)
         self.assertIn(svc._login_cooldown_pair_key('second'), deleted)
 
-        with patch.object(svc, 'clear_login_guard_for_identifier', AsyncMock()) as clear:
+        with patch.object(
+            svc, 'clear_login_guard_for_identifier', AsyncMock(),
+        ) as clear:
             await svc.clear_login_guard_for_identifiers(
                 redis,
                 [' Alice ', 'alice', '', 'BOB'],
@@ -968,7 +1029,9 @@ class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
                 await svc._authenticate(db, 'alice', 'password')
             self.assertEqual(raised.exception.detail['code'], code)
 
-    async def test_hcaptcha_disabled_unconfigured_and_transport_failure(self) -> None:
+    async def test_hcaptcha_disabled_unconfigured_and_transport_failure(
+        self,
+    ) -> None:
         with patch.object(svc.settings, 'hcaptcha_enabled', False):
             await svc._verify_hcaptcha(None)
 
@@ -987,24 +1050,44 @@ class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
         with patch.object(svc.settings, 'hcaptcha_enabled', True):
             with patch.object(svc, 'HCAPTCHA_SECRET_KEY', 'secret'):
                 with patch.object(svc, 'HCAPTCHA_SITE_KEY', 'site'):
-                    with patch.object(svc.httpx, 'AsyncClient', return_value=context):
+                    with patch.object(
+                        svc.httpx, 'AsyncClient', return_value=context,
+                    ):
                         with self.assertRaises(HTTPException) as raised:
                             await svc._verify_hcaptcha('token')
         self.assertEqual(raised.exception.status_code, 403)
 
     async def test_refresh_token_reuse_protection(self) -> None:
         redis = AsyncMock()
-        with patch.object(svc.jwt, 'decode', return_value={'subject': {'username': 'alice', 'family_id': 'family'}}):
+        with patch.object(
+            svc.jwt_refresh,
+            'decode_token',
+            return_value={
+                'subject': {'username': 'alice', 'family_id': 'family'},
+            },
+        ):
             redis.get.return_value = '1'
             with self.assertRaises(HTTPException) as raised:
                 await svc.verify_refresh_token('refresh', redis)
         self.assertEqual(raised.exception.detail, 'Refresh token reused')
 
         redis.get.return_value = None
-        with patch.object(svc.jwt, 'decode', return_value={'subject': {'username': 'alice', 'family_id': 'family'}}):
+        with patch.object(
+            svc.jwt_refresh,
+            'decode_token',
+            return_value={
+                'subject': {'username': 'alice', 'family_id': 'family'},
+            },
+        ):
             with patch.object(svc, 'prune_user_cache', AsyncMock()):
-                with patch.object(svc, 'get_user_data', AsyncMock(return_value={'refresh_tokens': []})):
-                    with patch.object(svc, '_revoke_refresh_family', AsyncMock()) as revoke:
+                with patch.object(
+                    svc,
+                    'get_user_data',
+                    AsyncMock(return_value={'refresh_tokens': []}),
+                ):
+                    with patch.object(
+                        svc, '_revoke_refresh_family', AsyncMock(),
+                    ) as revoke:
                         with self.assertRaises(HTTPException) as raised:
                             await svc.verify_refresh_token('refresh', redis)
         self.assertEqual(raised.exception.detail, 'Refresh token reused')
@@ -1025,41 +1108,69 @@ class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
 
         await svc._revoke_refresh_family(redis, 'family')
         self.assertEqual(
-            redis.set.await_args.args[0], svc._refresh_family_revoked_key(
+            redis.set.await_args.args[0],
+            svc._refresh_family_revoked_key(
                 'family',
             ),
         )
 
         redis.get.return_value = None
         redis.set.return_value = False
-        with patch.object(svc, '_revoke_refresh_family', AsyncMock()) as revoke:
+        with patch.object(
+            svc, '_revoke_refresh_family', AsyncMock(),
+        ) as revoke:
             with self.assertRaises(HTTPException) as raised:
-                await svc._consume_refresh_token_state(redis, 'refresh', 'family')
+                await svc._consume_refresh_token_state(
+                    redis, 'refresh', 'family', 'alice',
+                )
         self.assertEqual(raised.exception.detail, 'Refresh token reused')
         revoke.assert_awaited_once_with(redis, 'family')
 
         redis.get.return_value = '1'
-        with self.assertRaises(HTTPException) as raised:
-            await svc._consume_refresh_token_state(redis, 'refresh', 'family')
+        with patch.object(svc, '_revoke_user_access_tokens', AsyncMock()):
+            with self.assertRaises(HTTPException) as raised:
+                await svc._consume_refresh_token_state(
+                    redis,
+                    'refresh',
+                    'family',
+                    'alice',
+                )
         self.assertEqual(raised.exception.detail, 'Refresh token reused')
 
         redis.set.return_value = True
         redis.get.side_effect = [None, b'not-json']
-        with patch.object(svc, '_revoke_refresh_family', AsyncMock()) as revoke:
+        with (
+            patch.object(svc, '_revoke_user_access_tokens', AsyncMock()),
+            patch.object(
+                svc,
+                '_revoke_refresh_family',
+                AsyncMock(),
+            ) as revoke,
+        ):
             with self.assertRaises(HTTPException) as raised:
-                await svc._consume_refresh_token_state(redis, 'refresh', 'family')
+                await svc._consume_refresh_token_state(
+                    redis, 'refresh', 'family', 'alice',
+                )
         self.assertEqual(raised.exception.detail, 'Refresh token reused')
         revoke.assert_awaited_once_with(redis, 'family')
 
         redis.get.side_effect = [
-            None, '{"status":"active","family_id":"family"}',
+            None,
+            '{"status":"active","family_id":"family"}',
         ]
-        await svc._consume_refresh_token_state(redis, 'refresh', 'family')
+        await svc._consume_refresh_token_state(
+            redis,
+            'refresh',
+            'family',
+            'alice',
+        )
         self.assertIn('"status":"used"', redis.set.await_args.args[1])
 
     async def test_login_and_logout_fallback_paths(self) -> None:
-        payload = SimpleNamespace(
-            hcaptcha_token=None, identifier='alice', password='pw',
+        payload = UserLogin(
+            hcaptcha_token=None,
+            identifier='alice',
+            password='pw',
         )
         with patch.object(svc, '_verify_hcaptcha', AsyncMock()):
             with patch.object(svc, '_check_login_guard', AsyncMock()):
@@ -1068,7 +1179,8 @@ class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
                     '_authenticate',
                     AsyncMock(
                         side_effect=HTTPException(
-                        status_code=403, detail='denied',
+                            status_code=403,
+                            detail='denied',
                         ),
                     ),
                 ):
@@ -1078,14 +1190,36 @@ class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
 
         redis = AsyncMock()
         cache = {'jti_list': ['jti'], 'refresh_tokens': ['refresh']}
-        with patch.object(svc.jwt, 'decode', side_effect=[jwt.PyJWTError(), {'subject': {'username': 'alice'}}]):
+        with (
+            patch.object(
+                svc.jwt_access,
+                'decode_token',
+                side_effect=jwt.PyJWTError(),
+            ),
+            patch.object(
+                svc.jwt_refresh,
+                'decode_token',
+                return_value={'subject': {'username': 'alice'}},
+            ),
+        ):
             with patch.object(svc, 'prune_user_cache', AsyncMock()):
-                with patch.object(svc, 'get_user_data', AsyncMock(return_value=cache)):
-                    with patch.object(svc, 'set_user_data', AsyncMock()) as store:
-                        await svc.logout_user('refresh', 'Bearer invalid', redis)
+                with patch.object(
+                    svc, 'get_user_data', AsyncMock(return_value=cache),
+                ):
+                    with patch.object(
+                        svc, 'set_user_data', AsyncMock(),
+                    ) as store:
+                        await svc.logout_user(
+                            'refresh', 'Bearer invalid', redis,
+                        )
+        assert store.await_args is not None
         self.assertEqual(store.await_args.args[1], 'alice')
 
-        with patch.object(svc.jwt, 'decode', return_value={'subject': {}}):
+        with patch.object(
+            svc.jwt_refresh,
+            'decode_token',
+            return_value={'subject': {}},
+        ):
             await svc.logout_user('refresh', None, redis)
 
     async def test_refresh_cache_reuse_with_family(self) -> None:
@@ -1096,16 +1230,25 @@ class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
             AsyncMock(
                 return_value={
                     'subject': {
-                        'username': 'alice', 'family_id': 'family',
+                        'username': 'alice',
+                        'family_id': 'family',
                     },
                 },
             ),
         ):
             with patch.object(svc, 'prune_user_cache', AsyncMock()):
-                with patch.object(svc, 'get_user_data', AsyncMock(return_value={'refresh_tokens': []})):
-                    with patch.object(svc, '_revoke_refresh_family', AsyncMock()) as revoke:
+                with patch.object(
+                    svc,
+                    'get_user_data',
+                    AsyncMock(return_value={'refresh_tokens': []}),
+                ):
+                    with patch.object(
+                        svc, '_revoke_refresh_family', AsyncMock(),
+                    ) as revoke:
                         with self.assertRaises(HTTPException) as raised:
-                            await svc.refresh_tokens(RefreshRequest(refresh_token='old'), redis)
+                            await svc.refresh_tokens(
+                                RefreshRequest(refresh_token='old'), redis,
+                            )
         self.assertEqual(raised.exception.detail, 'Refresh token reused')
         revoke.assert_awaited_once_with(redis, 'family')
 
@@ -1121,20 +1264,42 @@ class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
             AsyncMock(
                 return_value={
                     'subject': {
-                        'username': 'alice', 'family_id': 'family',
+                        'username': 'alice',
+                        'family_id': 'family',
                     },
                 },
             ),
         ):
             with patch.object(svc, 'prune_user_cache', AsyncMock()):
-                with patch.object(svc, 'get_user_data', AsyncMock(return_value=cache)):
-                    with patch.object(svc, '_consume_refresh_token_state', AsyncMock()) as consume:
+                with patch.object(
+                    svc, 'get_user_data', AsyncMock(return_value=cache),
+                ):
+                    with patch.object(
+                        svc, '_consume_refresh_token_state', AsyncMock(),
+                    ) as consume:
                         with patch.object(svc, 'set_user_data', AsyncMock()):
-                            with patch.object(svc, '_register_refresh_token_state', AsyncMock()):
-                                with patch.object(svc.jwt_access, 'create_access_token', return_value='access'):
-                                    with patch.object(svc.jwt_refresh, 'create_access_token', return_value='new-refresh'):
-                                        await svc.refresh_tokens(RefreshRequest(refresh_token='old'), redis)
-        consume.assert_awaited_once_with(redis, 'old', 'family')
+                            with patch.object(
+                                svc,
+                                '_register_refresh_token_state',
+                                AsyncMock(),
+                            ):
+                                with patch.object(
+                                    svc.jwt_access,
+                                    'create_access_token',
+                                    return_value='access',
+                                ):
+                                    with patch.object(
+                                        svc.jwt_refresh,
+                                        'create_access_token',
+                                        return_value='new-refresh',
+                                    ):
+                                        await svc.refresh_tokens(
+                                            RefreshRequest(
+                                                refresh_token='old',
+                                            ),
+                                            redis,
+                                        )
+        consume.assert_awaited_once_with(redis, 'old', 'family', 'alice')
 
 
 if __name__ == '__main__':

@@ -50,7 +50,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.routers.users.create_user')
     async def test_add_user(
-        self, mock_create_user: AsyncMock,
+        self,
+        mock_create_user: AsyncMock,
     ) -> None:
         """Test adding a new user successfully.
 
@@ -78,7 +79,9 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_create_user.return_value = mock_user
 
         payload: UserCreate = UserCreate(
-            username='newuser', password='pass', group_id=10,
+            username='newuser',
+            password='pass',
+            group_id=10,
         )
 
         # db.execute returns a mock whose scalar_one is a sync method
@@ -101,7 +104,9 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         if response.profile is not None:
             self.assertEqual(response.profile.email, 'test@example.com')
 
-    @patch('examples.db_management.routers.users.send_signup_verification_email')
+    @patch(
+        'examples.db_management.routers.users.send_signup_verification_email',
+    )
     @patch('examples.db_management.routers.users.record_user_consent')
     @patch('examples.db_management.routers.users.validate_signup_consents')
     @patch('examples.db_management.routers.users.create_user')
@@ -259,7 +264,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.current_user.check_password.return_value = False
 
         payload: UpdateMyPassword = UpdateMyPassword(
-            old_password='wrong', new_password='newpass',
+            old_password='wrong',
+            new_password='newpass',
         )
 
         with self.assertRaises(HTTPException) as ctx:
@@ -287,7 +293,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.db.execute.return_value = mock_result
 
         payload: UpdatePassword = UpdatePassword(
-            username='user', new_password='newpass',
+            username='user',
+            new_password='newpass',
         )
         response: dict[str, str] = await users.admin_update_pwd(
             payload,
@@ -305,7 +312,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.db.execute.return_value = mock_result
 
         payload: UpdatePassword = UpdatePassword(
-            username='missing', new_password='pass',
+            username='missing',
+            new_password='pass',
         )
 
         with self.assertRaises(HTTPException) as ctx:
@@ -327,7 +335,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.db.execute.return_value = mock_result
 
         payload: UpdateUsername = UpdateUsername(
-            old_username='old', new_username='new',
+            old_username='old',
+            new_username='new',
         )
         response: dict[str, str] = await users.change_username(
             payload,
@@ -348,7 +357,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_result.scalar_one_or_none.return_value = None
         self.db.execute.return_value = mock_result
         payload: UpdateUsername = UpdateUsername(
-            old_username='notfound', new_username='new',
+            old_username='notfound',
+            new_username='new',
         )
         with self.assertRaises(HTTPException) as ctx:
             await users.change_username(payload, self.db, self.current_user)
@@ -369,7 +379,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             AsyncMock(return_value=mock_user),
         ):
             payload: UserProfileUpdate = UserProfileUpdate(
-                user_id=1, email='test@example.com',
+                user_id=1,
+                email='test@example.com',
             )
             response: dict[str, str] = await users.update_profile(
                 payload,
@@ -432,7 +443,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             profile=mock_profile2,
         )
         mock_list_users_service.return_value = [
-            mock_user1, mock_user2,
+            mock_user1,
+            mock_user2,
         ]
 
         result = cast(
@@ -571,7 +583,9 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as ctx:
             await users.approve_user_signup(
-                payload, self.db, self.current_user,
+                payload,
+                self.db,
+                self.current_user,
             )
 
         self.assertEqual(ctx.exception.status_code, 403)
@@ -598,7 +612,9 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as ctx:
             await users.approve_user_signup(
-                payload, self.db, self.current_user,
+                payload,
+                self.db,
+                self.current_user,
             )
 
         self.assertEqual(ctx.exception.status_code, 400)
@@ -616,7 +632,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_user.group_id = 10
         mock_get_user_by_id.return_value = mock_user
         payload: UpdatePasswordById = UpdatePasswordById(
-            user_id=1, new_password='newpass',
+            user_id=1,
+            new_password='newpass',
         )
         response: dict[str, str] = await users.admin_update_pwd_by_id(
             payload,
@@ -645,10 +662,12 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.current_user.check_password = AsyncMock(return_value=True)
         redis_pool: MagicMock = MagicMock()
         mock_get_user_data.return_value = {
-            'jti_list': ['a'], 'refresh_tokens': ['b'],
+            'jti_list': ['a'],
+            'refresh_tokens': ['b'],
         }
         payload: UpdateMyPassword = UpdateMyPassword(
-            old_password='old', new_password='new',
+            old_password='old',
+            new_password='new',
         )
         response: dict[str, str] = await users.update_my_pwd(
             payload,
@@ -657,10 +676,13 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             self.current_user,
         )
         mock_update_password.assert_awaited_with(
-            self.current_user, 'new', self.db,
+            self.current_user,
+            'new',
+            self.db,
         )
         mock_get_user_data.assert_awaited_with(
-            redis_pool, self.current_user.username,
+            redis_pool,
+            self.current_user.username,
         )
         mock_set_user_data.assert_awaited()
         self.assertEqual(
@@ -680,7 +702,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_user.group_id = 10
         mock_get_user_by_id.return_value = mock_user
         payload: UpdateUsernameById = UpdateUsernameById(
-            user_id=1, new_username='newiduser',
+            user_id=1,
+            new_username='newiduser',
         )
         response: dict[str, str] = await users.change_username_by_id(
             payload,
@@ -689,7 +712,9 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         )
         mock_get_user_by_id.assert_awaited_with(1, self.db)
         mock_update_username.assert_awaited_with(
-            mock_user, 'newiduser', self.db,
+            mock_user,
+            'newiduser',
+            self.db,
         )
         self.assertEqual(response['message'], 'Username updated successfully.')
 
@@ -705,14 +730,19 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_user.group_id = 10
         mock_get_user_by_id.return_value = mock_user
         payload: SetUserStatus = SetUserStatus(
-            user_id=1, status='active',
+            user_id=1,
+            status='active',
         )
         response: dict[str, str] = await users.update_user_status(
-            payload, self.db, self.current_user,
+            payload,
+            self.db,
+            self.current_user,
         )
         mock_get_user_by_id.assert_awaited_with(1, self.db)
         mock_set_user_status.assert_awaited_with(
-            mock_user, 'active', self.db,
+            mock_user,
+            'active',
+            self.db,
         )
         self.assertEqual(
             response['message'],
@@ -819,7 +849,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_user.group_id = 10
         mock_get_user_by_id.return_value = mock_user
         mock_ensure_not_super.side_effect = HTTPException(
-            403, 'Cannot modify super admin.',
+            403,
+            'Cannot modify super admin.',
         )
         payload: UpdateUserRole = UpdateUserRole(user_id=1, new_role='user')
         db: AsyncMock = AsyncMock()
@@ -831,7 +862,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.routers.users.get_user_by_id')
     async def test_change_group_success(
-        self, mock_get_user_by_id: AsyncMock,
+        self,
+        mock_get_user_by_id: AsyncMock,
     ) -> None:
         """Test updating user's group membership successfully."""
         mock_user: MagicMock = MagicMock()
@@ -845,7 +877,9 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             AsyncMock(return_value=MagicMock(id=99)),
         ) as mock_get_group:
             response: dict[str, str] = await users.change_group(
-                payload, db, me,
+                payload,
+                db,
+                me,
             )
         mock_get_user_by_id.assert_awaited_with(1, db)
         mock_get_group.assert_awaited_with(99, db)
@@ -858,7 +892,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.routers.users.get_user_by_id')
     async def test_change_group_forbidden_for_other_group(
-        self, mock_get_user_by_id: AsyncMock,
+        self,
+        mock_get_user_by_id: AsyncMock,
     ) -> None:
         """Test admin cannot manually assign a user into another group."""
         mock_user: MagicMock = MagicMock()
@@ -878,24 +913,30 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-'''
+"""
 pytest --cov=examples.db_management.routers.users\
     --cov-report=term-missing\
         tests/examples/db_management/routers/users_test.py
-'''
+"""
 
 
 class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
     """Cover the user-management authorization and alias edge cases."""
 
     def setUp(self) -> None:
-        self.admin = SimpleNamespace(group_id=10, role='admin')
+        self.admin = SimpleNamespace(
+            username='admin',
+            group_id=10,
+            role='admin',
+        )
         self.db = AsyncMock()
 
     async def test_group_lookup_and_scope_failures(self) -> None:
         """Missing groups and cross-group actions return their HTTP errors."""
         missing_result = MagicMock()
-        missing_result.unique.return_value.scalar_one_or_none.return_value = None
+        missing_result.unique.return_value.scalar_one_or_none.return_value = (
+            None
+        )
         self.db.execute.return_value = missing_result
 
         with self.assertRaisesRegex(HTTPException, 'Group not found'):
@@ -903,13 +944,18 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         group = SimpleNamespace(id=10)
         found_result = MagicMock()
-        found_result.unique.return_value.scalar_one_or_none.return_value = group
+        found_result.unique.return_value.scalar_one_or_none.return_value = (
+            group
+        )
         self.db.execute.return_value = found_result
         self.assertIs(await users._get_group_or_404(10, self.db), group)
 
-        with patch.object(users, 'is_super_admin', return_value=False), patch.object(
-            users,
-            'ensure_admin_with_group',
+        with (
+            patch.object(users, 'is_super_admin', return_value=False),
+            patch.object(
+                users,
+                'ensure_admin_with_group',
+            ),
         ):
             with self.assertRaisesRegex(HTTPException, 'group_id is required'):
                 users._resolve_target_group_id(None, self.admin)
@@ -924,7 +970,8 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(users, 'is_super_admin', return_value=True):
             self.assertEqual(
-                users._resolve_target_group_id(99, self.admin), 99,
+                users._resolve_target_group_id(99, self.admin),
+                99,
             )
 
     async def test_add_user_seeds_group_sites_and_commits(self) -> None:
@@ -941,7 +988,8 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             patch.object(users, 'is_super_admin', return_value=False),
             patch.object(users, 'ensure_admin_with_group'),
             patch.object(
-                users, 'create_user',
+                users,
+                'create_user',
                 AsyncMock(return_value=new_user),
             ),
             patch.object(
@@ -972,7 +1020,9 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
         )
         self.db.commit.assert_awaited_once()
 
-    async def test_registration_and_pending_list_aliases_delegate(self) -> None:
+    async def test_registration_and_pending_list_aliases_delegate(
+        self,
+    ) -> None:
         """Public registration and admin pending-list aliases share logic."""
         payload = MagicMock()
         request = MagicMock()
@@ -984,7 +1034,9 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             '_register_signup_user',
             AsyncMock(return_value=expected),
         ) as register:
-            result = await users.register_user(payload, request, self.db, redis)
+            result = await users.register_user(
+                payload, request, self.db, redis,
+            )
 
         self.assertIs(result, expected)
         register.assert_awaited_once_with(payload, request, self.db, redis)
@@ -1000,7 +1052,9 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result, rows)
         list_pending.assert_awaited_once_with(self.db)
 
-    async def test_signup_approval_routes_cover_rejection_and_approval(self) -> None:
+    async def test_signup_approval_routes_cover_rejection_and_approval(
+        self,
+    ) -> None:
         """Reviewing a pending signup either rejects or delegates approval."""
         pending_user = SimpleNamespace(
             id=8,
@@ -1061,12 +1115,16 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result, approved_result)
         approve.assert_awaited_once_with(pending_user, 10, self.db, self.admin)
 
-    async def test_approval_and_group_change_require_a_resolved_group(self) -> None:
+    async def test_approval_and_group_change_require_a_resolved_group(
+        self,
+    ) -> None:
         """A resolved group is mandatory before activating or moving a user."""
-        with patch.object(users, '_resolve_target_group_id', return_value=None):
+        with patch.object(
+            users, '_resolve_target_group_id', return_value=None,
+        ):
             with self.assertRaisesRegex(HTTPException, 'group_id is required'):
                 await users._approve_signup_user(
-                    SimpleNamespace(id=5),
+                    SimpleNamespace(id=5, group_id=None, status='pending'),
                     None,
                     self.db,
                     self.admin,

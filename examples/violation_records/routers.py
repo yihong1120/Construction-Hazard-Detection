@@ -5,6 +5,7 @@ import base64
 import binascii
 import json
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from typing import Final
 from typing import Literal
+from typing import Protocol
 from urllib.parse import urlencode
 
 from fastapi import APIRouter
@@ -25,6 +27,7 @@ from fastapi import Security
 from fastapi import UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image
+from PIL import ImageFile
 from PIL import UnidentifiedImageError
 from sqlalchemy import and_
 from sqlalchemy import cast
@@ -152,14 +155,37 @@ _violation_column_count = len(_violation_columns)
 
 AnalyticsBucket = Literal['day', 'hour', 'week']
 
+
+class _StreamScopeUser(Protocol):
+    """Identity fields needed to authorize a selected camera stream."""
+
+    role: str
+    group_id: int | None
+
+
 MAX_ANALYTICS_RANGE_YEARS = 5
-ALLOWED_VIOLATION_ANALYTICS_ROLES: Final[frozenset[str]] = frozenset({
-    'admin',
-    'super_admin',
-})
+ALLOWED_VIOLATION_ANALYTICS_ROLES: Final[frozenset[str]] = frozenset(
+    {
+        'admin',
+        'super_admin',
+    },
+)
 THUMBNAIL_DIR_NAME = '_thumbnails'
 THUMBNAIL_MAX_EDGE = 360
 THUMBNAIL_QUALITY = 78
+THUMBNAIL_HEADER_SCAN_BYTES = 64 * 1024
+_ISOBMFF_IMAGE_BRANDS: Final[frozenset[bytes]] = frozenset(
+    {
+        b'avif',
+        b'avis',
+        b'heic',
+        b'heix',
+        b'hevc',
+        b'hevx',
+        b'mif1',
+        b'msf1',
+    },
+)
 
 
 def _decode_detection_items(value: str | None) -> list[Any] | None:
@@ -213,8 +239,8 @@ def _media_endpoint_url(
     """Build a protected media endpoint URL for an image path."""
     query = urlencode({'image_path': image_path})
     if request is None:
-        return f'/{endpoint_name}?{query}'
-    return f'{request.url_for(endpoint_name)}?{query}'
+        return f"/{endpoint_name}?{query}"
+    return f"{request.url_for(endpoint_name)}?{query}"
 
 
 def _image_urls(
@@ -237,13 +263,19 @@ def _bbox_from_dict(raw: dict[str, Any]) -> list[float] | None:
             float(raw['x2']),
             float(raw['y2']),
         ]
-    if {'x', 'y'}.issubset(raw) and (
-        'width' in raw or 'w' in raw
-    ) and ('height' in raw or 'h' in raw):
+    if (
+        {'x', 'y'}.issubset(raw)
+        and ('width' in raw or 'w' in raw)
+        and ('height' in raw or 'h' in raw)
+    ):
         x = float(raw['x'])
         y = float(raw['y'])
-        width = float(raw.get('width', raw.get('w')))
-        height = float(raw.get('height', raw.get('h')))
+        width_value = raw.get('width', raw.get('w'))
+        height_value = raw.get('height', raw.get('h'))
+        if width_value is None or height_value is None:
+            return None
+        width = float(width_value)
+        height = float(height_value)
         return [x, y, x + width, y + height]
     return None
 
@@ -266,7 +298,7 @@ def _bbox_from_detection_item(item: Any) -> list[float] | None:
 
 def _feedback_detection_id_candidates(item: Any, index: int) -> set[str]:
     """Return all IDs the feedback endpoint can accept for one detection."""
-    candidates = {f'det_{index}'}
+    candidates = {f"det_{index}"}
     if isinstance(item, dict):
         for key in ('id', 'detection_id', 'target_detection_id', 'track_id'):
             value = item.get(key)
@@ -284,7 +316,7 @@ def _feedback_detection_from_item(
     index: int,
 ) -> FeedbackDetectionItem | None:
     """Build a compact detection item that the frontend can select."""
-    detection_id = f'det_{index}'
+    detection_id = f"det_{index}"
     label: str | None = None
     confidence: float | None = None
 
@@ -305,7 +337,7 @@ def _feedback_detection_from_item(
                 confidence = float(raw_confidence)
         elif isinstance(item, list | tuple) and len(item) >= 6:
             confidence = float(item[4])
-            label = f'class-{int(float(item[5]))}'
+            label = f"class-{int(float(item[5]))}"
     except (TypeError, ValueError):
         pass
 
@@ -331,9 +363,8 @@ def _feedback_detections_from_json(
     return [
         detection
         for index, item in enumerate(items)
-        if (
-            detection := _feedback_detection_from_item(item, index)
-        ) is not None
+        if (detection := _feedback_detection_from_item(item, index))
+        is not None
     ]
 
 
@@ -353,7 +384,7 @@ def _clamp_ratio(value: float) -> float:
 
 
 def _bbox_to_normalized(
-    bbox: list[float] | None,
+    bbox: Sequence[object] | None,
     image_size: tuple[int, int] | None,
 ) -> NormalizedBBox | None:
     """Convert [x1, y1, x2, y2] pixels or ratios to normalized bbox."""
@@ -361,7 +392,7 @@ def _bbox_to_normalized(
         return None
 
     try:
-        x1, y1, x2, y2 = (float(value) for value in bbox)
+        x1, y1, x2, y2 = (float(str(value)) for value in bbox)
     except (TypeError, ValueError):
         return None
 
@@ -447,7 +478,7 @@ def _overlay_objects_from_feedback(
             continue
         overlay_objects.append(
             ViolationOverlayObject(
-                object_id=f'feedback_{feedback.id}',
+                object_id=f"feedback_{feedback.id}",
                 label=feedback.corrected_label,
                 confidence=None,
                 bbox=bbox,
@@ -662,10 +693,7 @@ async def _load_violation_feedbacks(
             ViolationFeedback.id.desc(),
         ),
     )
-    return [
-        _feedback_to_item(feedback)
-        for feedback in result.scalars().all()
-    ]
+    return [_feedback_to_item(feedback) for feedback in result.scalars().all()]
 
 
 def _split_violation_row_total(row: Any) -> tuple[Any, int | None]:
@@ -732,12 +760,14 @@ async def _authorize_violation_media_access(
         raise HTTPException(status_code=403, detail='Access denied')
 
     result = await db.execute(
-        select(Violation.id).where(
+        select(Violation.id)
+        .where(
             Violation.image_path.in_(
                 _path_candidates_for_db(safe_rel_path, full_path),
             ),
             Violation.site.in_(site_names),
-        ).limit(1),
+        )
+        .limit(1),
     )
     if result.scalar() is None:
         raise HTTPException(status_code=403, detail='Access denied')
@@ -749,11 +779,21 @@ def _thumbnail_cache_path(full_path: Path) -> Path:
     """Return the deterministic cached thumbnail path for an image."""
     base_dir = Path(STATIC_DIR).resolve()
     rel_path = full_path.relative_to(base_dir)
-    return (
-        base_dir
-        / THUMBNAIL_DIR_NAME
-        / rel_path
-    ).with_suffix('.jpg')
+    return (base_dir / THUMBNAIL_DIR_NAME / rel_path).with_suffix('.jpg')
+
+
+def _has_recognized_image_header(source_path: Path) -> bool:
+    """Recognize image headers before invoking Pillow's lazy opener."""
+    with source_path.open('rb') as source_file:
+        header = source_file.read(THUMBNAIL_HEADER_SCAN_BYTES)
+
+    parser = ImageFile.Parser()
+    parser.feed(header)
+    return parser.image is not None or (
+        len(header) >= 12
+        and header[4:8] == b'ftyp'
+        and header[8:12] in _ISOBMFF_IMAGE_BRANDS
+    )
 
 
 def _generate_thumbnail_sync(source_path: Path, thumbnail_path: Path) -> None:
@@ -766,7 +806,10 @@ def _generate_thumbnail_sync(source_path: Path, thumbnail_path: Path) -> None:
 
     thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with Image.open(source_path) as image:
+        if not _has_recognized_image_header(source_path):
+            raise UnidentifiedImageError(str(source_path))
+        with Image.open(source_path) as opened_image:
+            image: Image.Image = opened_image
             image.thumbnail((THUMBNAIL_MAX_EDGE, THUMBNAIL_MAX_EDGE))
             if image.mode not in {'RGB', 'L'}:
                 image = image.convert('RGB')
@@ -776,7 +819,7 @@ def _generate_thumbnail_sync(source_path: Path, thumbnail_path: Path) -> None:
                 quality=THUMBNAIL_QUALITY,
                 optimize=True,
             )
-    except UnidentifiedImageError as exc:
+    except (ModuleNotFoundError, OSError) as exc:
         raise HTTPException(
             status_code=400,
             detail='Unsupported image content',
@@ -874,14 +917,16 @@ def _normalise_utc(value: datetime) -> datetime:
 
 
 def _validate_analytics_range(start: datetime, end: datetime) -> tuple[
-    datetime, datetime,
+    datetime,
+    datetime,
 ]:
     """Validate and normalise the analytics query range."""
     start_utc = _normalise_utc(start)
     end_utc = _normalise_utc(end)
     if start_utc >= end_utc:
         raise HTTPException(
-            status_code=422, detail='start must be before end',
+            status_code=422,
+            detail='start must be before end',
         )
     try:
         latest_end = start_utc.replace(
@@ -955,7 +1000,7 @@ def _format_bucket(value: Any, bucket: AnalyticsBucket) -> str:
             return value.strftime('%Y-%m-%dT%H:00:00Z')
         if bucket == 'week':
             year, week, _ = value.isocalendar()
-            return f'{year}-W{week:02d}'
+            return f"{year}-W{week:02d}"
         return value.strftime('%Y-%m-%d')
     return str(value)
 
@@ -970,7 +1015,7 @@ def _canonical_violation_type(violation_type: str) -> str:
     )
     raise HTTPException(
         status_code=422,
-        detail=f'Unsupported violation_type. Expected one of: {valid}',
+        detail=f"Unsupported violation_type. Expected one of: {valid}",
     )
 
 
@@ -982,12 +1027,17 @@ def _type_condition(
     canonical = _canonical_violation_type(violation_type)
     dialect_name = _analytics_dialect_name(db)
     if dialect_name == 'postgresql':
-        return cast(Violation.violation_type_codes, JSONB).contains([canonical])
+        return cast(Violation.violation_type_codes, JSONB).contains(
+            [canonical],
+        )
     if dialect_name in {'mysql', 'mariadb'}:
-        return func.json_contains(
-            Violation.violation_type_codes,
-            json.dumps([canonical]),
-        ) == 1
+        return (
+            func.json_contains(
+                Violation.violation_type_codes,
+                json.dumps([canonical]),
+            )
+            == 1
+        )
     return cast(Violation.violation_type_codes, String).like(
         f'%"{canonical}"%',
     )
@@ -997,7 +1047,7 @@ async def _resolve_stream_filter(
     stream_id: str,
     site_name: str | None,
     site_names: list[str],
-    user: User,
+    user: _StreamScopeUser,
     db: AsyncSession,
 ) -> tuple[int, str]:
     """Resolve and authorize a stable camera ID before querying violations."""
@@ -1024,10 +1074,7 @@ async def _resolve_stream_filter(
         or (site_name is not None and stream_row[2] != site_name)
         or (
             user.role != 'super_admin'
-            and (
-                user.group_id is None
-                or stream_row[1] != user.group_id
-            )
+            and (user.group_id is None or stream_row[1] != user.group_id)
         )
     ):
         raise HTTPException(status_code=403, detail='No access to stream_id')
@@ -1078,8 +1125,7 @@ async def get_my_sites(
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> list[SiteOut]:
-    """
-    Retrieve all sites accessible by the currently logged-in user.
+    """Retrieve all sites accessible by the currently logged-in user.
 
     Args:
         db (AsyncSession): The SQLAlchemy async session.
@@ -1139,7 +1185,8 @@ async def get_violation_filter_options(
         detail='Invalid user',
     )
     site = next(
-        (candidate for candidate in sites if candidate.id == site_id), None,
+        (candidate for candidate in sites if candidate.id == site_id),
+        None,
     )
     if site is None:
         raise HTTPException(status_code=403, detail='No access to site_id')
@@ -1193,7 +1240,10 @@ async def get_violations(
     start_time: datetime | None = Query(None),
     end_time: datetime | None = Query(None),
     limit: int = Query(
-        20, gt=0, le=100, description='Records per page (1-100)',
+        20,
+        gt=0,
+        le=100,
+        description='Records per page (1-100)',
     ),
     offset: int = Query(0, ge=0, description='Starting record offset'),
     flagged: bool | None = Query(
@@ -1211,8 +1261,7 @@ async def get_violations(
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> ViolationList:
-    """
-    Retrieve a paginated list of violation records.
+    """Retrieve a paginated list of violation records.
 
     Args:
         site_id (int | None): The ID of the site to filter violations by.
@@ -1277,10 +1326,12 @@ async def get_violations(
             user,
             db,
         )
-        conditions.extend([
-            Violation.stream_config_id == stream_config_id,
-            Violation.site == stream_site_name,
-        ])
+        conditions.extend(
+            [
+                Violation.stream_config_id == stream_config_id,
+                Violation.site == stream_site_name,
+            ],
+        )
 
     if violation_type:
         conditions.append(_type_condition(violation_type, db))
@@ -1340,9 +1391,7 @@ async def get_violations(
 
     if not rows and offset and not cursor:
         total_result = await db.execute(
-            select(func.count())
-            .select_from(Violation)
-            .where(where_clause),
+            select(func.count()).select_from(Violation).where(where_clause),
         )
         total = int(total_result.scalar() or 0)
 
@@ -1378,8 +1427,7 @@ async def get_violation_analytics(
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> ViolationAnalyticsResponse:
-    """
-    Return aggregated violation counts for charts and KPI widgets.
+    """Return aggregated violation counts for charts and KPI widgets.
 
     The response intentionally excludes image paths, warning payloads, and
     individual violation records.
@@ -1415,10 +1463,12 @@ async def get_violation_analytics(
             user,
             db,
         )
-        conditions.extend([
-            Violation.stream_config_id == stream_config_id,
-            Violation.site == stream_site_name,
-        ])
+        conditions.extend(
+            [
+                Violation.stream_config_id == stream_config_id,
+                Violation.site == stream_site_name,
+            ],
+        )
 
     if violation_type:
         conditions.append(_type_condition(violation_type, db))
@@ -1517,11 +1567,13 @@ async def get_violation_analytics(
     by_type.sort(key=lambda item: (-item.count, item.type))
     top_site = (
         ViolationAnalyticsTopSite(**by_site[0].model_dump())
-        if by_site else None
+        if by_site
+        else None
     )
     top_type = (
         ViolationAnalyticsTopType(**by_type[0].model_dump())
-        if by_type else None
+        if by_type
+        else None
     )
 
     return ViolationAnalyticsResponse(
@@ -1608,7 +1660,9 @@ async def get_next_review_violation(
     '/violations/{violation_id}/audit-log',
     response_model=list[ViolationReviewAuditItem],
     summary='Get violation review audit log',
-    description='Return review history for a flagged record in reviewer scope.',
+    description=(
+        'Return review history for a flagged record in reviewer scope.'
+    ),
 )
 async def get_violation_review_audit_log(
     violation_id: int,
@@ -1623,7 +1677,8 @@ async def get_violation_review_audit_log(
     _, site_names = await _load_review_scope(username, db)
     if not site_names:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
 
     result = await db.execute(
@@ -1635,7 +1690,8 @@ async def get_violation_review_audit_log(
     )
     if result.scalar() is None:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
 
     return await _load_review_audit_logs(db, violation_id)
@@ -1653,8 +1709,7 @@ async def get_single_violation(
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> ViolationItem:
-    """
-    Retrieve detailed information for a specific violation record.
+    """Retrieve detailed information for a specific violation record.
 
     Args:
         violation_id (int):
@@ -1690,7 +1745,8 @@ async def get_single_violation(
     site_names: list[str] = await get_user_sites_cached(username, db)
     if not site_names:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
 
     stmt_violation = select(*_violation_columns).where(
@@ -1705,14 +1761,16 @@ async def get_single_violation(
             f"[get_single_violation] No access to violation_id {violation_id}",
         )
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
     if hasattr(row, 'site') and row.site not in site_names:
         print(
             f"[get_single_violation] No access to violation_id {violation_id}",
         )
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
 
     item = _violation_to_item(row, request)
@@ -1748,8 +1806,7 @@ async def submit_violation_feedback(
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> ViolationFeedbackResponse:
-    """
-    Store structured feedback against a persisted violation record.
+    """Store structured feedback against a persisted violation record.
 
     Feedback is intentionally not accepted as training data immediately. The
     row starts as ``pending`` and can later be reviewed by a human workflow.
@@ -1761,7 +1818,8 @@ async def submit_violation_feedback(
     site_names: list[str] = await get_user_sites_cached(username, db)
     if not site_names:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
 
     stmt_violation = select(Violation).where(
@@ -1772,7 +1830,8 @@ async def submit_violation_feedback(
     violation = violation_result.scalar_one_or_none()
     if not violation:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
 
     feedback_detection_ids = _feedback_detection_ids_from_json(
@@ -1860,7 +1919,8 @@ async def review_violation(
     reviewer, site_names = await _load_review_scope(username, db)
     if not site_names:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
 
     result = await db.execute(
@@ -1872,11 +1932,13 @@ async def review_violation(
     violation = result.scalar_one_or_none()
     if not violation:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
     if not violation.is_flagged:
         raise HTTPException(
-            status_code=404, detail='Flagged violation not found',
+            status_code=404,
+            detail='Flagged violation not found',
         )
 
     reviewed_at = datetime.now(timezone.utc)
@@ -1930,8 +1992,7 @@ async def get_violation_image(
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> FileResponse:
-    """
-    Retrieve a violation image file from the "static" directory.
+    """Retrieve a violation image file from the "static" directory.
 
     Args:
         image_path (str): The relative path of the image within the "static"
@@ -2019,8 +2080,8 @@ async def upload_violation(
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> UploadViolationResponse:
-    """
-    Upload a new violation record, including an image and associated metadata.
+    """Upload a new violation record, including an image and associated
+    metadata.
 
     Args:
         site (str):
@@ -2082,11 +2143,13 @@ async def upload_violation(
     except (EmptyViolationImageError, ViolationImageReadError) as exc:
         logging.error(f"[upload_violation] read error: {exc}")
         raise HTTPException(
-            status_code=400, detail='Failed to read image file',
+            status_code=400,
+            detail='Failed to read image file',
         )
     if not violation_id:
         raise HTTPException(
-            status_code=500, detail='Failed to create violation record',
+            status_code=500,
+            detail='Failed to create violation record',
         )
 
     return UploadViolationResponse(

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from examples.mcp_server.tools import streaming
 from examples.mcp_server.tools.streaming import StreamingTools
 
 
@@ -24,7 +25,7 @@ class StartStopDetectionTests(unittest.IsolatedAsyncioTestCase):
         mock_detector.assert_called_once()
         self.assertFalse(result['success'])
         self.assertIn('unsupported', result['status'])
-        self.assertIn('stream_1', tool._active_streams)
+        self.assertIn('stream_1', tool._get_stream_store())
 
     async def test_start_detection_stream_autogen_id(self) -> None:
         """Should auto-generate a stream_id."""
@@ -34,7 +35,7 @@ class StartStopDetectionTests(unittest.IsolatedAsyncioTestCase):
             tool = StreamingTools()
             result = await tool.start_detection_stream('file.mp4', None)
         self.assertIn('stream_', result['stream_id'])
-        self.assertIn(result['stream_id'], tool._active_streams)
+        self.assertIn(result['stream_id'], tool._get_stream_store())
 
     async def test_start_detection_stream_exception(self) -> None:
         """Should log and raise on exception."""
@@ -60,7 +61,7 @@ class StartStopDetectionTests(unittest.IsolatedAsyncioTestCase):
             'examples.mcp_server.tools.streaming.YoloDetector',
         ):
             tool = StreamingTools()
-            tool._active_streams['s1'] = {'status': 'active'}
+            tool._get_stream_store()['s1'] = {'status': 'active'}
             result = await tool.stop_detection_stream('s1')
         self.assertFalse(result['success'])
         self.assertIn('unsupported', result['status'])
@@ -99,7 +100,7 @@ class StreamStatusTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_specific_existing_stream(self) -> None:
         """Should return info for existing stream."""
         tool = StreamingTools()
-        tool._active_streams['abc'] = {'status': 'active'}
+        tool._get_stream_store()['abc'] = {'status': 'active'}
         res = await tool.get_stream_status('abc')
         self.assertTrue(res['success'])
         self.assertIn('stream_info', res)
@@ -327,7 +328,9 @@ class ViewerTests(unittest.IsolatedAsyncioTestCase):
                 await tool.stop_stream_viewer()
             logger.error.assert_called_once()
 
-    async def test_viewer_optional_methods_support_sync_and_fallback_modes(self) -> None:
+    async def test_viewer_optional_methods_support_sync_and_fallback_modes(
+        self,
+    ) -> None:
         """Viewers without rich APIs use local task and resource fallbacks."""
         tool = StreamingTools()
         self.assertIsNone(
@@ -346,7 +349,9 @@ class ViewerTests(unittest.IsolatedAsyncioTestCase):
         )
         fallback_viewer.display_stream.return_value = None
         tool._stream_viewer = fallback_viewer
-        started = await tool.start_stream_viewer('rtsp://cam', viewer_port=8181)
+        started = await tool.start_stream_viewer(
+            'rtsp://cam', viewer_port=8181,
+        )
         self.assertTrue(started['success'])
         await tool._viewer_tasks[8181]
 
@@ -374,7 +379,7 @@ class EnsureMethodsTests(unittest.IsolatedAsyncioTestCase):
     async def test_ensure_yolo_detector_skip_when_exists(self) -> None:
         """Should skip creation if already set."""
         tool = StreamingTools()
-        tool._yolo_detector = object()
+        tool._yolo_detector = MagicMock(spec=streaming.YoloDetector)
         await tool._ensure_yolo_detector()
 
     async def test_ensure_stream_capture(self) -> None:
@@ -390,13 +395,12 @@ class EnsureMethodsTests(unittest.IsolatedAsyncioTestCase):
     async def test_ensure_stream_capture_skip_when_exists(self) -> None:
         """Should skip creation if already exists."""
         tool = StreamingTools()
-        tool._stream_capture = object()
+        tool._stream_capture = MagicMock(spec=streaming.StreamCapture)
         await tool._ensure_stream_capture(None)
 
     async def test_ensure_stream_capture_none_when_uninitialised(self) -> None:
-        """When uninitialised and URL None,
-        should early return without creating.
-        """
+        """When uninitialised and URL None, should early return without
+        creating."""
         tool = StreamingTools()
         await tool._ensure_stream_capture(None)
         self.assertIsNone(tool._stream_capture)
@@ -414,13 +418,12 @@ class EnsureMethodsTests(unittest.IsolatedAsyncioTestCase):
     async def test_ensure_stream_viewer_skip_when_exists(self) -> None:
         """Should skip creation if already exists."""
         tool = StreamingTools()
-        tool._stream_viewer = object()
+        tool._stream_viewer = MagicMock(spec=streaming.StreamViewer)
         await tool._ensure_stream_viewer(None)
 
     async def test_ensure_stream_viewer_none_when_uninitialised(self) -> None:
-        """When uninitialised and URL None,
-        should early return without creating.
-        """
+        """When uninitialised and URL None, should early return without
+        creating."""
         tool = StreamingTools()
         await tool._ensure_stream_viewer(None)
         self.assertIsNone(tool._stream_viewer)
@@ -428,9 +431,3 @@ class EnsureMethodsTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.mcp_server.tools.streaming\
-    --cov-report=term-missing\
-    tests/examples/mcp_server/tools/streaming_test.py
-'''

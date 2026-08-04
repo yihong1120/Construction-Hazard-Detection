@@ -6,6 +6,7 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -40,10 +41,12 @@ class TestViolationRouterHelpers(unittest.TestCase):
         self.assertIsNone(routers._decode_detection_items('{not json'))
         self.assertEqual(routers._decode_detection_items('[1, 2]'), [1, 2])
         self.assertEqual(
-            routers._decode_detection_items('{"detection_items": [3]}'), [3],
+            routers._decode_detection_items('{"detection_items": [3]}'),
+            [3],
         )
         self.assertEqual(
-            routers._decode_detection_items('{"items": [4]}'), [4],
+            routers._decode_detection_items('{"items": [4]}'),
+            [4],
         )
         self.assertIsNone(routers._decode_detection_items('{"items": "bad"}'))
 
@@ -51,12 +54,14 @@ class TestViolationRouterHelpers(unittest.TestCase):
         self.assertEqual(
             routers._warning_text_from_json(
                 '{not json',
-            ), '{not json',
+            ),
+            '{not json',
         )
         self.assertEqual(
             routers._warning_text_from_json(
                 '"plain warning"',
-            ), 'plain warning',
+            ),
+            'plain warning',
         )
         self.assertEqual(
             routers._warning_text_from_json(
@@ -67,22 +72,26 @@ class TestViolationRouterHelpers(unittest.TestCase):
         self.assertEqual(
             routers._warning_text_from_json(
                 '["one", "two"]',
-            ), 'one, two',
+            ),
+            'one, two',
         )
         self.assertIsNone(routers._warning_text_from_json('123'))
 
     def test_media_url_and_detection_bbox_helpers(self) -> None:
         request = SimpleNamespace(
-            url_for=lambda endpoint: f'https://api.test/{endpoint}',
+            url_for=lambda endpoint: f"https://api.test/{endpoint}",
         )
         image_url, thumbnail_url = routers._image_urls(
-            'dir/image name.jpg', request,
+            'dir/image name.jpg',
+            request,
         )
         self.assertIn('image_path=dir%2Fimage+name.jpg', image_url)
         self.assertIn('get_violation_thumbnail', thumbnail_url)
         self.assertEqual(
             routers._media_endpoint_url(
-                'get_violation_image', 'file.jpg', None,
+                'get_violation_image',
+                'file.jpg',
+                None,
             ),
             '/get_violation_image?image_path=file.jpg',
         )
@@ -115,6 +124,7 @@ class TestViolationRouterHelpers(unittest.TestCase):
             'track_id': 99,
         }
         normalized = routers._feedback_detection_from_item(item, 0)
+        assert normalized is not None
         self.assertEqual(normalized.id, 'tracked')
         self.assertEqual(normalized.label, 'worker')
         self.assertEqual(normalized.bbox, [1.0, 2.0, 4.0, 6.0])
@@ -125,6 +135,7 @@ class TestViolationRouterHelpers(unittest.TestCase):
 
         list_item = [1, 2, 3, 4, 0.75, 5, 12]
         normalized_list = routers._feedback_detection_from_item(list_item, 1)
+        assert normalized_list is not None
         self.assertEqual(normalized_list.id, 'det_1')
         self.assertEqual(normalized_list.label, 'class-5')
         self.assertEqual(
@@ -132,14 +143,11 @@ class TestViolationRouterHelpers(unittest.TestCase):
             {'det_1', '12'},
         )
         self.assertIsNone(routers._feedback_detection_from_item('invalid', 2))
-        self.assertEqual(
-            [
-                item.id for item in routers._feedback_detections_from_json(
-                    '[{"id":"one","bbox":[1,2,3,4]}, "bad"]',
-                )
-            ],
-            ['one'],
+        detections = routers._feedback_detections_from_json(
+            '[{"id":"one","bbox":[1,2,3,4]}, "bad"]',
         )
+        assert detections is not None
+        self.assertEqual([item.id for item in detections], ['one'])
         self.assertEqual(
             routers._feedback_detection_ids_from_json(
                 '[{"id":"one"}, [1,2,3,4,0.9,2,8]]',
@@ -157,17 +165,22 @@ class TestViolationRouterHelpers(unittest.TestCase):
         self.assertIsNone(routers._bbox_to_normalized(['bad'] * 4, (100, 100)))
         self.assertIsNone(
             routers._bbox_to_normalized(
-                [3, 2, 1, 4], (100, 100),
+                [3, 2, 1, 4],
+                (100, 100),
             ),
         )
         self.assertIsNone(routers._bbox_to_normalized([1, 2, 3, 4], None))
         self.assertIsNone(routers._bbox_to_normalized([1, 2, 3, 4], (0, 100)))
         normalized_ratio = routers._bbox_to_normalized(
-            [0.1, 0.2, 0.5, 0.7], None,
+            [0.1, 0.2, 0.5, 0.7],
+            None,
         )
         normalized_pixels = routers._bbox_to_normalized(
-            [10, 20, 50, 70], (100, 100),
+            [10, 20, 50, 70],
+            (100, 100),
         )
+        assert normalized_ratio is not None
+        assert normalized_pixels is not None
         self.assertAlmostEqual(normalized_ratio.x, 0.1)
         self.assertAlmostEqual(normalized_ratio.y, 0.2)
         self.assertAlmostEqual(normalized_ratio.w, 0.4)
@@ -182,7 +195,10 @@ class TestViolationRouterHelpers(unittest.TestCase):
         )
 
         detection = FeedbackDetectionItem(
-            id='det_0', label='worker', confidence=0.8, bbox=[10, 10, 30, 30],
+            id='det_0',
+            label='worker',
+            confidence=0.8,
+            bbox=[10, 10, 30, 30],
         )
         false_positive = _feedback(
             1,
@@ -198,19 +214,25 @@ class TestViolationRouterHelpers(unittest.TestCase):
             note='missed vehicle',
         )
         overlays = routers._overlay_objects_from_feedback(
-            [detection], [false_positive, false_negative], (100, 100),
+            [detection],
+            [false_positive, false_negative],
+            (100, 100),
         )
         self.assertEqual(
-            [overlay.object_id for overlay in overlays], [
-                'det_0', 'feedback_2',
+            [overlay.object_id for overlay in overlays],
+            [
+                'det_0',
+                'feedback_2',
             ],
         )
         self.assertTrue(overlays[0].is_flagged)
         self.assertEqual(overlays[1].label, 'vehicle')
         self.assertIs(
             routers._feedback_for_detection(
-                detection, [false_positive],
-            ), false_positive,
+                detection,
+                [false_positive],
+            ),
+            false_positive,
         )
         self.assertEqual(
             routers._overlay_objects_from_feedback(
@@ -229,28 +251,33 @@ class TestViolationRouterHelpers(unittest.TestCase):
         self.assertEqual(
             routers._split_violation_row_total(
                 (1, 2),
-            ), ((1, 2), None),
+            ),
+            ((1, 2), None),
         )
 
         mapping_row = SimpleNamespace(_mapping={'total_count': 9})
         self.assertEqual(
             routers._split_violation_row_total(
                 mapping_row,
-            ), (mapping_row, 9),
+            ),
+            (mapping_row, 9),
         )
         self.assertEqual(
             routers._scalar_value(
                 SimpleNamespace(name='Site A'),
-            ), 'Site A',
+            ),
+            'Site A',
         )
         self.assertEqual(routers._scalar_value(7), 7)
         with patch.object(routers, 'STATIC_DIR', Path('/tmp/static')):
             self.assertEqual(
                 routers._path_candidates_for_db(
-                    Path('2026/image.jpg'), Path('/tmp/static/2026/image.jpg'),
+                    Path('2026/image.jpg'),
+                    Path('/tmp/static/2026/image.jpg'),
                 ),
                 [
-                    '2026/image.jpg', 'static/2026/image.jpg',
+                    '2026/image.jpg',
+                    'static/2026/image.jpg',
                     '/tmp/static/2026/image.jpg',
                 ],
             )
@@ -268,7 +295,8 @@ class TestViolationRouterHelpers(unittest.TestCase):
         self.assertEqual(
             routers._cursor_payload(
                 SimpleNamespace(
-                    detection_time=timestamp, id=8,
+                    detection_time=timestamp,
+                    id=8,
                 ),
             ),
             (timestamp, 8),
@@ -279,7 +307,8 @@ class TestViolationRouterHelpers(unittest.TestCase):
         self.assertEqual(
             routers._decode_violation_cursor(
                 cursor,
-            ), (timestamp, 7),
+            ),
+            (timestamp, 7),
         )
         with self.assertRaises(HTTPException):
             routers._decode_violation_cursor('bad')
@@ -291,14 +320,18 @@ class TestViolationRouterHelpers(unittest.TestCase):
         )
         self.assertEqual(
             routers._format_bucket(
-                timestamp, 'hour',
-            ), '2026-07-24T12:00:00Z',
+                timestamp,
+                'hour',
+            ),
+            '2026-07-24T12:00:00Z',
         )
         self.assertEqual(routers._format_bucket(timestamp, 'week'), '2026-W30')
         self.assertEqual(
             routers._format_bucket(
-                timestamp, 'day',
-            ), '2026-07-24',
+                timestamp,
+                'day',
+            ),
+            '2026-07-24',
         )
         self.assertEqual(routers._format_bucket('raw', 'day'), 'raw')
 
@@ -307,7 +340,12 @@ class TestViolationRouterHelpers(unittest.TestCase):
             db = SimpleNamespace(
                 bind=SimpleNamespace(dialect=SimpleNamespace(name=dialect)),
             )
-            for bucket in ['hour', 'day', 'week']:
+            buckets: tuple[Literal['hour', 'day', 'week'], ...] = (
+                'hour',
+                'day',
+                'week',
+            )
+            for bucket in buckets:
                 self.assertTrue(
                     str(routers._analytics_bucket_expr(bucket, db)),
                 )
@@ -323,7 +361,8 @@ class TestViolationRouterHelpers(unittest.TestCase):
         self.assertEqual(invalid_type.exception.status_code, 422)
 
     def test_invalid_detection_values_and_feedback_bbox_matching(self) -> None:
-        """Malformed detector values are ignored without breaking feedback UI."""
+        """Malformed detector values are ignored without breaking feedback
+        UI."""
         self.assertIsNone(
             routers._bbox_from_detection_item({'bbox': [1, 2, 'bad', 4]}),
         )
@@ -332,6 +371,7 @@ class TestViolationRouterHelpers(unittest.TestCase):
             0,
         )
         self.assertIsNotNone(malformed_confidence)
+        assert malformed_confidence is not None
         self.assertEqual(malformed_confidence.bbox, [1.0, 2.0, 3.0, 4.0])
 
         detection = FeedbackDetectionItem(
@@ -349,8 +389,11 @@ class TestViolationRouterHelpers(unittest.TestCase):
         )
         self.assertIsNone(routers._feedback_for_detection(detection, []))
 
-    def test_row_total_helpers_cover_mapping_and_scalar_edge_cases(self) -> None:
-        """Window-count rows handle tuple and non-sized database result shapes."""
+    def test_row_total_helpers_cover_mapping_and_scalar_edge_cases(
+        self,
+    ) -> None:
+        """Window-count rows handle tuple and non-sized database result
+        shapes."""
 
         class MappingRow(tuple):
             @property
@@ -372,8 +415,11 @@ class TestViolationRouterHelpers(unittest.TestCase):
             (SimpleNamespace(), None),
         )
 
-    def test_thumbnail_generation_handles_cached_rgba_and_invalid_images(self) -> None:
-        """Thumbnails reuse current output, convert alpha images, and reject junk."""
+    def test_thumbnail_generation_handles_cached_rgba_and_invalid_images(
+        self,
+    ) -> None:
+        """Thumbnails reuse current output, convert alpha images, and reject
+        junk."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'source.png'
@@ -390,13 +436,15 @@ class TestViolationRouterHelpers(unittest.TestCase):
             invalid_source.write_bytes(b'not an image')
             with self.assertRaises(HTTPException) as invalid_image:
                 routers._generate_thumbnail_sync(
-                    invalid_source, root / 'bad.jpg',
+                    invalid_source,
+                    root / 'bad.jpg',
                 )
 
         self.assertEqual(invalid_image.exception.status_code, 400)
 
     def test_image_size_returns_dimensions_or_none(self) -> None:
-        """Detail overlays use available image dimensions and tolerate bad paths."""
+        """Detail overlays use available image dimensions and tolerate bad
+        paths."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             image_path = root / 'frame.jpg'
@@ -412,8 +460,11 @@ class TestViolationRouterHelpers(unittest.TestCase):
 
 
 class TestViolationMediaAccessCoverage(unittest.IsolatedAsyncioTestCase):
-    async def test_media_authorization_rejects_users_without_sites(self) -> None:
-        """Existing images remain inaccessible when no effective site is assigned."""
+    async def test_media_authorization_rejects_users_without_sites(
+        self,
+    ) -> None:
+        """Existing images remain inaccessible when no effective site is
+        assigned."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'frame.jpg').write_bytes(b'image bytes')
@@ -442,7 +493,9 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         self.credentials = SimpleNamespace(subject={'username': 'reviewer'})
         self.missing_credentials = SimpleNamespace(subject={})
 
-    async def test_range_and_stream_filter_reject_invalid_requests(self) -> None:
+    async def test_range_and_stream_filter_reject_invalid_requests(
+        self,
+    ) -> None:
         """Analytics dates and stream filters expose clear client errors."""
         timestamp = datetime(2026, 7, 24, tzinfo=timezone.utc)
         with self.assertRaises(HTTPException) as invalid_range:
@@ -461,8 +514,11 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(forbidden_stream.exception.status_code, 403)
 
-    async def test_filter_options_reject_missing_identity_and_site_scope(self) -> None:
-        """Camera filter options require both identity and accessible site ID."""
+    async def test_filter_options_reject_missing_identity_and_site_scope(
+        self,
+    ) -> None:
+        """Camera filter options require both identity and accessible site
+        ID."""
         with self.assertRaises(HTTPException) as missing_identity:
             await routers.get_violation_filter_options(
                 1,
@@ -489,9 +545,15 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inaccessible_site.exception.status_code, 403)
 
     async def test_violation_list_applies_cursor_filter(self) -> None:
-        """A valid cursor adds keyset filtering before an empty page response."""
+        """A valid cursor adds keyset filtering before an empty page
+        response."""
         cursor = routers._encode_violation_cursor(
-            (7, 'Roadwork', 'Cam 1', datetime(2026, 7, 24, tzinfo=timezone.utc)),
+            (
+                7,
+                'Roadwork',
+                'Cam 1',
+                datetime(2026, 7, 24, tzinfo=timezone.utc),
+            ),
         )
         self.db.execute.return_value = SimpleNamespace(all=lambda: [])
         with patch.object(
@@ -513,8 +575,11 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.total, 0)
         self.assertEqual(result.items, [])
 
-    async def test_analytics_rejects_missing_identity_and_handles_no_sites(self) -> None:
-        """Analytics does not disclose records to anonymous or unscoped callers."""
+    async def test_analytics_rejects_missing_identity_and_handles_no_sites(
+        self,
+    ) -> None:
+        """Analytics does not disclose records to anonymous or unscoped
+        callers."""
         start = datetime(2026, 7, 23, tzinfo=timezone.utc)
         end = datetime(2026, 7, 24, tzinfo=timezone.utc)
         with self.assertRaises(HTTPException) as missing_identity:
@@ -540,7 +605,8 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.summary.total, 0)
 
     async def test_review_queue_guards_reject_invalid_scopes(self) -> None:
-        """Review queue applies identity, scope, current item, and site checks."""
+        """Review queue applies identity, scope, current item, and site
+        checks."""
         with self.assertRaises(HTTPException) as missing_identity:
             await routers.get_next_review_violation(
                 SimpleNamespace(),
@@ -615,7 +681,9 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertEqual(inaccessible_record.exception.status_code, 403)
 
-    async def test_detail_feedback_review_and_thumbnail_guard_empty_scopes(self) -> None:
+    async def test_detail_feedback_review_and_thumbnail_guard_empty_scopes(
+        self,
+    ) -> None:
         """All mutation and media routes reject callers outside their scope."""
         with patch.object(
             routers,
@@ -684,7 +752,8 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_feedback_rejects_missing_user_after_record_authorization(
         self,
     ) -> None:
-        """Feedback creation returns 404 when the authenticated user vanished."""
+        """Feedback creation returns 404 when the authenticated user
+        vanished."""
         violation = SimpleNamespace(id=1, detections_json=None)
         self.db.execute.side_effect = [
             SimpleNamespace(scalar_one_or_none=lambda: violation),
@@ -709,7 +778,8 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_feedback_transaction_failure_returns_safe_server_error(
         self,
     ) -> None:
-        """Feedback persistence failure attempts rollback and hides DB details."""
+        """Feedback persistence failure attempts rollback and hides DB
+        details."""
         violation = SimpleNamespace(id=1, detections_json=None)
         self.db.execute.side_effect = [
             SimpleNamespace(scalar_one_or_none=lambda: violation),
@@ -739,7 +809,9 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failed.exception.status_code, 500)
         self.db.rollback.assert_awaited_once()
 
-    async def test_review_rejects_missing_identity_and_unflagged_record(self) -> None:
+    async def test_review_rejects_missing_identity_and_unflagged_record(
+        self,
+    ) -> None:
         """Review updates require a username and an already flagged record."""
         with self.assertRaises(HTTPException) as missing_identity:
             await routers.review_violation(
@@ -773,8 +845,11 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(unflagged_record.exception.status_code, 404)
 
-    async def test_review_transaction_failure_returns_safe_server_error(self) -> None:
-        """Review persistence failure attempts rollback even if rollback fails."""
+    async def test_review_transaction_failure_returns_safe_server_error(
+        self,
+    ) -> None:
+        """Review persistence failure attempts rollback even if rollback
+        fails."""
         violation = SimpleNamespace(
             id=1,
             is_flagged=True,

@@ -12,15 +12,13 @@ from examples.db_management.services import site_services
 
 
 class TestSiteServices(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for site_services.py using unittest and mocks.
-    """
+    """Unit tests for site_services.py using unittest and mocks."""
 
     def setUp(self) -> None:
         """Initialise common mock objects for each test.
 
-        This method sets up mock database and site objects for use in
-        each test case.
+        This method sets up mock database and site objects for use in each test
+        case.
         """
         self.db: AsyncMock = AsyncMock()
         self.site: MagicMock = MagicMock(spec=Site)
@@ -32,8 +30,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_list_sites_without_group(self) -> None:
         """Test retrieving all sites when no group_id is provided.
 
-        Ensures that all sites are returned if no group_id is
-        specified.
+        Ensures that all sites are returned if no group_id is specified.
         """
         mock_result: MagicMock = MagicMock()
         scalars_mock: MagicMock = (
@@ -68,7 +65,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sites, ['site3'])
 
-    async def test_group_user_and_preference_helpers_handle_empty_and_chunked_inputs(
+    async def test_group_preference_helpers_handle_empty_and_chunked_inputs(
         self,
     ) -> None:
         """Preference seeding skips empties and flushes a full bulk chunk."""
@@ -100,8 +97,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_create_site_success(self) -> None:
         """Test successful creation of a new site.
 
-        Verifies that a new site is created and committed to the
-        database without error.
+        Verifies that a new site is created and committed to the database
+        without error.
         """
         self.db.commit = AsyncMock()
         self.db.refresh = AsyncMock()
@@ -114,18 +111,15 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         mock_empty_users_result: MagicMock = MagicMock()
         mock_empty_users_result.scalars.return_value.all.return_value = []
         mock_admin_result: MagicMock = MagicMock()
-        (
-            mock_admin_result.unique.return_value.scalar_one_or_none
-            .return_value
-        ) = MagicMock(id=999)
+        admin_scalar = mock_admin_result.unique.return_value.scalar_one_or_none
+        admin_scalar.return_value = MagicMock(id=999)
         mock_insert_result: MagicMock = MagicMock()
         mock_pref_insert_result: MagicMock = MagicMock()
         mock_refreshed_site_result: MagicMock = MagicMock()
-        (
-            mock_refreshed_site_result
-            .unique.return_value
-            .scalar_one.return_value
-        ) = MagicMock()
+        refreshed_site_scalar = (
+            mock_refreshed_site_result.unique.return_value.scalar_one
+        )
+        refreshed_site_scalar.return_value = MagicMock()
         self.db.execute = AsyncMock(
             side_effect=[
                 mock_group_insert_result,  # site_groups insert
@@ -142,11 +136,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
             group_ids=[self.group_id],
             db=self.db,
         )
-        expected = (
-            mock_refreshed_site_result
-            .unique.return_value
-            .scalar_one.return_value
-        )
+        expected = refreshed_site_scalar.return_value
         self.assertEqual(result, expected)
 
         self.db.add.assert_called()
@@ -157,8 +147,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_create_site_exception(self) -> None:
         """Test handling exception during site creation.
 
-        Ensures that an HTTPException is raised and rollback is called
-        if the database commit fails during site creation.
+        Ensures that an HTTPException is raised and rollback is called if the
+        database commit fails during site creation.
         """
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
@@ -166,10 +156,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         mock_empty_users_result: MagicMock = MagicMock()
         mock_empty_users_result.scalars.return_value.all.return_value = []
         mock_admin_result: MagicMock = MagicMock()
-        (
-            mock_admin_result.unique.return_value.scalar_one_or_none
-            .return_value
-        ) = None
+        admin_scalar = mock_admin_result.unique.return_value.scalar_one_or_none
+        admin_scalar.return_value = None
         self.db.execute = AsyncMock(
             side_effect=[
                 MagicMock(),  # bulk site_groups insert
@@ -191,8 +179,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_update_site_success(self) -> None:
         """Test successful site name update.
 
-        Verifies that the site name is updated and committed to the
-        database.
+        Verifies that the site name is updated and committed to the database.
         """
         self.db.commit = AsyncMock()
 
@@ -208,8 +195,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_update_site_exception(self) -> None:
         """Test handling exception during site update.
 
-        Ensures that an HTTPException is raised and rollback is called
-        if the database commit fails during site update.
+        Ensures that an HTTPException is raised and rollback is called if the
+        database commit fails during site update.
         """
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
@@ -227,12 +214,13 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_delete_site_success(self) -> None:
         """Test successful deletion of a site and related records.
 
-        Verifies that the site and its related image records are deleted
-        and the transaction is committed.
+        Verifies that the site and its related image records are deleted and
+        the transaction is committed.
         """
         mock_execute_result: MagicMock = MagicMock()
         mock_execute_result.scalars.return_value.all.return_value = [
-            'image1.png', 'image2.png',
+            'image1.png',
+            'image2.png',
         ]
         self.db.execute = AsyncMock(return_value=mock_execute_result)
         self.db.delete = AsyncMock()
@@ -249,8 +237,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_delete_site_exception(self) -> None:
         """Test handling exception during site deletion.
 
-        Ensures that an HTTPException is raised and rollback is called
-        if the database commit fails during site deletion.
+        Ensures that an HTTPException is raised and rollback is called if the
+        database commit fails during site deletion.
         """
         mock_execute_result: MagicMock = MagicMock()
         mock_execute_result.scalars.return_value.all.return_value = [
@@ -273,9 +261,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_add_user_to_site(self) -> None:
         """Test adding a user to a site.
 
-        Verifies that a user is added to a site and a default
-        notification preference is created, then the transaction is
-        committed.
+        Verifies that a user is added to a site and a default notification
+        preference is created, then the transaction is committed.
         """
         self.db.execute = AsyncMock()
         self.db.commit = AsyncMock()
@@ -293,8 +280,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_remove_user_from_site(self) -> None:
         """Test removing a user from a site.
 
-        When the user has no group-based access, the notification
-        preference is also deleted and the transaction is committed.
+        When the user has no group-based access, the notification preference is
+        also deleted and the transaction is committed.
         """
         # Simulate a user with no group → pref is deleted directly
         mock_user: MagicMock = MagicMock()
@@ -316,8 +303,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_create_site_without_group_id(self) -> None:
         """Test exception raised when creating site without a group_id.
 
-        Ensures that an HTTPException with status 400 is raised if
-        group_id is not provided.
+        Ensures that an HTTPException with status 400 is raised if group_id is
+        not provided.
         """
         with self.assertRaises(HTTPException) as context:
             await site_services.create_site(
@@ -335,8 +322,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
     async def test_delete_site_removes_images(self) -> None:
         """Test file deletion during site deletion.
 
-        Verifies that image files are deleted from the filesystem
-        when a site is deleted.
+        Verifies that image files are deleted from the filesystem when a site
+        is deleted.
         """
         mock_execute_result: MagicMock = MagicMock()
         mock_execute_result.scalars.return_value.all.return_value = [
@@ -362,9 +349,9 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         mock_users_result.scalars.return_value.all.return_value = [1, 2]
         self.db.execute = AsyncMock(
             side_effect=[
-                MagicMock(),          # site_groups insert
-                mock_users_result,    # select users in group
-                MagicMock(),          # bulk pref insert
+                MagicMock(),  # site_groups insert
+                mock_users_result,  # select users in group
+                MagicMock(),  # bulk pref insert
             ],
         )
         self.db.commit = AsyncMock()
@@ -384,7 +371,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         mock_users_result.scalars.return_value.all.return_value = []
         self.db.execute = AsyncMock(
             side_effect=[
-                MagicMock(),        # site_groups insert
+                MagicMock(),  # site_groups insert
                 mock_users_result,  # select users → empty
             ],
         )
@@ -400,13 +387,12 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_remove_group_from_site_deletes_prefs(self) -> None:
-        """remove_group_from_site deletes prefs for members without
-        direct access.
-        """
+        """remove_group_from_site deletes prefs for members without direct
+        access."""
         self.db.execute = AsyncMock(
             side_effect=[
-                MagicMock(),          # site_groups delete
-                MagicMock(),          # conditional preference delete
+                MagicMock(),  # site_groups delete
+                MagicMock(),  # conditional preference delete
             ],
         )
         self.db.commit = AsyncMock()
@@ -421,13 +407,12 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_remove_group_from_site_no_users(self) -> None:
-        """remove_group_from_site commits with no pref deletions when
-        group is empty.
-        """
+        """remove_group_from_site commits with no pref deletions when group is
+        empty."""
         self.db.execute = AsyncMock(
             side_effect=[
-                MagicMock(),       # site_groups delete
-                MagicMock(),       # conditional preference delete
+                MagicMock(),  # site_groups delete
+                MagicMock(),  # conditional preference delete
             ],
         )
         self.db.commit = AsyncMock()
@@ -442,7 +427,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_remove_user_from_site_keeps_pref_when_group_access(
-            self,
+        self,
     ) -> None:
         """Keeps the pref when the user's group still owns the site."""
         mock_user: MagicMock = MagicMock()
@@ -453,8 +438,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         mock_group_row.first.return_value = (1,)
         self.db.execute = AsyncMock(
             side_effect=[
-                MagicMock(),       # user_sites delete
-                mock_group_row,    # site_groups check → group still linked
+                MagicMock(),  # user_sites delete
+                mock_group_row,  # site_groups check → group still linked
             ],
         )
         self.db.commit = AsyncMock()
@@ -473,9 +458,3 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.services.site_services\
-    --cov-report=term-missing\
-        tests/examples/db_management/services/site_services_test.py
-'''

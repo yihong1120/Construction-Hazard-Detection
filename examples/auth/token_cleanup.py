@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import time
 
-import jwt
+from jwt.exceptions import InvalidTokenError
 from redis.asyncio import Redis
 
 from examples.auth.cache import get_user_data
 from examples.auth.cache import set_user_data
-from examples.auth.config import Settings
-
-
-settings = Settings()
+from examples.auth.jwt_config import jwt_refresh
 
 
 def _typed_refresh_tokens(cache: dict[str, object]) -> list[str]:
@@ -51,13 +48,12 @@ def _prune_refresh_tokens(cache: dict[str, object]) -> tuple[list[str], bool]:
     changed = False
     for tok in tokens:
         try:
-            jwt.decode(
-                tok,
-                settings.authjwt_secret_key,
-                algorithms=[settings.ALGORITHM],
-            )
+            # Refresh tokens carry a refresh-only audience.  Decoding with
+            # bare PyJWT would reject that audience and incorrectly delete a
+            # valid session from Redis.
+            jwt_refresh.decode_token(tok)
             new_tokens.append(tok)
-        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        except InvalidTokenError:
             changed = True
             continue
     return new_tokens, changed or (new_tokens != tokens)

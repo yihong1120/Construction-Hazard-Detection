@@ -132,7 +132,9 @@ def test_optional_transforms_degrade_gracefully_on_older_versions(
 
     square_symmetry = LimitedAlbumentationsStub({'SquareSymmetry'})
     monkeypatch.setattr(subject, 'A', square_symmetry)
-    assert augmenter.symmetry_transform().name == 'SquareSymmetry'
+    symmetry = augmenter.symmetry_transform()
+    assert symmetry is not None
+    assert symmetry.name == 'SquareSymmetry'
 
     def legacy_factory(*, format: str) -> str:
         return format

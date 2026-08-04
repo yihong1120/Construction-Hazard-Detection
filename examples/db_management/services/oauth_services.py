@@ -90,7 +90,8 @@ def _verify_jwt_with_jwks(
 ) -> dict[str, Any]:
     if not audiences:
         raise HTTPException(
-            status_code=500, detail='OAuth client not configured',
+            status_code=500,
+            detail='OAuth client not configured',
         )
 
     try:
@@ -191,7 +192,8 @@ async def verify_apple_identity_token(
         client_id = str(payload.get('aud', ''))
         if client_id not in client_ids:
             raise HTTPException(
-                status_code=401, detail='Invalid provider token',
+                status_code=401,
+                detail='Invalid provider token',
             )
         token_response = await _exchange_apple_authorization_code(
             authorization_code,
@@ -227,7 +229,8 @@ async def verify_apple_identity_token(
 
 
 def _apple_exchange_client_id_candidates() -> list[str]:
-    """Try web/service ID first, then native bundle ID for Apple code exchange."""
+    """Try web/service ID first, then native bundle ID for Apple code
+    exchange."""
     candidates = [
         settings.apple_service_id,
         settings.apple_bundle_id,
@@ -325,7 +328,7 @@ def _username_from_claims(provider: Provider, claims: dict[str, Any]) -> str:
     email = _normalise_email(claims.get('email'))
     source = email.split('@', 1)[0] if email else f'{provider}_{claims["sub"]}'
     username = re.sub(r'[^A-Za-z0-9_.-]+', '_', source).strip('._-')
-    return username[:64] or f'{provider}_user'
+    return username[:64] or f"{provider}_user"
 
 
 async def _unique_username(
@@ -338,15 +341,19 @@ async def _unique_username(
     suffix = 1
     while await db.scalar(select(User.id).where(User.username == candidate)):
         suffix += 1
-        candidate = f'{base[:70]}_{suffix}'
+        candidate = f"{base[:70]}_{suffix}"
     return candidate
 
 
-def _profile_names(provider: Provider, claims: dict[str, Any]) -> tuple[str, str]:
+def _profile_names(
+    provider: Provider, claims: dict[str, Any],
+) -> tuple[str, str]:
     given_name = str(claims.get('given_name') or '').strip()
     family_name = str(claims.get('family_name') or '').strip()
     if given_name or family_name:
-        return (family_name or provider.title())[:50], (given_name or 'User')[:50]
+        return (family_name or provider.title())[:50], (given_name or 'User')[
+            :50
+        ]
 
     name = str(claims.get('name') or '').strip()
     if name:
@@ -383,7 +390,8 @@ def _new_identity(
                 if part
             )
             or '',
-        ) or None,
+        )
+        or None,
         raw_profile=dict(claims),
         raw_email_is_private=(
             _bool_claim(claims.get('is_private_email'))
@@ -479,7 +487,8 @@ async def authenticate_provider_user(
     consent_payload: SignupConsentPayload | None = None,
     hash_refresh_token: bool = False,
 ) -> TokenPairData:
-    """Resolve a verified provider identity to a local user and issue tokens."""
+    """Resolve a verified provider identity to a local user and issue
+    tokens."""
     provider_user_id = str(claims.get('sub') or '')
     if not provider_user_id:
         raise HTTPException(status_code=401, detail='Invalid provider token')
@@ -605,12 +614,16 @@ async def list_user_identities(
     db: AsyncSession,
 ) -> IdentityListResponse:
     identities = (
-        await db.execute(
-            select(UserIdentity)
-            .where(UserIdentity.user_id == user.id)
-            .order_by(UserIdentity.linked_at.asc()),
+        (
+            await db.execute(
+                select(UserIdentity)
+                .where(UserIdentity.user_id == user.id)
+                .order_by(UserIdentity.linked_at.asc()),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return IdentityListResponse(
         identities=[_identity_read(identity) for identity in identities],
         has_password=_user_has_password(user),
@@ -655,13 +668,13 @@ def _update_identity_from_claims(
     if display_name:
         identity.display_name = display_name
     identity.raw_profile = dict(claims)
-    identity.raw_email_is_private = (
-        _bool_claim(claims.get('is_private_email'))
-        or bool(
-            identity.email and identity.email.endswith(
-                '@privaterelay.appleid.com',
-            ),
-        )
+    identity.raw_email_is_private = _bool_claim(
+        claims.get('is_private_email'),
+    ) or bool(
+        identity.email
+        and identity.email.endswith(
+            '@privaterelay.appleid.com',
+        ),
     )
 
 
@@ -704,7 +717,7 @@ async def link_provider_identity(
                 'code': 'provider_already_linked',
                 'message': (
                     'This user already has a different account linked for '
-                    f'{provider}.'
+                    f"{provider}."
                 ),
             },
         )

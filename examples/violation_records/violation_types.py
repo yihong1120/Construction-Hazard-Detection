@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -54,11 +53,11 @@ VIOLATION_TYPE_DEFINITIONS: tuple[ViolationTypeDefinition, ...] = (
 )
 
 VIOLATION_TYPE_BY_CODE: dict[str, ViolationTypeDefinition] = {
-    definition.code: definition
-    for definition in VIOLATION_TYPE_DEFINITIONS
+    definition.code: definition for definition in VIOLATION_TYPE_DEFINITIONS
 }
 
-# Keep existing analytics clients working while publishing only canonical codes.
+# Keep existing analytics clients working while publishing only canonical
+# codes.
 VIOLATION_TYPE_ALIASES: dict[str, str] = {
     'no_helmet': 'no_safety_helmet',
     'no_hardhat': 'no_safety_helmet',
@@ -77,7 +76,7 @@ def normalise_violation_type(code: str) -> str | None:
 
 
 def violation_type_codes_from_warnings(
-    warnings: str | Mapping[str, Any] | None,
+    warnings: object,
 ) -> list[str]:
     """Derive canonical codes from the warning payload's structured keys."""
     payload: object = warnings

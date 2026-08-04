@@ -106,9 +106,8 @@ _PASS_RESPONSE_HEADERS = {
 def _is_sse_request(request: Request, suffix: str) -> bool:
     """Return whether the proxied request should stay streaming."""
     accept = request.headers.get('accept', '').lower()
-    return (
-        'text/event-stream' in accept
-        or suffix.startswith('metadata/stream-id/')
+    return 'text/event-stream' in accept or suffix.startswith(
+        'metadata/stream-id/',
     )
 
 
@@ -126,7 +125,9 @@ def _log_sse_error_events(
         buffer[:] = remaining
         event_type = 'message'
         data_lines: list[str] = []
-        for line in bytes(raw_event).decode('utf-8', errors='replace').splitlines():
+        for line in (
+            bytes(raw_event).decode('utf-8', errors='replace').splitlines()
+        ):
             field, separator, value = line.partition(':')
             if not separator:
                 continue
@@ -280,7 +281,7 @@ def _proxy_request_headers(
         for name, value in request.headers.items()
         if name.lower() not in _DROP_REQUEST_HEADERS
     }
-    headers['Authorization'] = f'Bearer {access_token}'
+    headers['Authorization'] = f"Bearer {access_token}"
     headers['X-BFF-Request'] = '1'
     return headers
 
@@ -292,7 +293,7 @@ async def proxy_request(
     path: str,
 ) -> Response:
     base, suffix = resolve_upstream(path)
-    url = f'{base}/{suffix}' if suffix else base
+    url = f"{base}/{suffix}" if suffix else base
     body = await request.body()
 
     async def send(access_token: str) -> httpx.Response:
@@ -358,9 +359,12 @@ async def _proxy_streaming_request(
     url: str,
     access_token: str,
 ) -> StreamingResponse:
-    """Proxy one long-lived upstream streaming response without buffering it."""
+    """Proxy one long-lived upstream streaming response without buffering
+    it."""
 
-    async def open_stream(token: str) -> tuple[httpx.AsyncClient, httpx.Response]:
+    async def open_stream(
+        token: str,
+    ) -> tuple[httpx.AsyncClient, httpx.Response]:
         client = httpx.AsyncClient(
             timeout=httpx.Timeout(
                 UPSTREAM_TIMEOUT_SECONDS,
@@ -447,8 +451,8 @@ async def _proxy_streaming_request(
         except Exception as exc:
             close_reason = type(exc).__name__
             logger.warning(
-                'BFF SSE upstream closed with error path=%s upstream_status=%s '
-                'reason=%s',
+                'BFF SSE upstream closed with error path=%s '
+                'upstream_status=%s reason=%s',
                 request.url.path,
                 upstream.status_code,
                 close_reason,

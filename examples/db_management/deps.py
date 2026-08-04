@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Protocol
+
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Security
@@ -14,6 +16,20 @@ from examples.auth.models import Site
 from examples.auth.models import User
 
 SUPER_ADMIN_NAME = 'ChangDar'
+
+
+class _NamedRoleUser(Protocol):
+    """Identity fields required to recognise the super administrator."""
+
+    username: str
+    role: str
+
+
+class _GroupedRoleUser(Protocol):
+    """Identity fields required for group-scoped admin checks."""
+
+    role: str
+    group_id: int | None
 
 
 async def get_current_user(
@@ -55,7 +71,7 @@ async def get_current_user(
     return user
 
 
-def is_super_admin(user: User) -> bool:
+def is_super_admin(user: _NamedRoleUser) -> bool:
     """
     Check if the given user is the super administrator.
 
@@ -123,7 +139,7 @@ def ensure_not_super(target: User) -> None:
         )
 
 
-def ensure_admin_with_group(user: User) -> None:
+def ensure_admin_with_group(user: _GroupedRoleUser) -> None:
     """
     Ensure the user is an admin associated with a group.
 

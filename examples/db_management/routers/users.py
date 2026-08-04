@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Protocol
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -67,6 +68,27 @@ from examples.db_management.services.user_services import update_password
 from examples.db_management.services.user_services import update_username
 
 router = APIRouter(tags=['user-mgmt'])
+
+
+class _GroupOperator(Protocol):
+    """User fields needed for group-scoped account administration."""
+
+    username: str
+    role: str
+    group_id: int | None
+
+
+class _ManagedUser(Protocol):
+    """User fields needed while checking management scope."""
+
+    group_id: int | None
+
+
+class _SignupApprovalUser(_ManagedUser, Protocol):
+    """User fields mutated by the signup-approval workflow."""
+
+    id: int
+    status: str
 
 
 async def _load_user_read(user_id: int, db: AsyncSession) -> UserRead:
@@ -154,7 +176,7 @@ async def _register_signup_user(
 
 def _resolve_target_group_id(
     requested_group_id: int | None,
-    operator: User,
+    operator: _GroupOperator,
     default_to_operator_group: bool = False,
 ) -> int | None:
     """Resolve the effective group ID that the operator may manage."""
@@ -174,7 +196,10 @@ def _resolve_target_group_id(
     return requested_group_id
 
 
-def _ensure_user_management_scope(target: User, operator: User) -> None:
+def _ensure_user_management_scope(
+    target: _ManagedUser,
+    operator: _GroupOperator,
+) -> None:
     """Ensure an admin can only manage users in their own group."""
     if is_super_admin(operator):
         return
@@ -297,10 +322,10 @@ async def admin_list_pending_users(
 
 
 async def _approve_signup_user(
-    user: User,
+    user: _SignupApprovalUser,
     group_id: int | None,
     db: AsyncSession,
-    me: User,
+    me: _GroupOperator,
 ) -> UserRead:
     """Assign an approved signup to a group and activate it."""
     target_group_id = _resolve_target_group_id(

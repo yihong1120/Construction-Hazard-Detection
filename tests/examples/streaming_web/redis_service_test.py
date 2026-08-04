@@ -25,13 +25,15 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         """Exercise this test."""
         with patch(
             'examples.streaming_web.redis_service.Utils.encode',
-            side_effect=lambda value: f'encoded({value})',
+            side_effect=lambda value: f"encoded({value})",
         ):
             key = build_metadata_key('site-a', 'cam-1')
 
         self.assertEqual(key, 'stream_metadata:encoded(site-a)|encoded(cam-1)')
 
-    def test_metadata_key_helpers_handle_cache_and_invalid_values(self) -> None:
+    def test_metadata_key_helpers_handle_cache_and_invalid_values(
+        self,
+    ) -> None:
         """Metadata display names tolerate malformed or repeated Redis keys."""
         service._stream_name_cache.clear()
         self.assertEqual(service._extract_stream_id('invalid-key'), '')
@@ -45,18 +47,18 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         service._stream_name_cache[encoded_name] = 'Cached camera'
         self.assertEqual(
             service._decode_stream_name(
-                f'stream_metadata:site|{encoded_name}',
+                f"stream_metadata:site|{encoded_name}",
             ),
             'Cached camera',
         )
 
         service._stream_name_cache.clear()
         service._stream_name_cache.update(
-            {f'cached-{index}': 'value' for index in range(512)},
+            {f"cached-{index}": 'value' for index in range(512)},
         )
         self.assertEqual(
             service._decode_stream_name(
-                f'stream_metadata:site|{encoded_name}',
+                f"stream_metadata:site|{encoded_name}",
             ),
             'Cam1',
         )
@@ -137,7 +139,9 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['stream_id'], 'Q2FtMQ==')
         self.assertEqual(result['has_warning'], '1')
 
-    async def test_fetch_latest_metadata_skips_repeated_message_id(self) -> None:
+    async def test_fetch_latest_metadata_skips_repeated_message_id(
+        self,
+    ) -> None:
         """The SSE poller ignores the Redis item it has already sent."""
         self.mock_rds.xread.return_value = [
             (

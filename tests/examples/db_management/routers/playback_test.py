@@ -40,11 +40,13 @@ class PlaybackRouterTest(unittest.TestCase):
         app.dependency_overrides[get_redis_pool] = lambda: self.redis
         app.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(app)
-        self.access_token = jwt_access.create_access_token({
-            'username': 'ChangDar',
-            'user_id': 1,
-        })
-        self.headers = {'Authorization': f'Bearer {self.access_token}'}
+        self.access_token = jwt_access.create_access_token(
+            {
+                'username': 'ChangDar',
+                'user_id': 1,
+            },
+        )
+        self.headers = {'Authorization': f"Bearer {self.access_token}"}
 
     def test_native_single_playback_returns_signed_detail_url(self) -> None:
         upstream = {
@@ -52,6 +54,7 @@ class PlaybackRouterTest(unittest.TestCase):
             'key': 'Cam1',
             'label': 'Site A',
             'profile': 'clean',
+            'rendition': 'detail',
             'state': 'ready',
             'status': 'ready',
             'media_hls_url': '/hazard/media/site_cam1/index.m3u8',
@@ -109,7 +112,12 @@ class PlaybackRouterTest(unittest.TestCase):
         self.assertEqual(media['parent'], 'native:user:1')
         self.assertEqual(media['camera'], 'Cam1')
         self.assertEqual(media['quality'], 'detail')
+        self.assertEqual(
+            media['playback_sessions']['stream-session-1']['stream_name'],
+            'Cam1',
+        )
         post_streaming.assert_awaited_once()
+        assert post_streaming.await_args is not None
         self.assertEqual(
             post_streaming.await_args.kwargs['payload']['profile'],
             'clean',
@@ -197,6 +205,7 @@ class PlaybackRouterTest(unittest.TestCase):
                 'media_overlay_demand:hazard_U2l0ZSBB_Q2FtMg_preview:emgtVFc',
             ],
         )
+        assert post_streaming.await_args is not None
         self.assertEqual(
             post_streaming.await_args.kwargs['payload']['streams'][0],
             {
@@ -365,11 +374,12 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             access_token='access-token',
         )
 
-    def test_bearer_decode_and_subject_helpers(self) -> None:
+    async def test_bearer_decode_and_subject_helpers(self) -> None:
         self.assertEqual(
             playback._bearer_token(
                 _request('Bearer token'),
-            ), 'token',
+            ),
+            'token',
         )
         self.assertIsNone(playback._bearer_token(_request('Basic token')))
         self.assertEqual(playback._subject_user_id({'user_id': '7'}), 7)
@@ -381,30 +391,48 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             side_effect=InvalidTokenError('bad token'),
         ):
             with self.assertRaises(HTTPException) as invalid:
-                playback._decode_access_token('bad')
+                await playback._decode_access_token('bad', self.redis)
         self.assertEqual(invalid.exception.status_code, 401)
 
-        with patch.object(
-            playback.jwt_access,
-            'decode_token',
-            return_value={'sub': 'alice'},
+        with (
+            patch.object(
+                playback.jwt_access,
+                'decode_token',
+                return_value={'sub': 'alice'},
+            ),
+            patch.object(
+                playback,
+                'is_access_token_revoked',
+                new=AsyncMock(return_value=False),
+            ),
         ):
-            credentials = playback._decode_access_token('token')
+            credentials = await playback._decode_access_token(
+                'token',
+                self.redis,
+            )
         self.assertEqual(credentials.subject, {'username': 'alice'})
 
-        with patch.object(
-            playback.jwt_access,
-            'decode_token',
-            return_value={'sub': 7},
+        with (
+            patch.object(
+                playback.jwt_access,
+                'decode_token',
+                return_value={'sub': 7},
+            ),
+            patch.object(
+                playback,
+                'is_access_token_revoked',
+                new=AsyncMock(return_value=False),
+            ),
         ):
             with self.assertRaises(HTTPException) as empty_subject:
-                playback._decode_access_token('token')
+                await playback._decode_access_token('token', self.redis)
         self.assertEqual(empty_subject.exception.status_code, 401)
 
     async def test_user_lookup_and_principal_resolution_failures(self) -> None:
         self.db.scalar.return_value = '9'
         self.assertEqual(
-            await playback._load_user_id_by_username(self.db, 'alice'), 9,
+            await playback._load_user_id_by_username(self.db, 'alice'),
+            9,
         )
         self.db.scalar.return_value = 'invalid'
         with self.assertRaises(HTTPException) as invalid_user:
@@ -418,13 +446,19 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as invalid_bearer:
                 await playback._resolve_playback_principal(
-                    _request('Bearer token'), self.db, self.redis,
+                    _request('Bearer token'),
+                    self.db,
+                    self.redis,
                 )
         self.assertEqual(invalid_bearer.exception.status_code, 401)
 
-        with patch.object(playback, 'get_auth_session', new=AsyncMock(return_value=None)):
+        with patch.object(
+            playback, 'get_auth_session', new=AsyncMock(return_value=None),
+        ):
             with self.assertRaises(HTTPException) as expired_session:
-                await playback._resolve_playback_principal(_request(), self.db, self.redis)
+                await playback._resolve_playback_principal(
+                    _request(), self.db, self.redis,
+                )
         self.assertEqual(
             expired_session.exception.detail,
             'app_session_expired',
@@ -446,26 +480,36 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                         '_decode_access_token',
                         return_value=JwtAuthorizationCredentials(subject={}),
                     ):
-                        with self.assertRaises(HTTPException) as invalid_web_token:
+                        with self.assertRaises(
+                            HTTPException,
+                        ) as invalid_web_token:
                             await playback._resolve_playback_principal(
                                 _request(
                                     session_id='session',
-                                ), self.db, self.redis,
+                                ),
+                                self.db,
+                                self.redis,
                             )
         self.assertEqual(invalid_web_token.exception.status_code, 401)
 
-    async def test_principal_resolution_uses_database_and_bff_session_fallbacks(self) -> None:
+    async def test_principal_resolution_uses_database_and_bff_fallbacks(
+        self,
+    ) -> None:
         credentials = JwtAuthorizationCredentials(
             subject={'username': 'alice'},
         )
-        with patch.object(playback, '_decode_access_token', return_value=credentials):
+        with patch.object(
+            playback, '_decode_access_token', return_value=credentials,
+        ):
             with patch.object(
                 playback,
                 '_load_user_id_by_username',
                 new=AsyncMock(return_value=9),
             ):
                 principal = await playback._resolve_playback_principal(
-                    _request('Bearer token'), self.db, self.redis,
+                    _request('Bearer token'),
+                    self.db,
+                    self.redis,
                 )
         self.assertEqual(principal.parent, 'native:user:9')
 
@@ -480,16 +524,24 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                     'get_proxy_access_token',
                     new=AsyncMock(return_value=('web-token', 'refresh')),
                 ):
-                    with patch.object(playback, '_decode_access_token', return_value=credentials):
+                    with patch.object(
+                        playback,
+                        '_decode_access_token',
+                        return_value=credentials,
+                    ):
                         with patch.object(
                             playback,
                             '_load_user_id_by_username',
                             new=AsyncMock(return_value=11),
                         ):
-                            principal = await playback._resolve_playback_principal(
-                                _request(
-                                    session_id='session',
-                                ), self.db, self.redis,
+                            principal = (
+                                await playback._resolve_playback_principal(
+                                    _request(
+                                        session_id='session',
+                                    ),
+                                    self.db,
+                                    self.redis,
+                                )
                             )
         self.assertEqual(principal.platform, 'web')
         self.assertEqual(principal.user_id, 11)
@@ -509,30 +561,42 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         timeout_context.__aenter__.side_effect = httpx.TimeoutException(
             'timeout',
         )
-        with patch.object(playback.httpx, 'AsyncClient', return_value=timeout_context):
+        with patch.object(
+            playback.httpx, 'AsyncClient', return_value=timeout_context,
+        ):
             with self.assertRaises(HTTPException) as unavailable:
                 await playback._post_streaming_playback(
-                    '/stream', principal=self.principal, payload={},
+                    '/stream',
+                    principal=self.principal,
+                    payload={},
                 )
         self.assertEqual(unavailable.exception.status_code, 502)
 
         failure_response = MagicMock(status_code=403)
         failure_response.json.return_value = {'detail': 'forbidden'}
         _, failure_context = _http_context(failure_response)
-        with patch.object(playback.httpx, 'AsyncClient', return_value=failure_context):
+        with patch.object(
+            playback.httpx, 'AsyncClient', return_value=failure_context,
+        ):
             with self.assertRaises(HTTPException) as failed_upstream:
                 await playback._post_streaming_playback(
-                    '/stream', principal=self.principal, payload={},
+                    '/stream',
+                    principal=self.principal,
+                    payload={},
                 )
         self.assertEqual(failed_upstream.exception.detail, 'forbidden')
 
         invalid_response = MagicMock(status_code=200)
         invalid_response.json.side_effect = ValueError('bad json')
         _, invalid_context = _http_context(invalid_response)
-        with patch.object(playback.httpx, 'AsyncClient', return_value=invalid_context):
+        with patch.object(
+            playback.httpx, 'AsyncClient', return_value=invalid_context,
+        ):
             with self.assertRaises(HTTPException) as bad_json:
                 await playback._post_streaming_playback(
-                    '/stream', principal=self.principal, payload={},
+                    '/stream',
+                    principal=self.principal,
+                    payload={},
                 )
         self.assertEqual(
             bad_json.exception.detail,
@@ -542,19 +606,27 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         list_response = MagicMock(status_code=200)
         list_response.json.return_value = []
         _, list_context = _http_context(list_response)
-        with patch.object(playback.httpx, 'AsyncClient', return_value=list_context):
+        with patch.object(
+            playback.httpx, 'AsyncClient', return_value=list_context,
+        ):
             with self.assertRaises(HTTPException) as bad_body:
                 await playback._post_streaming_playback(
-                    '/stream', principal=self.principal, payload={},
+                    '/stream',
+                    principal=self.principal,
+                    payload={},
                 )
         self.assertEqual(bad_body.exception.status_code, 502)
 
         success_response = MagicMock(status_code=201)
         success_response.json.return_value = {'key': 'Cam1'}
         _, success_context = _http_context(success_response)
-        with patch.object(playback.httpx, 'AsyncClient', return_value=success_context):
+        with patch.object(
+            playback.httpx, 'AsyncClient', return_value=success_context,
+        ):
             body, status_code = await playback._post_streaming_playback(
-                '/stream', principal=self.principal, payload={'key': 'Cam1'},
+                '/stream',
+                principal=self.principal,
+                payload={'key': 'Cam1'},
             )
         self.assertEqual((body, status_code), ({'key': 'Cam1'}, 201))
 
@@ -569,40 +641,63 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             },
             'new-token',
         )
+        assert isinstance(signed['media_hls_url'], str)
+        assert isinstance(signed['playback_url'], str)
         self.assertIn('mt=new-token', signed['media_hls_url'])
         self.assertIn('mt=new-token', signed['playback_url'])
         self.assertEqual(signed['hls_url'], signed['playback_url'])
         self.assertEqual(
             playback._signed_stream_item(
-                {'media_hls_url': '/media'}, 'token',
+                {'media_hls_url': '/media'},
+                'token',
             )['hls_url'],
             '/media?mt=token',
         )
 
         self.assertEqual(
             playback._playback_demand_keys(
-                site='Site', cameras=['Cam'], profile='clean', quality='preview', language=None,
+                site='Site',
+                cameras=['Cam'],
+                profile='clean',
+                quality='preview',
+                language=None,
             )[0].split(':', 1)[0],
             'media_clean_demand',
         )
         self.assertEqual(
             playback._playback_demand_keys(
-                site='Site', cameras=['Cam'], profile='overlay', quality='detail', language='en',
+                site='Site',
+                cameras=['Cam'],
+                profile='overlay',
+                quality='detail',
+                language='en',
             )[0].split(':', 1)[0],
             'media_overlay_demand',
         )
         with self.assertRaises(ValueError):
             playback._playback_demand_keys(
-                site='Site', cameras=['Cam'], profile='bad', quality='detail', language=None,
+                site='Site',
+                cameras=['Cam'],
+                profile='bad',
+                quality='detail',
+                language=None,
             )
 
         wall_payload = playback._wall_upstream_payload(
-            PlaybackWallRequest(site='Site', cameras=['Cam1']), 'overlay',
+            PlaybackWallRequest(site='Site', cameras=['Cam1']),
+            'overlay',
         )
         self.assertNotIn('label', wall_payload)
-        self.assertEqual(wall_payload['streams'][0]['key'], 'Cam1')
+        streams = wall_payload['streams']
+        assert isinstance(streams, list)
+        assert streams
+        first_stream = streams[0]
+        assert isinstance(first_stream, dict)
+        self.assertEqual(first_stream['key'], 'Cam1')
 
-    def test_wall_camera_validator_handles_missing_blank_and_duplicate_names(self) -> None:
+    def test_wall_camera_validator_handles_missing_blank_and_duplicate_names(
+        self,
+    ) -> None:
         """Wall requests may omit cameras but cannot contain invalid names."""
         self.assertIsNone(PlaybackWallRequest(site='Site').cameras)
         self.assertIsNone(PlaybackWallRequest.validate_cameras(None))
@@ -620,7 +715,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as invalid_items:
                 await playback._create_wall_playback(
-                    payload=payload, principal=self.principal, redis=self.redis,
+                    payload=payload,
+                    principal=self.principal,
+                    redis=self.redis,
                 )
         self.assertEqual(invalid_items.exception.status_code, 502)
 
@@ -631,7 +728,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as no_cameras:
                 await playback._create_wall_playback(
-                    payload=payload, principal=self.principal, redis=self.redis,
+                    payload=payload,
+                    principal=self.principal,
+                    redis=self.redis,
                 )
         self.assertEqual(no_cameras.exception.detail, 'cameras_not_found')
 
@@ -640,12 +739,19 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             '_resolve_playback_principal',
             new=AsyncMock(return_value=self.principal),
         ):
-            with patch.object(playback, 'renew_media_session', new=AsyncMock(return_value=None)):
+            with patch.object(
+                playback,
+                'renew_media_session',
+                new=AsyncMock(return_value=None),
+            ):
                 with self.assertRaises(HTTPException) as expired:
                     await playback.renew_playback_session(
                         PlaybackRenewRequest(
                             id='session',
-                        ), _request(), self.db, self.redis,
+                        ),
+                        _request(),
+                        self.db,
+                        self.redis,
                     )
         self.assertEqual(expired.exception.detail, 'expired_media_session')
 
@@ -654,10 +760,17 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             '_resolve_playback_principal',
             new=AsyncMock(return_value=self.principal),
         ):
-            with patch.object(playback, 'delete_media_session', new=AsyncMock(return_value=False)):
+            with patch.object(
+                playback,
+                'delete_media_session',
+                new=AsyncMock(return_value=False),
+            ):
                 with self.assertRaises(HTTPException) as absent:
                     await playback.delete_playback_session(
-                        'session', _request(), self.db, self.redis,
+                        'session',
+                        _request(),
+                        self.db,
+                        self.redis,
                     )
         self.assertEqual(absent.exception.detail, 'session_not_found')
 
@@ -666,9 +779,16 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             '_resolve_playback_principal',
             new=AsyncMock(return_value=self.principal),
         ):
-            with patch.object(playback, 'delete_media_session', new=AsyncMock(return_value=True)):
+            with patch.object(
+                playback,
+                'delete_media_session',
+                new=AsyncMock(return_value=True),
+            ):
                 response = await playback.delete_playback_session(
-                    'session', _request(), self.db, self.redis,
+                    'session',
+                    _request(),
+                    self.db,
+                    self.redis,
                 )
         self.assertEqual(response.status_code, 204)
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import types
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import patch
+
+from jwt.exceptions import ExpiredSignatureError
+from jwt.exceptions import InvalidTokenError
 
 from examples.auth import token_cleanup as tc
 
@@ -11,20 +13,9 @@ from examples.auth import token_cleanup as tc
 class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
     """Behavioural tests for prune_user_cache covering key branches."""
 
-    def setUp(self) -> None:
-        """Provide shared fakes and defaults for tests."""
-        # Minimal Redis substitute, not used directly by the function.
-        self.rds: object = object()
-        # Fixed settings for jwt decode path.
-        self.settings = types.SimpleNamespace(
-            authjwt_secret_key='s',
-            ALGORITHM='HS256',
-        )
-
     async def test_no_cache_returns_none(self) -> None:
         """When user cache is missing, return None and do not write back."""
         with (
-            patch.object(tc, 'settings', self.settings),
             patch.object(
                 tc,
                 'get_user_data',
@@ -32,9 +23,9 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             ) as mock_get,
             patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
         ):
-            out = await tc.prune_user_cache(self.rds, 'alice')
+            out = await tc.prune_user_cache(object(), 'alice')
         self.assertIsNone(out)
-        mock_get.assert_awaited_once_with(self.rds, 'alice')
+        mock_get.assert_awaited_once()
         mock_set.assert_not_awaited()
 
     async def test_prune_refresh_tokens_mixed_validity(self) -> None:
@@ -43,24 +34,17 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         cache = {
             'refresh_tokens': ['valid1', 'expired1', 'invalid1'],
         }
-        # Configure jwt.decode to succeed for valid1, fail for others.
+        # Configure refresh-token verification for valid and invalid tokens.
 
-        def decode_side_effect(
-            tok: str,
-            key: str,
-            algorithms: list[str],
-        ) -> dict[str, object]:
+        def decode_side_effect(tok: str) -> dict[str, object]:
             """Support decode_side_effect."""
             if tok == 'valid1':
-                self.assertEqual(key, 's')
-                self.assertEqual(algorithms, ['HS256'])
                 return {'ok': True}
             if tok == 'expired1':
-                raise tc.jwt.ExpiredSignatureError('expired')
-            raise tc.jwt.InvalidTokenError('bad')
+                raise ExpiredSignatureError('expired')
+            raise InvalidTokenError('bad')
 
         with (
-            patch.object(tc, 'settings', self.settings),
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
                 tc,
@@ -69,12 +53,12 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             ) as mock_get,
             patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
             patch.object(
-                tc.jwt,
-                'decode',
+                tc.jwt_refresh,
+                'decode_token',
                 side_effect=decode_side_effect,
             ) as mock_decode,
         ):
-            out = await tc.prune_user_cache(self.rds, 'bob')
+            out = await tc.prune_user_cache(object(), 'bob')
 
             self.assertEqual(
                 out,
@@ -84,15 +68,20 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
                     'jti_meta': {},
                 },
             )
-        mock_get.assert_awaited_once_with(self.rds, 'bob')
-        mock_set.assert_awaited_once_with(
-            self.rds,
-            'bob',
-            {
-                'refresh_tokens': ['valid1'],
-                'jti_list': [],
-                'jti_meta': {},
-            },
+        mock_get.assert_awaited_once()
+        mock_set.assert_awaited_once()
+        await_call = mock_set.await_args
+        assert await_call is not None
+        self.assertEqual(
+            await_call.args[1:],
+            (
+                'bob',
+                {
+                    'refresh_tokens': ['valid1'],
+                    'jti_list': [],
+                    'jti_meta': {},
+                },
+            ),
         )
         # Ensure decode was attempted for each token
         self.assertEqual(
@@ -111,7 +100,6 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             'jti_meta': {'a': now + 10, 'b': now - 1, 'stale': now + 10},
         }
         with (
-            patch.object(tc, 'settings', self.settings),
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
                 tc,
@@ -120,9 +108,9 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             ) as mock_get,
             patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
             # not used in this path
-            patch.object(tc.jwt, 'decode', return_value={}),
+            patch.object(tc.jwt_refresh, 'decode_token', return_value={}),
         ):
-            out = await tc.prune_user_cache(self.rds, 'carol')
+            out = await tc.prune_user_cache(object(), 'carol')
 
         self.assertEqual(
             out,
@@ -132,11 +120,16 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
                 'jti_meta': {'a': now + 10},
             },
         )
-        mock_get.assert_awaited_once_with(self.rds, 'carol')
-        mock_set.assert_awaited_once_with(
-            self.rds,
-            'carol',
-            {'jti_list': ['a', 'c'], 'jti_meta': {'a': now + 10}},
+        mock_get.assert_awaited_once()
+        mock_set.assert_awaited_once()
+        await_call = mock_set.await_args
+        assert await_call is not None
+        self.assertEqual(
+            await_call.args[1:],
+            (
+                'carol',
+                {'jti_list': ['a', 'c'], 'jti_meta': {'a': now + 10}},
+            ),
         )
 
     async def test_no_change_does_not_write(self) -> None:
@@ -149,7 +142,6 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         }
 
         with (
-            patch.object(tc, 'settings', self.settings),
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
                 tc,
@@ -158,22 +150,18 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             ) as mock_get,
             patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
             patch.object(
-                tc.jwt,
-                'decode',
+                tc.jwt_refresh,
+                'decode_token',
                 return_value={'ok': True},
             ) as mock_decode,
         ):
-            out = await tc.prune_user_cache(self.rds, 'dave')
+            out = await tc.prune_user_cache(object(), 'dave')
 
         # No changes: same cache returned and no write
         self.assertEqual(out, cache)
-        mock_get.assert_awaited_once_with(self.rds, 'dave')
+        mock_get.assert_awaited_once()
         mock_set.assert_not_awaited()
-        mock_decode.assert_called_once_with(
-            'still_valid',
-            's',
-            algorithms=['HS256'],
-        )
+        mock_decode.assert_called_once_with('still_valid')
 
     async def test_combined_refresh_and_jti_changes(self) -> None:
         """Prune both refresh tokens and JTIs then persist the updated
@@ -186,18 +174,13 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             'jti_meta': {'keep': now + 5, 'drop': now - 5},
         }
 
-        def decode_side_effect(
-            tok: str,
-            key: str,
-            algorithms: list[str],
-        ) -> dict[str, object]:
+        def decode_side_effect(tok: str) -> dict[str, object]:
             """Support decode_side_effect."""
             if tok == 'ok':
                 return {}
-            raise tc.jwt.InvalidTokenError('bad')
+            raise InvalidTokenError('bad')
 
         with (
-            patch.object(tc, 'settings', self.settings),
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
                 tc,
@@ -206,12 +189,12 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             ) as mock_get,
             patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
             patch.object(
-                tc.jwt,
-                'decode',
+                tc.jwt_refresh,
+                'decode_token',
                 side_effect=decode_side_effect,
             ),
         ):
-            out = await tc.prune_user_cache(self.rds, 'erin')
+            out = await tc.prune_user_cache(object(), 'erin')
 
         self.assertEqual(
             out,
@@ -221,15 +204,20 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
                 'jti_meta': {'keep': now + 5},
             },
         )
-        mock_get.assert_awaited_once_with(self.rds, 'erin')
-        mock_set.assert_awaited_once_with(
-            self.rds,
-            'erin',
-            {
-                'refresh_tokens': ['ok'],
-                'jti_list': ['keep'],
-                'jti_meta': {'keep': now + 5},
-            },
+        mock_get.assert_awaited_once()
+        mock_set.assert_awaited_once()
+        await_call = mock_set.await_args
+        assert await_call is not None
+        self.assertEqual(
+            await_call.args[1:],
+            (
+                'erin',
+                {
+                    'refresh_tokens': ['ok'],
+                    'jti_list': ['keep'],
+                    'jti_meta': {'keep': now + 5},
+                },
+            ),
         )
 
     async def test_refresh_tokens_not_list_is_ignored(self) -> None:
@@ -239,15 +227,14 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             'refresh_tokens': 'oops-not-a-list',
         }
         with (
-            patch.object(tc, 'settings', self.settings),
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
                 tc, 'get_user_data', new=AsyncMock(return_value=cache.copy()),
             ) as mock_get,
             patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
-            patch.object(tc.jwt, 'decode', return_value={}),
+            patch.object(tc.jwt_refresh, 'decode_token', return_value={}),
         ):
-            out = await tc.prune_user_cache(self.rds, 'fred')
+            out = await tc.prune_user_cache(object(), 'fred')
 
         # 會補上正規化的空 jti 欄位，且不寫回
         self.assertEqual(
@@ -258,7 +245,7 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
                 'jti_meta': {},
             },
         )
-        mock_get.assert_awaited_once_with(self.rds, 'fred')
+        mock_get.assert_awaited_once()
         mock_set.assert_not_awaited()
 
     async def test_jti_meta_not_dict_skips_processing(self) -> None:
@@ -269,19 +256,18 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             'jti_meta': 'not-a-dict',
         }
         with (
-            patch.object(tc, 'settings', self.settings),
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
                 tc, 'get_user_data', new=AsyncMock(return_value=cache.copy()),
             ) as mock_get,
             patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
         ):
-            out = await tc.prune_user_cache(self.rds, 'gina')
+            out = await tc.prune_user_cache(object(), 'gina')
 
         # No changes since jti_meta is invalid type (treated as empty),
         # and no refresh tokens provided to change state
         self.assertEqual(out, {'jti_list': ['a'], 'jti_meta': {}})
-        mock_get.assert_awaited_once_with(self.rds, 'gina')
+        mock_get.assert_awaited_once()
         mock_set.assert_not_awaited()
 
     async def test_jti_list_not_list_prunes_all_meta(self) -> None:
@@ -294,23 +280,27 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
             'jti_meta': {'keep': now + 10},
         }
         with (
-            patch.object(tc, 'settings', self.settings),
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
                 tc, 'get_user_data', new=AsyncMock(return_value=cache.copy()),
             ) as mock_get,
             patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
         ):
-            out = await tc.prune_user_cache(self.rds, 'hank')
+            out = await tc.prune_user_cache(object(), 'hank')
 
         # jti_list remains the original invalid value as per current logic,
         # but jti_meta is pruned to empty and a write occurs
-            self.assertEqual(out, {'jti_list': [], 'jti_meta': {}})
-        mock_get.assert_awaited_once_with(self.rds, 'hank')
-        mock_set.assert_awaited_once_with(
-            self.rds,
-            'hank',
-            {'jti_list': [], 'jti_meta': {}},
+        self.assertEqual(out, {'jti_list': [], 'jti_meta': {}})
+        mock_get.assert_awaited_once()
+        mock_set.assert_awaited_once()
+        await_call = mock_set.await_args
+        assert await_call is not None
+        self.assertEqual(
+            await_call.args[1:],
+            (
+                'hank',
+                {'jti_list': [], 'jti_meta': {}},
+            ),
         )
 
 

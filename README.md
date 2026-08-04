@@ -188,16 +188,46 @@ YOLO_WORKER_ENABLED=true
 YOLO_WORKER_COUNT=2
 YOLO_WORKER_DEVICES=cuda:0,cuda:0
 YOLO_WORKER_QUEUE_SIZE=64
+YOLO_WORKER_RESULT_QUEUE_SIZE=8
+YOLO_WORKER_RING_SLOTS=2
+YOLO_WORKER_RING_SLOT_CLEANUP_SECONDS=120
 YOLO_WORKER_BATCH_SIZE=8
 YOLO_WORKER_BATCH_WAIT_MS=10
 YOLO_WORKER_PRECISION=f16
 # f32/f16 use models/pt/*.pt; int8 uses models/int8_engine/*.engine.
+
+# Each camera keeps a bounded shared-memory frame ring and receives results on
+# its own queue. For Docker, set YOLO_WORKER_SHM_SIZE high enough for
+# camera_count * YOLO_WORKER_RING_SLOTS * maximum_frame_bytes.
+
+# Staged GPU decode rollout. This bypasses OpenCV CPU decoding and groups
+# NVDEC CUDA tensors by model key for shared batched YOLO inference. Every
+# source is copied through a local MediaMTX TCP relay without re-encoding
+# before TorchCodec reads it with NVDEC.
+# Start disabled, then enable after confirming VRAM capacity for all cameras.
+GPU_DECODE_ENABLED=false
+GPU_DECODE_DEVICE=cuda:0
+GPU_DECODE_BATCH_SIZE=8
+GPU_DECODE_BATCH_WAIT_MS=10
+GPU_DECODE_QUEUE_SIZE=64
+GPU_DECODE_STREAM_RETRY_SECONDS=5
+GPU_DECODE_RELAY_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
+GPU_DECODE_RELAY_TIMEOUT_US=5000000
+GPU_DECODE_RELAY_STARTUP_SECONDS=1
 
 MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
 MEDIA_PUBLIC_HLS_BASE_URL='/hazard/media'
 MEDIA_PUBLIC_WEBRTC_BASE_URL='/hazard/media/webrtc'
 MEDIA_PUBLISH_CLEAN_STREAM=true
 MEDIA_PUBLISH_ANNOTATED_STREAM=true
+# Detail clean video is copied directly from the camera. Only the requested
+# preview and annotated streams are encoded, using the Intel iGPU.
+MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM=true
+MEDIA_PUBLISH_CLEAN_ENCODER=copy
+MEDIA_PUBLISH_ENCODER=h264_vaapi
+MEDIA_PUBLISH_VAAPI_DEVICE=/dev/dri/renderD128
+# Share viewer-demand reads between a camera's clean/detail/preview publishers.
+MEDIA_DEMAND_CACHE_SECONDS=0.5
 ```
 
 Use one stable, high-entropy `JWT_SECRET_KEY` for a deployment. Do not commit
@@ -279,11 +309,27 @@ MEDIA_PUBLIC_HLS_BASE_URL='/hazard/media'
 MEDIA_PUBLIC_WEBRTC_BASE_URL='/hazard/media/webrtc'
 ```
 
+The host account that runs `main.py` needs access to the Intel render node:
+
+```bash
+sudo usermod -aG render "$USER"
+# Sign out and back in before starting main.py.
+```
+
+With the configured on-demand publishers, clean detail video uses FFmpeg
+stream copy and consumes no encoder session. Only active preview and annotated
+paths use `h264_vaapi` on the Intel iGPU; MediaMTX then remuxes and distributes
+that one encoded stream to all viewers. This avoids the RTX 4090 GeForce NVENC
+eight-session policy without moving overlay drawing into the browser.
+
 Use the Compose service name when `main.py` runs inside Docker:
 
 ```dotenv
 MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://media-server:8554'
 ```
+
+Docker Compose maps `/dev/dri/renderD128` into the detection container. Set
+`INTEL_RENDER_GID` to the host `render` group ID if it is not `992`.
 
 The streaming backend returns playback URLs shaped like:
 

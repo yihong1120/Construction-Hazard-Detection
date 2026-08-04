@@ -9,6 +9,7 @@ from examples.mcp_server.config import get_transport_config
 from examples.mcp_server.schemas import DetectionLikeDict
 from examples.mcp_server.schemas import HazardResponse
 from examples.mcp_server.schemas import InferenceResponse
+from examples.mcp_server.schemas import TransportConfig
 from examples.mcp_server.tools.hazard import HazardTools
 from examples.mcp_server.tools.inference import InferenceTools
 from examples.mcp_server.tools.model import ModelTools
@@ -419,53 +420,33 @@ async def utils_validate_detections(
     )
 
 
+def _configure_mcp_transport(transport_config: TransportConfig) -> None:
+    """Apply runtime transport settings to the registered MCP server."""
+    settings = mcp.settings
+    settings.host = transport_config['host']
+    settings.port = transport_config['port']
+    settings.streamable_http_path = transport_config['path']
+    settings.sse_path = transport_config['sse_path']
+    settings.debug = transport_config['debug']
+    settings.stateless_http = (
+        transport_config['transport'] == 'streamable-http'
+    )
+
+
 async def run_server() -> None:
     """Run the MCP server with configured transport."""
     transport_config = get_transport_config()
 
     logger.info('Starting Construction Hazard Detection MCP Server')
     logger.info(f"Transport: {transport_config['transport']}")
+    _configure_mcp_transport(transport_config)
 
     if transport_config['transport'] == 'stdio':
         await mcp.run_stdio_async()
     elif transport_config['transport'] == 'sse':
-        uvicorn_config = {
-            'timeout_keep_alive': 0,
-            'timeout_graceful_shutdown': None,
-            'h11_max_incomplete_event_size': None,
-        }
-        await mcp.run_sse_async(  # type: ignore[call-arg]
-            host=transport_config['host'],
-            port=transport_config['port'],
-            uvicorn_config=uvicorn_config,
-            stateless_http=True,
-        )
+        await mcp.run_sse_async()
     elif transport_config['transport'] == 'streamable-http':
-        uvicorn_config = {
-            'timeout_keep_alive': 0,
-            'timeout_graceful_shutdown': None,
-            'h11_max_incomplete_event_size': None,
-        }
-        await mcp.run_http_async(  # type: ignore[attr-defined]
-            transport='streamable-http',
-            host=transport_config['host'],
-            port=transport_config['port'],
-            uvicorn_config=uvicorn_config,
-            stateless_http=True,
-        )
-    elif transport_config['transport'] == 'http':
-        uvicorn_config = {
-            'timeout_keep_alive': 0,
-            'timeout_graceful_shutdown': None,
-            'h11_max_incomplete_event_size': None,
-        }
-        await mcp.run_http_async(  # type: ignore[attr-defined]
-            transport='http',
-            host=transport_config['host'],
-            port=transport_config['port'],
-            uvicorn_config=uvicorn_config,
-            stateless_http=True,
-        )
+        await mcp.run_streamable_http_async()
     else:
         raise ValueError(
             f"Unsupported transport type: {transport_config['transport']}",

@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from collections.abc import Mapping
 from datetime import datetime
 from datetime import timezone
+from typing import Any
 from typing import cast
 from typing import DefaultDict
 from typing import Final
@@ -21,6 +22,7 @@ from typing import Final
 import redis.asyncio as redis
 from cryptography.fernet import Fernet
 from cryptography.fernet import InvalidToken
+from redis.asyncio.client import Pipeline
 from sqlalchemy import select
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -202,14 +204,14 @@ def _result_scalars_all(result: object) -> list[object]:
 
 
 def _queue_token_cache_write(
-    pipe: object,
+    pipe: Pipeline[Any],
     row: FcmDeviceToken,
     device_token: str,
 ) -> None:
     """Queue Redis writes for one active DB-backed FCM token."""
     user_key = f'fcm_tokens:{row.user_id}'
     meta_key = _token_meta_key(row.user_id, row.device_token_hash)
-    mapping = {
+    mapping: dict[str | bytes, bytes | float | int | str] = {
         'token_hash': row.device_token_hash,
         'platform': row.platform or 'unknown',
         'device_lang': row.device_lang,
@@ -268,9 +270,7 @@ async def record_fcm_token_registration(
             created_at=now,
             updated_at=now,
         )
-        add_result = db.add(row)
-        if inspect.isawaitable(add_result):
-            await add_result
+        db.add(row)
         registered_at = now
     else:
         registered_at = row.created_at or now
@@ -732,7 +732,9 @@ async def get_site_notification_user_ids_cached(
 
 
 def _decode_lang_token_map(
-    raw_maps: list[Mapping[bytes | str, bytes | str | None]],
+    raw_maps: Iterable[
+        Mapping[bytes, bytes | None] | Mapping[str, str | None]
+    ],
 ) -> DefaultDict[str, list[str]]:
     """
     Decode Redis HGETALL results into a language-to-tokens map.
@@ -971,9 +973,7 @@ async def create_notification_records_for_users(
         )
         for user_id in recipient_ids
     ]
-    add_result = db.add_all(records)
-    if inspect.isawaitable(add_result):
-        await add_result
+    db.add_all(records)
     await db.commit()
     return len(records)
 

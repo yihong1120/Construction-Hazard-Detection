@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from math import sqrt
 
 from src.utils import Utils
@@ -16,7 +17,7 @@ class UtilsTools:
 
     async def calculate_polygon_area(
         self,
-        polygon_points: list[list[float]],
+        polygon_points: Sequence[Sequence[float]],
     ) -> dict:
         """Calculate the area of a polygon.
 
@@ -52,8 +53,8 @@ class UtilsTools:
 
     async def point_in_polygon(
         self,
-        point: list[float],
-        polygon_points: list[list[float]],
+        point: Sequence[float],
+        polygon_points: Sequence[Sequence[float]],
     ) -> dict:
         """Check whether a point is inside a polygon.
 
@@ -100,8 +101,8 @@ class UtilsTools:
 
     async def bbox_intersection(
         self,
-        bbox1: list[float],
-        bbox2: list[float],
+        bbox1: Sequence[float],
+        bbox2: Sequence[float],
     ) -> dict:
         """Calculate the intersection of two bounding boxes.
 
@@ -115,7 +116,7 @@ class UtilsTools:
         """
         try:
             # Ensure bbox order [x1, y1, x2, y2]
-            def _norm(b: list[float]) -> tuple[float, float, float, float]:
+            def _norm(b: Sequence[float]) -> tuple[float, float, float, float]:
                 """Return a bounding box in left-top-right-bottom order."""
                 x1, y1, x2, y2 = b
                 return (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
@@ -155,8 +156,8 @@ class UtilsTools:
 
     async def distance_between_points(
         self,
-        point1: list[float],
-        point2: list[float],
+        point1: Sequence[float],
+        point2: Sequence[float],
         metric: str = 'euclidean',
     ) -> dict:
         """Calculate the distance between two points.
@@ -397,7 +398,7 @@ class UtilsTools:
 
     async def validate_detection_data(
         self,
-        detections: list[dict],
+        detections: Sequence[object],
         image_width: int,
         image_height: int,
     ) -> dict:

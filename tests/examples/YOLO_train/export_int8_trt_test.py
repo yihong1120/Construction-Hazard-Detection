@@ -8,8 +8,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
+import yaml
 
 from examples.YOLO_train import export_int8_trt as subject
 
@@ -43,7 +45,7 @@ def _install_modelopt(
     modelopt = ModuleType('modelopt')
     modelopt_onnx = ModuleType('modelopt.onnx')
     modelopt_quantization = ModuleType('modelopt.onnx.quantization')
-    modelopt_quantization.quantize = quantize
+    setattr(modelopt_quantization, 'quantize', quantize)
     monkeypatch.setitem(sys.modules, 'modelopt', modelopt)
     monkeypatch.setitem(sys.modules, 'modelopt.onnx', modelopt_onnx)
     monkeypatch.setitem(
@@ -70,6 +72,12 @@ def _export_args(
         workspace=workspace,
         batch=batch,
         calib_batch=calib_batch,
+        calib_images=4096,
+        calib_seed=20260730,
+        calib_split='val',
+        calibration_method='entropy',
+        exclude_node=[],
+        exclude_detect_head=False,
         device=0,
         imgsz=640,
         fraction=1.0,
@@ -90,13 +98,19 @@ def test_calibration_reader_reads_all_batches_and_rewinds(
     reader = subject.AllImagesCalibrationReader('images', dataloader)
 
     assert len(reader) == 2
-    assert reader.get_first()['images'].shape == (2, 3, 2, 2)
+    first_batch = reader.get_first()['images']
+    assert isinstance(first_batch, np.ndarray)
+    assert first_batch.shape == (2, 3, 2, 2)
     first = reader.get_next()
     second = reader.get_next()
     assert first is not None
     assert second is not None
-    assert first['images'].max() == pytest.approx(1.0)
-    assert second['images'].max() == pytest.approx(128 / 255)
+    first_images = first['images']
+    second_images = second['images']
+    assert isinstance(first_images, np.ndarray)
+    assert isinstance(second_images, np.ndarray)
+    assert first_images.max() == pytest.approx(1.0)
+    assert second_images.max() == pytest.approx(128 / 255)
     assert reader.get_next() is None
     assert reader.seen_images == 3
     assert dataloader.reset_count >= 3
@@ -179,11 +193,64 @@ def test_modelopt_quantize_int8_uses_all_calibration_images(
     assert output == '/tmp/model.int8.onnx'
     kwargs = quantize.call_args.kwargs
     assert kwargs['calibration_data_reader'] is reader
+    assert kwargs['calibration_method'] == 'entropy'
     assert kwargs['output_path'] == '/tmp/model.int8.onnx'
     if dynamic:
         assert kwargs['calibration_shapes'] == 'images:2x3x640x640'
     else:
         assert 'calibration_shapes' not in kwargs
+
+
+def test_modelopt_quantize_int8_keeps_excluded_nodes_high_precision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mixed precision export forwards requested ONNX exclusion patterns."""
+    quantize = MagicMock()
+    _install_modelopt(monkeypatch, quantize)
+    reader = SimpleNamespace(batch_size=2, total_images=5)
+    onnx_model = SimpleNamespace(
+        graph=SimpleNamespace(input=[SimpleNamespace(name='images')]),
+    )
+    monkeypatch.setattr(
+        subject, 'AllImagesCalibrationReader', lambda *_: reader,
+    )
+    monkeypatch.setattr(subject, 'check_requirements', MagicMock())
+    monkeypatch.setattr(
+        subject.onnx, 'load',
+        MagicMock(return_value=onnx_model),
+    )
+    monkeypatch.setattr(
+        subject,
+        'node_exclusion_patterns',
+        (r'/model\\.23/.*',),
+    )
+
+    subject.modelopt_quantize_onnx_all_images(
+        '/tmp/model.onnx',
+        quantize=8,
+        dataset=object(),
+    )
+
+    assert quantize.call_args.kwargs['nodes_to_exclude'] == [
+        r'/model\\.23/.*',
+    ]
+
+
+def test_patched_onnx2engine_uses_batch_only_explicit_qdq() -> None:
+    """TensorRT export patch keeps dynamic shape to batch 1..N only."""
+    source = subject.original_onnx2engine_source
+    assert source is not None
+    patched = subject._patched_onnx2engine_source(
+        source,
+    )
+
+    assert 'min_shape = (1, *shape[1:])' in patched
+    assert 'opt_shape = shape' in patched
+    assert 'max_shape = shape' in patched
+    assert 'force_explicit_int8 = use_int8 and FORCE_EXPLICIT_INT8' in patched
+    assert 'if force_explicit_int8:' in patched
+    assert 'use_int8 = False' in patched
+    assert 'use_fp16 = True' in patched
 
 
 def test_set_calibration_batch_size_restores_export_batch(
@@ -233,6 +300,12 @@ def test_parse_args_reads_script_options(
             '--imgsz', '320',
             '--batch', '8',
             '--calib-batch', '2',
+            '--calib-images', '1024',
+            '--calib-seed', '99',
+            '--calib-split', 'train',
+            '--calibration-method', 'max',
+            '--exclude-node', 'custom_node.*',
+            '--exclude-detect-head',
             '--workspace', '4',
             '--static',
             '--fraction', '0.5',
@@ -247,6 +320,12 @@ def test_parse_args_reads_script_options(
     assert args.imgsz == 320
     assert args.batch == 8
     assert args.calib_batch == 2
+    assert args.calib_images == 1024
+    assert args.calib_seed == 99
+    assert args.calib_split == 'train'
+    assert args.calibration_method == 'max'
+    assert args.exclude_node == ['custom_node.*']
+    assert args.exclude_detect_head is True
     assert args.workspace == 4
     assert args.static is True
     assert args.fraction == 0.5
@@ -303,6 +382,19 @@ def test_main_exports_and_moves_engine(
     move = MagicMock()
     monkeypatch.setattr(subject, 'parse_args', lambda: args)
     monkeypatch.setattr(subject, 'set_calibration_batch_size', MagicMock())
+    monkeypatch.setattr(subject, 'set_calibration_method', MagicMock())
+    set_node_exclusions = MagicMock()
+    monkeypatch.setattr(subject, 'set_node_exclusions', set_node_exclusions)
+    monkeypatch.setattr(
+        subject,
+        'prepare_calibration_data',
+        lambda source, _workdir, _limit, _seed, _split: (source, 4096),
+    )
+    monkeypatch.setattr(
+        subject,
+        'build_data_yaml',
+        lambda value: Path(value),
+    )
     monkeypatch.setattr(subject, 'YOLO', FakeYolo)
     monkeypatch.setattr(subject.shutil, 'move', move)
 
@@ -322,6 +414,72 @@ def test_main_exports_and_moves_engine(
     move.assert_called_once_with(
         str(exported.resolve()), args.output.resolve(),
     )
+    set_node_exclusions.assert_called_once_with([])
+
+
+def test_prepare_calibration_data_uses_requested_split(
+    tmp_path: Path,
+) -> None:
+    """Calibration selection can use original validation images."""
+    root = tmp_path / 'dataset'
+    for split in ('train', 'val'):
+        (root / split / 'images').mkdir(parents=True)
+        (root / split / 'labels').mkdir()
+    for name, class_id in [('first', 0), ('second', 1), ('third', 0)]:
+        (root / 'val' / 'images' / f'{name}.jpg').write_bytes(b'image')
+        (root / 'val' / 'labels' / f'{name}.txt').write_text(
+            f'{class_id} 0.5 0.5 0.2 0.2\n',
+        )
+    data = tmp_path / 'data.yaml'
+    data.write_text(
+        yaml.safe_dump({
+            'path': str(root),
+            'train': 'train/images',
+            'val': 'val/images',
+            'names': ['first', 'second'],
+        }),
+    )
+
+    calibration, count = subject.prepare_calibration_data(
+        data,
+        tmp_path / 'work',
+        image_limit=2,
+        seed=7,
+        split='val',
+    )
+
+    selected = yaml.safe_load(calibration.read_text())
+    paths = Path(selected['val']).read_text().splitlines()
+    assert count == 2
+    assert len(paths) == 2
+    assert all('/val/images/' in path for path in paths)
+
+
+def test_class_balanced_images_excludes_calibration_images(
+    tmp_path: Path,
+) -> None:
+    """A holdout subset can be selected without calibration overlap."""
+    images = tmp_path / 'images'
+    labels = tmp_path / 'labels'
+    images.mkdir()
+    labels.mkdir()
+    for index in range(4):
+        (images / f'{index}.jpg').write_bytes(b'image')
+        (labels / f'{index}.txt').write_text(
+            f'{index % 2} 0.5 0.5 0.2 0.2\n',
+        )
+
+    calibration = subject.class_balanced_images(images, labels, 2, seed=1)
+    holdout = subject.class_balanced_images(
+        images,
+        labels,
+        2,
+        seed=2,
+        excluded_images=set(calibration),
+    )
+
+    assert len(holdout) == 2
+    assert set(calibration).isdisjoint(holdout)
 
 
 def test_script_main_block_invokes_main_before_model_io(

@@ -78,12 +78,16 @@ class WebRtcServiceTest(unittest.TestCase):
         },
         clear=False,
     )
-    @patch('examples.streaming_web.webrtc_service.time.time', return_value=1_700_000_000)
+    @patch(
+        'examples.streaming_web.webrtc_service.time.time',
+        return_value=1_700_000_000,
+    )
     def test_get_public_ice_servers_uses_turn_rest_credentials(
         self,
         mock_time: MagicMock,
     ) -> None:
-        """TURN REST credentials use the default TTL when env input is invalid."""
+        """TURN REST credentials use the default TTL when env input is
+        invalid."""
         servers = get_public_ice_servers('alice')
 
         self.assertEqual(servers[0], {'urls': ['stun:relay']})

@@ -16,7 +16,9 @@ from examples.db_management.routers.sites import endpoint_add_user_to_site
 from examples.db_management.routers.sites import endpoint_create_site
 from examples.db_management.routers.sites import endpoint_delete_site
 from examples.db_management.routers.sites import endpoint_list_sites
-from examples.db_management.routers.sites import endpoint_remove_group_from_site
+from examples.db_management.routers.sites import (
+    endpoint_remove_group_from_site,
+)
 from examples.db_management.routers.sites import endpoint_remove_user_from_site
 from examples.db_management.routers.sites import endpoint_update_site
 from examples.db_management.schemas.site import SiteCreate
@@ -43,9 +45,7 @@ class AsyncKeyIterator:
 
 
 class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
-    """
-    Test suite for site management router endpoints.
-    """
+    """Test suite for site management router endpoints."""
 
     def setUp(self) -> None:
         """Prepare common test mocks for each test case."""
@@ -91,7 +91,8 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.routers.sites.create_site')
     async def test_endpoint_create_site_success(
-        self, mock_create_site: MagicMock,
+        self,
+        mock_create_site: MagicMock,
     ) -> None:
         """Test successful creation of a new site.
 
@@ -149,7 +150,9 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.group_ids, [])
         mock_create_site.assert_awaited_once_with(
-            'Shared Site', [1, 2], self.db,
+            'Shared Site',
+            [1, 2],
+            self.db,
         )
 
     @patch(
@@ -435,7 +438,8 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         return_value=False,
     )
     async def test_endpoint_remove_user_from_site_super_admin(
-        self, mock_is_super_admin: MagicMock,
+        self,
+        mock_is_super_admin: MagicMock,
     ) -> None:
         """Ensure super admin cannot be removed from a site.
 
@@ -499,7 +503,9 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             await endpoint_remove_user_from_site(payload, self.db, self.user)
         self.assertEqual(ctx.exception.status_code, 403)
 
-    async def test_remove_user_from_site_rejects_user_without_group(self) -> None:
+    async def test_remove_user_from_site_rejects_user_without_group(
+        self,
+    ) -> None:
         """Group-scoped admins cannot remove an ungrouped user from a site."""
         site = MagicMock(groups=[MagicMock(id=1)])
         user_to_remove = MagicMock(username='ungrouped', group_id=None)
@@ -519,7 +525,8 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.routers.sites.list_sites')
     async def test_endpoint_list_sites_admin(
-        self, mock_list_sites: MagicMock,
+        self,
+        mock_list_sites: MagicMock,
     ) -> None:
         """Test listing sites as an admin (group-specific)."""
         self.user.role = 'admin'
@@ -605,7 +612,9 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             'User unlinked from site successfully.',
         )
         mock_remove_user.assert_called_once_with(
-            user_to_remove.id, site.id, self.db,
+            user_to_remove.id,
+            site.id,
+            self.db,
         )
         mock_refresh_site_cache.assert_awaited_once_with(
             'Site One',
@@ -613,13 +622,17 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             mock_redis,
         )
 
-    async def test_delete_matching_redis_keys_flushes_full_batches(self) -> None:
+    async def test_delete_matching_redis_keys_flushes_full_batches(
+        self,
+    ) -> None:
         """Redis SCAN deletes complete batches without a blocking KEYS call."""
         rds = MagicMock()
         rds.scan_iter.return_value = AsyncKeyIterator([b'first', b'second'])
         rds.delete = AsyncMock()
 
-        await _delete_matching_redis_keys(rds, 'stream_metadata:*', batch_size=1)
+        await _delete_matching_redis_keys(
+            rds, 'stream_metadata:*', batch_size=1,
+        )
 
         self.assertEqual(rds.delete.await_count, 2)
         rds.delete.assert_any_await(b'first')
@@ -668,7 +681,8 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_remove_group: MagicMock,
     ) -> None:
-        """Group unlinks use site permissions and distinguish a missing site."""
+        """Group unlinks use site permissions and distinguish a missing
+        site."""
         site = MagicMock()
         site.id = 1
         site.groups = [MagicMock(id=1)]
@@ -704,10 +718,3 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-
-'''
-pytest --cov=examples.db_management.routers.sites\
-    --cov-report=term-missing\
-        tests/examples/db_management/routers/sites_test.py
-'''

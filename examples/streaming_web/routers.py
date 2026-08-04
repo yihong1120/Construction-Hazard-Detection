@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import time
+from collections.abc import Mapping
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -339,8 +340,11 @@ def _media_auth_401(detail: str) -> HTTPException:
 
 def _media_session_demand_ttl(session: dict[str, object]) -> int:
     """Return a bounded producer lease from trusted capability expiry."""
+    expires_at = session.get('expires_at')
+    if not isinstance(expires_at, (str, bytes, bytearray, int, float)):
+        return MEDIA_PUBLISHER_IDLE_GRACE_SECONDS
     try:
-        remaining = int(session.get('expires_at') or 0) - int(time.time())
+        remaining = int(expires_at) - int(time.time())
     except (TypeError, ValueError):
         remaining = 0
     return max(MEDIA_PUBLISHER_IDLE_GRACE_SECONDS, remaining)
@@ -512,7 +516,7 @@ def _media_path_matches_site(media_path: str, site_name: str) -> bool:
 
 
 def _opaque_media_session_allows_path(
-    session: dict[str, object],
+    session: Mapping[str, object],
     media_path: str,
 ) -> bool:
     """Enforce the site/camera/profile scope embedded in a media session."""
@@ -891,6 +895,100 @@ async def _refresh_playback_session_ttl(
         )
 
 
+async def _restore_playback_session(
+    rds: redis.Redis,
+    session_id: str,
+    request: Request,
+) -> dict[str, object] | None:
+    """Restore a missing HLS session from its valid media capability."""
+    if not hasattr(request, 'query_params'):
+        return None
+    opaque_token = _extract_opaque_media_token(request)
+    media_session = await get_media_session(rds, opaque_token)
+    if media_session is None or media_session.get('user_active') is False:
+        return None
+
+    descriptors = media_session.get('playback_sessions')
+    if not isinstance(descriptors, Mapping):
+        return None
+    descriptor = descriptors.get(session_id)
+    if not isinstance(descriptor, Mapping):
+        return None
+
+    label = descriptor.get('label')
+    stream_name = descriptor.get('stream_name')
+    profile = descriptor.get('profile')
+    rendition = descriptor.get('rendition')
+    username = media_session.get('username')
+    if not isinstance(label, str) or not label:
+        return None
+    if not isinstance(stream_name, str) or not stream_name:
+        return None
+    if not isinstance(profile, str) or not profile:
+        return None
+    if not isinstance(rendition, str) or not rendition:
+        return None
+    if not isinstance(username, str) or not username:
+        return None
+    if (
+        label != media_session.get('site')
+        or stream_name not in media_session_cameras(media_session)
+        or profile != media_session.get('profile')
+    ):
+        return None
+
+    quality = media_session.get('quality')
+    expected_rendition = 'preview' if quality == 'preview' else 'detail'
+    if quality not in {'detail', 'preview'} or rendition != expected_rendition:
+        return None
+
+    language = descriptor.get('language') if profile == 'overlay' else None
+    if language is not None and not isinstance(language, str):
+        return None
+    base_media_path = build_media_path(label, stream_name)
+    if rendition == 'preview':
+        base_media_path = build_preview_media_path(base_media_path)
+    overlay_media_path = (
+        build_annotated_media_path(base_media_path, language)
+        if profile == 'overlay' and language
+        else None
+    )
+    restored_at = datetime.now(timezone.utc)
+    session: dict[str, object] = {
+        'session_id': session_id,
+        'username': username,
+        'label': label,
+        'stream_name': stream_name,
+        'stream_id': Utils.encode(stream_name),
+        'profile': profile,
+        'rendition': rendition,
+        'language': language,
+        'base_media_path': base_media_path,
+        'overlay_media_path': overlay_media_path,
+        'created_at': restored_at.isoformat(),
+        'expires_at': (
+            restored_at + timedelta(
+                seconds=STREAM_PLAYBACK_SESSION_TTL_SECONDS,
+            )
+        ).isoformat(),
+    }
+    selected_media_path = _session_selected_media_path(session)
+    if (
+        selected_media_path is None
+        or not _opaque_media_session_allows_path(
+            media_session,
+            selected_media_path,
+        )
+    ):
+        return None
+    await rds.set(
+        _playback_session_key(session_id),
+        json.dumps(session, ensure_ascii=False),
+        ex=STREAM_PLAYBACK_SESSION_TTL_SECONDS,
+    )
+    return session
+
+
 async def _select_session_playback(
     rds: redis.Redis,
     session: dict[str, object],
@@ -1210,6 +1308,8 @@ async def stream_playback_session_playlist(
 ) -> Response:
     """Serve a stable playlist whose fragments keep the media auth token."""
     session = await _load_playback_session(rds, session_id)
+    if session is None:
+        session = await _restore_playback_session(rds, session_id, request)
     if session is None:
         raise HTTPException(status_code=404, detail='session_not_found')
 

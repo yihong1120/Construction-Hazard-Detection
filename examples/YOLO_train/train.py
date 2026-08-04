@@ -595,7 +595,7 @@ if __name__ == '__main__':
 
     # python train.py \
     #     --data_config=cv_dataset/data.yaml \
-    #     --model_name=../../models/pt/best_yolo26m.pt \
+    #     --model_name=../../models/pt/best_yolo26x.pt \
     #     --epochs=100 \
     #     --batch_size=2 \
     #     --full_data_training

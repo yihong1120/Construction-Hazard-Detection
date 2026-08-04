@@ -19,7 +19,8 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Prepare test fixtures."""
         self.tool = ViolationsTools()
-        self.tool.logger = MagicMock()
+        self.logger = MagicMock()
+        self.tool.logger = self.logger
 
     # --- _ensure_client ---
 
@@ -92,7 +93,7 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(RuntimeError):
             await self.tool._get_auth_headers()
-        self.tool.logger.error.assert_called_once()
+        self.logger.error.assert_called_once()
 
     # --- search ---
 
@@ -117,15 +118,17 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_search_exception(self) -> None:
         """Exercise this test."""
-        self.tool._get_auth_headers = AsyncMock(
-            side_effect=RuntimeError('bad'),
-        )
-        # Ensure client is set to pass the internal assertion
-        self.tool._client = AsyncMock()
-        self.tool._base_url = 'https://x'
-        with self.assertRaises(RuntimeError):
-            await self.tool.search()
-        self.tool.logger.error.assert_called_once()
+        with patch.object(
+            self.tool,
+            '_get_auth_headers',
+            new=AsyncMock(side_effect=RuntimeError('bad')),
+        ):
+            # Ensure client is set to pass the internal assertion
+            self.tool._client = AsyncMock()
+            self.tool._base_url = 'https://x'
+            with self.assertRaises(RuntimeError):
+                await self.tool.search()
+        self.logger.error.assert_called_once()
 
     @patch.object(
         ViolationsTools,
@@ -182,15 +185,17 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_get_exception(self) -> None:
         """Exercise this test."""
-        self.tool._get_auth_headers = AsyncMock(
-            side_effect=RuntimeError('fail'),
-        )
-        # Ensure client is set to pass the internal assertion
-        self.tool._client = AsyncMock()
-        self.tool._base_url = 'https://x'
-        with self.assertRaises(RuntimeError):
-            await self.tool.get(1)
-        self.tool.logger.error.assert_called_once()
+        with patch.object(
+            self.tool,
+            '_get_auth_headers',
+            new=AsyncMock(side_effect=RuntimeError('fail')),
+        ):
+            # Ensure client is set to pass the internal assertion
+            self.tool._client = AsyncMock()
+            self.tool._base_url = 'https://x'
+            with self.assertRaises(RuntimeError):
+                await self.tool.get(1)
+        self.logger.error.assert_called_once()
 
     # --- get_image ---
 
@@ -245,13 +250,15 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_get_image_general_error(self) -> None:
         """Exercise this test."""
-        self.tool._get_auth_headers = AsyncMock(
-            side_effect=RuntimeError('boom'),
-        )
-        # Ensure client is set to pass the internal assertion
-        self.tool._client = AsyncMock()
-        self.tool._base_url = 'https://api'
-        res = await self.tool.get_image('xx', as_base64=True)
+        with patch.object(
+            self.tool,
+            '_get_auth_headers',
+            new=AsyncMock(side_effect=RuntimeError('boom')),
+        ):
+            # Ensure client is set to pass the internal assertion
+            self.tool._client = AsyncMock()
+            self.tool._base_url = 'https://api'
+            res = await self.tool.get_image('xx', as_base64=True)
         self.assertFalse(res['success'])
         self.assertIn('boom', res['message'])
 
@@ -278,15 +285,17 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_my_sites_exception(self) -> None:
         """Exercise this test."""
-        self.tool._get_auth_headers = AsyncMock(
-            side_effect=RuntimeError('bad'),
-        )
-        # Ensure client is set to pass the internal assertion
-        self.tool._client = AsyncMock()
-        self.tool._base_url = 'https://x'
-        with self.assertRaises(RuntimeError):
-            await self.tool.my_sites()
-        self.tool.logger.error.assert_called_once()
+        with patch.object(
+            self.tool,
+            '_get_auth_headers',
+            new=AsyncMock(side_effect=RuntimeError('bad')),
+        ):
+            # Ensure client is set to pass the internal assertion
+            self.tool._client = AsyncMock()
+            self.tool._base_url = 'https://x'
+            with self.assertRaises(RuntimeError):
+                await self.tool.my_sites()
+        self.logger.error.assert_called_once()
 
     # --- get_image_by_violation_id ---
 
@@ -322,7 +331,7 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         res = await self.tool.get_image_by_violation_id(1)
         self.assertFalse(res['success'])
         self.assertIn('bad', res['message'])
-        self.tool.logger.error.assert_called_once()
+        self.logger.error.assert_called_once()
 
     # --- close ---
 

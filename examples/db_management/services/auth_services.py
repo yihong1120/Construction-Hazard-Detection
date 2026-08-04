@@ -29,6 +29,8 @@ from examples.auth.models import USER_STATUS_REJECTED
 from examples.auth.models import USER_STATUS_SUSPENDED
 from examples.auth.models import UserProfile
 from examples.auth.token_cleanup import prune_user_cache
+from examples.auth.token_revocation import revoke_access_token
+from examples.auth.token_revocation import revoke_access_token_jtis
 from examples.db_management.schemas.auth import DbUserInfo
 from examples.db_management.schemas.auth import RefreshRequest
 from examples.db_management.schemas.auth import RefreshTokenPayload
@@ -462,8 +464,8 @@ async def verify_refresh_token(
         HTTPException: If token is invalid, expired, or not recognised.
     """
     try:
-        # Decode and verify JWT refresh token
-        payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        # Decode and verify JWT refresh token and its purpose.
+        payload = jwt_refresh.decode_token(refresh_token)
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=401, detail='Refresh token has expired',
@@ -494,6 +496,7 @@ async def verify_refresh_token(
     ):
         if family_id:
             await _revoke_refresh_family(redis_pool, family_id)
+            await _revoke_user_access_tokens(redis_pool, username)
             raise HTTPException(status_code=401, detail='Refresh token reused')
         raise HTTPException(
             status_code=401, detail='Refresh token not recognised',
@@ -553,18 +556,35 @@ async def _revoke_refresh_family(
     )
 
 
+async def _revoke_user_access_tokens(
+    redis_pool: Redis,
+    username: str,
+) -> int:
+    """Immediately revoke every unexpired access token for a user."""
+    cache = cast(UserCache | None, await get_user_data(redis_pool, username))
+    if not cache:
+        return 0
+    jti_meta = cache.get('jti_meta', {})
+    if not isinstance(jti_meta, dict):
+        return 0
+    return await revoke_access_token_jtis(redis_pool, jti_meta)
+
+
 async def _consume_refresh_token_state(
     redis_pool: Redis,
     refresh_token: str,
     family_id: str,
+    username: str,
 ) -> None:
     """Make a rotating refresh token single-use across all workers."""
     if await redis_pool.get(_refresh_family_revoked_key(family_id)):
+        await _revoke_user_access_tokens(redis_pool, username)
         raise HTTPException(status_code=401, detail='Refresh token reused')
     lock_key = f'{_refresh_state_key(refresh_token)}:consume'
     acquired = await redis_pool.set(lock_key, '1', ex=30, nx=True)
     if not acquired:
         await _revoke_refresh_family(redis_pool, family_id)
+        await _revoke_user_access_tokens(redis_pool, username)
         raise HTTPException(status_code=401, detail='Refresh token reused')
     raw = await redis_pool.get(_refresh_state_key(refresh_token))
     if isinstance(raw, bytes):
@@ -578,6 +598,7 @@ async def _consume_refresh_token_state(
         or state.get('family_id') != family_id
     ):
         await _revoke_refresh_family(redis_pool, family_id)
+        await _revoke_user_access_tokens(redis_pool, username)
         raise HTTPException(status_code=401, detail='Refresh token reused')
     state['status'] = 'used'
     await redis_pool.set(
@@ -732,12 +753,7 @@ async def issue_token_pair_for_user(
 
     # store access token expiry timestamp for pruning (epoch seconds)
     try:
-        at_payload = jwt.decode(
-            access_token,
-            SECRET_KEY,
-            algorithms=[ALGORITHM],
-            options={'verify_exp': False},
-        )
+        at_payload = jwt_access.decode_token(access_token, verify_exp=False)
         exp_ts = int(at_payload.get('exp', 0))
         jti_meta = cache.get('jti_meta', {}) or {}
         jti_meta[new_jti] = exp_ts
@@ -786,45 +802,62 @@ async def logout_user(
     """
     username: str | None = None
     jti: str | None = None
+    access_payload: dict[str, object] | None = None
+    refresh_family_id: str | None = None
     if authorization:
         parts = authorization.split()
         if len(parts) == 2:
             try:
-                payload = jwt.decode(
-                    parts[1],
-                    SECRET_KEY,
-                    algorithms=[ALGORITHM],
-                    options={'verify_exp': False},
-                )
+                payload = jwt_access.decode_token(parts[1], verify_exp=False)
+                access_payload = payload
                 subject = payload.get('subject') or {}
                 username = subject.get('username') or payload.get('username')
                 jti = subject.get('jti') or payload.get('jti')
             except jwt.PyJWTError:
                 username = None
 
-    if not username and refresh_token:
+    if refresh_token:
         try:
-            refresh_payload = jwt.decode(
+            refresh_payload = jwt_refresh.decode_token(
                 refresh_token,
-                SECRET_KEY,
-                algorithms=[ALGORITHM],
-                options={'verify_exp': False},
+                verify_exp=False,
             )
             subject = refresh_payload.get('subject') or {}
-            username = subject.get('username') or refresh_payload.get(
+            refresh_username = subject.get('username') or refresh_payload.get(
                 'username',
             )
+            if not username and isinstance(refresh_username, str):
+                username = refresh_username
+            family_id = subject.get('family_id') or refresh_payload.get(
+                'family_id',
+            )
+            if isinstance(family_id, str) and family_id:
+                refresh_family_id = family_id
         except jwt.PyJWTError:
-            return
+            if access_payload is None:
+                return
 
     if not isinstance(username, str):
         return
+
+    # Revocation must happen before cache maintenance so a logout takes
+    # effect immediately, even if the user cache was already evicted.
+    if access_payload is not None:
+        await revoke_access_token(redis_pool, access_payload)
+    if refresh_family_id:
+        await _revoke_refresh_family(redis_pool, refresh_family_id)
 
     # Remove the tokens from Redis cache
     await prune_user_cache(redis_pool, username)
     cache = cast(UserCache | None, await get_user_data(redis_pool, username))
     if not cache:
         return
+
+    # Refresh-only logout requests do not identify a single access token;
+    # revoke the user's current access capabilities rather than leaving them
+    # valid until their natural expiry.
+    if access_payload is None:
+        await _revoke_user_access_tokens(redis_pool, username)
 
     cache['jti_list'] = [x for x in cache.get('jti_list', []) if x != jti]
     # remove jti_meta entry as well
@@ -875,6 +908,7 @@ async def refresh_tokens(
     if not cache or not _cache_contains_refresh_token(cache, old_refresh):
         if family_id:
             await _revoke_refresh_family(redis_pool, family_id)
+            await _revoke_user_access_tokens(redis_pool, username)
             raise HTTPException(status_code=401, detail='Refresh token reused')
         raise HTTPException(status_code=401, detail='Refresh token invalid')
 
@@ -883,6 +917,7 @@ async def refresh_tokens(
             redis_pool,
             old_refresh,
             family_id,
+            username,
         )
 
     _remove_refresh_token_from_cache(cache, old_refresh)
@@ -913,12 +948,7 @@ async def refresh_tokens(
     cache.setdefault('jti_list', []).append(new_jti)
     # store access token expiry for pruning
     try:
-        at_payload = jwt.decode(
-            access_token,
-            SECRET_KEY,
-            algorithms=[ALGORITHM],
-            options={'verify_exp': False},
-        )
+        at_payload = jwt_access.decode_token(access_token, verify_exp=False)
         exp_ts = int(at_payload.get('exp', 0))
         jti_meta = cache.get('jti_meta', {}) or {}
         jti_meta[new_jti] = exp_ts

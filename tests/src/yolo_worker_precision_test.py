@@ -35,7 +35,11 @@ class TestYoloWorkerPrecisionCoverage(unittest.TestCase):
             )
         self.assertEqual(
             yolo_worker._worker_precision_config('int8'),
-            (yolo_worker.Path('models/int8_engine'), '.engine', {}),
+            (
+                yolo_worker.Path('models/int8_engine'),
+                '.engine',
+                {'rect': False},
+            ),
         )
         with self.assertRaisesRegex(AssertionError, 'unhandled'):
             yolo_worker._worker_precision_config('bf16')
@@ -55,7 +59,7 @@ class TestYoloWorkerPrecisionCoverage(unittest.TestCase):
             yolo_worker.Path('models/int8_engine'),
         )
         self.assertEqual(worker.model_suffix, '.engine')
-        self.assertEqual(worker.precision_args, {})
+        self.assertEqual(worker.precision_args, {'rect': False})
 
     def test_worker_uses_legacy_precision_configuration(self) -> None:
         environment = {

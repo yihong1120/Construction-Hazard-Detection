@@ -21,16 +21,12 @@ from examples.db_management.schemas.auth import UserLogin
 
 
 class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the authentication router endpoints
-    using FastAPI and unittest.
-    """
+    """Unit tests for the authentication router endpoints using FastAPI and
+    unittest."""
 
     def setUp(self) -> None:
-        """
-        Set up the FastAPI app, TestClient,
-        and dependency overrides for each test.
-        """
+        """Set up the FastAPI app, TestClient, and dependency overrides for
+        each test."""
         # Create FastAPI app and mount the auth router
         self.app: FastAPI = FastAPI()
         self.app.include_router(auth.router, prefix='/auth')
@@ -46,9 +42,8 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
             yield db_mock
 
         async def override_get_redis_pool() -> MagicMock:
-            """
-            Override for get_redis_pool dependency, returns a mock Redis pool.
-            """
+            """Override for get_redis_pool dependency, returns a mock Redis
+            pool."""
             redis_mock: MagicMock = MagicMock()
             # Avoid await redis.get errors
             redis_mock.get = AsyncMock(return_value=None)
@@ -74,8 +69,7 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_login_success(self, mock_login_user: AsyncMock) -> None:
-        """
-        Test successful login returns correct token pair and user info.
+        """Test successful login returns correct token pair and user info.
 
         Args:
             mock_login_user (AsyncMock): Mocked login_user service function.
@@ -110,7 +104,8 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_login_forwards_hcaptcha_bypass_header(
-        self, mock_login_user: AsyncMock,
+        self,
+        mock_login_user: AsyncMock,
     ) -> None:
         """Test login forwards backend-only hCaptcha bypass header."""
         mock_login_user.return_value = {
@@ -136,7 +131,8 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_web_login_requires_bff(
-        self, mock_login_user: AsyncMock,
+        self,
+        mock_login_user: AsyncMock,
     ) -> None:
         """The legacy token endpoint never returns a JWT to browser code."""
         mock_login_user.return_value = {
@@ -194,7 +190,10 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Test resend verification endpoint accepts an email."""
         mock_resend_verification.return_value = {
-            'message': 'If the account requires verification, a verification email has been sent.',
+            'message': (
+                'If the account requires verification, a verification '
+                'email has been sent.'
+            ),
             'code': 'verification_email_sent',
         }
 
@@ -423,8 +422,7 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_logout_success(self, mock_logout_user: AsyncMock) -> None:
-        """
-        Test successful logout returns a confirmation message.
+        """Test successful logout returns a confirmation message.
 
         Args:
             mock_logout_user (AsyncMock): Mocked logout_user service function.
@@ -447,10 +445,10 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_refresh_success(
-        self, mock_refresh_tokens: AsyncMock,
+        self,
+        mock_refresh_tokens: AsyncMock,
     ) -> None:
-        """
-        Test successful token refresh returns new access and refresh tokens.
+        """Test successful token refresh returns new access and refresh tokens.
 
         Args:
             mock_refresh_tokens (AsyncMock):
@@ -473,7 +471,8 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_web_refresh_requires_bff(
-        self, mock_refresh_tokens: AsyncMock,
+        self,
+        mock_refresh_tokens: AsyncMock,
     ) -> None:
         """Web refresh is internal to the BFF and not callable by Flutter."""
         mock_refresh_tokens.return_value = {
@@ -499,8 +498,7 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_login_fail(self, mock_login_user: AsyncMock) -> None:
-        """
-        Test failed login returns 401 and error detail.
+        """Test failed login returns 401 and error detail.
 
         Args:
             mock_login_user (AsyncMock): Mocked login_user service function.
@@ -523,8 +521,7 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_logout_fail(self, mock_logout_user: AsyncMock) -> None:
-        """
-        Test failed logout returns 401 and error detail.
+        """Test failed logout returns 401 and error detail.
 
         Args:
             mock_logout_user (AsyncMock): Mocked logout_user service function.
@@ -550,7 +547,8 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_web_logout_uses_cookie_and_clears_cookie(
-        self, mock_logout_user: AsyncMock,
+        self,
+        mock_logout_user: AsyncMock,
     ) -> None:
         """Web logout can revoke refresh token from cookie without body."""
         response = self.client.post(
@@ -578,8 +576,7 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_refresh_fail(self, mock_refresh_tokens: AsyncMock) -> None:
-        """
-        Test failed token refresh returns 401 and error detail.
+        """Test failed token refresh returns 401 and error detail.
 
         Args:
             mock_refresh_tokens (AsyncMock):
@@ -600,9 +597,3 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.routers.auth\
-    --cov-report=term-missing\
-        tests/examples/db_management/routers/auth_test.py
-'''

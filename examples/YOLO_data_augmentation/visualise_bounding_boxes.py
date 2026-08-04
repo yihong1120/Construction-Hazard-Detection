@@ -8,9 +8,7 @@ from matplotlib import pyplot as plt
 
 
 class BoundingBoxVisualiser:
-    """
-    Class for visualising bounding boxes on images.
-    """
+    """Class for visualising bounding boxes on images."""
 
     def __init__(
         self,
@@ -18,8 +16,7 @@ class BoundingBoxVisualiser:
         label_path: str | Path,
         class_names: list[str],
     ) -> None:
-        """
-        Initialises the BoundingBoxVisualiser with the specified image,
+        """Initialises the BoundingBoxVisualiser with the specified image,
         label paths, and class names.
 
         Args:
@@ -38,9 +35,7 @@ class BoundingBoxVisualiser:
         self.image = image
 
     def draw_bounding_boxes(self) -> None:
-        """
-        Draws bounding boxes on the image based on the label file.
-        """
+        """Draws bounding boxes on the image based on the label file."""
         height, width, _ = self.image.shape
 
         # Explicitly specify the mode 'r' when opening the file
@@ -53,7 +48,8 @@ class BoundingBoxVisualiser:
                 continue
             try:
                 class_id_f, x_centre, y_centre, bbox_width, bbox_height = map(
-                    float, parts[:5],
+                    float,
+                    parts[:5],
                 )
             except Exception:
                 continue
@@ -88,10 +84,11 @@ class BoundingBoxVisualiser:
             )
 
     def save_or_display_image(
-        self, output_path: str | Path, save: bool,
+        self,
+        output_path: str | Path,
+        save: bool,
     ) -> None:
-        """
-        Saves or displays the image based on the user's preference.
+        """Saves or displays the image based on the user's preference.
 
         Args:
             output_path: Path to save the image with drawn bounding boxes.
@@ -156,12 +153,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
-
-"""example
-python visualise_bounding_boxes.py \
-  --image './dataset_aug/train/images/-_jpeg.rf.b4ba444d690bb533133e22f1bd69442d_aug_6.jpg' \
-  --label './dataset_aug/train/labels/-_jpeg.rf.b4ba444d690bb533133e22f1bd69442d_aug_6.txt' \
-  --save \
-  --output './visualised_image.jpg'
-"""

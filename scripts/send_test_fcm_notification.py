@@ -26,8 +26,7 @@ _SENSITIVE_KEYS = {
     'token',
 }
 _SENSITIVE_KEY_ALIASES = {
-    key.replace('_', '').replace('-', '').lower()
-    for key in _SENSITIVE_KEYS
+    key.replace('_', '').replace('-', '').lower() for key in _SENSITIVE_KEYS
 }
 
 
@@ -37,8 +36,7 @@ def _is_sensitive_key(key: object) -> bool:
         return False
     normalised = key.replace('_', '').replace('-', '').lower()
     return (
-        key.lower() in _SENSITIVE_KEYS
-        or normalised in _SENSITIVE_KEY_ALIASES
+        key.lower() in _SENSITIVE_KEYS or normalised in _SENSITIVE_KEY_ALIASES
     )
 
 
@@ -117,13 +115,13 @@ def _login(client: httpx.Client, args: argparse.Namespace) -> str:
     if not username or not password:
         raise RuntimeError(
             'Missing login credentials. Provide --access-token, or set '
-            'API_USERNAME/API_PASSWORD in .env, or pass --username/--password.',
+            'API_USERNAME/API_PASSWORD in .env, or pass '
+            '--username/--password.',
         )
 
     headers: dict[str, str] = {}
-    bypass_key = (
-        args.hcaptcha_bypass_key
-        or os.getenv('HCAPTCHA_BYPASS_KEY', '')
+    bypass_key = args.hcaptcha_bypass_key or os.getenv(
+        'HCAPTCHA_BYPASS_KEY', '',
     )
     if bypass_key:
         headers['X-HCaptcha-Bypass-Key'] = bypass_key
@@ -135,8 +133,7 @@ def _login(client: httpx.Client, args: argparse.Namespace) -> str:
     )
     if response.status_code != 200:
         raise RuntimeError(
-            'Login failed: '
-            f'HTTP {response.status_code} {response.text}',
+            'Login failed: ' f"HTTP {response.status_code} {response.text}",
         )
 
     data = response.json()
@@ -168,7 +165,7 @@ def _store_device_token(
     if response.status_code >= 400:
         raise RuntimeError(
             'Store token failed: '
-            f'HTTP {response.status_code} {response.text}',
+            f"HTTP {response.status_code} {response.text}",
         )
     return response.json()
 
@@ -191,8 +188,7 @@ def _send_notification(
         'metadata': _load_json_arg(args.metadata_json),
     }
     payload = {
-        key: value for key,
-        value in payload.items() if value is not None
+        key: value for key, value in payload.items() if value is not None
     }
 
     if args.print_payload or args.dry_run:
@@ -203,12 +199,12 @@ def _send_notification(
     response = client.post(
         _url(args.fcm_url, '/send_fcm_notification'),
         json=payload,
-        headers={'Authorization': f'Bearer {access_token}'},
+        headers={'Authorization': f"Bearer {access_token}"},
     )
     if response.status_code >= 400:
         raise RuntimeError(
             'Send notification failed: '
-            f'HTTP {response.status_code} {response.text}',
+            f"HTTP {response.status_code} {response.text}",
         )
     return response.json()
 
@@ -341,7 +337,7 @@ def main() -> int:
             return 0
         return 2
     except Exception as exc:
-        print(f'Error: {exc}', file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
 

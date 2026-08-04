@@ -29,14 +29,17 @@ from examples.violation_records.routers import _validate_analytics_range
 from examples.violation_records.routers import get_user_sites_cached
 from examples.violation_records.routers import router
 from examples.violation_records.routers import upload_violation
-from examples.violation_records.violation_manager import EmptyViolationImageError
-from examples.violation_records.violation_manager import ViolationImageReadError
+from examples.violation_records.violation_manager import (
+    EmptyViolationImageError,
+)
+from examples.violation_records.violation_manager import (
+    ViolationImageReadError,
+)
 
 
 class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
-    """
-    A test suite for violation-related endpoints.
-    """
+    """A test suite for violation-related endpoints."""
+
     # fake_db is created in setUpClass as a SimpleNamespace with AsyncMocks
     client: ClassVar[TestClient]
     fake_db: ClassVar[SimpleNamespace]  # 明確定義 fake_db 作為類別屬性
@@ -80,9 +83,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         cls.client = TestClient(app)  # <== typed as ClassVar[TestClient]
 
     async def asyncSetUp(self) -> None:
-        """
-        Reset the fake DB's mocks before each test.
-        """
+        """Reset the fake DB's mocks before each test."""
         _user_sites_cache.clear()
         self.fake_db.execute.reset_mock()
         self.fake_db.execute.side_effect = None
@@ -103,8 +104,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         user_obj: object | None,
     ) -> None:
-        """
-        Simulate the DB returning a user object.
+        """Simulate the DB returning a user object.
 
         Args:
             user_obj (MockUser | None): The mock user object to return.
@@ -123,34 +123,39 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         site_obj: object | None,
     ) -> None:
-        """
-        Append a site query result to the side_effect queue.
+        """Append a site query result to the side_effect queue.
 
         Args:
             site_obj (MockSite | None): The mock site object to return.
         """
-        cur = list(
-            self.fake_db.execute.side_effect,
-        ) if self.fake_db.execute.side_effect else []
+        cur = (
+            list(
+                self.fake_db.execute.side_effect,
+            )
+            if self.fake_db.execute.side_effect
+            else []
+        )
         cur.append(self._exec_scalar(site_obj))
         self.fake_db.execute.side_effect = cur
 
     def append_count_query(self, count_val: int) -> None:
-        """
-        Append a count query result to the side_effect queue.
+        """Append a count query result to the side_effect queue.
 
         Args:
             count_val (int): The integer count to return from db.execute().
         """
-        cur = list(
-            self.fake_db.execute.side_effect,
-        ) if self.fake_db.execute.side_effect else []
+        cur = (
+            list(
+                self.fake_db.execute.side_effect,
+            )
+            if self.fake_db.execute.side_effect
+            else []
+        )
         cur.append(self._exec_scalar(count_val))
         self.fake_db.execute.side_effect = cur
 
     def simulate_scalars_list(self, items: list) -> None:
-        """
-        Simulate db.scalars(stmt).all() returning a list of items.
+        """Simulate db.scalars(stmt).all() returning a list of items.
 
         Args:
             items (list): A list of mock items to return.
@@ -189,7 +194,9 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
     def _exec_scalars_feedbacks(self, values: list) -> Any:
         """Return an object with scalars().all() -> feedback rows."""
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: values))
+        return SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: values),
+        )
 
     def _exec_first(self, value: Any) -> Any:
         """Return an object with first() -> value."""
@@ -334,9 +341,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     # Cache function tests
     ###################################################
     async def test_get_user_sites_cached_user_not_found(self) -> None:
-        """
-        Test get_user_sites_cached function when user is not found.
-        """
+        """Test get_user_sites_cached function when user is not found."""
         from examples.violation_records.routers import get_user_sites_cached
         from fastapi import HTTPException
 
@@ -350,9 +355,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.detail, 'User not found')
 
     async def test_get_user_sites_cached_success(self) -> None:
-        """
-        Test get_user_sites_cached function with successful user retrieval.
-        """
+        """Test get_user_sites_cached function with successful user
+        retrieval."""
         # Clear cache first
         _user_sites_cache.clear()
 
@@ -377,9 +381,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertIn('test_user', _user_sites_cache)
 
     async def test_get_user_sites_cached_cache_hit(self) -> None:
-        """
-        Test get_user_sites_cached function returns cached result.
-        """
+        """Test get_user_sites_cached function returns cached result."""
         # Pre-populate cache
         current_time = time.time()
         _user_sites_cache['cached_user'] = (['CachedSite'], current_time)
@@ -394,9 +396,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.fake_db.execute.assert_not_called()
 
     async def test_get_user_sites_cached_cache_expired(self) -> None:
-        """
-        Test get_user_sites_cached function refreshes expired cache.
-        """
+        """Test get_user_sites_cached function refreshes expired cache."""
         # Pre-populate cache with expired entry
         old_time = time.time() - _cache_ttl - 10  # expired
         _user_sites_cache['expired_user'] = (['OldSite'], old_time)
@@ -421,9 +421,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_user_sites_cache['expired_user'][0], ['NewSite'])
 
     async def test_get_my_sites_integration_cache(self) -> None:
-        """
-        Integration test for get_my_sites endpoint.
-        """
+        """Integration test for get_my_sites endpoint."""
         # Create mock user with sites
         siteA = self.make_site(1, 'SiteA')
         user = self.make_user('test_user', [siteA])
@@ -442,17 +440,14 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     # /api/my_sites Tests
     ###################################################
     async def test_get_my_sites_user_not_found(self) -> None:
-        """
-        If the DB returns no user, the endpoint should return 404.
-        """
+        """If the DB returns no user, the endpoint should return 404."""
         self.simulate_user_query(None)
         resp = self.client.get('/api/my_sites')
         self.assertEqual(resp.status_code, 404)
 
     async def test_get_my_sites_empty_sites(self) -> None:
-        """
-        If the user has no sites, the endpoint should return an empty list.
-        """
+        """If the user has no sites, the endpoint should return an empty
+        list."""
         user = self.make_user('test_user', [])
         self.simulate_user_query(user)
         resp = self.client.get('/api/my_sites')
@@ -460,9 +455,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.json(), [])
 
     async def test_get_my_sites_success(self) -> None:
-        """
-        If the user has multiple sites, return their info as a list of dicts.
-        """
+        """If the user has multiple sites, return their info as a list of
+        dicts."""
         siteA = self.make_site(1, 'SiteA')
         siteB = self.make_site(2, 'SiteB')
         user = self.make_user('test_user', [siteA, siteB])
@@ -475,20 +469,21 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data[1]['name'], 'SiteB')
 
     async def test_get_my_sites_missing_username(self) -> None:
-        """
-        Provide a JWT token with no 'username' in the subject dict to
-        exercise `if not username: ...`.
-        """
+        """Provide a JWT token with no 'username' in the subject dict to
+        exercise `if not username: ...`."""
+
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
+
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
         )
 
         resp = self.client.get('/api/my_sites')
         self.assertEqual(
-            resp.status_code, 401,
+            resp.status_code,
+            401,
             'Expected 401 when username is missing',
         )
 
@@ -504,9 +499,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     @patch('examples.violation_records.routers.Path')
     def test_get_violation_image_dotdot(self, mock_path: MagicMock) -> None:
-        """
-        If the path contains '..', return 400 for 'Invalid path'.
-        """
+        """If the path contains '..', return 400 for 'Invalid path'."""
         path_mock = MagicMock()
         path_mock.parts = ('..', 'secret.jpg')
         mock_path.return_value = path_mock
@@ -520,8 +513,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_path: MagicMock,
     ) -> None:
-        """
-        If the path is not relative to the 'static' dir, return 403.
+        """If the path is not relative to the 'static' dir, return 403.
 
         Args:
             mock_path (MagicMock): Mocked Path class.
@@ -543,9 +535,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.violation_records.routers.Path')
     def test_get_violation_image_not_found(self, mock_path: MagicMock) -> None:
-        """
-        If the requested file does not exist, return 404.
-        """
+        """If the requested file does not exist, return 404."""
         path_mock = MagicMock()
         path_mock.resolve.return_value = path_mock
         path_mock.__truediv__.return_value = path_mock
@@ -572,9 +562,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         mock_path: MagicMock,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If the file exists,
-        return 200 with the correct content-type for a '.png'.
+        """If the file exists, return 200 with the correct content-type for a
+        '.png'.
 
         Args:
             mock_path (MagicMock): Mocked Path class.
@@ -608,10 +597,9 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         mock_path: MagicMock,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If the file exists with a .jpg/.jpeg, return 200 and ensure
-        content-type is image/jpeg and the Content-Disposition filename is
-        sanitised before being returned.
+        """If the file exists with a .jpg/.jpeg, return 200 and ensure content-
+        type is image/jpeg and the Content-Disposition filename is sanitised
+        before being returned.
 
         Args:
             mock_path (MagicMock): Mocked Path class.
@@ -643,9 +631,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_path: MagicMock,
     ) -> None:
-        """
-        If the file exists but has an unsupported extension, return 400.
-        """
+        """If the file exists but has an unsupported extension, return 400."""
         path_mock = MagicMock()
         # Simulate safe relative path resolution
         path_mock.resolve.return_value = path_mock
@@ -665,10 +651,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.json()['detail'], 'Unsupported file type')
 
     def test_get_violation_image_invalid_path_segment(self) -> None:
-        """
-        A path segment that sanitises to empty (e.g. '***') should return 400
-        with 'Invalid path segment'.
-        """
+        """A path segment that sanitises to empty (e.g. '***') should return
+        400 with 'Invalid path segment'."""
         resp = self.client.get('/api/get_violation_image?image_path=***')
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()['detail'], 'Invalid path segment')
@@ -684,9 +668,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         mock_path: MagicMock,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If image_path starts with 'static/', it should be normalised to avoid
-        constructing 'static/static/...'. Expect success for valid PNG.
+        """If image_path starts with 'static/', it should be normalised to
+        avoid constructing 'static/static/...'.
+
+        Expect success for valid PNG.
         """
         path_mock = MagicMock()
         path_mock.resolve.return_value = path_mock
@@ -713,10 +698,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_path: MagicMock,
     ) -> None:
-        """
-        If a path contains a '.' segment, the per-segment validation should
-        raise 400 'Invalid path' (covers the branch on line ~384).
-        """
+        """If a path contains a '.' segment, the per-segment validation should
+        raise 400 'Invalid path' (covers the branch on line ~384)."""
         path_mock = MagicMock()
         # Force parts to include a '.' so it isn't normalised away
         path_mock.parts = ('valid', '.', 'image.jpg')
@@ -739,7 +722,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """Image endpoints require the path to belong to an accessible record."""
+        """Image endpoints require the path to belong to an accessible
+        record."""
         mock_get_user_sites.return_value = ['SiteA']
         self.fake_db.execute.return_value = self._exec_scalar(None)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -747,7 +731,9 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             source = base_dir / '2026-06-28' / 'image.png'
             source.parent.mkdir(parents=True)
             Image.new('RGB', (24, 24), color='white').save(source)
-            with patch('examples.violation_records.routers.STATIC_DIR', base_dir):
+            with patch(
+                'examples.violation_records.routers.STATIC_DIR', base_dir,
+            ):
                 resp = self.client.get(
                     '/api/get_violation_image'
                     '?image_path=2026-06-28/image.png',
@@ -773,16 +759,15 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             source.parent.mkdir(parents=True)
             Image.new('RGB', (800, 600), color='white').save(source)
 
-            with patch('examples.violation_records.routers.STATIC_DIR', base_dir):
+            with patch(
+                'examples.violation_records.routers.STATIC_DIR', base_dir,
+            ):
                 resp = self.client.get(
                     '/api/get_violation_thumbnail'
                     '?image_path=2026-06-28/image.png',
                 )
                 thumbnail = (
-                    base_dir
-                    / '_thumbnails'
-                    / '2026-06-28'
-                    / 'image.jpg'
+                    base_dir / '_thumbnails' / '2026-06-28' / 'image.jpg'
                 )
                 thumbnail_exists = thumbnail.exists()
 
@@ -798,13 +783,13 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If no user is found in the DB, return 404.
-        """
+        """If no user is found in the DB, return 404."""
         # Mock get_user_sites_cached to raise 404 when user not found
         from fastapi import HTTPException
+
         mock_get_user_sites.side_effect = HTTPException(
-            status_code=404, detail='User not found',
+            status_code=404,
+            detail='User not found',
         )
         resp = self.client.get('/api/violations')
         self.assertEqual(resp.status_code, 404)
@@ -814,9 +799,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If the user has no sites, return total=0 and items=[].
-        """
+        """If the user has no sites, return total=0 and items=[]."""
         mock_get_user_sites.return_value = []
         resp = self.client.get('/api/violations')
         self.assertEqual(resp.status_code, 200)
@@ -830,10 +813,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If the user tries to access a site ID that does not match their site,
-        return 403.
-        """
+        """If the user tries to access a site ID that does not match their
+        site, return 403."""
         mock_get_user_sites.return_value = ['SiteA']
         # Mock site query to return a different site
         self.fake_db.execute.return_value = self._exec_scalar(
@@ -847,18 +828,18 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If keyword, start_time, end_time, limit, and offset are provided,
-        verify the response returns the expected data.
-        """
+        """If keyword, start_time, end_time, limit, and offset are provided,
+        verify the response returns the expected data."""
         mock_get_user_sites.return_value = ['SiteA']
         # Mock count query and violations query
         v1 = self.make_violation(123, 'SiteA')
         v2 = self.make_violation(456, 'SiteA')
-        self.fake_db.execute.return_value = self._exec_all([
-            self._violation_row_with_total(v1, 2),
-            self._violation_row_with_total(v2, 2),
-        ])
+        self.fake_db.execute.return_value = self._exec_all(
+            [
+                self._violation_row_with_total(v1, 2),
+                self._violation_row_with_total(v2, 2),
+            ],
+        )
 
         params = {
             'keyword': 'cam',
@@ -913,7 +894,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         site_a = self.make_site(1, 'SiteA')
         admin = self.make_user('test_user', [site_a], role='admin')
         with patch(
-            'examples.violation_records.routers.load_user_with_effective_sites',
+            (
+                'examples.violation_records.routers.'
+                'load_user_with_effective_sites'
+            ),
             new=AsyncMock(return_value=(admin, [site_a])),
         ):
             resp = self.client.get('/api/violations?stream_id=Cam1')
@@ -933,22 +917,26 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         site_a = self.make_site(1, 'SiteA')
         admin = self.make_user('test_user', [site_a], role='admin')
         mock_load_user.return_value = (admin, [site_a])
-        self.fake_db.execute.return_value = self._exec_all([
-            (10, 'Cam A'),
-            (11, 'Cam B'),
-        ])
+        self.fake_db.execute.return_value = self._exec_all(
+            [
+                (10, 'Cam A'),
+                (11, 'Cam B'),
+            ],
+        )
 
         resp = self.client.get('/api/violations/filter-options?site_id=1')
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(
-            resp.json()['cameras'], [
+            resp.json()['cameras'],
+            [
                 {'stream_id': '10', 'name': 'Cam A'},
                 {'stream_id': '11', 'name': 'Cam B'},
             ],
         )
         self.assertEqual(
-            resp.json()['violation_types'][0], {
+            resp.json()['violation_types'][0],
+            {
                 'code': 'no_safety_helmet',
                 'label': '未戴安全帽',
             },
@@ -981,9 +969,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If the user and site are valid, and there's 1 violation, return it.
-        """
+        """If the user and site are valid, and there's 1 violation, return
+        it."""
         mock_get_user_sites.return_value = ['SiteA']
         # Mock site query and count query
         viol = self.make_violation(101, 'SiteA')
@@ -1024,10 +1011,12 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             'SiteA',
             detection_time=datetime(2026, 6, 28, 11, 0, 0),
         )
-        self.fake_db.execute.return_value = self._exec_all([
-            self._violation_row_with_total(first, 2),
-            self._violation_row_with_total(second, 2),
-        ])
+        self.fake_db.execute.return_value = self._exec_all(
+            [
+                self._violation_row_with_total(first, 2),
+                self._violation_row_with_total(second, 2),
+            ],
+        )
 
         resp = self.client.get('/api/violations?limit=1')
 
@@ -1095,9 +1084,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         viol.flagged_by = 9
         viol.flagged_at = datetime(2026, 6, 25, 10, 0, 0)
         viol.review_status = 'pending'
-        self.fake_db.execute.return_value = self._exec_all([
-            self._violation_row_with_total(viol, 1),
-        ])
+        self.fake_db.execute.return_value = self._exec_all(
+            [
+                self._violation_row_with_total(viol, 1),
+            ],
+        )
 
         resp = self.client.get(
             '/api/violations?flagged=true&review_status=pending',
@@ -1200,14 +1191,18 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.fake_db.execute.side_effect = [
             self._exec_scalar(128),
             self._exec_scalar(12),
-            self._exec_all([
-                (datetime(2026, 6, 20), 18),
-                (datetime(2026, 6, 21), 22),
-            ]),
-            self._exec_all([
-                (1, 'SiteA', 80),
-                (2, 'SiteB', 48),
-            ]),
+            self._exec_all(
+                [
+                    (datetime(2026, 6, 20), 18),
+                    (datetime(2026, 6, 21), 22),
+                ],
+            ),
+            self._exec_all(
+                [
+                    (1, 'SiteA', 80),
+                    (2, 'SiteB', 48),
+                ],
+            ),
             self._exec_all([(8, 12), (9, 21), (10, 9)]),
             self._exec_scalar(64),
             self._exec_scalar(30),
@@ -1236,7 +1231,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             'no_safety_helmet',
         )
         self.assertEqual(
-            data['trend'][0], {
+            data['trend'][0],
+            {
                 'bucket': '2026-06-20',
                 'count': 18,
             },
@@ -1291,11 +1287,14 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['summary']['total'], 7)
         self.assertEqual(data['summary']['today'], 2)
         self.assertEqual(
-            data['by_type'], [{
-                'type': 'near_vehicle',
-                'label': '人員靠近車輛',
-                'count': 7,
-            }],
+            data['by_type'],
+            [
+                {
+                    'type': 'near_vehicle',
+                    'label': '人員靠近車輛',
+                    'count': 7,
+                },
+            ],
         )
 
         aggregate_statements = [
@@ -1453,7 +1452,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(
-            resp.json(), {
+            resp.json(),
+            {
                 'detail': 'violation_analytics_forbidden',
             },
         )
@@ -1467,12 +1467,12 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If there's no user, return 404.
-        """
+        """If there's no user, return 404."""
         from fastapi import HTTPException
+
         mock_get_user_sites.side_effect = HTTPException(
-            status_code=404, detail='User not found',
+            status_code=404,
+            detail='User not found',
         )
         resp = self.client.get('/api/violations/9999')
         self.assertEqual(resp.status_code, 404)
@@ -1482,10 +1482,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If the DB returns None for the violation, respond with 403 because it's
-        not accessible.
-        """
+        """If the DB returns None for the violation, respond with 403 because
+        it's not accessible."""
         mock_get_user_sites.return_value = ['SiteA']
         self.fake_db.execute.return_value = self._exec_scalar(None)
         resp = self.client.get('/api/violations/1234')
@@ -1496,10 +1494,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If the violation's site doesn't match the user's site,
-        respond with 403.
-        """
+        """If the violation's site doesn't match the user's site, respond with
+        403."""
         mock_get_user_sites.return_value = ['SiteA']
         viol = self.make_violation(88, 'SiteB')
         self.fake_db.execute.return_value = self._exec_scalar(viol)
@@ -1511,16 +1507,16 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_sites: AsyncMock,
     ) -> None:
-        """
-        If the violation matches the user's site,
-        return 200 with violation data.
-        """
+        """If the violation matches the user's site, return 200 with violation
+        data."""
         mock_get_user_sites.return_value = ['SiteA']
         viol = self.make_violation(77, 'SiteA')
         viol.feedback_note = '測試'
-        viol.detections_json = json.dumps([
-            [40, 40, 180, 210, 0.93, 5, 12],
-        ])
+        viol.detections_json = json.dumps(
+            [
+                [40, 40, 180, 210, 0.93, 5, 12],
+            ],
+        )
         feedback = self.make_feedback(1, 77, note='測試')
         self.fake_db.execute.side_effect = [
             self._exec_scalar(viol),
@@ -1549,9 +1545,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """Detail response exposes normalized overlay objects for painters."""
         mock_get_user_sites.return_value = ['SiteA']
         viol = self.make_violation(77, 'SiteA')
-        viol.detections_json = json.dumps([
-            [40, 40, 180, 210, 0.93, 5, 12],
-        ])
+        viol.detections_json = json.dumps(
+            [
+                [40, 40, 180, 210, 0.93, 5, 12],
+            ],
+        )
         feedback = self.make_feedback(1, 77, note='測試')
         self.fake_db.execute.side_effect = [
             self._exec_scalar(viol),
@@ -1608,12 +1606,12 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_get_violations_missing_username(self) -> None:
-        """
-        If the JWT token has no 'username', return 401 for invalid token.
-        """
+        """If the JWT token has no 'username', return 401 for invalid token."""
+
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
+
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
         )
@@ -1630,12 +1628,12 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_get_single_violation_missing_username(self) -> None:
-        """
-        If the JWT token has no 'username', return 401 for invalid token.
-        """
+        """If the JWT token has no 'username', return 401 for invalid token."""
+
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
+
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
         )
@@ -1662,9 +1660,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """A valid feedback request creates a pending feedback row."""
         mock_get_user_sites.return_value = ['SiteA']
         viol = self.make_violation(77, 'SiteA')
-        viol.detections_json = json.dumps([
-            [40, 40, 180, 210, 0.93, 5, 12],
-        ])
+        viol.detections_json = json.dumps(
+            [
+                [40, 40, 180, 210, 0.93, 5, 12],
+            ],
+        )
         self.fake_db.execute.side_effect = [
             self._exec_scalar(viol),
             self._exec_scalar(9),
@@ -1769,9 +1769,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         """A target_detection_id must belong to parsed record detections."""
         mock_get_user_sites.return_value = ['SiteA']
         viol = self.make_violation(77, 'SiteA')
-        viol.detections_json = json.dumps([
-            [40, 40, 180, 210, 0.93, 5, 12],
-        ])
+        viol.detections_json = json.dumps(
+            [
+                [40, 40, 180, 210, 0.93, 5, 12],
+            ],
+        )
         self.fake_db.execute.return_value = self._exec_scalar(viol)
 
         resp = self.client.post(
@@ -1791,9 +1793,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
     async def test_submit_violation_feedback_missing_username(self) -> None:
         """Feedback submission requires an authenticated username."""
+
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
+
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
         )
@@ -1953,15 +1957,16 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_path: MagicMock,
     ) -> None:
-        """
-        If the token has no username, /api/get_violation_image should 401.
+        """If the token has no username, /api/get_violation_image should 401.
 
         Args:
             mock_path (MagicMock): Mocked Path class.
         """
+
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
+
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
         )
@@ -2020,12 +2025,12 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         mock_save_violation.assert_awaited_once()
 
     async def test_upload_violation_missing_username(self) -> None:
-        """
-        If the token lacks 'username', /api/upload should 401.
-        """
+        """If the token lacks 'username', /api/upload should 401."""
+
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
             return JwtAuthorizationCredentials(subject={})
+
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
         )
@@ -2055,8 +2060,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         mock_file_obj = MagicMock()
         with self.assertRaisesRegex(
-                HTTPException,
-                'No access to this site',
+            HTTPException,
+            'No access to this site',
         ) as raised:
             await upload_violation(
                 site='SiteB',
@@ -2093,8 +2098,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaisesRegex(
-                HTTPException,
-                'Failed to read image file',
+            HTTPException,
+            'Failed to read image file',
         ) as raised:
             await upload_violation(
                 site='SiteA',
@@ -2131,8 +2136,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaisesRegex(
-                HTTPException,
-                'Failed to read image file',
+            HTTPException,
+            'Failed to read image file',
         ) as raised:
             await upload_violation(
                 site='SiteA',
@@ -2170,8 +2175,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         mock_save_violation.return_value = None
 
         with self.assertRaisesRegex(
-                HTTPException,
-                'Failed to create violation record',
+            HTTPException,
+            'Failed to create violation record',
         ) as raised:
             await upload_violation(
                 site='SiteA',
@@ -2193,8 +2198,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-'''
-pytest \
-    --cov=examples.violation_records.routers \
-    --cov-report=term-missing tests/examples/violation_records/routers_test.py
-'''
+"""Pytest \
+
+--cov=examples.violation_records.routers \
+--cov-report=term-missing tests/examples/violation_records/routers_test.py
+"""

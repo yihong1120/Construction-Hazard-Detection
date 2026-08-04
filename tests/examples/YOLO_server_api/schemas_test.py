@@ -125,6 +125,7 @@ class TestUpdateModelRequest(unittest.TestCase):
         req = UpdateModelRequest(**data)
         dt = req.last_update_as_datetime()
         self.assertIsNotNone(dt)
+        assert dt is not None
         self.assertIsInstance(dt, datetime)
         self.assertEqual(dt.year, 2023)
         self.assertEqual(dt.month, 10)

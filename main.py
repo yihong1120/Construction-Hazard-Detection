@@ -6,25 +6,26 @@ import hashlib
 import json
 import multiprocessing
 import os
-from concurrent.futures import ProcessPoolExecutor
+import signal
 from contextlib import suppress
-from datetime import datetime
 from multiprocessing import Process
 from multiprocessing.managers import SyncManager
+from types import FrameType
 from typing import Any
-from typing import cast
 
 from asyncpg import create_pool  # type: ignore[import-untyped]
 from asyncpg.pool import Pool  # type: ignore[import-untyped]
 from dotenv import load_dotenv
 from sqlalchemy.engine.url import make_url
 
+from src.gpu_stream_capture import GpuStreamCapture
 from src.monitor_logger import LoggerConfig
 from src.stream_processor import delete_stream_live_metadata
+from src.stream_processor import process_gpu_stream_group
 from src.stream_processor import process_single_stream
+from src.stream_processor import process_ultralytics_stream_group
 from src.stream_processor import StreamConfig
 from src.utils import Utils
-from src.yolo_worker import ResultStore
 from src.yolo_worker import YOLO_WORKER_STOP_MESSAGE
 from src.yolo_worker import YoloWorker
 
@@ -55,14 +56,21 @@ class MainApp:
         self.db_pool: Pool | None = None  # PostgreSQL async connection pool
         self._config_listener_connection: Any | None = None
         self._config_reload_task: asyncio.Task[None] | None = None
+        self._last_config_summary: tuple[int, int, int] | None = None
 
-        # Process pool management to improve performance
-        self.max_workers = min(multiprocessing.cpu_count(), 8)
-        self.process_executor: ProcessPoolExecutor | None = None
         self.yolo_manager: SyncManager | None = None
         self.yolo_request_queues: list[Any] = []
-        self.yolo_result_stores: list[Any] = []
+        self.yolo_result_queues: dict[str, Any] = {}
         self.yolo_worker_processes: list[Process] = []
+        self.yolo_worker_slots: dict[str, int] = {}
+        self.yolo_worker_topology_signature: str | None = None
+        self.yolo_worker_startup_lock: Any | None = None
+        self.gpu_stream_group_process: Process | None = None
+        self.gpu_stream_group_signature: str | None = None
+        self.gpu_stream_group_configs: list[StreamConfig] = []
+        self.ultralytics_stream_group_process: Process | None = None
+        self.ultralytics_stream_group_signature: str | None = None
+        self.ultralytics_stream_group_configs: list[StreamConfig] = []
 
     async def _ensure_db_pool(self) -> None:
         """
@@ -79,6 +87,13 @@ class MainApp:
             port = url.port
             if url.drivername.startswith('mysql') and port == 3306:
                 port = 5432
+            self.logger.info(
+                '[database] Connecting to stream configuration database '
+                '%s:%s/%s',
+                url.host or 'localhost',
+                port or 5432,
+                url.database or '',
+            )
             self.db_pool = await create_pool(
                 host=url.host,
                 port=port or 5432,
@@ -92,6 +107,9 @@ class MainApp:
                 server_settings={
                     'application_name': 'construction-hazard-detection',
                 },
+            )
+            self.logger.info(
+                '[database] Stream configuration database connection ready',
             )
 
     async def _ensure_config_listener(self) -> None:
@@ -113,6 +131,9 @@ class MainApp:
             await self.db_pool.release(connection)
             raise
         self._config_listener_connection = connection
+        self.logger.info(
+            '[database] Listening for stream configuration changes',
+        )
 
     def _on_stream_config_changed(
         self,
@@ -265,36 +286,49 @@ class MainApp:
     async def reload_configurations(self) -> None:
         """
         Main configuration reload logic:
-            - Stops disabled, unscheduled, expired, or deleted stream processes
+            - Stops disabled, expired, or deleted stream processes
             - Restarts modified streams (based on updated_at)
             - Starts newly added streams not yet tracked
         """
         async with self.lock:
             configs = await self.fetch_stream_configs()
             cfg_map = {c['video_url']: c for c in configs}
-            now = datetime.now()
-            runnable_configs = {
+            active_configs = {
                 video_url: cfg
                 for video_url, cfg in cfg_map.items()
-                if self._can_run_recognition(cfg, now)
+                if self._can_run_stream(cfg)
             }
-            if runnable_configs:
-                workers_restarted = (
-                    self._ensure_yolo_worker()
-                    if self.yolo_worker_processes
-                    else False
+            if self._ultralytics_stream_group_enabled():
+                await self._reload_ultralytics_stream_group(
+                    configs,
+                    active_configs,
+                )
+                return
+
+            self._stop_ultralytics_stream_group()
+            if self._gpu_stream_group_enabled():
+                await self._reload_gpu_stream_group(
+                    configs,
+                    active_configs,
+                )
+                return
+
+            self._stop_gpu_stream_group()
+            if active_configs:
+                worker_broker_replaced = self._ensure_yolo_worker(
+                    list(active_configs.values()),
                 )
             else:
-                workers_restarted = False
+                worker_broker_replaced = False
                 if self.yolo_worker_processes:
                     self._stop_yolo_worker()
 
-            # 1. Stop streams that are removed or cannot currently run.
+            # 1. Stop streams that are removed, disabled, or expired.
             for video_url in list(self.running_processes.keys()):
                 proc_info = self.running_processes[video_url]
                 cfg = cfg_map.get(video_url)
 
-                if video_url not in runnable_configs:
+                if video_url not in active_configs:
                     self.logger.info(f"Stop stream {video_url}")
                     self.stop_process(proc_info['process'])
 
@@ -303,10 +337,17 @@ class MainApp:
                     del self.running_processes[video_url]
                     continue
 
+                if cfg is None:
+                    self.logger.warning(
+                        'Active stream %s has no configuration',
+                        video_url,
+                    )
+                    continue
+
                 if self._stream_needs_restart(
                     proc_info,
                     cfg,
-                    workers_restarted,
+                    worker_broker_replaced,
                 ):
                     await self._restart_stream_process(
                         video_url,
@@ -314,8 +355,8 @@ class MainApp:
                         cfg,
                     )
 
-            # 2. Start any newly runnable streams.
-            for video_url, cfg in runnable_configs.items():
+            # 2. Start every enabled, non-expired recognition stream.
+            for video_url, cfg in active_configs.items():
                 if video_url not in self.running_processes:
                     self.logger.info(
                         f"Launch new stream {video_url}",
@@ -326,22 +367,221 @@ class MainApp:
                         'updated_at': cfg['updated_at'],
                         'cfg': cfg,
                     }
+            self._log_config_summary(len(configs), len(active_configs))
+
+    async def _reload_gpu_stream_group(
+        self,
+        configs: list[StreamConfig],
+        active_configs: dict[str, StreamConfig],
+    ) -> None:
+        """Run all NVDEC streams in one process with a shared YOLO cache."""
+        if self.yolo_worker_processes:
+            self._stop_yolo_worker()
+
+        for video_url, proc_info in list(self.running_processes.items()):
+            self.logger.info(
+                'Stop standalone stream %s for shared GPU batch mode',
+                video_url,
+            )
+            self.stop_process(proc_info['process'])
+            await self._delete_stream_redis_keys(proc_info['cfg'])
+        self.running_processes.clear()
+
+        group_configs = sorted(
+            active_configs.values(),
+            key=lambda cfg: cfg['video_url'],
+        )
+        signature = json.dumps(
+            group_configs,
+            sort_keys=True,
+            separators=(',', ':'),
+        )
+        process = self.gpu_stream_group_process
+        group_is_current = (
+            process is not None
+            and process.is_alive()
+            and signature == self.gpu_stream_group_signature
+        )
+        if group_is_current:
+            self._log_config_summary(
+                len(configs),
+                len(active_configs),
+                active_process_count=1,
+            )
+            return
+
+        if process is not None:
+            self.logger.info('[GPU-YOLO] restarting shared stream group')
+            self.stop_process(process)
+            for cfg in self.gpu_stream_group_configs:
+                await self._delete_stream_redis_keys(cfg)
+
+        self.gpu_stream_group_process = None
+        self.gpu_stream_group_signature = None
+        self.gpu_stream_group_configs = []
+        if group_configs:
+            group_process = Process(
+                target=process_gpu_stream_group,
+                args=(group_configs,),
+            )
+            group_process.start()
+            self.gpu_stream_group_process = group_process
+            self.gpu_stream_group_signature = signature
+            self.gpu_stream_group_configs = group_configs
+            self.logger.info(
+                '[GPU-YOLO] started one shared stream group for %s cameras',
+                len(group_configs),
+            )
+        self._log_config_summary(
+            len(configs),
+            len(active_configs),
+            active_process_count=1 if group_configs else 0,
+        )
+
+    async def _reload_ultralytics_stream_group(
+        self,
+        configs: list[StreamConfig],
+        active_configs: dict[str, StreamConfig],
+    ) -> None:
+        """Run direct Ultralytics RTSP loaders in one grouped process."""
+        if self.yolo_worker_processes:
+            self._stop_yolo_worker()
+        self._stop_gpu_stream_group()
+
+        for video_url, proc_info in list(self.running_processes.items()):
+            self.logger.info(
+                'Stop standalone stream %s for Ultralytics stream mode',
+                video_url,
+            )
+            self.stop_process(proc_info['process'])
+            await self._delete_stream_redis_keys(proc_info['cfg'])
+        self.running_processes.clear()
+
+        group_configs = sorted(
+            active_configs.values(),
+            key=lambda cfg: cfg['video_url'],
+        )
+        signature = json.dumps(
+            group_configs,
+            sort_keys=True,
+            separators=(',', ':'),
+        )
+        process = self.ultralytics_stream_group_process
+        group_is_current = (
+            process is not None
+            and process.is_alive()
+            and signature == self.ultralytics_stream_group_signature
+        )
+        if group_is_current:
+            self._log_config_summary(
+                len(configs),
+                len(active_configs),
+                active_process_count=1,
+            )
+            return
+
+        if process is not None:
+            self.logger.info('[Ultralytics-Stream] restarting stream group')
+            self.stop_process(process)
+            for cfg in self.ultralytics_stream_group_configs:
+                await self._delete_stream_redis_keys(cfg)
+
+        self.ultralytics_stream_group_process = None
+        self.ultralytics_stream_group_signature = None
+        self.ultralytics_stream_group_configs = []
+        if group_configs:
+            group_process = Process(
+                target=process_ultralytics_stream_group,
+                args=(group_configs,),
+            )
+            group_process.start()
+            self.ultralytics_stream_group_process = group_process
+            self.ultralytics_stream_group_signature = signature
+            self.ultralytics_stream_group_configs = group_configs
+            self.logger.info(
+                '[Ultralytics-Stream] started grouped direct RTSP inference '
+                'for %s cameras',
+                len(group_configs),
+            )
+        self._log_config_summary(
+            len(configs),
+            len(active_configs),
+            active_process_count=1 if group_configs else 0,
+        )
+
+    def _stop_gpu_stream_group(self) -> None:
+        """Stop the process that owns NVDEC tensors and the model cache."""
+        process = self.gpu_stream_group_process
+        self.gpu_stream_group_process = None
+        self.gpu_stream_group_signature = None
+        self.gpu_stream_group_configs = []
+        if process is not None:
+            self.stop_process(process)
+
+    def _stop_ultralytics_stream_group(self) -> None:
+        """Stop the process that owns direct Ultralytics RTSP predictors."""
+        process = self.ultralytics_stream_group_process
+        self.ultralytics_stream_group_process = None
+        self.ultralytics_stream_group_signature = None
+        self.ultralytics_stream_group_configs = []
+        if process is not None:
+            self.stop_process(process)
 
     @staticmethod
-    def _can_run_recognition(
+    def _ultralytics_stream_group_enabled() -> bool:
+        """Return whether direct Ultralytics RTSP stream mode is enabled."""
+        return os.getenv(
+            'ULTRALYTICS_STREAM_ENABLED',
+            'false',
+        ).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+    @staticmethod
+    def _gpu_stream_group_enabled() -> bool:
+        """Return whether NVDEC can use the in-process CUDA batcher safely."""
+        requested = os.getenv(
+            'GPU_DECODE_ENABLED',
+            'false',
+        ).strip().lower() in {'1', 'true', 'yes', 'on'}
+        return requested and GpuStreamCapture.is_available()
+
+    def _log_config_summary(
+        self,
+        configured_count: int,
+        active_count: int,
+        active_process_count: int | None = None,
+    ) -> None:
+        """Log configuration state changes without flooding each poll cycle."""
+        summary = (
+            configured_count,
+            active_count,
+            (
+                len(self.running_processes)
+                if active_process_count is None
+                else active_process_count
+            ),
+        )
+        if summary == self._last_config_summary:
+            return
+        self._last_config_summary = summary
+        self.logger.info(
+            '[config] Loaded %s configs; %s recognition streams enabled; '
+            '%s stream processes active',
+            *summary,
+        )
+
+    @staticmethod
+    def _can_run_stream(
         cfg: StreamConfig,
-        now: datetime | None = None,
     ) -> bool:
-        """Return whether this stream is currently eligible for recognition."""
+        """Return whether capture and MediaMTX publishing should stay active.
+
+        Working hours are enforced inside the stream processor only for
+        violation records and notifications. Live capture and playback remain
+        available whenever recognition is enabled and the stream is valid.
+        """
         if not cfg.get('recognition_enabled', True):
             return False
-        if Utils.is_expired(cfg.get('expire_date')):
-            return False
-
-        current_hour = (now or datetime.now()).hour
-        work_start_hour = int(cfg.get('work_start_hour', 7))
-        work_end_hour = int(cfg.get('work_end_hour', 18))
-        return work_start_hour <= current_hour < work_end_hour
+        return not Utils.is_expired(cfg.get('expire_date'))
 
     def start_process(self, cfg: StreamConfig) -> Process:
         """
@@ -353,17 +593,29 @@ class MainApp:
         Returns:
             Process: The new multiprocessing.Process object.
         """
-        self._ensure_yolo_worker()
-        yolo_request_queue, yolo_result_store = self._yolo_worker_slot(cfg)
+        if not self.yolo_worker_processes:
+            self._ensure_yolo_worker([cfg])
+        yolo_request_queue, yolo_result_queue = self._yolo_worker_slot(cfg)
         p = Process(
             target=process_single_stream,
-            args=(cfg, yolo_request_queue, yolo_result_store),
+            args=(cfg, yolo_request_queue, yolo_result_queue),
         )
         p.start()
         return p
 
-    def _ensure_yolo_worker(self) -> bool:
-        """Start the shared YOLO worker pool when enabled."""
+    def _ensure_yolo_worker(
+        self,
+        configs: list[StreamConfig] | None = None,
+    ) -> bool:
+        """Maintain shared YOLO workers and report IPC broker replacement.
+
+        A dead worker is replaced with its existing request queue, so stream
+        processes keep their valid proxy objects. ``True`` indicates
+        that the whole broker was created or replaced and existing stream
+        processes need fresh proxies. When
+        ``YOLO_WORKER_CAMERAS_PER_ENGINE`` is positive, one worker is created
+        per same-model camera shard.
+        """
         if os.getenv(
             'YOLO_WORKER_ENABLED',
             'true',
@@ -372,41 +624,156 @@ class MainApp:
                 self._stop_yolo_worker()
                 return True
             return False
-        worker_count = max(1, int(os.getenv('YOLO_WORKER_COUNT', '2')))
-        if (
-            len(self.yolo_worker_processes) == worker_count
-            and all(p.is_alive() for p in self.yolo_worker_processes)
+        (
+            worker_count,
+            worker_slots,
+            topology_signature,
+        ) = self._yolo_worker_topology(configs)
+        devices = _csv_env('YOLO_WORKER_DEVICES', 'cuda:0')
+        if self._has_yolo_worker_broker(
+            worker_count,
+            topology_signature,
         ):
+            self._ensure_yolo_result_queues(configs)
+            self._restart_dead_yolo_workers(devices)
             return False
         self._stop_yolo_worker()
         if self.yolo_manager is None:
             self.yolo_manager = multiprocessing.Manager()
-        devices = _csv_env('YOLO_WORKER_DEVICES', 'cuda:0')
+        if topology_signature is not None:
+            self.yolo_worker_startup_lock = self.yolo_manager.Lock()
         for worker_index in range(worker_count):
             request_queue = self.yolo_manager.Queue(
                 maxsize=int(os.getenv('YOLO_WORKER_QUEUE_SIZE', '64')),
             )
-            result_store = self.yolo_manager.dict()
-            device = devices[worker_index % len(devices)]
-            worker = YoloWorker(
-                request_queue,
-                cast(ResultStore, result_store),
-                device,
-            )
-            process = Process(
-                target=worker.run,
-                daemon=True,
-            )
-            process.start()
             self.yolo_request_queues.append(request_queue)
-            self.yolo_result_stores.append(result_store)
-            self.yolo_worker_processes.append(process)
+            self.yolo_worker_processes.append(
+                self._start_yolo_worker(
+                    worker_index,
+                    request_queue,
+                    devices[worker_index % len(devices)],
+                ),
+            )
+        self._ensure_yolo_result_queues(configs)
+        self.yolo_worker_slots = worker_slots
+        self.yolo_worker_topology_signature = topology_signature
+        if topology_signature is not None:
             self.logger.info(
-                '[YOLO-Worker] process %s started on %s',
+                '[YOLO-Worker] camera-sharded topology started: %s workers',
+                worker_count,
+            )
+        return True
+
+    def _yolo_worker_topology(
+        self,
+        configs: list[StreamConfig] | None,
+    ) -> tuple[int, dict[str, int], str | None]:
+        """Build stable same-model camera shards for TensorRT workers."""
+        cameras_per_engine = _positive_int_env(
+            'YOLO_WORKER_CAMERAS_PER_ENGINE',
+            default=0,
+        )
+        if not configs or cameras_per_engine == 0:
+            return (
+                max(1, int(os.getenv('YOLO_WORKER_COUNT', '2'))),
+                {},
+                None,
+            )
+
+        grouped_configs: dict[str, list[StreamConfig]] = {}
+        for cfg in configs:
+            grouped_configs.setdefault(str(cfg['model_key']), []).append(cfg)
+
+        slots: dict[str, int] = {}
+        signature_shards: list[dict[str, object]] = []
+        worker_index = 0
+        for model_key, model_configs in sorted(grouped_configs.items()):
+            sorted_configs = sorted(
+                model_configs,
+                key=lambda cfg: str(cfg['video_url']),
+            )
+            for start in range(0, len(sorted_configs), cameras_per_engine):
+                shard = sorted_configs[start:start + cameras_per_engine]
+                source_urls = [str(cfg['video_url']) for cfg in shard]
+                for source_url in source_urls:
+                    slots[source_url] = worker_index
+                signature_shards.append(
+                    {
+                        'model_key': model_key,
+                        'sources': source_urls,
+                    },
+                )
+                worker_index += 1
+
+        signature = json.dumps(
+            {
+                'cameras_per_engine': cameras_per_engine,
+                'shards': signature_shards,
+            },
+            sort_keys=True,
+            separators=(',', ':'),
+        )
+        return worker_index, slots, signature
+
+    def _has_yolo_worker_broker(
+        self,
+        worker_count: int,
+        topology_signature: str | None = None,
+    ) -> bool:
+        """Return whether existing worker IPC can be reused safely."""
+        return (
+            self.yolo_manager is not None
+            and len(self.yolo_request_queues) == worker_count
+            and len(self.yolo_worker_processes) == worker_count
+            and self.yolo_worker_topology_signature == topology_signature
+        )
+
+    def _restart_dead_yolo_workers(self, devices: list[str]) -> None:
+        """Replace dead workers without replacing stream-side IPC proxies."""
+        for worker_index, process in enumerate(self.yolo_worker_processes):
+            if process.is_alive():
+                continue
+            with suppress(Exception):
+                process.join()
+            request_queue = self.yolo_request_queues[worker_index]
+            device = devices[worker_index % len(devices)]
+            self.yolo_worker_processes[worker_index] = (
+                self._start_yolo_worker(
+                    worker_index,
+                    request_queue,
+                    device,
+                )
+            )
+            self.logger.warning(
+                '[YOLO-Worker] process %s exited; restarted with existing '
+                'IPC broker on %s',
                 worker_index,
                 device,
             )
-        return True
+
+    def _start_yolo_worker(
+        self,
+        worker_index: int,
+        request_queue: Any,
+        device: str,
+    ) -> Process:
+        """Start one worker against a stable request queue."""
+        if self.yolo_worker_startup_lock is None:
+            worker = YoloWorker(request_queue, device)
+        else:
+            worker = YoloWorker(
+                request_queue,
+                device,
+                startup_lock=self.yolo_worker_startup_lock,
+            )
+        process = Process(target=worker.run, daemon=True)
+        process.start()
+        self.logger.info(
+            '[YOLO-Worker] process %s started on %s',
+            worker_index,
+            device,
+        )
+        return process
 
     async def _restart_stream_process(
         self,
@@ -430,12 +797,12 @@ class MainApp:
     def _stream_needs_restart(
         proc_info: dict[str, Any],
         cfg: StreamConfig,
-        workers_restarted: bool,
+        worker_broker_replaced: bool,
     ) -> bool:
         """Return True when an existing stream should be relaunched."""
         proc = proc_info['process']
         return (
-            workers_restarted
+            worker_broker_replaced
             or cfg['updated_at'] != proc_info['updated_at']
             or not proc.is_alive()
         )
@@ -456,13 +823,69 @@ class MainApp:
         self,
         cfg: StreamConfig,
     ) -> tuple[object | None, object | None]:
-        """Return the worker queue/result store assigned to this camera."""
-        if not self.yolo_request_queues or not self.yolo_result_stores:
+        """Return the worker and dedicated result queue assigned to a camera.
+
+        Sharded mode pins up to the configured number of same-model cameras to
+        one engine worker. Legacy mode retains model-key assignment.
+        """
+        if not self.yolo_request_queues:
             return None, None
-        camera_key = f"{cfg.get('site', '')}|{cfg.get('stream_name', '')}"
-        digest = hashlib.blake2b(camera_key.encode(), digest_size=4).digest()
-        index = int.from_bytes(digest, 'big') % len(self.yolo_request_queues)
-        return self.yolo_request_queues[index], self.yolo_result_stores[index]
+        result_queue = self._yolo_worker_result_queue(cfg)
+        if result_queue is None:
+            return None, None
+        source_url = str(cfg['video_url'])
+        slot_index = self.yolo_worker_slots.get(source_url)
+        if slot_index is not None:
+            return (
+                self.yolo_request_queues[slot_index],
+                result_queue,
+            )
+        model_key = str(cfg.get('model_key', ''))
+        configured_model_keys = [
+            key.strip()
+            for key in os.getenv('DETECT_SERVER_MODEL_KEYS', '').split(',')
+            if key.strip()
+        ]
+        if model_key in configured_model_keys:
+            index = configured_model_keys.index(model_key)
+        else:
+            digest = hashlib.blake2b(
+                model_key.encode(),
+                digest_size=4,
+            ).digest()
+            index = int.from_bytes(digest, 'big')
+        index %= len(self.yolo_request_queues)
+        return self.yolo_request_queues[index], result_queue
+
+    def _ensure_yolo_result_queues(
+        self,
+        configs: list[StreamConfig] | None,
+    ) -> None:
+        """Pre-create one bounded result queue for each active camera."""
+        if configs is None:
+            return
+        for cfg in configs:
+            self._yolo_worker_result_queue(cfg)
+
+    def _yolo_worker_result_queue(
+        self,
+        cfg: StreamConfig,
+    ) -> Any | None:
+        """Return a stable response queue that only one camera consumes."""
+        manager = self.yolo_manager
+        if manager is None:
+            return None
+        camera_key = f"{cfg['site']}|{cfg['stream_name']}"
+        result_queue = self.yolo_result_queues.get(camera_key)
+        if result_queue is None:
+            result_queue = manager.Queue(
+                maxsize=max(
+                    1,
+                    int(os.getenv('YOLO_WORKER_RESULT_QUEUE_SIZE', '8')),
+                ),
+            )
+            self.yolo_result_queues[camera_key] = result_queue
+        return result_queue
 
     async def _delete_stream_redis_keys(self, cfg: StreamConfig) -> None:
         """Delete compact live metadata for one configured camera."""
@@ -496,10 +919,8 @@ class MainApp:
             self.stop_process(info['process'])
         self.running_processes.clear()
 
-        # Close process pool
-        if self.process_executor:
-            self.process_executor.shutdown(wait=True)
-
+        self._stop_ultralytics_stream_group()
+        self._stop_gpu_stream_group()
         self._stop_yolo_worker()
         await self._cancel_config_reload_task()
 
@@ -535,14 +956,22 @@ class MainApp:
             self.yolo_manager.shutdown()
             self.yolo_manager = None
         self.yolo_request_queues.clear()
-        self.yolo_result_stores.clear()
+        self.yolo_result_queues.clear()
         self.yolo_worker_processes.clear()
+        self.yolo_worker_slots.clear()
+        self.yolo_worker_topology_signature = None
+        self.yolo_worker_startup_lock = None
 
     async def run(self) -> None:
         """
         Start the application loop that continuously checks the stream configs.
         """
         try:
+            self.logger.info(
+                '[startup] Stream supervisor started; polling every %s '
+                'seconds',
+                self.poll_interval,
+            )
             await self._ensure_config_listener()
             await self.poll_and_reload()
         except KeyboardInterrupt:
@@ -575,21 +1004,39 @@ async def main() -> None:
         with open(args.config, encoding='utf-8') as f:
             configs = json.load(f)
         app = MainApp(poll_interval=args.poll)
-        runnable_configs = [
-            cfg for cfg in configs if app._can_run_recognition(cfg)
+        active_configs = [
+            cfg for cfg in configs if app._can_run_stream(cfg)
         ]
-        if runnable_configs:
-            app._ensure_yolo_worker()
-        # Start a process for each currently runnable config.
-        procs = []
-        for cfg in runnable_configs:
-            yolo_request_queue, yolo_result_store = app._yolo_worker_slot(cfg)
-            proc = Process(
-                target=process_single_stream,
-                args=(cfg, yolo_request_queue, yolo_result_store),
+        if active_configs and app._ultralytics_stream_group_enabled():
+            app.ultralytics_stream_group_process = Process(
+                target=process_ultralytics_stream_group,
+                args=(active_configs,),
             )
-            proc.start()
-            procs.append(proc)
+            app.ultralytics_stream_group_process.start()
+            procs = [app.ultralytics_stream_group_process]
+        elif active_configs and app._gpu_stream_group_enabled():
+            app.gpu_stream_group_process = Process(
+                target=process_gpu_stream_group,
+                args=(active_configs,),
+            )
+            app.gpu_stream_group_process.start()
+            procs = [app.gpu_stream_group_process]
+        elif active_configs:
+            app._ensure_yolo_worker(active_configs)
+            # Start a process for every enabled, non-expired config.
+            procs = []
+            for cfg in active_configs:
+                yolo_request_queue, yolo_result_queue = app._yolo_worker_slot(
+                    cfg,
+                )
+                proc = Process(
+                    target=process_single_stream,
+                    args=(cfg, yolo_request_queue, yolo_result_queue),
+                )
+                proc.start()
+                procs.append(proc)
+        else:
+            procs = []
         try:
             while any(p.is_alive() for p in procs):
                 for p in procs:
@@ -597,6 +1044,8 @@ async def main() -> None:
         except KeyboardInterrupt:
             print('\n[INFO] KeyboardInterrupt, shutting down...')
         finally:
+            app._stop_ultralytics_stream_group()
+            app._stop_gpu_stream_group()
             for p in procs:
                 if p.is_alive():
                     p.terminate()
@@ -604,12 +1053,7 @@ async def main() -> None:
             await app.cleanup_resources()
     else:
         app = MainApp(poll_interval=args.poll)
-        try:
-            await app.run()
-        except KeyboardInterrupt:
-            print('\n[INFO] KeyboardInterrupt, shutting down...')
-        finally:
-            await app.cleanup_resources()
+        await app.run()
 
 
 def _csv_env(name: str, default: str) -> list[str]:
@@ -627,7 +1071,21 @@ def _csv_env(name: str, default: str) -> list[str]:
     return items or [default]
 
 
+def _positive_int_env(name: str, default: int = 0) -> int:
+    """Read a non-negative integer environment setting."""
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def _handle_sigterm(_signum: int, _frame: FrameType | None) -> None:
+    """Route SIGTERM through the normal graceful shutdown path."""
+    raise KeyboardInterrupt
+
+
 if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, _handle_sigterm)
     multiprocessing.set_start_method('spawn', force=True)
     asyncio.run(main())
 

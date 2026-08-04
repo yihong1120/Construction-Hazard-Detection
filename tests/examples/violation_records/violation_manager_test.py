@@ -16,14 +16,13 @@ from examples.violation_records.violation_manager import ViolationManager
 
 
 class TestViolationManager(unittest.IsolatedAsyncioTestCase):
-    """
-    Test cases for the ViolationManager class.
-    """
+    """Test cases for the ViolationManager class."""
 
     async def asyncSetUp(self) -> None:
-        """
-        Set up for each test. This method is called before each test_* method
-        in an asynchronous test case.
+        """Set up for each test.
+
+        This method is called before each test_* method in an asynchronous test
+        case.
         """
         # Create an instance of ViolationManager.
         self.manager = ViolationManager(base_dir='static')
@@ -60,8 +59,7 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
         mock_mkdir: MagicMock,
         mock_uuid: MagicMock,
     ) -> None:
-        """
-        Test the save_violation method when all operations succeed.
+        """Test the save_violation method when all operations succeed.
 
         Args:
             mock_aiofiles_open (MagicMock): Mock for aiofiles.open.
@@ -81,7 +79,9 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
         # Create a fake Violation object that will be returned by db.refresh
         fake_violation = Violation(id=999)
         self.mock_db.refresh.side_effect = lambda obj: setattr(
-            obj, 'id', fake_violation.id,
+            obj,
+            'id',
+            fake_violation.id,
         )
 
         # Act
@@ -130,8 +130,7 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
         self,
         mock_aiofiles_open: MagicMock,
     ) -> None:
-        """
-        Test the save_violation method when file writing fails.
+        """Test the save_violation method when file writing fails.
 
         Args:
             mock_aiofiles_open (MagicMock): Mock for aiofiles.open.
@@ -186,27 +185,31 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(new_violation_id, 100)
         upload_file.read.assert_has_awaits([call(5), call(5), call(5)])
-        mock_file_handle.write.assert_has_awaits([
-            call(b'chunk1'),
-            call(b'chunk2'),
-        ])
+        mock_file_handle.write.assert_has_awaits(
+            [
+                call(b'chunk1'),
+                call(b'chunk2'),
+            ],
+        )
 
 
 if __name__ == '__main__':
     unittest.main()
 
-'''
-pytest \
-    --cov=examples.violation_records.violation_manager \
-    --cov-report=term-missing \
-    tests/examples/violation_records/violation_manager_test.py
-'''
+"""Pytest \
+
+--cov=examples.violation_records.violation_manager \
+--cov-report=term-missing \
+tests/examples/violation_records/violation_manager_test.py
+"""
 
 
 class TestViolationManagerFailureRecovery(unittest.IsolatedAsyncioTestCase):
     """Exercise cleanup behaviour around failed violation image writes."""
 
-    async def test_empty_image_payload_is_rejected_without_conversion(self) -> None:
+    async def test_empty_image_payload_is_rejected_without_conversion(
+        self,
+    ) -> None:
         """Empty byte payloads retain their specific client-facing error."""
         with tempfile.TemporaryDirectory() as directory:
             manager = ViolationManager(base_dir=directory)
@@ -222,7 +225,8 @@ class TestViolationManagerFailureRecovery(unittest.IsolatedAsyncioTestCase):
     async def test_write_helpers_clean_up_read_errors_and_empty_uploads(
         self,
     ) -> None:
-        """Streaming upload failures remove incomplete files before re-raising."""
+        """Streaming upload failures remove incomplete files before re-
+        raising."""
         with tempfile.TemporaryDirectory() as directory:
             manager = ViolationManager(base_dir=directory)
             empty_path = Path(directory) / 'empty.png'
@@ -235,10 +239,16 @@ class TestViolationManagerFailureRecovery(unittest.IsolatedAsyncioTestCase):
             failing_upload = SimpleNamespace(
                 read=AsyncMock(side_effect=OSError('camera disconnected')),
             )
-            with patch(
-                'examples.violation_records.violation_manager.aiofiles.open',
-                return_value=context,
-            ), self.assertRaisesRegex(OSError, 'Failed to read image file'):
+            with (
+                patch(
+                    (
+                        'examples.violation_records.violation_manager.'
+                        'aiofiles.open'
+                    ),
+                    return_value=context,
+                ),
+                self.assertRaisesRegex(OSError, 'Failed to read image file'),
+            ):
                 await manager._write_upload_file(
                     failing_upload,
                     Path(directory) / 'failed.png',
@@ -246,10 +256,16 @@ class TestViolationManagerFailureRecovery(unittest.IsolatedAsyncioTestCase):
                 )
 
             empty_upload = SimpleNamespace(read=AsyncMock(return_value=b''))
-            with patch(
-                'examples.violation_records.violation_manager.aiofiles.open',
-                return_value=context,
-            ), self.assertRaisesRegex(ValueError, 'Empty image'):
+            with (
+                patch(
+                    (
+                        'examples.violation_records.violation_manager.'
+                        'aiofiles.open'
+                    ),
+                    return_value=context,
+                ),
+                self.assertRaisesRegex(ValueError, 'Empty image'),
+            ):
                 await manager._write_upload_file(
                     empty_upload,
                     Path(directory) / 'empty-upload.png',
@@ -269,7 +285,8 @@ class TestViolationManagerFailureRecovery(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch.object(
-                    manager, '_build_image_path',
+                    manager,
+                    '_build_image_path',
                     return_value=image_path,
                 ),
                 patch.object(

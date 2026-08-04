@@ -29,9 +29,7 @@ settings = Settings()
 logger = logging.getLogger(__name__)
 
 BREVO_SEND_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email'
-FORGOT_PASSWORD_RESPONSE = (
-    'If the email exists, a reset link has been sent.'
-)
+FORGOT_PASSWORD_RESPONSE = 'If the email exists, a reset link has been sent.'
 PASSWORD_RESET_SUCCESS_RESPONSE = 'Password reset successfully.'
 RESET_TOKEN_INVALID_RESPONSE = 'Reset token is invalid or expired.'
 
@@ -47,24 +45,24 @@ def _hash_identifier(value: str) -> str:
 
 
 def _password_reset_key(token_hash: str) -> str:
-    return f'password_reset:{token_hash}'
+    return f"password_reset:{token_hash}"
 
 
 def _email_rate_key(email: str) -> str:
-    return f'password_reset_rate:email:{_hash_identifier(email)}'
+    return f"password_reset_rate:email:{_hash_identifier(email)}"
 
 
 def _ip_rate_key(client_ip: str) -> str:
-    return f'password_reset_rate:ip:{_hash_identifier(client_ip)}'
+    return f"password_reset_rate:ip:{_hash_identifier(client_ip)}"
 
 
 def _user_cache_key(username: str) -> str:
-    return f'{PROJECT_PREFIX}:user_cache:{username}'
+    return f"{PROJECT_PREFIX}:user_cache:{username}"
 
 
 def _build_reset_url(raw_token: str) -> str:
     public_url = settings.app_public_url.rstrip('/')
-    return f'{public_url}/reset_password?token={raw_token}'
+    return f"{public_url}/reset_password?token={raw_token}"
 
 
 async def _increment_rate_limit(
@@ -146,7 +144,7 @@ async def _send_password_reset_email(
         ),
         'textContent': (
             'Use the following link to reset your password:\n'
-            f'{reset_url}\n\n'
+            f"{reset_url}\n\n"
             'This link expires soon. If you did not request this, '
             'you can ignore this email.'
         ),
@@ -192,7 +190,8 @@ async def request_password_reset(
     redis_pool: Redis,
     client_ip: str | None = None,
 ) -> dict[str, str]:
-    """Create a one-time reset token and send it by e-mail if the user exists."""
+    """Create a one-time reset token and send it by e-mail if the user
+    exists."""
     normalized_email = email.strip().lower()
     await _enforce_forgot_password_rate_limits(
         normalized_email,
@@ -277,7 +276,7 @@ async def reset_password(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f'Database error: {exc}',
+            detail=f"Database error: {exc}",
         ) from exc
 
     await redis_pool.delete(_user_cache_key(user.username))

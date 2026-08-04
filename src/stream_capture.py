@@ -5,6 +5,7 @@ import asyncio
 import datetime
 import gc
 import os
+import time
 from collections.abc import AsyncGenerator
 from typing import TypedDict
 from urllib.parse import urlsplit
@@ -46,6 +47,14 @@ def _redact_stream_url(value: str) -> str:
         parts.query,
         parts.fragment,
     ))
+
+
+def _nonnegative_float_env(name: str, default: float) -> float:
+    """Read a non-negative floating-point environment setting."""
+    try:
+        return max(0.0, float(os.getenv(name, str(default))))
+    except ValueError:
+        return default
 
 
 class InputData(TypedDict):
@@ -96,6 +105,25 @@ class StreamCapture:
                 '60.0',
             ),
         )
+        self.freeze_reconnect_seconds = _nonnegative_float_env(
+            'STREAM_CAPTURE_FREEZE_RECONNECT_SECONDS',
+            20.0,
+        )
+        self.freeze_sample_seconds = max(
+            0.1,
+            _nonnegative_float_env(
+                'STREAM_CAPTURE_FREEZE_SAMPLE_SECONDS',
+                1.0,
+            ),
+        )
+        self.freeze_frame_delta = _nonnegative_float_env(
+            'STREAM_CAPTURE_FREEZE_FRAME_DELTA',
+            0.2,
+        )
+        self.reconnect_event = asyncio.Event()
+        self._freeze_last_sample: np.ndarray | None = None
+        self._freeze_last_sample_at: float | None = None
+        self._freeze_last_motion_at: float | None = None
 
     async def initialise_stream(self, stream_url: str) -> None:
         """
@@ -104,6 +132,7 @@ class StreamCapture:
         Args:
             stream_url (str): The URL of the stream to initialise.
         """
+        self._reset_frozen_frame_watchdog()
         self.cap = self._create_capture(stream_url)
 
         if not self.cap.isOpened():
@@ -125,6 +154,50 @@ class StreamCapture:
         )
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return cap
+
+    def _reset_frozen_frame_watchdog(self) -> None:
+        """Forget samples from the previous RTSP connection."""
+        self._freeze_last_sample = None
+        self._freeze_last_sample_at = None
+        self._freeze_last_motion_at = None
+
+    def _should_reconnect_after_frozen_frame(self, frame: np.ndarray) -> bool:
+        """Return whether a valid-but-frozen source frame needs a reconnect."""
+        if (
+            self.freeze_reconnect_seconds <= 0
+            or not isinstance(frame, np.ndarray)
+            or frame.ndim < 2
+        ):
+            return False
+        height, width = frame.shape[:2]
+        if height <= 0 or width <= 0:
+            return False
+        now = time.monotonic()
+        if (
+            self._freeze_last_sample_at is not None
+            and now - self._freeze_last_sample_at < self.freeze_sample_seconds
+        ):
+            return False
+        sample = cv2.resize(
+            frame,
+            (min(64, width), min(36, height)),
+            interpolation=cv2.INTER_AREA,
+        )
+        previous_sample = self._freeze_last_sample
+        self._freeze_last_sample = sample
+        self._freeze_last_sample_at = now
+        if previous_sample is None or previous_sample.shape != sample.shape:
+            self._freeze_last_motion_at = now
+            return False
+        delta = float(np.mean(cv2.absdiff(sample, previous_sample)))
+        if delta > self.freeze_frame_delta:
+            self._freeze_last_motion_at = now
+            return False
+        return (
+            self._freeze_last_motion_at is not None
+            and now - self._freeze_last_motion_at
+            >= self.freeze_reconnect_seconds
+        )
 
     async def release_resources(self) -> None:
         """
@@ -193,6 +266,18 @@ class StreamCapture:
 
                 # Mark as successfully captured
                 self.successfully_captured = True
+
+                if self._should_reconnect_after_frozen_frame(frame):
+                    print(
+                        'Frozen source frame detected; reconnecting stream. '
+                        f'source={_redact_stream_url(self.stream_url)}',
+                        flush=True,
+                    )
+                    self.reconnect_event.set()
+                    await self.release_resources()
+                    await asyncio.sleep(self.reopen_delay)
+                    await self.initialise_stream(self.stream_url)
+                    continue
 
             # Process the frame if the capture interval has elapsed
             current_time = datetime.datetime.now()

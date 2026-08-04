@@ -17,6 +17,7 @@ from fastapi import Response
 from fastapi.responses import JSONResponse
 from jwt.exceptions import InvalidTokenError
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +32,7 @@ from examples.auth.session_store import delete_media_session
 from examples.auth.session_store import get_auth_session
 from examples.auth.session_store import MEDIA_SESSION_TTL_SECONDS
 from examples.auth.session_store import renew_media_session
+from examples.auth.token_revocation import is_access_token_revoked
 from examples.bff.proxy import get_proxy_access_token
 from examples.bff.security import check_csrf
 from examples.bff.security import SESSION_COOKIE
@@ -73,7 +75,10 @@ def _bearer_token(request: Request) -> str | None:
     return None
 
 
-def _decode_access_token(token: str) -> JwtAuthorizationCredentials:
+async def _decode_access_token(
+    token: str,
+    redis: Redis,
+) -> JwtAuthorizationCredentials:
     try:
         payload = jwt_access.decode_token(token)
     except InvalidTokenError as exc:
@@ -81,6 +86,19 @@ def _decode_access_token(token: str) -> JwtAuthorizationCredentials:
             status_code=401,
             detail='Could not validate credentials',
             headers={'WWW-Authenticate': 'Bearer'},
+        ) from exc
+
+    try:
+        if await is_access_token_revoked(redis, payload):
+            raise HTTPException(
+                status_code=401,
+                detail='Could not validate credentials',
+                headers={'WWW-Authenticate': 'Bearer'},
+            )
+    except RedisError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail='Authentication revocation service unavailable',
         ) from exc
 
     subject = payload.get('subject')
@@ -130,7 +148,7 @@ async def _resolve_playback_principal(
 ) -> PlaybackPrincipal:
     bearer = _bearer_token(request)
     if bearer:
-        credentials = _decode_access_token(bearer)
+        credentials = await _decode_access_token(bearer, redis)
         username = credentials.subject.get('username')
         if not isinstance(username, str) or not username:
             raise HTTPException(status_code=401, detail='Invalid token')
@@ -152,7 +170,7 @@ async def _resolve_playback_principal(
 
     check_csrf(request, app_session, request.headers.get('x-csrf-token'))
     access_token, _ = await get_proxy_access_token(redis, session_id)
-    credentials = _decode_access_token(access_token)
+    credentials = await _decode_access_token(access_token, redis)
     username = credentials.subject.get('username')
     if not isinstance(username, str) or not username:
         raise HTTPException(status_code=401, detail='Invalid token')
@@ -282,6 +300,37 @@ def _playback_endpoints() -> dict[str, str]:
     }
 
 
+def _streaming_session_descriptors(
+    stream_items: list[dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Retain enough trusted context to restore a lost HLS session."""
+    descriptors: dict[str, dict[str, object]] = {}
+    for item in stream_items:
+        session_id = item.get('session_id')
+        label = item.get('label')
+        stream_name = item.get('key')
+        profile = item.get('profile')
+        rendition = item.get('rendition')
+        if not isinstance(session_id, str) or not session_id:
+            continue
+        if not isinstance(label, str) or not label:
+            continue
+        if not isinstance(stream_name, str) or not stream_name:
+            continue
+        if not isinstance(profile, str) or not profile:
+            continue
+        if not isinstance(rendition, str) or not rendition:
+            continue
+        descriptors[session_id] = {
+            'label': label,
+            'stream_name': stream_name,
+            'profile': profile,
+            'rendition': rendition,
+            'language': item.get('language'),
+        }
+    return descriptors
+
+
 async def _create_scoped_media_session(
     redis: Redis,
     *,
@@ -291,6 +340,7 @@ async def _create_scoped_media_session(
     profile: str,
     quality: str,
     language: str | None,
+    playback_sessions: dict[str, dict[str, object]],
 ) -> tuple[str, dict[str, Any]]:
     kwargs: dict[str, Any] = {
         'user_id': principal.user_id,
@@ -309,6 +359,7 @@ async def _create_scoped_media_session(
             quality=quality,
             language=language,
         ),
+        'playback_sessions': playback_sessions,
     }
     if len(cameras) == 1:
         kwargs['camera'] = cameras[0]
@@ -441,6 +492,7 @@ async def _create_single_playback(
             if stream_item.get('language')
             else payload.language
         ),
+        playback_sessions=_streaming_session_descriptors([stream_item]),
     )
     return (
         _single_response_body(
@@ -524,6 +576,7 @@ async def _create_wall_playback(
                 if item.get('language')
             ), payload.language,
         ),
+        playback_sessions=_streaming_session_descriptors(stream_items),
     )
     max_streams = upstream.get('max_streams')
     return (

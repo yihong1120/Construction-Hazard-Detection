@@ -38,10 +38,7 @@ class SendViolationTests(unittest.IsolatedAsyncioTestCase):
         """Should handle base64 with data URL prefix correctly."""
         fake_sender = AsyncMock()
         fake_sender.send_violation.return_value = 'id123'
-        img = (
-            'data:image/png;base64,'
-            + base64.b64encode(b'data').decode()
-        )
+        img = 'data:image/png;base64,' + base64.b64encode(b'data').decode()
         with patch(
             'examples.mcp_server.tools.record.ViolationSender',
             return_value=fake_sender,
@@ -129,9 +126,7 @@ class BatchSendViolationsTests(unittest.IsolatedAsyncioTestCase):
                 'detections': [],
                 'warning_message': 'x',
             }
-            res = await tool.batch_send_violations([
-                payload for _ in range(3)
-            ])
+            res = await tool.batch_send_violations([payload for _ in range(3)])
         self.assertTrue(res['success'])
         self.assertEqual(res['successful'], 3)
 
@@ -150,9 +145,7 @@ class BatchSendViolationsTests(unittest.IsolatedAsyncioTestCase):
                 'detections': [],
                 'warning_message': 'x',
             }
-            res = await tool.batch_send_violations([
-                payload for _ in range(3)
-            ])
+            res = await tool.batch_send_violations([payload for _ in range(3)])
         self.assertFalse(res['success'])
         self.assertEqual(res['failed'], 1)
 
@@ -172,13 +165,15 @@ class BatchSendViolationsTests(unittest.IsolatedAsyncioTestCase):
             logger = mock_logger.return_value
             tool.logger = logger
             with self.assertRaises(RuntimeError):
-                await tool.batch_send_violations([
-                    {
-                        'image_base64': 'a',
-                        'detections': [],
-                        'warning_message': 'x',
-                    },
-                ])
+                await tool.batch_send_violations(
+                    [
+                        {
+                            'image_base64': 'a',
+                            'detections': [],
+                            'warning_message': 'x',
+                        },
+                    ],
+                )
             logger.error.assert_called_once()
 
 
@@ -198,7 +193,9 @@ class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
         self.assertEqual(res['records_count'], 5)
 
-    async def test_backup_handles_unsupported_and_synchronous_sender_apis(self) -> None:
+    async def test_backup_handles_unsupported_and_synchronous_sender_apis(
+        self,
+    ) -> None:
         """Backup gracefully supports older sender implementations."""
         tool = RecordTools()
         with patch.object(
@@ -234,9 +231,8 @@ class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Backup failed', res['message'])
 
     async def test_backup_default_path_construction(self) -> None:
-        """Should construct default backup path using dirname/join
-        and loop time.
-        """
+        """Should construct default backup path using dirname/join and loop
+        time."""
         fake_sender = AsyncMock()
         fake_sender.backup_to_local.return_value = (True, 1)
         fake_loop = MagicMock()
@@ -331,9 +327,8 @@ class BackupLocalRecordsTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SyncAndStatsAndCacheTests(unittest.IsolatedAsyncioTestCase):
-    """Tests for sync_pending_records,
-    get_upload_statistics, clear_local_cache.
-    """
+    """Tests for sync_pending_records, get_upload_statistics,
+    clear_local_cache."""
 
     async def test_sync_pending_records_default(self) -> None:
         """Should return default not supported message."""
@@ -442,9 +437,3 @@ class EnsureViolationSenderTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.mcp_server.tools.record\
-    --cov-report=term-missing\
-    tests/examples/mcp_server/tools/record_test.py
-'''

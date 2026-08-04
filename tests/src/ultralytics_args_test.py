@@ -33,7 +33,7 @@ def test_precision_kwargs_uses_quantize_when_supported(
 ) -> None:
     """Newer Ultralytics installs use quantize instead of half."""
     cfg_module = ModuleType('ultralytics.cfg')
-    cfg_module.DEFAULT_CFG_DICT = {'quantize': False}
+    setattr(cfg_module, 'DEFAULT_CFG_DICT', {'quantize': False})
     monkeypatch.setitem(sys.modules, 'ultralytics.cfg', cfg_module)
 
     assert precision_kwargs(True) == {'quantize': 16}
@@ -46,7 +46,7 @@ def test_precision_kwargs_falls_back_to_half_when_needed(
 ) -> None:
     """Older Ultralytics installs still accept half."""
     cfg_module = ModuleType('ultralytics.cfg')
-    cfg_module.DEFAULT_CFG_DICT = {'half': False}
+    setattr(cfg_module, 'DEFAULT_CFG_DICT', {'half': False})
     monkeypatch.setitem(sys.modules, 'ultralytics.cfg', cfg_module)
 
     assert precision_kwargs(False) == {'half': False}

@@ -87,14 +87,19 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'event: overlay_ready', encoded)
         self.assertIn(b'"state":"ready"', encoded)
 
-    async def test_overlay_helpers_skip_absent_demand_and_ready_keys(self) -> None:
-        """Overlay helper calls are harmless when optional Redis keys are absent."""
+    async def test_overlay_helpers_skip_absent_demand_and_ready_keys(
+        self,
+    ) -> None:
+        """Overlay helper calls are harmless when optional Redis keys are
+        absent."""
         rds = MagicMock()
         rds.set = AsyncMock()
         rds.exists = AsyncMock(return_value=0)
 
         await handlers._refresh_overlay_demand(rds, None, 30)
-        self.assertIsNone(await handlers._overlay_ready_event(rds, None, {'state': 'ready'}))
+        self.assertIsNone(
+            await handlers._overlay_ready_event(rds, None, {'state': 'ready'}),
+        )
         self.assertIsNone(
             await handlers._overlay_ready_event(
                 rds,
@@ -157,7 +162,9 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'"state":"ready"', event)
         self.assertIn(b'/hazard/media/overlay/index.m3u8', event)
 
-    async def test_metadata_stream_continues_after_overlay_ready_event(self) -> None:
+    async def test_metadata_stream_continues_after_overlay_ready_event(
+        self,
+    ) -> None:
         """Sending overlay readiness does not stop later metadata polling."""
         request = MagicMock()
         request.is_disconnected = AsyncMock(side_effect=[False, False, True])
@@ -254,7 +261,10 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.ws_handlers.fetch_latest_metadata_for_key',
+                (
+                    'examples.streaming_web.ws_handlers.'
+                    'fetch_latest_metadata_for_key'
+                ),
                 new=AsyncMock(side_effect=asyncio.TimeoutError),
             ),
             patch(
@@ -263,13 +273,18 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             iterator = metadata_stream_generator(
-                request, MagicMock(), 'metadata-key',
+                request,
+                MagicMock(),
+                'metadata-key',
             )
             await anext(iterator)
             self.assertEqual(await anext(iterator), b': keepalive\n\n')
 
-    async def test_metadata_stream_read_error_emits_suppressed_error_keepalive(self) -> None:
-        """Rate-limited Redis errors fall back to heartbeats between error events."""
+    async def test_metadata_stream_read_error_emits_suppressed_error_keepalive(
+        self,
+    ) -> None:
+        """Rate-limited Redis errors fall back to heartbeats between error
+        events."""
         request = MagicMock()
         request.is_disconnected = AsyncMock(return_value=False)
         loop = MagicMock()
@@ -277,7 +292,10 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.ws_handlers.fetch_latest_metadata_for_key',
+                (
+                    'examples.streaming_web.ws_handlers.'
+                    'fetch_latest_metadata_for_key'
+                ),
                 new=AsyncMock(side_effect=RuntimeError('redis down')),
             ),
             patch(
@@ -285,11 +303,15 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
                 return_value=loop,
             ),
             patch.object(
-                handlers, '_metadata_redis_error_interval_seconds', 30.0,
+                handlers,
+                '_metadata_redis_error_interval_seconds',
+                30.0,
             ),
         ):
             iterator = metadata_stream_generator(
-                request, MagicMock(), 'metadata-key',
+                request,
+                MagicMock(),
+                'metadata-key',
             )
             await anext(iterator)
             await anext(iterator)
@@ -394,29 +416,39 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         ws = self.make_ws()
         rds = MagicMock()
 
-        with patch(
-            'examples.streaming_web.ws_handlers.'
-            '_safe_websocket_receive_text',
-            new=AsyncMock(side_effect=['{"action":"ping"}', None]),
-        ), patch(
-            'examples.streaming_web.ws_handlers.'
-            '_safe_websocket_send_text',
-            new=AsyncMock(return_value=True),
-        ) as send_text, patch(
-            'examples.streaming_web.ws_handlers.'
-            '_is_websocket_connected',
-            return_value=True,
-        ), patch(
-            'examples.streaming_web.ws_handlers.'
-            'check_and_maybe_close_on_timeout',
-            new=AsyncMock(return_value=False),
-        ), patch(
-            'examples.streaming_web.ws_handlers.'
-            'fetch_latest_metadata_for_key',
-            new=AsyncMock(return_value=None),
+        with (
+            patch(
+                'examples.streaming_web.ws_handlers.'
+                '_safe_websocket_receive_text',
+                new=AsyncMock(side_effect=['{"action":"ping"}', None]),
+            ),
+            patch(
+                'examples.streaming_web.ws_handlers.'
+                '_safe_websocket_send_text',
+                new=AsyncMock(return_value=True),
+            ) as send_text,
+            patch(
+                'examples.streaming_web.ws_handlers.'
+                '_is_websocket_connected',
+                return_value=True,
+            ),
+            patch(
+                'examples.streaming_web.ws_handlers.'
+                'check_and_maybe_close_on_timeout',
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                'examples.streaming_web.ws_handlers.'
+                'fetch_latest_metadata_for_key',
+                new=AsyncMock(return_value=None),
+            ),
         ):
             count = await metadata_push_loop(
-                cast(Any, ws), rds, 'metadata-key', '127.0.0.1', 'alice',
+                cast(Any, ws),
+                rds,
+                'metadata-key',
+                '127.0.0.1',
+                'alice',
             )
 
         self.assertEqual(count, 0)
@@ -605,8 +637,7 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.ws_handlers.asyncio.'
-                'create_task',
+                'examples.streaming_web.ws_handlers.asyncio.' 'create_task',
                 side_effect=close_coroutine_task,
             ),
             patch(
@@ -704,8 +735,7 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=('alice', None)),
             ),
             patch(
-                'examples.streaming_web.ws_handlers.'
-                'get_user_and_sites',
+                'examples.streaming_web.ws_handlers.' 'get_user_and_sites',
                 new=AsyncMock(side_effect=RuntimeError('missing')),
             ),
         ):
@@ -733,8 +763,7 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=('alice', None)),
             ),
             patch(
-                'examples.streaming_web.ws_handlers.'
-                'get_user_and_sites',
+                'examples.streaming_web.ws_handlers.' 'get_user_and_sites',
                 new=AsyncMock(return_value=(None, ['other'], 'user')),
             ),
         ):
@@ -761,8 +790,7 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=('alice', None)),
             ),
             patch(
-                'examples.streaming_web.ws_handlers.'
-                'metadata_push_loop',
+                'examples.streaming_web.ws_handlers.' 'metadata_push_loop',
                 new=AsyncMock(side_effect=RuntimeError('boom')),
             ),
         ):
@@ -788,8 +816,7 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=('alice', None)),
             ),
             patch(
-                'examples.streaming_web.ws_handlers.'
-                'metadata_push_loop',
+                'examples.streaming_web.ws_handlers.' 'metadata_push_loop',
                 new=AsyncMock(side_effect=WebSocketDisconnect),
             ),
         ):
@@ -806,8 +833,7 @@ class WsHandlersTest(unittest.IsolatedAsyncioTestCase):
         ws = self.make_ws()
 
         with patch(
-            'examples.streaming_web.ws_handlers.'
-            'authenticate_ws_or_none',
+            'examples.streaming_web.ws_handlers.' 'authenticate_ws_or_none',
             new=AsyncMock(return_value=(None, None)),
         ):
             await handle_metadata_stream_id_ws(

@@ -227,7 +227,8 @@ async def create_media_session(
     language: str | None = None,
     quality: str | None = None,
     purpose: str | None = None,
-    demand_keys: list[str] | tuple[str, ...] | None = None,
+    demand_keys: list[object] | tuple[object, ...] | None = None,
+    playback_sessions: Mapping[str, Mapping[str, object]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Create a separately revocable, narrowly scoped media capability."""
     is_batch = cameras is not None
@@ -270,6 +271,14 @@ async def create_media_session(
     )
     if scoped_demand_keys:
         data['demand_keys'] = scoped_demand_keys
+    if playback_sessions:
+        data['playback_sessions'] = {
+            session_id: dict(descriptor)
+            for session_id, descriptor in playback_sessions.items()
+            if isinstance(session_id, str)
+            and session_id
+            and isinstance(descriptor, Mapping)
+        }
     token_key = media_session_key(token)
     parent_key = f'{MEDIA_PARENT_PREFIX}:{_digest(parent)}'
     payload = json.dumps(data, separators=(',', ':'))

@@ -33,8 +33,8 @@ class BffServicesTest(unittest.TestCase):
         for legacy, canonical in aliases.items():
             with self.subTest(legacy=legacy):
                 self.assertEqual(
-                    resolve_upstream(f'{legacy}/resource'),
-                    resolve_upstream(f'{canonical}/resource'),
+                    resolve_upstream(f"{legacy}/resource"),
+                    resolve_upstream(f"{canonical}/resource"),
                 )
 
     def test_fcm_service_is_allowlisted(self) -> None:
@@ -45,7 +45,9 @@ class BffServicesTest(unittest.TestCase):
 
     def test_metadata_path_uses_sse_streaming_proxy(self) -> None:
         request = type(
-            'Request', (), {
+            'Request',
+            (),
+            {
                 'headers': {'accept': '*/*'},
             },
         )()
@@ -59,7 +61,9 @@ class BffServicesTest(unittest.TestCase):
 
     def test_accept_event_stream_uses_sse_streaming_proxy(self) -> None:
         request = type(
-            'Request', (), {
+            'Request',
+            (),
+            {
                 'headers': {'accept': 'text/event-stream'},
             },
         )()
@@ -134,7 +138,7 @@ class FakeResponse:
         content: bytes = b'',
         headers: dict[str, str] | None = None,
         chunks: tuple[bytes, ...] = (),
-        stream_error: Exception | None = None,
+        stream_error: BaseException | None = None,
     ) -> None:
         self.status_code = status_code
         self.content = content
@@ -263,13 +267,17 @@ def test_terminal_refresh_error_detection(
     expected: bool,
 ) -> None:
     """Only permanent authentication failures invalidate a BFF session."""
-    assert proxy._is_terminal_refresh_error(
-        HTTPException(status_code=status, detail=detail),
-    ) is expected
+    assert (
+        proxy._is_terminal_refresh_error(
+            HTTPException(status_code=status, detail=detail),
+        )
+        is expected
+    )
 
 
 def test_proxy_request_headers_drop_credentials_and_keep_safe_values() -> None:
-    """The BFF replaces browser credentials with its server-side bearer token."""
+    """The BFF replaces browser credentials with its server-side bearer
+    token."""
     headers = proxy._proxy_request_headers(_request(), 'server-token')
 
     assert headers == {
@@ -290,9 +298,11 @@ def test_resolve_upstream_rejects_unknown_service() -> None:
 def test_get_proxy_access_token_handles_session_and_lock_outcomes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Missing sessions and a completed peer refresh return stable HTTP errors."""
+    """Missing sessions and a completed peer refresh return stable HTTP
+    errors."""
     monkeypatch.setattr(
-        proxy, 'get_auth_session',
+        proxy,
+        'get_auth_session',
         AsyncMock(return_value=None),
     )
     with pytest.raises(HTTPException, match='app_session_expired') as missing:
@@ -303,17 +313,22 @@ def test_get_proxy_access_token_handles_session_and_lock_outcomes(
     acquire = AsyncMock()
     monkeypatch.setattr(proxy, 'time', SimpleNamespace(time=lambda: 10))
     monkeypatch.setattr(
-        proxy, 'get_auth_session',
+        proxy,
+        'get_auth_session',
         AsyncMock(return_value=fresh),
     )
     monkeypatch.setattr(
-        proxy, 'auth_tokens', lambda session: (
-            session['access_token'], session['refresh_token'],
+        proxy,
+        'auth_tokens',
+        lambda session: (
+            session['access_token'],
+            session['refresh_token'],
         ),
     )
     monkeypatch.setattr(proxy, 'acquire_refresh_lock', acquire)
     assert _run(proxy.get_proxy_access_token(AsyncMock(), 'session')) == (
-        'old', fresh,
+        'old',
+        fresh,
     )
     acquire.assert_not_awaited()
 
@@ -326,12 +341,16 @@ def test_get_proxy_access_token_handles_session_and_lock_outcomes(
         AsyncMock(side_effect=[old, newer]),
     )
     monkeypatch.setattr(
-        proxy, 'auth_tokens', lambda session: (
-            session['access_token'], session['refresh_token'],
+        proxy,
+        'auth_tokens',
+        lambda session: (
+            session['access_token'],
+            session['refresh_token'],
         ),
     )
     monkeypatch.setattr(
-        proxy, 'acquire_refresh_lock',
+        proxy,
+        'acquire_refresh_lock',
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(proxy.asyncio, 'sleep', AsyncMock())
@@ -345,16 +364,21 @@ def test_get_proxy_access_token_handles_session_and_lock_outcomes(
 def test_get_proxy_access_token_waits_or_reports_busy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Lock contention falls back to a valid token or returns a retry response."""
+    """Lock contention falls back to a valid token or returns a retry
+    response."""
     valid = _session(expires_at=20)
     monkeypatch.setattr(proxy, 'time', SimpleNamespace(time=lambda: 10))
     monkeypatch.setattr(
-        proxy, 'auth_tokens', lambda session: (
-            session['access_token'], session['refresh_token'],
+        proxy,
+        'auth_tokens',
+        lambda session: (
+            session['access_token'],
+            session['refresh_token'],
         ),
     )
     monkeypatch.setattr(
-        proxy, 'acquire_refresh_lock',
+        proxy,
+        'acquire_refresh_lock',
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(proxy.asyncio, 'sleep', AsyncMock())
@@ -365,7 +389,8 @@ def test_get_proxy_access_token_waits_or_reports_busy(
     )
 
     assert _run(proxy.get_proxy_access_token(AsyncMock(), 'session')) == (
-        'old', valid,
+        'old',
+        valid,
     )
 
     expired = _session(expires_at=0)
@@ -391,23 +416,29 @@ def test_get_proxy_access_token_waits_or_reports_busy(
 def test_get_proxy_access_token_refreshes_and_releases_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The lock owner refreshes tokens, stores them, then always releases lock."""
+    """The lock owner refreshes tokens, stores them, then always releases
+    lock."""
     session = _session(expires_at=1)
     owner = 'lock-owner'
     save = AsyncMock()
     release = AsyncMock()
     monkeypatch.setattr(proxy, 'time', SimpleNamespace(time=lambda: 10))
     monkeypatch.setattr(
-        proxy, 'get_auth_session',
+        proxy,
+        'get_auth_session',
         AsyncMock(side_effect=[session, session]),
     )
     monkeypatch.setattr(
-        proxy, 'auth_tokens', lambda value: (
-            value['access_token'], value['refresh_token'],
+        proxy,
+        'auth_tokens',
+        lambda value: (
+            value['access_token'],
+            value['refresh_token'],
         ),
     )
     monkeypatch.setattr(
-        proxy, 'acquire_refresh_lock',
+        proxy,
+        'acquire_refresh_lock',
         AsyncMock(return_value=owner),
     )
     monkeypatch.setattr(proxy, 'release_refresh_lock', release)
@@ -444,16 +475,21 @@ def test_get_proxy_access_token_invalidates_terminal_refresh_error(
     release = AsyncMock()
     monkeypatch.setattr(proxy, 'time', SimpleNamespace(time=lambda: 10))
     monkeypatch.setattr(
-        proxy, 'get_auth_session',
+        proxy,
+        'get_auth_session',
         AsyncMock(side_effect=[session, session]),
     )
     monkeypatch.setattr(
-        proxy, 'auth_tokens', lambda value: (
-            value['access_token'], value['refresh_token'],
+        proxy,
+        'auth_tokens',
+        lambda value: (
+            value['access_token'],
+            value['refresh_token'],
         ),
     )
     monkeypatch.setattr(
-        proxy, 'acquire_refresh_lock',
+        proxy,
+        'acquire_refresh_lock',
         AsyncMock(return_value='owner'),
     )
     monkeypatch.setattr(proxy, 'delete_auth_session', delete)
@@ -475,18 +511,23 @@ def test_get_proxy_access_token_invalidates_terminal_refresh_error(
 def test_get_proxy_access_token_handles_changed_or_missing_locked_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Lock owners reuse a newer token and release locks on missing sessions."""
+    """Lock owners reuse a newer token and release locks on missing
+    sessions."""
     original = _session(expires_at=1)
     changed = _session(token='newer', expires_at=1)
     release = AsyncMock()
     monkeypatch.setattr(proxy, 'time', SimpleNamespace(time=lambda: 10))
     monkeypatch.setattr(
-        proxy, 'auth_tokens', lambda value: (
-            value['access_token'], value['refresh_token'],
+        proxy,
+        'auth_tokens',
+        lambda value: (
+            value['access_token'],
+            value['refresh_token'],
         ),
     )
     monkeypatch.setattr(
-        proxy, 'acquire_refresh_lock',
+        proxy,
+        'acquire_refresh_lock',
         AsyncMock(return_value='owner'),
     )
     monkeypatch.setattr(proxy, 'release_refresh_lock', release)
@@ -497,7 +538,8 @@ def test_get_proxy_access_token_handles_changed_or_missing_locked_session(
     )
 
     assert _run(proxy.get_proxy_access_token(AsyncMock(), 'session')) == (
-        'newer', changed,
+        'newer',
+        changed,
     )
     release.assert_awaited_once()
 
@@ -521,16 +563,21 @@ def test_get_proxy_access_token_reraises_nonterminal_refresh_error(
     release = AsyncMock()
     monkeypatch.setattr(proxy, 'time', SimpleNamespace(time=lambda: 10))
     monkeypatch.setattr(
-        proxy, 'get_auth_session',
+        proxy,
+        'get_auth_session',
         AsyncMock(side_effect=[session, session]),
     )
     monkeypatch.setattr(
-        proxy, 'auth_tokens', lambda value: (
-            value['access_token'], value['refresh_token'],
+        proxy,
+        'auth_tokens',
+        lambda value: (
+            value['access_token'],
+            value['refresh_token'],
         ),
     )
     monkeypatch.setattr(
-        proxy, 'acquire_refresh_lock',
+        proxy,
+        'acquire_refresh_lock',
         AsyncMock(return_value='owner'),
     )
     monkeypatch.setattr(proxy, 'release_refresh_lock', release)
@@ -560,7 +607,8 @@ def test_proxy_request_forwards_response_and_retries_401(
     clients = iter([first_client, second_client])
     tokens = AsyncMock(side_effect=[('old', {}), ('new', {})])
     monkeypatch.setattr(
-        proxy.httpx, 'AsyncClient',
+        proxy.httpx,
+        'AsyncClient',
         lambda **_kwargs: next(clients),
     )
     monkeypatch.setattr(proxy, '_get_proxy_access_token_or_503', tokens)
@@ -579,9 +627,9 @@ def test_proxy_request_forwards_response_and_retries_401(
     assert response.headers['cache-control'] == 'no-store'
     assert response.headers['content-type'] == 'application/json'
     assert tokens.await_count == 2
-    assert second_client.request_calls[0]['kwargs']['headers']['Authorization'] == (
-        'Bearer new'
-    )
+    assert second_client.request_calls[0]['kwargs']['headers'][
+        'Authorization'
+    ] == ('Bearer new')
 
 
 def test_proxy_request_maps_network_error_to_bad_gateway(
@@ -596,10 +644,15 @@ def test_proxy_request_maps_network_error_to_bad_gateway(
         AsyncMock(return_value=('token', {})),
     )
 
-    with pytest.raises(HTTPException, match='bff_upstream_unavailable') as raised:
+    with pytest.raises(
+        HTTPException, match='bff_upstream_unavailable',
+    ) as raised:
         _run(
             proxy.proxy_request(
-                _request(), AsyncMock(), 'session', 'streaming/records',
+                _request(),
+                AsyncMock(),
+                'session',
+                'streaming/records',
             ),
         )
 
@@ -609,7 +662,8 @@ def test_proxy_request_maps_network_error_to_bad_gateway(
 def test_proxy_request_delegates_sse_routes_to_streaming_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SSE requests retain their streaming response instead of buffering data."""
+    """SSE requests retain their streaming response instead of buffering
+    data."""
     expected = MagicMock()
     stream = AsyncMock(return_value=expected)
     monkeypatch.setattr(
@@ -640,7 +694,8 @@ async def _collect_stream(response: Any) -> list[bytes]:
 def test_streaming_proxy_forwards_chunks_logs_errors_and_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A successful SSE proxy logs embedded errors and closes both resources."""
+    """A successful SSE proxy logs embedded errors and closes both
+    resources."""
     upstream = FakeResponse(
         headers={'content-type': 'text/event-stream'},
         chunks=(b'event: error\ndata: {"source":"redis"}\n\n', b'next'),
@@ -679,7 +734,8 @@ def test_streaming_proxy_retries_401_then_logs_upstream_error(
     logger = MagicMock()
     token = AsyncMock(return_value=('refreshed', {}))
     monkeypatch.setattr(
-        proxy.httpx, 'AsyncClient',
+        proxy.httpx,
+        'AsyncClient',
         lambda **_kwargs: next(clients),
     )
     monkeypatch.setattr(proxy, '_get_proxy_access_token_or_503', token)
@@ -705,14 +761,17 @@ def test_streaming_proxy_retries_401_then_logs_upstream_error(
 def test_streaming_proxy_maps_open_and_iteration_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Connection and later stream failures close resources and surface errors."""
+    """Connection and later stream failures close resources and surface
+    errors."""
     failed_client = FakeAsyncClient(error=httpx.NetworkError('offline'))
     monkeypatch.setattr(
         proxy.httpx,
         'AsyncClient',
         lambda **_kwargs: failed_client,
     )
-    with pytest.raises(HTTPException, match='bff_upstream_unavailable') as raised:
+    with pytest.raises(
+        HTTPException, match='bff_upstream_unavailable',
+    ) as raised:
         _run(
             proxy._proxy_streaming_request(
                 _request(accept='text/event-stream'),

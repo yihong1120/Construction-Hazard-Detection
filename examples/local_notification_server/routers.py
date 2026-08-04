@@ -4,6 +4,7 @@ import hashlib
 import json
 import time
 from typing import cast
+from typing import Protocol
 
 import redis.asyncio as redis
 from fastapi import APIRouter
@@ -35,55 +36,72 @@ from examples.local_notification_server.fcm_service import (
     send_fcm_notification_service,
 )
 from examples.local_notification_server.lang_config import normalize_language
-from examples.local_notification_server.schemas import \
-    DeviceStatusResponse
-from examples.local_notification_server.schemas import \
-    DeviceTokenStatus
-from examples.local_notification_server.schemas import \
-    NotificationBulkReadResponse
+from examples.local_notification_server.schemas import DeviceStatusResponse
+from examples.local_notification_server.schemas import DeviceTokenStatus
+from examples.local_notification_server.schemas import (
+    NotificationBulkReadResponse,
+)
 from examples.local_notification_server.schemas import NotificationList
 from examples.local_notification_server.schemas import NotificationOut
 from examples.local_notification_server.schemas import NotificationStatus
 from examples.local_notification_server.schemas import NotificationType
-from examples.local_notification_server.schemas import \
-    NotificationUnreadCount
-from examples.local_notification_server.schemas import \
-    SiteNotificationPreferenceOut
-from examples.local_notification_server.schemas import \
-    SiteNotificationPreferenceUpdateRequest
+from examples.local_notification_server.schemas import NotificationUnreadCount
+from examples.local_notification_server.schemas import (
+    SiteNotificationPreferenceOut,
+)
+from examples.local_notification_server.schemas import (
+    SiteNotificationPreferenceUpdateRequest,
+)
 from examples.local_notification_server.schemas import SiteNotifyRequest
 from examples.local_notification_server.schemas import TestNotificationResponse
 from examples.local_notification_server.schemas import TokenRequest
 from examples.local_notification_server.schemas import TokenStoreResponse
-from examples.local_notification_server.services import \
-    _execute_push_tasks_bounded_streaming
-from examples.local_notification_server.services import \
-    _iter_push_tasks_streaming
-from examples.local_notification_server.services import \
-    create_notification_records_for_users
-from examples.local_notification_server.services import delete_fcm_token_metadata
+from examples.local_notification_server.services import (
+    _execute_push_tasks_bounded_streaming,
+)
+from examples.local_notification_server.services import (
+    _iter_push_tasks_streaming,
+)
+from examples.local_notification_server.services import (
+    create_notification_records_for_users,
+)
+from examples.local_notification_server.services import (
+    delete_fcm_token_metadata,
+)
 from examples.local_notification_server.services import diagnose_push_preflight
-from examples.local_notification_server.services import \
-    get_site_notification_user_ids_cached
+from examples.local_notification_server.services import (
+    get_site_notification_user_ids_cached,
+)
 from examples.local_notification_server.services import list_fcm_device_status
-from examples.local_notification_server.services import \
-    load_active_fcm_device_tokens
-from examples.local_notification_server.services import \
-    mark_fcm_tokens_failure
-from examples.local_notification_server.services import \
-    mark_fcm_tokens_success
-from examples.local_notification_server.services import \
-    mark_invalid_fcm_tokens_for_users
-from examples.local_notification_server.services import \
-    record_fcm_token_registration
-from examples.local_notification_server.services import \
-    refresh_fcm_token_cache_for_users
-from examples.local_notification_server.services import \
-    refresh_site_notification_user_cache
+from examples.local_notification_server.services import (
+    load_active_fcm_device_tokens,
+)
+from examples.local_notification_server.services import mark_fcm_tokens_failure
+from examples.local_notification_server.services import mark_fcm_tokens_success
+from examples.local_notification_server.services import (
+    mark_invalid_fcm_tokens_for_users,
+)
+from examples.local_notification_server.services import (
+    record_fcm_token_registration,
+)
+from examples.local_notification_server.services import (
+    refresh_fcm_token_cache_for_users,
+)
+from examples.local_notification_server.services import (
+    refresh_site_notification_user_cache,
+)
 
 router: APIRouter = APIRouter()
 _dedupe_ttl_with_violation_id: int = 600
 _dedupe_ttl_without_violation_id: int = 15
+
+
+class _NotificationScopeUser(Protocol):
+    """Identity fields needed to scope notification-management sites."""
+
+    username: str
+    role: str
+    group_id: int | None
 
 
 def _notification_dedupe_key(req: SiteNotifyRequest) -> str:
@@ -98,7 +116,7 @@ def _notification_dedupe_key(req: SiteNotifyRequest) -> str:
     if req.violation_id is not None:
         return (
             'fcm_notification_dedupe:'
-            f'{req.site}:{req.stream_name}:{req.violation_id}'
+            f"{req.site}:{req.stream_name}:{req.violation_id}"
         )
 
     payload_hash = hashlib.sha256(
@@ -113,7 +131,7 @@ def _notification_dedupe_key(req: SiteNotifyRequest) -> str:
             separators=(',', ':'),
         ).encode('utf-8'),
     ).hexdigest()
-    return f'fcm_notification_dedupe:{payload_hash}'
+    return f"fcm_notification_dedupe:{payload_hash}"
 
 
 def _notification_dedupe_ttl(req: SiteNotifyRequest) -> int:
@@ -337,9 +355,7 @@ async def send_fcm_notification(
         if preflight_stats['unique_tokens'] == 0:
             skip_message = f"Site '{req.site}' has no device tokens."
         else:
-            skip_message = (
-                f"Site '{req.site}' has no sendable device tokens."
-            )
+            skip_message = f"Site '{req.site}' has no sendable device tokens."
         print(
             'FCM sending skipped: no sendable batches; '
             f"site={req.site!r}, stream={req.stream_name!r}, "
@@ -369,8 +385,8 @@ async def send_fcm_notification(
     return {
         'success': overall_success,
         'message': (
-            f'FCM notification processed. '
-            f'{successful_batches}/{total_batches} batches succeeded.'
+            f"FCM notification processed. "
+            f"{successful_batches}/{total_batches} batches succeeded."
         ),
         'stats': {
             'translation_time': translation_time,
@@ -487,7 +503,8 @@ async def get_notification_device_status(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ) -> DeviceStatusResponse:
-    """Return diagnostic metadata for the current user's notification tokens."""
+    """Return diagnostic metadata for the current user's notification
+    tokens."""
     rows = await list_fcm_device_status(me.id, db)
     devices = [DeviceTokenStatus.model_validate(row) for row in rows]
     active_count = sum(1 for device in devices if device.is_active)
@@ -632,7 +649,7 @@ async def delete_notification(
 
 async def _list_notification_scope_sites(
     db: AsyncSession,
-    me: User,
+    me: _NotificationScopeUser,
 ) -> list[Site]:
     """Return sites the current user may manage notification settings for.
 
@@ -711,12 +728,10 @@ async def list_site_notification_preferences(
         ),
     )
     pref_pairs = [
-        cast(tuple[int, bool], (row[0], row[1]))
-        for row in pref_rows.all()
+        cast(tuple[int, bool], (row[0], row[1])) for row in pref_rows.all()
     ]
     pref_map: dict[int, bool] = {
-        site_id: is_enabled
-        for site_id, is_enabled in pref_pairs
+        site_id: is_enabled for site_id, is_enabled in pref_pairs
     }
 
     access_site_ids = {

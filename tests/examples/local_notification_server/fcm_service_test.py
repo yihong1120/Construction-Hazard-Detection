@@ -24,9 +24,7 @@ patch(
 
 
 class TestInitFirebaseApp(unittest.TestCase):
-    """
-    Test suite for initialising the Firebase application.
-    """
+    """Test suite for initialising the Firebase application."""
 
     @patch('firebase_admin.credentials.Certificate', return_value=MagicMock())
     @patch('firebase_admin.initialize_app')
@@ -36,9 +34,8 @@ class TestInitFirebaseApp(unittest.TestCase):
         mock_init_app: MagicMock,
         mock_cred: MagicMock,
     ) -> None:
-        """
-        Test that init_firebase_app() calls initialise_app
-        when no apps are registered.
+        """Test that init_firebase_app() calls initialise_app when no apps are
+        registered.
 
         Args:
             mock_init_app (MagicMock): Mocked initialise_app function.
@@ -56,9 +53,8 @@ class TestInitFirebaseApp(unittest.TestCase):
         mock_init_app: MagicMock,
         mock_cred: MagicMock,
     ) -> None:
-        """
-        Test that init_firebase_app() does not re-initialise
-        if an app is already registered.
+        """Test that init_firebase_app() does not re-initialise if an app is
+        already registered.
 
         Args:
             mock_init_app (MagicMock): Mocked initialise_app function.
@@ -69,17 +65,15 @@ class TestInitFirebaseApp(unittest.TestCase):
         mock_cred.assert_not_called()
 
     def test_init_firebase_app_empty_cred_path(self) -> None:
-        """
-        Test that init_firebase_app raises ValueError if cred_path is empty.
-        """
+        """Test that init_firebase_app raises ValueError if cred_path is
+        empty."""
         with self.assertRaises(ValueError) as ctx:
             init_firebase_app('', 'dummy-project')
         self.assertIn('cred_path', str(ctx.exception))
 
     def test_init_firebase_app_empty_project_id(self) -> None:
-        """
-        Test that init_firebase_app raises ValueError if project_id is empty.
-        """
+        """Test that init_firebase_app raises ValueError if project_id is
+        empty."""
         with self.assertRaises(ValueError) as ctx:
             init_firebase_app('dummy/path.json', '')
         self.assertIn('project_id', str(ctx.exception))
@@ -94,12 +88,16 @@ class TestFcmTokenHelpers(unittest.TestCase):
         self.assertNotEqual(
             _token_log_id(
                 'raw-device-token',
-            ), 'raw-device-token',
+            ),
+            'raw-device-token',
         )
         self.assertEqual(len(_token_log_id('raw-device-token')), 12)
 
-    def test_invalid_token_errors_support_exception_code_and_messages(self) -> None:
-        """Invalid registration tokens are recognized across SDK error shapes."""
+    def test_invalid_token_errors_support_exception_code_and_messages(
+        self,
+    ) -> None:
+        """Invalid registration tokens are recognized across SDK error
+        shapes."""
         self.assertTrue(
             _is_invalid_registration_token_error(
                 messaging.SenderIdMismatchError('mismatch'),
@@ -127,15 +125,12 @@ class TestFcmTokenHelpers(unittest.TestCase):
     lambda: None,
 )
 class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
-    """
-    Test suite for sending FCM notifications
-    using the send_fcm_notification_service function.
-    """
+    """Test suite for sending FCM notifications using the
+    send_fcm_notification_service function."""
 
     async def test_no_tokens(self) -> None:
-        """
-        Test that sending notifications with an empty token list returns False.
-        """
+        """Test that sending notifications with an empty token list returns
+        False."""
         result = await send_fcm_notification_service([], 'Title', 'Body')
         self.assertFalse(result)
         self.assertIsInstance(result, FcmSendResult)
@@ -144,8 +139,8 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
 
     @patch('firebase_admin.messaging.send_each')
     async def test_all_success(self, mock_send_each: MagicMock) -> None:
-        """
-        Test that the service returns True when all tokens send successfully.
+        """Test that the service returns True when all tokens send
+        successfully.
 
         Args:
             mock_send_each (MagicMock): Mocked send_each function.
@@ -166,8 +161,7 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
 
     @patch('firebase_admin.messaging.send_each')
     async def test_partial_fail(self, mock_send_each: MagicMock) -> None:
-        """
-        Test that the service returns False when at least one token fails.
+        """Test that the service returns False when at least one token fails.
 
         Args:
             mock_send_each (MagicMock): Mocked send_each function.
@@ -194,8 +188,7 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
 
     @patch('firebase_admin.messaging.send_each')
     async def test_exception(self, mock_send_each: MagicMock) -> None:
-        """
-        Test that the service returns False when an exception occurs.
+        """Test that the service returns False when an exception occurs.
 
         Args:
             mock_send_each (MagicMock): Mocked send_each function.
@@ -212,10 +205,10 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+\
+"""Pytest \
 
-"""
-pytest \
-    --cov=examples.local_notification_server.fcm_service \
-    --cov-report=term-missing \
-    tests/examples/local_notification_server/fcm_service_test.py
+--cov=examples.local_notification_server.fcm_service \
+--cov-report=term-missing \
+tests/examples/local_notification_server/fcm_service_test.py
 """

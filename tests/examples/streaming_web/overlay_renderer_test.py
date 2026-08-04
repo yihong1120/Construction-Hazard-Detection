@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -53,7 +54,7 @@ class OverlayRendererTest(unittest.TestCase):
 
     def test_env_helpers_parse_configured_values(self) -> None:
         """Exercise this test."""
-        with unittest.mock.patch.dict(
+        with mock.patch.dict(
             'os.environ',
             {
                 'STREAMING_OVERLAY_TEST_BOOL': 'yes',
@@ -114,7 +115,7 @@ class OverlayRendererTest(unittest.TestCase):
     ) -> None:
         """Exercise this test."""
         frame_bytes = self._jpeg_frame()
-        with unittest.mock.patch(
+        with mock.patch(
             'examples.streaming_web.overlay_renderer.cv2.imencode',
             return_value=(False, np.array([], dtype=np.uint8)),
         ):
@@ -527,7 +528,7 @@ class OverlayRendererTest(unittest.TestCase):
             ),
             ['No hardhat'],
         )
-        with unittest.mock.patch.object(
+        with mock.patch.object(
             renderer,
             '_overlay_max_warning_summary_items',
             1,
@@ -566,7 +567,7 @@ class OverlayRendererTest(unittest.TestCase):
     def test_draw_warning_summary_status_and_empty_roi(self) -> None:
         """Exercise this test."""
         frame = np.zeros((1, 1, 3), dtype=np.uint8)
-        with unittest.mock.patch.object(
+        with mock.patch.object(
             renderer,
             '_overlay_draw_warning_status',
             True,
@@ -599,13 +600,13 @@ class OverlayRendererTest(unittest.TestCase):
         )
 
         self.assertFalse(renderer._should_draw_label(detection, 99_999))
-        with unittest.mock.patch.object(
+        with mock.patch.object(
             renderer,
             '_overlay_draw_labels',
             False,
         ):
             self.assertFalse(renderer._should_draw_label(detection, 0))
-        with unittest.mock.patch.object(
+        with mock.patch.object(
             renderer,
             '_overlay_label_warnings_only',
             True,
@@ -719,7 +720,7 @@ class OverlayRendererTest(unittest.TestCase):
     ) -> None:
         """Exercise this test."""
         frame = np.zeros((20, 20, 3), dtype=np.uint8)
-        with unittest.mock.patch(
+        with mock.patch(
             'examples.streaming_web.overlay_renderer.'
             '_load_overlay_font',
             return_value=None,
@@ -742,12 +743,12 @@ class OverlayRendererTest(unittest.TestCase):
 
         renderer._load_overlay_font.cache_clear()
         with (
-            unittest.mock.patch(
+            mock.patch(
                 'examples.streaming_web.overlay_renderer.'
                 'ImageFont.truetype',
                 side_effect=RuntimeError,
             ),
-            unittest.mock.patch(
+            mock.patch(
                 'examples.streaming_web.overlay_renderer.'
                 'ImageFont.load_default',
                 side_effect=RuntimeError,

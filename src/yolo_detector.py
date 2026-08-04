@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ import numpy as np
 import torch
 from dotenv import load_dotenv
 
+from src.gpu_stream_capture import GpuFrame
 from src.ultralytics_args import parse_quantize_value
 from src.ultralytics_args import precision_kwargs
 from src.yolo_worker import YoloWorkerClient
@@ -28,21 +30,27 @@ class _LazyAutoDetectionModel:
     @staticmethod
     def from_pretrained(*args: Any, **kwargs: Any) -> Any:
         """Load SAHI's detection model factory on first use."""
-        from sahi import AutoDetectionModel as _AutoDetectionModel
+        from sahi import (
+            AutoDetectionModel as _AutoDetectionModel,
+        )
 
         return _AutoDetectionModel.from_pretrained(*args, **kwargs)
 
 
 def get_sliced_prediction(*args: Any, **kwargs: Any) -> Any:
     """Run SAHI sliced prediction, importing SAHI lazily."""
-    from sahi.predict import get_sliced_prediction as _prediction
+    from sahi.predict import (
+        get_sliced_prediction as _prediction,
+    )
 
     return _prediction(*args, **kwargs)
 
 
 def linear_sum_assignment(*args: Any, **kwargs: Any) -> Any:
     """Run SciPy linear assignment, importing SciPy lazily."""
-    from scipy.optimize import linear_sum_assignment as _assignment
+    from scipy.optimize import (
+        linear_sum_assignment as _assignment,
+    )
 
     return _assignment(*args, **kwargs)
 
@@ -92,7 +100,7 @@ class YoloDetector:
         max_id_keep: int = 10,
         remote_tracker: str = 'centroid',
         remote_cost_threshold: float = 0.7,
-        worker_client: YoloWorkerClient | None = None,
+        worker_client: YoloWorkerClient | Any | None = None,
     ) -> None:
         """Initialise the YoloDetector with specified configuration.
 
@@ -204,7 +212,8 @@ class YoloDetector:
             ]
 
     async def generate_detections(
-        self, frame: np.ndarray,
+        self,
+        frame: np.ndarray | GpuFrame,
     ) -> tuple[list[list[float]], list[list[float]]]:
         """Generate object detections with tracking information.
 
@@ -212,7 +221,7 @@ class YoloDetector:
         remote inference, applies object tracking, and manages frame counting.
 
         Args:
-            frame: Input image frame as numpy array for detection.
+            frame: BGR NumPy frame or RGB CUDA frame for detection.
 
         Returns:
             Tuple containing:
@@ -226,10 +235,17 @@ class YoloDetector:
             datas = await self._detect_remote(frame)
             tracked = self._track_remote(datas)
         else:
+            model_frame: np.ndarray | torch.Tensor = frame
+            letterbox = None
+            if isinstance(frame, GpuFrame):
+                model_frame, letterbox = frame.prepare_for_yolo(
+                    self.local_imgsz,
+                    self.local_half,
+                )
             # Batch process detection results to improve efficiency
             try:
                 results = self.ultralytics_model.track(
-                    frame,
+                    model_frame,
                     persist=True,
                     verbose=False,
                     device=self.local_device,
@@ -256,26 +272,40 @@ class YoloDetector:
                 self._cleanup_prev_centers()
                 return [], []
 
-            ids = boxes.id if boxes.id is not None else [
-                -1,
-            ] * len(boxes)
-
-            # Batch calculate all bounding box data
-            xyxy_batch = boxes.xyxy.tolist()
-            conf_batch = boxes.conf.tolist()
-            cls_batch = boxes.cls.tolist()
+            # Ultralytics exposes the packed accelerator tensor as ``data``.
+            # Keep the field fallback for lightweight models and test doubles.
+            box_data = getattr(boxes, 'data', None)
+            if isinstance(box_data, (np.ndarray, torch.Tensor)):
+                if hasattr(box_data, 'cpu'):
+                    box_data = box_data.cpu()
+                box_rows = box_data.tolist()
+            else:
+                xyxy_rows = boxes.xyxy.tolist()
+                confidences = boxes.conf.tolist()
+                class_ids = boxes.cls.tolist()
+                track_ids = (
+                    None if boxes.id is None else boxes.id.tolist()
+                )
+                box_rows = [
+                    [
+                        *coordinates,
+                        *([] if track_ids is None else [track_ids[index]]),
+                        confidences[index],
+                        class_ids[index],
+                    ]
+                    for index, coordinates in enumerate(xyxy_rows)
+                ]
+            if letterbox is not None:
+                box_rows = letterbox.restore_rows(box_rows)
 
             datas = []
             tracked = []
 
-            for i in range(len(boxes)):
-                xyxy = xyxy_batch[i]
-                conf = float(conf_batch[i])
-                cls = int(cls_batch[i])
-                tid = (
-                    int(ids[i]) if ids is not None and ids[i] is not None
-                    else -1
-                )
+            for row in box_rows:
+                xyxy = row[:4]
+                conf = float(row[-2])
+                cls = int(row[-1])
+                tid = int(row[-3]) if len(row) == 7 else -1
 
                 # Calculate centre point and movement status
                 cx, cy = (xyxy[0] + xyxy[2]) * 0.5, (xyxy[1] + xyxy[3]) * 0.5
@@ -300,7 +330,10 @@ class YoloDetector:
             self._cleanup_prev_centers()
         return datas, tracked
 
-    async def _detect_remote(self, frame: np.ndarray) -> list[list[float]]:
+    async def _detect_remote(
+        self,
+        frame: np.ndarray | GpuFrame,
+    ) -> list[list[float]]:
         """Detect with the shared worker process."""
         if self.worker_client is None:
             raise RuntimeError(
@@ -310,6 +343,14 @@ class YoloDetector:
             frame,
             model_key=self.model_key,
         )
+
+    def track_detections(
+        self,
+        detections: list[list[float]],
+    ) -> list[list[float]]:
+        """Attach this detector's persistent remote track IDs to detections."""
+        self.frame_count += 1
+        return self._track_remote(detections)
 
     @staticmethod
     def _is_cuda_oom(exc: Exception) -> bool:
@@ -742,14 +783,46 @@ class YoloDetector:
         if num_rows == 0 or num_cols == 0:
             return [], list(range(num_rows)), list(range(num_cols))
 
-        row_ind, col_ind = _linear_sum_assignment()(cost)
+        candidate_mask = np.isfinite(cost) & (cost <= cost_threshold)
+        if not candidate_mask.any():
+            return [], list(range(num_rows)), list(range(num_cols))
+
         matches: list[tuple[int, int]] = []
-        used_rows = set()
-        used_cols = set()
-        for row, col in zip(row_ind, col_ind):
-            r = int(row)
-            c = int(col)
-            if cost[r, c] <= cost_threshold:
+        used_rows: set[int] = set()
+        used_cols: set[int] = set()
+        remaining_rows = {
+            int(row)
+            for row in np.flatnonzero(candidate_mask.any(axis=1))
+        }
+        while remaining_rows:
+            component_rows, component_cols = self._assignment_component(
+                candidate_mask,
+                remaining_rows.pop(),
+            )
+            remaining_rows.difference_update(component_rows)
+            row_indices = sorted(component_rows)
+            col_indices = sorted(component_cols)
+            component_cost = cost[np.ix_(row_indices, col_indices)]
+            component_candidates = candidate_mask[
+                np.ix_(
+                    row_indices,
+                    col_indices,
+                )
+            ]
+            # Invalid edges must never displace valid matches in this
+            # component. The solver only sees small connected components.
+            blocked_cost = max(cost_threshold + 1.0, 1.0)
+            solver_cost = np.where(
+                component_candidates,
+                component_cost,
+                blocked_cost,
+            )
+            row_ind, col_ind = _linear_sum_assignment()(solver_cost)
+            for row, col in zip(row_ind, col_ind, strict=True):
+                r = row_indices[int(row)]
+                c = col_indices[int(col)]
+                if not candidate_mask[r, c]:
+                    continue
                 matches.append((r, c))
                 used_rows.add(r)
                 used_cols.add(c)
@@ -757,6 +830,30 @@ class YoloDetector:
         unmatched_rows = [r for r in range(num_rows) if r not in used_rows]
         unmatched_cols = [c for c in range(num_cols) if c not in used_cols]
         return matches, unmatched_rows, unmatched_cols
+
+    @staticmethod
+    def _assignment_component(
+        candidate_mask: np.ndarray,
+        start_row: int,
+    ) -> tuple[set[int], set[int]]:
+        """Return one connected valid-edge component of a cost matrix."""
+        rows = {start_row}
+        cols: set[int] = set()
+        row_stack = [start_row]
+        while row_stack:
+            row = row_stack.pop()
+            for col_value in np.flatnonzero(candidate_mask[row]):
+                col = int(col_value)
+                if col in cols:
+                    continue
+                cols.add(col)
+                for neighbour_value in np.flatnonzero(candidate_mask[:, col]):
+                    neighbour = int(neighbour_value)
+                    if neighbour in rows:
+                        continue
+                    rows.add(neighbour)
+                    row_stack.append(neighbour)
+        return rows, cols
 
     def _prune_remote_tracks(self) -> None:
         """
@@ -813,7 +910,10 @@ class YoloDetector:
             cv2.destroyAllWindows()
 
     async def close(self) -> None:
-        """Compatibility hook for callers that close detector resources."""
+        """Release stream-side worker resources when they support cleanup."""
+        close = getattr(self.worker_client, 'close', None)
+        if close is not None:
+            await close()
 
     def remove_overlapping_labels(
         self,
@@ -852,8 +952,8 @@ class YoloDetector:
 
     def overlap_percentage(
         self,
-        bbox1: list[float],
-        bbox2: list[float],
+        bbox1: Sequence[float],
+        bbox2: Sequence[float],
     ) -> float:
         """Calculate the overlap ratio between two bounding boxes.
 
@@ -879,8 +979,8 @@ class YoloDetector:
 
     def is_contained(
         self,
-        inner_bbox: list[float],
-        outer_bbox: list[float],
+        inner_bbox: Sequence[float],
+        outer_bbox: Sequence[float],
     ) -> bool:
         """Return whether one bounding box is contained inside another.
 

@@ -460,6 +460,39 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertIn((0, 0), matches)
         self.assertIn((1, 1), matches)
 
+    def test_hungarian_assign_splits_disconnected_candidate_groups(
+        self,
+    ) -> None:
+        """Distant objects use independent small Hungarian assignments."""
+        d = self.detector_server
+        cost = np.array([
+            [0.1, 0.9, 0.9, 0.9],
+            [0.9, 0.2, 0.9, 0.9],
+            [0.9, 0.9, 0.1, 0.9],
+            [0.9, 0.9, 0.9, 0.2],
+        ])
+
+        def assign(
+            component_cost: np.ndarray,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            """Return the only assignment in a one-edge component."""
+            self.assertEqual(component_cost.shape, (1, 1))
+            return np.array([0]), np.array([0])
+
+        with patch(
+            'src.yolo_detector._linear_sum_assignment',
+            return_value=assign,
+        ) as assignment:
+            matches, unmatched_rows, unmatched_cols = d._hungarian_assign(
+                cost,
+                cost_threshold=0.3,
+            )
+
+        self.assertEqual(matches, [(0, 0), (1, 1), (2, 2), (3, 3)])
+        self.assertEqual(unmatched_rows, [])
+        self.assertEqual(unmatched_cols, [])
+        self.assertEqual(assignment.call_count, 4)
+
     @patch('src.yolo_detector.cv2.destroyAllWindows')
     @patch('src.yolo_detector.cv2.waitKey', side_effect=[-1, ord('q')])
     @patch('src.yolo_detector.cv2.putText')

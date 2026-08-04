@@ -4,10 +4,15 @@ import asyncio
 import os
 import shutil
 import subprocess
+from collections.abc import Awaitable
 from typing import Final
+from typing import Protocol
 
 import cv2
 import numpy as np
+
+from src.nvenc_session import release_nvenc_session
+from src.nvenc_session import try_acquire_nvenc_session
 
 
 _default_fps: Final[float] = 10.0
@@ -16,6 +21,68 @@ _default_preset: Final[str] = 'veryfast'
 _default_encoder: Final[str] = 'libx264'
 _default_nvenc_preset: Final[str] = 'p1'
 _default_nvenc_cq: Final[int] = 30
+_default_vaapi_device: Final[str] = '/dev/dri/renderD128'
+_default_vaapi_bitrate: Final[str] = '4M'
+_default_vaapi_maxrate: Final[str] = '8M'
+_default_vaapi_bufsize: Final[str] = '16M'
+
+
+def _keyframe_interval_seconds() -> float:
+    """Return the maximum time between H.264 keyframes."""
+    try:
+        return max(
+            0.1,
+            float(os.getenv('MEDIA_PUBLISH_KEYFRAME_INTERVAL_SECONDS', '2')),
+        )
+    except ValueError:
+        return 2.0
+
+
+class _FfmpegStdin(Protocol):
+    """Writable stdin interface used to feed frames to ffmpeg."""
+
+    def is_closing(self) -> bool:
+        """Return whether no more writes are accepted."""
+
+    def close(self) -> None:
+        """Close the input stream."""
+
+    def write(self, payload: memoryview) -> None:
+        """Write a frame payload."""
+
+    def drain(self) -> Awaitable[None]:
+        """Wait until buffered writes are accepted."""
+
+
+class _FfmpegProcess(Protocol):
+    """Subprocess operations used by the frame publisher."""
+
+    @property
+    def returncode(self) -> int | None:
+        """Return the process exit status when available."""
+
+    @property
+    def stdin(self) -> _FfmpegStdin | None:
+        """Return the stream accepting raw frame data."""
+
+    def terminate(self) -> None:
+        """Request graceful process termination."""
+
+    def kill(self) -> None:
+        """Force process termination."""
+
+    def wait(self) -> Awaitable[int | None]:
+        """Wait for process completion."""
+
+
+class _CancellableTask(Awaitable[None], Protocol):
+    """Background task operations needed while closing the publisher."""
+
+    def cancel(self) -> bool:
+        """Request cancellation of the task."""
+
+    def done(self) -> bool:
+        """Return whether the task has completed."""
 
 
 class MediaStreamPublisher:
@@ -52,12 +119,14 @@ class MediaStreamPublisher:
         self.bitrate = bitrate
         self.maxrate = maxrate
         self.bufsize = bufsize
-        self._process: asyncio.subprocess.Process | None = None
+        self._process: _FfmpegProcess | None = None
         self._writer_task: asyncio.Task[None] | None = None
-        self._stderr_task: asyncio.Task[None] | None = None
+        self._stderr_task: _CancellableTask | None = None
         self._latest_frame: np.ndarray | None = None
         self._stream_size: tuple[int, int] | None = None
         self._started = False
+        self._uses_nvenc = False
+        self._nvenc_unavailable = False
         self.last_error: str | None = None
         self._state_lock = asyncio.Lock()
 
@@ -70,6 +139,9 @@ class MediaStreamPublisher:
 
             if not self._started:
                 await self._start(prepared.shape[1], prepared.shape[0])
+                self._latest_frame = prepared
+                if not await self._write_first_frame(prepared):
+                    return
                 self._writer_task = asyncio.create_task(self._writer_loop())
             elif self._stream_size is not None:
                 prepared = self._resize_to_stream_size(prepared)
@@ -123,7 +195,10 @@ class MediaStreamPublisher:
         stderr_task = self._stderr_task
         self._stderr_task = None
         if process is None:
-            if stderr_task is not None and stderr_task is not asyncio.current_task():
+            if (
+                stderr_task is not None
+                and stderr_task is not asyncio.current_task()
+            ):
                 stderr_task.cancel()
             return
         if process.stdin is not None and not process.stdin.is_closing():
@@ -138,13 +213,17 @@ class MediaStreamPublisher:
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
-        if stderr_task is not None and stderr_task is not asyncio.current_task():
+        if (
+            stderr_task is not None
+            and stderr_task is not asyncio.current_task()
+        ):
             if not stderr_task.done():
                 stderr_task.cancel()
             try:
                 await stderr_task
             except asyncio.CancelledError:
                 pass
+        self._release_nvenc_session()
 
     def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
         """Normalise size and dimensions before sending to ffmpeg."""
@@ -182,13 +261,37 @@ class MediaStreamPublisher:
         if not ffmpeg_binary:
             raise RuntimeError('Media publishing requires ffmpeg')
 
-        command = self._build_ffmpeg_command(ffmpeg_binary, width, height)
-        self._process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+        encoder = _select_encoder(ffmpeg_binary)
+        if encoder == 'h264_vaapi':
+            _ensure_vaapi_device_access()
+        if encoder == 'h264_nvenc' and self._nvenc_unavailable:
+            encoder = 'libx264'
+        elif encoder == 'h264_nvenc' and not try_acquire_nvenc_session():
+            encoder = 'libx264'
+            print(
+                f'[media:{self.publish_url}] NVENC session budget reached; '
+                'using libx264',
+                flush=True,
+            )
+        else:
+            self._uses_nvenc = encoder == 'h264_nvenc'
+
+        command = self._build_ffmpeg_command(
+            ffmpeg_binary,
+            width,
+            height,
+            encoder=encoder,
         )
+        try:
+            self._process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except Exception:
+            self._release_nvenc_session()
+            raise
         self._stderr_task = asyncio.create_task(
             self._drain_stderr(self._process),
         )
@@ -199,7 +302,7 @@ class MediaStreamPublisher:
 
     async def _drain_stderr(
         self,
-        process: asyncio.subprocess.Process,
+        process: object,
     ) -> None:
         """Drain ffmpeg stderr so an encoder error cannot block the pipe."""
         stderr = getattr(process, 'stderr', None)
@@ -214,6 +317,8 @@ class MediaStreamPublisher:
                 if not line:
                     continue
                 self.last_error = line[-1000:]
+                if self._uses_nvenc and _is_nvenc_unavailable_error(line):
+                    self._nvenc_unavailable = True
                 print(
                     f'[media:{self.publish_url}] ffmpeg: {self.last_error}',
                     flush=True,
@@ -222,6 +327,29 @@ class MediaStreamPublisher:
             raise
         except Exception as exc:
             self.last_error = f'stderr reader failed: {exc}'
+
+    async def _write_first_frame(self, frame: np.ndarray) -> bool:
+        """Write one frame before a demand change can cancel the publisher."""
+        process = self._process
+        if process is None or process.stdin is None:
+            self._started = False
+            return False
+        try:
+            process.stdin.write(memoryview(frame).cast('B'))
+            await asyncio.wait_for(
+                process.stdin.drain(),
+                timeout=max(1.0, (1.0 / self.fps) * 3),
+            )
+        except (
+            asyncio.TimeoutError,
+            BrokenPipeError,
+            ConnectionResetError,
+            RuntimeError,
+        ):
+            await self._stop_process()
+            self._started = False
+            return False
+        return True
 
     async def _writer_loop(self) -> None:
         """Continuously feed ffmpeg so MediaMTX keeps the live path online."""
@@ -281,12 +409,21 @@ class MediaStreamPublisher:
         ffmpeg_binary: str,
         width: int,
         height: int,
+        *,
+        encoder: str | None = None,
     ) -> list[str]:
         """Build an ffmpeg command that publishes H.264 to MediaMTX."""
-        gop_size = max(1, round(self.fps * 2))
-        encoder = _select_encoder(ffmpeg_binary)
+        gop_size = max(1, round(self.fps * _keyframe_interval_seconds()))
+        encoder = encoder or _select_encoder(ffmpeg_binary)
         command = [
             ffmpeg_binary,
+        ]
+        if encoder == 'h264_vaapi':
+            command.extend([
+                '-vaapi_device',
+                _vaapi_device(),
+            ])
+        command.extend([
             '-hide_banner',
             '-loglevel',
             os.getenv('MEDIA_FFMPEG_LOGLEVEL', 'error'),
@@ -306,10 +443,18 @@ class MediaStreamPublisher:
             '-i',
             'pipe:0',
             '-an',
-        ]
+        ])
         if encoder == 'h264_nvenc':
             command.extend(
                 _build_nvenc_options(
+                    bitrate=self.bitrate,
+                    maxrate=self.maxrate,
+                    bufsize=self.bufsize,
+                ),
+            )
+        elif encoder == 'h264_vaapi':
+            command.extend(
+                _build_vaapi_options(
                     bitrate=self.bitrate,
                     maxrate=self.maxrate,
                     bufsize=self.bufsize,
@@ -341,6 +486,12 @@ class MediaStreamPublisher:
             self.publish_url,
         ])
         return command
+
+    def _release_nvenc_session(self) -> None:
+        """Return this publisher's NVENC reservation exactly once."""
+        if self._uses_nvenc:
+            release_nvenc_session()
+            self._uses_nvenc = False
 
 
 def _build_x264_options(
@@ -393,14 +544,77 @@ def _build_nvenc_options(
         '-cq',
         str(int(os.getenv('MEDIA_PUBLISH_NVENC_CQ', str(_default_nvenc_cq)))),
         '-b:v',
-        bitrate or os.getenv('MEDIA_PUBLISH_NVENC_BITRATE', '0'),
+        bitrate or os.getenv('MEDIA_PUBLISH_NVENC_BITRATE', '0') or '0',
         '-maxrate',
-        maxrate or os.getenv('MEDIA_PUBLISH_NVENC_MAXRATE', '8M'),
+        maxrate or os.getenv('MEDIA_PUBLISH_NVENC_MAXRATE', '8M') or '8M',
         '-bufsize',
-        bufsize or os.getenv('MEDIA_PUBLISH_NVENC_BUFSIZE', '16M'),
+        bufsize or os.getenv('MEDIA_PUBLISH_NVENC_BUFSIZE', '16M') or '16M',
         '-pix_fmt',
         'yuv420p',
     ]
+
+
+def _build_vaapi_options(
+    *,
+    bitrate: str | None = None,
+    maxrate: str | None = None,
+    bufsize: str | None = None,
+) -> list[str]:
+    """Return Intel VAAPI H.264 options for low-latency live streams."""
+    target_bitrate = (
+        bitrate
+        or os.getenv('MEDIA_PUBLISH_VAAPI_BITRATE', _default_vaapi_bitrate)
+        or _default_vaapi_bitrate
+    )
+    target_maxrate = (
+        maxrate
+        or os.getenv('MEDIA_PUBLISH_VAAPI_MAXRATE', _default_vaapi_maxrate)
+        or _default_vaapi_maxrate
+    )
+    target_bufsize = (
+        bufsize
+        or os.getenv('MEDIA_PUBLISH_VAAPI_BUFSIZE', _default_vaapi_bufsize)
+        or _default_vaapi_bufsize
+    )
+    return [
+        '-vf',
+        'format=nv12,hwupload',
+        '-c:v',
+        'h264_vaapi',
+        '-rc_mode',
+        os.getenv('MEDIA_PUBLISH_VAAPI_RC_MODE', 'CBR'),
+        '-b:v',
+        target_bitrate,
+        '-maxrate',
+        target_maxrate,
+        '-bufsize',
+        target_bufsize,
+        '-bf',
+        '0',
+        '-async_depth',
+        os.getenv('MEDIA_PUBLISH_VAAPI_ASYNC_DEPTH', '1'),
+        '-profile:v',
+        'high',
+    ]
+
+
+def _vaapi_device() -> str:
+    """Return the Intel render node used for VAAPI encoding."""
+    return os.getenv(
+        'MEDIA_PUBLISH_VAAPI_DEVICE',
+        _default_vaapi_device,
+    )
+
+
+def _ensure_vaapi_device_access() -> None:
+    """Fail clearly when the process cannot use the configured Intel GPU."""
+    device = _vaapi_device()
+    if os.access(device, os.R_OK | os.W_OK):
+        return
+    raise RuntimeError(
+        f'VAAPI device is not accessible: {device}. Add the process user to '
+        'the render group, then start a new login shell.',
+    )
 
 
 def _select_encoder(ffmpeg_binary: str) -> str:
@@ -421,6 +635,13 @@ def _select_encoder(ffmpeg_binary: str) -> str:
             ffmpeg_binary,
             'h264_nvenc',
         ) else 'libx264'
+    if configured in {'vaapi', 'h264_vaapi'}:
+        if _ffmpeg_has_encoder(ffmpeg_binary, 'h264_vaapi'):
+            return 'h264_vaapi'
+        raise RuntimeError(
+            'MEDIA_PUBLISH_ENCODER=h264_vaapi requires an ffmpeg build '
+            'with h264_vaapi support',
+        )
     if configured in {'auto', 'hardware'} and _ffmpeg_has_encoder(
         ffmpeg_binary,
         'h264_nvenc',
@@ -442,3 +663,15 @@ def _ffmpeg_has_encoder(ffmpeg_binary: str, encoder: str) -> bool:
     except Exception:
         return False
     return encoder in result.stdout
+
+
+def _is_nvenc_unavailable_error(line: str) -> bool:
+    """Return whether an ffmpeg error means this publisher must use CPU."""
+    return any(
+        marker in line
+        for marker in (
+            'No capable devices found',
+            'OpenEncodeSessionEx failed',
+            'Cannot load libcuda',
+        )
+    )

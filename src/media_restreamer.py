@@ -3,11 +3,33 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+from collections.abc import Awaitable
 from typing import Final
+from typing import Protocol
+
+from src.nvenc_session import release_nvenc_session
+from src.nvenc_session import try_acquire_nvenc_session
 
 
 _restart_delay_seconds: Final[float] = 2.0
 _default_fps: Final[float] = 15.0
+
+
+class _FfmpegProcess(Protocol):
+    """Subprocess operations used by the clean-stream restreamer."""
+
+    @property
+    def returncode(self) -> int | None:
+        """Return the process exit status when available."""
+
+    def terminate(self) -> None:
+        """Request graceful process termination."""
+
+    def kill(self) -> None:
+        """Force process termination."""
+
+    def wait(self) -> Awaitable[int | None]:
+        """Wait for process completion."""
 
 
 class MediaSourceRestreamer:
@@ -26,7 +48,7 @@ class MediaSourceRestreamer:
         """
         self.source_url = source_url
         self.publish_url = publish_url
-        self._process: asyncio.subprocess.Process | None = None
+        self._process: _FfmpegProcess | None = None
         self._monitor_task: asyncio.Task[None] | None = None
         self._closed = False
 
@@ -53,27 +75,49 @@ class MediaSourceRestreamer:
                 pass
         await self._stop_process()
 
+    async def restart(self) -> None:
+        """Reconnect the current source without ending the monitor loop."""
+        if self._closed:
+            return
+        await self._stop_process()
+
     async def _monitor_loop(self) -> None:
         """Keep the clean stream alive if the source briefly disconnects."""
         while not self._closed:
             ffmpeg_binary = _find_ffmpeg()
             encoder = _get_encoder()
+            uses_nvenc = False
+            if encoder in {'nvenc', 'h264_nvenc'}:
+                if try_acquire_nvenc_session():
+                    encoder = 'h264_nvenc'
+                    uses_nvenc = True
+                else:
+                    encoder = 'libx264'
+                    print(
+                        f'[media:{self.publish_url}] NVENC session budget '
+                        'reached; using libx264',
+                        flush=True,
+                    )
             command = _build_command(
                 ffmpeg_binary,
                 self.source_url,
                 self.publish_url,
                 encoder,
             )
-            self._process = await asyncio.create_subprocess_exec(
-                *command,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
+            try:
+                self._process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
 
-            process = self._process
-            if process is not None:
-                await process.wait()
+                process = self._process
+                if process is not None:
+                    await process.wait()
+            finally:
+                if uses_nvenc:
+                    release_nvenc_session()
             if not self._closed:
                 await asyncio.sleep(_restart_delay_seconds)
 
