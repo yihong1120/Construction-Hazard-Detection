@@ -1883,32 +1883,6 @@ async def _send_violation_and_notification(
     return current_timestamp
 
 
-async def _publish_requested_overlay_frames(
-    latest_frame: _LatestFrameState,
-    latest_detection: _LatestDetectionState,
-    redis_manager: RedisManager,
-    media_publish_base: str,
-    media_path: str,
-    site: str,
-    stream_name: str,
-    stop_event: asyncio.Event,
-    demand_cache: _MediaDemandCache | None = None,
-    rendition: str = 'detail',
-) -> None:
-    """Compatibility wrapper for publishing one overlay rendition."""
-    await _publish_requested_overlay_variants(
-        latest_frame=latest_frame,
-        latest_detection=latest_detection,
-        redis_manager=redis_manager,
-        media_publish_base=media_publish_base,
-        variants=[_OverlayPublisherVariant(media_path, rendition)],
-        site=site,
-        stream_name=stream_name,
-        stop_event=stop_event,
-        demand_cache=demand_cache,
-    )
-
-
 def _overlay_publisher_variants(
     media_path: str,
 ) -> list[_OverlayPublisherVariant]:
@@ -2107,49 +2081,6 @@ async def _requested_overlay_languages(
         for language, value in zip(allowed_languages, values, strict=True)
         if value is not None
     }
-
-
-async def _publish_requested_overlay_snapshot(
-    redis_manager: RedisManager,
-    overlay_media_publishers: dict[str, MediaStreamPublisher],
-    media_publish_base: str,
-    media_path: str,
-    site: str,
-    stream_name: str,
-    source_frame: np.ndarray | GpuFrame,
-    warnings: object,
-    cone_polys: object,
-    pole_polys: object,
-    track_data: object,
-    overlay_ready_started_at: dict[str, float] | None = None,
-    demand_cache: _MediaDemandCache | None = None,
-    rendition: str = 'detail',
-) -> None:
-    """Compatibility wrapper for publishing one overlay rendition snapshot."""
-    await _publish_requested_overlay_snapshot_variants(
-        redis_manager=redis_manager,
-        variants=[
-            _OverlayPublisherVariant(
-                media_path=media_path,
-                rendition=rendition,
-                publishers=overlay_media_publishers,
-                ready_started_at=(
-                    overlay_ready_started_at
-                    if overlay_ready_started_at is not None
-                    else {}
-                ),
-            ),
-        ],
-        media_publish_base=media_publish_base,
-        site=site,
-        stream_name=stream_name,
-        source_frame=source_frame,
-        warnings=warnings,
-        cone_polys=cone_polys,
-        pole_polys=pole_polys,
-        track_data=track_data,
-        demand_cache=demand_cache,
-    )
 
 
 async def _publish_requested_overlay_snapshot_variants(

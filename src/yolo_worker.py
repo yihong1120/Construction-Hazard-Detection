@@ -7,7 +7,6 @@ import queue
 import time
 import uuid
 from collections.abc import Iterable
-from collections.abc import MutableMapping
 from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing import shared_memory
@@ -91,7 +90,7 @@ class WorkerRequestPayload(TypedDict):
     slot: int
     shape: tuple[int, ...]
     dtype: str
-    result_queue: WorkerResultSender | None
+    result_queue: WorkerResultSender
 
 
 class WorkerResult(TypedDict, total=False):
@@ -101,11 +100,7 @@ class WorkerResult(TypedDict, total=False):
     ok: bool
     detections: list[Detection]
     error: str
-    expired: bool
     skipped: bool
-
-
-ResultStore: TypeAlias = MutableMapping[str, WorkerResult]
 
 
 class WorkerRequestSender(Protocol):
@@ -218,8 +213,8 @@ class _WorkerRequest:
     shm_name: str
     shape: tuple[int, ...]
     dtype: str
+    result_queue: WorkerResultSender
     slot: int = 0
-    result_queue: WorkerResultSender | None = None
 
     @classmethod
     def from_mapping(
@@ -243,7 +238,7 @@ class _WorkerRequest:
             slot=int(request.get('slot', 0)),
             shape=tuple(int(v) for v in request['shape']),
             dtype=str(request['dtype']),
-            result_queue=request.get('result_queue'),
+            result_queue=cast(WorkerResultSender, request['result_queue']),
         )
 
 
@@ -342,7 +337,7 @@ class YoloWorkerClient:
     def __init__(
         self,
         request_queue: WorkerRequestSender,
-        result_queue: WorkerResultReceiver | ResultStore,
+        result_queue: WorkerResultReceiver,
         camera_id: str,
         timeout_seconds: float = 30.0,
     ) -> None:
@@ -357,9 +352,6 @@ class YoloWorkerClient:
         """
         self.request_queue = request_queue
         self.result_queue = result_queue
-        self.result_store = (
-            result_queue if isinstance(result_queue, MutableMapping) else None
-        )
         self.camera_id = camera_id
         self.timeout_seconds = timeout_seconds
         self.ring_slots = max(
@@ -410,11 +402,7 @@ class YoloWorkerClient:
             'slot': slot,
             'shape': contiguous.shape,
             'dtype': str(contiguous.dtype),
-            'result_queue': (
-                None
-                if self.result_store is not None
-                else cast(WorkerResultSender, self.result_queue)
-            ),
+            'result_queue': cast(WorkerResultSender, self.result_queue),
         }
         request_submitted = False
         request_timed_out = False
@@ -425,12 +413,6 @@ class YoloWorkerClient:
         except TimeoutError:
             request_timed_out = request_submitted
             if request_timed_out:
-                if self.result_store is not None:
-                    self.result_store[request_id] = {
-                        'id': request_id,
-                        'ok': False,
-                        'expired': True,
-                    }
                 self._release_slot_later(request_id)
             raise
         finally:
@@ -531,10 +513,10 @@ class YoloWorkerClient:
             raise TimeoutError('YOLO worker request queue is full') from exc
 
     async def _wait_for_result(self, request_id: str) -> list[Detection]:
-        """Wait for a worker result.
+        """Wait for this camera's matching worker result.
 
         Args:
-            request_id: Request identifier to poll in the result store.
+            request_id: Request identifier returned through the result queue.
 
         Returns:
             Detection rows returned by the worker.
@@ -544,18 +526,6 @@ class YoloWorkerClient:
             RuntimeError: If the worker reports an error result.
         """
         deadline = time.monotonic() + self.timeout_seconds
-        if self.result_store is not None:
-            while time.monotonic() < deadline:
-                result = self.result_store.pop(request_id, None)
-                if result is None:
-                    await asyncio.sleep(0.002)
-                    continue
-                if result.get('ok'):
-                    return result.get('detections', [])
-                raise RuntimeError(
-                    str(result.get('error', 'YOLO worker request failed')),
-                )
-            raise TimeoutError('YOLO worker request timed out')
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -564,7 +534,7 @@ class YoloWorkerClient:
                 result = cast(
                     WorkerResult,
                     await asyncio.to_thread(
-                        cast(WorkerResultReceiver, self.result_queue).get,
+                        self.result_queue.get,
                         True,
                         remaining,
                     ),
@@ -591,7 +561,7 @@ class YoloWorker:
     def __init__(
         self,
         request_queue: WorkerQueue | None,
-        device: str | ResultStore | None = None,
+        device: str | None = None,
         startup_lock: Any | None = None,
     ) -> None:
         """Initialise the worker.
@@ -603,9 +573,6 @@ class YoloWorker:
                 first TensorRT inference.
         """
         self.request_queue = request_queue
-        self.result_store = (
-            device if isinstance(device, MutableMapping) else None
-        )
         self.device = (
             device
             if isinstance(device, str)
@@ -885,10 +852,6 @@ class YoloWorker:
         frames: list[FrameArray] = []
         valid_requests: list[_WorkerRequest] = []
         for request in requests:
-            if self._request_expired(request):
-                if self.result_store is not None:
-                    self.result_store.pop(request.id, None)
-                continue
             try:
                 frames.append(self._read_frame(request))
                 valid_requests.append(request)
@@ -923,10 +886,6 @@ class YoloWorker:
         result: WorkerResult,
     ) -> None:
         """Return one result without an abandoned camera blocking IO."""
-        if request.result_queue is None:
-            if self.result_store is not None:
-                self.result_store[request.id] = result
-            return
         try:
             request.result_queue.put(result, block=False)
         except queue.Full:
@@ -935,14 +894,6 @@ class YoloWorker:
                 'dropping stale result',
                 request.camera_id,
             )
-
-    def _request_expired(self, request: _WorkerRequest) -> bool:
-        """Return whether a legacy result-store client timed out a request."""
-        result_store = self.result_store
-        if result_store is None:
-            return False
-        result = result_store.get(request.id)
-        return bool(result and result.get('expired'))
 
     @staticmethod
     def _read_frame(request: _WorkerRequest) -> FrameArray:

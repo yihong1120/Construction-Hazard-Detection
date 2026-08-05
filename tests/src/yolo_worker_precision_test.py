@@ -50,7 +50,7 @@ class TestYoloWorkerPrecisionCoverage(unittest.TestCase):
             {'YOLO_WORKER_PRECISION': 'int8'},
             clear=False,
         ):
-            worker = yolo_worker.YoloWorker(None, {})
+            worker = yolo_worker.YoloWorker(None)
 
         self.assertEqual(worker.precision_mode, 'int8')
         self.assertEqual(worker.precision_label, 'int8')
@@ -75,7 +75,7 @@ class TestYoloWorkerPrecisionCoverage(unittest.TestCase):
                 'precision_kwargs',
                 return_value={'quantize': 32},
             ) as precision_kwargs:
-                worker = yolo_worker.YoloWorker(None, {})
+                worker = yolo_worker.YoloWorker(None)
 
         self.assertIsNone(worker.precision_mode)
         self.assertEqual(worker.precision_label, 'legacy')

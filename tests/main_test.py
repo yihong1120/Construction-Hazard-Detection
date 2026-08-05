@@ -476,7 +476,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Exercise this test."""
         queue = object()
-        result_store = object()
+        result_queue = object()
         with (
             patch('src.stream_processor.load_dotenv') as load_env,
             patch('src.stream_processor.asyncio.run') as run,
@@ -486,14 +486,14 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             processor.process_single_stream(
                 self.dummy_cfg,
                 yolo_request_queue=queue,
-                yolo_result_queue=result_store,
+                yolo_result_queue=result_queue,
             )
 
         load_env.assert_called_once_with(override=True)
         run_single.assert_called_once_with(
             self.dummy_cfg,
             yolo_request_queue=queue,
-            yolo_result_queue=result_store,
+            yolo_result_queue=result_queue,
         )
         run.assert_called_once()
 
@@ -1488,200 +1488,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_publish_requested_overlay_frames_primes_from_capture(
-        self,
-    ) -> None:
-        """Demanded overlay HLS paths are opened before detection finishes."""
-        latest_frame = processor._LatestFrameState()
-        latest_detection = processor._LatestDetectionState()
-        captured_frame = np.full((8, 8, 3), 127, dtype=np.uint8)
-        async with latest_frame.lock:
-            latest_frame.frame = captured_frame.copy()
-            latest_frame.timestamp = 1_640_995_200.0
-            latest_frame.sequence = 1
-            latest_frame.event.set()
-
-        stop_event = asyncio.Event()
-
-        redis_manager = MagicMock()
-
-        async def mget(keys: list[str]) -> list[bytes | None]:
-            """Return demand for the Traditional Chinese overlay only."""
-            key = build_overlay_demand_key(
-                'hazard_U2l0ZUE_Q2FtMQ',
-                'zh-TW',
-            )
-            return [b'1' if item == key else None for item in keys]
-
-        redis_manager.redis.mget = mget
-        redis_manager.redis.set = AsyncMock()
-
-        publisher = AsyncMock()
-
-        async def publish_once(frame: Any) -> None:
-            """Support publish_once.
-
-            Args:
-                frame: Test helper value.
-            """
-            self.assertTrue(np.array_equal(frame, captured_frame))
-            stop_event.set()
-
-        publisher.publish.side_effect = publish_once
-
-        with patch(
-            'src.stream_processor.MediaStreamPublisher',
-            return_value=publisher,
-        ):
-            await asyncio.wait_for(
-                processor._publish_requested_overlay_frames(
-                    latest_frame=latest_frame,
-                    latest_detection=latest_detection,
-                    redis_manager=redis_manager,
-                    media_publish_base='rtsp://media-server:8554',
-                    media_path='hazard_U2l0ZUE_Q2FtMQ',
-                    site='SiteA',
-                    stream_name='Cam1',
-                    stop_event=stop_event,
-                ),
-                timeout=1.0,
-            )
-
-        publisher.publish.assert_awaited_once()
-
-    async def test_publish_requested_overlay_frames_uses_startup_on_no_frame(
-        self,
-    ) -> None:
-        """Exercise this test."""
-        latest_frame = processor._LatestFrameState()
-        latest_detection = processor._LatestDetectionState()
-        stop_event = asyncio.Event()
-        redis_manager = MagicMock()
-
-        async def mget(keys: list[str]) -> list[bytes | None]:
-            """Return demand for the English overlay only."""
-            key = build_overlay_demand_key('hazard_site_cam', 'en')
-            return [b'1' if item == key else None for item in keys]
-
-        redis_manager.redis.mget = mget
-        redis_manager.redis.set = AsyncMock()
-        publisher = AsyncMock()
-
-        async def publish_once(frame: Any) -> None:
-            """Support publish_once.
-
-            Args:
-                frame: Test helper value.
-            """
-            self.assertEqual(frame.shape, (720, 1280, 3))
-            stop_event.set()
-
-        publisher.publish.side_effect = publish_once
-
-        with patch(
-            'src.stream_processor.MediaStreamPublisher',
-            return_value=publisher,
-        ):
-            await processor._publish_requested_overlay_frames(
-                latest_frame=latest_frame,
-                latest_detection=latest_detection,
-                redis_manager=redis_manager,
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_site_cam',
-                site='SiteA',
-                stream_name='Cam1',
-                stop_event=stop_event,
-            )
-
-        publisher.publish.assert_awaited_once()
-
-    async def test_publish_requested_overlay_frames_recovers_from_errors(
-        self,
-    ) -> Any:
-        """Exercise this test."""
-        stop_event = asyncio.Event()
-
-        async def requested_once(*_args) -> None:
-            """Support requested_once."""
-            stop_event.set()
-            raise RuntimeError('redis down')
-
-        async def sleep_noop(_delay: Any) -> Any:
-            """Support sleep_noop.
-
-            Args:
-                _delay: Test helper value.
-            """
-            return None
-
-        with (
-            patch(
-                'src.stream_processor._requested_overlay_languages',
-                side_effect=requested_once,
-            ),
-            patch(
-                'src.stream_processor.asyncio.sleep',
-                side_effect=sleep_noop,
-            ),
-            patch(
-                'src.stream_processor._close_overlay_publishers',
-                new_callable=AsyncMock,
-            ) as close_publishers,
-        ):
-            await processor._publish_requested_overlay_frames(
-                latest_frame=processor._LatestFrameState(),
-                latest_detection=processor._LatestDetectionState(),
-                redis_manager=MagicMock(),
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_site_cam',
-                site='SiteA',
-                stream_name='Cam1',
-                stop_event=stop_event,
-            )
-
-        close_publishers.assert_awaited_once()
-
-    async def test_publish_requested_overlay_snapshot_publishes_each_language(
-        self,
-    ) -> None:
-        """Exercise this test."""
-        frame = np.zeros((4, 4, 3), dtype=np.uint8)
-        redis_manager = MagicMock()
-        publishers: dict[str, processor.MediaStreamPublisher] = {}
-
-        with (
-            patch(
-                'src.stream_processor._requested_overlay_languages',
-                new_callable=AsyncMock,
-                return_value={'zh-TW', 'en'},
-            ) as requested,
-            patch(
-                'src.stream_processor._publish_overlay_language_snapshot',
-                new_callable=AsyncMock,
-            ) as publish_language,
-            patch(
-                'src.stream_processor._close_unrequested_overlay_publishers',
-                new_callable=AsyncMock,
-            ) as close_unrequested,
-        ):
-            await processor._publish_requested_overlay_snapshot(
-                redis_manager=redis_manager,
-                overlay_media_publishers=publishers,
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_site_cam',
-                site='SiteA',
-                stream_name='Cam1',
-                source_frame=frame,
-                warnings={},
-                cone_polys=[],
-                pole_polys=[],
-                track_data=[],
-            )
-
-        requested.assert_awaited_once_with(redis_manager, 'hazard_site_cam')
-        close_unrequested.assert_awaited_once_with(publishers, {'zh-TW', 'en'})
-        self.assertEqual(publish_language.await_count, 2)
-
     async def test_overlay_snapshot_variants_render_each_language_once(
         self,
     ) -> None:
@@ -2205,42 +2011,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaisesRegex(ValueError, 'unsupported media rendition'):
             processor._media_publisher('rtsp://media/unknown', rendition='raw')
-
-    async def test_overlay_snapshot_prunes_stale_ready_times(self) -> None:
-        """A disconnected overlay language no longer keeps a ready timer."""
-        ready_started_at = {'en': 1.0, 'zh-TW': 2.0}
-        publishers: dict[str, processor.MediaStreamPublisher] = {}
-        with (
-            patch(
-                'src.stream_processor._requested_overlay_languages',
-                new_callable=AsyncMock,
-                return_value={'en'},
-            ),
-            patch(
-                'src.stream_processor._close_unrequested_overlay_publishers',
-                new_callable=AsyncMock,
-            ),
-            patch(
-                'src.stream_processor._publish_overlay_language_snapshot',
-                new_callable=AsyncMock,
-            ),
-        ):
-            await processor._publish_requested_overlay_snapshot(
-                redis_manager=MagicMock(),
-                overlay_media_publishers=publishers,
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_site_cam',
-                site='SiteA',
-                stream_name='Cam1',
-                source_frame=np.zeros((2, 2, 3), dtype=np.uint8),
-                warnings={},
-                cone_polys=[],
-                pole_polys=[],
-                track_data=[],
-                overlay_ready_started_at=ready_started_at,
-            )
-
-        self.assertEqual(ready_started_at, {'en': 1.0})
 
     def test_media_timing_configuration_falls_back_on_invalid_values(
         self,
