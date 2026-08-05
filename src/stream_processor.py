@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import math
 import os
 import tempfile
 import time
@@ -234,6 +235,14 @@ class _UltralyticsStreamSourceRetry(RuntimeError):
     """Raised when a healthy shard should retry a quarantined RTSP source."""
 
 
+class _UltralyticsStreamShardOOM(RuntimeError):
+    """Raised when a TensorRT shard must be rebuilt with fewer engines."""
+
+    def __init__(self, model_key: str) -> None:
+        super().__init__(f'GPU memory exhausted for model {model_key}')
+        self.model_key = model_key
+
+
 class _UltralyticsStreamModel(Protocol):
     """Minimal direct-stream interface provided by an Ultralytics model."""
 
@@ -241,6 +250,32 @@ class _UltralyticsStreamModel(Protocol):
 
     def predict(self, **kwargs: object) -> Iterator[object]:
         """Run stream prediction and yield one result per input frame."""
+
+
+@dataclass(frozen=True)
+class _UltralyticsStreamShardPlan:
+    """Camera capacities selected for direct TensorRT predictor shards."""
+
+    camera_caps: dict[str, int]
+    available_vram_mib: int | None
+    vram_budget_mib: int | None
+    estimated_vram_mib: int
+
+
+_DEFAULT_ULTRALYTICS_STREAM_CAMERA_CAPS: Final[dict[str, int]] = {
+    'yolo26n': 8,
+    'yolo26s': 6,
+    'yolo26m': 4,
+    'yolo26l': 2,
+    'yolo26x': 1,
+}
+_DEFAULT_ULTRALYTICS_STREAM_ENGINE_VRAM_MIB: Final[dict[str, int]] = {
+    'yolo26n': 700,
+    'yolo26s': 1100,
+    'yolo26m': 1900,
+    'yolo26l': 3400,
+    'yolo26x': 5200,
+}
 
 
 def _preview_publisher_kwargs() -> _PreviewPublisherKwargs:
@@ -316,43 +351,71 @@ def process_ultralytics_stream_group(configs: list[StreamConfig]) -> None:
 
 
 async def _run_ultralytics_stream_group(configs: list[StreamConfig]) -> None:
-    """Keep one direct Ultralytics predictor alive for each model key."""
+    """Keep direct predictors alive with VRAM-aware same-model shards."""
     grouped_configs: dict[str, list[StreamConfig]] = {}
     for cfg in configs:
         model_key = cfg['model_key']
         _validate_server_model_key(model_key)
         grouped_configs.setdefault(model_key, []).append(cfg)
 
-    max_sources = _ultralytics_stream_max_sources_per_model()
-    startup_lock = asyncio.Lock()
-    tasks: list[asyncio.Task[None]] = []
-    for model_key, model_configs in sorted(grouped_configs.items()):
-        sorted_configs = sorted(
-            model_configs,
-            key=lambda cfg: cfg['video_url'],
-        )
-        shards = [
-            sorted_configs[index:index + max_sources]
-            for index in range(0, len(sorted_configs), max_sources)
-        ]
-        for shard_index, shard_configs in enumerate(shards, start=1):
-            tasks.append(
-                asyncio.create_task(
-                    _run_ultralytics_model_stream_group(
-                        model_key,
-                        shard_configs,
-                        shard_index=shard_index,
-                        shard_count=len(shards),
-                        startup_lock=startup_lock,
-                    ),
-                ),
+    plan = _ultralytics_stream_shard_plan(grouped_configs)
+    camera_caps = dict(plan.camera_caps)
+    _log_ultralytics_stream_shard_plan(plan)
+    while True:
+        startup_lock = asyncio.Lock()
+        tasks: list[asyncio.Task[None]] = []
+        for model_key, model_configs in sorted(grouped_configs.items()):
+            sorted_configs = sorted(
+                model_configs,
+                key=lambda cfg: cfg['video_url'],
             )
-    try:
-        await asyncio.gather(*tasks)
-    finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+            camera_cap = camera_caps[model_key]
+            shards = [
+                sorted_configs[index:index + camera_cap]
+                for index in range(0, len(sorted_configs), camera_cap)
+            ]
+            for shard_index, shard_configs in enumerate(shards, start=1):
+                tasks.append(
+                    asyncio.create_task(
+                        _run_ultralytics_model_stream_group(
+                            model_key,
+                            shard_configs,
+                            shard_index=shard_index,
+                            shard_count=len(shards),
+                            startup_lock=startup_lock,
+                        ),
+                    ),
+                )
+        try:
+            await asyncio.gather(*tasks)
+            return
+        except _UltralyticsStreamShardOOM as exc:
+            rebalanced = _rebalance_ultralytics_stream_camera_cap(
+                grouped_configs,
+                camera_caps,
+                exc.model_key,
+            )
+            if rebalanced is not None:
+                previous_cap, next_cap = rebalanced
+                print(
+                    '[Ultralytics-Stream] GPU OOM model='
+                    f'{exc.model_key}; rebuilding direct TensorRT shards with '
+                    f'cameras_per_engine={next_cap} (was {previous_cap})',
+                    flush=True,
+                )
+                continue
+            print(
+                '[Ultralytics-Stream] GPU OOM model='
+                f'{exc.model_key}; one engine already owns the maximum '
+                'configured cameras. Retrying the direct TensorRT topology '
+                'without a fallback worker.',
+                flush=True,
+            )
+            await asyncio.sleep(_ultralytics_stream_restart_seconds())
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _run_ultralytics_model_stream_group(
@@ -500,6 +563,8 @@ async def _run_ultralytics_model_stream_group(
                 flush=True,
             )
         except Exception as exc:
+            if _ultralytics_stream_is_oom(exc):
+                raise _UltralyticsStreamShardOOM(model_key) from exc
             print(
                 '[Ultralytics-Stream] model='
                 f'{model_key} shard={shard_label} restarting after '
@@ -988,6 +1053,265 @@ def _ultralytics_stream_max_sources_per_model() -> int:
         )
     except ValueError:
         return 3
+
+
+def _ultralytics_stream_model_int_settings(
+    name: str,
+    defaults: Mapping[str, int],
+) -> dict[str, int]:
+    """Read comma-separated ``model=value`` settings with safe defaults."""
+    settings = {key.lower(): value for key, value in defaults.items()}
+    raw_value = os.getenv(name, '').strip()
+    if not raw_value:
+        return settings
+    for item in raw_value.split(','):
+        model_key, separator, raw_setting = item.partition('=')
+        if not separator or not model_key.strip():
+            continue
+        try:
+            setting = int(raw_setting.strip())
+        except ValueError:
+            continue
+        if setting > 0:
+            settings[model_key.strip().lower()] = setting
+    return settings
+
+
+def _ultralytics_stream_max_cameras_per_engine() -> int:
+    """Return the hard source limit supported by the TensorRT batch profile."""
+    try:
+        return max(
+            1,
+            int(
+                os.getenv(
+                    'ULTRALYTICS_STREAM_MAX_CAMERAS_PER_ENGINE',
+                    '16',
+                ),
+            ),
+        )
+    except ValueError:
+        return 16
+
+
+def _ultralytics_stream_camera_cap(model_key: str) -> int:
+    """Return the preferred camera capacity for one model engine."""
+    settings = _ultralytics_stream_model_int_settings(
+        'ULTRALYTICS_STREAM_CAMERAS_PER_ENGINE_BY_MODEL',
+        _DEFAULT_ULTRALYTICS_STREAM_CAMERA_CAPS,
+    )
+    configured = settings.get(
+        model_key.lower(),
+        _ultralytics_stream_max_sources_per_model(),
+    )
+    return min(configured, _ultralytics_stream_max_cameras_per_engine())
+
+
+def _ultralytics_stream_engine_vram_mib(model_key: str) -> int:
+    """Return the estimated TensorRT context footprint for one model engine."""
+    settings = _ultralytics_stream_model_int_settings(
+        'ULTRALYTICS_STREAM_ENGINE_VRAM_MIB_BY_MODEL',
+        _DEFAULT_ULTRALYTICS_STREAM_ENGINE_VRAM_MIB,
+    )
+    return settings.get(model_key.lower(), 2048)
+
+
+def _ultralytics_stream_vram_headroom_mib() -> int:
+    """Return VRAM left unused for decoding, publishing, and CUDA overhead."""
+    try:
+        return max(
+            0,
+            int(os.getenv('ULTRALYTICS_STREAM_VRAM_HEADROOM_MIB', '1024')),
+        )
+    except ValueError:
+        return 1024
+
+
+def _ultralytics_stream_available_vram_mib() -> int | None:
+    """Return available CUDA memory, or ``None`` when probing is unavailable.
+
+    The caller retains its configured per-model capacities when CUDA cannot be
+    queried during startup.
+    """
+    if not _env_enabled('ULTRALYTICS_STREAM_VRAM_PROBE_ENABLED', True):
+        return None
+    if not torch.cuda.is_available():
+        return None
+    try:
+        free_bytes, _total_bytes = torch.cuda.mem_get_info(
+            os.getenv('YOLO_WORKER_DEVICE', 'cuda:0'),
+        )
+    except Exception:
+        return None
+    return max(0, int(free_bytes) // (1024 * 1024))
+
+
+def _ultralytics_stream_shard_count(
+    camera_count: int,
+    camera_cap: int,
+) -> int:
+    """Return the number of predictor contexts needed for one model."""
+    return max(1, math.ceil(camera_count / max(1, camera_cap)))
+
+
+def _ultralytics_stream_estimated_vram_mib(
+    grouped_configs: Mapping[str, list[StreamConfig]],
+    camera_caps: Mapping[str, int],
+) -> int:
+    """Estimate the aggregate VRAM required by the planned engine contexts."""
+    return sum(
+        _ultralytics_stream_shard_count(
+            len(model_configs),
+            camera_caps[model_key],
+        )
+        * _ultralytics_stream_engine_vram_mib(model_key)
+        for model_key, model_configs in grouped_configs.items()
+    )
+
+
+def _ultralytics_stream_next_camera_cap(
+    camera_count: int,
+    camera_cap: int,
+) -> int:
+    """Increase capacity enough to remove one context whenever possible."""
+    maximum = min(
+        max(1, camera_count),
+        _ultralytics_stream_max_cameras_per_engine(),
+    )
+    current = min(maximum, max(1, camera_cap))
+    current_shards = _ultralytics_stream_shard_count(camera_count, current)
+    if current_shards <= 1 or current >= maximum:
+        return current
+    return min(
+        maximum,
+        max(current + 1, math.ceil(camera_count / (current_shards - 1))),
+    )
+
+
+def _ultralytics_stream_shard_plan(
+    grouped_configs: Mapping[str, list[StreamConfig]],
+) -> _UltralyticsStreamShardPlan:
+    """Choose per-model capacities that fit the currently free VRAM budget."""
+    camera_caps = {
+        model_key: min(
+            len(model_configs),
+            _ultralytics_stream_camera_cap(model_key),
+        )
+        for model_key, model_configs in grouped_configs.items()
+    }
+    available_vram_mib = _ultralytics_stream_available_vram_mib()
+    if available_vram_mib is None:
+        return _UltralyticsStreamShardPlan(
+            camera_caps=camera_caps,
+            available_vram_mib=None,
+            vram_budget_mib=None,
+            estimated_vram_mib=_ultralytics_stream_estimated_vram_mib(
+                grouped_configs,
+                camera_caps,
+            ),
+        )
+
+    vram_budget_mib = max(
+        0,
+        available_vram_mib - _ultralytics_stream_vram_headroom_mib(),
+    )
+    estimated_vram_mib = _ultralytics_stream_estimated_vram_mib(
+        grouped_configs,
+        camera_caps,
+    )
+    while estimated_vram_mib > vram_budget_mib:
+        candidates: list[tuple[int, str, int]] = []
+        for model_key, model_configs in grouped_configs.items():
+            current_cap = camera_caps[model_key]
+            next_cap = _ultralytics_stream_next_camera_cap(
+                len(model_configs),
+                current_cap,
+            )
+            current_shards = _ultralytics_stream_shard_count(
+                len(model_configs),
+                current_cap,
+            )
+            next_shards = _ultralytics_stream_shard_count(
+                len(model_configs),
+                next_cap,
+            )
+            savings = (
+                current_shards - next_shards
+            ) * _ultralytics_stream_engine_vram_mib(model_key)
+            if savings > 0:
+                candidates.append((savings, model_key, next_cap))
+        if not candidates:
+            break
+        _savings, model_key, next_cap = max(candidates)
+        camera_caps[model_key] = next_cap
+        estimated_vram_mib = _ultralytics_stream_estimated_vram_mib(
+            grouped_configs,
+            camera_caps,
+        )
+
+    return _UltralyticsStreamShardPlan(
+        camera_caps=camera_caps,
+        available_vram_mib=available_vram_mib,
+        vram_budget_mib=vram_budget_mib,
+        estimated_vram_mib=estimated_vram_mib,
+    )
+
+
+def _rebalance_ultralytics_stream_camera_cap(
+    grouped_configs: Mapping[str, list[StreamConfig]],
+    camera_caps: dict[str, int],
+    model_key: str,
+) -> tuple[int, int] | None:
+    """Reduce a model's context count after an OOM without changing modes."""
+    model_configs = grouped_configs.get(model_key)
+    if not model_configs:
+        return None
+    previous_cap = camera_caps[model_key]
+    next_cap = _ultralytics_stream_next_camera_cap(
+        len(model_configs),
+        previous_cap,
+    )
+    if next_cap == previous_cap:
+        return None
+    camera_caps[model_key] = next_cap
+    return previous_cap, next_cap
+
+
+def _log_ultralytics_stream_shard_plan(
+    plan: _UltralyticsStreamShardPlan,
+) -> None:
+    """Log the planned context footprint before starting direct inference."""
+    camera_caps = ', '.join(
+        f'{model_key}={camera_cap}'
+        for model_key, camera_cap in sorted(plan.camera_caps.items())
+    )
+    if plan.available_vram_mib is None:
+        print(
+            '[Ultralytics-Stream] VRAM probe unavailable; using '
+            f'cameras_per_engine: {camera_caps}',
+            flush=True,
+        )
+        return
+    print(
+        '[Ultralytics-Stream] VRAM plan '
+        f'free_mib={plan.available_vram_mib} '
+        f'budget_mib={plan.vram_budget_mib} '
+        f'estimated_engine_mib={plan.estimated_vram_mib} '
+        f'cameras_per_engine: {camera_caps}',
+        flush=True,
+    )
+
+
+def _ultralytics_stream_is_oom(exc: Exception) -> bool:
+    """Return whether a direct TensorRT failure is caused by VRAM pressure."""
+    message = str(exc).lower()
+    return (
+        (
+            'out of memory' in message
+            and ('cuda' in message or 'trt' in message)
+        )
+        or 'execution context was not created' in message
+        or ('nonetype' in message and 'set_input_shape' in message)
+    )
 
 
 def _ultralytics_stream_metrics_interval_seconds() -> float:

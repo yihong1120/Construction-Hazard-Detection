@@ -200,6 +200,18 @@ YOLO_WORKER_PRECISION=f16
 # its own queue. For Docker, set YOLO_WORKER_SHM_SIZE high enough for
 # camera_count * YOLO_WORKER_RING_SLOTS * maximum_frame_bytes.
 
+# Direct Ultralytics/TensorRT mode keeps one engine per same-model camera shard.
+# On startup it probes free VRAM, keeps the requested headroom, and reduces the
+# number of engines by raising only the affected model's cameras-per-engine.
+# A TensorRT OOM follows the same direct rebuild path; it does not fall back to
+# shared workers or empty detections.
+ULTRALYTICS_STREAM_ENABLED=true
+ULTRALYTICS_STREAM_CAMERAS_PER_ENGINE_BY_MODEL='yolo26n=8,yolo26s=6,yolo26m=4,yolo26l=2,yolo26x=1'
+ULTRALYTICS_STREAM_MAX_CAMERAS_PER_ENGINE=16
+ULTRALYTICS_STREAM_VRAM_PROBE_ENABLED=true
+ULTRALYTICS_STREAM_VRAM_HEADROOM_MIB=1024
+ULTRALYTICS_STREAM_ENGINE_VRAM_MIB_BY_MODEL='yolo26n=700,yolo26s=1100,yolo26m=1900,yolo26l=3400,yolo26x=5200'
+
 # Staged GPU decode rollout. This bypasses OpenCV CPU decoding and groups
 # NVDEC CUDA tensors by model key for shared batched YOLO inference. Every
 # source is copied through a local MediaMTX TCP relay without re-encoding

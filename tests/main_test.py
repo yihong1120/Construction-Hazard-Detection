@@ -3494,7 +3494,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         {'ULTRALYTICS_STREAM_MAX_SOURCES_PER_MODEL': '3'},
     )
     async def test_ultralytics_stream_splits_busy_model_groups(self) -> None:
-        """Same-model RTSP sources are sharded before predictors start."""
+        """Same-model RTSP sources use the model-specific engine capacity."""
         configs = []
         for index in range(7):
             cfg = self.dummy_cfg.copy()
@@ -3503,6 +3503,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             configs.append(cfg)
 
         with (
+            patch.dict(
+                os.environ,
+                {'ULTRALYTICS_STREAM_VRAM_PROBE_ENABLED': 'false'},
+            ),
             patch('src.stream_processor._validate_server_model_key'),
             patch(
                 'src.stream_processor._run_ultralytics_model_stream_group',
@@ -3511,14 +3515,14 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         ):
             await processor._run_ultralytics_stream_group(configs)
 
-        self.assertEqual(run_group.await_count, 3)
+        self.assertEqual(run_group.await_count, 2)
         self.assertEqual(
             [len(call.args[1]) for call in run_group.await_args_list],
-            [3, 3, 1],
+            [4, 3],
         )
         self.assertEqual(
             [call.kwargs['shard_index'] for call in run_group.await_args_list],
-            [1, 2, 3],
+            [1, 2],
         )
         startup_locks = [
             call.kwargs['startup_lock']
@@ -3526,6 +3530,131 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertTrue(
             all(lock is startup_locks[0] for lock in startup_locks),
+        )
+
+    def test_ultralytics_stream_camera_caps_are_model_specific(self) -> None:
+        """Small models can serve more cameras from one TensorRT context."""
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                processor._ultralytics_stream_camera_cap('yolo26m'),
+                4,
+            )
+            self.assertEqual(
+                processor._ultralytics_stream_camera_cap('yolo26n'),
+                8,
+            )
+            self.assertEqual(
+                processor._ultralytics_stream_camera_cap('custom-model'),
+                3,
+            )
+
+        with patch.dict(
+            os.environ,
+            {
+                'ULTRALYTICS_STREAM_CAMERAS_PER_ENGINE_BY_MODEL': (
+                    'yolo26m=5,yolo26n=10'
+                ),
+                'ULTRALYTICS_STREAM_MAX_CAMERAS_PER_ENGINE': '8',
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                processor._ultralytics_stream_camera_cap('yolo26m'),
+                5,
+            )
+            self.assertEqual(
+                processor._ultralytics_stream_camera_cap('yolo26n'),
+                8,
+            )
+
+    def test_ultralytics_stream_vram_plan_reduces_engine_count(self) -> None:
+        """Low free VRAM raises a model's per-engine camera capacity."""
+        configs = []
+        for index in range(9):
+            cfg = self.dummy_cfg.copy()
+            cfg['model_key'] = 'yolo26m'
+            cfg['video_url'] = f'rtsp://example.com/m{index:02d}'
+            configs.append(cfg)
+
+        with (
+            patch.dict(
+                os.environ,
+                {'ULTRALYTICS_STREAM_VRAM_HEADROOM_MIB': '1000'},
+            ),
+            patch(
+                'src.stream_processor._ultralytics_stream_available_vram_mib',
+                return_value=5500,
+            ),
+        ):
+            plan = processor._ultralytics_stream_shard_plan(
+                {'yolo26m': configs},
+            )
+
+        self.assertEqual(plan.camera_caps, {'yolo26m': 5})
+        self.assertEqual(plan.vram_budget_mib, 4500)
+        self.assertEqual(plan.estimated_vram_mib, 3800)
+
+    async def test_ultralytics_stream_oom_rebuilds_direct_shards(self) -> None:
+        """An OOM rebuilds direct shards without changing inference modes."""
+        configs = []
+        for index in range(7):
+            cfg = self.dummy_cfg.copy()
+            cfg['model_key'] = 'yolo26m'
+            cfg['video_url'] = f'rtsp://example.com/m{index:02d}'
+            configs.append(cfg)
+
+        with (
+            patch.dict(
+                os.environ,
+                {'ULTRALYTICS_STREAM_VRAM_PROBE_ENABLED': 'false'},
+            ),
+            patch('src.stream_processor._validate_server_model_key'),
+            patch('src.stream_processor._log_ultralytics_stream_shard_plan'),
+            patch(
+                'src.stream_processor._run_ultralytics_model_stream_group',
+                new_callable=AsyncMock,
+                side_effect=[
+                    processor._UltralyticsStreamShardOOM('yolo26m'),
+                    None,
+                    None,
+                ],
+            ) as run_group,
+        ):
+            await processor._run_ultralytics_stream_group(configs)
+
+        self.assertEqual(
+            [len(call.args[1]) for call in run_group.await_args_list],
+            [4, 3, 7],
+        )
+
+    def test_ultralytics_stream_oom_rebalances_without_fallback(self) -> None:
+        """An OOM removes a predictor context by growing only that shard."""
+        configs = []
+        for index in range(7):
+            cfg = self.dummy_cfg.copy()
+            cfg['model_key'] = 'yolo26m'
+            cfg['video_url'] = f'rtsp://example.com/m{index:02d}'
+            configs.append(cfg)
+        camera_caps = {'yolo26m': 4}
+
+        with patch.dict(
+            os.environ,
+            {'ULTRALYTICS_STREAM_MAX_CAMERAS_PER_ENGINE': '16'},
+        ):
+            rebalanced = processor._rebalance_ultralytics_stream_camera_cap(
+                {'yolo26m': configs},
+                camera_caps,
+                'yolo26m',
+            )
+
+        self.assertEqual(rebalanced, (4, 7))
+        self.assertEqual(camera_caps, {'yolo26m': 7})
+        self.assertTrue(
+            processor._ultralytics_stream_is_oom(
+                AttributeError(
+                    "'NoneType' object has no attribute 'set_input_shape'",
+                ),
+            ),
         )
 
     async def test_gpu_stream_always_uses_tcp_relay(self) -> None:
