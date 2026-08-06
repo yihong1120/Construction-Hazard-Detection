@@ -22,6 +22,7 @@ import torch
 import yaml
 from onnxruntime.quantization import CalibrationDataReader
 from tqdm import tqdm
+from ultralytics import __version__ as ultralytics_version
 from ultralytics import YOLO
 from ultralytics.engine.exporter import Exporter
 from ultralytics.utils import LOGGER
@@ -58,6 +59,7 @@ image_suffixes = frozenset(
 )
 detect_head_node_pattern = r'/model\.23/.*'
 node_exclusion_patterns: tuple[str, ...] = ()
+required_ultralytics_version = '8.4.115'
 
 
 class ProgressReporter(Protocol):
@@ -296,6 +298,20 @@ original_get_int8_calibration_dataloader = (
 )
 
 
+def _require_modelopt_export_support() -> None:
+    """Fail clearly when the pinned ModelOpt exporter API is unavailable."""
+    if (
+        ultralytics_version != required_ultralytics_version
+        or original_modelopt_quantize_onnx is None
+    ):
+        raise RuntimeError(
+            f'Mixed INT8 TensorRT export requires Ultralytics '
+            f'{required_ultralytics_version} with ModelOpt support; found '
+            f'{ultralytics_version}. Reinstall the pinned dependencies with '
+            '`python -m pip install -r requirements.txt`.',
+        )
+
+
 def modelopt_quantize_onnx_all_images(
     onnx_file: str,
     quantize: int | str | None = None,
@@ -472,6 +488,7 @@ def _patched_onnx2engine_source(source: str) -> str:
 
 def patch_tensorrt_engine_exporter() -> None:
     """Patch Ultralytics TensorRT export for batch-only dynamic mixed INT8."""
+    _require_modelopt_export_support()
     namespace = dict(engine_export.__dict__)
     namespace['FORCE_EXPLICIT_INT8'] = True
     source = original_onnx2engine_source

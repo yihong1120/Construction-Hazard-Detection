@@ -21,10 +21,10 @@
 
 <div align="center">
    <a href="https://www.python.org/downloads/">
-      <img src="https://img.shields.io/badge/python-3.12-blue?logo=python" alt="Python 3.12">
+      <img src="https://img.shields.io/badge/python-3.14-blue?logo=python" alt="Python 3.14">
    </a>
    <a href="https://github.com/ultralytics/ultralytics">
-      <img src="https://img.shields.io/badge/ultralytics-8.4.8-blue?logo=yolo" alt="Ultralytics 8.4.8">
+      <img src="https://img.shields.io/badge/ultralytics-8.4.115-blue?logo=yolo" alt="Ultralytics 8.4.115">
    </a>
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
@@ -132,7 +132,7 @@ FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready 
 
 ### 1. 準備 Python
 
-目前專案鎖定 Python `>=3.12,<3.13`。
+目前專案鎖定 Python `>=3.14,<3.15`。
 
 ```bash
 uv sync

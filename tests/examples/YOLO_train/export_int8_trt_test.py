@@ -253,6 +253,22 @@ def test_patched_onnx2engine_uses_batch_only_explicit_qdq() -> None:
     assert 'use_fp16 = True' in patched
 
 
+def test_modelopt_export_api_is_available() -> None:
+    """The pinned Ultralytics version provides the required ModelOpt API."""
+    assert subject.ultralytics_version == subject.required_ultralytics_version
+    assert subject.original_modelopt_quantize_onnx is not None
+
+
+def test_modelopt_export_api_requires_pinned_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An incompatible environment gets a direct dependency repair message."""
+    monkeypatch.setattr(subject, 'ultralytics_version', '0.0.0')
+
+    with pytest.raises(RuntimeError, match='pip install -r requirements.txt'):
+        subject._require_modelopt_export_support()
+
+
 def test_patched_onnx2engine_accepts_compatible_modelopt_gate() -> None:
     """The exporter patch tolerates ModelOpt formatting and conditions."""
     source = subject.original_onnx2engine_source

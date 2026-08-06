@@ -25,7 +25,6 @@ mcp==1.28.1
 msgpack==1.2.1
 numpy==2.4.6
 onnx==1.22.0
-onnxruntime==1.28.0
 onnxruntime-gpu==1.27.0
 opencv_python==4.11.0.86
 opencv_python_headless==4.11.0.86
@@ -71,7 +70,7 @@ transformers==5.5.0
 twilio==9.10.9
 types-aiofiles
 types-requests
-ultralytics==8.4.37
+ultralytics==8.4.115
 urllib3==2.7.0
 uvicorn==0.49.0
 
