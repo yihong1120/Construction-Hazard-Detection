@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import inspect
 import random
-import re
 import shutil
 import sys
 import tempfile
@@ -411,35 +411,63 @@ def _patched_onnx2engine_source(source: str) -> str:
         '        config.add_optimization_profile(profile)',
         '',
     ])
-    modelopt_gate = re.compile(
-        r'^(?P<indent>[ \t]*)if is_trt11 and \(use_fp16 or use_int8\):\n'
-        r'(?P=indent)[ \t]+(?P<call>onnx_file = '
-        r'modelopt_quantize_onnx\([\s\S]*?\))\n',
-        re.MULTILINE,
-    )
     if dynamic_profile not in source:
         raise RuntimeError(
             'Cannot patch Ultralytics dynamic TensorRT profile.',
         )
-    modelopt_match = modelopt_gate.search(source)
-    if modelopt_match is None:
-        raise RuntimeError('Cannot patch Ultralytics ModelOpt INT8 gate.')
-    indent = modelopt_match.group('indent')
-    explicit_qdq_gate = '\n'.join([
-        f'{indent}force_explicit_int8 = use_int8 and FORCE_EXPLICIT_INT8',
-        f'{indent}if (is_trt11 and (use_fp16 or use_int8)) or '
-        'force_explicit_int8:',
-        f"{indent}    {modelopt_match.group('call')}",
-        f'{indent}    if force_explicit_int8:',
-        f'{indent}        use_int8 = False',
-        f'{indent}        use_fp16 = True',
-        '',
-    ])
     source = source.replace(
         dynamic_profile,
         batch_only_profile,
     )
-    return modelopt_gate.sub(explicit_qdq_gate, source, count=1)
+    modelopt_gate: tuple[ast.If, ast.Assign] | None = None
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.If):
+            continue
+        for statement in node.body:
+            if not (
+                isinstance(statement, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == 'onnx_file'
+                    for target in statement.targets
+                )
+                and isinstance(statement.value, ast.Call)
+                and isinstance(statement.value.func, ast.Name)
+                and statement.value.func.id == 'modelopt_quantize_onnx'
+            ):
+                continue
+            modelopt_gate = (node, statement)
+            break
+        if modelopt_gate is not None:
+            break
+    if modelopt_gate is None:
+        raise RuntimeError('Cannot patch Ultralytics ModelOpt INT8 gate.')
+
+    gate, modelopt_call = modelopt_gate
+    lines = source.splitlines(keepends=True)
+    gate_indent = lines[gate.lineno - 1][:gate.col_offset]
+    call_indent = lines[modelopt_call.lineno - 1][:modelopt_call.col_offset]
+    call_source = ast.get_source_segment(source, modelopt_call)
+    if call_source is None:
+        raise RuntimeError('Cannot read Ultralytics ModelOpt INT8 call.')
+    call_end_line = modelopt_call.end_lineno
+    call_end_column = modelopt_call.end_col_offset
+    if call_end_line is None or call_end_column is None:
+        raise RuntimeError('Cannot locate Ultralytics ModelOpt INT8 call end.')
+    explicit_qdq_gate = '\n'.join([
+        f'{gate_indent}force_explicit_int8 = use_int8 and FORCE_EXPLICIT_INT8',
+        f'{gate_indent}if ({ast.unparse(gate.test)}) or '
+        'force_explicit_int8:',
+        f'{call_indent}{call_source}',
+        f'{call_indent}if force_explicit_int8:',
+        f'{call_indent}    use_int8 = False',
+        f'{call_indent}    use_fp16 = True',
+    ])
+    line_offsets = [0]
+    for line in lines:
+        line_offsets.append(line_offsets[-1] + len(line))
+    gate_start = line_offsets[gate.lineno - 1] + gate.col_offset
+    call_end = line_offsets[call_end_line - 1] + call_end_column
+    return source[:gate_start] + explicit_qdq_gate + source[call_end:]
 
 
 def patch_tensorrt_engine_exporter() -> None:

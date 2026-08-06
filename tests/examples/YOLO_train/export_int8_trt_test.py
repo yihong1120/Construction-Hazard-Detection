@@ -253,10 +253,11 @@ def test_patched_onnx2engine_uses_batch_only_explicit_qdq() -> None:
     assert 'use_fp16 = True' in patched
 
 
-def test_patched_onnx2engine_accepts_multiline_modelopt_gate() -> None:
-    """The exporter patch tolerates Ultralytics call formatting changes."""
+def test_patched_onnx2engine_accepts_compatible_modelopt_gate() -> None:
+    """The exporter patch tolerates ModelOpt formatting and conditions."""
     source = subject.original_onnx2engine_source
     assert source is not None
+    original_condition = '    if is_trt11 and (use_fp16 or use_int8):'
     original_call = (
         '        onnx_file = modelopt_quantize_onnx('
         'onnx_file, quantize, dataset, shape, dynamic, prefix)'
@@ -271,13 +272,20 @@ def test_patched_onnx2engine_accepts_multiline_modelopt_gate() -> None:
         '            prefix,',
         '        )',
     ])
+    assert original_condition in source
     assert original_call in source
 
-    patched = subject._patched_onnx2engine_source(
-        source.replace(original_call, multiline_call),
+    compatible_source = source.replace(
+        original_condition,
+        '    if use_fp16 or use_int8:',
+    ).replace(
+        original_call,
+        multiline_call,
     )
+    patched = subject._patched_onnx2engine_source(compatible_source)
 
     assert 'force_explicit_int8 = use_int8 and FORCE_EXPLICIT_INT8' in patched
+    assert 'if (use_fp16 or use_int8) or force_explicit_int8:' in patched
     assert multiline_call in patched
 
 
