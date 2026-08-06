@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import multiprocessing
 import os
 import signal
 from contextlib import suppress
 from multiprocessing import Process
-from multiprocessing.managers import SyncManager
 from types import FrameType
 from typing import Any
 
@@ -18,12 +16,9 @@ from asyncpg.pool import Pool  # type: ignore[import-untyped]
 from dotenv import load_dotenv
 from sqlalchemy.engine.url import make_url
 
-from src.gpu_stream_capture import GpuStreamCapture
 from src.monitor_logger import LoggerConfig
 from src.stream_processor import delete_stream_live_metadata
-from src.stream_processor import process_gpu_stream_group
 from src.stream_processor import process_single_stream
-from src.stream_processor import process_ultralytics_stream_group
 from src.stream_processor import StreamConfig
 from src.utils import Utils
 from src.yolo_worker import YOLO_WORKER_STOP_MESSAGE
@@ -58,19 +53,13 @@ class MainApp:
         self._config_reload_task: asyncio.Task[None] | None = None
         self._last_config_summary: tuple[int, int, int] | None = None
 
-        self.yolo_manager: SyncManager | None = None
         self.yolo_request_queues: list[Any] = []
         self.yolo_result_queues: dict[str, Any] = {}
         self.yolo_worker_processes: list[Process] = []
         self.yolo_worker_slots: dict[str, int] = {}
+        self.yolo_worker_camera_slots: dict[str, int] = {}
         self.yolo_worker_topology_signature: str | None = None
         self.yolo_worker_startup_lock: Any | None = None
-        self.gpu_stream_group_process: Process | None = None
-        self.gpu_stream_group_signature: str | None = None
-        self.gpu_stream_group_configs: list[StreamConfig] = []
-        self.ultralytics_stream_group_process: Process | None = None
-        self.ultralytics_stream_group_signature: str | None = None
-        self.ultralytics_stream_group_configs: list[StreamConfig] = []
 
     async def _ensure_db_pool(self) -> None:
         """
@@ -298,22 +287,6 @@ class MainApp:
                 for video_url, cfg in cfg_map.items()
                 if self._can_run_stream(cfg)
             }
-            if self._ultralytics_stream_group_enabled():
-                await self._reload_ultralytics_stream_group(
-                    configs,
-                    active_configs,
-                )
-                return
-
-            self._stop_ultralytics_stream_group()
-            if self._gpu_stream_group_enabled():
-                await self._reload_gpu_stream_group(
-                    configs,
-                    active_configs,
-                )
-                return
-
-            self._stop_gpu_stream_group()
             if active_configs:
                 worker_broker_replaced = self._ensure_yolo_worker(
                     list(active_configs.values()),
@@ -368,181 +341,6 @@ class MainApp:
                         'cfg': cfg,
                     }
             self._log_config_summary(len(configs), len(active_configs))
-
-    async def _reload_gpu_stream_group(
-        self,
-        configs: list[StreamConfig],
-        active_configs: dict[str, StreamConfig],
-    ) -> None:
-        """Run all NVDEC streams in one process with a shared YOLO cache."""
-        if self.yolo_worker_processes:
-            self._stop_yolo_worker()
-
-        for video_url, proc_info in list(self.running_processes.items()):
-            self.logger.info(
-                'Stop standalone stream %s for shared GPU batch mode',
-                video_url,
-            )
-            self.stop_process(proc_info['process'])
-            await self._delete_stream_redis_keys(proc_info['cfg'])
-        self.running_processes.clear()
-
-        group_configs = sorted(
-            active_configs.values(),
-            key=lambda cfg: cfg['video_url'],
-        )
-        signature = json.dumps(
-            group_configs,
-            sort_keys=True,
-            separators=(',', ':'),
-        )
-        process = self.gpu_stream_group_process
-        group_is_current = (
-            process is not None
-            and process.is_alive()
-            and signature == self.gpu_stream_group_signature
-        )
-        if group_is_current:
-            self._log_config_summary(
-                len(configs),
-                len(active_configs),
-                active_process_count=1,
-            )
-            return
-
-        if process is not None:
-            self.logger.info('[GPU-YOLO] restarting shared stream group')
-            self.stop_process(process)
-            for cfg in self.gpu_stream_group_configs:
-                await self._delete_stream_redis_keys(cfg)
-
-        self.gpu_stream_group_process = None
-        self.gpu_stream_group_signature = None
-        self.gpu_stream_group_configs = []
-        if group_configs:
-            group_process = Process(
-                target=process_gpu_stream_group,
-                args=(group_configs,),
-            )
-            group_process.start()
-            self.gpu_stream_group_process = group_process
-            self.gpu_stream_group_signature = signature
-            self.gpu_stream_group_configs = group_configs
-            self.logger.info(
-                '[GPU-YOLO] started one shared stream group for %s cameras',
-                len(group_configs),
-            )
-        self._log_config_summary(
-            len(configs),
-            len(active_configs),
-            active_process_count=1 if group_configs else 0,
-        )
-
-    async def _reload_ultralytics_stream_group(
-        self,
-        configs: list[StreamConfig],
-        active_configs: dict[str, StreamConfig],
-    ) -> None:
-        """Run direct Ultralytics RTSP loaders in one grouped process."""
-        if self.yolo_worker_processes:
-            self._stop_yolo_worker()
-        self._stop_gpu_stream_group()
-
-        for video_url, proc_info in list(self.running_processes.items()):
-            self.logger.info(
-                'Stop standalone stream %s for Ultralytics stream mode',
-                video_url,
-            )
-            self.stop_process(proc_info['process'])
-            await self._delete_stream_redis_keys(proc_info['cfg'])
-        self.running_processes.clear()
-
-        group_configs = sorted(
-            active_configs.values(),
-            key=lambda cfg: cfg['video_url'],
-        )
-        signature = json.dumps(
-            group_configs,
-            sort_keys=True,
-            separators=(',', ':'),
-        )
-        process = self.ultralytics_stream_group_process
-        group_is_current = (
-            process is not None
-            and process.is_alive()
-            and signature == self.ultralytics_stream_group_signature
-        )
-        if group_is_current:
-            self._log_config_summary(
-                len(configs),
-                len(active_configs),
-                active_process_count=1,
-            )
-            return
-
-        if process is not None:
-            self.logger.info('[Ultralytics-Stream] restarting stream group')
-            self.stop_process(process)
-            for cfg in self.ultralytics_stream_group_configs:
-                await self._delete_stream_redis_keys(cfg)
-
-        self.ultralytics_stream_group_process = None
-        self.ultralytics_stream_group_signature = None
-        self.ultralytics_stream_group_configs = []
-        if group_configs:
-            group_process = Process(
-                target=process_ultralytics_stream_group,
-                args=(group_configs,),
-            )
-            group_process.start()
-            self.ultralytics_stream_group_process = group_process
-            self.ultralytics_stream_group_signature = signature
-            self.ultralytics_stream_group_configs = group_configs
-            self.logger.info(
-                '[Ultralytics-Stream] started grouped direct RTSP inference '
-                'for %s cameras',
-                len(group_configs),
-            )
-        self._log_config_summary(
-            len(configs),
-            len(active_configs),
-            active_process_count=1 if group_configs else 0,
-        )
-
-    def _stop_gpu_stream_group(self) -> None:
-        """Stop the process that owns NVDEC tensors and the model cache."""
-        process = self.gpu_stream_group_process
-        self.gpu_stream_group_process = None
-        self.gpu_stream_group_signature = None
-        self.gpu_stream_group_configs = []
-        if process is not None:
-            self.stop_process(process)
-
-    def _stop_ultralytics_stream_group(self) -> None:
-        """Stop the process that owns direct Ultralytics RTSP predictors."""
-        process = self.ultralytics_stream_group_process
-        self.ultralytics_stream_group_process = None
-        self.ultralytics_stream_group_signature = None
-        self.ultralytics_stream_group_configs = []
-        if process is not None:
-            self.stop_process(process)
-
-    @staticmethod
-    def _ultralytics_stream_group_enabled() -> bool:
-        """Return whether direct Ultralytics RTSP stream mode is enabled."""
-        return os.getenv(
-            'ULTRALYTICS_STREAM_ENABLED',
-            'false',
-        ).strip().lower() in {'1', 'true', 'yes', 'on'}
-
-    @staticmethod
-    def _gpu_stream_group_enabled() -> bool:
-        """Return whether NVDEC can use the in-process CUDA batcher safely."""
-        requested = os.getenv(
-            'GPU_DECODE_ENABLED',
-            'false',
-        ).strip().lower() in {'1', 'true', 'yes', 'on'}
-        return requested and GpuStreamCapture.is_available()
 
     def _log_config_summary(
         self,
@@ -607,28 +405,18 @@ class MainApp:
         self,
         configs: list[StreamConfig] | None = None,
     ) -> bool:
-        """Maintain shared YOLO workers and report IPC broker replacement.
+        """Maintain native shared-memory YOLO workers for camera shards.
 
-        A dead worker is replaced with its existing request queue, so stream
-        processes keep their valid proxy objects. ``True`` indicates
-        that the whole broker was created or replaced and existing stream
-        processes need fresh proxies. When
-        ``YOLO_WORKER_CAMERAS_PER_ENGINE`` is positive, one worker is created
-        per same-model camera shard.
+        A dead worker is replaced with its existing queues. A topology change
+        rebuilds the queue set before restarting its associated stream clients.
         """
-        if os.getenv(
-            'YOLO_WORKER_ENABLED',
-            'true',
-        ).strip().lower() not in {'1', 'true', 'yes', 'on'}:
-            if self.yolo_worker_processes:
-                self._stop_yolo_worker()
-                return True
-            return False
         (
             worker_count,
             worker_slots,
             topology_signature,
         ) = self._yolo_worker_topology(configs)
+        if worker_count == 0:
+            return False
         devices = _csv_env('YOLO_WORKER_DEVICES', 'cuda:0')
         if self._has_yolo_worker_broker(
             worker_count,
@@ -638,12 +426,17 @@ class MainApp:
             self._restart_dead_yolo_workers(devices)
             return False
         self._stop_yolo_worker()
-        if self.yolo_manager is None:
-            self.yolo_manager = multiprocessing.Manager()
-        if topology_signature is not None:
-            self.yolo_worker_startup_lock = self.yolo_manager.Lock()
+        self._ensure_yolo_result_queues(configs)
+        self.yolo_worker_slots = worker_slots
+        self.yolo_worker_camera_slots = {
+            f"{cfg['site']}|{cfg['stream_name']}": worker_slots[
+                str(cfg['video_url'])
+            ]
+            for cfg in configs or []
+        }
+        self.yolo_worker_startup_lock = multiprocessing.Lock()
         for worker_index in range(worker_count):
-            request_queue = self.yolo_manager.Queue(
+            request_queue: Any = multiprocessing.Queue(
                 maxsize=int(os.getenv('YOLO_WORKER_QUEUE_SIZE', '64')),
             )
             self.yolo_request_queues.append(request_queue)
@@ -654,8 +447,6 @@ class MainApp:
                     devices[worker_index % len(devices)],
                 ),
             )
-        self._ensure_yolo_result_queues(configs)
-        self.yolo_worker_slots = worker_slots
         self.yolo_worker_topology_signature = topology_signature
         if topology_signature is not None:
             self.logger.info(
@@ -669,16 +460,16 @@ class MainApp:
         configs: list[StreamConfig] | None,
     ) -> tuple[int, dict[str, int], str | None]:
         """Build stable same-model camera shards for TensorRT workers."""
-        cameras_per_engine = _positive_int_env(
-            'YOLO_WORKER_CAMERAS_PER_ENGINE',
-            default=0,
+        if not configs:
+            return 0, {}, None
+        default_cameras_per_engine = max(
+            1,
+            _positive_int_env(
+                'YOLO_WORKER_CAMERAS_PER_ENGINE',
+                default=3,
+            ),
         )
-        if not configs or cameras_per_engine == 0:
-            return (
-                max(1, int(os.getenv('YOLO_WORKER_COUNT', '2'))),
-                {},
-                None,
-            )
+        cameras_per_engine_by_model = _model_camera_limits_env()
 
         grouped_configs: dict[str, list[StreamConfig]] = {}
         for cfg in configs:
@@ -688,6 +479,10 @@ class MainApp:
         signature_shards: list[dict[str, object]] = []
         worker_index = 0
         for model_key, model_configs in sorted(grouped_configs.items()):
+            cameras_per_engine = cameras_per_engine_by_model.get(
+                model_key.lower(),
+                default_cameras_per_engine,
+            )
             sorted_configs = sorted(
                 model_configs,
                 key=lambda cfg: str(cfg['video_url']),
@@ -695,19 +490,32 @@ class MainApp:
             for start in range(0, len(sorted_configs), cameras_per_engine):
                 shard = sorted_configs[start:start + cameras_per_engine]
                 source_urls = [str(cfg['video_url']) for cfg in shard]
+                camera_ids = [
+                    f"{cfg['site']}|{cfg['stream_name']}"
+                    for cfg in shard
+                ]
                 for source_url in source_urls:
                     slots[source_url] = worker_index
                 signature_shards.append(
                     {
                         'model_key': model_key,
+                        'cameras_per_engine': cameras_per_engine,
                         'sources': source_urls,
+                        'cameras': camera_ids,
                     },
                 )
                 worker_index += 1
 
         signature = json.dumps(
             {
-                'cameras_per_engine': cameras_per_engine,
+                'default_cameras_per_engine': default_cameras_per_engine,
+                'cameras_per_engine_by_model': {
+                    model_key: cameras_per_engine_by_model.get(
+                        model_key.lower(),
+                        default_cameras_per_engine,
+                    )
+                    for model_key in sorted(grouped_configs)
+                },
                 'shards': signature_shards,
             },
             sort_keys=True,
@@ -722,14 +530,13 @@ class MainApp:
     ) -> bool:
         """Return whether existing worker IPC can be reused safely."""
         return (
-            self.yolo_manager is not None
-            and len(self.yolo_request_queues) == worker_count
+            len(self.yolo_request_queues) == worker_count
             and len(self.yolo_worker_processes) == worker_count
             and self.yolo_worker_topology_signature == topology_signature
         )
 
     def _restart_dead_yolo_workers(self, devices: list[str]) -> None:
-        """Replace dead workers without replacing stream-side IPC proxies."""
+        """Replace dead workers while preserving fixed native IPC queues."""
         for worker_index, process in enumerate(self.yolo_worker_processes):
             if process.is_alive():
                 continue
@@ -757,15 +564,18 @@ class MainApp:
         request_queue: Any,
         device: str,
     ) -> Process:
-        """Start one worker against a stable request queue."""
-        if self.yolo_worker_startup_lock is None:
-            worker = YoloWorker(request_queue, device)
-        else:
-            worker = YoloWorker(
-                request_queue,
-                device,
-                startup_lock=self.yolo_worker_startup_lock,
-            )
+        """Start one worker against fixed native request/result queues."""
+        result_queues = {
+            camera_id: result_queue
+            for camera_id, result_queue in self.yolo_result_queues.items()
+            if self.yolo_worker_camera_slots.get(camera_id) == worker_index
+        }
+        worker = YoloWorker(
+            request_queue,
+            device,
+            result_queues=result_queues,
+            startup_lock=self.yolo_worker_startup_lock,
+        )
         process = Process(target=worker.run, daemon=True)
         process.start()
         self.logger.info(
@@ -826,7 +636,7 @@ class MainApp:
         """Return the worker and dedicated result queue assigned to a camera.
 
         Sharded mode pins up to the configured number of same-model cameras to
-        one engine worker. Legacy mode retains model-key assignment.
+        one engine worker.
         """
         if not self.yolo_request_queues:
             return None, None
@@ -840,22 +650,7 @@ class MainApp:
                 self.yolo_request_queues[slot_index],
                 result_queue,
             )
-        model_key = str(cfg.get('model_key', ''))
-        configured_model_keys = [
-            key.strip()
-            for key in os.getenv('DETECT_SERVER_MODEL_KEYS', '').split(',')
-            if key.strip()
-        ]
-        if model_key in configured_model_keys:
-            index = configured_model_keys.index(model_key)
-        else:
-            digest = hashlib.blake2b(
-                model_key.encode(),
-                digest_size=4,
-            ).digest()
-            index = int.from_bytes(digest, 'big')
-        index %= len(self.yolo_request_queues)
-        return self.yolo_request_queues[index], result_queue
+        return None, None
 
     def _ensure_yolo_result_queues(
         self,
@@ -872,13 +667,10 @@ class MainApp:
         cfg: StreamConfig,
     ) -> Any | None:
         """Return a stable response queue that only one camera consumes."""
-        manager = self.yolo_manager
-        if manager is None:
-            return None
         camera_key = f"{cfg['site']}|{cfg['stream_name']}"
         result_queue = self.yolo_result_queues.get(camera_key)
         if result_queue is None:
-            result_queue = manager.Queue(
+            result_queue = multiprocessing.Queue(
                 maxsize=max(
                     1,
                     int(os.getenv('YOLO_WORKER_RESULT_QUEUE_SIZE', '8')),
@@ -919,8 +711,6 @@ class MainApp:
             self.stop_process(info['process'])
         self.running_processes.clear()
 
-        self._stop_ultralytics_stream_group()
-        self._stop_gpu_stream_group()
         self._stop_yolo_worker()
         await self._cancel_config_reload_task()
 
@@ -941,10 +731,10 @@ class MainApp:
                 await pool.close()
 
     def _stop_yolo_worker(self) -> None:
-        """Stop the shared YOLO worker pool and manager."""
+        """Stop the shared YOLO worker pool and close native IPC queues."""
         for request_queue in self.yolo_request_queues:
             try:
-                request_queue.put(YOLO_WORKER_STOP_MESSAGE)
+                request_queue.put(YOLO_WORKER_STOP_MESSAGE, block=False)
             except Exception as e:
                 self.logger.error(f"Error signalling YOLO worker: {e}")
         for process in self.yolo_worker_processes:
@@ -952,13 +742,19 @@ class MainApp:
             if process.is_alive():
                 process.kill()
                 process.join()
-        if self.yolo_manager is not None:
-            self.yolo_manager.shutdown()
-            self.yolo_manager = None
+        for worker_queue in [
+            *self.yolo_request_queues,
+            *self.yolo_result_queues.values(),
+        ]:
+            with suppress(Exception):
+                worker_queue.close()
+            with suppress(Exception):
+                worker_queue.join_thread()
         self.yolo_request_queues.clear()
         self.yolo_result_queues.clear()
         self.yolo_worker_processes.clear()
         self.yolo_worker_slots.clear()
+        self.yolo_worker_camera_slots.clear()
         self.yolo_worker_topology_signature = None
         self.yolo_worker_startup_lock = None
 
@@ -1007,21 +803,7 @@ async def main() -> None:
         active_configs = [
             cfg for cfg in configs if app._can_run_stream(cfg)
         ]
-        if active_configs and app._ultralytics_stream_group_enabled():
-            app.ultralytics_stream_group_process = Process(
-                target=process_ultralytics_stream_group,
-                args=(active_configs,),
-            )
-            app.ultralytics_stream_group_process.start()
-            procs = [app.ultralytics_stream_group_process]
-        elif active_configs and app._gpu_stream_group_enabled():
-            app.gpu_stream_group_process = Process(
-                target=process_gpu_stream_group,
-                args=(active_configs,),
-            )
-            app.gpu_stream_group_process.start()
-            procs = [app.gpu_stream_group_process]
-        elif active_configs:
+        if active_configs:
             app._ensure_yolo_worker(active_configs)
             # Start a process for every enabled, non-expired config.
             procs = []
@@ -1044,8 +826,6 @@ async def main() -> None:
         except KeyboardInterrupt:
             print('\n[INFO] KeyboardInterrupt, shutting down...')
         finally:
-            app._stop_ultralytics_stream_group()
-            app._stop_gpu_stream_group()
             for p in procs:
                 if p.is_alive():
                     p.terminate()
@@ -1077,6 +857,28 @@ def _positive_int_env(name: str, default: int = 0) -> int:
         return max(0, int(os.getenv(name, str(default))))
     except ValueError:
         return default
+
+
+def _model_camera_limits_env() -> dict[str, int]:
+    """Read positive per-model camera limits from a comma-separated setting.
+
+    The value format is ``model_key=camera_count``. Invalid entries are
+    ignored so a typo falls back to ``YOLO_WORKER_CAMERAS_PER_ENGINE``.
+    """
+    limits: dict[str, int] = {}
+    raw_value = os.getenv('YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL', '')
+    for entry in raw_value.split(','):
+        model_key, separator, raw_limit = entry.partition('=')
+        if not separator:
+            continue
+        normalized_model_key = model_key.strip().lower()
+        try:
+            camera_limit = int(raw_limit.strip())
+        except ValueError:
+            continue
+        if normalized_model_key and camera_limit > 0:
+            limits[normalized_model_key] = camera_limit
+    return limits
 
 
 def _handle_sigterm(_signum: int, _frame: FrameType | None) -> None:

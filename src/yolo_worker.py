@@ -7,6 +7,7 @@ import queue
 import time
 import uuid
 from collections.abc import Iterable
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing import shared_memory
@@ -90,7 +91,6 @@ class WorkerRequestPayload(TypedDict):
     slot: int
     shape: tuple[int, ...]
     dtype: str
-    result_queue: WorkerResultSender
 
 
 class WorkerResult(TypedDict, total=False):
@@ -213,7 +213,6 @@ class _WorkerRequest:
     shm_name: str
     shape: tuple[int, ...]
     dtype: str
-    result_queue: WorkerResultSender
     slot: int = 0
 
     @classmethod
@@ -238,7 +237,6 @@ class _WorkerRequest:
             slot=int(request.get('slot', 0)),
             shape=tuple(int(v) for v in request['shape']),
             dtype=str(request['dtype']),
-            result_queue=cast(WorkerResultSender, request['result_queue']),
         )
 
 
@@ -331,7 +329,7 @@ class YoloWorkerClient:
 
     A fixed, per-camera shared-memory ring avoids allocating one POSIX segment
     per frame. Requests contain only a ring slot descriptor; results return on
-    a camera-specific queue so no stream needs to poll a shared manager dict.
+    a camera-specific queue so no stream needs to poll a shared response queue.
     """
 
     def __init__(
@@ -402,7 +400,6 @@ class YoloWorkerClient:
             'slot': slot,
             'shape': contiguous.shape,
             'dtype': str(contiguous.dtype),
-            'result_queue': cast(WorkerResultSender, self.result_queue),
         }
         request_submitted = False
         request_timed_out = False
@@ -562,6 +559,7 @@ class YoloWorker:
         self,
         request_queue: WorkerQueue | None,
         device: str | None = None,
+        result_queues: Mapping[str, WorkerResultSender] | None = None,
         startup_lock: Any | None = None,
     ) -> None:
         """Initialise the worker.
@@ -569,6 +567,7 @@ class YoloWorker:
         Args:
             request_queue: Queue from which request metadata is consumed.
             device: CUDA/CPU device string. Defaults to environment settings.
+            result_queues: Fixed per-camera queues created before worker start.
             startup_lock: Cross-process lock used to serialize an engine's
                 first TensorRT inference.
         """
@@ -578,6 +577,7 @@ class YoloWorker:
             if isinstance(device, str)
             else os.getenv('YOLO_WORKER_DEVICE') or 'cuda:0'
         )
+        self.result_queues = dict(result_queues or {})
         self.startup_lock = startup_lock
         self.logger = logging.getLogger(__name__)
         self.model_cache: dict[str, YoloModelLike] = {}
@@ -886,8 +886,15 @@ class YoloWorker:
         result: WorkerResult,
     ) -> None:
         """Return one result without an abandoned camera blocking IO."""
+        result_queue = self.result_queues.get(request.camera_id)
+        if result_queue is None:
+            self.logger.warning(
+                '[YOLO-Worker] missing result queue for %s',
+                request.camera_id,
+            )
+            return
         try:
-            request.result_queue.put(result, block=False)
+            result_queue.put(result, block=False)
         except queue.Full:
             self.logger.warning(
                 '[YOLO-Worker] result queue full for %s; '

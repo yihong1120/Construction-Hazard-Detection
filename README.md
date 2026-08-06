@@ -184,9 +184,9 @@ FCM_API_URL='http://127.0.0.1:8003'
 VIOLATION_RECORD_API_URL='http://127.0.0.1:8002'
 STREAMING_API_URL='http://127.0.0.1:8800'
 
-YOLO_WORKER_ENABLED=true
-# Used only when YOLO_WORKER_CAMERAS_PER_ENGINE=0.
-YOLO_WORKER_COUNT=2
+YOLO_WORKER_CAMERAS_PER_ENGINE=3
+# Override capacity by model size; unlisted model keys use the default above.
+YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL=yolo26n=8,yolo26s=6,yolo26m=4,yolo26l=2,yolo26x=1
 YOLO_WORKER_DEVICES=cuda:0,cuda:0
 YOLO_WORKER_QUEUE_SIZE=64
 YOLO_WORKER_RESULT_QUEUE_SIZE=8
@@ -200,21 +200,6 @@ YOLO_WORKER_PRECISION=f16
 # Each camera keeps a bounded shared-memory frame ring and receives results on
 # its own queue. For Docker, set YOLO_WORKER_SHM_SIZE high enough for
 # camera_count * YOLO_WORKER_RING_SLOTS * maximum_frame_bytes.
-
-# Staged GPU decode rollout. This bypasses OpenCV CPU decoding and groups
-# NVDEC CUDA tensors by model key for shared batched YOLO inference. Every
-# source is copied through a local MediaMTX TCP relay without re-encoding
-# before TorchCodec reads it with NVDEC.
-# Start disabled, then enable after confirming VRAM capacity for all cameras.
-GPU_DECODE_ENABLED=false
-GPU_DECODE_DEVICE=cuda:0
-GPU_DECODE_BATCH_SIZE=8
-GPU_DECODE_BATCH_WAIT_MS=10
-GPU_DECODE_QUEUE_SIZE=64
-GPU_DECODE_STREAM_RETRY_SECONDS=5
-GPU_DECODE_RELAY_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
-GPU_DECODE_RELAY_TIMEOUT_US=5000000
-GPU_DECODE_RELAY_STARTUP_SECONDS=1
 
 MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
 MEDIA_PUBLIC_HLS_BASE_URL='/hazard/media'

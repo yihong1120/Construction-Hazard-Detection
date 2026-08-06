@@ -220,7 +220,6 @@ def _request(
     request_id: str,
     camera_id: str,
     model_key: str,
-    result_queue: yolo_worker.WorkerResultSender | None = None,
 ) -> yolo_worker._WorkerRequest:
     """Support _request."""
     return yolo_worker._WorkerRequest(
@@ -230,20 +229,22 @@ def _request(
         shm_name='frame-shm',
         shape=(2, 2, 3),
         dtype='uint8',
-        result_queue=result_queue or _ResultQueue(),
     )
 
 
 def test_store_latest_request_replaces_same_camera() -> None:
     """Only the newest request for a camera remains pending."""
     result_queue = _ResultQueue()
-    worker = yolo_worker.YoloWorker(None)
+    worker = yolo_worker.YoloWorker(
+        None,
+        result_queues={'site|cam1': result_queue},
+    )
 
     worker.store_latest_request(
-        _request('old', 'site|cam1', 'yolo26n', result_queue),
+        _request('old', 'site|cam1', 'yolo26n'),
     )
     worker.store_latest_request(
-        _request('new', 'site|cam1', 'yolo26n', result_queue),
+        _request('new', 'site|cam1', 'yolo26n'),
     )
 
     assert worker.pending['site|cam1'].id == 'new'
@@ -409,7 +410,6 @@ def test_worker_run_handles_one_batch(monkeypatch: Any) -> None:
         'slot': 0,
         'shape': (2, 2, 3),
         'dtype': 'uint8',
-        'result_queue': _ResultQueue(),
     }
     handled: list[list[str]] = []
     worker = yolo_worker.YoloWorker(_RunQueue(message))
@@ -451,7 +451,6 @@ def test_drain_queue_stores_requests_until_empty() -> None:
         'slot': 0,
         'shape': (2, 2, 3),
         'dtype': 'uint8',
-        'result_queue': _ResultQueue(),
     }
     request_queue = _DrainQueue([request])
     worker = yolo_worker.YoloWorker(request_queue)
@@ -480,7 +479,6 @@ def test_submit_request_raises_when_queue_full() -> None:
                 'slot': 0,
                 'shape': (2, 2, 3),
                 'dtype': 'uint8',
-                'result_queue': _ResultQueue(),
             }),
         )
 
@@ -571,9 +569,12 @@ def test_handle_batch_returns_when_no_valid_requests(monkeypatch: Any) -> None:
 
 def test_handle_batch_records_model_error(monkeypatch: Any) -> None:
     """Exercise this test."""
-    worker = yolo_worker.YoloWorker(None)
     result_queue = _ResultQueue()
-    request = _request('1', 'cam1', 'yolo26n', result_queue)
+    worker = yolo_worker.YoloWorker(
+        None,
+        result_queues={'cam1': result_queue},
+    )
+    request = _request('1', 'cam1', 'yolo26n')
     monkeypatch.setattr(
         worker,
         '_read_batch_frames',
@@ -594,9 +595,12 @@ def test_handle_batch_records_model_error(monkeypatch: Any) -> None:
 
 def test_handle_batch_converts_yolo_box_data(monkeypatch: Any) -> None:
     """Exercise this test."""
-    worker = yolo_worker.YoloWorker(None)
     result_queue = _ResultQueue()
-    request = _request('1', 'cam1', 'yolo26n', result_queue)
+    worker = yolo_worker.YoloWorker(
+        None,
+        result_queues={'cam1': result_queue},
+    )
+    request = _request('1', 'cam1', 'yolo26n')
     frame = np.zeros((2, 2, 3), dtype=np.uint8)
     data = np.array([[1, 2, 3, 4, 99, 0.8, 5]], dtype=float)
     model = _Model(data)
@@ -620,10 +624,13 @@ def test_handle_batch_converts_yolo_box_data(monkeypatch: Any) -> None:
 def test_handle_batch_returns_result_through_camera_queue(
     monkeypatch: Any,
 ) -> None:
-    """The worker sends a completed inference to the request's own queue."""
+    """The worker sends a completed inference to the camera's fixed queue."""
     result_queue = _ResultQueue()
-    worker = yolo_worker.YoloWorker(None)
-    request = _request('1', 'cam1', 'yolo26n', result_queue)
+    worker = yolo_worker.YoloWorker(
+        None,
+        result_queues={'cam1': result_queue},
+    )
+    request = _request('1', 'cam1', 'yolo26n')
     model = _Model(np.empty((0, 6), dtype=float))
     monkeypatch.setattr(
         worker,
@@ -671,9 +678,12 @@ def test_read_batch_frames_records_missing_shared_memory(
     monkeypatch: Any,
 ) -> None:
     """Exercise this test."""
-    worker = yolo_worker.YoloWorker(None)
     result_queue = _ResultQueue()
-    request = _request('1', 'cam1', 'yolo26n', result_queue)
+    worker = yolo_worker.YoloWorker(
+        None,
+        result_queues={'cam1': result_queue},
+    )
+    request = _request('1', 'cam1', 'yolo26n')
     monkeypatch.setattr(
         worker,
         '_read_frame',
@@ -691,9 +701,12 @@ def test_read_batch_frames_records_missing_shared_memory(
 
 def test_read_batch_frames_records_read_error(monkeypatch: Any) -> None:
     """Exercise this test."""
-    worker = yolo_worker.YoloWorker(None)
     result_queue = _ResultQueue()
-    request = _request('1', 'cam1', 'yolo26n', result_queue)
+    worker = yolo_worker.YoloWorker(
+        None,
+        result_queues={'cam1': result_queue},
+    )
+    request = _request('1', 'cam1', 'yolo26n')
     monkeypatch.setattr(
         worker,
         '_read_frame',
@@ -743,7 +756,6 @@ def test_read_frame_maps_shared_memory() -> None:
             shm_name=shm.name,
             shape=frame.shape,
             dtype=str(frame.dtype),
-            result_queue=_ResultQueue(),
         )
 
         mapped = yolo_worker.YoloWorker._read_frame(request)

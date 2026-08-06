@@ -1,49 +1,11 @@
 from __future__ import annotations
 
-import argparse
-import asyncio
-import logging
-import os
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
-import cv2
 import numpy as np
-import torch
-from dotenv import load_dotenv
 
-from src.gpu_stream_capture import GpuFrame
-from src.ultralytics_args import parse_quantize_value
-from src.ultralytics_args import precision_kwargs
 from src.yolo_worker import YoloWorkerClient
-
-# Load environment variables for configuration
-load_dotenv()
-
-YOLO: Any = None
-
-
-class _LazyAutoDetectionModel:
-    """Import SAHI's model factory only when sliced prediction is used."""
-
-    @staticmethod
-    def from_pretrained(*args: Any, **kwargs: Any) -> Any:
-        """Load SAHI's detection model factory on first use."""
-        from sahi import (
-            AutoDetectionModel as _AutoDetectionModel,
-        )
-
-        return _AutoDetectionModel.from_pretrained(*args, **kwargs)
-
-
-def get_sliced_prediction(*args: Any, **kwargs: Any) -> Any:
-    """Run SAHI sliced prediction, importing SAHI lazily."""
-    from sahi.predict import (
-        get_sliced_prediction as _prediction,
-    )
-
-    return _prediction(*args, **kwargs)
 
 
 def linear_sum_assignment(*args: Any, **kwargs: Any) -> Any:
@@ -55,45 +17,24 @@ def linear_sum_assignment(*args: Any, **kwargs: Any) -> Any:
     return _assignment(*args, **kwargs)
 
 
-AutoDetectionModel: Any = _LazyAutoDetectionModel
-
-
-def _yolo_class() -> Any:
-    """Return the Ultralytics YOLO class, importing it only when needed."""
-    global YOLO
-    if YOLO is None:
-        from ultralytics import YOLO as _YOLO
-
-        YOLO = _YOLO
-    return YOLO
-
-
-def _sahi_detection_model() -> Any:
-    """Return the SAHI detection model class, importing it lazily."""
-    return AutoDetectionModel
-
-
-def _sahi_sliced_prediction() -> Any:
-    """Return SAHI sliced prediction function, importing it lazily."""
-    return get_sliced_prediction
-
-
 def _linear_sum_assignment() -> Any:
     """Return SciPy's Hungarian assignment function, importing it lazily."""
     return linear_sum_assignment
 
 
 class YoloDetector:
-    """
-    A class to perform live stream detection and tracking
-    using YOLO with SAHI.
+    """Submit production frames to a shared worker and track its results.
+
+    Passing `detect_with_server=False` remains a compatibility bridge for
+    external callers. It lazily delegates to `LocalYoloDetector`, keeping
+    Ultralytics and SAHI out of the production stream process.
     """
 
     def __init__(
         self,
         model_key: str = 'yolo26n',
         output_folder: str | None = None,
-        detect_with_server: bool = False,
+        detect_with_server: bool = True,
         use_ultralytics: bool = True,
         movement_thr: float = 40.0,
         fps: int = 1,
@@ -102,237 +43,57 @@ class YoloDetector:
         remote_cost_threshold: float = 0.7,
         worker_client: YoloWorkerClient | Any | None = None,
     ) -> None:
-        """Initialise the YoloDetector with specified configuration.
-
-        Args:
-            model_key: YOLO model identifier.
-            output_folder: Optional directory for saving outputs.
-            detect_with_server: Use shared worker inference if True.
-            use_ultralytics: Use Ultralytics engine (else SAHI slicing).
-            movement_thr: Pixel movement threshold (centroid distance).
-            fps: Target FPS (reserved for future time-based logic).
-            max_id_keep: Frames to retain inactive track IDs.
-            remote_tracker: 'centroid' or 'hungarian' for remote tracking.
-            remote_cost_threshold: Cost cutoff (0-1) for Hungarian match.
-            worker_client: Shared YOLO worker client for in-process IPC.
-        """
+        """Initialise shared-worker inference and per-camera tracking state."""
         self.model_key = model_key
         self.output_folder = output_folder
         self.detect_with_server = detect_with_server
         self.worker_client = worker_client
-        self.use_ultralytics = use_ultralytics
-        self.local_device = os.getenv('DETECT_LOCAL_DEVICE', 'cuda:0')
-        self.local_imgsz = int(os.getenv('DETECT_LOCAL_IMGSZ', '640'))
-        self.local_half = os.getenv(
-            'DETECT_LOCAL_HALF',
-            'true',
-        ).strip().lower() in {'1', 'true', 'yes', 'on'}
-        self.local_quantize = parse_quantize_value(
-            os.getenv('DETECT_LOCAL_QUANTIZE'),
-        )
-
-        # Models (local inference path)
-        if not detect_with_server:
-            # Uncomment for local inference using .engine files
-            # (quantised from .pt)
-            # if self.use_ultralytics:
-            #     self.ultralytics_model = YOLO(
-            #         f"models/int8_engine/best_{self.model_key}.engine",
-            #     )
-
-            if self.use_ultralytics:
-                self.ultralytics_model = _yolo_class()(
-                    f"models/pt/best_{self.model_key}.pt",
-                )
-            else:
-                self.model = _sahi_detection_model().from_pretrained(
-                    'yolo26',
-                    model_path=str(
-                        Path('models/pt') /
-                        f"best_{self.model_key}.pt",
-                    ),
-                    device='cuda:0',
-                )
-
-        self._logger = logging.getLogger(__name__)
-
-        # Tracking state stores
-        self.remote_tracks: dict[int, dict] = {}
-        self.next_remote_id = 0
-        self.prev_centers: dict[int, tuple[float, float]] = {}
-        self.prev_centers_last_seen: dict[int, int] = {}
         self.movement_thr = movement_thr
         self.movement_thr_sq = movement_thr * movement_thr
         self.frame_count = 0
         self.max_id_keep = max_id_keep
-
-        # Remote tracking configuration
         self.remote_tracker = remote_tracker
         self.remote_cost_threshold = remote_cost_threshold
+        self.remote_tracks: dict[int, dict] = {}
+        self.next_remote_id = 0
+        self._local_detector: Any | None = None
+
+        if not detect_with_server:
+            from src.local_yolo_detector import LocalYoloDetector
+
+            self._local_detector = LocalYoloDetector(
+                model_key=model_key,
+                output_folder=output_folder,
+                use_ultralytics=use_ultralytics,
+                movement_thr=movement_thr,
+                fps=fps,
+                max_id_keep=max_id_keep,
+            )
 
     async def _detect_local(self, frame: np.ndarray) -> list[list[float]]:
-        """Perform object detection using local YOLO models.
-
-        This method runs inference locally using either Ultralytics YOLO or
-        SAHI AutoDetectionModel, depending on the configuration.
-
-        Args:
-            frame: Input image frame as numpy array for detection.
-
-        Returns:
-            List of detection results, where each detection is represented as
-            [x1, y1, x2, y2, confidence, class_id].
-        """
-        if self.use_ultralytics:
-            # Use Ultralytics YOLO for direct inference
-            result = self.ultralytics_model(frame)
-            boxes = result[0].boxes
-            return [
-                [
-                    *map(float, boxes.xyxy[i].tolist()),
-                    float(boxes.conf[i].item()),
-                    int(boxes.cls[i].item()),
-                ]
-                for i in range(len(boxes))
-            ]
-        else:
-            # Use SAHI for sliced inference on large images
-            sahi_result: Any = _sahi_sliced_prediction()(
-                frame, self.model,
-                slice_height=376, slice_width=376,
-                overlap_height_ratio=0.3, overlap_width_ratio=0.3,
+        """Delegate legacy local calls to the optional local detector."""
+        if self._local_detector is None:
+            raise RuntimeError(
+                'Local inference is not enabled. '
+                'Use LocalYoloDetector instead.',
             )
-            return [
-                [
-                    *map(int, obj.bbox.to_voc_bbox()),
-                    float(obj.score.value),
-                    int(obj.category.id),
-                ]
-                for obj in sahi_result.object_prediction_list
-            ]
+        return await self._local_detector._detect_local(frame)
 
     async def generate_detections(
         self,
-        frame: np.ndarray | GpuFrame,
+        frame: np.ndarray,
     ) -> tuple[list[list[float]], list[list[float]]]:
-        """Generate object detections with tracking information.
+        """Generate detections through the shared worker and track them."""
+        if self._local_detector is not None:
+            return await self._local_detector.generate_detections(frame)
 
-        This is the main detection method that coordinates between local and
-        remote inference, applies object tracking, and manages frame counting.
-
-        Args:
-            frame: BGR NumPy frame or RGB CUDA frame for detection.
-
-        Returns:
-            Tuple containing:
-                - List of raw detection results
-                  [x1, y1, x2, y2, confidence, class_id]
-                - List of tracked detection results
-                  [x1, y1, x2, y2, confidence, class_id, track_id, is_moving]
-        """
         self.frame_count += 1
-        if self.detect_with_server:
-            datas = await self._detect_remote(frame)
-            tracked = self._track_remote(datas)
-        else:
-            model_frame: np.ndarray | torch.Tensor = frame
-            letterbox = None
-            if isinstance(frame, GpuFrame):
-                model_frame, letterbox = frame.prepare_for_yolo(
-                    self.local_imgsz,
-                    self.local_half,
-                )
-            # Batch process detection results to improve efficiency
-            try:
-                results = self.ultralytics_model.track(
-                    model_frame,
-                    persist=True,
-                    verbose=False,
-                    device=self.local_device,
-                    imgsz=self.local_imgsz,
-                    **precision_kwargs(
-                        self.local_half,
-                        self.local_quantize,
-                    ),
-                )
-            except Exception as exc:
-                if not self._is_cuda_oom(exc):
-                    raise
-                self._logger.error(
-                    'Local YOLO CUDA out of memory for model %s. %s',
-                    self.model_key,
-                    'Returning empty detections.',
-                )
-                self._release_local_model()
-                self._cleanup_prev_centers()
-                return [], []
-            boxes = results[0].boxes
-
-            if boxes is None or len(boxes) == 0:
-                self._cleanup_prev_centers()
-                return [], []
-
-            # Ultralytics exposes the packed accelerator tensor as ``data``.
-            # Keep the field fallback for lightweight models and test doubles.
-            box_data = getattr(boxes, 'data', None)
-            if isinstance(box_data, (np.ndarray, torch.Tensor)):
-                if hasattr(box_data, 'cpu'):
-                    box_data = box_data.cpu()
-                box_rows = box_data.tolist()
-            else:
-                xyxy_rows = boxes.xyxy.tolist()
-                confidences = boxes.conf.tolist()
-                class_ids = boxes.cls.tolist()
-                track_ids = (
-                    None if boxes.id is None else boxes.id.tolist()
-                )
-                box_rows = [
-                    [
-                        *coordinates,
-                        *([] if track_ids is None else [track_ids[index]]),
-                        confidences[index],
-                        class_ids[index],
-                    ]
-                    for index, coordinates in enumerate(xyxy_rows)
-                ]
-            if letterbox is not None:
-                box_rows = letterbox.restore_rows(box_rows)
-
-            datas = []
-            tracked = []
-
-            for row in box_rows:
-                xyxy = row[:4]
-                conf = float(row[-2])
-                cls = int(row[-1])
-                tid = int(row[-3]) if len(row) == 7 else -1
-
-                # Calculate centre point and movement status
-                cx, cy = (xyxy[0] + xyxy[2]) * 0.5, (xyxy[1] + xyxy[3]) * 0.5
-                is_moving = 0
-
-                if tid != -1:
-                    prev_c = self.prev_centers.get(tid)
-                    if prev_c:
-                        # Use pre-computed square distance comparison
-                        distance_sq = (
-                            (cx - prev_c[0]) ** 2 + (cy - prev_c[1]) ** 2
-                        )
-                        is_moving = (
-                            1 if distance_sq > self.movement_thr_sq else 0
-                        )
-
-                    self.prev_centers[tid] = (cx, cy)
-                    self.prev_centers_last_seen[tid] = self.frame_count
-
-                datas.append(xyxy + [conf, cls])
-                tracked.append(xyxy + [conf, cls, tid, is_moving])
-            self._cleanup_prev_centers()
-        return datas, tracked
+        detections = await self._detect_remote(frame)
+        return detections, self._track_remote(detections)
 
     async def _detect_remote(
         self,
-        frame: np.ndarray | GpuFrame,
+        frame: np.ndarray,
     ) -> list[list[float]]:
         """Detect with the shared worker process."""
         if self.worker_client is None:
@@ -351,43 +112,6 @@ class YoloDetector:
         """Attach this detector's persistent remote track IDs to detections."""
         self.frame_count += 1
         return self._track_remote(detections)
-
-    @staticmethod
-    def _is_cuda_oom(exc: Exception) -> bool:
-        """Return True when an exception represents CUDA memory exhaustion."""
-        message = str(exc).lower()
-        return (
-            'out of memory' in message
-            and ('cuda' in message or 'accelerator' in message)
-        )
-
-    def _release_local_model(self) -> None:
-        """Release local YOLO resources after a CUDA OOM."""
-        if hasattr(self, 'ultralytics_model'):
-            del self.ultralytics_model
-        if hasattr(self, 'model'):
-            del self.model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-
-    def _cleanup_prev_centers(self) -> None:
-        """Clean up tracking data for inactive object IDs.
-
-        This method removes tracking information for objects that haven't been
-        seen for more than max_id_keep frames to prevent memory leaks and
-        maintain tracking performance.
-        """
-        # Clean up IDs that haven't appeared for more than max_id_keep frames
-        if self.frame_count % 10 == 0:
-            current_frame = self.frame_count
-            expired_ids = [
-                tid for tid, last_seen in self.prev_centers_last_seen.items()
-                if current_frame - last_seen > self.max_id_keep
-            ]
-            for tid in expired_ids:
-                self.prev_centers.pop(tid, None)
-                self.prev_centers_last_seen.pop(tid, None)
 
     def _track_remote(self, dets: list[list[float]]) -> list[list[float]]:
         """Dispatch to the configured remote tracker implementation."""
@@ -868,49 +592,11 @@ class YoloDetector:
         for tid in stale:
             self.remote_tracks.pop(tid, None)
 
-    async def run_detection(self, stream_url: str) -> None:
-        """Run continuous object detection on a video stream.
-
-        This method opens a video stream, performs real-time object detection
-        with tracking, and displays the results in a window. The detection
-        loop continues until the user presses 'q' to quit.
-
-        Args:
-            stream_url: URL or path to the video stream source.
-
-        Raises:
-            ValueError: If the stream cannot be opened.
-        """
-        cap = cv2.VideoCapture(stream_url)
-        if not cap.isOpened():
-            raise ValueError('Failed to open stream.')
-        try:
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    await asyncio.sleep(1)
-                    continue
-                datas, tracked = await self.generate_detections(frame)
-                disp = frame.copy()  # Use copy of original frame for display
-                for d in tracked:
-                    x1, y1, x2, y2, _, _, tid, mov = d
-                    cv2.rectangle(
-                        disp, (int(x1), int(y1)),
-                        (int(x2), int(y2)), (0, 255, 0), 2,
-                    )
-                    cv2.putText(
-                        disp, f"ID{tid} M{mov}", (int(x1), int(y1)-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1,
-                    )
-                cv2.imshow('Stream', disp)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-        finally:
-            cap.release()
-            cv2.destroyAllWindows()
-
     async def close(self) -> None:
-        """Release stream-side worker resources when they support cleanup."""
+        """Release the active worker or compatibility local detector."""
+        if self._local_detector is not None:
+            await self._local_detector.close()
+            return
         close = getattr(self.worker_client, 'close', None)
         if close is not None:
             await close()
@@ -1069,36 +755,13 @@ class YoloDetector:
 
 
 async def main() -> None:
-    """Main execution block for command-line interface.
+    """Run the optional local preview CLI for backward-compatible commands."""
+    from src.local_yolo_detector import main as local_main
 
-    Args:
-        None
-    """
-    parser = argparse.ArgumentParser(
-        description='Live stream detection with local YOLO inference',
-    )
-    parser.add_argument(
-        '--url', type=str, required=True,
-        help='Stream URL or video file path',
-    )
-    parser.add_argument(
-        '--model_key', type=str,
-        default='yolo26n', help='YOLO model identifier key',
-    )
-    parser.add_argument(
-        '--use_ultralytics', action='store_true',
-        help='Use Ultralytics YOLO for local inference',
-    )
-    args = parser.parse_args()
+    await local_main()
 
-    # Create detector instance with parsed arguments
-    detector = YoloDetector(
-        model_key=args.model_key,
-        use_ultralytics=args.use_ultralytics,
-    )
-
-    # Run detection loop
-    await detector.run_detection(args.url)
 
 if __name__ == '__main__':
+    import asyncio
+
     asyncio.run(main())

@@ -8,7 +8,7 @@ asyncpg==0.31.0
 ckip_transformers==0.3.4
 cloudinary==1.44.1
 codecov==2.1.13
-cryptography==48.0.1
+cryptography==50.0.0
 fastapi==0.139.2
 filelock==3.20.3
 firebase_admin==7.4.0
@@ -65,7 +65,6 @@ structlog==25.5.0
 tenacity==9.1.4
 tensorrt==11.1.0.106
 torch==2.13.0
-torchcodec==0.15.0
 torchvision==0.28.0
 tornado==6.5.7
 transformers==5.5.0

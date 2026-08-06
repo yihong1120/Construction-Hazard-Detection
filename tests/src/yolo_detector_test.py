@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import os
 import unittest
-from typing import Any
 from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
 from unittest.mock import patch
 
-import cv2
 import numpy as np
 
 from src.yolo_detector import YoloDetector
@@ -16,9 +12,7 @@ from src.yolo_detector import YoloDetector
 class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
     """Async test suite for YoloDetector.
 
-    Tests the complete detection pipeline including cloud/local detection,
-    tracking algorithms, error handling, and frame processing. Uses mock
-    objects to isolate behaviour from external dependencies.
+    Tests shared-worker detection, tracking algorithms, and label filtering.
     """
 
     # Test instance attributes
@@ -30,150 +24,37 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         """Set up test environment and detector instances before each test."""
-        # Mock environment variables for authentication
-        patcher_env = patch.dict(
-            os.environ, {
-                'API_USERNAME': 'test_user',
-                'API_PASSWORD': 'test_pass',
-            },
-        )
-        patcher_env.start()
-        self.addCleanup(patcher_env.stop)
-
-        patcher_yolo = patch(
-            'src.yolo_detector.YOLO',
-            return_value=MagicMock(),
-        )
-        patcher_yolo.start()
-        self.addCleanup(patcher_yolo.stop)
-
-        # Test configuration
         self.model_key: str = 'yolo11n'
         self.output_folder: str = 'test_output'
-        self.detect_with_server: bool = False
-
-        # Create local detection detector instance
-        self.detector: YoloDetector = YoloDetector(
-            model_key=self.model_key,
-            output_folder=self.output_folder,
-            detect_with_server=self.detect_with_server,
-        )
-        # Create server-mode detector for worker-related tests
         self.detector_server: YoloDetector = YoloDetector(
-            detect_with_server=True,
             model_key='yolo11n',
         )
+        self.detector = self.detector_server
 
     def test_initialisation(self) -> None:
         """Test basic detector initialisation with default parameters."""
         detector = YoloDetector(
             model_key=self.model_key,
             output_folder=self.output_folder,
-            detect_with_server=self.detect_with_server,
         )
         # Verify all configuration is set correctly
         self.assertEqual(detector.model_key, self.model_key)
         self.assertEqual(detector.output_folder, self.output_folder)
-        self.assertEqual(detector.detect_with_server, self.detect_with_server)
-
-    @patch('src.yolo_detector.get_sliced_prediction')
-    @patch('src.yolo_detector.AutoDetectionModel.from_pretrained')
-    async def test_detect_local_with_predictions(
-        self, mock_from_pretrained: Any, mock_get_sliced_prediction: Any,
-    ) -> None:
-        """Exercise this test."""
-        mock_model = MagicMock()
-        mock_from_pretrained.return_value = mock_model
-
-        mock_result = MagicMock()
-        mock_result.object_prediction_list = [
-            MagicMock(
-                category=MagicMock(id=0),
-                bbox=MagicMock(to_voc_bbox=lambda: [10.5, 20.3, 50.8, 60.1]),
-                score=MagicMock(value=0.85),
-            ),
-            MagicMock(
-                category=MagicMock(id=1),
-                bbox=MagicMock(to_voc_bbox=lambda: [30, 40, 70, 80]),
-                score=MagicMock(value=0.9),
-            ),
-        ]
-        mock_get_sliced_prediction.return_value = mock_result
-
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        # Create a detector that uses SAHI instead of ultralytics
-        detector = YoloDetector(
-            model_key=self.model_key,
-            output_folder=self.output_folder,
-            detect_with_server=self.detect_with_server,
-            use_ultralytics=False,  # Use SAHI
-        )
-        datas: list[list[float]] = await detector._detect_local(frame)
-        self.assertEqual(len(datas), 2)
-        self.assertEqual(datas[0], [10, 20, 50, 60, 0.85, 0])
-        self.assertEqual(datas[1], [30, 40, 70, 80, 0.9, 1])
-        mock_get_sliced_prediction.assert_called_once_with(
-            frame, mock_model, slice_height=376, slice_width=376,
-            overlap_height_ratio=0.3, overlap_width_ratio=0.3,
-        )
+        self.assertTrue(detector.detect_with_server)
 
     async def test_generate_detections(self) -> None:
-        """Test detection generation for both local and server modes."""
+        """Shared-worker results receive a persistent remote track ID."""
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        mat_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-        # Test local detection mode (uses ultralytics directly)
-        self.detector.detect_with_server = False
-        # Mock the ultralytics model.track() method
-        mock_results = MagicMock()
-        mock_boxes = MagicMock()
-        mock_results.boxes = mock_boxes
-
-        # Mock boxes to have length 1
-        mock_boxes.__len__ = MagicMock(return_value=1)
-        mock_boxes.xyxy = MagicMock()
-        mock_boxes.conf = MagicMock()
-        mock_boxes.cls = MagicMock()
-        mock_boxes.id = None
-
-        # Mock tensor-like objects with tolist() method
-        mock_boxes.xyxy.tolist.return_value = [[10, 10, 50, 50]]
-        mock_boxes.conf.tolist.return_value = [0.9]
-        mock_boxes.cls.tolist.return_value = [0]
-
-        with patch.object(
-            self.detector.ultralytics_model,
-            'track',
-            return_value=[mock_results],
-        ) as mock_track:
-            with patch(
-                'src.yolo_detector.precision_kwargs',
-                return_value={'quantize': 8},
-            ):
-                datas, tracked = await self.detector.generate_detections(
-                    mat_frame,
-                )
-            self.assertEqual(len(datas), 1)
-            self.assertEqual(datas[0][5], 0)  # class_id
-            self.assertEqual(len(tracked), 1)
-            # track_id when no ID provided
-            self.assertEqual(tracked[0][6], -1)
-            self.assertEqual(mock_track.call_args.kwargs['quantize'], 8)
-
-        # Test server detection mode
-        self.detector.detect_with_server = True
         worker_client = AsyncMock()
-        worker_client.detect = AsyncMock(
-            return_value=[[20, 20, 60, 60, 0.8, 1]],
-        )
+        worker_client.detect.return_value = [[20, 20, 60, 60, 0.8, 1]]
         self.detector.worker_client = worker_client
-        datas, tracked = await self.detector.generate_detections(
-            mat_frame,
-        )
-        self.assertEqual(len(datas), 1)
-        self.assertEqual(datas[0][5], 1)  # class_id
+
+        detections, tracked = await self.detector.generate_detections(frame)
+
+        self.assertEqual(detections, [[20, 20, 60, 60, 0.8, 1]])
+        self.assertEqual(tracked[0][6:], [0, 0])
         worker_client.detect.assert_awaited_once_with(
-            mat_frame,
+            frame,
             model_key=self.detector.model_key,
         )
 
@@ -190,103 +71,25 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
                 np.zeros((32, 32, 3), dtype=np.uint8),
             )
 
-    @patch('src.yolo_detector.cv2.VideoCapture')
-    async def test_run_detection_stream_not_opened(
-        self, mock_vcap: Any,
-    ) -> None:
-        """Exercise this test."""
-        cap_mock = MagicMock()
-        cap_mock.isOpened.return_value = False
-        mock_vcap.return_value = cap_mock
-        with self.assertRaises(ValueError) as ctx:
-            await self.detector.run_detection('fake_stream')
-        self.assertIn('Failed to open stream', str(ctx.exception))
-
-    async def test_run_detection(self) -> None:
-        """Exercise this test."""
-        stream_url = 'http://example.com/virtual_stream'
-        cap_mock = MagicMock()
-        cap_mock.read.side_effect = [
-            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
-            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
-            (False, None),
-        ]
-        cap_mock.isOpened.return_value = True
+    async def test_legacy_local_mode_delegates_to_local_detector(self) -> None:
+        """Legacy callers use the isolated local implementation."""
         with patch(
-            'src.yolo_detector.cv2.VideoCapture',
-            return_value=cap_mock,
-        ):
-            with patch('src.yolo_detector.cv2.imshow'):
-                with patch(
-                    'src.yolo_detector.cv2.waitKey',
-                    side_effect=[-1, ord('q')],
-                ):
-                    with patch(
-                        'src.yolo_detector.cv2.destroyAllWindows',
-                    ):
-                        # Avoid real model inference
-                        with patch.object(
-                            self.detector,
-                            'generate_detections',
-                            return_value=([], []),
-                        ):
-                            await self.detector.run_detection(stream_url)
-        cap_mock.read.assert_called()
-        cap_mock.release.assert_called_once()
+            'src.local_yolo_detector.LocalYoloDetector',
+        ) as local_detector:
+            local_detector.return_value.generate_detections = AsyncMock(
+                return_value=([], []),
+            )
+            detector = YoloDetector(detect_with_server=False)
+            await detector.generate_detections(
+                np.zeros((2, 2, 3), dtype=np.uint8),
+            )
 
-    @patch('src.yolo_detector.cv2.destroyAllWindows')
-    @patch(
-        'src.yolo_detector.cv2.waitKey',
-        side_effect=[-1, -1, ord('q')],
-    )
-    @patch('src.yolo_detector.cv2.imshow')
-    @patch('src.yolo_detector.cv2.VideoCapture')
-    async def test_run_detection_loop(
-        self,
-        mock_vcap: Any,
-        mock_imshow: Any,
-        mock_waitKey: Any,
-        mock_destroy: Any,
-    ) -> None:
-        """Exercise this test."""
-        cap_mock = MagicMock()
-        cap_mock.isOpened.return_value = True
-        frames_side_effect = [
-            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
-            (False, None),
-            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
-            (True, np.zeros((480, 640, 3), dtype=np.uint8)),
-        ]
-        cap_mock.read.side_effect = frames_side_effect
-        mock_vcap.return_value = cap_mock
-        # Avoid real model inference
-        with patch.object(
-            self.detector, 'generate_detections', return_value=([], []),
-        ):
-            await self.detector.run_detection('fake_stream')
-        self.assertGreaterEqual(cap_mock.read.call_count, 4)
-        cap_mock.release.assert_called_once()
-        mock_imshow.assert_called()
-        mock_waitKey.assert_called()
-        mock_destroy.assert_called_once()
+        local_detector.assert_called_once()
+        local_detector.return_value.generate_detections.assert_awaited_once()
 
     async def test_close_method(self) -> None:
         """close remains a no-op compatibility hook."""
         await self.detector.close()
-
-    def test_tracking_cleanup(self) -> None:
-        """Test tracking data cleanup for old track IDs."""
-        self.detector.prev_centers = {1: (100, 100), 2: (200, 200)}
-        self.detector.prev_centers_last_seen = {1: 1, 2: 2}
-        self.detector.frame_count = 50
-        self.detector.max_id_keep = 5
-
-        # Should trigger cleanup
-        self.detector._cleanup_prev_centers()
-
-        # Data should be cleaned up for old IDs
-        self.assertEqual(len(self.detector.prev_centers), 0)
-        self.assertEqual(len(self.detector.prev_centers_last_seen), 0)
 
     def test_remove_overlapping_labels(self) -> None:
         """Test removal of overlapping detection labels."""
@@ -493,32 +296,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unmatched_cols, [])
         self.assertEqual(assignment.call_count, 4)
 
-    @patch('src.yolo_detector.cv2.destroyAllWindows')
-    @patch('src.yolo_detector.cv2.waitKey', side_effect=[-1, ord('q')])
-    @patch('src.yolo_detector.cv2.putText')
-    @patch('src.yolo_detector.cv2.rectangle')
-    @patch('src.yolo_detector.cv2.imshow')
-    @patch('src.yolo_detector.cv2.VideoCapture')
-    async def test_cov_run_detection_draw_calls(
-        self, mock_vcap: Any, mock_imshow: Any, mock_rect: Any,
-        mock_text: Any, *_m,
-    ) -> None:
-        """Exercise this test."""
-        cap = MagicMock()
-        cap.isOpened.return_value = True
-        frame = np.zeros((10, 10, 3), dtype=np.uint8)
-        cap.read.side_effect = [(True, frame), (True, frame)]
-        mock_vcap.return_value = cap
-        tracked = [[1, 1, 5, 5, 0.9, 0, 42, 1]]
-        with patch.object(
-            self.detector_server, 'generate_detections',
-            new_callable=AsyncMock, return_value=(tracked, tracked),
-        ):
-            await self.detector_server.run_detection('stream')
-        mock_imshow.assert_called()
-        mock_rect.assert_called()
-        mock_text.assert_called()
-
     def test_cov_remove_vest_containment_both_directions(self) -> None:
         """Exercise this test."""
         d = self.detector_server
@@ -544,41 +321,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(matches, [])
         self.assertEqual(ur, [])
         self.assertEqual(uc, [0, 1])
-
-    @patch('argparse.ArgumentParser.parse_args')
-    async def test_main_function_execution(
-        self, mock_parse_args: Any,
-    ) -> None:
-        """Exercise this test."""
-        from src.yolo_detector import main
-        from src.yolo_detector import YoloDetector as LSD
-        mock_args = MagicMock()
-        mock_args.url = 'test_stream'
-        mock_args.model_key = 'yolo11n'
-        mock_args.use_ultralytics = True
-        mock_parse_args.return_value = mock_args
-        # Avoid opening real video by mocking run_detection
-        with patch.object(LSD, 'run_detection', new_callable=AsyncMock):
-            await main()
-
-    async def test_generate_detections_no_boxes(self) -> None:
-        """Test detection generation when no boxes are detected."""
-        self.detector.detect_with_server = False
-        # Mock track() returning empty boxes
-        mock_results = MagicMock()
-        mock_boxes = MagicMock()
-        mock_boxes.__len__ = MagicMock(return_value=0)
-        mock_results.boxes = mock_boxes
-        with patch.object(
-            self.detector.ultralytics_model,
-            'track',
-            return_value=[mock_results],
-        ):
-            datas, tracked = await self.detector.generate_detections(
-                np.zeros((10, 10, 3), dtype=np.uint8),
-            )
-            self.assertEqual(datas, [])
-            self.assertEqual(tracked, [])
 
     def test_track_remote_hungarian_no_tracks_creates_new(self) -> None:
         """Exercise this test."""
@@ -625,122 +367,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(tid != 1 for tid in tids))
         # prune should remove stale 99
         self.assertNotIn(99, d.remote_tracks)
-
-    async def test_detect_local_ultralytics_branch(self) -> None:
-        """Test local detection using the Ultralytics branch."""
-        d = self.detector
-        d.use_ultralytics = True
-
-        class Boxes:
-            """Mock Ultralytics Boxes class."""
-
-            def __init__(self) -> None:
-                """Initialise mock boxes with test data."""
-                self.xyxy = np.array(
-                    [[1, 2, 3, 4], [5, 6, 7, 8]], dtype=float,
-                )
-                self.conf = np.array([0.9, 0.8], dtype=float)
-                self.cls = np.array([0, 1], dtype=float)
-
-            def __len__(self) -> int:
-                """Return number of boxes."""
-                return 2
-
-        boxes = Boxes()
-        mock_res = MagicMock()
-        mock_res.boxes = boxes
-
-        def _ultra_call(_frame: Any) -> list[Any]:
-            """Support _ultra_call."""
-            return [mock_res]
-
-        d.ultralytics_model = _ultra_call  # type: ignore[assignment]
-        out = await d._detect_local(np.zeros((4, 4, 3), dtype=np.uint8))
-        self.assertEqual(len(out), 2)
-        self.assertEqual(out[0][5], 0)
-        self.assertEqual(out[1][5], 1)
-
-    async def test_detect_local_sahi_branch(self) -> None:
-        """Test local detection using the SAHI branch."""
-        # Force SAHI path; avoid loading real model by patching predictor
-        with patch(
-            'src.yolo_detector.AutoDetectionModel.from_pretrained',
-        ) as mock_from:
-            mock_from.return_value = MagicMock()
-            d = YoloDetector(
-                detect_with_server=False, use_ultralytics=False,
-            )
-        frame = np.zeros((10, 10, 3), dtype=np.uint8)
-
-        class _BBox:
-            """Tests for _BBox."""
-
-            def to_voc_bbox(self) -> tuple[int, int, int, int]:
-                """Support to_voc_bbox."""
-                return (1, 2, 3, 4)
-
-        class _Score:
-            """Tests for _Score."""
-            value = 0.77
-
-        class _Cat:
-            """Tests for _Cat."""
-            id = 5
-
-        class _Obj:
-            """Tests for _Obj."""
-            bbox = _BBox()
-            score = _Score()
-            category = _Cat()
-
-        class _Res:
-            """Tests for _Res."""
-            object_prediction_list = [_Obj()]
-
-        with patch(
-            'src.yolo_detector.get_sliced_prediction',
-            return_value=_Res(),
-        ):
-            out = await d._detect_local(frame)
-            self.assertEqual(out, [[1, 2, 3, 4, 0.77, 5]])
-
-    async def test_generate_detections_with_ids_and_movement(self) -> None:
-        """Exercise this test."""
-        d = self.detector
-        d.detect_with_server = False
-        d.movement_thr = 1.0
-        d.movement_thr_sq = 1.0
-
-        class Boxes2:
-            """Tests for Boxes2."""
-
-            def __init__(self) -> None:
-                """Support __init__."""
-                self.xyxy = np.array([[0.0, 0.0, 2.0, 2.0]], dtype=float)
-                self.conf = np.array([0.9], dtype=float)
-                self.cls = np.array([0], dtype=float)
-                self.id = np.array([5], dtype=float)
-
-            def __len__(self) -> int:
-                return 1
-
-        mock_res = MagicMock()
-        mock_res.boxes = Boxes2()
-
-        # Prev center far so movement=True
-        d.prev_centers[5] = (100.0, 100.0)
-        d.prev_centers_last_seen[5] = d.frame_count
-
-        with patch.object(
-            d.ultralytics_model, 'track', return_value=[mock_res],
-        ):
-            datas, tracked = await d.generate_detections(
-                np.zeros((4, 4, 3), dtype=np.uint8),
-            )
-        self.assertEqual(len(datas), 1)
-        self.assertEqual(len(tracked), 1)
-        self.assertEqual(tracked[0][6], 5)  # tid
-        self.assertEqual(tracked[0][7], 1)  # is_moving
 
     def test_centroid_tracker_match_and_moving_flag(self) -> None:
         """Test centroid tracker matching and movement flag assignment."""

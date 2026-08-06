@@ -11,7 +11,6 @@ import cv2
 
 from src.stream_capture import StreamCapture
 from src.stream_viewer import StreamViewer
-from src.yolo_detector import YoloDetector
 
 
 class StreamingTools:
@@ -21,7 +20,6 @@ class StreamingTools:
         """Initialise lazy streaming resources."""
         self.logger = logging.getLogger(__name__)
         self._stream_capture: StreamCapture | None = None
-        self._yolo_detector: YoloDetector | None = None
         self._stream_viewer: StreamViewer | None = None
         self._viewer_tasks: dict[int, asyncio.Task[object]] = {}
         self._active_streams: (
@@ -70,15 +68,11 @@ class StreamingTools:
             dict[str, Any]: Stream status and identifier.
         """
         try:
-            await self._ensure_yolo_detector()
-
             # Generate stream ID if not provided
             if stream_id is None:
                 import time
                 stream_id = f"stream_{int(time.time())}"
 
-            # YoloDetector lacks start_stream_detection;
-            # return graceful message
             stream_store = self._get_stream_store()
             stream_store[stream_id] = {
                 'stream_url': stream_url,
@@ -91,8 +85,7 @@ class StreamingTools:
                 'stream_id': stream_id,
                 'status': 'unsupported',
                 'message': (
-                    'Continuous detection is not implemented in current '
-                    'YoloDetector'
+                    'Continuous detection is not available in this tool'
                 ),
             }
 
@@ -113,10 +106,6 @@ class StreamingTools:
             dict[str, Any]: Stop status and information.
         """
         try:
-            await self._ensure_yolo_detector()
-
-            # YoloDetector lacks stop_stream_detection;
-            # return graceful message
             stream_store = self._get_stream_store()
             if stream_id in stream_store:
                 stream_store[stream_id]['status'] = 'unsupported'
@@ -129,8 +118,7 @@ class StreamingTools:
                 'stream_id': stream_id,
                 'status': 'unsupported',
                 'message': (
-                    'Stopping continuous detection is not implemented in '
-                    'current YoloDetector'
+                    'Continuous detection is not available in this tool'
                 ),
             }
 
@@ -344,13 +332,6 @@ class StreamingTools:
         except Exception as e:
             self.logger.error(f"Failed to stop stream viewer: {e}")
             raise
-
-    async def _ensure_yolo_detector(self) -> YoloDetector:
-        """Ensure the yolo detector is initialised and return it."""
-        if self._yolo_detector is None:
-            self._yolo_detector = YoloDetector()
-            self.logger.info('Initialised live stream detector')
-        return self._yolo_detector
 
     async def _ensure_stream_capture(
         self,

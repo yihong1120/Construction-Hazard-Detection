@@ -10,88 +10,68 @@ from examples.mcp_server.tools.streaming import StreamingTools
 
 
 class StartStopDetectionTests(unittest.IsolatedAsyncioTestCase):
-    """Tests for start_detection_stream and stop_detection_stream."""
+    """Tests for unsupported continuous-detection requests."""
 
     async def test_start_detection_stream_with_custom_id(self) -> None:
-        """Should return unsupported message and register stream."""
-        with patch(
-            'examples.mcp_server.tools.streaming.YoloDetector',
-        ) as mock_detector:
-            tool = StreamingTools()
-            result = await tool.start_detection_stream(
-                'rtsp://cam',
-                'stream_1',
-            )
-        mock_detector.assert_called_once()
+        """Should return unsupported status without loading a local model."""
+        tool = StreamingTools()
+        result = await tool.start_detection_stream('rtsp://cam', 'stream_1')
+
         self.assertFalse(result['success'])
         self.assertIn('unsupported', result['status'])
         self.assertIn('stream_1', tool._get_stream_store())
 
     async def test_start_detection_stream_autogen_id(self) -> None:
         """Should auto-generate a stream_id."""
-        with patch(
-            'examples.mcp_server.tools.streaming.YoloDetector',
-        ):
-            tool = StreamingTools()
-            result = await tool.start_detection_stream('file.mp4', None)
+        tool = StreamingTools()
+        result = await tool.start_detection_stream('file.mp4', None)
+
         self.assertIn('stream_', result['stream_id'])
         self.assertIn(result['stream_id'], tool._get_stream_store())
 
-    async def test_start_detection_stream_exception(self) -> None:
-        """Should log and raise on exception."""
-        with (
-            patch(
-                'examples.mcp_server.tools.streaming.YoloDetector',
-                side_effect=RuntimeError('boom'),
-            ),
-            patch(
-                'examples.mcp_server.tools.streaming.logging.getLogger',
-            ) as mock_logger,
-        ):
-            logger = mock_logger.return_value
+    async def test_start_detection_stream_logs_store_errors(self) -> None:
+        """Store failures remain visible to callers and logs."""
+        with patch(
+            'examples.mcp_server.tools.streaming.logging.getLogger',
+        ) as mock_logger:
             tool = StreamingTools()
-            tool.logger = logger
-            with self.assertRaises(RuntimeError):
+            tool.logger = mock_logger.return_value
+            tool._active_streams = MagicMock(
+                side_effect=RuntimeError('boom'),
+            )
+            with self.assertRaisesRegex(RuntimeError, 'boom'):
                 await tool.start_detection_stream('x')
-            logger.error.assert_called_once()
+            mock_logger.return_value.error.assert_called_once()
 
     async def test_stop_detection_stream_existing(self) -> None:
-        """Should update existing stream and return unsupported message."""
-        with patch(
-            'examples.mcp_server.tools.streaming.YoloDetector',
-        ):
-            tool = StreamingTools()
-            tool._get_stream_store()['s1'] = {'status': 'active'}
-            result = await tool.stop_detection_stream('s1')
+        """Should update existing stream and return unsupported status."""
+        tool = StreamingTools()
+        tool._get_stream_store()['s1'] = {'status': 'active'}
+        result = await tool.stop_detection_stream('s1')
+
         self.assertFalse(result['success'])
         self.assertIn('unsupported', result['status'])
 
     async def test_stop_detection_stream_non_existing(self) -> None:
-        """Should handle non-existing stream gracefully."""
-        with patch(
-            'examples.mcp_server.tools.streaming.YoloDetector',
-        ):
-            tool = StreamingTools()
-            result = await tool.stop_detection_stream('nope')
+        """Should handle non-existing streams gracefully."""
+        tool = StreamingTools()
+        result = await tool.stop_detection_stream('nope')
+
         self.assertIn('unsupported', result['status'])
 
-    async def test_stop_detection_stream_exception(self) -> None:
-        """Should log and raise on exception."""
-        with (
-            patch(
-                'examples.mcp_server.tools.streaming.YoloDetector',
-                side_effect=RuntimeError('boom'),
-            ),
-            patch(
-                'examples.mcp_server.tools.streaming.logging.getLogger',
-            ) as mock_logger,
-        ):
-            logger = mock_logger.return_value
+    async def test_stop_detection_stream_logs_store_errors(self) -> None:
+        """Store failures remain visible to callers and logs."""
+        with patch(
+            'examples.mcp_server.tools.streaming.logging.getLogger',
+        ) as mock_logger:
             tool = StreamingTools()
-            tool.logger = logger
-            with self.assertRaises(RuntimeError):
+            tool.logger = mock_logger.return_value
+            tool._active_streams = MagicMock(
+                side_effect=RuntimeError('boom'),
+            )
+            with self.assertRaisesRegex(RuntimeError, 'boom'):
                 await tool.stop_detection_stream('id')
-            logger.error.assert_called_once()
+            mock_logger.return_value.error.assert_called_once()
 
 
 class StreamStatusTests(unittest.IsolatedAsyncioTestCase):
@@ -365,22 +345,6 @@ class ViewerTests(unittest.IsolatedAsyncioTestCase):
 
 class EnsureMethodsTests(unittest.IsolatedAsyncioTestCase):
     """Tests for _ensure_* methods."""
-
-    async def test_ensure_yolo_detector_initialises_once(self) -> None:
-        """Should initialise detector only once."""
-        with patch(
-            'examples.mcp_server.tools.streaming.YoloDetector',
-        ) as mock_live:
-            tool = StreamingTools()
-            await tool._ensure_yolo_detector()
-            await tool._ensure_yolo_detector()
-            mock_live.assert_called_once()
-
-    async def test_ensure_yolo_detector_skip_when_exists(self) -> None:
-        """Should skip creation if already set."""
-        tool = StreamingTools()
-        tool._yolo_detector = MagicMock(spec=streaming.YoloDetector)
-        await tool._ensure_yolo_detector()
 
     async def test_ensure_stream_capture(self) -> None:
         """Should initialise capture with URL and skip if None."""

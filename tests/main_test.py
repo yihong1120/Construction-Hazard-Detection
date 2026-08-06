@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import multiprocessing
 import os
 import runpy
 import signal
-import time
 import unittest
 from collections.abc import AsyncIterator
 from collections.abc import Iterator
 from contextlib import suppress
 from datetime import datetime
 from datetime import timedelta
-from types import SimpleNamespace
 from typing import Any
 from typing import cast
 from unittest.mock import AsyncMock
@@ -109,12 +108,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Prepare test fixtures."""
-        self._ultralytics_stream_env = patch.dict(
-            os.environ,
-            {'ULTRALYTICS_STREAM_ENABLED': 'false'},
-        )
-        self._ultralytics_stream_env.start()
-        self.addCleanup(self._ultralytics_stream_env.stop)
         self.app = MainApp(poll_interval=1)
         self.mock_logger = MagicMock()
         self.app.logger = self.mock_logger
@@ -147,9 +140,13 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await self.app.fetch_stream_configs()
 
-    @patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'})
+    @patch.object(MainApp, '_ensure_yolo_worker', return_value=False)
     @patch('main.Process')
-    def test_start_and_stop_process(self, mock_process_class: Any) -> None:
+    def test_start_and_stop_process(
+        self,
+        mock_process_class: Any,
+        mock_ensure_yolo_worker: Any,
+    ) -> None:
         """Test start_process and stop_process methods."""
         # Mock the Process class to avoid actually starting processes
         mock_process = MagicMock()
@@ -163,6 +160,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             target=process_single_stream,
             args=(cfg, None, None),
         )
+        mock_ensure_yolo_worker.assert_called_once_with([cfg])
         mock_process.start.assert_called_once()
         self.assertEqual(proc, mock_process)
 
@@ -533,16 +531,12 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 return_value=redis_manager,
             ),
             patch(
-                'src.stream_processor.MediaStreamPublisher',
-            ) as publisher_cls,
-            patch(
                 'src.stream_processor._run_decoupled_media_server_loop',
                 new_callable=AsyncMock,
             ) as decoupled_loop,
             patch.dict(
                 os.environ,
                 {
-                    'MEDIA_PUBLISH_DECOUPLED_ANNOTATED': 'true',
                     'MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM': 'false',
                     'MEDIA_PUBLISH_CLEAN_STREAM': 'true',
                     'MEDIA_PUBLISH_ANNOTATED_STREAM': 'true',
@@ -558,7 +552,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         decoupled_loop.assert_awaited_once()
         yolo_detector.close.assert_awaited_once()
         streaming_capture.release_resources.assert_awaited_once()
-        publisher_cls.assert_not_called()
         redis_manager.delete.assert_awaited_once()
 
     async def test_run_single_stream_skips_disabled_recognition(self) -> None:
@@ -597,337 +590,15 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 'src.stream_processor.YoloDetector',
                 return_value=yolo_detector,
             ),
-            patch.dict(
-                os.environ,
-                {
-                    'YOLO_WORKER_ENABLED': 'true',
-                    'DETECT_SERVER_MODEL_KEYS': 'yolo26n',
-                },
-            ),
         ):
             with self.assertRaisesRegex(
                 RuntimeError,
-                'shared worker result queues',
+                'Shared YOLO worker queues',
             ):
                 await processor._run_single_stream(cfg)
 
         yolo_detector.close.assert_not_called()
         streaming_capture.release_resources.assert_not_called()
-
-    async def test_run_single_stream_starts_server_worker_client(self) -> None:
-        """Exercise this test."""
-        cfg = self.dummy_cfg.copy()
-        cfg.update(
-            {
-                'model_key': 'yolo26n',
-            },
-        )
-        streaming_capture = AsyncMock()
-        yolo_detector = AsyncMock()
-
-        with (
-            patch(
-                'src.stream_processor.StreamCapture',
-                return_value=streaming_capture,
-            ),
-            patch(
-                'src.stream_processor.YoloWorkerClient',
-                return_value=object(),
-            ),
-            patch(
-                'src.stream_processor.YoloDetector',
-                return_value=yolo_detector,
-            ),
-            patch('src.stream_processor.DangerDetector'),
-            patch('src.stream_processor.FCMSender'),
-            patch('src.stream_processor.ViolationSender'),
-            patch(
-                'src.stream_processor._run_inline_stream_loop',
-                new_callable=AsyncMock,
-            ) as inline_loop,
-            patch.dict(
-                os.environ,
-                {
-                    'YOLO_WORKER_ENABLED': 'true',
-                    'DETECT_SERVER_MODEL_KEYS': 'yolo26n',
-                    'MEDIA_PUBLISH_CLEAN_STREAM': 'false',
-                    'MEDIA_PUBLISH_ANNOTATED_STREAM': 'false',
-                },
-            ),
-        ):
-            await processor._run_single_stream(
-                cfg,
-                yolo_request_queue=object(),
-                yolo_result_queue=object(),
-            )
-
-        inline_loop.assert_awaited_once()
-        yolo_detector.close.assert_awaited_once()
-
-    async def test_run_single_stream_defers_clean_restreamer_until_requested(
-        self,
-    ) -> None:
-        """Clean restreaming is not started during stream bootstrap."""
-        cfg = self.dummy_cfg.copy()
-        cfg.update(
-            {
-                'model_key': 'yolo26n',
-            },
-        )
-        streaming_capture = AsyncMock()
-        yolo_detector = AsyncMock()
-        restreamer = AsyncMock()
-        redis_manager = MagicMock()
-        redis_manager.delete = AsyncMock()
-
-        with (
-            patch(
-                'src.stream_processor.StreamCapture',
-                return_value=streaming_capture,
-            ),
-            patch(
-                'src.stream_processor.YoloDetector',
-                return_value=yolo_detector,
-            ),
-            patch(
-                'src.stream_processor.YoloWorkerClient',
-                return_value=object(),
-            ),
-            patch('src.stream_processor.DangerDetector'),
-            patch('src.stream_processor.FCMSender'),
-            patch('src.stream_processor.ViolationSender'),
-            patch(
-                'src.stream_processor.RedisManager',
-                return_value=redis_manager,
-            ),
-            patch(
-                'src.stream_processor.MediaSourceRestreamer',
-                return_value=restreamer,
-            ),
-            patch(
-                'src.stream_processor._run_inline_stream_loop',
-                new_callable=AsyncMock,
-            ),
-            patch.dict(
-                os.environ,
-                {
-                    'MEDIA_PUBLISH_DECOUPLED_ANNOTATED': 'false',
-                    'MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM': 'true',
-                    'MEDIA_PUBLISH_CLEAN_STREAM': 'true',
-                    'MEDIA_PUBLISH_ANNOTATED_STREAM': 'false',
-                },
-            ),
-        ):
-            await processor._run_single_stream(
-                cfg,
-                yolo_request_queue=object(),
-                yolo_result_queue=object(),
-            )
-
-        restreamer.start.assert_not_awaited()
-        restreamer.close.assert_not_awaited()
-
-    async def test_run_single_stream_uses_inline_loop_when_decoupled_disabled(
-        self,
-    ) -> None:
-        """Exercise this test."""
-        cfg = self.dummy_cfg.copy()
-        cfg.update(
-            {
-                'model_key': 'yolo26n',
-            },
-        )
-        streaming_capture = AsyncMock()
-        yolo_detector = AsyncMock()
-        redis_manager = MagicMock()
-        redis_manager.delete = AsyncMock()
-
-        with (
-            patch(
-                'src.stream_processor.StreamCapture',
-                return_value=streaming_capture,
-            ),
-            patch(
-                'src.stream_processor.YoloDetector',
-                return_value=yolo_detector,
-            ),
-            patch(
-                'src.stream_processor.YoloWorkerClient',
-                return_value=object(),
-            ),
-            patch('src.stream_processor.DangerDetector'),
-            patch('src.stream_processor.FCMSender'),
-            patch('src.stream_processor.ViolationSender'),
-            patch(
-                'src.stream_processor.RedisManager',
-                return_value=redis_manager,
-            ),
-            patch(
-                'src.stream_processor._run_inline_stream_loop',
-                new_callable=AsyncMock,
-            ) as inline_loop,
-            patch.dict(
-                os.environ,
-                {
-                    'MEDIA_PUBLISH_DECOUPLED_ANNOTATED': 'false',
-                    'MEDIA_PUBLISH_CLEAN_STREAM': 'false',
-                    'MEDIA_PUBLISH_ANNOTATED_STREAM': 'false',
-                },
-            ),
-        ):
-            await processor._run_single_stream(
-                cfg,
-                yolo_request_queue=object(),
-                yolo_result_queue=object(),
-            )
-
-        inline_loop.assert_awaited_once()
-        yolo_detector.close.assert_awaited_once()
-
-    async def test_inline_stream_loop_keeps_running_on_publish_errors(
-        self,
-    ) -> None:
-        """Exercise this test."""
-        frame = np.full((8, 8, 3), 50, dtype=np.uint8)
-
-        async def execute_capture() -> AsyncIterator[tuple[np.ndarray, float]]:
-            """Support execute_capture."""
-            yield frame, 1_640_995_200.0
-
-        streaming_capture = MagicMock()
-        streaming_capture.execute_capture = execute_capture
-        streaming_capture.update_capture_interval = MagicMock()
-        streaming_capture.release_resources = AsyncMock()
-        yolo_detector = AsyncMock()
-        yolo_detector.generate_detections.return_value = (
-            [],
-            [[1, 1, 5, 5, 0.9, 5]],
-        )
-        danger_detector = MagicMock()
-        danger_detector.detect_danger.return_value = (
-            {'warning_no_hardhat': {'count': 1}},
-            [],
-            [],
-        )
-        clean_media_publisher = AsyncMock()
-        fcm_sender = AsyncMock()
-        violation_sender = AsyncMock()
-        redis_manager = MagicMock()
-
-        with (
-            patch(
-                (
-                    'src.stream_processor.'
-                    '_publish_requested_overlay_snapshot_variants'
-                ),
-                new_callable=AsyncMock,
-            ) as publish_overlay,
-            patch(
-                'src.stream_processor._send_violation_and_notification',
-                new_callable=AsyncMock,
-                return_value=1_640_995_200,
-            ) as send_violation,
-            patch(
-                'src.stream_processor.Utils.filter_warnings_by_working_hour',
-                return_value={'warning_no_hardhat': {'count': 1}},
-            ),
-            patch(
-                'src.stream_processor.Utils.should_notify',
-                return_value=True,
-            ),
-        ):
-            publish_overlay.side_effect = [
-                RuntimeError('prime failed'),
-                RuntimeError('publish failed'),
-            ]
-            await processor._run_inline_stream_loop(
-                streaming_capture=streaming_capture,
-                yolo_detector=yolo_detector,
-                danger_detector=danger_detector,
-                fcm_sender=fcm_sender,
-                violation_sender=violation_sender,
-                redis_manager=redis_manager,
-                clean_source_restreamer=None,
-                clean_media_publisher=clean_media_publisher,
-                overlay_media_publishers={},
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_site_cam',
-                publish_annotated_stream=True,
-                live_view_enabled=True,
-                site='SiteA',
-                stream_name='Cam1',
-                work_start_hour=0,
-                work_end_hour=24,
-                metadata_key='stream_metadata:site|cam',
-                publish_clean_stream=False,
-                restream_clean_source=False,
-                video_url='rtsp://source',
-            )
-
-        self.assertEqual(publish_overlay.await_count, 2)
-        send_violation.assert_awaited_once()
-        streaming_capture.update_capture_interval.assert_called_once_with(0.2)
-        streaming_capture.release_resources.assert_awaited_once()
-
-    async def test_inline_stream_loop_stores_media_metadata_on_warning(
-        self,
-    ) -> None:
-        """Exercise this test."""
-        frame = np.full((8, 8, 3), 50, dtype=np.uint8)
-
-        async def execute_capture() -> AsyncIterator[tuple[np.ndarray, float]]:
-            """Support execute_capture."""
-            yield frame, 1_640_995_200.0
-
-        streaming_capture = MagicMock()
-        streaming_capture.execute_capture = execute_capture
-        streaming_capture.update_capture_interval = MagicMock()
-        streaming_capture.release_resources = AsyncMock()
-        yolo_detector = AsyncMock()
-        yolo_detector.generate_detections.return_value = ([], [])
-        danger_detector = MagicMock()
-        danger_detector.detect_danger.return_value = (
-            {'warning_no_hardhat': {'count': 1}},
-            [],
-            [],
-        )
-        clean_media_publisher = AsyncMock()
-        redis_manager = MagicMock()
-        redis_manager.redis.xadd = AsyncMock()
-
-        with patch(
-            'src.stream_processor.Utils.should_notify',
-            return_value=False,
-        ):
-            await processor._run_inline_stream_loop(
-                streaming_capture=streaming_capture,
-                yolo_detector=yolo_detector,
-                danger_detector=danger_detector,
-                fcm_sender=AsyncMock(),
-                violation_sender=AsyncMock(),
-                redis_manager=redis_manager,
-                clean_source_restreamer=None,
-                clean_media_publisher=clean_media_publisher,
-                overlay_media_publishers={},
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_site_cam',
-                publish_annotated_stream=False,
-                live_view_enabled=True,
-                site='SiteA',
-                stream_name='Cam1',
-                work_start_hour=0,
-                work_end_hour=24,
-                metadata_key='stream_metadata:site|cam',
-                publish_clean_stream=False,
-                restream_clean_source=False,
-                video_url='rtsp://source',
-            )
-
-        redis_manager.redis.xadd.assert_awaited_once_with(
-            'stream_metadata:site|cam',
-            {'has_warning': '1'},
-            maxlen=10,
-        )
 
     async def test_record_detection_keeps_live_warning_outside_working_hours(
         self,
@@ -1041,8 +712,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
     async def test_decoupled_loop_starts_all_requested_tasks(self) -> Any:
         """Exercise this test."""
-        clean_media_publisher = AsyncMock()
-
         async def stop_capture(**_kwargs) -> Any:
             """Support stop_capture."""
             return None
@@ -1084,7 +753,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 fcm_sender=AsyncMock(),
                 violation_sender=AsyncMock(),
                 redis_manager=MagicMock(),
-                clean_media_publisher=clean_media_publisher,
                 media_publish_base='rtsp://media-server:8554',
                 media_path='hazard_site_cam',
                 publish_overlay_streams=True,
@@ -1132,7 +800,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                     fcm_sender=AsyncMock(),
                     violation_sender=AsyncMock(),
                     redis_manager=MagicMock(),
-                    clean_media_publisher=None,
                     media_publish_base='rtsp://media-server:8554',
                     media_path='hazard_site_cam',
                     publish_overlay_streams=False,
@@ -1488,68 +1155,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_overlay_snapshot_variants_render_each_language_once(
-        self,
-    ) -> None:
-        """Detail and preview share a rendered frame for the same language."""
-        detail_publisher = AsyncMock()
-        preview_publisher = AsyncMock()
-        variants = [
-            processor._OverlayPublisherVariant(
-                media_path='hazard_site_cam',
-                rendition='detail',
-                publishers={'zh-TW': detail_publisher},
-            ),
-            processor._OverlayPublisherVariant(
-                media_path='hazard_site_cam_preview',
-                rendition='preview',
-                publishers={'zh-TW': preview_publisher},
-            ),
-        ]
-        rendered = np.full((4, 4, 3), 200, dtype=np.uint8)
-        redis_manager = MagicMock()
-        redis_manager.redis.set = AsyncMock()
-
-        with (
-            patch(
-                'src.stream_processor._requested_overlay_languages',
-                new_callable=AsyncMock,
-                return_value={'zh-TW'},
-            ),
-            patch(
-                'src.stream_processor._build_media_publish_frame',
-                return_value=rendered,
-            ) as build_frame,
-        ):
-            await processor._publish_requested_overlay_snapshot_variants(
-                redis_manager=redis_manager,
-                variants=variants,
-                media_publish_base='rtsp://media-server:8554',
-                site='SiteA',
-                stream_name='Cam1',
-                source_frame=np.zeros((4, 4, 3), dtype=np.uint8),
-                warnings={},
-                cone_polys=[],
-                pole_polys=[],
-                track_data=[[1, 1, 3, 3, 0.9, 5]],
-                demand_cache=processor._MediaDemandCache(refresh_seconds=0),
-            )
-
-        build_frame.assert_called_once()
-        detail_publisher.publish.assert_awaited_once_with(rendered)
-        preview_publisher.publish.assert_awaited_once_with(rendered)
-
-    async def test_overlay_language_snapshot_reuses_same_sequence_render(
+    def test_overlay_publish_frames_reuses_same_sequence_render(
         self,
     ) -> None:
         """Do not re-render unchanged detection overlays every publish tick."""
-        redis_manager = MagicMock()
-        redis_manager.redis.set = AsyncMock()
-        publisher = AsyncMock()
-        overlay_publishers = cast(
-            dict[str, processor.MediaStreamPublisher],
-            {'zh-TW': publisher},
-        )
         rendered_cache: dict[str, tuple[tuple[int, int], np.ndarray]] = {}
         snapshot = processor._OverlaySnapshot(
             sequence=(7, 7),
@@ -1565,31 +1174,46 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             'src.stream_processor._build_media_publish_frame',
             return_value=rendered,
         ) as build_frame:
-            await processor._publish_overlay_language_snapshot(
-                redis_manager=redis_manager,
-                overlay_media_publishers=overlay_publishers,
-                rendered_overlay_cache=rendered_cache,
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_U2l0ZUE_Q2FtMQ',
-                site='SiteA',
-                stream_name='Cam1',
-                label_language='zh-TW',
+            first_frames = processor._overlay_publish_frames(
                 snapshot=snapshot,
+                requested_languages={'zh-TW'},
+                rendered_overlay_cache=rendered_cache,
             )
-            await processor._publish_overlay_language_snapshot(
-                redis_manager=redis_manager,
-                overlay_media_publishers=overlay_publishers,
-                rendered_overlay_cache=rendered_cache,
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_U2l0ZUE_Q2FtMQ',
-                site='SiteA',
-                stream_name='Cam1',
-                label_language='zh-TW',
+            second_frames = processor._overlay_publish_frames(
                 snapshot=snapshot,
+                requested_languages={'zh-TW'},
+                rendered_overlay_cache=rendered_cache,
             )
 
         build_frame.assert_called_once()
-        self.assertEqual(publisher.publish.await_count, 2)
+        self.assertIs(first_frames['zh-TW'], rendered)
+        self.assertIs(second_frames['zh-TW'], rendered)
+
+    async def test_overlay_language_snapshot_publishes_pre_rendered_frame(
+        self,
+    ) -> None:
+        """A publisher receives the frame rendered once by the caller."""
+        redis_manager = MagicMock()
+        redis_manager.redis.set = AsyncMock()
+        publisher = AsyncMock()
+        overlay_publishers = cast(
+            dict[str, processor.MediaStreamPublisher],
+            {'zh-TW': publisher},
+        )
+        rendered = np.full((8, 8, 3), 200, dtype=np.uint8)
+
+        await processor._publish_overlay_language_snapshot(
+            redis_manager=redis_manager,
+            overlay_media_publishers=overlay_publishers,
+            media_publish_base='rtsp://media-server:8554',
+            media_path='hazard_U2l0ZUE_Q2FtMQ',
+            site='SiteA',
+            stream_name='Cam1',
+            label_language='zh-TW',
+            publish_frame=rendered,
+        )
+
+        publisher.publish.assert_awaited_once_with(rendered)
 
     def test_build_media_startup_frame_has_stable_dimensions(self) -> None:
         """Startup slate can open the annotated media path before capture."""
@@ -2029,192 +1653,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 30,
             )
 
-    async def test_inline_clean_publishers_follow_viewer_demand(self) -> None:
-        """Detail and preview encoders stop promptly when viewers leave."""
-        frames = [
-            np.zeros((2, 2, 3), dtype=np.uint8),
-            np.ones((2, 2, 3), dtype=np.uint8),
-            np.full((2, 2, 3), 2, dtype=np.uint8),
-        ]
-
-        async def execute_capture() -> Any:
-            for index, frame in enumerate(frames):
-                yield frame, 1_640_995_200 + index
-
-        streaming_capture = MagicMock()
-        streaming_capture.execute_capture = execute_capture
-        streaming_capture.update_capture_interval = MagicMock()
-        streaming_capture.release_resources = AsyncMock()
-        redis_manager = MagicMock()
-        redis_manager.redis.exists = AsyncMock(
-            side_effect=[1, 1, 0, 0, 1, 1],
-        )
-        detail_first = AsyncMock()
-        preview_first = AsyncMock()
-        detail_second = AsyncMock()
-        preview_second = AsyncMock()
-
-        with patch(
-            'src.stream_processor.MediaStreamPublisher',
-            side_effect=[
-                detail_first,
-                preview_first,
-                detail_second,
-                preview_second,
-            ],
-        ), patch.dict(os.environ, {'MEDIA_DEMAND_CACHE_SECONDS': '0'}):
-            await processor._run_inline_stream_loop(
-                streaming_capture=streaming_capture,
-                yolo_detector=AsyncMock(
-                    generate_detections=AsyncMock(return_value=([], [])),
-                ),
-                danger_detector=MagicMock(
-                    detect_danger=MagicMock(return_value=({}, [], [])),
-                ),
-                fcm_sender=AsyncMock(),
-                violation_sender=AsyncMock(),
-                redis_manager=redis_manager,
-                clean_source_restreamer=None,
-                clean_media_publisher=None,
-                overlay_media_publishers={},
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_site_cam',
-                publish_annotated_stream=False,
-                live_view_enabled=True,
-                site='SiteA',
-                stream_name='Cam1',
-                work_start_hour=0,
-                work_end_hour=24,
-                metadata_key='stream_metadata:site|cam',
-                publish_clean_stream=True,
-                restream_clean_source=False,
-                video_url='rtsp://source',
-            )
-
-        for publisher in (
-            detail_first,
-            preview_first,
-            detail_second,
-            preview_second,
-        ):
-            publisher.publish.assert_awaited_once()
-            publisher.close.assert_awaited_once()
-        streaming_capture.release_resources.assert_awaited_once()
-
-    async def test_inline_clean_source_restreamer_restarts_on_new_demand(
-        self,
-    ) -> None:
-        """Source restreaming is released and recreated with demand changes."""
-        frames = [
-            np.zeros((2, 2, 3), dtype=np.uint8),
-            np.ones((2, 2, 3), dtype=np.uint8),
-            np.full((2, 2, 3), 2, dtype=np.uint8),
-        ]
-
-        async def execute_capture() -> Any:
-            for index, frame in enumerate(frames):
-                yield frame, 1_640_995_200 + index
-
-        streaming_capture = MagicMock()
-        streaming_capture.execute_capture = execute_capture
-        streaming_capture.update_capture_interval = MagicMock()
-        streaming_capture.release_resources = AsyncMock()
-        redis_manager = MagicMock()
-        redis_manager.redis.exists = AsyncMock(
-            side_effect=[1, 0, 0, 0, 1, 0],
-        )
-        first_restreamer = AsyncMock()
-        second_restreamer = AsyncMock()
-
-        with patch(
-            'src.stream_processor.MediaSourceRestreamer',
-            side_effect=[first_restreamer, second_restreamer],
-        ), patch.dict(os.environ, {'MEDIA_DEMAND_CACHE_SECONDS': '0'}):
-            await processor._run_inline_stream_loop(
-                streaming_capture=streaming_capture,
-                yolo_detector=AsyncMock(
-                    generate_detections=AsyncMock(return_value=([], [])),
-                ),
-                danger_detector=MagicMock(
-                    detect_danger=MagicMock(return_value=({}, [], [])),
-                ),
-                fcm_sender=AsyncMock(),
-                violation_sender=AsyncMock(),
-                redis_manager=redis_manager,
-                clean_source_restreamer=None,
-                clean_media_publisher=None,
-                overlay_media_publishers={},
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_site_cam',
-                publish_annotated_stream=False,
-                live_view_enabled=True,
-                site='SiteA',
-                stream_name='Cam1',
-                work_start_hour=0,
-                work_end_hour=24,
-                metadata_key='stream_metadata:site|cam',
-                publish_clean_stream=True,
-                restream_clean_source=True,
-                video_url='rtsp://source',
-            )
-
-        first_restreamer.start.assert_awaited_once()
-        first_restreamer.close.assert_awaited_once()
-        second_restreamer.start.assert_awaited_once()
-        second_restreamer.close.assert_awaited_once()
-
-    async def test_inline_stream_publishes_both_overlay_renditions(
-        self,
-    ) -> None:
-        """One capture frame primes and updates detail and preview overlays."""
-        frame = np.zeros((2, 2, 3), dtype=np.uint8)
-
-        async def execute_capture() -> Any:
-            yield frame, 1_640_995_200
-
-        streaming_capture = MagicMock()
-        streaming_capture.execute_capture = execute_capture
-        streaming_capture.update_capture_interval = MagicMock()
-        streaming_capture.release_resources = AsyncMock()
-        publish_overlay = AsyncMock()
-
-        with patch(
-            (
-                'src.stream_processor.'
-                '_publish_requested_overlay_snapshot_variants'
-            ),
-            publish_overlay,
-        ):
-            await processor._run_inline_stream_loop(
-                streaming_capture=streaming_capture,
-                yolo_detector=AsyncMock(
-                    generate_detections=AsyncMock(return_value=([], [])),
-                ),
-                danger_detector=MagicMock(
-                    detect_danger=MagicMock(return_value=({}, [], [])),
-                ),
-                fcm_sender=AsyncMock(),
-                violation_sender=AsyncMock(),
-                redis_manager=MagicMock(),
-                clean_source_restreamer=None,
-                clean_media_publisher=None,
-                overlay_media_publishers={},
-                media_publish_base='rtsp://media-server:8554',
-                media_path='hazard_site_cam',
-                publish_annotated_stream=True,
-                live_view_enabled=True,
-                site='SiteA',
-                stream_name='Cam1',
-                work_start_hour=0,
-                work_end_hour=24,
-                metadata_key='stream_metadata:site|cam',
-                publish_clean_stream=False,
-                restream_clean_source=False,
-                video_url='rtsp://source',
-            )
-
-        self.assertEqual(publish_overlay.await_count, 2)
-
     async def test_clean_frame_loop_releases_restreamers_on_demand_changes(
         self,
     ) -> None:
@@ -2343,57 +1781,61 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(mock_create_pool.call_args.kwargs['port'], 5432)
 
-    def test_ensure_yolo_worker_disabled_stops_existing_workers(self) -> None:
-        """Exercise this test."""
-        self.app.yolo_worker_processes = [MagicMock()]
-        with (
-            patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'}),
-            patch.object(self.app, '_stop_yolo_worker') as stop_worker,
-        ):
-            restarted = self.app._ensure_yolo_worker()
-
-        self.assertTrue(restarted)
-        stop_worker.assert_called_once()
-
-    def test_ensure_yolo_worker_disabled_without_workers_is_noop(self) -> None:
-        """Exercise this test."""
-        with patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'}):
-            self.assertFalse(self.app._ensure_yolo_worker())
-
     def test_ensure_yolo_worker_keeps_alive_pool(self) -> None:
-        """Exercise this test."""
-        process_a = MagicMock()
-        process_b = MagicMock()
-        process_a.is_alive.return_value = True
-        process_b.is_alive.return_value = True
-        self.app.yolo_manager = MagicMock()
-        self.app.yolo_request_queues = [MagicMock(), MagicMock()]
-        self.app.yolo_worker_processes = [process_a, process_b]
+        """A matching topology retains its native queues and workers."""
+        request_queue = MagicMock()
+        result_queue = MagicMock()
+        worker_process = MagicMock()
+        worker_process.is_alive.return_value = True
 
         with patch.dict(
             os.environ,
-            {'YOLO_WORKER_ENABLED': 'true', 'YOLO_WORKER_COUNT': '2'},
+            {
+                'YOLO_WORKER_CAMERAS_PER_ENGINE': '3',
+                'YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL': '',
+            },
         ):
-            self.assertFalse(self.app._ensure_yolo_worker())
+            topology_signature = self.app._yolo_worker_topology(
+                [self.dummy_cfg],
+            )[2]
+            self.app.yolo_request_queues = [request_queue]
+            self.app.yolo_result_queues = {'SiteA|StreamOne': result_queue}
+            self.app.yolo_worker_processes = [worker_process]
+            self.app.yolo_worker_slots = {
+                self.dummy_cfg['video_url']: 0,
+            }
+            self.app.yolo_worker_camera_slots = {'SiteA|StreamOne': 0}
+            self.app.yolo_worker_topology_signature = topology_signature
+
+            with patch.object(
+                self.app,
+                '_restart_dead_yolo_workers',
+            ) as restart:
+                self.assertFalse(
+                    self.app._ensure_yolo_worker([self.dummy_cfg]),
+                )
+
+        restart.assert_called_once()
+        self.assertEqual(self.app.yolo_request_queues, [request_queue])
+        self.assertEqual(
+            self.app.yolo_result_queues,
+            {'SiteA|StreamOne': result_queue},
+        )
 
     def test_ensure_yolo_worker_replaces_dead_worker_in_place(self) -> None:
-        """A dead worker keeps the existing stream-side IPC proxies valid."""
+        """A dead worker retains its existing native queue endpoints."""
         request_queue = MagicMock()
         dead_process = MagicMock()
-        alive_process = MagicMock()
         replacement_process = MagicMock()
         dead_process.is_alive.return_value = False
-        alive_process.is_alive.return_value = True
-        self.app.yolo_manager = MagicMock()
-        self.app.yolo_request_queues = [request_queue, MagicMock()]
-        self.app.yolo_worker_processes = [dead_process, alive_process]
+        result_queue = MagicMock()
 
         with (
             patch.dict(
                 os.environ,
                 {
-                    'YOLO_WORKER_ENABLED': 'true',
-                    'YOLO_WORKER_COUNT': '2',
+                    'YOLO_WORKER_CAMERAS_PER_ENGINE': '3',
+                    'YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL': '',
                     'YOLO_WORKER_DEVICES': 'cuda:0,cuda:1',
                 },
             ),
@@ -2401,109 +1843,131 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             patch('main.Process', return_value=replacement_process),
             patch.object(self.app, '_stop_yolo_worker') as stop_worker,
         ):
+            topology_signature = self.app._yolo_worker_topology(
+                [self.dummy_cfg],
+            )[2]
+            self.app.yolo_request_queues = [request_queue]
+            self.app.yolo_result_queues = {'SiteA|StreamOne': result_queue}
+            self.app.yolo_worker_processes = [dead_process]
+            self.app.yolo_worker_slots = {
+                self.dummy_cfg['video_url']: 0,
+            }
+            self.app.yolo_worker_camera_slots = {'SiteA|StreamOne': 0}
+            self.app.yolo_worker_topology_signature = topology_signature
+            self.app.yolo_worker_startup_lock = MagicMock()
             worker_class.return_value.run = MagicMock()
-            self.assertFalse(self.app._ensure_yolo_worker())
+            self.assertFalse(self.app._ensure_yolo_worker([self.dummy_cfg]))
 
         dead_process.join.assert_called_once()
         replacement_process.start.assert_called_once()
         self.assertIs(self.app.yolo_worker_processes[0], replacement_process)
-        self.assertIs(self.app.yolo_worker_processes[1], alive_process)
         worker_class.assert_called_once_with(
             request_queue,
             'cuda:0',
+            result_queues={'SiteA|StreamOne': result_queue},
+            startup_lock=self.app.yolo_worker_startup_lock,
         )
         stop_worker.assert_not_called()
 
     def test_ensure_yolo_worker_starts_configured_workers(self) -> None:
-        """Exercise this test."""
-        manager = MagicMock()
-        manager.Queue.side_effect = ['queue-0', 'queue-1', 'result-0']
-        process_a = MagicMock()
-        process_b = MagicMock()
+        """Each worker receives only its own shard's result queues."""
+        configs = []
+        for index in range(4):
+            cfg = self.dummy_cfg.copy()
+            cfg['video_url'] = f'rtsp://example.com/cam{index}'
+            cfg['stream_name'] = f'Cam{index}'
+            configs.append(cfg)
+        result_queues = [MagicMock() for _ in configs]
+        request_queues = [MagicMock(), MagicMock()]
+        worker_processes = [MagicMock(), MagicMock()]
+        startup_lock = MagicMock()
 
         with (
             patch.dict(
                 os.environ,
                 {
-                    'YOLO_WORKER_ENABLED': 'true',
-                    'YOLO_WORKER_COUNT': '2',
-                    'YOLO_WORKER_DEVICES': 'cuda:0,cuda:1',
+                    'YOLO_WORKER_DEVICES': 'cuda:0',
                     'YOLO_WORKER_QUEUE_SIZE': '7',
-                    'YOLO_WORKER_CAMERAS_PER_ENGINE': '0',
+                    'YOLO_WORKER_CAMERAS_PER_ENGINE': '3',
+                    'YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL': '',
                 },
             ),
-            patch('main.multiprocessing.Manager', return_value=manager),
+            patch(
+                'main.multiprocessing.Queue',
+                side_effect=[*result_queues, *request_queues],
+            ) as queue_class,
+            patch(
+                'main.multiprocessing.Lock',
+                return_value=startup_lock,
+            ),
             patch('main.YoloWorker') as worker_class,
-            patch('main.Process', side_effect=[process_a, process_b]),
+            patch('main.Process', side_effect=worker_processes),
         ):
             worker_class.return_value.run = MagicMock()
-            restarted = self.app._ensure_yolo_worker([self.dummy_cfg])
+            restarted = self.app._ensure_yolo_worker(configs)
 
         self.assertTrue(restarted)
-        self.assertEqual(self.app.yolo_request_queues, ['queue-0', 'queue-1'])
+        self.assertEqual(self.app.yolo_request_queues, request_queues)
         self.assertEqual(
             self.app.yolo_result_queues,
-            {'SiteA|StreamOne': 'result-0'},
+            {
+                f'SiteA|Cam{index}': result_queues[index]
+                for index in range(4)
+            },
         )
-        process_a.start.assert_called_once()
-        process_b.start.assert_called_once()
-        self.assertEqual(manager.Queue.call_args_list[0].kwargs['maxsize'], 7)
+        for worker_process in worker_processes:
+            worker_process.start.assert_called_once()
+        self.assertEqual(
+            [call.kwargs['maxsize'] for call in queue_class.call_args_list],
+            [8, 8, 8, 8, 7, 7],
+        )
+        self.assertEqual(worker_class.call_count, 2)
+        first_worker_args = worker_class.call_args_list[0]
+        self.assertEqual(first_worker_args.args, (request_queues[0], 'cuda:0'))
+        self.assertEqual(
+            first_worker_args.kwargs['result_queues'],
+            {
+                'SiteA|Cam0': result_queues[0],
+                'SiteA|Cam1': result_queues[1],
+                'SiteA|Cam2': result_queues[2],
+            },
+        )
+        self.assertEqual(
+            worker_class.call_args_list[1].args,
+            (request_queues[1], 'cuda:0'),
+        )
+        self.assertEqual(
+            worker_class.call_args_list[1].kwargs['result_queues'],
+            {'SiteA|Cam3': result_queues[3]},
+        )
+        self.assertIs(
+            first_worker_args.kwargs['startup_lock'],
+            startup_lock,
+        )
 
-    def test_yolo_worker_slot_returns_empty_and_groups_model_keys(
+    def test_yolo_worker_slot_returns_only_its_fixed_camera_queues(
         self,
     ) -> None:
-        """Cameras using one model share one TensorRT worker context."""
+        """Each camera is pinned to one request queue and result queue."""
         self.assertEqual(
             self.app._yolo_worker_slot(self.dummy_cfg),
             (None, None),
         )
-        self.app.yolo_request_queues = ['q0', 'q1']
-        self.app.yolo_manager = MagicMock()
-        self.app.yolo_manager.Queue.side_effect = ['r0', 'r1']
+        self.app.yolo_request_queues = ['request-0']
+        self.app.yolo_result_queues = {'SiteA|StreamOne': 'result-0'}
+        self.app.yolo_worker_slots = {self.dummy_cfg['video_url']: 0}
 
-        first = self.app._yolo_worker_slot(self.dummy_cfg)
-        second = self.app._yolo_worker_slot(self.dummy_cfg)
-        same_model_other_camera = self.dummy_cfg.copy()
-        same_model_other_camera['site'] = 'OtherSite'
-        same_model_other_camera['stream_name'] = 'OtherCamera'
-
-        self.assertEqual(first, second)
-        other_camera = self.app._yolo_worker_slot(same_model_other_camera)
-        self.assertEqual(first[0], other_camera[0])
-        self.assertNotEqual(first[1], other_camera[1])
-        self.assertIn(first[0], {'q0', 'q1'})
-
-    def test_yolo_worker_slot_separates_configured_model_keys(self) -> None:
-        """Configured models use their own workers when capacity permits."""
-        self.app.yolo_request_queues = [
-            'q0',
-            'q1',
-            'q2',
-            'q3',
-            'q4',
-        ]
-        self.app.yolo_manager = MagicMock()
-        self.app.yolo_manager.Queue.return_value = 'result-queue'
-        expected_slots = {
-            'yolo26n': 'q0',
-            'yolo26s': 'q1',
-            'yolo26m': 'q2',
-            'yolo26l': 'q3',
-            'yolo26x': 'q4',
-        }
-        with patch.dict(
-            os.environ,
-            {
-                'DETECT_SERVER_MODEL_KEYS': ','.join(expected_slots),
-            },
-        ):
-            actual_slots = {}
-            for model_key in expected_slots:
-                cfg = self.dummy_cfg.copy()
-                cfg['model_key'] = model_key
-                actual_slots[model_key] = self.app._yolo_worker_slot(cfg)[0]
-
-        self.assertEqual(actual_slots, expected_slots)
+        self.assertEqual(
+            self.app._yolo_worker_slot(self.dummy_cfg),
+            ('request-0', 'result-0'),
+        )
+        unknown_camera = self.dummy_cfg.copy()
+        unknown_camera['video_url'] = 'rtsp://example.com/unknown'
+        unknown_camera['stream_name'] = 'Unknown'
+        self.assertEqual(
+            self.app._yolo_worker_slot(unknown_camera),
+            (None, None),
+        )
 
     def test_yolo_worker_topology_shards_same_model_cameras(self) -> None:
         """At most three same-model cameras are pinned to one engine worker."""
@@ -2519,7 +1983,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         with patch.dict(
             os.environ,
-            {'YOLO_WORKER_CAMERAS_PER_ENGINE': '3'},
+            {
+                'YOLO_WORKER_CAMERAS_PER_ENGINE': '3',
+                'YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL': '',
+            },
         ):
             worker_count, slots, signature = self.app._yolo_worker_topology(
                 medium_configs + [nano_cfg],
@@ -2532,6 +1999,49 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(slots[nano_cfg['video_url']], 3)
         self.assertIsNotNone(signature)
+
+    def test_yolo_worker_topology_uses_per_model_camera_limits(self) -> None:
+        """Each model key can use a different worker capacity from .env."""
+        medium_configs = []
+        nano_configs = []
+        for index in range(5):
+            medium_cfg = self.dummy_cfg.copy()
+            medium_cfg['model_key'] = 'yolo26m'
+            medium_cfg['video_url'] = f'rtsp://example.com/m{index:02d}'
+            medium_configs.append(medium_cfg)
+            nano_cfg = self.dummy_cfg.copy()
+            nano_cfg['model_key'] = 'yolo26n'
+            nano_cfg['video_url'] = f'rtsp://example.com/n{index:02d}'
+            nano_configs.append(nano_cfg)
+
+        with patch.dict(
+            os.environ,
+            {
+                'YOLO_WORKER_CAMERAS_PER_ENGINE': '3',
+                'YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL': (
+                    'yolo26m=2,yolo26n=4'
+                ),
+            },
+        ):
+            worker_count, slots, signature = self.app._yolo_worker_topology(
+                medium_configs + nano_configs,
+            )
+
+        self.assertEqual(worker_count, 5)
+        self.assertEqual(
+            [slots[cfg['video_url']] for cfg in medium_configs],
+            [0, 0, 1, 1, 2],
+        )
+        self.assertEqual(
+            [slots[cfg['video_url']] for cfg in nano_configs],
+            [3, 3, 3, 3, 4],
+        )
+        self.assertIsNotNone(signature)
+        assert signature is not None
+        self.assertEqual(
+            json.loads(signature)['cameras_per_engine_by_model'],
+            {'yolo26m': 2, 'yolo26n': 4},
+        )
 
     def test_restart_reason_covers_all_reasons(self) -> None:
         """Exercise this test."""
@@ -2649,32 +2159,35 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.app.db_pool)
         db_pool.close.assert_awaited_once()
 
-    def test_stop_yolo_worker_signals_kills_and_shuts_down_manager(
+    def test_stop_yolo_worker_signals_kills_and_closes_native_queues(
         self,
     ) -> None:
-        """Exercise this test."""
+        """Queue cleanup does not depend on a multiprocessing manager."""
         bad_queue = MagicMock()
         bad_queue.put.side_effect = RuntimeError('queue closed')
         good_queue = MagicMock()
+        result_queue = MagicMock()
         alive_process = MagicMock()
         alive_process.is_alive.return_value = True
         stopped_process = MagicMock()
         stopped_process.is_alive.return_value = False
-        manager = MagicMock()
         self.app.yolo_request_queues = [bad_queue, good_queue]
-        self.app.yolo_result_queues = {'SiteA|Cam1': {'x': 1}}
+        self.app.yolo_result_queues = {'SiteA|Cam1': result_queue}
         self.app.yolo_worker_processes = [alive_process, stopped_process]
-        self.app.yolo_manager = manager
 
         self.app._stop_yolo_worker()
 
-        good_queue.put.assert_called_once_with(main.YOLO_WORKER_STOP_MESSAGE)
+        good_queue.put.assert_called_once_with(
+            main.YOLO_WORKER_STOP_MESSAGE,
+            block=False,
+        )
         alive_process.kill.assert_called_once()
-        manager.shutdown.assert_called_once()
+        for worker_queue in [bad_queue, good_queue, result_queue]:
+            worker_queue.close.assert_called_once()
+            worker_queue.join_thread.assert_called_once()
         self.assertEqual(self.app.yolo_request_queues, [])
         self.assertEqual(self.app.yolo_result_queues, {})
         self.assertEqual(self.app.yolo_worker_processes, [])
-        self.assertIsNone(self.app.yolo_manager)
 
     async def test_run_logs_unexpected_errors_and_cleans_up(self) -> None:
         """Exercise this test."""
@@ -2773,7 +2286,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_cfg = self.dummy_cfg.copy()
         mock_fetch.return_value = [mock_cfg]
 
-        with patch('main.MainApp.start_process') as mock_start:
+        with (
+            patch.object(self.app, '_ensure_yolo_worker', return_value=False),
+            patch('main.MainApp.start_process') as mock_start,
+        ):
             mock_proc = MagicMock()
             mock_start.return_value = mock_proc
             await self.app.reload_configurations()
@@ -2886,6 +2402,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_fetch.return_value = [new_cfg]
 
         with (
+            patch.object(self.app, '_ensure_yolo_worker', return_value=False),
             patch('main.MainApp.start_process') as mock_start,
             patch(
                 'main.delete_stream_live_metadata',
@@ -2915,7 +2432,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         }
         mock_fetch.return_value = [cfg]
 
-        with patch('main.MainApp.start_process') as mock_start:
+        with (
+            patch.object(self.app, '_ensure_yolo_worker', return_value=False),
+            patch('main.MainApp.start_process') as mock_start,
+        ):
             mock_start.return_value = MagicMock()
             await self.app.reload_configurations()
 
@@ -2977,421 +2497,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         mock_proc.terminate.assert_not_called()
         mock_start.assert_not_called()
-
-    @patch.dict(os.environ, {'GPU_DECODE_ENABLED': 'true'})
-    @patch('main.GpuStreamCapture.is_available', return_value=True)
-    @patch('main.Process')
-    @patch('main.MainApp.fetch_stream_configs')
-    async def test_reload_config_uses_one_shared_gpu_group(
-        self,
-        mock_fetch: Any,
-        mock_process_class: Any,
-        _gpu_available: Any,
-    ) -> None:
-        """NVDEC cameras start together instead of one model process each."""
-        cfg = self.dummy_cfg.copy()
-        mock_fetch.return_value = [cfg]
-        group_process = MagicMock()
-        group_process.is_alive.return_value = True
-        mock_process_class.return_value = group_process
-
-        await self.app.reload_configurations()
-        await self.app.reload_configurations()
-
-        mock_process_class.assert_called_once_with(
-            target=main.process_gpu_stream_group,
-            args=([cfg],),
-        )
-        group_process.start.assert_called_once()
-        self.assertIs(self.app.gpu_stream_group_process, group_process)
-        self.assertEqual(self.app.running_processes, {})
-
-    @patch.dict(os.environ, {'ULTRALYTICS_STREAM_ENABLED': 'true'})
-    @patch('main.Process')
-    @patch('main.MainApp.fetch_stream_configs')
-    async def test_reload_config_uses_one_ultralytics_stream_group(
-        self,
-        mock_fetch: Any,
-        mock_process_class: Any,
-    ) -> None:
-        """Direct RTSP mode owns all model groups in one process."""
-        cfg = self.dummy_cfg.copy()
-        mock_fetch.return_value = [cfg]
-        group_process = MagicMock()
-        group_process.is_alive.return_value = True
-        mock_process_class.return_value = group_process
-
-        await self.app.reload_configurations()
-        await self.app.reload_configurations()
-
-        mock_process_class.assert_called_once_with(
-            target=main.process_ultralytics_stream_group,
-            args=([cfg],),
-        )
-        group_process.start.assert_called_once()
-        self.assertIs(
-            self.app.ultralytics_stream_group_process,
-            group_process,
-        )
-        self.assertEqual(self.app.running_processes, {})
-
-    async def test_cleanup_resources_stops_shared_gpu_group(self) -> None:
-        """The CUDA group is stopped along with ordinary stream processes."""
-        group_process = MagicMock()
-        group_process.is_alive.return_value = False
-        self.app.gpu_stream_group_process = group_process
-
-        await self.app.cleanup_resources()
-
-        group_process.terminate.assert_called_once()
-        self.assertIsNone(self.app.gpu_stream_group_process)
-
-    def test_ultralytics_result_rows_preserves_detection_schema(self) -> None:
-        """Direct predictor results are converted for the existing tracker."""
-        result = SimpleNamespace(
-            boxes=SimpleNamespace(
-                data=SimpleNamespace(
-                    cpu=lambda: SimpleNamespace(
-                        tolist=lambda: [[1, 2, 3, 4, 0.8, 5]],
-                    ),
-                ),
-            ),
-        )
-
-        self.assertEqual(
-            processor._ultralytics_result_rows(result),
-            [[1.0, 2.0, 3.0, 4.0, 0.8, 5]],
-        )
-        self.assertIsNone(
-            processor._next_ultralytics_stream_result(iter(())),
-        )
-
-    async def test_ultralytics_stream_next_timeout_closes_loader(self) -> None:
-        """A stuck Ultralytics iterator is closed so the shard can restart."""
-        closed: list[bool] = []
-
-        def close() -> None:
-            closed.append(True)
-
-        def slow_next(_result_stream: object) -> object | None:
-            time.sleep(0.2)
-            return None
-
-        model = SimpleNamespace(
-            predictor=SimpleNamespace(
-                dataset=SimpleNamespace(close=close),
-            ),
-        )
-
-        with (
-            patch(
-                'src.stream_processor._next_ultralytics_stream_result',
-                slow_next,
-            ),
-            patch.dict(
-                os.environ,
-                {'ULTRALYTICS_STREAM_CLOSE_GRACE_SECONDS': '0.01'},
-            ),
-        ):
-            with self.assertRaises(processor._UltralyticsStreamReadTimeout):
-                await processor._next_ultralytics_stream_result_with_timeout(
-                    iter(()),
-                    model,
-                    0.01,
-                )
-
-        self.assertEqual(closed, [True])
-
-    async def test_ultralytics_stream_next_propagates_connection_error(
-        self,
-    ) -> None:
-        """A loader failure during close grace is handled by the shard loop."""
-        closed: list[bool] = []
-
-        def close() -> None:
-            closed.append(True)
-
-        def failing_next(_result_stream: object) -> object | None:
-            time.sleep(0.02)
-            raise ConnectionError('RTSP unavailable')
-
-        model = SimpleNamespace(
-            predictor=SimpleNamespace(
-                dataset=SimpleNamespace(close=close),
-            ),
-        )
-        with (
-            patch(
-                'src.stream_processor._next_ultralytics_stream_result',
-                failing_next,
-            ),
-            patch.dict(
-                os.environ,
-                {'ULTRALYTICS_STREAM_CLOSE_GRACE_SECONDS': '0.1'},
-            ),
-        ):
-            with self.assertRaisesRegex(ConnectionError, 'unavailable'):
-                await processor._next_ultralytics_stream_result_with_timeout(
-                    iter(()),
-                    model,
-                    0.01,
-                )
-
-        self.assertEqual(closed, [True])
-
-    async def test_release_ultralytics_stream_model_drops_trt_backend(
-        self,
-    ) -> None:
-        """Restarting a shard must release its retained TensorRT predictor."""
-        predictor = SimpleNamespace(dataset=object(), model=object())
-        model = SimpleNamespace(predictor=predictor)
-
-        with (
-            patch(
-                'src.stream_processor._close_ultralytics_stream_loader',
-                new_callable=AsyncMock,
-            ) as close_loader,
-            patch('src.stream_processor.gc.collect') as collect,
-            patch(
-                'src.stream_processor.torch.cuda.is_available',
-                return_value=True,
-            ),
-            patch(
-                'src.stream_processor.torch.cuda.empty_cache',
-            ) as empty_cache,
-            patch(
-                'src.stream_processor.torch.cuda.ipc_collect',
-            ) as ipc_collect,
-        ):
-            await processor._release_ultralytics_stream_model(model)
-
-        close_loader.assert_awaited_once_with(model)
-        self.assertIsNone(predictor.dataset)
-        self.assertIsNone(predictor.model)
-        self.assertIsNone(model.predictor)
-        collect.assert_called_once()
-        empty_cache.assert_called_once()
-        ipc_collect.assert_called_once()
-
-    def test_ultralytics_stream_failed_source_match_redacts_credentials(
-        self,
-    ) -> None:
-        """RTSP failures isolate a camera without leaking credentials."""
-        cfg = self.dummy_cfg.copy()
-        cfg['video_url'] = 'rtsp://user:secret@camera.example/live'
-        exc = ConnectionError(
-            '1/1: rtsp://user:secret@camera.example/live failed to open',
-        )
-
-        self.assertEqual(
-            processor._ultralytics_stream_failed_source_urls(exc, [cfg]),
-            {cfg['video_url']},
-        )
-        message = processor._ultralytics_stream_error_message(exc)
-        self.assertNotIn('secret', message)
-        self.assertIn('RTSP source', message)
-
-    def test_ultralytics_stream_default_shard_size_reuses_engines(
-        self,
-    ) -> None:
-        """Direct RTSP mode reuses each TensorRT engine across cameras."""
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(
-                processor._ultralytics_stream_max_sources_per_model(),
-                3,
-            )
-        with patch.dict(
-            os.environ,
-            {'ULTRALYTICS_STREAM_MAX_SOURCES_PER_MODEL': 'invalid'},
-            clear=True,
-        ):
-            self.assertEqual(
-                processor._ultralytics_stream_max_sources_per_model(),
-                3,
-            )
-
-    def test_ultralytics_stream_precision_kwargs_follow_worker_mode(
-        self,
-    ) -> None:
-        """Direct RTSP mode keeps .pt fallback at the requested precision."""
-        with (
-            patch.dict(os.environ, {'YOLO_WORKER_PRECISION': 'f16'}),
-            patch(
-                'src.stream_processor.precision_kwargs',
-                return_value={'quantize': 16},
-            ) as precision,
-        ):
-            self.assertEqual(
-                processor._ultralytics_stream_precision_kwargs(),
-                {'quantize': 16},
-            )
-            precision.assert_called_once_with(True)
-
-        with (
-            patch.dict(os.environ, {'YOLO_WORKER_PRECISION': 'f32'}),
-            patch(
-                'src.stream_processor.precision_kwargs',
-                return_value={'quantize': 32},
-            ) as precision,
-        ):
-            self.assertEqual(
-                processor._ultralytics_stream_precision_kwargs(),
-                {'quantize': 32},
-            )
-            precision.assert_called_once_with(False)
-
-        with patch.dict(os.environ, {'YOLO_WORKER_PRECISION': 'int8'}):
-            self.assertEqual(
-                processor._ultralytics_stream_precision_kwargs(),
-                {'rect': False},
-            )
-
-    def test_ultralytics_stream_context_error_explains_gpu_memory_fix(
-        self,
-    ) -> None:
-        """A failed TensorRT context should not look like a shape bug."""
-        message = processor._ultralytics_stream_error_message(
-            AttributeError(
-                "'NoneType' object has no attribute 'set_input_shape'",
-            ),
-        )
-
-        self.assertIn('TensorRT execution context', message)
-        self.assertIn('GPU memory', message)
-
-    @patch.dict(
-        os.environ,
-        {'ULTRALYTICS_STREAM_MAX_SOURCES_PER_MODEL': '3'},
-    )
-    async def test_ultralytics_stream_splits_busy_model_groups(self) -> None:
-        """Same-model RTSP sources are sharded before predictors start."""
-        configs = []
-        for index in range(7):
-            cfg = self.dummy_cfg.copy()
-            cfg['model_key'] = 'yolo26m'
-            cfg['video_url'] = f'rtsp://example.com/stream{index}'
-            configs.append(cfg)
-
-        with (
-            patch('src.stream_processor._validate_server_model_key'),
-            patch(
-                'src.stream_processor._run_ultralytics_model_stream_group',
-                new_callable=AsyncMock,
-            ) as run_group,
-        ):
-            await processor._run_ultralytics_stream_group(configs)
-
-        self.assertEqual(run_group.await_count, 3)
-        self.assertEqual(
-            [len(call.args[1]) for call in run_group.await_args_list],
-            [3, 3, 1],
-        )
-        self.assertEqual(
-            [call.kwargs['shard_index'] for call in run_group.await_args_list],
-            [1, 2, 3],
-        )
-        startup_locks = [
-            call.kwargs['startup_lock']
-            for call in run_group.await_args_list
-        ]
-        self.assertTrue(
-            all(lock is startup_locks[0] for lock in startup_locks),
-        )
-
-    async def test_gpu_stream_always_uses_tcp_relay(self) -> None:
-        """GPU group cameras use the local relay before opening TorchCodec."""
-        worker_client = MagicMock()
-        relay = MagicMock()
-        relay.publish_url = 'rtsp://127.0.0.1:8554/gpu-decode-test'
-        relay.is_running = True
-        relay.start = AsyncMock()
-        relay.close = AsyncMock()
-        with (
-            patch(
-                'src.stream_processor.GpuRtspRelay',
-                return_value=relay,
-            ) as relay_class,
-            patch(
-                'src.stream_processor._run_single_stream',
-                new_callable=AsyncMock,
-            ) as run_single,
-            patch(
-                'src.stream_processor.asyncio.sleep',
-                new_callable=AsyncMock,
-            ),
-        ):
-            await processor._run_gpu_stream_with_restart(
-                self.dummy_cfg,
-                worker_client,
-            )
-
-        run_single.assert_awaited_once_with(
-            self.dummy_cfg,
-            gpu_yolo_client=worker_client,
-            gpu_decode_stream_url=relay.publish_url,
-        )
-        relay_class.assert_called_once_with(self.dummy_cfg['video_url'])
-        relay.start.assert_awaited_once()
-        relay.close.assert_awaited_once()
-
-    async def test_gpu_stream_retries_the_same_relay_pipeline(self) -> None:
-        """A relay or NVDEC error never changes this camera to CPU decode."""
-        worker_client = MagicMock()
-        relay = MagicMock()
-        relay.publish_url = 'rtsp://127.0.0.1:8554/gpu-decode-test'
-        relay.is_running = True
-        relay.start = AsyncMock()
-        relay.close = AsyncMock()
-        with (
-            patch(
-                'src.stream_processor.GpuRtspRelay',
-                return_value=relay,
-            ),
-            patch(
-                'src.stream_processor._run_single_stream',
-                new_callable=AsyncMock,
-                side_effect=[
-                    RuntimeError('open failed'),
-                    None,
-                ],
-            ) as run_single,
-            patch(
-                'src.stream_processor.asyncio.sleep',
-                new_callable=AsyncMock,
-            ),
-        ):
-            await processor._run_gpu_stream_with_restart(
-                self.dummy_cfg,
-                worker_client,
-            )
-
-        self.assertEqual(run_single.await_count, 2)
-        self.assertEqual(
-            run_single.await_args_list[0].kwargs['gpu_decode_stream_url'],
-            relay.publish_url,
-        )
-        self.assertEqual(
-            run_single.await_args_list[1].kwargs['gpu_decode_stream_url'],
-            relay.publish_url,
-        )
-        self.assertEqual(relay.start.await_count, 2)
-        relay.close.assert_awaited_once()
-
-    @patch.dict(os.environ, {'GPU_DECODE_ENABLED': 'true'})
-    @patch(
-        'src.stream_processor.GpuStreamCapture.is_available',
-        return_value=True,
-    )
-    async def test_gpu_stream_requires_relay_url(
-        self,
-        _gpu_available: Any,
-    ) -> None:
-        """GPU group code cannot silently open the remote RTSP source."""
-        with self.assertRaisesRegex(RuntimeError, 'local relay URL'):
-            await processor._run_single_stream(
-                self.dummy_cfg,
-                gpu_yolo_client=MagicMock(),
-            )
 
     @patch('main.MainApp.fetch_stream_configs')
     async def test_reload_config_skips_expired_config(
@@ -3543,6 +2648,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_fetch.return_value = [new_cfg]
 
         with (
+            patch.object(self.app, '_ensure_yolo_worker', return_value=False),
             patch('main.MainApp.start_process') as mock_start,
             patch(
                 'main.delete_stream_live_metadata',
@@ -3609,7 +2715,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_app.run.assert_awaited_once()
         mock_app.cleanup_resources.assert_not_awaited()
 
-    @patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'})
+    @patch.object(MainApp, '_ensure_yolo_worker', return_value=False)
     @patch('main.Process')
     @patch('main.json.load')
     @patch('main.open', create=True)
@@ -3620,6 +2726,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_open: Any,
         mock_json_load: Any,
         mock_process_class: Any,
+        _mock_ensure_yolo_worker: Any,
     ) -> None:
         """Test main function with --config argument (JSON file)."""
         from main import main as main_func
@@ -3655,7 +2762,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_proc.start.assert_called_once()
         mock_proc.join.assert_called()
 
-    @patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'})
+    @patch.object(MainApp, '_ensure_yolo_worker', return_value=False)
     @patch('main.print')
     @patch('main.Process')
     @patch('main.json.load')
@@ -3668,6 +2775,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_json_load: Any,
         mock_process_class: Any,
         mock_print: Any,
+        _mock_ensure_yolo_worker: Any,
     ) -> Any:
         """
         Test main function with JSON config handling KeyboardInterrupt
@@ -3728,7 +2836,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # Verify process cleanup in finally block
         mock_process.terminate.assert_called()
 
-    @patch.dict(os.environ, {'YOLO_WORKER_ENABLED': 'false'})
+    @patch.object(MainApp, '_ensure_yolo_worker', return_value=False)
     @patch('main.Process')
     @patch('main.json.load')
     @patch('main.open', create=True)
@@ -3739,6 +2847,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_open: Any,
         mock_json_load: Any,
         mock_process_class: Any,
+        _mock_ensure_yolo_worker: Any,
     ) -> Any:
         """
         Test main function JSON config with alive process cleanup

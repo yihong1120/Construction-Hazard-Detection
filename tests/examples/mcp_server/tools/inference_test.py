@@ -232,10 +232,10 @@ class LoadImageTests(unittest.IsolatedAsyncioTestCase):
 class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
     """Tests for the private _init_detector method."""
 
-    async def test_init_detector_creates_yolo_detector(self) -> None:
-        """Should create YoloDetector with expected parameters."""
+    async def test_init_detector_creates_local_yolo_detector(self) -> None:
+        """Should create LocalYoloDetector with expected parameters."""
         with patch(
-            'examples.mcp_server.tools.inference.YoloDetector',
+            'examples.mcp_server.tools.inference.LocalYoloDetector',
         ) as mock_lsd, patch(
             'examples.mcp_server.tools.inference.get_env_int',
             side_effect=[1, 10],

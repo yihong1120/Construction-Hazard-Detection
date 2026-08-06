@@ -9,7 +9,7 @@ import numpy as np
 
 from examples.mcp_server.config import get_env_int
 from examples.mcp_server.schemas import InferenceResponse
-from src.yolo_detector import YoloDetector
+from src.local_yolo_detector import LocalYoloDetector
 
 
 class InferenceTools:
@@ -22,7 +22,7 @@ class InferenceTools:
     def __init__(self) -> None:
         """Initialise lazy inference resources."""
         self.logger = logging.getLogger(__name__)
-        self._detector: YoloDetector | None = None
+        self._detector: LocalYoloDetector | None = None
 
     async def detect_frame(
         self,
@@ -143,17 +143,15 @@ class InferenceTools:
     async def _init_detector(
         self, model_key: str, use_ultralytics: bool,
         movement_thr: float,
-    ) -> YoloDetector:
+    ) -> LocalYoloDetector:
         """Initialise the detection system.
 
         The underlying detector is imported dynamically to avoid heavy import
         costs for users who only interact with configuration or non-inference
         tools.
         """
-        # Create detector
-        self._detector = YoloDetector(
+        self._detector = LocalYoloDetector(
             model_key=model_key,
-            detect_with_server=False,
             use_ultralytics=use_ultralytics,
             movement_thr=movement_thr,
             fps=get_env_int('TARGET_FPS', 1),
