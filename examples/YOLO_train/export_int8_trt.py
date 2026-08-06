@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import random
+import re
 import shutil
 import sys
 import tempfile
@@ -410,36 +411,35 @@ def _patched_onnx2engine_source(source: str) -> str:
         '        config.add_optimization_profile(profile)',
         '',
     ])
-    modelopt_gate = '\n'.join([
-        '    if is_trt11 and (use_fp16 or use_int8):',
-        '        onnx_file = modelopt_quantize_onnx(onnx_file, quantize, '
-        'dataset, shape, dynamic, prefix)',
-        '',
-    ])
-    explicit_qdq_gate = '\n'.join([
-        '    force_explicit_int8 = use_int8 and FORCE_EXPLICIT_INT8',
-        '    if (is_trt11 and (use_fp16 or use_int8)) or '
-        'force_explicit_int8:',
-        '        onnx_file = modelopt_quantize_onnx(onnx_file, quantize, '
-        'dataset, shape, dynamic, prefix)',
-        '        if force_explicit_int8:',
-        '            use_int8 = False',
-        '            use_fp16 = True',
-        '',
-    ])
+    modelopt_gate = re.compile(
+        r'^(?P<indent>[ \t]*)if is_trt11 and \(use_fp16 or use_int8\):\n'
+        r'(?P=indent)[ \t]+(?P<call>onnx_file = '
+        r'modelopt_quantize_onnx\([\s\S]*?\))\n',
+        re.MULTILINE,
+    )
     if dynamic_profile not in source:
         raise RuntimeError(
             'Cannot patch Ultralytics dynamic TensorRT profile.',
         )
-    if modelopt_gate not in source:
+    modelopt_match = modelopt_gate.search(source)
+    if modelopt_match is None:
         raise RuntimeError('Cannot patch Ultralytics ModelOpt INT8 gate.')
-    return source.replace(
+    indent = modelopt_match.group('indent')
+    explicit_qdq_gate = '\n'.join([
+        f'{indent}force_explicit_int8 = use_int8 and FORCE_EXPLICIT_INT8',
+        f'{indent}if (is_trt11 and (use_fp16 or use_int8)) or '
+        'force_explicit_int8:',
+        f"{indent}    {modelopt_match.group('call')}",
+        f'{indent}    if force_explicit_int8:',
+        f'{indent}        use_int8 = False',
+        f'{indent}        use_fp16 = True',
+        '',
+    ])
+    source = source.replace(
         dynamic_profile,
         batch_only_profile,
-    ).replace(
-        modelopt_gate,
-        explicit_qdq_gate,
     )
+    return modelopt_gate.sub(explicit_qdq_gate, source, count=1)
 
 
 def patch_tensorrt_engine_exporter() -> None:

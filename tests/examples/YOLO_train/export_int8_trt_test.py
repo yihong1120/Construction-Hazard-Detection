@@ -253,6 +253,34 @@ def test_patched_onnx2engine_uses_batch_only_explicit_qdq() -> None:
     assert 'use_fp16 = True' in patched
 
 
+def test_patched_onnx2engine_accepts_multiline_modelopt_gate() -> None:
+    """The exporter patch tolerates Ultralytics call formatting changes."""
+    source = subject.original_onnx2engine_source
+    assert source is not None
+    original_call = (
+        '        onnx_file = modelopt_quantize_onnx('
+        'onnx_file, quantize, dataset, shape, dynamic, prefix)'
+    )
+    multiline_call = '\n'.join([
+        '        onnx_file = modelopt_quantize_onnx(',
+        '            onnx_file,',
+        '            quantize,',
+        '            dataset,',
+        '            shape,',
+        '            dynamic,',
+        '            prefix,',
+        '        )',
+    ])
+    assert original_call in source
+
+    patched = subject._patched_onnx2engine_source(
+        source.replace(original_call, multiline_call),
+    )
+
+    assert 'force_explicit_int8 = use_int8 and FORCE_EXPLICIT_INT8' in patched
+    assert multiline_call in patched
+
+
 def test_set_calibration_batch_size_restores_export_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
