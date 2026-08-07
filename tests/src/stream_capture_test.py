@@ -707,3 +707,74 @@ def test_generic_capture_retries_when_quality_refresh_returns_none() -> None:
                 await generator.__anext__()
 
     asyncio.run(run_case())
+
+
+def test_nonnegative_float_environment_uses_default_for_invalid_value(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid watchdog settings leave stream capture at a safe default."""
+    monkeypatch.setenv('STREAM_CAPTURE_FREEZE_SAMPLE_SECONDS', 'not-a-float')
+
+    assert stream_capture._nonnegative_float_env(
+        'STREAM_CAPTURE_FREEZE_SAMPLE_SECONDS',
+        1.5,
+    ) == 1.5
+
+
+def test_frozen_frame_watchdog_skips_invalid_fast_and_moving_frames() -> None:
+    """Only sustained identical valid frames trigger the reconnect signal."""
+    capture = StreamCapture('rtsp://camera.example/live')
+    capture.freeze_reconnect_seconds = 5
+    capture.freeze_sample_seconds = 1
+    capture.freeze_frame_delta = 0
+
+    assert capture._should_reconnect_after_frozen_frame(
+        np.empty((0, 0, 3), dtype=np.uint8),
+    ) is False
+
+    capture._freeze_last_sample_at = 10
+    with patch.object(stream_capture.time, 'monotonic', return_value=10.5):
+        assert capture._should_reconnect_after_frozen_frame(
+            np.zeros((2, 2, 3), dtype=np.uint8),
+        ) is False
+
+    capture._freeze_last_sample = np.zeros((2, 2, 3), dtype=np.uint8)
+    capture._freeze_last_sample_at = 0
+    capture._freeze_last_motion_at = 0
+    with patch.object(stream_capture.time, 'monotonic', return_value=2):
+        assert capture._should_reconnect_after_frozen_frame(
+            np.ones((2, 2, 3), dtype=np.uint8),
+        ) is False
+    assert capture._freeze_last_motion_at == 2
+
+
+def test_execute_capture_reconnects_after_frozen_frame() -> None:
+    """The capture generator signals and recovers from a frozen source."""
+    async def run_case() -> None:
+        capture = StreamCapture('rtsp://camera.example/live', 0)
+        capture.cap = SimpleNamespace(
+            read=MagicMock(
+                side_effect=[
+                    (True, np.zeros((2, 2, 3), dtype=np.uint8)),
+                    (True, np.ones((2, 2, 3), dtype=np.uint8)),
+                ],
+            ),
+        )
+        with (
+            patch.object(capture, 'initialise_stream', new=AsyncMock()),
+            patch.object(capture, 'release_resources', new=AsyncMock()),
+            patch.object(
+                capture,
+                '_should_reconnect_after_frozen_frame',
+                side_effect=[True, False],
+            ),
+            patch.object(stream_capture.asyncio, 'sleep', new=AsyncMock()),
+        ):
+            generator = capture.execute_capture()
+            frame, _timestamp = await generator.__anext__()
+            await generator.aclose()
+
+        assert capture.reconnect_event.is_set()
+        assert np.array_equal(frame, np.ones((2, 2, 3), dtype=np.uint8))
+
+    asyncio.run(run_case())

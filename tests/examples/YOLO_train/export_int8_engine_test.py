@@ -306,3 +306,52 @@ def test_main_exports_every_requested_model(
 def test_main_rejects_output_with_multiple_models() -> None:
     with pytest.raises(SystemExit):
         export_int8_engine.main(['yolo26n', 'yolo26s', '--output', 'one'])
+
+
+def test_path_helpers_cover_absolute_and_fallback_roots(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absolute paths and a missing configured dataset root stay usable."""
+    checkpoint = tmp_path / 'absolute.pt'
+    checkpoint.write_text('model')
+    assert export_int8_engine.checkpoint(
+        str(checkpoint),
+        tmp_path / 'models',
+    ) == checkpoint.resolve()
+
+    dataset = tmp_path / 'dataset'
+    images = dataset / 'images'
+    images.mkdir(parents=True)
+    data_yaml = dataset / 'data.yaml'
+    data_yaml.write_text(
+        'path: missing-root\ntrain: train/images\nval: val/images\n',
+    )
+    calibration = export_int8_engine.calibration_yaml(
+        data_yaml,
+        tmp_path / 'temporary',
+    )
+    assert calibration != data_yaml
+
+    output = tmp_path / 'absolute.engine'
+    assert export_int8_engine.output_path(
+        output,
+        tmp_path / 'outputs',
+    ) == output.resolve()
+
+
+def test_checkpoint_accepts_project_relative_model_path(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A relative path with a parent directory uses the project root."""
+    root = tmp_path / 'repo'
+    checkpoint = root / 'models' / 'nested.pt'
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_text('model')
+    monkeypatch.setattr(export_int8_engine, 'ROOT', root)
+
+    assert export_int8_engine.checkpoint(
+        'models/nested.pt',
+        root / 'unused',
+    ) == checkpoint.resolve()

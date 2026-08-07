@@ -640,3 +640,206 @@ def test_writer_loop_reraises_cancelled_error() -> None:
             await task
 
     asyncio.run(run_case())
+
+
+def test_keyframe_interval_uses_default_for_invalid_environment(
+        monkeypatch: Any,
+) -> None:
+    """An invalid GOP interval cannot prevent the publisher from starting."""
+    monkeypatch.setenv('MEDIA_PUBLISH_KEYFRAME_INTERVAL_SECONDS', 'invalid')
+
+    assert publisher._keyframe_interval_seconds() == 2.0
+
+
+def test_publish_does_not_start_writer_when_first_frame_fails(
+        monkeypatch: Any,
+) -> None:
+    """A failed initial stdin write leaves no orphan writer task."""
+    async def fake_start(_width: int, _height: int) -> None:
+        stream._started = True
+
+    stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+    monkeypatch.setattr(stream, '_start', fake_start)
+    monkeypatch.setattr(
+        stream, '_write_first_frame',
+        AsyncMock(return_value=False),
+    )
+
+    asyncio.run(stream.publish(np.zeros((2, 2, 3), dtype=np.uint8)))
+
+    assert stream._writer_task is None
+
+
+def test_start_falls_back_after_nvenc_is_marked_unavailable(
+        monkeypatch: Any,
+) -> None:
+    """A previous NVENC startup error forces the next process onto x264."""
+    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+        commands.append(args)
+        return _FakeProcess()
+
+    commands: list[tuple[object, ...]] = []
+    stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+    stream._nvenc_unavailable = True
+    monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
+    monkeypatch.setattr(
+        publisher, '_select_encoder',
+        lambda _path: 'h264_nvenc',
+    )
+    monkeypatch.setattr(
+        publisher.asyncio,
+        'create_subprocess_exec',
+        fake_create_subprocess_exec,
+    )
+
+    asyncio.run(stream._start(320, 240))
+    asyncio.run(stream.close())
+
+    assert 'libx264' in commands[0]
+    assert stream._uses_nvenc is False
+
+
+def test_start_releases_reserved_nvenc_when_process_creation_fails(
+        monkeypatch: Any,
+) -> None:
+    """A failed ffmpeg launch cannot leak the local NVENC reservation."""
+    async def fail_create_subprocess_exec(*_args, **_kwargs) -> Any:
+        raise OSError('ffmpeg unavailable')
+
+    releases: list[bool] = []
+    stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+    monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
+    monkeypatch.setattr(
+        publisher, '_select_encoder',
+        lambda _path: 'h264_nvenc',
+    )
+    monkeypatch.setattr(publisher, 'try_acquire_nvenc_session', lambda: True)
+    monkeypatch.setattr(
+        publisher,
+        'release_nvenc_session',
+        lambda: releases.append(True),
+    )
+    monkeypatch.setattr(
+        publisher.asyncio,
+        'create_subprocess_exec',
+        fail_create_subprocess_exec,
+    )
+
+    with pytest.raises(OSError, match='ffmpeg unavailable'):
+        asyncio.run(stream._start(320, 240))
+
+    assert releases == [True]
+    assert stream._uses_nvenc is False
+
+
+def test_vaapi_helpers_cover_device_options_and_errors(
+        monkeypatch: Any,
+) -> None:
+    """VAAPI commands use defaults and reject inaccessible devices."""
+    monkeypatch.setenv('MEDIA_PUBLISH_VAAPI_BITRATE', '')
+    monkeypatch.setenv('MEDIA_PUBLISH_VAAPI_MAXRATE', '')
+    monkeypatch.setenv('MEDIA_PUBLISH_VAAPI_BUFSIZE', '')
+    monkeypatch.setenv('MEDIA_PUBLISH_VAAPI_DEVICE', '/dev/dri/custom')
+    options = publisher._build_vaapi_options()
+
+    assert publisher._default_vaapi_bitrate in options
+    assert publisher._default_vaapi_maxrate in options
+    assert publisher._default_vaapi_bufsize in options
+    assert publisher._vaapi_device() == '/dev/dri/custom'
+
+    monkeypatch.setattr(publisher.os, 'access', lambda *_args: False)
+    with pytest.raises(RuntimeError, match='not accessible'):
+        publisher._ensure_vaapi_device_access()
+
+    monkeypatch.setattr(publisher.os, 'access', lambda *_args: True)
+    publisher._ensure_vaapi_device_access()
+    command = publisher.MediaStreamPublisher(
+        'rtsp://127.0.0.1:8554/out',
+    )._build_ffmpeg_command('/bin/ffmpeg', 320, 240, encoder='h264_vaapi')
+    assert '-vaapi_device' in command
+
+
+def test_select_encoder_rejects_unavailable_vaapi(monkeypatch: Any) -> None:
+    """An explicit VAAPI choice must report a missing ffmpeg encoder."""
+    monkeypatch.setenv('MEDIA_PUBLISH_ENCODER', 'vaapi')
+    monkeypatch.setattr(publisher, '_ffmpeg_has_encoder', lambda *_args: False)
+
+    with pytest.raises(RuntimeError, match='h264_vaapi'):
+        publisher._select_encoder('/bin/ffmpeg')
+
+
+def test_stderr_and_first_frame_failures_mark_publisher_unavailable() -> None:
+    """NVENC errors and failed first writes are handled without a writer."""
+    stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+    stream._uses_nvenc = True
+    process = SimpleNamespace(
+        stderr=_FakeStderr([b'Cannot load libcuda\n', b'']),
+    )
+    asyncio.run(stream._drain_stderr(process))
+    assert stream._nvenc_unavailable is True
+    assert publisher._is_nvenc_unavailable_error('unrelated error') is False
+
+    stream._process = _FakeProcess()
+    stream._process.stdin = _ErrorStdin()
+    stream._started = True
+    assert asyncio.run(
+        stream._write_first_frame(np.zeros((2, 2, 3), dtype=np.uint8)),
+    ) is False
+    assert stream._started is False
+
+
+def test_start_covers_hardware_encoder_edge_cases(monkeypatch: Any) -> None:
+    """VAAPI and exhausted NVENC sessions select the intended startup path."""
+    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+        commands.append(args)
+        return _FakeProcess()
+
+    commands: list[tuple[object, ...]] = []
+    monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
+    monkeypatch.setattr(
+        publisher.asyncio,
+        'create_subprocess_exec',
+        fake_create_subprocess_exec,
+    )
+    vaapi = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/vaapi')
+    with (
+        monkeypatch.context() as context,
+    ):
+        context.setattr(
+            publisher,
+            '_select_encoder',
+            lambda _path: 'h264_vaapi',
+        )
+        context.setattr(publisher, '_ensure_vaapi_device_access', lambda: None)
+        asyncio.run(vaapi._start(320, 240))
+    asyncio.run(vaapi.close())
+    assert '-vaapi_device' in commands[0]
+
+    nvenc = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/nvenc')
+    with (
+        monkeypatch.context() as context,
+    ):
+        context.setattr(
+            publisher,
+            '_select_encoder',
+            lambda _path: 'h264_nvenc',
+        )
+        context.setattr(publisher, 'try_acquire_nvenc_session', lambda: False)
+        asyncio.run(nvenc._start(320, 240))
+    asyncio.run(nvenc.close())
+    assert 'libx264' in commands[1]
+
+    no_stdin = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+    no_stdin._process = SimpleNamespace(stdin=None)
+    no_stdin._started = True
+    assert asyncio.run(
+        no_stdin._write_first_frame(np.zeros((2, 2, 3), dtype=np.uint8)),
+    ) is False
+
+
+def test_select_encoder_accepts_available_vaapi(monkeypatch: Any) -> None:
+    """An explicit VAAPI configuration is retained when ffmpeg supports it."""
+    monkeypatch.setenv('MEDIA_PUBLISH_ENCODER', 'h264_vaapi')
+    monkeypatch.setattr(publisher, '_ffmpeg_has_encoder', lambda *_args: True)
+
+    assert publisher._select_encoder('/bin/ffmpeg') == 'h264_vaapi'

@@ -543,3 +543,179 @@ def test_script_main_block_invokes_main_before_model_io(
 
     with pytest.raises(SystemExit, match='batch > 1'):
         runpy.run_path(str(script), run_name='__main__')
+
+
+def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed labels and calibration layouts fail with clear outcomes."""
+    missing = tmp_path / 'missing.txt'
+    assert subject.label_classes(missing) == set()
+    labels = tmp_path / 'labels'
+    images = tmp_path / 'images'
+    labels.mkdir()
+    images.mkdir()
+    (labels / 'item.txt').write_text('\nnot-a-class\n2 0.5 0.5 1 1\n')
+    image = images / 'item.jpg'
+    image.write_bytes(b'image')
+    assert subject.label_classes(labels / 'item.txt') == {2}
+
+    duplicate = images / 'duplicate.jpg'
+    duplicate.write_bytes(b'image')
+    (labels / 'duplicate.txt').write_text('0 0 0 0 0\n1 0 0 0 0\n')
+    selected = subject.class_balanced_images(images, labels, 1, seed=1)
+    assert len(selected) == 1
+
+    invalid_yaml = tmp_path / 'invalid.yaml'
+    invalid_yaml.write_text('- images\n')
+    monkeypatch.setattr(
+        subject, 'build_calibration_yaml',
+        lambda *_args: invalid_yaml,
+    )
+    with pytest.raises(ValueError, match='must be a mapping'):
+        subject.prepare_calibration_data(invalid_yaml, tmp_path / 'work', 1, 1)
+
+    split_yaml = tmp_path / 'split.yaml'
+    split_yaml.write_text('path: .\nval: [images]\n')
+    monkeypatch.setattr(
+        subject, 'build_calibration_yaml',
+        lambda *_args: split_yaml,
+    )
+    with pytest.raises(ValueError, match='must point to one images directory'):
+        subject.prepare_calibration_data(split_yaml, tmp_path / 'work', 1, 1)
+
+    missing_layout = tmp_path / 'missing-layout.yaml'
+    missing_layout.write_text('path: .\nval: absent/images\n')
+    monkeypatch.setattr(
+        subject,
+        'build_calibration_yaml',
+        lambda *_args: missing_layout,
+    )
+    assert subject.prepare_calibration_data(
+        missing_layout,
+        tmp_path / 'work',
+        1,
+        1,
+    ) == (missing_layout, 0)
+
+    empty_root = tmp_path / 'empty'
+    (empty_root / 'val' / 'images').mkdir(parents=True)
+    (empty_root / 'val' / 'labels').mkdir()
+    empty_yaml = tmp_path / 'empty.yaml'
+    empty_yaml.write_text(f'path: {empty_root}\nval: val/images\n')
+    monkeypatch.setattr(
+        subject, 'build_calibration_yaml',
+        lambda *_args: empty_yaml,
+    )
+    with pytest.raises(FileNotFoundError, match='No calibration images'):
+        subject.prepare_calibration_data(empty_yaml, tmp_path / 'work', 1, 1)
+
+
+def test_export_configuration_setters_and_negative_image_limit(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+) -> None:
+    """Export helpers retain unique exclusions and reject negative limits."""
+    subject.set_calibration_method('max')
+    subject.set_node_exclusions(['head', 'head', 'tail'])
+    assert subject.calibration_method == 'max'
+    assert subject.node_exclusion_patterns == ('head', 'tail')
+
+    args = _export_args(tmp_path)
+    args.calib_images = -1
+    monkeypatch.setattr(subject, 'parse_args', lambda: args)
+    with pytest.raises(SystemExit, match='calib-images'):
+        subject.main()
+
+
+def test_exporter_patch_reports_unexpected_upstream_shapes(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unsupported Ultralytics exporter layouts fail before engine export."""
+    with pytest.raises(RuntimeError, match='dynamic TensorRT profile'):
+        subject._patched_onnx2engine_source('def onnx2engine():\n    pass\n')
+
+    source = subject.original_onnx2engine_source
+    assert source is not None
+    without_gate = source.replace('modelopt_quantize_onnx', 'other_quantize')
+    with pytest.raises(RuntimeError, match='ModelOpt INT8 gate'):
+        subject._patched_onnx2engine_source(without_gate)
+
+    with (
+        monkeypatch.context() as context,
+    ):
+        context.setattr(subject.ast, 'get_source_segment', lambda *_args: None)
+        with pytest.raises(RuntimeError, match='INT8 call'):
+            subject._patched_onnx2engine_source(source)
+
+    gate = subject.ast.If(
+        test=subject.ast.Constant(value=True),
+        body=[
+            subject.ast.Assign(
+                targets=[subject.ast.Name(id='onnx_file')],
+                value=subject.ast.Call(
+                    func=subject.ast.Name(id='modelopt_quantize_onnx'),
+                    args=[],
+                    keywords=[],
+                ),
+            ),
+        ],
+        orelse=[],
+    )
+    gate.lineno = 1
+    gate.col_offset = 0
+    call = gate.body[0]
+    call.lineno = 1
+    call.col_offset = 0
+    call.end_lineno = None
+    call.end_col_offset = None
+    with monkeypatch.context() as context:
+        context.setattr(subject.ast, 'walk', lambda _tree: [gate])
+        context.setattr(
+            subject.ast,
+            'get_source_segment',
+            lambda *_args: 'onnx_file = modelopt_quantize_onnx()',
+        )
+        with pytest.raises(RuntimeError, match='call end'):
+            subject._patched_onnx2engine_source(source)
+
+    monkeypatch.setattr(subject, 'original_onnx2engine_source', None)
+    monkeypatch.setattr(
+        subject, '_require_modelopt_export_support', MagicMock(),
+    )
+    with pytest.raises(RuntimeError, match='source is unavailable'):
+        subject.patch_tensorrt_engine_exporter()
+
+
+def test_main_adds_detect_head_exclusion_to_mixed_precision_export(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+) -> None:
+    """The convenience flag is forwarded to the ModelOpt exclusion setter."""
+    args = _export_args(tmp_path)
+    args.exclude_detect_head = True
+    monkeypatch.setattr(subject, 'parse_args', lambda: args)
+    monkeypatch.setattr(subject, 'set_calibration_batch_size', MagicMock())
+    monkeypatch.setattr(subject, 'set_calibration_method', MagicMock())
+    exclusions = MagicMock()
+    monkeypatch.setattr(subject, 'set_node_exclusions', exclusions)
+    monkeypatch.setattr(subject, 'patch_tensorrt_engine_exporter', MagicMock())
+    monkeypatch.setattr(
+        subject,
+        'prepare_calibration_data',
+        lambda source, *_args: (source, 0),
+    )
+    monkeypatch.setattr(subject, 'build_data_yaml', lambda value: Path(value))
+
+    class FakeYolo:
+        def __init__(self, _path: str) -> None:
+            pass
+
+        def export(self, **_kwargs: object) -> str:
+            return str(args.output)
+
+    monkeypatch.setattr(subject, 'YOLO', FakeYolo)
+    subject.main()
+
+    exclusions.assert_called_once_with([subject.detect_head_node_pattern])

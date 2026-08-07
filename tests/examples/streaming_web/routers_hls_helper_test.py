@@ -151,6 +151,7 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
                 base_path,
             ),
         )
+
         self.assertTrue(
             routers._opaque_media_session_allows_path(
                 {
@@ -202,6 +203,154 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             ),
             overlay_path,
         )
+
+    async def test_restore_playback_session_rejects_invalid_capability_data(
+        self,
+    ) -> None:
+        """A media token can restore only a complete matching session scope."""
+        request = SimpleNamespace(query_params={}, headers={})
+        rds = AsyncMock()
+        descriptor: dict[str, object] = {
+            'label': 'SiteA',
+            'stream_name': 'Camera1',
+            'profile': 'clean',
+            'rendition': 'detail',
+        }
+        base: dict[str, object] = {
+            'username': 'alice',
+            'site': 'SiteA',
+            'cameras': ['Camera1'],
+            'profile': 'clean',
+            'quality': 'detail',
+            'playback_sessions': {'session': descriptor},
+        }
+        with patch.object(
+            routers,
+            'get_media_session',
+            new=AsyncMock(return_value=None),
+        ) as get_media:
+            assert await routers._restore_playback_session(
+                rds,
+                'session',
+                request,
+            ) is None
+
+            get_media.return_value = {'username': 'alice'}
+            assert await routers._restore_playback_session(
+                rds,
+                'session',
+                request,
+            ) is None
+
+            get_media.return_value = {'playback_sessions': {'session': []}}
+            assert await routers._restore_playback_session(
+                rds,
+                'session',
+                request,
+            ) is None
+
+            for field in (
+                'label',
+                'stream_name',
+                'profile',
+                'rendition',
+            ):
+                malformed = {
+                    **base,
+                    'playback_sessions': {
+                        'session': {
+                            **descriptor,
+                            field: '',
+                        },
+                    },
+                }
+                get_media.return_value = malformed
+                assert await routers._restore_playback_session(
+                    rds,
+                    'session',
+                    request,
+                ) is None
+
+            wrong_scope = {
+                **base,
+                'playback_sessions': {
+                    'session': {
+                        **descriptor,
+                        'label': 'OtherSite',
+                    },
+                },
+            }
+            get_media.return_value = wrong_scope
+            assert await routers._restore_playback_session(
+                rds,
+                'session',
+                request,
+            ) is None
+
+            get_media.return_value = {**base, 'quality': 'unexpected'}
+            assert await routers._restore_playback_session(
+                rds,
+                'session',
+                request,
+            ) is None
+
+            get_media.return_value = {**base, 'username': ''}
+            assert await routers._restore_playback_session(
+                rds,
+                'session',
+                request,
+            ) is None
+
+            invalid_language = {
+                **base,
+                'profile': 'overlay',
+                'playback_sessions': {
+                    'session': {
+                        **descriptor,
+                        'profile': 'overlay',
+                        'language': 7,
+                    },
+                },
+            }
+            get_media.return_value = invalid_language
+            assert await routers._restore_playback_session(
+                rds,
+                'session',
+                request,
+            ) is None
+
+            preview = {
+                **base,
+                'quality': 'preview',
+                'playback_sessions': {
+                    'session': {
+                        **descriptor,
+                        'rendition': 'preview',
+                    },
+                },
+            }
+            get_media.return_value = preview
+            restored = await routers._restore_playback_session(
+                rds,
+                'session',
+                request,
+            )
+            assert restored is not None
+            self.assertTrue(
+                str(restored['base_media_path']).endswith('_preview'),
+            )
+
+            with patch.object(
+                routers,
+                '_opaque_media_session_allows_path',
+                return_value=False,
+            ):
+                get_media.return_value = base
+                assert await routers._restore_playback_session(
+                    rds,
+                    'session',
+                    request,
+                ) is None
 
     async def test_demand_and_media_session_indexes_tolerate_failures(
         self,

@@ -428,6 +428,61 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                 await playback._decode_access_token('token', self.redis)
         self.assertEqual(empty_subject.exception.status_code, 401)
 
+    async def test_bearer_decode_rejects_revoked_and_redis_failures(
+        self,
+    ) -> None:
+        """Playback tokens fail closed when revocation cannot be verified."""
+        payload = {'subject': {'username': 'alice'}}
+        with (
+            patch.object(
+                playback.jwt_access,
+                'decode_token',
+                return_value=payload,
+            ),
+            patch.object(
+                playback,
+                'is_access_token_revoked',
+                new=AsyncMock(return_value=True),
+            ),
+            self.assertRaises(HTTPException) as revoked,
+        ):
+            await playback._decode_access_token('token', self.redis)
+        self.assertEqual(revoked.exception.status_code, 401)
+
+        with (
+            patch.object(
+                playback.jwt_access,
+                'decode_token',
+                return_value=payload,
+            ),
+            patch.object(
+                playback,
+                'is_access_token_revoked',
+                new=AsyncMock(side_effect=playback.RedisError('offline')),
+            ),
+            self.assertRaises(HTTPException) as unavailable,
+        ):
+            await playback._decode_access_token('token', self.redis)
+        self.assertEqual(unavailable.exception.status_code, 503)
+
+    def test_streaming_descriptors_ignore_each_invalid_required_value(
+        self,
+    ) -> None:
+        """Only complete descriptors may restore HLS sessions."""
+        base: dict[str, object] = {
+            'session_id': 'session',
+            'label': 'SiteA',
+            'key': 'Camera1',
+            'profile': 'clean',
+            'rendition': 'detail',
+        }
+        for field in ('session_id', 'label', 'key', 'profile', 'rendition'):
+            item: dict[str, object] = dict(base)
+            item[field] = ''
+            self.assertEqual(
+                playback._streaming_session_descriptors([item]), {},
+            )
+
     async def test_user_lookup_and_principal_resolution_failures(self) -> None:
         self.db.scalar.return_value = '9'
         self.assertEqual(

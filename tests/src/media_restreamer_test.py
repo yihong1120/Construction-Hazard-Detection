@@ -205,6 +205,22 @@ def test_restart_terminates_live_process_without_closing_monitor() -> None:
     assert process.terminated
 
 
+def test_restart_ignores_closed_restreamer() -> None:
+    """A closed restreamer must not touch an already stopped process."""
+    stream = restreamer.MediaSourceRestreamer(
+        'rtsp://camera/stream',
+        'rtsp://127.0.0.1:8554/out',
+    )
+    process = _FakeProcess()
+    stream._closed = True
+    stream._process = process
+
+    asyncio.run(stream.restart())
+
+    assert stream._process is process
+    assert process.terminated is False
+
+
 def test_start_creates_monitor_task() -> None:
     """Exercise this test."""
     async def run_case() -> restreamer.MediaSourceRestreamer:
@@ -280,6 +296,69 @@ def test_monitor_loop_sleeps_before_restart(monkeypatch: Any) -> None:
     asyncio.run(stream._monitor_loop())
 
     assert sleeps == [True]
+
+
+def test_monitor_loop_releases_reserved_nvenc_session(
+        monkeypatch: Any,
+) -> None:
+    """NVENC reservations are released after the ffmpeg process exits."""
+    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+        commands.append(args)
+        stream._closed = True
+        return _OneShotProcess()
+
+    commands: list[tuple[object, ...]] = []
+    releases: list[bool] = []
+    stream = restreamer.MediaSourceRestreamer(
+        'rtsp://camera/stream',
+        'rtsp://127.0.0.1:8554/out',
+    )
+    monkeypatch.setattr(restreamer, '_find_ffmpeg', lambda: '/bin/ffmpeg')
+    monkeypatch.setattr(restreamer, '_get_encoder', lambda: 'nvenc')
+    monkeypatch.setattr(restreamer, 'try_acquire_nvenc_session', lambda: True)
+    monkeypatch.setattr(
+        restreamer,
+        'release_nvenc_session',
+        lambda: releases.append(True),
+    )
+    monkeypatch.setattr(
+        restreamer.asyncio,
+        'create_subprocess_exec',
+        fake_create_subprocess_exec,
+    )
+
+    asyncio.run(stream._monitor_loop())
+
+    assert 'h264_nvenc' in commands[0]
+    assert releases == [True]
+
+
+def test_monitor_loop_falls_back_when_nvenc_budget_is_full(
+        monkeypatch: Any,
+) -> None:
+    """A full local NVENC budget uses the software encoder for this stream."""
+    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+        commands.append(args)
+        stream._closed = True
+        return _OneShotProcess()
+
+    commands: list[tuple[object, ...]] = []
+    stream = restreamer.MediaSourceRestreamer(
+        'rtsp://camera/stream',
+        'rtsp://127.0.0.1:8554/out',
+    )
+    monkeypatch.setattr(restreamer, '_find_ffmpeg', lambda: '/bin/ffmpeg')
+    monkeypatch.setattr(restreamer, '_get_encoder', lambda: 'h264_nvenc')
+    monkeypatch.setattr(restreamer, 'try_acquire_nvenc_session', lambda: False)
+    monkeypatch.setattr(
+        restreamer.asyncio,
+        'create_subprocess_exec',
+        fake_create_subprocess_exec,
+    )
+
+    asyncio.run(stream._monitor_loop())
+
+    assert 'libx264' in commands[0]
 
 
 def test_close_cancels_monitor_task() -> None:

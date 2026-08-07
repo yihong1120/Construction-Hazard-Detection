@@ -8,10 +8,12 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 from jwt.exceptions import InvalidTokenError
+from redis.exceptions import RedisError
 
 from examples.auth.config import Settings
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import jwt_refresh
+from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.jwt_config import PyJWTBearer
 
 
@@ -66,6 +68,14 @@ class TestJwtConfig(unittest.TestCase):
             0,
             'The token string should not be empty.',
         )
+
+    def test_credentials_support_existing_mapping_access(self) -> None:
+        """Existing handlers can read JWT claims as a mapping."""
+        credentials = JwtAuthorizationCredentials({'username': 'alice'})
+
+        self.assertEqual(credentials['username'], 'alice')
+        self.assertIsNone(credentials.get('role'))
+        self.assertEqual(credentials.get('role', 'viewer'), 'viewer')
 
 
 if __name__ == '__main__':
@@ -188,3 +198,82 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload['sub'], 'alice')
         self.assertEqual(payload['subject'], {'username': 'alice'})
+
+    def test_decode_rejects_token_for_another_use(self) -> None:
+        """A refresh payload cannot be accepted by the access bearer."""
+        with (
+            patch(
+                'examples.auth.jwt_config.jwt.decode',
+                return_value={'token_use': 'refresh'},
+            ),
+            self.assertRaises(InvalidTokenError),
+        ):
+            self.bearer.decode_token('refresh-token')
+
+    async def test_bearer_reports_unavailable_revocation_service(self) -> None:
+        """Access tokens fail closed when their revocation store is absent."""
+        self.request.app.state.redis_client = None
+        with (
+            patch.object(
+                self.bearer,
+                'oauth2_scheme',
+                new=AsyncMock(return_value='access-token'),
+            ),
+            patch.object(
+                self.bearer,
+                'decode_token',
+                new=MagicMock(return_value={'subject': {'username': 'alice'}}),
+            ),
+            self.assertRaises(HTTPException) as error,
+        ):
+            await self.bearer(self.request)
+
+        self.assertEqual(error.exception.status_code, 503)
+
+    async def test_bearer_reports_revocation_store_errors(self) -> None:
+        """Redis failures have the same service-unavailable response."""
+        self.request.app.state.redis_client.client = MagicMock()
+        with (
+            patch.object(
+                self.bearer,
+                'oauth2_scheme',
+                new=AsyncMock(return_value='access-token'),
+            ),
+            patch.object(
+                self.bearer,
+                'decode_token',
+                new=MagicMock(return_value={'subject': {'username': 'alice'}}),
+            ),
+            patch(
+                'examples.auth.jwt_config.is_access_token_revoked',
+                new=AsyncMock(side_effect=RedisError('offline')),
+            ),
+            self.assertRaises(HTTPException) as error,
+        ):
+            await self.bearer(self.request)
+
+        self.assertEqual(error.exception.status_code, 503)
+
+    async def test_bearer_rejects_non_string_legacy_subject(self) -> None:
+        """A malformed legacy sub claim cannot become an authenticated user."""
+        self.request.app.state.redis_client.client = MagicMock()
+        with (
+            patch.object(
+                self.bearer,
+                'oauth2_scheme',
+                new=AsyncMock(return_value='access-token'),
+            ),
+            patch.object(
+                self.bearer,
+                'decode_token',
+                new=MagicMock(return_value={'sub': 7}),
+            ),
+            patch(
+                'examples.auth.jwt_config.is_access_token_revoked',
+                new=AsyncMock(return_value=False),
+            ),
+            self.assertRaises(HTTPException) as error,
+        ):
+            await self.bearer(self.request)
+
+        self.assertEqual(error.exception.status_code, 401)

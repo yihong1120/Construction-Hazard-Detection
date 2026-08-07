@@ -6,6 +6,8 @@ import sys
 from collections.abc import Iterable
 from types import ModuleType
 from typing import Any
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -815,3 +817,199 @@ def test_get_model_loads_and_caches_model(
     assert isinstance(model, FakeYOLO)
     assert loaded_paths == [str(model_path)]
     assert worker.model_cache['yolo26n'] is model
+
+
+def test_record_batch_metrics_logs_and_resets_counters(
+        monkeypatch: Any,
+        caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An enabled throughput interval emits one compact worker summary."""
+    worker = yolo_worker.YoloWorker(None)
+    worker.metrics_interval_seconds = 1
+    worker._metrics_started_at = 0
+    monkeypatch.setattr(yolo_worker.time, 'monotonic', lambda: 2)
+
+    with caplog.at_level('INFO'):
+        worker._record_batch_metrics('yolo26n', 2, 0.5)
+
+    assert 'throughput model=yolo26n' in caplog.text
+    assert worker._metrics_images == 0
+    assert worker._metrics_batches == 0
+    assert worker._metrics_predict_seconds == 0
+
+
+def test_send_result_drops_when_camera_queue_is_full() -> None:
+    """A stalled receiver cannot block the shared inference worker."""
+    worker = yolo_worker.YoloWorker(
+        None,
+        result_queues={'cam1': _FullQueue()},
+    )
+
+    worker._send_result(
+        _request('1', 'cam1', 'yolo26n'),
+        {'id': '1', 'ok': True, 'detections': []},
+    )
+
+
+def test_read_frame_closes_mapping_when_array_construction_fails(
+        monkeypatch: Any,
+) -> None:
+    """A malformed shared-memory request releases its mapped handle."""
+    class BrokenSharedMemory:
+        def __init__(self) -> None:
+            self.buf = object()
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    shared = BrokenSharedMemory()
+    monkeypatch.setattr(
+        yolo_worker.shared_memory,
+        'SharedMemory',
+        lambda **_kwargs: shared,
+    )
+
+    with pytest.raises(TypeError):
+        yolo_worker.YoloWorker._read_frame(_request('1', 'cam1', 'yolo26n'))
+
+    assert shared.closed is True
+
+
+def test_close_shared_frames_ignores_unmapped_and_plain_arrays() -> None:
+    """Only mapped frame views carry a handle that needs closing."""
+    unmapped = np.zeros((2, 2, 3), dtype=np.uint8).view(
+        yolo_worker._SharedFrameArray,
+    )
+    unmapped.shared_memory_handle = None
+
+    yolo_worker.YoloWorker._close_shared_frames([
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        unmapped,
+    ])
+
+
+def test_shared_frame_ring_handles_full_slots_and_duplicate_release() -> None:
+    """A ring bounds in-flight frames and ignores an extra release."""
+    ring = yolo_worker._SharedFrameRing.create(
+        (1, 1, 3),
+        np.dtype(np.uint8),
+        1,
+    )
+    try:
+        assert asyncio.run(ring.acquire_slot(0.1)) == 0
+        with pytest.raises(TimeoutError, match='ring is full'):
+            asyncio.run(ring.acquire_slot(0.001))
+        ring.release_slot(0)
+        ring.release_slot(0)
+        assert asyncio.run(ring.acquire_slot(0.1)) == 0
+    finally:
+        ring.close()
+
+
+def test_client_handles_close_write_and_retired_ring_paths(
+        monkeypatch: Any,
+) -> None:
+    """Closed clients reject frames while retired rings retain requests."""
+    client = yolo_worker.YoloWorkerClient(
+        _QueueSpy(),
+        _ResultQueue(),
+        camera_id='cam1',
+    )
+    client._closed = True
+    with pytest.raises(RuntimeError, match='client is closed'):
+        asyncio.run(
+            client._write_frame(
+                'closed',
+                np.zeros((1, 1, 3), dtype=np.uint8),
+            ),
+        )
+
+    client._closed = False
+    old_ring = MagicMock(shape=(1, 1, 3), dtype=np.dtype(np.uint8))
+    new_ring = MagicMock()
+    new_ring.acquire_slot = AsyncMock(return_value=0)
+    client._ring = old_ring
+    monkeypatch.setattr(
+        yolo_worker._SharedFrameRing,
+        'create', lambda *_args: new_ring,
+    )
+    asyncio.run(
+        client._write_frame(
+            'new',
+            np.zeros((2, 2, 3), dtype=np.uint8),
+        ),
+    )
+    assert client._retired_rings == [old_ring]
+
+    client._release_slot('missing')
+    client._inflight_slots = {
+        'first': (old_ring, 0),
+        'second': (old_ring, 1),
+    }
+    client._release_slot('first')
+    old_ring.close.assert_not_called()
+    client._release_slot('second')
+    old_ring.close.assert_called_once()
+
+
+def test_client_close_and_wait_error_paths(monkeypatch: Any) -> None:
+    """Client teardown is idempotent and expired waits fail immediately."""
+    ring = MagicMock()
+    client = yolo_worker.YoloWorkerClient(
+        _QueueSpy(),
+        _ResultQueue(),
+        camera_id='cam1',
+        timeout_seconds=1,
+    )
+    client._ring = ring
+    asyncio.run(client.close())
+    asyncio.run(client.close())
+    ring.close.assert_called_once()
+
+    client = yolo_worker.YoloWorkerClient(
+        _QueueSpy(),
+        _ResultQueue(),
+        camera_id='cam1',
+        timeout_seconds=0,
+    )
+    with pytest.raises(TimeoutError, match='timed out'):
+        asyncio.run(client._wait_for_result('missing'))
+
+
+def test_worker_configuration_and_queue_guard_paths(
+        monkeypatch: Any,
+) -> None:
+    """Invalid metrics and unavailable queues leave workers in safe states."""
+    monkeypatch.setenv('YOLO_WORKER_METRICS_INTERVAL_SECONDS', 'invalid')
+    worker = yolo_worker.YoloWorker(None)
+    assert worker.metrics_interval_seconds == 0
+    worker._record_batch_metrics('yolo26n', 1, 0.1)
+    with pytest.raises(RuntimeError, match='requires a request queue'):
+        worker.run()
+    with pytest.raises(RuntimeError, match='requires a request queue'):
+        worker._drain_queue(1)
+
+    worker = yolo_worker.YoloWorker(_DrainQueue([]))
+    worker._drain_queue(yolo_worker.time.monotonic() + 1)
+    worker._drain_queue(yolo_worker.time.monotonic() - 1)
+
+
+def test_timed_out_slot_is_released_after_cleanup_delay() -> None:
+    """Late worker cleanup returns a timed-out ring slot to its owner."""
+    async def run_case() -> None:
+        ring = MagicMock()
+        client = yolo_worker.YoloWorkerClient(
+            _QueueSpy(),
+            _ResultQueue(),
+            camera_id='cam1',
+        )
+        client.ring_cleanup_delay_seconds = 0
+        client._inflight_slots['request'] = (ring, 0)
+        client._release_slot_later('request')
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        ring.release_slot.assert_called_once_with(0)
+
+    asyncio.run(run_case())

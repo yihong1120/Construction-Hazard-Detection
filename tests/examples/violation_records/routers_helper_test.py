@@ -892,3 +892,13 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_bbox_dict_rejects_missing_width_or_height() -> None:
+    """Partial xywh metadata must not become a misleading zero-size box."""
+    assert routers._bbox_from_dict(
+        {'x': 1, 'y': 2, 'width': None, 'height': 3},
+    ) is None
+    assert routers._bbox_from_dict(
+        {'x': 1, 'y': 2, 'width': 3, 'height': None},
+    ) is None

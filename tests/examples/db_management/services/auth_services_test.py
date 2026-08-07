@@ -994,6 +994,45 @@ class TestAuthServicesCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(clear.await_args_list[0].args[1], 'alice')
         self.assertEqual(clear.await_args_list[1].args[1], 'bob')
 
+    async def test_logout_revokes_refresh_family_without_user_cache(
+        self,
+    ) -> None:
+        """Refresh-only logout revokes its family before an evicted cache.
+
+        The refresh family must be revoked before cache eviction can return.
+        """
+        redis = AsyncMock()
+        with (
+            patch.object(
+                svc.jwt_refresh,
+                'decode_token',
+                return_value={
+                    'subject': {
+                        'username': 'alice',
+                        'family_id': 'family-1',
+                    },
+                },
+            ),
+            patch.object(svc, 'prune_user_cache', AsyncMock()),
+            patch.object(svc, 'get_user_data', AsyncMock(return_value=None)),
+            patch.object(svc, '_revoke_refresh_family', AsyncMock()) as revoke,
+        ):
+            await svc.logout_user('refresh-token', None, redis)
+
+        revoke.assert_awaited_once_with(redis, 'family-1')
+
+    async def test_revoke_user_access_tokens_ignores_invalid_metadata(
+        self,
+    ) -> None:
+        """Broken legacy cache metadata cannot be sent to Redis revocation."""
+        redis = AsyncMock()
+        with patch.object(
+            svc,
+            'get_user_data',
+            AsyncMock(return_value={'jti_meta': ['not-a-mapping']}),
+        ):
+            assert await svc._revoke_user_access_tokens(redis, 'alice') == 0
+
     async def test_failed_login_locks_account(self) -> None:
         redis = AsyncMock()
         redis.incr.side_effect = [1, 3]

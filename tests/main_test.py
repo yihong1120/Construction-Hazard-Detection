@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from contextlib import suppress
 from datetime import datetime
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
 from typing import cast
 from unittest.mock import AsyncMock
@@ -3099,3 +3100,337 @@ pytest \
     --cov=main \
     --cov-report=term-missing tests/main_test.py
 """
+
+
+def test_stream_processor_media_environment_helpers() -> None:
+    """Malformed demand settings and rendition rates retain safe defaults."""
+    with patch.dict(
+        os.environ,
+        {
+            'MEDIA_DEMAND_CACHE_SECONDS': 'invalid',
+            'MEDIA_PUBLISH_FPS': '20',
+        },
+    ):
+        assert processor._media_demand_cache_seconds() == 0.5
+        assert processor._env_enabled('UNSET_OVERLAY_SETTING', True) is True
+        variants = [
+            processor._OverlayPublisherVariant('detail', 'detail'),
+            processor._OverlayPublisherVariant('preview', 'preview'),
+        ]
+        assert processor._overlay_variant_fps(variants) >= 20
+
+
+def test_overlay_frame_helpers_cover_fallback_and_ready_timing() -> None:
+    """Untracked frames and dropped languages avoid unnecessary rendering."""
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    snapshot = processor._OverlaySnapshot(
+        sequence=(1, 1),
+        frame=frame,
+        track_data=None,
+    )
+    assert processor._overlay_publish_frames(
+        snapshot,
+        {'en'},
+        {},
+    ) == {'en': frame}
+
+    ready_started_at = {'en': 1.0, 'zh-TW': 2.0}
+    processor._drop_unrequested_overlay_start_times(ready_started_at, {'en'})
+    assert ready_started_at == {'en': 1.0}
+
+    async def run_case() -> None:
+        loop = MagicMock()
+        loop.time.side_effect = [10.0, 11.1]
+        with (
+            patch.object(
+                processor.asyncio, 'get_running_loop',
+                return_value=loop,
+            ),
+            patch.object(
+                processor, '_overlay_ready_grace_seconds', return_value=1,
+            ),
+        ):
+            started_at: dict[str, float] = {}
+            assert not processor._overlay_ready_grace_elapsed(started_at, 'en')
+            assert processor._overlay_ready_grace_elapsed(started_at, 'en')
+
+    asyncio.run(run_case())
+
+
+def test_overlay_snapshot_uses_detection_frame_when_capture_is_empty() -> None:
+    """Detection output remains publishable during a brief capture handoff."""
+    async def run_case() -> None:
+        latest_frame = processor._LatestFrameState()
+        latest_detection = processor._LatestDetectionState()
+        frame = np.ones((2, 2, 3), dtype=np.uint8)
+        async with latest_detection.lock:
+            latest_detection.frame = frame
+            latest_detection.sequence = 4
+
+        snapshot = await processor._latest_overlay_snapshot(
+            latest_frame,
+            latest_detection,
+        )
+        assert snapshot is not None
+        assert snapshot.frame is frame
+        assert snapshot.sequence == (0, 4)
+
+    asyncio.run(run_case())
+
+
+def test_overlay_language_snapshot_creates_publisher_and_marks_ready() -> None:
+    """The first demand for a language creates and advertises its rendition."""
+    async def run_case() -> None:
+        redis_manager = MagicMock()
+        publisher = AsyncMock()
+        publishers: dict[str, object] = {}
+        with (
+            patch.object(
+                processor,
+                '_media_publisher',
+                return_value=publisher,
+            ),
+            patch.object(
+                processor,
+                '_mark_overlay_ready',
+                new=AsyncMock(),
+            ) as mark,
+        ):
+            await processor._publish_overlay_language_snapshot(
+                redis_manager=redis_manager,
+                overlay_media_publishers=cast(dict, publishers),
+                media_publish_base='rtsp://media:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                label_language='en',
+                publish_frame=np.zeros((2, 2, 3), dtype=np.uint8),
+            )
+        assert publishers['en'] is publisher
+        publisher.publish.assert_awaited_once()
+        mark.assert_awaited_once()
+
+    asyncio.run(run_case())
+
+
+def test_overlay_publish_loop_processes_demand_then_closes_publishers(
+) -> None:
+    """Demanded overlays render once, publish, and clean up on shutdown."""
+    class DemandCache:
+        async def overlay_languages(
+            self,
+            _redis: object,
+            _path: str,
+        ) -> set[str]:
+            return {'en'}
+
+    async def run_case() -> None:
+        stop_event = asyncio.Event()
+        variants = [
+            processor._OverlayPublisherVariant('hazard_site_cam', 'detail'),
+        ]
+
+        async def stop_after_frame(_delay: float) -> None:
+            stop_event.set()
+
+        with (
+            patch.object(
+                processor,
+                '_latest_overlay_snapshot',
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                processor,
+                '_overlay_publish_frames',
+                return_value={'en': np.zeros((2, 2, 3), dtype=np.uint8)},
+            ),
+            patch.object(
+                processor,
+                '_publish_overlay_language_snapshot',
+                new=AsyncMock(),
+            ) as publish,
+            patch.object(
+                processor,
+                '_close_overlay_publishers',
+                new=AsyncMock(),
+            ) as close_publishers,
+            patch.object(
+                processor.asyncio,
+                'sleep',
+                side_effect=stop_after_frame,
+            ),
+        ):
+            await processor._publish_requested_overlay_variants(
+                latest_frame=processor._LatestFrameState(),
+                latest_detection=processor._LatestDetectionState(),
+                redis_manager=MagicMock(),
+                media_publish_base='rtsp://media:8554',
+                variants=variants,
+                site='SiteA',
+                stream_name='Cam1',
+                stop_event=stop_event,
+                demand_cache=cast(processor._MediaDemandCache, DemandCache()),
+            )
+
+        publish.assert_awaited_once()
+        close_publishers.assert_awaited_once_with(variants[0].publishers)
+
+    asyncio.run(run_case())
+
+
+def test_clean_restreamer_restarts_after_frozen_source_signal() -> None:
+    """A freeze reconnect signal restarts the active source restreamer."""
+    class DemandCache:
+        async def clean_requested(self, _redis: object, _path: str) -> bool:
+            return True
+
+    async def run_case() -> None:
+        stop_event = asyncio.Event()
+        reconnect_event = asyncio.Event()
+        restreamer = AsyncMock()
+        sleeps = 0
+
+        async def progress_loop(_delay: float) -> None:
+            nonlocal sleeps
+            sleeps += 1
+            if sleeps == 1:
+                reconnect_event.set()
+            else:
+                stop_event.set()
+
+        with (
+            patch.object(
+                processor,
+                'MediaSourceRestreamer',
+                return_value=restreamer,
+            ),
+            patch.object(
+                processor.asyncio,
+                'sleep',
+                side_effect=progress_loop,
+            ),
+        ):
+            await processor._publish_requested_clean_frames(
+                latest_frame=processor._LatestFrameState(),
+                redis_manager=MagicMock(),
+                media_publish_base='rtsp://media:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                source_url='rtsp://source',
+                use_source_restreamer=True,
+                stop_event=stop_event,
+                source_reconnect_event=reconnect_event,
+                demand_cache=cast(processor._MediaDemandCache, DemandCache()),
+            )
+
+        restreamer.start.assert_awaited_once()
+        restreamer.restart.assert_awaited_once()
+        restreamer.close.assert_awaited_once()
+
+    asyncio.run(run_case())
+
+
+def test_overlay_publish_loop_retries_after_demand_failure() -> None:
+    """A transient demand read failure is logged, delayed, and cleaned up."""
+    class DemandCache:
+        async def overlay_languages(
+            self,
+            _redis: object,
+            _path: str,
+        ) -> set[str]:
+            raise RuntimeError('redis offline')
+
+    async def run_case() -> None:
+        stop_event = asyncio.Event()
+        variants = [
+            processor._OverlayPublisherVariant('hazard_site_cam', 'detail'),
+        ]
+
+        async def stop_after_retry(_delay: float) -> None:
+            stop_event.set()
+
+        with (
+            patch.object(
+                processor.asyncio,
+                'sleep',
+                side_effect=stop_after_retry,
+            ),
+            patch.object(
+                processor,
+                '_close_overlay_publishers',
+                new=AsyncMock(),
+            ) as close_publishers,
+        ):
+            await processor._publish_requested_overlay_variants(
+                latest_frame=processor._LatestFrameState(),
+                latest_detection=processor._LatestDetectionState(),
+                redis_manager=MagicMock(),
+                media_publish_base='rtsp://media:8554',
+                variants=variants,
+                site='SiteA',
+                stream_name='Cam1',
+                stop_event=stop_event,
+                demand_cache=cast(processor._MediaDemandCache, DemandCache()),
+            )
+
+        close_publishers.assert_awaited_once_with(variants[0].publishers)
+
+    asyncio.run(run_case())
+
+
+def test_main_worker_and_environment_guard_paths() -> None:
+    """Empty topology, stable workers, and invalid env values stay harmless."""
+    app = MainApp()
+    assert app._ensure_yolo_worker(None) is False
+    assert app._yolo_worker_topology([]) == (0, {}, None)
+
+    alive_process = MagicMock()
+    alive_process.is_alive.return_value = True
+    app.yolo_worker_processes = [alive_process]
+    app.yolo_request_queues = [MagicMock()]
+    app._restart_dead_yolo_workers(['cuda:0'])
+
+    app.yolo_request_queues = [MagicMock()]
+    with patch.object(app, '_yolo_worker_result_queue', return_value=None):
+        assert app._yolo_worker_slot({
+            'video_url': 'stream',
+            'site': 'SiteA',
+            'stream_name': 'Cam1',
+        }) == (None, None)
+    app._ensure_yolo_result_queues(None)
+
+    with patch.dict(
+        os.environ,
+        {
+            'TEST_POSITIVE_INTEGER': 'invalid',
+            'YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL': (
+                'yolo26n=4,invalid,nope=bad,yolo26s=0'
+            ),
+        },
+    ):
+        assert main._positive_int_env('TEST_POSITIVE_INTEGER', 3) == 3
+        assert main._model_camera_limits_env() == {'yolo26n': 4}
+
+
+def test_main_config_mode_handles_no_runnable_streams() -> None:
+    """A config file with no active stream still performs normal cleanup."""
+    async def run_case() -> None:
+        app = MagicMock()
+        app._can_run_stream.return_value = False
+        app.cleanup_resources = AsyncMock()
+        args = SimpleNamespace(config='configs.json', poll=1)
+        with (
+            patch.object(
+                main.argparse.ArgumentParser,
+                'parse_args',
+                return_value=args,
+            ),
+            patch('builtins.open', unittest.mock.mock_open(read_data='[]')),
+            patch.object(main.json, 'load', return_value=[{}]),
+            patch.object(main, 'MainApp', return_value=app),
+        ):
+            await main.main()
+        app.cleanup_resources.assert_awaited_once()
+
+    asyncio.run(run_case())

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import runpy
 import sys
 import unittest
 from types import ModuleType
+from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -90,6 +92,102 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(detections, [[10, 10, 50, 50, 0.9, 0]])
         self.assertEqual(tracked, [[10, 10, 50, 50, 0.9, 0, -1, 0]])
+
+    async def test_detect_local_normalises_raw_ultralytics_boxes(self) -> None:
+        """The one-frame local API preserves box, score, and class values."""
+        boxes = MagicMock()
+        boxes.__len__.return_value = 1
+        boxes.xyxy[0].tolist.return_value = [1, 2, 3, 4]
+        boxes.conf[0].item.return_value = 0.75
+        boxes.cls[0].item.return_value = 5
+        result = MagicMock()
+        result.boxes = boxes
+        self.detector.ultralytics_model.return_value = [result]
+
+        detections = await self.detector._detect_local(
+            np.zeros((2, 2, 3), dtype=np.uint8),
+        )
+
+        self.assertEqual(detections, [[1.0, 2.0, 3.0, 4.0, 0.75, 5]])
+
+    async def test_generate_ultralytics_tracks_data_rows_and_motion(
+        self,
+    ) -> None:
+        """Native tracker rows retain IDs and report motion above threshold."""
+        boxes = MagicMock()
+        boxes.__len__.return_value = 1
+        boxes.data = np.array([[2, 2, 6, 6, 4, 0.8, 1]], dtype=float)
+        result = MagicMock()
+        result.boxes = boxes
+        self.detector.prev_centers = {4: (0.0, 0.0)}
+        self.detector.movement_thr_sq = 1.0
+        self.detector.ultralytics_model.track.return_value = [result]
+
+        detections, tracked = await self.detector.generate_detections(
+            np.zeros((2, 2, 3), dtype=np.uint8),
+        )
+
+        self.assertEqual(detections, [[2.0, 2.0, 6.0, 6.0, 0.8, 1]])
+        self.assertEqual(
+            tracked,
+            [[2.0, 2.0, 6.0, 6.0, 0.8, 1, 4, 1]],
+        )
+
+    async def test_generate_ultralytics_accepts_tensor_box_data(self) -> None:
+        """GPU-like tensor box storage is moved to CPU before normalising."""
+        boxes = MagicMock()
+        boxes.__len__.return_value = 1
+        boxes.data = local_module.torch.tensor(
+            [[1, 1, 3, 3, 0.9, 2]],
+        )
+        result = MagicMock()
+        result.boxes = boxes
+        self.detector.ultralytics_model.track.return_value = [result]
+
+        detections, _tracked = await self.detector.generate_detections(
+            np.zeros((2, 2, 3), dtype=np.uint8),
+        )
+
+        self.assertEqual(detections[0][:4], [1.0, 1.0, 3.0, 3.0])
+        self.assertAlmostEqual(detections[0][4], 0.9)
+        self.assertEqual(detections[0][5], 2)
+
+    async def test_local_preview_main_builds_detector_from_cli(self) -> None:
+        """The preview CLI forwards parsed options to its detector."""
+        detector = MagicMock()
+        detector.run_detection = AsyncMock()
+        with (
+            patch(
+                'src.local_yolo_detector.argparse.ArgumentParser.parse_args',
+                return_value=MagicMock(
+                    url='rtsp://camera',
+                    model_key='yolo26n',
+                    use_ultralytics=True,
+                ),
+            ),
+            patch(
+                'src.local_yolo_detector.LocalYoloDetector',
+                return_value=detector,
+            ) as detector_class,
+        ):
+            await local_module.main()
+
+        detector_class.assert_called_once_with(
+            model_key='yolo26n',
+            use_ultralytics=True,
+        )
+        detector.run_detection.assert_awaited_once_with('rtsp://camera')
+
+    async def test_generate_ultralytics_handles_empty_boxes(self) -> None:
+        """An empty tracker result clears stale state without an error."""
+        result = MagicMock()
+        result.boxes = None
+        self.detector.ultralytics_model.track.return_value = [result]
+        with patch.object(self.detector, '_cleanup_prev_centers') as cleanup:
+            assert await self.detector.generate_detections(
+                np.zeros((2, 2, 3), dtype=np.uint8),
+            ) == ([], [])
+        cleanup.assert_called_once()
 
     async def test_sahi_detection_returns_untracked_rows(self) -> None:
         """SAHI works for MCP single-frame inference without tracker IDs."""
@@ -198,6 +296,55 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaisesRegex(ValueError, 'Failed to open stream'):
                 await self.detector.run_detection('invalid')
+
+    async def test_run_detection_draws_rows_and_releases_capture(self) -> None:
+        """The preview loop handles a read failure and exits cleanly."""
+        capture = MagicMock()
+        capture.isOpened.return_value = True
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        capture.read.side_effect = [(False, None), (True, frame)]
+        with (
+            patch(
+                'src.local_yolo_detector.cv2.VideoCapture',
+                return_value=capture,
+            ),
+            patch.object(
+                self.detector,
+                'generate_detections',
+                return_value=([], [[1, 1, 4, 4, 0.8, 1, 3, 1]]),
+            ),
+            patch(
+                'src.local_yolo_detector.asyncio.sleep',
+                new=AsyncMock(),
+            ),
+            patch(
+                'src.local_yolo_detector.cv2.waitKey',
+                return_value=ord('q'),
+            ),
+            patch('src.local_yolo_detector.cv2.imshow'),
+            patch('src.local_yolo_detector.cv2.rectangle') as rectangle,
+            patch('src.local_yolo_detector.cv2.putText') as put_text,
+            patch('src.local_yolo_detector.cv2.destroyAllWindows') as destroy,
+        ):
+            await self.detector.run_detection('stream')
+
+        capture.release.assert_called_once()
+        rectangle.assert_called_once()
+        put_text.assert_called_once()
+        destroy.assert_called_once()
+
+    async def test_close_releases_local_model(self) -> None:
+        """Interactive callers can explicitly release their local detector."""
+        with patch.object(self.detector, '_release_local_model') as release:
+            await self.detector.close()
+        release.assert_called_once()
+
+    def test_local_preview_script_guard_invokes_async_main(self) -> None:
+        """Running the module directly reaches its protected CLI entry."""
+        script = local_module.Path(local_module.__file__).resolve()
+        with patch.object(sys, 'argv', [str(script), '--help']):
+            with self.assertRaises(SystemExit):
+                runpy.run_path(str(script), run_name='__main__')
 
 
 if __name__ == '__main__':

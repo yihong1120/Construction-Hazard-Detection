@@ -299,8 +299,6 @@ class MainApp:
             # 1. Stop streams that are removed, disabled, or expired.
             for video_url in list(self.running_processes.keys()):
                 proc_info = self.running_processes[video_url]
-                cfg = cfg_map.get(video_url)
-
                 if video_url not in active_configs:
                     self.logger.info(f"Stop stream {video_url}")
                     self.stop_process(proc_info['process'])
@@ -310,13 +308,7 @@ class MainApp:
                     del self.running_processes[video_url]
                     continue
 
-                if cfg is None:
-                    self.logger.warning(
-                        'Active stream %s has no configuration',
-                        video_url,
-                    )
-                    continue
-
+                cfg = cfg_map[video_url]
                 if self._stream_needs_restart(
                     proc_info,
                     cfg,
