@@ -838,6 +838,22 @@ def test_record_batch_metrics_logs_and_resets_counters(
     assert worker._metrics_predict_seconds == 0
 
 
+def test_record_batch_metrics_accumulates_until_interval_elapsed(
+    monkeypatch: Any,
+) -> None:
+    """A partial interval retains metrics for the next throughput report."""
+    worker = yolo_worker.YoloWorker(None)
+    worker.metrics_interval_seconds = 3
+    worker._metrics_started_at = 0
+    monkeypatch.setattr(yolo_worker.time, 'monotonic', lambda: 2)
+
+    worker._record_batch_metrics('yolo26n', 2, 0.5)
+
+    assert worker._metrics_images == 2
+    assert worker._metrics_batches == 1
+    assert worker._metrics_predict_seconds == 0.5
+
+
 def test_send_result_drops_when_camera_queue_is_full() -> None:
     """A stalled receiver cannot block the shared inference worker."""
     worker = yolo_worker.YoloWorker(

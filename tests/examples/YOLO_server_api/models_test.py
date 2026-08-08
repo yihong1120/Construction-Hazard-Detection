@@ -194,6 +194,18 @@ class TestDetectionModelManager(unittest.TestCase):
         model_none = self.model_manager.get_model('nonexistent')
         self.assertIsNone(model_none)
 
+    def test_touch_lru_moves_existing_model_to_end(self) -> None:
+        """Refreshing a model moves its LRU entry to the newest slot."""
+        manager = DetectionModelManager.__new__(DetectionModelManager)
+        manager._lru_order = ['oldest', 'target', 'newest']
+
+        manager._touch_lru('target')
+
+        self.assertEqual(
+            manager._lru_order,
+            ['oldest', 'newest', 'target'],
+        )
+
     def test_cleanup_on_delete(self) -> None:
         """
         Test that the observer is stopped and joined upon deletion.

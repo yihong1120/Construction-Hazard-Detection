@@ -178,6 +178,21 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 RuntimeError, 'Invalid OAUTH_NATIVE_CLIENTS_JSON',
             ):
                 oauth._native_clients()
+        with patch.dict(
+            os.environ,
+            {
+                'OAUTH_NATIVE_CLIENTS_JSON': json.dumps(
+                    {
+                        'custom-client': ['app://oauth'],
+                        'ignored-client': 'not-a-list',
+                    },
+                ),
+            },
+        ):
+            self.assertEqual(
+                oauth._native_clients(),
+                {'custom-client': {'app://oauth'}},
+            )
 
     async def test_authorize_rejects_invalid_pkce_and_missing_login(
         self,

@@ -72,8 +72,18 @@ class TestSettings(unittest.TestCase):
             _postgres_async_url('postgres://user:password@host/database'),
             'postgresql+asyncpg://user:password@host/database',
         )
+        self.assertEqual(
+            _postgres_async_url('sqlite+aiosqlite:///application.db'),
+            'sqlite+aiosqlite:///application.db',
+        )
         with mock.patch.dict(os.environ, {}, clear=False):
             self.assertTrue(_env_bool('MISSING_BOOLEAN_SWITCH', True))
+        with mock.patch.dict(
+            os.environ,
+            {'CONFIG_TEST_BOOLEAN_SWITCH': ' Yes '},
+            clear=False,
+        ):
+            self.assertTrue(_env_bool('CONFIG_TEST_BOOLEAN_SWITCH'))
 
     def test_settings_requires_non_empty_jwt_secret(self) -> None:
         """An explicitly empty JWT secret prevents an unsafe application

@@ -172,6 +172,7 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
         result = await get_new_model_file(self.valid_model, self.updated_time)
         self.assertIsNone(result)
 
+    @patch('pathlib.Path.stat')
     @patch(
         'pathlib.Path.open',
         side_effect=FileNotFoundError('[Errno 2] No such file or directory'),
@@ -181,6 +182,7 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
         self,
         mock_is_file: MagicMock,
         mock_open: MagicMock,
+        mock_stat: MagicMock,
     ) -> None:
         """
         Test error while reading the model file.
@@ -191,6 +193,10 @@ class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
             mock_open (MagicMock):
                 Mock for opening the file.
         """
+        mock_stat.return_value.st_mtime = (
+            self.updated_time + datetime.timedelta(seconds=1)
+        ).timestamp()
+
         with self.assertRaises(OSError) as context:
             await get_new_model_file(self.valid_model, self.updated_time)
         self.assertIn('No such file or directory', str(context.exception))
