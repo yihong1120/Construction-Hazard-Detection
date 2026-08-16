@@ -47,3 +47,6 @@ build/
 frontend/web/
 examples/streaming_web/frontend/node_modules/
 examples/streaming_web/frontend/dist/
+
+# Runtime credentials must never enter a Docker build context.
+examples/local_notification_server/*firebase-adminsdk*.json

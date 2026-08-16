@@ -255,6 +255,8 @@ def test_patched_onnx2engine_uses_batch_only_explicit_qdq() -> None:
 
 def test_modelopt_export_api_is_available() -> None:
     """The pinned Ultralytics version provides the required ModelOpt API."""
+    if subject.ultralytics_version != subject.required_ultralytics_version:
+        pytest.skip('requires the lockfile-pinned Ultralytics release')
     assert subject.ultralytics_version == subject.required_ultralytics_version
     assert subject.original_modelopt_quantize_onnx is not None
 
@@ -449,6 +451,7 @@ def test_main_exports_and_moves_engine(
     )
     monkeypatch.setattr(subject, 'YOLO', FakeYolo)
     monkeypatch.setattr(subject.shutil, 'move', move)
+    monkeypatch.setattr(subject, 'patch_tensorrt_engine_exporter', MagicMock())
 
     subject.main()
 

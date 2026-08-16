@@ -352,10 +352,10 @@ to recover from a short publisher or network interruption.
 Run each service from the repository root:
 
 ```bash
-uvicorn examples.db_management.app:app --host 127.0.0.1 --port 8005 --workers 2
+uvicorn examples.db_management.app:app --host 127.0.0.1 --port 8005 --workers 2 --timeout-graceful-shutdown 10
 uvicorn examples.local_notification_server.app:app --host 127.0.0.1 --port 8003 --workers 2
 uvicorn examples.violation_records.app:app --host 127.0.0.1 --port 8002 --workers 2
-uvicorn examples.streaming_web.app:app --host 127.0.0.1 --port 8800 --workers 2
+uvicorn examples.streaming_web.app:app --host 127.0.0.1 --port 8800 --workers 2 --timeout-graceful-shutdown 10
 ```
 
 Optional standalone detector API:

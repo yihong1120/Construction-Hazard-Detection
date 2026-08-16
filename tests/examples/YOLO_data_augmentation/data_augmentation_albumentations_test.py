@@ -22,6 +22,7 @@ _requires_albumentations = unittest.skipUnless(
 )
 
 
+@_requires_albumentations
 class TestDataAugmentation(unittest.TestCase):
     """Unit tests for the DataAugmentation class."""
 
@@ -335,10 +336,10 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(transform, 'bbox_safe_crop')
         mock_crop.assert_called_once_with(height=512, width=640, p=1)
 
-    def test_at_least_one_bbox_crop_transform_uses_supported_transform(
+    def test_at_least_one_bbox_crop_transform_uses_fixed_transform(
         self,
     ) -> None:
-        """Test AtLeastOneBBoxRandomCrop is used when available."""
+        """Test AtLeastOneBBoxRandomCrop is used."""
         mock_crop = MagicMock(return_value='at_least_one_crop')
         with patch.object(
             A,
@@ -482,8 +483,8 @@ class TestDataAugmentation(unittest.TestCase):
 
         self.assertTrue(can_use)
 
-    def test_safe_rotate_transform_uses_supported_transform(self) -> None:
-        """Test SafeRotate is created when available."""
+    def test_safe_rotate_transform_uses_fixed_transform(self) -> None:
+        """Test SafeRotate is created."""
         mock_rotate = MagicMock(return_value='safe_rotate')
         with patch.object(A, 'SafeRotate', mock_rotate, create=True):
             transform = self.augmenter.safe_rotate_transform()
@@ -494,8 +495,8 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(kwargs['border_mode'], 4)
         self.assertEqual(kwargs['p'], 1)
 
-    def test_symmetry_transform_prefers_d4(self) -> None:
-        """Test D4 square symmetry is used when available."""
+    def test_symmetry_transform_uses_d4(self) -> None:
+        """Test D4 square symmetry is used."""
         mock_d4 = MagicMock(return_value='d4')
         with patch.object(A, 'D4', mock_d4, create=True):
             transform = self.augmenter.symmetry_transform()
@@ -503,8 +504,8 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(transform, 'd4')
         mock_d4.assert_called_once_with(p=1)
 
-    def test_random_scale_transform_uses_supported_transform(self) -> None:
-        """Test RandomScale is created when available."""
+    def test_random_scale_transform_uses_fixed_transform(self) -> None:
+        """Test RandomScale is created."""
         mock_scale = MagicMock(return_value='random_scale')
         with patch.object(A, 'RandomScale', mock_scale, create=True):
             transform = self.augmenter.random_scale_transform()
@@ -514,8 +515,8 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(kwargs['scale_limit'], (-0.25, 0.35))
         self.assertEqual(kwargs['p'], 1)
 
-    def test_pad_if_needed_transform_uses_supported_transform(self) -> None:
-        """Test PadIfNeeded is created when available."""
+    def test_pad_if_needed_transform_uses_fixed_transform(self) -> None:
+        """Test PadIfNeeded is created."""
         mock_pad = MagicMock(return_value='pad')
         with patch.object(A, 'PadIfNeeded', mock_pad, create=True):
             transform = self.augmenter.pad_if_needed_transform()
@@ -526,21 +527,6 @@ class TestDataAugmentation(unittest.TestCase):
         self.assertEqual(kwargs['min_width'], 640)
         self.assertEqual(kwargs['p'], 1)
 
-    def test_create_sized_crop_transform_supports_size_argument(self) -> None:
-        """Test Albumentations v2-style crop constructors are supported."""
-
-        def fake_crop(*, size: tuple[int, int], p: int) -> tuple:
-            return size, p
-
-        transform = self.augmenter._create_sized_crop_transform(
-            fake_crop,
-            512,
-            640,
-            p=1,
-        )
-
-        self.assertEqual(transform, ((512, 640), 1))
-
     def test_create_bbox_params_filters_invalid_boxes(self) -> None:
         """Test bbox params request clipping and visibility filtering."""
         mock_params = MagicMock(return_value='bbox_params')
@@ -549,20 +535,18 @@ class TestDataAugmentation(unittest.TestCase):
 
         self.assertEqual(bbox_params, 'bbox_params')
         _, kwargs = mock_params.call_args
-        self.assertEqual(kwargs['coord_format'], 'yolo')
-        self.assertTrue(kwargs['clip_after_transform'])
-        self.assertTrue(kwargs['clip_bboxes_on_input'])
+        self.assertEqual(kwargs['format'], 'yolo')
+        self.assertTrue(kwargs['clip'])
         self.assertTrue(kwargs['filter_invalid_bboxes'])
         self.assertEqual(
             kwargs['min_visibility'],
             self.augmenter.min_bbox_visibility,
         )
 
-    def test_random_resized_crop_transform_supports_size_argument(
+    def test_random_resized_crop_transform_uses_fixed_size_argument(
         self,
     ) -> None:
-        """Test RandomResizedCrop is created through the API-compatible
-        helper."""
+        """Test RandomResizedCrop is created with the fixed API."""
 
         def fake_crop(
             *,

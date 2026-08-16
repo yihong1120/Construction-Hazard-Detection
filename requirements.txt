@@ -2,7 +2,7 @@ aiofiles==25.1.0
 aiohttp==3.14.3
 aiortc==1.14.0
 aiosqlite==0.22.1
-albumentationsx==2.3.3
+albumentationsx==2.0.15
 apscheduler==3.11.2
 asyncpg==0.31.0
 ckip_transformers==0.3.4

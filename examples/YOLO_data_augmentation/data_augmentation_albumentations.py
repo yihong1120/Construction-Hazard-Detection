@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import gc
-import inspect
 import os
 import random
 import time
@@ -10,7 +9,6 @@ import uuid
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any
 
 import albumentations as A
 import cv2
@@ -122,40 +120,23 @@ class DataAugmentation:
         crop_height, crop_width = DataAugmentation._random_crop_size(
             image_shape,
         )
-        if hasattr(A, 'RandomSizedBBoxSafeCrop'):
-            return DataAugmentation._create_sized_crop_transform(
-                A.RandomSizedBBoxSafeCrop,
-                crop_height,
-                crop_width,
-                p=1,
-            )
-        if hasattr(A, 'BBoxSafeRandomCrop'):
-            return A.BBoxSafeRandomCrop(p=1)
-        return DataAugmentation._create_sized_crop_transform(
-            A.RandomCrop,
-            crop_height,
-            crop_width,
-            pad_if_needed=True,
+        return A.RandomSizedBBoxSafeCrop(
+            height=crop_height,
+            width=crop_width,
             p=1,
         )
 
     @staticmethod
     def at_least_one_bbox_crop_transform(
         image_shape: tuple[int, int],
-    ) -> A.BasicTransform | None:
-        """
-        Create a crop that keeps at least one bbox when supported.
-        """
-        if not hasattr(A, 'AtLeastOneBBoxRandomCrop'):
-            return None
-
+    ) -> A.BasicTransform:
+        """Create a crop that keeps at least one bounding box."""
         crop_height, crop_width = DataAugmentation._random_crop_size(
             image_shape,
         )
-        return DataAugmentation._create_sized_crop_transform(
-            A.AtLeastOneBBoxRandomCrop,
-            crop_height,
-            crop_width,
+        return A.AtLeastOneBBoxRandomCrop(
+            height=crop_height,
+            width=crop_width,
             erosion_factor=0.2,
             p=1,
         )
@@ -163,65 +144,41 @@ class DataAugmentation:
     @staticmethod
     def random_resized_crop_transform() -> A.BasicTransform:
         """
-        Create a RandomResizedCrop across Albumentations API versions.
+        Create a 640px RandomResizedCrop.
         """
-        return DataAugmentation._create_sized_crop_transform(
-            A.RandomResizedCrop,
-            640,
-            640,
+        return A.RandomResizedCrop(
+            size=(640, 640),
             scale=(0.3, 1.0),
             p=1,
         )
 
     @staticmethod
-    def symmetry_transform() -> A.BasicTransform | None:
-        """
-        Create an Albumentations square symmetry transform when available.
-        """
-        if hasattr(A, 'D4'):
-            return A.D4(p=1)
-        if hasattr(A, 'SquareSymmetry'):
-            return A.SquareSymmetry(p=1)
-        return None
+    def symmetry_transform() -> A.BasicTransform:
+        """Create a square-symmetry transform."""
+        return A.D4(p=1)
 
     @staticmethod
-    def safe_rotate_transform() -> A.BasicTransform | None:
-        """
-        Create SafeRotate with version-compatible arguments.
-        """
-        if not hasattr(A, 'SafeRotate'):
-            return None
-        return DataAugmentation._create_transform(
-            A.SafeRotate,
-            angle_range=(-45, 45),
+    def safe_rotate_transform() -> A.BasicTransform:
+        """Create a safe rotation transform."""
+        return A.SafeRotate(
             limit=(-45, 45),
             border_mode=cv2.BORDER_REFLECT_101,
             p=1,
         )
 
     @staticmethod
-    def random_scale_transform() -> A.BasicTransform | None:
-        """
-        Create a bbox-aware scale transform when available.
-        """
-        if not hasattr(A, 'RandomScale'):
-            return None
-        return DataAugmentation._create_transform(
-            A.RandomScale,
+    def random_scale_transform() -> A.BasicTransform:
+        """Create a bounding-box-aware scale transform."""
+        return A.RandomScale(
             scale_limit=(-0.25, 0.35),
             interpolation=cv2.INTER_LINEAR,
             p=1,
         )
 
     @staticmethod
-    def pad_if_needed_transform() -> A.BasicTransform | None:
-        """
-        Pad after scale/crop transforms without changing bbox semantics.
-        """
-        if not hasattr(A, 'PadIfNeeded'):
-            return None
-        return DataAugmentation._create_transform(
-            A.PadIfNeeded,
+    def pad_if_needed_transform() -> A.BasicTransform:
+        """Pad after scale and crop transforms."""
+        return A.PadIfNeeded(
             min_height=640,
             min_width=640,
             border_mode=cv2.BORDER_REFLECT_101,
@@ -231,14 +188,13 @@ class DataAugmentation:
     @staticmethod
     def _create_bbox_params() -> A.BboxParams:
         kwargs = {
-            'coord_format': 'yolo',
+            'format': 'yolo',
             'label_fields': ['class_labels'],
-            'clip_after_transform': True,
-            'clip_bboxes_on_input': True,
+            'clip': True,
             'filter_invalid_bboxes': True,
             'min_visibility': DataAugmentation.min_bbox_visibility,
         }
-        return DataAugmentation._create_transform(A.BboxParams, **kwargs)
+        return A.BboxParams(**kwargs)
 
     def normalize_bboxes_with_albumentations(
         self,
@@ -246,11 +202,9 @@ class DataAugmentation:
         bboxes: list[list[float]],
         class_labels: list[int],
     ) -> tuple[list[list[float]], list[int]]:
-        if not hasattr(A, 'Compose'):
-            return bboxes, class_labels
-        transforms = [A.NoOp(p=1)] if hasattr(A, 'NoOp') else []
         transform = A.Compose(
-            transforms, bbox_params=self._create_bbox_params(),
+            [A.NoOp(p=1)],
+            bbox_params=self._create_bbox_params(),
         )
         transformed = transform(
             image=image,
@@ -258,44 +212,6 @@ class DataAugmentation:
             class_labels=class_labels,
         )
         return list(transformed['bboxes']), list(transformed['class_labels'])
-
-    @staticmethod
-    def _create_transform(transform_factory: Any, **kwargs: Any) -> Any:
-        signature = inspect.signature(transform_factory)
-        parameters = signature.parameters
-        supports_any_kwargs = any(
-            parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in parameters.values()
-        )
-        if (
-            'coord_format' in kwargs
-            and 'coord_format' not in parameters
-            and not supports_any_kwargs
-            and 'format' in parameters
-        ):
-            kwargs['format'] = kwargs.pop('coord_format')
-        supported_kwargs = {
-            key: value
-            for key, value in kwargs.items()
-            if supports_any_kwargs or key in parameters
-        }
-        return transform_factory(**supported_kwargs)
-
-    @staticmethod
-    def _create_sized_crop_transform(
-        transform_factory: Any,
-        crop_height: int,
-        crop_width: int,
-        **kwargs: Any,
-    ) -> A.BasicTransform:
-        signature = inspect.signature(transform_factory)
-        if 'size' in signature.parameters:
-            return transform_factory(size=(crop_height, crop_width), **kwargs)
-        return transform_factory(
-            height=crop_height,
-            width=crop_width,
-            **kwargs,
-        )
 
     def _choose_bbox_transforms(
         self,
@@ -498,18 +414,9 @@ class DataAugmentation:
             A.Compose: The augmentation pipeline.
         """
         # Augmentations that affect bounding boxes
-        bbox_augmentations: list[A.BasicTransform | A.BaseCompose] = []
-        # Flip 兼容處理（albumentationsx 可能沒有 Horizontal/VerticalFlip）
-        if hasattr(A, 'HorizontalFlip'):
-            bbox_augmentations.append(A.HorizontalFlip(p=1))
-        elif hasattr(A, 'Flip'):
-            bbox_augmentations.append(A.Flip(p=1))
-        if hasattr(A, 'VerticalFlip'):
-            bbox_augmentations.append(A.VerticalFlip(p=1))
-        elif hasattr(A, 'Flip'):
-            bbox_augmentations.append(A.Flip(p=1))
-
-        optional_bbox_augmentations = [
+        bbox_augmentations: list[A.BasicTransform | A.BaseCompose] = [
+            A.HorizontalFlip(p=1),
+            A.VerticalFlip(p=1),
             self.symmetry_transform(),
             self.safe_rotate_transform(),
             self.random_scale_transform(),
@@ -530,53 +437,44 @@ class DataAugmentation:
                 if bboxes is not None else []
             )
         )
-        at_least_one_crop = (
-            self.at_least_one_bbox_crop_transform(image_shape)
-            if has_bboxes else None
-        )
-        if at_least_one_crop is not None:
-            crop_bbox_augmentations.append(at_least_one_crop)
+        if has_bboxes:
+            crop_bbox_augmentations.append(
+                self.at_least_one_bbox_crop_transform(image_shape),
+            )
 
         bbox_augmentations.extend([
             A.RandomRotate90(p=1),
-            self._create_transform(
-                A.Rotate,
-                angle_range=(-45, 45),
+            A.Rotate(
                 limit=(-45, 45),
                 border_mode=cv2.BORDER_REFLECT_101,
                 rotate_method='ellipse',
                 crop_border=True,
                 p=1,
             ),
-            self._create_transform(
-                A.Affine,
+            A.Affine(
                 scale=(0.9, 1.1),  # Scaling range
                 # Increased translation for human-induced jitter
                 translate_percent=(0.05, 0.12),
                 shear=(-8, 8),  # Shear angle range
                 rotate=(-45, 45),  # Rotation angle range
                 rotate_method='ellipse',
-                mode=cv2.BORDER_REFLECT_101,
                 border_mode=cv2.BORDER_REFLECT_101,
-                cval=0,
                 fill=0,
                 p=1,
             ),
             A.Transpose(p=1),
-            self._create_transform(
-                A.Perspective,
+            A.Perspective(
                 scale=(0.02, 0.06),
                 keep_size=True,
                 fit_output=False,
                 border_mode=cv2.BORDER_REFLECT_101,
-                pad_mode=cv2.BORDER_REFLECT_101,
                 fill=0,
                 p=1,
             ),
             A.ElasticTransform(alpha=1, sigma=50, p=1),
             A.GridDistortion(p=1),
             A.OpticalDistortion(
-                distort_range=(0.05, 0.1), p=1.0,
+                distort_limit=(0.05, 0.1), p=1.0,
             ),
         ])
         if safe_grid_shuffle_grids:
@@ -586,55 +484,49 @@ class DataAugmentation:
                     p=1,
                 ),
             )
-        bbox_augmentations.extend(
-            transform
-            for transform in optional_bbox_augmentations
-            if transform is not None
-        )
-
         # Augmentations that do not affect bounding boxes
         non_bbox_augmentations = [
             # Colour and brightness adjustments
             A.RandomBrightnessContrast(
-                brightness_range=(0.0, 0.03),
-                contrast_range=(0.0, 0.03),
+                brightness_limit=(0.0, 0.03),
+                contrast_limit=(0.0, 0.03),
                 p=1.0,
             ),
             A.RGBShift(
-                r_shift_range=(-3, 3),
-                g_shift_range=(-3, 3),
-                b_shift_range=(-3, 3),
+                r_shift_limit=(-3, 3),
+                g_shift_limit=(-3, 3),
+                b_shift_limit=(-3, 3),
                 p=1.0,
             ),
             A.HueSaturationValue(
-                hue_shift_range=(-3, 3),
-                sat_shift_range=(-5, 5),
-                val_shift_range=(-3, 3),
+                hue_shift_limit=(-3, 3),
+                sat_shift_limit=(-5, 5),
+                val_shift_limit=(-3, 3),
                 p=1.0,
             ),
             A.ColorJitter(
-                brightness_range=(0.92, 1.08),
-                contrast_range=(0.92, 1.08),
-                saturation_range=(0.85, 1.15),
-                hue_range=(-0.05, 0.05),
+                brightness=(0.92, 1.08),
+                contrast=(0.92, 1.08),
+                saturation=(0.85, 1.15),
+                hue=(-0.05, 0.05),
                 p=1.0,  # Wider hue/saturation shifts
             ),
             A.PlanckianJitter(p=1),
             # Blur and noise
-            A.MotionBlur(blur_range=(3, 7), p=1.0),
-            A.GaussianBlur(blur_range=(1, 3), p=1.0),
+            A.MotionBlur(blur_limit=(3, 7), p=1.0),
+            A.GaussianBlur(blur_limit=(1, 3), p=1.0),
             A.GaussNoise(std_range=(0.1, 0.5), p=1.0),
             A.ISONoise(
-                color_shift_range=(0.01, 0.05),
-                intensity_range=(0.05, 0.2),
+                color_shift=(0.01, 0.05),
+                intensity=(0.05, 0.2),
                 p=1.0,
             ),
-            A.MedianBlur(blur_range=(3, 3), p=1.0),
+            A.MedianBlur(blur_limit=(3, 3), p=1.0),
             # Colour space and contrast adjustments
-            A.CLAHE(clip_range=(2, 2), p=1.0),
+            A.CLAHE(clip_limit=(2, 2), p=1.0),
             A.Sharpen(
-                alpha_range=(0.1, 0.3),
-                lightness_range=(0.7, 1.0),
+                alpha=(0.1, 0.3),
+                lightness=(0.7, 1.0),
                 p=1.0,
             ),
             A.CoarseDropout(
@@ -649,7 +541,7 @@ class DataAugmentation:
             # Special effects
             A.RandomShadow(
                 shadow_roi=(0, 0.5, 1, 1),
-                num_shadows_range=(1, 1), shadow_dimension=5, p=1.0,
+                num_shadows_limit=(1, 1), shadow_dimension=5, p=1.0,
             ),
             # Stronger night/low-light style fog/haze
             A.RandomFog(alpha_coef=0.08, fog_coef_range=(0.3, 0.6), p=1.0),
@@ -666,13 +558,13 @@ class DataAugmentation:
                 flare_roi=(0.02, 0.04, 0.08, 0.08),
                 angle_range=(0, 1), p=1,
             ),
-            A.Defocus(radius_range=(3, 5), p=1),
+            A.Defocus(radius=(3, 5), p=1),
             # Other augmentations
             A.RandomToneCurve(scale=0.05, p=1.0),
-            A.RandomGamma(gamma_range=(90, 110), p=1.0),
+            A.RandomGamma(gamma_limit=(90, 110), p=1.0),
             A.Superpixels(
-                p_replace_range=(0.1, 0.1),
-                n_segments_range=(100, 100), p=1,
+                p_replace=(0.1, 0.1),
+                n_segments=(100, 100), p=1,
             ),
             # Stronger compression artifacts
             A.ImageCompression(quality_range=(30, 70), p=1.0),
@@ -680,7 +572,7 @@ class DataAugmentation:
             A.PixelDropout(dropout_prob=0.05, p=1),
             A.Emboss(p=1),
             # Fourier Domain Adaptation for domain/style shift
-            A.FDA(beta_range=(0.5, 0.5), p=1),
+            A.FDA(beta_limit=(0.5, 0.5), p=1),
             # CCTV/監視器常見影像退化
             A.Downscale(p=1.0),
             A.GridDropout(ratio=0.5, random_offset=True, p=1.0),
@@ -688,7 +580,7 @@ class DataAugmentation:
                 multiplier=(0.9, 1.1),
                 per_channel=True, p=1.0,
             ),
-            A.ZoomBlur(max_factor_range=(1.01, 1.08), p=1.0),
+            A.ZoomBlur(max_factor=(1.01, 1.08), p=1.0),
             A.Solarize(p=1.0),
             A.Spatter(p=1),
             A.ToSepia(p=1),
@@ -766,20 +658,14 @@ class DataAugmentation:
         transformed['class_labels'] = transformed_labels
 
         # 再依照機率套用 MaskDropout（用變換後影像尺寸產生遮罩，避免尺寸不匹配）
-        if (
-            transformed_bboxes
-            and hasattr(A, 'Compose')
-            and hasattr(A, 'MaskDropout')
-            and random.random() < 0.6
-        ):
-            # 60% 機率啟用，近似原本隨機選取行為
+        if transformed_bboxes and random.random() < 0.6:
             post_mask = self.generate_random_mask(
                 image_shape=transformed['image'].shape[:2],
             )
             post = A.Compose(
                 [
                     A.MaskDropout(
-                        max_objects_range=(1, 3),
+                        max_objects=(1, 3),
                         fill=0,
                         fill_mask=0,
                         p=1.0,
@@ -867,57 +753,12 @@ class DataAugmentation:
                     f"due to invalid labels.",
                 )
                 return
-            had_objects = len(bboxes) > 0
-
-            for i in range(self.num_augmentations):
-                # Apply augmentations to the image and bounding boxes
-                transformed = self.process_image(
-                    image=image, bboxes=bboxes, class_labels=class_labels,
-                )
-                image_aug, bboxes_raw, class_labels_raw = (
-                    transformed['image'],
-                    transformed['bboxes'],
-                    transformed['class_labels'],
-                )
-
-                bboxes_aug, class_labels_aug = (
-                    self.normalize_bboxes_with_albumentations(
-                        image_aug, bboxes_raw, class_labels_raw,
-                    )
-                )
-
-                # 原本有物件的圖片，若增強後物件全消失就略過。
-                # 原本無物件的負樣本則保留，並輸出空 label 檔。
-                if had_objects and len(bboxes_aug) == 0:
-                    continue
-
-                # Save the augmented image and label file
-                aug_image_filename = (
-                    f"{image_path.stem}_aug_{i}{image_path.suffix}"
-                )
-                aug_label_filename = (
-                    f"{image_path.stem}_aug_{i}.txt"
-                )
-
-                image_aug_path = (
-                    self.train_path / 'images' / aug_image_filename
-                )
-                label_aug_path = (
-                    self.train_path / 'labels' / aug_label_filename
-                )
-
-                # Convert the image back to uint8 once（Compose 未 Normalize）
-                if image_aug.dtype != np.uint8:
-                    image_aug = np.clip(image_aug, 0, 255).astype(np.uint8)
-                # Save the image using OpenCV（單次色彩轉換）
-                cv2.imwrite(
-                    str(image_aug_path), cv2.cvtColor(
-                        image_aug, cv2.COLOR_RGB2BGR,
-                    ),
-                )
-                self.write_label_file(
-                    bboxes_aug, class_labels_aug, Path(label_aug_path),
-                )
+            self._write_augmented_images(
+                image_path,
+                image,
+                bboxes,
+                class_labels,
+            )
 
         except Exception as e:
             print(f"Error processing image: {image_path}: {e}")
@@ -927,6 +768,69 @@ class DataAugmentation:
             if bboxes is not None:
                 del bboxes
             gc.collect()
+
+    def _write_augmented_images(
+        self,
+        image_path: Path,
+        image: np.ndarray,
+        bboxes: list[list[float]],
+        class_labels: list[int],
+    ) -> None:
+        """Transform and persist every requested augmentation of one image."""
+        had_objects = len(bboxes) > 0
+        for index in range(self.num_augmentations):
+            transformed = self.process_image(
+                image=image,
+                bboxes=bboxes,
+                class_labels=class_labels,
+            )
+            image_aug, bboxes_raw, class_labels_raw = (
+                transformed['image'],
+                transformed['bboxes'],
+                transformed['class_labels'],
+            )
+            bboxes_aug, class_labels_aug = (
+                self.normalize_bboxes_with_albumentations(
+                    image_aug,
+                    bboxes_raw,
+                    class_labels_raw,
+                )
+            )
+            if had_objects and not bboxes_aug:
+                continue
+            self._write_augmented_image(
+                image_path,
+                index,
+                image_aug,
+                bboxes_aug,
+                class_labels_aug,
+            )
+
+    def _write_augmented_image(
+        self,
+        image_path: Path,
+        index: int,
+        image: np.ndarray,
+        bboxes: list[list[float]],
+        class_labels: list[int],
+    ) -> None:
+        """Write one RGB image and its matching YOLO label file."""
+        image_path_out = self.train_path / 'images' / (
+            f"{image_path.stem}_aug_{index}{image_path.suffix}"
+        )
+        label_path_out = self.train_path / 'labels' / (
+            f"{image_path.stem}_aug_{index}.txt"
+        )
+        image_uint8 = (
+            image
+            if image.dtype == np.uint8
+            else np.clip(image, 0, 255).astype(np.uint8)
+        )
+        cv2.imwrite(
+            str(image_path_out),
+            cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR),
+        )
+        self.write_label_file(bboxes, class_labels, label_path_out)
 
     def augment_data(self, batch_size: int = 10) -> None:
         """

@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""Rebuild one TensorRT engine file.
-
-Usage:
-    python scripts/rebuild_single_engine.py yolo11m
-"""
 from __future__ import annotations
 
 import sys

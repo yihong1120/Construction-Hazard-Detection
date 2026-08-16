@@ -42,28 +42,6 @@ class AlbumentationsStub:
         return factory
 
 
-class LimitedAlbumentationsStub(AlbumentationsStub):
-    """Expose only selected transforms to exercise compatibility fallbacks."""
-
-    def __init__(self, available: set[str]) -> None:
-        super().__init__()
-        self.available = available
-
-    def __getattr__(self, name: str) -> Any:
-        if name not in self.available:
-            raise AttributeError(name)
-        return super().__getattr__(name)
-
-
-class FlipFallbackAlbumentationsStub(AlbumentationsStub):
-    """Model an older release that only exposes the combined flip transform."""
-
-    def __getattr__(self, name: str) -> Any:
-        if name in {'HorizontalFlip', 'VerticalFlip'}:
-            raise AttributeError(name)
-        return super().__getattr__(name)
-
-
 @pytest.mark.parametrize(
     ('has_bboxes', 'bboxes'),
     [
@@ -99,54 +77,6 @@ def test_random_transform_builds_a_bbox_aware_pipeline(
     assert any(
         item.name == 'RandomGridShuffle'
         for item in albumentations.created
-    )
-
-
-def test_optional_transforms_degrade_gracefully_on_older_versions(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Optional Albumentations APIs have safe fallbacks or no-op behaviour."""
-    albumentations = LimitedAlbumentationsStub({'RandomCrop'})
-    monkeypatch.setattr(subject, 'A', albumentations)
-    augmenter = subject.DataAugmentation(str(tmp_path))
-
-    crop = augmenter.random_bbox_safe_crop_transform((480, 640))
-    assert crop.name == 'RandomCrop'
-    assert augmenter.at_least_one_bbox_crop_transform((480, 640)) is None
-    assert augmenter.symmetry_transform() is None
-    assert augmenter.safe_rotate_transform() is None
-    assert augmenter.random_scale_transform() is None
-    assert augmenter.pad_if_needed_transform() is None
-    assert augmenter.normalize_bboxes_with_albumentations(
-        np.zeros((2, 2, 3), dtype=np.uint8),
-        [[0.5, 0.5, 0.2, 0.2]],
-        [1],
-    ) == ([[0.5, 0.5, 0.2, 0.2]], [1])
-
-    bbox_safe = LimitedAlbumentationsStub({'BBoxSafeRandomCrop'})
-    monkeypatch.setattr(subject, 'A', bbox_safe)
-    assert augmenter.random_bbox_safe_crop_transform((480, 640)).name == (
-        'BBoxSafeRandomCrop'
-    )
-
-    square_symmetry = LimitedAlbumentationsStub({'SquareSymmetry'})
-    monkeypatch.setattr(subject, 'A', square_symmetry)
-    symmetry = augmenter.symmetry_transform()
-    assert symmetry is not None
-    assert symmetry.name == 'SquareSymmetry'
-
-    def legacy_factory(*, format: str) -> str:
-        return format
-
-    assert subject.DataAugmentation._create_transform(
-        legacy_factory,
-        coord_format='yolo',
-    ) == 'yolo'
-    assert augmenter._choose_bbox_transforms([], []) == []
-    assert not augmenter._bbox_stays_in_single_grid_cell(
-        [0.5, 0.5, 0.0, 0.2],
-        (2, 2),
     )
 
 
@@ -240,11 +170,11 @@ def test_mask_dropout_uses_the_post_transform_pipeline(
     post.assert_called_once()
 
 
-def test_generate_mask_and_flip_fallbacks_cover_all_shape_variants(
+def test_generate_mask_and_flip_transforms_cover_all_shape_variants(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Mask generation handles each supported shape and legacy flip APIs."""
+    """Mask generation and fixed flip transforms cover all shape variants."""
     augmenter = subject.DataAugmentation(str(tmp_path))
     with patch.object(
         subject.random,
@@ -259,10 +189,15 @@ def test_generate_mask_and_flip_fallbacks_cover_all_shape_variants(
     assert mask.shape == (80, 100)
     assert mask.any()
 
-    albumentations = FlipFallbackAlbumentationsStub()
+    albumentations = AlbumentationsStub()
     monkeypatch.setattr(subject, 'A', albumentations)
     augmenter.random_transform(has_bboxes=False)
-    assert sum(item.name == 'Flip' for item in albumentations.created) >= 2
+    assert any(
+        item.name == 'HorizontalFlip' for item in albumentations.created
+    )
+    assert any(
+        item.name == 'VerticalFlip' for item in albumentations.created
+    )
 
 
 def test_augment_image_skips_unreadable_or_invalid_outputs(

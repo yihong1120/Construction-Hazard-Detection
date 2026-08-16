@@ -399,7 +399,14 @@ def _patched_onnx2engine_source(source: str) -> str:
     Q/DQ ModelOpt INT8 so
     ``--exclude-detect-head`` remains meaningful.
     """
-    dynamic_profile = '\n'.join([
+    source = _replace_dynamic_profile(source)
+    gate, modelopt_call = _find_modelopt_quantize_gate(source)
+    return _replace_modelopt_gate(source, gate, modelopt_call)
+
+
+def _dynamic_profile_source() -> str:
+    """Return the upstream dynamic TensorRT profile expected by the patch."""
+    return '\n'.join([
         '    if dynamic:',
         '        profile = builder.create_optimization_profile()',
         '        min_shape = (1, shape[1], 32, 32)  # minimum input shape',
@@ -411,7 +418,11 @@ def _patched_onnx2engine_source(source: str) -> str:
         '        config.add_optimization_profile(profile)',
         '',
     ])
-    batch_only_profile = '\n'.join([
+
+
+def _batch_only_dynamic_profile_source() -> str:
+    """Return the fixed-spatial profile used for dynamic live batching."""
+    return '\n'.join([
         '    if dynamic:',
         '        profile = builder.create_optimization_profile()',
         '        min_shape = (1, *shape[1:])',
@@ -427,38 +438,58 @@ def _patched_onnx2engine_source(source: str) -> str:
         '        config.add_optimization_profile(profile)',
         '',
     ])
+
+
+def _replace_dynamic_profile(source: str) -> str:
+    """Replace Ultralytics spatial dynamics with batch-only dynamics."""
+    dynamic_profile = _dynamic_profile_source()
     if dynamic_profile not in source:
         raise RuntimeError(
             'Cannot patch Ultralytics dynamic TensorRT profile.',
         )
-    source = source.replace(
+    return source.replace(
         dynamic_profile,
-        batch_only_profile,
+        _batch_only_dynamic_profile_source(),
     )
-    modelopt_gate: tuple[ast.If, ast.Assign] | None = None
+
+
+def _find_modelopt_quantize_gate(source: str) -> tuple[ast.If, ast.Assign]:
+    """Locate the upstream condition containing the ModelOpt assignment."""
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.If):
             continue
         for statement in node.body:
-            if not (
+            if (
                 isinstance(statement, ast.Assign)
-                and any(
-                    isinstance(target, ast.Name) and target.id == 'onnx_file'
-                    for target in statement.targets
-                )
-                and isinstance(statement.value, ast.Call)
-                and isinstance(statement.value.func, ast.Name)
-                and statement.value.func.id == 'modelopt_quantize_onnx'
+                and _is_modelopt_quantize_assignment(statement)
             ):
-                continue
-            modelopt_gate = (node, statement)
-            break
-        if modelopt_gate is not None:
-            break
-    if modelopt_gate is None:
-        raise RuntimeError('Cannot patch Ultralytics ModelOpt INT8 gate.')
+                return node, statement
+    raise RuntimeError('Cannot patch Ultralytics ModelOpt INT8 gate.')
 
-    gate, modelopt_call = modelopt_gate
+
+def _is_modelopt_quantize_assignment(statement: ast.stmt) -> bool:
+    """Return whether a statement assigns ModelOpt output to ``onnx_file``."""
+    if not isinstance(statement, ast.Assign):
+        return False
+    has_onnx_target = any(
+        isinstance(target, ast.Name) and target.id == 'onnx_file'
+        for target in statement.targets
+    )
+    call = statement.value
+    return (
+        has_onnx_target
+        and isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == 'modelopt_quantize_onnx'
+    )
+
+
+def _replace_modelopt_gate(
+    source: str,
+    gate: ast.If,
+    modelopt_call: ast.Assign,
+) -> str:
+    """Force an explicit Q/DQ gate around one upstream ModelOpt call."""
     lines = source.splitlines(keepends=True)
     gate_indent = lines[gate.lineno - 1][:gate.col_offset]
     call_indent = lines[modelopt_call.lineno - 1][:modelopt_call.col_offset]
@@ -478,12 +509,18 @@ def _patched_onnx2engine_source(source: str) -> str:
         f'{call_indent}    use_int8 = False',
         f'{call_indent}    use_fp16 = True',
     ])
-    line_offsets = [0]
-    for line in lines:
-        line_offsets.append(line_offsets[-1] + len(line))
+    line_offsets = _line_offsets(lines)
     gate_start = line_offsets[gate.lineno - 1] + gate.col_offset
     call_end = line_offsets[call_end_line - 1] + call_end_column
     return source[:gate_start] + explicit_qdq_gate + source[call_end:]
+
+
+def _line_offsets(lines: list[str]) -> list[int]:
+    """Return source-character offsets for one-based AST line locations."""
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    return offsets
 
 
 def patch_tensorrt_engine_exporter() -> None:

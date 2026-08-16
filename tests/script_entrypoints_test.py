@@ -49,7 +49,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             'src/notifiers/telegram_notifier.py',
             'src/notifiers/line_notifier_message_api.py',
             'src/stream_capture.py',
-            'src/yolo_detector.py',
+            'src/local_yolo_detector.py',
         )
 
         def close_coroutine(coroutine: object) -> None:

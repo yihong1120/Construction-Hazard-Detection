@@ -3,8 +3,24 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from math import sqrt
+from typing import cast
 
 from src.utils import Utils
+
+
+def _clip_coordinate(value: float, minimum: float, maximum: float) -> float:
+    """Clamp a coordinate to an inclusive range."""
+    return max(minimum, min(maximum, value))
+
+
+def _is_number(value: object) -> bool:
+    """Return whether a value is a non-boolean number."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _in_range(value: float, minimum: float, maximum: float) -> bool:
+    """Return whether a value is inside an inclusive range."""
+    return minimum <= value <= maximum
 
 
 class UtilsTools:
@@ -272,41 +288,24 @@ class UtilsTools:
             dict[str, Any]: A mapping with normalised coordinates and meta.
         """
         try:
-            # Basic normalisation utilities
-            def _clip(v: float, lo: float, hi: float) -> float:
-                """Clamp a value to an inclusive range."""
-                return max(lo, min(hi, v))
-
-            norm = []
             if target_format == 'normalized':
-                # Convert absolute coords to [0,1]
-                for x, y in coordinates:
-                    nx = _clip(x / image_width, 0.0, 1.0)
-                    ny = _clip(y / image_height, 0.0, 1.0)
-                    norm.append([nx, ny])
+                norm = self._normalise_point_coordinates(
+                    coordinates,
+                    image_width,
+                    image_height,
+                )
             elif target_format == 'yolo':
-                # Expect coordinates are bbox corners [x1,y1,x2,y2] for each
-                # item
-                for bbox in coordinates:
-                    if len(bbox) != 4:
-                        raise ValueError('YOLO expects [x1,y1,x2,y2] per item')
-                    x1, y1, x2, y2 = bbox
-                    cx = _clip(((x1 + x2) / 2.0) / image_width, 0.0, 1.0)
-                    cy = _clip(((y1 + y2) / 2.0) / image_height, 0.0, 1.0)
-                    w = _clip((abs(x2 - x1)) / image_width, 0.0, 1.0)
-                    h = _clip((abs(y2 - y1)) / image_height, 0.0, 1.0)
-                    norm.append([cx, cy, w, h])
+                norm = self._normalise_yolo_boxes(
+                    coordinates,
+                    image_width,
+                    image_height,
+                )
             elif target_format == 'coco':
-                # Convert [x1,y1,x2,y2] -> [x,y,w,h]
-                for bbox in coordinates:
-                    if len(bbox) != 4:
-                        raise ValueError('COCO expects [x1,y1,x2,y2] per item')
-                    x1, y1, x2, y2 = bbox
-                    x = _clip(min(x1, x2), 0.0, float(image_width))
-                    y = _clip(min(y1, y2), 0.0, float(image_height))
-                    w = _clip(abs(x2 - x1), 0.0, float(image_width))
-                    h = _clip(abs(y2 - y1), 0.0, float(image_height))
-                    norm.append([x, y, w, h])
+                norm = self._normalise_coco_boxes(
+                    coordinates,
+                    image_width,
+                    image_height,
+                )
             else:
                 raise ValueError(
                     "Unsupported target_format. Use 'yolo', 'coco', or "
@@ -325,6 +324,61 @@ class UtilsTools:
         except Exception as e:
             self.logger.error(f"Failed to normalize coordinates: {e}")
             raise
+
+    @staticmethod
+    def _normalise_point_coordinates(
+        coordinates: list[list[float]],
+        image_width: int,
+        image_height: int,
+    ) -> list[list[float]]:
+        """Convert absolute point coordinates to the normalized range."""
+        return [
+            [
+                _clip_coordinate(x / image_width, 0.0, 1.0),
+                _clip_coordinate(y / image_height, 0.0, 1.0),
+            ]
+            for x, y in coordinates
+        ]
+
+    @staticmethod
+    def _normalise_yolo_boxes(
+        coordinates: list[list[float]],
+        image_width: int,
+        image_height: int,
+    ) -> list[list[float]]:
+        """Convert xyxy boxes to normalized YOLO centre-width-height boxes."""
+        normalized: list[list[float]] = []
+        for bbox in coordinates:
+            if len(bbox) != 4:
+                raise ValueError('YOLO expects [x1,y1,x2,y2] per item')
+            x1, y1, x2, y2 = bbox
+            normalized.append([
+                _clip_coordinate(((x1 + x2) / 2.0) / image_width, 0.0, 1.0),
+                _clip_coordinate(((y1 + y2) / 2.0) / image_height, 0.0, 1.0),
+                _clip_coordinate(abs(x2 - x1) / image_width, 0.0, 1.0),
+                _clip_coordinate(abs(y2 - y1) / image_height, 0.0, 1.0),
+            ])
+        return normalized
+
+    @staticmethod
+    def _normalise_coco_boxes(
+        coordinates: list[list[float]],
+        image_width: int,
+        image_height: int,
+    ) -> list[list[float]]:
+        """Convert xyxy boxes to clipped COCO left-top-width-height boxes."""
+        normalized: list[list[float]] = []
+        for bbox in coordinates:
+            if len(bbox) != 4:
+                raise ValueError('COCO expects [x1,y1,x2,y2] per item')
+            x1, y1, x2, y2 = bbox
+            normalized.append([
+                _clip_coordinate(min(x1, x2), 0.0, float(image_width)),
+                _clip_coordinate(min(y1, y2), 0.0, float(image_height)),
+                _clip_coordinate(abs(x2 - x1), 0.0, float(image_width)),
+                _clip_coordinate(abs(y2 - y1), 0.0, float(image_height)),
+            ])
+        return normalized
 
     async def convert_image_format(
         self,
@@ -413,78 +467,16 @@ class UtilsTools:
             dict[str, Any]: A mapping with the validation outcome and details.
         """
         try:
-            # Validate detections inline
             errors: list[str] = []
-
-            def _is_number(v: object) -> bool:
-                """Return whether a value is a non-boolean number."""
-                return isinstance(v, (int, float)) and not isinstance(v, bool)
-
-            def _in_range(v: float, lo: float, hi: float) -> bool:
-                """Return whether a value is inside an inclusive range."""
-                return lo <= v <= hi
-
             for idx, det in enumerate(detections):
-                if not isinstance(det, dict):
-                    errors.append(f"[{idx}] detection must be an object/dict")
-                    continue
-
-                # Accept 'bbox' or 'box'
-                bbox = det.get('bbox') if 'bbox' in det else det.get('box')
-                if bbox is None:
-                    errors.append(f"[{idx}] missing 'bbox'/'box'")
-                    continue
-                if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-                    errors.append(
-                        (
-                            f"[{idx}] 'bbox' must be a list of 4 numbers "
-                            '[x1,y1,x2,y2]'
-                        ),
-                    )
-                    continue
-                if not all(_is_number(v) for v in bbox):
-                    errors.append(f"[{idx}] 'bbox' values must be numbers")
-                    continue
-
-                x1, y1, x2, y2 = bbox
-                # Normalized coords support: if all in [0,1],
-                # scale check loosely
-                if all(0.0 <= float(v) <= 1.0 for v in [x1, y1, x2, y2]):
-                    # allow normalized, but ensure ordering and non-zero area
-                    pass
-                else:
-                    if not _in_range(float(x1), 0.0, float(image_width)):
-                        errors.append(
-                            f"[{idx}] x1 out of range [0,{image_width}]",
-                        )
-                    if not _in_range(float(x2), 0.0, float(image_width)):
-                        errors.append(
-                            f"[{idx}] x2 out of range [0,{image_width}]",
-                        )
-                    if not _in_range(float(y1), 0.0, float(image_height)):
-                        errors.append(
-                            f"[{idx}] y1 out of range [0,{image_height}]",
-                        )
-                    if not _in_range(float(y2), 0.0, float(image_height)):
-                        errors.append(
-                            f"[{idx}] y2 out of range [0,{image_height}]",
-                        )
-
-                # Check geometry validity (after potential normalization)
-                if float(x2) <= float(x1) or float(y2) <= float(y1):
-                    errors.append(
-                        f"[{idx}] bbox has non-positive size: {bbox}",
-                    )
-
-                # Optional fields validation
-                if 'confidence' in det and not _is_number(det['confidence']):
-                    errors.append(f"[{idx}] 'confidence' must be a number")
-                if 'conf' in det and not _is_number(det['conf']):
-                    errors.append(f"[{idx}] 'conf' must be a number")
-                if 'class' in det and not isinstance(det['class'], int):
-                    errors.append(f"[{idx}] 'class' must be an integer")
-                if 'cls' in det and not isinstance(det['cls'], int):
-                    errors.append(f"[{idx}] 'cls' must be an integer")
+                errors.extend(
+                    self._detection_validation_errors(
+                        det,
+                        idx,
+                        image_width,
+                        image_height,
+                    ),
+                )
 
             is_valid = len(errors) == 0
             validation_errors = errors
@@ -504,6 +496,93 @@ class UtilsTools:
         except Exception as e:
             self.logger.error(f"Failed to validate detection data: {e}")
             raise
+
+    @staticmethod
+    def _detection_validation_errors(
+        detection: object,
+        index: int,
+        image_width: int,
+        image_height: int,
+    ) -> list[str]:
+        """Return validation messages for one detection object."""
+        if not isinstance(detection, dict):
+            return [f"[{index}] detection must be an object/dict"]
+        bbox = detection.get(
+            'bbox',
+        ) if 'bbox' in detection else detection.get('box')
+        bbox_error = UtilsTools._bbox_validation_error(bbox, index)
+        if bbox_error is not None:
+            return [bbox_error]
+        assert isinstance(bbox, (list, tuple))
+        return (
+            UtilsTools._bbox_geometry_errors(
+                bbox,
+                index,
+                image_width,
+                image_height,
+            )
+            + UtilsTools._optional_field_errors(detection, index)
+        )
+
+    @staticmethod
+    def _bbox_validation_error(bbox: object, index: int) -> str | None:
+        """Return the first shape or type error for a detection bbox."""
+        if bbox is None:
+            return f"[{index}] missing 'bbox'/'box'"
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            return (
+                f"[{index}] 'bbox' must be a list of 4 numbers "
+                '[x1,y1,x2,y2]'
+            )
+        if not all(_is_number(value) for value in bbox):
+            return f"[{index}] 'bbox' values must be numbers"
+        return None
+
+    @staticmethod
+    def _bbox_geometry_errors(
+        bbox: Sequence[object],
+        index: int,
+        image_width: int,
+        image_height: int,
+    ) -> list[str]:
+        """Validate bbox bounds and positive geometry after type checking."""
+        x1, y1, x2, y2 = (
+            float(cast(float | int, value)) for value in bbox
+        )
+        errors: list[str] = []
+        if not all(0.0 <= value <= 1.0 for value in (x1, y1, x2, y2)):
+            bounds = (
+                ('x1', x1, image_width),
+                ('x2', x2, image_width),
+                ('y1', y1, image_height),
+                ('y2', y2, image_height),
+            )
+            errors.extend(
+                f"[{index}] {name} out of range [0,{maximum}]"
+                for name, value, maximum in bounds
+                if not _in_range(value, 0.0, float(maximum))
+            )
+        if x2 <= x1 or y2 <= y1:
+            errors.append(f"[{index}] bbox has non-positive size: {bbox}")
+        return errors
+
+    @staticmethod
+    def _optional_field_errors(
+        detection: dict[object, object],
+        index: int,
+    ) -> list[str]:
+        """Validate optional confidence and class fields."""
+        errors = [
+            f"[{index}] '{field}' must be a number"
+            for field in ('confidence', 'conf')
+            if field in detection and not _is_number(detection[field])
+        ]
+        errors.extend(
+            f"[{index}] '{field}' must be an integer"
+            for field in ('class', 'cls')
+            if field in detection and not isinstance(detection[field], int)
+        )
+        return errors
 
     async def _ensure_utils(self) -> Utils:
         """Ensure the utils module is initialised and return it."""

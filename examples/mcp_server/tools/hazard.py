@@ -56,53 +56,7 @@ class HazardTools:
             detector = self._detector
             assert detector is not None
 
-            # Normalize detections to expected format if provided as dicts
-            norm_detections: list[list[float]]
-            if detections and isinstance(detections[0], dict):
-                norm: list[list[float]] = []
-                det_dicts: list[DetectionLikeDict] = cast(
-                    list[DetectionLikeDict], detections,
-                )
-                for d in det_dicts:
-                    bbox_any = d['bbox'] if 'bbox' in d else None
-                    if (
-                        not isinstance(bbox_any, (list, tuple))
-                        or len(bbox_any) < 4
-                    ):
-                        continue
-                    x1, y1, x2, y2 = bbox_any[:4]
-                    if 'confidence' not in d or 'class_' not in d:
-                        continue
-                    conf_any = cast(object, d['confidence'])
-                    if isinstance(
-                        conf_any,
-                        (int, float, str),
-                    ):
-                        try:
-                            conf_f = float(conf_any)
-                        except Exception:
-                            conf_f = 0.0
-                    else:
-                        conf_f = 0.0
-                    cls_any = cast(object, d['class_'])
-                    if isinstance(cls_any, (int, float, str)):
-                        try:
-                            cls_idx_i = int(cls_any)
-                        except Exception:
-                            cls_idx_i = 0
-                    else:
-                        cls_idx_i = 0
-                    norm.append([
-                        float(x1),
-                        float(y1),
-                        float(x2),
-                        float(y2),
-                        conf_f,
-                        float(cls_idx_i),
-                    ])
-                norm_detections = norm
-            else:
-                norm_detections = cast(list[list[float]], detections)
+            norm_detections = self._normalise_detections(detections)
 
             # Perform violation detection
             result = detector.detect_danger(
@@ -125,6 +79,61 @@ class HazardTools:
         except Exception as e:
             self.logger.error(f"Violation detection failed: {e}")
             raise
+
+    @staticmethod
+    def _normalise_detections(
+        detections: list[list[float]] | list[DetectionLikeDict],
+    ) -> list[list[float]]:
+        """Convert dictionary detections to the detector's row format."""
+        if not detections or not isinstance(detections[0], dict):
+            return cast(list[list[float]], detections)
+        return [
+            normalized
+            for detection in cast(list[DetectionLikeDict], detections)
+            if (
+                normalized := HazardTools._normalise_detection(detection)
+            ) is not None
+        ]
+
+    @staticmethod
+    def _normalise_detection(
+        detection: DetectionLikeDict,
+    ) -> list[float] | None:
+        """Return one normalized detection or skip an incomplete object."""
+        bbox = detection['bbox'] if 'bbox' in detection else None
+        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+            return None
+        if 'confidence' not in detection or 'class_' not in detection:
+            return None
+        x1, y1, x2, y2 = bbox[:4]
+        return [
+            float(x1),
+            float(y1),
+            float(x2),
+            float(y2),
+            HazardTools._coerce_float(detection['confidence']),
+            float(HazardTools._coerce_int(detection['class_'])),
+        ]
+
+    @staticmethod
+    def _coerce_float(value: object) -> float:
+        """Convert supported numeric input with the legacy zero fallback."""
+        if not isinstance(value, (int, float, str)):
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _coerce_int(value: object) -> int:
+        """Convert supported class input with the legacy zero fallback."""
+        if not isinstance(value, (int, float, str)):
+            return 0
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
 
     async def _init_detector(
         self,

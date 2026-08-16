@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-"""scripts/rebuild_tensorrt_engines.py
-
-批量重建 TensorRT INT8 engine。
-
-实现说明：
-- 使用 Ultralytics 的 model.export(format='engine', quantize=8, data=...) 进行导出
-- dynamic=False, batch=1, workspace=4
-"""
 from __future__ import annotations
 
 import sys

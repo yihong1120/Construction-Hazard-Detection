@@ -33,6 +33,8 @@ services:
 
   media-server:
     image: bluenviron/mediamtx:latest
+    # Keep the playback upstream available after a Docker daemon restart.
+    restart: unless-stopped
     environment:
       MTX_PROTOCOLS: tcp
       MTX_HLS: 'yes'
@@ -196,7 +198,7 @@ services:
       postgres:
         condition: service_healthy
     # Command to run the backend using Uvicorn
-    command: ["uvicorn", "examples.streaming_web.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "examples.streaming_web.app:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "10"]
     # Expose the backend on port 8000
     ports:
       - '127.0.0.1:8000:8000'

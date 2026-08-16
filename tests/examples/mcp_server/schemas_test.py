@@ -1,4 +1,3 @@
-# tests/examples/mcp_server/schemas_test.py
 from __future__ import annotations
 
 import typing
