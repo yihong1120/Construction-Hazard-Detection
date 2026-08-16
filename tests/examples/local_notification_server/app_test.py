@@ -70,7 +70,11 @@ class TestLocalNotificationServer(unittest.TestCase):
         fernet_key = Fernet.generate_key().decode('utf-8')
         with patch.dict(
             os.environ,
-            {'FCM_TOKEN_ENCRYPTION_KEY': fernet_key},
+            {
+                'FCM_TOKEN_ENCRYPTION_KEY': fernet_key,
+                'FIREBASE_CRED_PATH': '/tmp/test-firebase-credentials.json',
+                'FIREBASE_PROJECT_ID': 'test-project',
+            },
         ):
             with patch('examples.auth.lifespan.engine', fake_engine):
                 with patch(
