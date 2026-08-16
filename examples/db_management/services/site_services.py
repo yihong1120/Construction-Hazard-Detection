@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from typing import Final
 
 from fastapi import HTTPException
+from redis.asyncio import Redis
 from sqlalchemy import delete
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,15 +20,88 @@ from examples.auth.models import User
 from examples.auth.models import user_sites_table
 from examples.auth.models import Violation
 from examples.db_management.deps import SUPER_ADMIN_NAME
+from examples.db_management.schemas.site import SiteRead
 
 _bulk_insert_chunk_size: Final[int] = 1000
+
+
+def encode_site_name(site_name: str) -> str:
+    """Encode a site name for its Redis key namespace.
+
+    Args:
+        site_name: Human-readable site name.
+
+    Returns:
+        URL-safe ASCII key component.
+    """
+    return base64.urlsafe_b64encode(site_name.encode('utf-8')).decode('ascii')
+
+
+async def delete_matching_redis_keys(
+    redis: Redis,
+    key_pattern: str,
+    batch_size: int = 500,
+) -> None:
+    """Delete keys matching a Redis pattern using incremental batches.
+
+    Args:
+        redis: Redis connection used to scan and delete keys.
+        key_pattern: Redis glob pattern identifying keys to remove.
+        batch_size: Maximum keys deleted in one command.
+    """
+    pending: list[bytes] = []
+    async for key in redis.scan_iter(match=key_pattern, count=batch_size):
+        pending.append(key)
+        if len(pending) >= batch_size:
+            await redis.delete(*pending)
+            pending = []
+    if pending:
+        await redis.delete(*pending)
+
+
+def site_to_read(
+    site: Site,
+    visible_group_id: int | None = None,
+) -> SiteRead:
+    """Serialise a site within the requesting administrator's group scope.
+
+    Args:
+        site: Site and relationships to serialise.
+        visible_group_id: Group visible to a scoped administrator, if any.
+
+    Returns:
+        Validated site response with only visible group information.
+    """
+    groups = list(site.groups)
+    users = list(site.users)
+    if visible_group_id is not None:
+        groups = [group for group in groups if group.id == visible_group_id]
+        users = [
+            user for user in users
+            if user.group_id == visible_group_id
+        ]
+    return SiteRead(
+        id=site.id,
+        name=site.name,
+        group_ids=[group.id for group in groups],
+        group_names=[group.name for group in groups],
+        user_ids=[user.id for user in users],
+    )
 
 
 async def _list_user_ids_for_groups(
     group_ids: list[int],
     db: AsyncSession,
 ) -> list[int]:
-    """Load all user IDs for the provided groups."""
+    """Load all user identifiers for the provided groups.
+
+    Args:
+        group_ids: Group identifiers whose members are requested.
+        db: Database session used to query users.
+
+    Returns:
+        User identifiers belonging to any supplied group.
+    """
     if not group_ids:
         return []
 
@@ -40,7 +115,15 @@ async def list_site_ids_for_group(
     group_id: int,
     db: AsyncSession,
 ) -> list[int]:
-    """Load all site IDs linked to a group."""
+    """Load all site identifiers linked to a group.
+
+    Args:
+        group_id: Identifier of the group.
+        db: Database session used to query site membership.
+
+    Returns:
+        Site identifiers accessible to the group.
+    """
     result = await db.execute(
         select(site_groups_table.c.site_id).where(
             site_groups_table.c.group_id == group_id,
@@ -54,7 +137,13 @@ async def seed_site_notification_preferences(
     site_ids: list[int],
     db: AsyncSession,
 ) -> None:
-    """Insert default-enabled notification preferences in bulk."""
+    """Insert default-enabled notification preferences in bulk.
+
+    Args:
+        user_ids: Users that should receive default preferences.
+        site_ids: Sites for which preferences should be created.
+        db: Database session used for bulk insertion.
+    """
     if not user_ids or not site_ids:
         return
 

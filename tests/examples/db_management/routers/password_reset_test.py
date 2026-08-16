@@ -97,7 +97,10 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_reset_password.side_effect = HTTPException(
             status_code=400,
-            detail='Reset token is invalid or expired.',
+            detail={
+                'code': 'reset_token_invalid',
+                'message': 'Reset token is invalid or expired.',
+            },
         )
 
         response = self.client.post(
@@ -108,7 +111,10 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
             response.json(),
-            {'message': 'Reset token is invalid or expired.'},
+            {
+                'code': 'reset_token_invalid',
+                'message': 'Reset token is invalid or expired.',
+            },
         )
 
     async def test_reset_password_missing_fields_returns_400_message(
@@ -119,7 +125,10 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
             response.json(),
-            {'message': 'Reset token is invalid or expired.'},
+            {
+                'code': 'reset_token_invalid',
+                'message': 'Reset token is invalid or expired.',
+            },
         )
 
     @patch(
@@ -132,7 +141,11 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_reset_password.side_effect = HTTPException(
             status_code=400,
-            detail={'code': 'password_too_short', 'min_length': 8},
+            detail={
+                'code': 'password_too_short',
+                'message': 'Password is too short.',
+                'min_length': 8,
+            },
         )
 
         response = self.client.post(
@@ -143,5 +156,9 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
             response.json(),
-            {'code': 'password_too_short', 'min_length': 8},
+            {
+                'code': 'password_too_short',
+                'message': 'Password is too short.',
+                'min_length': 8,
+            },
         )

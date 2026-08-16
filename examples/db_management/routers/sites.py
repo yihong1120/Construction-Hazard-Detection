@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 from typing import cast
 
 import redis.asyncio as redis
@@ -30,11 +29,14 @@ from examples.db_management.schemas.site import SiteUserOp
 from examples.db_management.services.site_services import add_group_to_site
 from examples.db_management.services.site_services import add_user_to_site
 from examples.db_management.services.site_services import create_site
+from examples.db_management.services.site_services import delete_matching_redis_keys
 from examples.db_management.services.site_services import delete_site
+from examples.db_management.services.site_services import encode_site_name
 from examples.db_management.services.site_services import list_sites
 from examples.db_management.services.site_services import \
     remove_group_from_site
 from examples.db_management.services.site_services import remove_user_from_site
+from examples.db_management.services.site_services import site_to_read
 from examples.db_management.services.site_services import update_site
 from examples.local_notification_server.services import (
     invalidate_site_notification_user_cache,
@@ -43,46 +45,6 @@ from examples.local_notification_server.services import \
     refresh_site_notification_user_cache
 
 router: APIRouter = APIRouter(tags=['site-mgmt'])
-
-
-async def _delete_matching_redis_keys(
-    rds: redis.Redis,
-    key_pattern: str,
-    batch_size: int = 500,
-) -> None:
-    """Delete matching Redis keys without blocking Redis with KEYS."""
-    pending: list[bytes | str] = []
-    async for key in rds.scan_iter(match=key_pattern, count=batch_size):
-        pending.append(key)
-        if len(pending) >= batch_size:
-            await rds.delete(*pending)
-            pending = []
-    if pending:
-        await rds.delete(*pending)
-
-
-def _site_to_read(
-    site: Site,
-    visible_group_id: int | None = None,
-) -> SiteRead:
-    """Convert a Site ORM instance to the API response model."""
-    groups = list(site.groups)
-    users = list(site.users)
-
-    if visible_group_id is not None:
-        groups = [group for group in groups if group.id == visible_group_id]
-        users = [
-            user for user in users
-            if getattr(user, 'group_id', None) == visible_group_id
-        ]
-
-    return SiteRead(
-        id=site.id,
-        name=site.name,
-        group_ids=[g.id for g in groups],
-        group_names=[g.name for g in groups],
-        user_ids=[user.id for user in users],
-    )
 
 
 @router.get('/list_sites', response_model=list[SiteRead])
@@ -115,7 +77,7 @@ async def endpoint_list_sites(
 
     # Convert Site objects to SiteRead schemas for response
     return [
-        _site_to_read(site, visible_group_id=visible_group_id)
+        site_to_read(site, visible_group_id=visible_group_id)
         for site in sites
     ]
 
@@ -157,7 +119,7 @@ async def endpoint_create_site(
     site: Site = await create_site(payload.name, group_ids, db)
     invalidate_effective_site_cache()
 
-    return _site_to_read(site, visible_group_id=visible_group_id)
+    return site_to_read(site, visible_group_id=visible_group_id)
 
 
 @router.put(
@@ -241,22 +203,9 @@ async def endpoint_delete_site(
     # Check permissions for deletion
     _site_permission(me, site=site)
 
-    # Delete compact live metadata keys for this site.
-    def encode_site_name(site_name: str) -> str:
-        """Encode the site name using URL-safe base64 encoding.
-
-        Args:
-            site_name (str): The site name to encode.
-
-        Returns:
-            str: The base64-encoded site name.
-        """
-        return base64.urlsafe_b64encode(
-            site_name.encode('utf-8'),
-        ).decode('ascii')
     encoded_name: str = encode_site_name(site.name)
     key_pattern: str = f'stream_metadata:{encoded_name}*'
-    await _delete_matching_redis_keys(rds, key_pattern)
+    await delete_matching_redis_keys(rds, key_pattern)
 
     await invalidate_site_notification_user_cache([site.name], rds)
 

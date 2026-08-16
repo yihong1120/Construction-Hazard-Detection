@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import secrets
 from datetime import datetime
@@ -36,39 +35,107 @@ VERIFY_EMAIL_SUCCESS_RESPONSE = 'Email verified successfully.'
 
 
 def _now() -> datetime:
+    """Return the current timezone-aware UTC time.
+
+    Returns:
+        Current UTC time for verification expiry and audit data.
+    """
     return datetime.now(timezone.utc)
 
 
 def _hash_token(raw_token: str) -> str:
-    """Hash a raw email verification token before storing or comparing it."""
+    """Hash a raw verification token before storing or comparing it.
+
+    Args:
+        raw_token: Raw one-time token sent to the user.
+
+    Returns:
+        Non-reversible token hash.
+    """
     return hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
 
 
 def _hash_identifier(value: str) -> str:
+    """Hash an identifier before using it in a Redis key.
+
+    Args:
+        value: Email address or other identifier.
+
+    Returns:
+        Non-reversible identifier hash.
+    """
     return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
 
 def _resend_rate_key(email: str) -> str:
+    """Build the short-window verification-resend key for an email.
+
+    Args:
+        email: Email address requesting a verification resend.
+
+    Returns:
+        Redis rate-limit key.
+    """
     return f'email_verification_rate:email:{_hash_identifier(email)}'
 
 
 def _resend_daily_rate_key(email: str) -> str:
+    """Build the daily verification-resend key for an email.
+
+    Args:
+        email: Email address requesting a verification resend.
+
+    Returns:
+        Redis daily rate-limit key.
+    """
     return f'email_verification_daily_rate:email:{_hash_identifier(email)}'
 
 
 def _email_verification_key(token_hash: str) -> str:
+    """Build the Redis key for an email-verification token.
+
+    Args:
+        token_hash: Non-reversible verification-token hash.
+
+    Returns:
+        Redis token-record key.
+    """
     return f'email_verification:{token_hash}'
 
 
 def _email_verification_used_key(token_hash: str) -> str:
+    """Build the Redis key recording a consumed verification token.
+
+    Args:
+        token_hash: Non-reversible verification-token hash.
+
+    Returns:
+        Redis consumed-token marker key.
+    """
     return f'email_verification_used:{token_hash}'
 
 
 def _email_verification_user_key(user_id: int) -> str:
+    """Build the Redis key mapping a user to an active token.
+
+    Args:
+        user_id: Database identifier of the user.
+
+    Returns:
+        Redis user-to-token mapping key.
+    """
     return f'email_verification_user:{user_id}'
 
 
 def _build_verify_url(raw_token: str) -> str:
+    """Build the public verification URL for a raw token.
+
+    Args:
+        raw_token: One-time verification token to place in the URL.
+
+    Returns:
+        Public verification URL.
+    """
     public_url = settings.app_public_url.rstrip('/')
     return f'{public_url}/verify-email?token={raw_token}'
 
@@ -77,6 +144,15 @@ async def _enforce_resend_rate_limit(
     email: str,
     redis_pool: Redis,
 ) -> None:
+    """Enforce short-window and daily verification-resend limits.
+
+    Args:
+        email: Email address requesting a resend.
+        redis_pool: Redis connection holding rate-limit counters.
+
+    Raises:
+        HTTPException: If either resend limit is exceeded.
+    """
     key = _resend_rate_key(email)
     current = int(await redis_pool.incr(key))
     if current == 1:
@@ -128,6 +204,15 @@ async def _find_user_by_email(
     email: str,
     db: AsyncSession,
 ) -> User | None:
+    """Find the user whose profile matches an email address.
+
+    Args:
+        email: Email address to search for.
+        db: Database session used to load the user.
+
+    Returns:
+        Matching user, or ``None`` when absent.
+    """
     return await db.scalar(
         select(User)
         .options(selectinload(User.profile))
@@ -137,6 +222,14 @@ async def _find_user_by_email(
 
 
 def _profile_email(user: User) -> str:
+    """Return the normalised email address from a user's profile.
+
+    Args:
+        user: User with a required loaded profile.
+
+    Returns:
+        Normalised email address.
+    """
     profile = user.profile
     email = str(profile.email if profile else '').strip().lower()
     if not email:
@@ -151,32 +244,46 @@ async def _delete_existing_token_for_user(
     user_id: int,
     redis_pool: Redis,
 ) -> None:
+    """Remove any previous verification token belonging to a user.
+
+    Args:
+        user_id: Database identifier of the user.
+        redis_pool: Redis connection holding token state.
+    """
     index_key = _email_verification_user_key(user_id)
     existing_hash = await redis_pool.get(index_key)
-    if isinstance(existing_hash, bytes):
-        existing_hash = existing_hash.decode('utf-8')
-    if isinstance(existing_hash, str) and existing_hash:
-        await redis_pool.delete(_email_verification_key(existing_hash))
+    if existing_hash is not None:
+        await redis_pool.delete(
+            _email_verification_key(existing_hash.decode('ascii')),
+        )
     await redis_pool.delete(index_key)
 
 
 async def _create_email_verification_token(
     user: User,
-    email: str,
     redis_pool: Redis,
 ) -> str:
+    """Create and persist a replacement verification token for a user.
+
+    Args:
+        user: User receiving the verification token.
+        redis_pool: Redis connection used to store token state.
+
+    Returns:
+        Raw one-time token to send by email.
+    """
     await _delete_existing_token_for_user(user.id, redis_pool)
     raw_token = secrets.token_urlsafe(48)
     token_hash = _hash_token(raw_token)
     ttl = settings.email_verification_token_ttl_seconds
     await redis_pool.set(
         _email_verification_key(token_hash),
-        json.dumps({'user_id': user.id, 'email': email}),
+        str(user.id).encode('ascii'),
         ex=ttl,
     )
     await redis_pool.set(
         _email_verification_user_key(user.id),
-        token_hash,
+        token_hash.encode('ascii'),
         ex=ttl,
     )
     return raw_token
@@ -186,6 +293,12 @@ async def _delete_token_by_raw_token(
     raw_token: str,
     redis_pool: Redis,
 ) -> None:
+    """Delete the verification record associated with a raw token.
+
+    Args:
+        raw_token: Raw verification token whose records are removed.
+        redis_pool: Redis connection holding token state.
+    """
     token_hash = _hash_token(raw_token)
     await redis_pool.delete(_email_verification_key(token_hash))
 
@@ -195,7 +308,13 @@ async def _send_email_verification_email(
     username: str,
     verify_url: str,
 ) -> None:
-    """Send a transactional email verification link through Brevo."""
+    """Send a transactional verification link through Brevo.
+
+    Args:
+        email: Recipient email address.
+        username: Account username used in message content.
+        verify_url: Public one-time verification URL.
+    """
     if not settings.brevo_api_key or not settings.mail_from:
         raise HTTPException(
             status_code=500,
@@ -275,11 +394,18 @@ async def send_signup_verification_email(
     user: User,
     redis_pool: Redis,
 ) -> dict[str, str]:
-    """Create a one-time verification token and email it to the new user."""
+    """Create a one-time verification token and email it to a new user.
+
+    Args:
+        user: Newly registered user requiring verification.
+        redis_pool: Redis connection used to store token state.
+
+    Returns:
+        Generic success message for the registration flow.
+    """
     email = _profile_email(user)
     raw_token = await _create_email_verification_token(
         user,
-        email,
         redis_pool,
     )
     try:
@@ -303,7 +429,16 @@ async def resend_verification_email(
     db: AsyncSession,
     redis_pool: Redis,
 ) -> dict[str, str]:
-    """Send another verification email for an unverified account."""
+    """Send another verification email for an unverified account.
+
+    Args:
+        email: Account email address requesting a resend.
+        db: Database session used to locate the account.
+        redis_pool: Redis connection used for rate limits and token state.
+
+    Returns:
+        Generic response that does not disclose account existence.
+    """
     normalized_email = email.strip().lower()
     await _enforce_resend_rate_limit(normalized_email, redis_pool)
 
@@ -326,45 +461,26 @@ async def verify_email_token(
     db: AsyncSession,
     redis_pool: Redis,
 ) -> dict[str, str]:
-    """Verify a one-time email token and advance the account state."""
-    token_value = (raw_token or '').strip()
-    if not token_value:
-        raise HTTPException(
-            status_code=400,
-            detail={'code': 'invalid_token', 'message': 'Invalid token.'},
-        )
+    """Verify a one-time email token and advance account state.
 
+    Args:
+        raw_token: Raw one-time verification token.
+        db: Database session used to update the user.
+        redis_pool: Redis connection used to consume token state.
+
+    Returns:
+        Verification message and resulting account status.
+
+    Raises:
+        HTTPException: If the token is invalid, expired, or already used.
+    """
+    token_value = _required_email_token(raw_token)
     token_hash = _hash_token(token_value)
-    redis_key = _email_verification_key(token_hash)
-    raw_payload = await redis_pool.getdel(redis_key)
-
-    if raw_payload is None:
-        if await redis_pool.get(_email_verification_used_key(token_hash)):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    'code': 'token_used',
-                    'message': 'Token already used.',
-                },
-            )
-        raise HTTPException(
-            status_code=400,
-            detail={
-                'code': 'invalid_or_expired_token',
-                'message': 'Token is invalid or expired.',
-            },
-        )
-
-    try:
-        if isinstance(raw_payload, bytes):
-            raw_payload = raw_payload.decode('utf-8')
-        payload = json.loads(raw_payload)
-        user_id = int(payload['user_id'])
-    except (TypeError, ValueError, KeyError, json.JSONDecodeError):
-        raise HTTPException(
-            status_code=400,
-            detail={'code': 'invalid_token', 'message': 'Invalid token.'},
-        )
+    raw_payload = await _consume_email_verification_payload(
+        redis_pool,
+        token_hash,
+    )
+    user_id = _email_verification_user_id(raw_payload)
 
     user = await db.get(User, user_id)
     if user is None:
@@ -373,19 +489,13 @@ async def verify_email_token(
             detail={'code': 'invalid_token', 'message': 'Invalid token.'},
         )
 
-    now = _now()
-    if user.email_verified_at is None:
-        user.email_verified_at = now
-
-    if user.status == USER_STATUS_EMAIL_UNVERIFIED:
-        user.status = USER_STATUS_PENDING_ADMIN_APPROVAL
-    elif user.status in {USER_STATUS_REJECTED, USER_STATUS_SUSPENDED}:
+    _apply_email_verification_status(user)
+    if user.status in {
+        USER_STATUS_REJECTED,
+        USER_STATUS_SUSPENDED,
+    }:
         await db.commit()
-        await redis_pool.set(
-            _email_verification_used_key(token_hash),
-            '1',
-            ex=settings.email_verification_token_ttl_seconds,
-        )
+        await _mark_email_token_used(redis_pool, token_hash)
         raise HTTPException(
             status_code=403,
             detail={
@@ -393,16 +503,12 @@ async def verify_email_token(
                 'status': user.status,
             },
         )
-    elif user.status not in {
+    if user.status not in {
         USER_STATUS_ACTIVE,
         USER_STATUS_PENDING_ADMIN_APPROVAL,
     }:
         await db.commit()
-        await redis_pool.set(
-            _email_verification_used_key(token_hash),
-            '1',
-            ex=settings.email_verification_token_ttl_seconds,
-        )
+        await _mark_email_token_used(redis_pool, token_hash)
         raise HTTPException(
             status_code=403,
             detail={'code': 'account_not_active', 'status': user.status},
@@ -410,13 +516,104 @@ async def verify_email_token(
 
     await db.commit()
     await redis_pool.delete(_email_verification_user_key(user.id))
-    await redis_pool.set(
-        _email_verification_used_key(token_hash),
-        '1',
-        ex=settings.email_verification_token_ttl_seconds,
-    )
+    await _mark_email_token_used(redis_pool, token_hash)
     return {
         'message': VERIFY_EMAIL_SUCCESS_RESPONSE,
         'code': 'email_verified',
         'status': user.status,
     }
+
+
+def _required_email_token(raw_token: str | None) -> str:
+    """Return a non-empty verification token or raise the public error.
+
+    Args:
+        raw_token: Optional token supplied by the client.
+
+    Returns:
+        Non-empty verification token.
+
+    Raises:
+        HTTPException: If the token is absent.
+    """
+    token_value = (raw_token or '').strip()
+    if not token_value:
+        raise HTTPException(
+            status_code=400,
+            detail={'code': 'invalid_token', 'message': 'Invalid token.'},
+        )
+    return token_value
+
+
+async def _consume_email_verification_payload(
+    redis_pool: Redis,
+    token_hash: str,
+) -> bytes:
+    """Consume an active token or raise its used/expired error.
+
+    Args:
+        redis_pool: Redis connection holding token state.
+        token_hash: Non-reversible verification-token hash.
+
+    Returns:
+        Raw persisted token payload.
+
+    Raises:
+        HTTPException: If the token is used, expired, or invalid.
+    """
+    raw_payload = await redis_pool.getdel(_email_verification_key(token_hash))
+    if raw_payload is not None:
+        return raw_payload
+    if await redis_pool.get(_email_verification_used_key(token_hash)):
+        raise HTTPException(
+            status_code=400,
+            detail={'code': 'token_used', 'message': 'Token already used.'},
+        )
+    raise HTTPException(
+        status_code=400,
+        detail={
+            'code': 'invalid_or_expired_token',
+            'message': 'Token is invalid or expired.',
+        },
+    )
+
+
+def _email_verification_user_id(raw_payload: bytes) -> int:
+    """Extract the account identifier from a consumed token payload.
+
+    Args:
+        raw_payload: Redis payload stored for an active verification token.
+
+    Returns:
+        Verified user's database identifier.
+
+    Raises:
+        HTTPException: If the payload does not contain a valid identifier.
+    """
+    return int(raw_payload)
+
+
+def _apply_email_verification_status(user: User) -> None:
+    """Set verification time and advance an unverified user once.
+
+    Args:
+        user: User whose email-verification state is updated.
+    """
+    if user.email_verified_at is None:
+        user.email_verified_at = _now()
+    if user.status == USER_STATUS_EMAIL_UNVERIFIED:
+        user.status = USER_STATUS_PENDING_ADMIN_APPROVAL
+
+
+async def _mark_email_token_used(redis_pool: Redis, token_hash: str) -> None:
+    """Record token use for the remainder of its verification TTL.
+
+    Args:
+        redis_pool: Redis connection holding token state.
+        token_hash: Non-reversible verification-token hash.
+    """
+    await redis_pool.set(
+        _email_verification_used_key(token_hash),
+        b'1',
+        ex=settings.email_verification_token_ttl_seconds,
+    )

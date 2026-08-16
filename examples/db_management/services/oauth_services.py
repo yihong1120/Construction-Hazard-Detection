@@ -6,12 +6,12 @@ from collections.abc import Sequence
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
-from typing import Any
 from typing import Literal
 
 import httpx
 import jwt
 from fastapi import HTTPException
+from pydantic import ValidationError
 from redis.asyncio import Redis
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,14 +21,15 @@ from examples.auth.config import Settings
 from examples.auth.models import User
 from examples.auth.models import USER_STATUS_ACTIVE
 from examples.auth.models import USER_STATUS_EMAIL_UNVERIFIED
-from examples.auth.models import USER_STATUS_INACTIVE
-from examples.auth.models import USER_STATUS_PENDING
+from examples.auth.models import USER_STATUS_PENDING_ADMIN_APPROVAL
 from examples.auth.models import USER_STATUS_REJECTED
 from examples.auth.models import USER_STATUS_SUSPENDED
 from examples.auth.models import UserIdentity
 from examples.auth.models import UserProfile
+from examples.db_management.schemas.auth import AppleTokenExchangeResponse
 from examples.db_management.schemas.auth import IdentityListResponse
 from examples.db_management.schemas.auth import IdentityRead
+from examples.db_management.schemas.auth import ProviderClaims
 from examples.db_management.schemas.auth import TokenPairData
 from examples.db_management.services.auth_services import (
     issue_token_pair_for_user,
@@ -52,6 +53,11 @@ APPLE_TOKEN_URL = 'https://appleid.apple.com/auth/token'
 
 
 def _configured_google_client_ids() -> list[str]:
+    """Return configured Google OAuth audience identifiers.
+
+    Returns:
+        Non-empty client IDs accepted in Google identity tokens.
+    """
     return [
         value.strip()
         for value in settings.google_client_ids.split(',')
@@ -60,6 +66,11 @@ def _configured_google_client_ids() -> list[str]:
 
 
 def _configured_apple_client_ids() -> list[str]:
+    """Return configured Apple OAuth audience identifiers.
+
+    Returns:
+        Non-empty client IDs accepted in Apple identity tokens.
+    """
     return [
         value.strip()
         for value in settings.apple_client_ids.split(',')
@@ -67,19 +78,37 @@ def _configured_apple_client_ids() -> list[str]:
     ]
 
 
-def _bool_claim(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() == 'true'
-    return False
+def _normalise_email(email: str | None) -> str | None:
+    """Return a trimmed, case-normalised optional email address.
 
+    Args:
+        email: Optional email address supplied by an identity provider.
 
-def _normalise_email(email: object) -> str | None:
-    if not isinstance(email, str):
+    Returns:
+        Normalised email address, or ``None`` when absent.
+    """
+    if email is None:
         return None
     normalized = email.strip().lower()
     return normalized or None
+
+
+def _provider_claims(payload: object) -> ProviderClaims:
+    """Validate provider claims at the OpenID Connect boundary.
+
+    Args:
+        payload: Decoded provider-token claims.
+
+    Returns:
+        Strictly validated provider claims.
+    """
+    try:
+        return ProviderClaims.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail='Invalid provider token',
+        ) from exc
 
 
 def _verify_jwt_with_jwks(
@@ -87,7 +116,21 @@ def _verify_jwt_with_jwks(
     jwks_url: str,
     audiences: Sequence[str],
     issuers: Sequence[str],
-) -> dict[str, Any]:
+) -> ProviderClaims:
+    """Verify provider-token claims against JWKS metadata.
+
+    Args:
+        token: Raw OpenID Connect identity token.
+        jwks_url: Provider JSON Web Key Set URL.
+        audiences: Accepted client audiences.
+        issuers: Accepted token issuers.
+
+    Returns:
+        Verified provider claims.
+
+    Raises:
+        HTTPException: If token signature or registered claims are invalid.
+    """
     if not audiences:
         raise HTTPException(
             status_code=500,
@@ -109,16 +152,18 @@ def _verify_jwt_with_jwks(
             detail='Invalid provider token',
         ) from exc
 
-    if not payload.get('sub'):
-        raise HTTPException(
-            status_code=401,
-            detail='Invalid provider token',
-        )
-    return dict(payload)
+    return _provider_claims(payload)
 
 
-async def verify_google_id_token(id_token: str) -> dict[str, Any]:
-    """Verify Google ID token signature, audience, issuer, and expiry."""
+async def verify_google_id_token(id_token: str) -> ProviderClaims:
+    """Verify Google identity-token signature and registered claims.
+
+    Args:
+        id_token: Raw Google OpenID Connect identity token.
+
+    Returns:
+        Verified Google provider claims.
+    """
     payload = await asyncio.to_thread(
         _verify_jwt_with_jwks,
         id_token,
@@ -126,20 +171,29 @@ async def verify_google_id_token(id_token: str) -> dict[str, Any]:
         _configured_google_client_ids(),
         GOOGLE_ISSUERS,
     )
-    if not _bool_claim(payload.get('email_verified')):
+    claims = _provider_claims(payload)
+    if not claims.email_verified:
         raise HTTPException(
             status_code=401,
             detail='Google email is not verified',
         )
-    if not _normalise_email(payload.get('email')):
+    if not _normalise_email(claims.email):
         raise HTTPException(
             status_code=401,
             detail='Google account did not return an email address',
         )
-    return payload
+    return claims
 
 
 def _load_apple_private_key() -> str:
+    """Load the configured Apple signing private key.
+
+    Returns:
+        PEM-encoded Apple signing key.
+
+    Raises:
+        HTTPException: If the required Apple key configuration is unavailable.
+    """
     if settings.apple_private_key:
         return settings.apple_private_key.replace('\\n', '\n')
     if settings.apple_private_key_path:
@@ -152,6 +206,14 @@ def _load_apple_private_key() -> str:
 
 
 def _build_apple_client_secret(client_id: str) -> str:
+    """Build a signed Apple client-secret JWT for a client.
+
+    Args:
+        client_id: Apple Services ID or bundle identifier.
+
+    Returns:
+        Signed short-lived Apple client-secret JWT.
+    """
     if not settings.apple_team_id or not settings.apple_key_id:
         raise HTTPException(
             status_code=500,
@@ -177,19 +239,30 @@ async def verify_apple_identity_token(
     identity_token: str | None,
     authorization_code: str,
     expected_nonce: str | None = None,
-) -> dict[str, Any]:
-    """Verify Apple identity token and validate authorization code."""
+) -> ProviderClaims:
+    """Verify Apple identity token and validate its authorisation code.
+
+    Args:
+        identity_token: Optional Apple OpenID Connect identity token.
+        authorization_code: Apple authorisation code to validate.
+        expected_nonce: Optional nonce expected in token claims.
+
+    Returns:
+        Verified Apple provider claims.
+    """
     client_ids = _configured_apple_client_ids()
-    payload: dict[str, Any] | None = None
+    payload: ProviderClaims | None = None
     if identity_token:
-        payload = await asyncio.to_thread(
-            _verify_jwt_with_jwks,
-            identity_token,
-            APPLE_JWKS_URL,
-            client_ids,
-            (APPLE_ISSUER,),
+        payload = _provider_claims(
+            await asyncio.to_thread(
+                _verify_jwt_with_jwks,
+                identity_token,
+                APPLE_JWKS_URL,
+                client_ids,
+                (APPLE_ISSUER,),
+            ),
         )
-        client_id = str(payload.get('aud', ''))
+        client_id = payload.aud
         if client_id not in client_ids:
             raise HTTPException(
                 status_code=401,
@@ -205,25 +278,29 @@ async def verify_apple_identity_token(
             _apple_exchange_client_id_candidates(),
         )
 
-    exchanged_id_token = token_response.get('id_token')
-    if isinstance(exchanged_id_token, str) and exchanged_id_token:
-        exchanged_payload = await asyncio.to_thread(
-            _verify_jwt_with_jwks,
-            exchanged_id_token,
-            APPLE_JWKS_URL,
-            client_ids,
-            (APPLE_ISSUER,),
+    token_response = AppleTokenExchangeResponse.model_validate(
+        token_response,
+    )
+    if token_response.id_token is not None:
+        exchanged_payload = _provider_claims(
+            await asyncio.to_thread(
+                _verify_jwt_with_jwks,
+                token_response.id_token,
+                APPLE_JWKS_URL,
+                client_ids,
+                (APPLE_ISSUER,),
+            ),
         )
         if payload is None:
             payload = exchanged_payload
-        elif exchanged_payload.get('sub') != payload.get('sub'):
+        elif exchanged_payload.sub != payload.sub:
             raise HTTPException(
                 status_code=401,
                 detail='Invalid provider token',
             )
     if payload is None:
         raise HTTPException(status_code=401, detail='Invalid provider token')
-    if expected_nonce and payload.get('nonce') != expected_nonce:
+    if expected_nonce and payload.nonce != expected_nonce:
         raise HTTPException(status_code=401, detail='Invalid provider token')
     return payload
 
@@ -246,17 +323,32 @@ def _apple_exchange_client_id_candidates() -> list[str]:
 async def _exchange_apple_authorization_code(
     authorization_code: str,
     client_ids: Sequence[str],
-) -> dict[str, Any]:
-    """Validate an Apple authorization code against one allowed client id."""
+) -> AppleTokenExchangeResponse:
+    """Validate an Apple authorisation code against an allowed client ID.
+
+    Args:
+        authorization_code: Apple authorisation code to exchange.
+        client_ids: Candidate allowed Apple client IDs.
+
+    Returns:
+        Validated Apple token-exchange response.
+    """
     last_error: HTTPException | None = None
     for client_id in client_ids:
         try:
-            return await _exchange_apple_authorization_code_once(
-                authorization_code,
-                client_id,
+            return AppleTokenExchangeResponse.model_validate(
+                await _exchange_apple_authorization_code_once(
+                    authorization_code,
+                    client_id,
+                ),
             )
         except HTTPException as exc:
             last_error = exc
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=401,
+                detail='Invalid provider token',
+            ) from exc
     if last_error is not None:
         raise last_error
     raise HTTPException(status_code=500, detail='Apple client not configured')
@@ -265,7 +357,16 @@ async def _exchange_apple_authorization_code(
 async def _exchange_apple_authorization_code_once(
     authorization_code: str,
     client_id: str,
-) -> dict[str, Any]:
+) -> AppleTokenExchangeResponse:
+    """Exchange an Apple authorisation code for provider tokens once.
+
+    Args:
+        authorization_code: Apple authorisation code to exchange.
+        client_id: Apple client ID bound to the code.
+
+    Returns:
+        Validated Apple token-exchange response.
+    """
     data = {
         'client_id': client_id,
         'client_secret': _build_apple_client_secret(client_id),
@@ -283,27 +384,34 @@ async def _exchange_apple_authorization_code_once(
     if response.status_code >= 400:
         raise HTTPException(status_code=401, detail='Invalid provider token')
     try:
-        token_response = response.json()
-    except ValueError as exc:
+        return AppleTokenExchangeResponse.model_validate(response.json())
+    except (ValueError, ValidationError) as exc:
         raise HTTPException(
             status_code=401,
             detail='Invalid provider token',
         ) from exc
-    return dict(token_response)
 
 
 def _status_error(status: str) -> HTTPException:
+    """Return the HTTP error corresponding to an account status.
+
+    Args:
+        status: Account lifecycle status.
+
+    Returns:
+        Appropriate authentication HTTP exception.
+    """
     if status == USER_STATUS_EMAIL_UNVERIFIED:
         return HTTPException(
             status_code=403,
             detail={'code': 'email_unverified', 'status': status},
         )
-    if status == USER_STATUS_PENDING:
+    if status == USER_STATUS_PENDING_ADMIN_APPROVAL:
         return HTTPException(
             status_code=403,
             detail={'code': 'pending_admin_approval', 'status': status},
         )
-    if status in {USER_STATUS_INACTIVE, USER_STATUS_SUSPENDED}:
+    if status == USER_STATUS_SUSPENDED:
         return HTTPException(
             status_code=403,
             detail={'code': 'account_suspended', 'status': status},
@@ -320,13 +428,30 @@ def _status_error(status: str) -> HTTPException:
 
 
 def _ensure_active_user(user: User) -> None:
+    """Reject a user account that is not active.
+
+    Args:
+        user: Account whose lifecycle status is checked.
+
+    Raises:
+        HTTPException: If the account is not active.
+    """
     if user.status != USER_STATUS_ACTIVE:
         raise _status_error(user.status)
 
 
-def _username_from_claims(provider: Provider, claims: dict[str, Any]) -> str:
-    email = _normalise_email(claims.get('email'))
-    source = email.split('@', 1)[0] if email else f'{provider}_{claims["sub"]}'
+def _username_from_claims(provider: Provider, claims: ProviderClaims) -> str:
+    """Derive a stable local username from provider claims.
+
+    Args:
+        provider: Identity-provider name.
+        claims: Verified identity-provider claims.
+
+    Returns:
+        Bounded local username candidate.
+    """
+    email = _normalise_email(claims.email)
+    source = email.split('@', 1)[0] if email else f'{provider}_{claims.sub}'
     username = re.sub(r'[^A-Za-z0-9_.-]+', '_', source).strip('._-')
     return username[:64] or f"{provider}_user"
 
@@ -334,8 +459,18 @@ def _username_from_claims(provider: Provider, claims: dict[str, Any]) -> str:
 async def _unique_username(
     db: AsyncSession,
     provider: Provider,
-    claims: dict[str, Any],
+    claims: ProviderClaims,
 ) -> str:
+    """Return an unused local username derived from provider claims.
+
+    Args:
+        db: Database session used to check username availability.
+        provider: Identity-provider name.
+        claims: Verified identity-provider claims.
+
+    Returns:
+        Unique local username.
+    """
     base = _username_from_claims(provider, claims)
     candidate = base
     suffix = 1
@@ -346,22 +481,31 @@ async def _unique_username(
 
 
 def _profile_names(
-    provider: Provider, claims: dict[str, Any],
+    provider: Provider, claims: ProviderClaims,
 ) -> tuple[str, str]:
-    given_name = str(claims.get('given_name') or '').strip()
-    family_name = str(claims.get('family_name') or '').strip()
+    """Derive bounded family and given names from provider claims.
+
+    Args:
+        provider: Identity-provider name.
+        claims: Verified identity-provider claims.
+
+    Returns:
+        Bounded family-name and given-name pair.
+    """
+    given_name = (claims.given_name or '').strip()
+    family_name = (claims.family_name or '').strip()
     if given_name or family_name:
         return (family_name or provider.title())[:50], (given_name or 'User')[
             :50
         ]
 
-    name = str(claims.get('name') or '').strip()
+    name = (claims.name or '').strip()
     if name:
         parts = name.split()
         if len(parts) > 1:
             return parts[0][:50], ' '.join(parts[1:])[:50]
         return provider.title(), parts[0][:50]
-    email = _normalise_email(claims.get('email'))
+    email = _normalise_email(claims.email)
     if email:
         return provider.title(), email.split('@', 1)[0][:50]
     return provider.title(), 'User'
@@ -370,44 +514,62 @@ def _profile_names(
 def _new_identity(
     user: User,
     provider: Provider,
-    claims: dict[str, Any],
+    claims: ProviderClaims,
 ) -> UserIdentity:
-    email = _normalise_email(claims.get('email'))
+    """Build an unpersisted provider identity for a user.
+
+    Args:
+        user: Local user receiving the identity.
+        provider: Identity-provider name.
+        claims: Verified identity-provider claims.
+
+    Returns:
+        New unpersisted identity model.
+    """
+    email = _normalise_email(claims.email)
     return UserIdentity(
         user=user,
         provider=provider,
-        provider_user_id=str(claims['sub']),
+        provider_user_id=claims.sub,
         email=email,
-        email_verified=_bool_claim(claims.get('email_verified')),
+        email_verified=claims.email_verified,
         display_name=str(
-            claims.get('name')
+            claims.name
             or ' '.join(
                 part
                 for part in [
-                    str(claims.get('given_name') or '').strip(),
-                    str(claims.get('family_name') or '').strip(),
+                    (claims.given_name or '').strip(),
+                    (claims.family_name or '').strip(),
                 ]
                 if part
             )
             or '',
         )
         or None,
-        raw_profile=dict(claims),
+        raw_profile=claims.model_dump(),
         raw_email_is_private=(
-            _bool_claim(claims.get('is_private_email'))
+            claims.is_private_email
             or bool(email and email.endswith('@privaterelay.appleid.com'))
         ),
     )
 
 
-def _display_name_from_claims(claims: dict[str, Any]) -> str | None:
+def _display_name_from_claims(claims: ProviderClaims) -> str | None:
+    """Return the optional display name supplied by an identity provider.
+
+    Args:
+        claims: Verified identity-provider claims.
+
+    Returns:
+        Bounded display name, or ``None`` when absent.
+    """
     display_name = str(
-        claims.get('name')
+        claims.name
         or ' '.join(
             part
             for part in [
-                str(claims.get('given_name') or '').strip(),
-                str(claims.get('family_name') or '').strip(),
+                (claims.given_name or '').strip(),
+                (claims.family_name or '').strip(),
             ]
             if part
         )
@@ -421,6 +583,16 @@ async def _find_identity_user(
     provider: Provider,
     provider_user_id: str,
 ) -> User | None:
+    """Find the local user associated with a provider subject.
+
+    Args:
+        db: Database session used to load identity and user data.
+        provider: Identity-provider name.
+        provider_user_id: Stable external provider subject.
+
+    Returns:
+        Associated user, or ``None`` when no identity exists.
+    """
     identity = await db.scalar(
         select(UserIdentity).where(
             UserIdentity.provider == provider,
@@ -433,6 +605,15 @@ async def _find_identity_user(
 
 
 async def _find_user_by_email(db: AsyncSession, email: str) -> User | None:
+    """Find the local user with a matching profile email address.
+
+    Args:
+        db: Database session used to search profiles.
+        email: Normalised profile email address.
+
+    Returns:
+        Matching local user, or ``None`` when absent.
+    """
     return await db.scalar(
         select(User)
         .join(UserProfile, UserProfile.user_id == User.id)
@@ -443,9 +624,19 @@ async def _find_user_by_email(db: AsyncSession, email: str) -> User | None:
 async def _create_pending_user_with_identity(
     db: AsyncSession,
     provider: Provider,
-    claims: dict[str, Any],
+    claims: ProviderClaims,
 ) -> User:
-    email = _normalise_email(claims.get('email'))
+    """Create a pending account and identity from provider claims.
+
+    Args:
+        db: Database session used to persist account and identity.
+        provider: Identity-provider name.
+        claims: Verified identity-provider claims.
+
+    Returns:
+        Newly created pending user.
+    """
+    email = _normalise_email(claims.email)
     if not email:
         raise HTTPException(
             status_code=400,
@@ -457,7 +648,7 @@ async def _create_pending_user_with_identity(
         username=await _unique_username(db, provider, claims),
         password_hash=OAUTH_DISABLED_PASSWORD_HASH,
         role='user',
-        status=USER_STATUS_PENDING,
+        status=USER_STATUS_PENDING_ADMIN_APPROVAL,
         email_verified_at=datetime.now(timezone.utc),
         group_id=None,
     )
@@ -481,7 +672,7 @@ async def _create_pending_user_with_identity(
 
 async def authenticate_provider_user(
     provider: Provider,
-    claims: dict[str, Any],
+    claims: ProviderClaims,
     db: AsyncSession,
     redis_pool: Redis,
     consent_payload: SignupConsentPayload | None = None,
@@ -489,9 +680,7 @@ async def authenticate_provider_user(
 ) -> TokenPairData:
     """Resolve a verified provider identity to a local user and issue
     tokens."""
-    provider_user_id = str(claims.get('sub') or '')
-    if not provider_user_id:
-        raise HTTPException(status_code=401, detail='Invalid provider token')
+    provider_user_id = claims.sub
 
     user = await _find_identity_user(db, provider, provider_user_id)
     if user is not None:
@@ -503,7 +692,7 @@ async def authenticate_provider_user(
             hash_refresh_token=hash_refresh_token,
         )
 
-    email = _normalise_email(claims.get('email'))
+    email = _normalise_email(claims.email)
     if email:
         existing_user = await _find_user_by_email(db, email)
         if existing_user is not None:
@@ -543,11 +732,26 @@ async def login_with_google(
     consent_payload: SignupConsentPayload | None = None,
     hash_refresh_token: bool = False,
 ) -> TokenPairData:
+    """Authenticate a Google identity token and issue local tokens.
+
+    Args:
+        id_token: Google OpenID Connect identity token.
+        db: Database session used to resolve the account.
+        redis_pool: Redis connection used to issue token state.
+        email: Optional client-supplied email assertion.
+        display_name: Optional client-supplied display name.
+        device_lang: Optional client device language.
+        consent_payload: Required consents for a new account.
+        hash_refresh_token: Whether browser refresh tokens are cache-hashed.
+
+    Returns:
+        Locally issued token-pair data.
+    """
     claims = await verify_google_id_token(id_token)
-    if display_name and not claims.get('name'):
-        claims['name'] = display_name
+    if display_name and not claims.name:
+        claims.name = display_name
     if device_lang:
-        claims['device_lang'] = device_lang
+        claims.device_lang = device_lang
     return await authenticate_provider_user(
         'google',
         claims,
@@ -571,19 +775,37 @@ async def login_with_apple(
     consent_payload: SignupConsentPayload | None = None,
     hash_refresh_token: bool = False,
 ) -> TokenPairData:
+    """Authenticate an Apple identity and issue local tokens.
+
+    Args:
+        identity_token: Optional Apple identity token.
+        authorization_code: Apple authorisation code.
+        db: Database session used to resolve the account.
+        redis_pool: Redis connection used to issue token state.
+        email: Optional client-supplied email assertion.
+        given_name: Optional client-supplied given name.
+        family_name: Optional client-supplied family name.
+        nonce: Optional expected identity-token nonce.
+        device_lang: Optional client device language.
+        consent_payload: Required consents for a new account.
+        hash_refresh_token: Whether browser refresh tokens are cache-hashed.
+
+    Returns:
+        Locally issued token-pair data.
+    """
     claims = await verify_apple_identity_token(
         identity_token,
         authorization_code,
         expected_nonce=nonce,
     )
-    if email and not claims.get('email'):
-        claims['email'] = email
-    if given_name and not claims.get('given_name'):
-        claims['given_name'] = given_name
-    if family_name and not claims.get('family_name'):
-        claims['family_name'] = family_name
+    if email and not claims.email:
+        claims.email = email
+    if given_name and not claims.given_name:
+        claims.given_name = given_name
+    if family_name and not claims.family_name:
+        claims.family_name = family_name
     if device_lang:
-        claims['device_lang'] = device_lang
+        claims.device_lang = device_lang
     return await authenticate_provider_user(
         'apple',
         claims,
@@ -595,10 +817,26 @@ async def login_with_apple(
 
 
 def _user_has_password(user: User) -> bool:
+    """Return whether the user has a configured password credential.
+
+    Args:
+        user: User whose password credential is inspected.
+
+    Returns:
+        ``True`` when the user has a usable password hash.
+    """
     return not str(user.password_hash).startswith('oauth_disabled:')
 
 
 def _identity_read(identity: UserIdentity) -> IdentityRead:
+    """Convert a persisted provider identity into its public schema.
+
+    Args:
+        identity: Persisted provider identity.
+
+    Returns:
+        Safe public identity response.
+    """
     linked_at = identity.linked_at
     return IdentityRead(
         id=identity.id,
@@ -613,6 +851,15 @@ async def list_user_identities(
     user: User,
     db: AsyncSession,
 ) -> IdentityListResponse:
+    """Return the current user's linked provider identities.
+
+    Args:
+        user: Current authenticated user.
+        db: Database session used to refresh identity data.
+
+    Returns:
+        Public identities and password-credential availability.
+    """
     identities = (
         (
             await db.execute(
@@ -635,6 +882,16 @@ async def _find_identity(
     provider: Provider,
     provider_user_id: str,
 ) -> UserIdentity | None:
+    """Find a provider identity matching an external subject.
+
+    Args:
+        db: Database session used to search identities.
+        provider: Identity-provider name.
+        provider_user_id: Stable external provider subject.
+
+    Returns:
+        Matching identity, or ``None`` when absent.
+    """
     return await db.scalar(
         select(UserIdentity).where(
             UserIdentity.provider == provider,
@@ -648,6 +905,16 @@ async def _find_current_user_provider_identity(
     user: User,
     provider: Provider,
 ) -> UserIdentity | None:
+    """Find the user's existing identity for one provider.
+
+    Args:
+        db: Database session used to search identities.
+        user: Local user that owns the identity.
+        provider: Identity-provider name.
+
+    Returns:
+        Matching identity, or ``None`` when absent.
+    """
     return await db.scalar(
         select(UserIdentity).where(
             UserIdentity.user_id == user.id,
@@ -658,19 +925,23 @@ async def _find_current_user_provider_identity(
 
 def _update_identity_from_claims(
     identity: UserIdentity,
-    claims: dict[str, Any],
+    claims: ProviderClaims,
 ) -> None:
-    email = _normalise_email(claims.get('email'))
+    """Synchronise mutable provider claims onto a persisted identity.
+
+    Args:
+        identity: Persisted provider identity to update.
+        claims: Newly verified provider claims.
+    """
+    email = _normalise_email(claims.email)
     if email:
         identity.email = email
-    identity.email_verified = _bool_claim(claims.get('email_verified'))
+    identity.email_verified = claims.email_verified
     display_name = _display_name_from_claims(claims)
     if display_name:
         identity.display_name = display_name
-    identity.raw_profile = dict(claims)
-    identity.raw_email_is_private = _bool_claim(
-        claims.get('is_private_email'),
-    ) or bool(
+    identity.raw_profile = claims.model_dump()
+    identity.raw_email_is_private = claims.is_private_email or bool(
         identity.email
         and identity.email.endswith(
             '@privaterelay.appleid.com',
@@ -681,12 +952,21 @@ def _update_identity_from_claims(
 async def link_provider_identity(
     user: User,
     provider: Provider,
-    claims: dict[str, Any],
+    claims: ProviderClaims,
     db: AsyncSession,
 ) -> IdentityRead:
-    provider_user_id = str(claims.get('sub') or '')
-    if not provider_user_id:
-        raise HTTPException(status_code=401, detail='Invalid provider token')
+    """Link a verified provider identity to the current user.
+
+    Args:
+        user: Authenticated local user receiving the identity.
+        provider: Identity-provider name.
+        claims: Verified identity-provider claims.
+        db: Database session used to persist the link.
+
+    Returns:
+        Public linked identity response.
+    """
+    provider_user_id = claims.sub
 
     existing = await _find_identity(db, provider, provider_user_id)
     if existing is not None and existing.user_id != user.id:
@@ -734,6 +1014,16 @@ async def link_google_identity(
     id_token: str,
     db: AsyncSession,
 ) -> IdentityRead:
+    """Verify and link a Google identity token.
+
+    Args:
+        user: Authenticated local user receiving the identity.
+        id_token: Google OpenID Connect identity token.
+        db: Database session used to persist the link.
+
+    Returns:
+        Public linked Google identity.
+    """
     claims = await verify_google_id_token(id_token)
     return await link_provider_identity(user, 'google', claims, db)
 
@@ -745,6 +1035,18 @@ async def link_apple_identity(
     db: AsyncSession,
     nonce: str | None = None,
 ) -> IdentityRead:
+    """Verify and link an Apple identity token.
+
+    Args:
+        user: Authenticated local user receiving the identity.
+        identity_token: Optional Apple identity token.
+        authorization_code: Apple authorisation code.
+        db: Database session used to persist the link.
+        nonce: Optional expected identity-token nonce.
+
+    Returns:
+        Public linked Apple identity.
+    """
     claims = await verify_apple_identity_token(
         identity_token,
         authorization_code,
@@ -758,6 +1060,19 @@ async def unlink_identity(
     identity_id: int,
     db: AsyncSession,
 ) -> dict[str, str]:
+    """Unlink a provider identity while retaining a login method.
+
+    Args:
+        user: Authenticated local user that owns the identity.
+        identity_id: Identifier of the identity to remove.
+        db: Database session used to remove the identity.
+
+    Returns:
+        Confirmation message after unlinking.
+
+    Raises:
+        HTTPException: If the identity is absent or is the last login method.
+    """
     identity = await db.get(UserIdentity, identity_id)
     if identity is None or identity.user_id != user.id:
         raise HTTPException(status_code=404, detail='Identity not found')

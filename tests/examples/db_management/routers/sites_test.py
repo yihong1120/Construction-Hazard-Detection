@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.models import User
 from examples.db_management.deps import SUPER_ADMIN_NAME
-from examples.db_management.routers.sites import _delete_matching_redis_keys
 from examples.db_management.routers.sites import endpoint_add_group_to_site
 from examples.db_management.routers.sites import endpoint_add_user_to_site
 from examples.db_management.routers.sites import endpoint_create_site
@@ -26,6 +25,8 @@ from examples.db_management.schemas.site import SiteDelete
 from examples.db_management.schemas.site import SiteGroupOp
 from examples.db_management.schemas.site import SiteUpdate
 from examples.db_management.schemas.site import SiteUserOp
+from examples.db_management.services.site_services import \
+    delete_matching_redis_keys
 
 
 class AsyncKeyIterator:
@@ -630,7 +631,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         rds.scan_iter.return_value = AsyncKeyIterator([b'first', b'second'])
         rds.delete = AsyncMock()
 
-        await _delete_matching_redis_keys(
+        await delete_matching_redis_keys(
             rds, 'stream_metadata:*', batch_size=1,
         )
 

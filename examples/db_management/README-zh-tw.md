@@ -30,7 +30,8 @@
 uvicorn examples.db_management.app:app \
   --host 127.0.0.1 \
   --port 8005 \
-  --workers 2
+  --workers 2 \
+  --timeout-graceful-shutdown 10
 ```
 
 OpenAPI docs：`http://127.0.0.1:8005/docs`。

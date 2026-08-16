@@ -94,7 +94,11 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cm.exception.status_code, 400)
         self.assertEqual(
             cm.exception.detail,
-            {'code': 'password_too_short', 'min_length': 8},
+            {
+                'code': 'password_too_short',
+                'message': 'Password is too short.',
+                'min_length': 8,
+            },
         )
         self.db.add.assert_not_called()
 
@@ -306,7 +310,11 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cm.exception.status_code, 400)
         self.assertEqual(
             cm.exception.detail,
-            {'code': 'password_too_short', 'min_length': 8},
+            {
+                'code': 'password_too_short',
+                'message': 'Password is too short.',
+                'min_length': 8,
+            },
         )
         user.set_password.assert_not_called()
         db.commit.assert_not_awaited()

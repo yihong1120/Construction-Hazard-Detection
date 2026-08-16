@@ -19,14 +19,24 @@ SUPER_ADMIN_NAME = 'ChangDar'
 
 
 class _NamedRoleUser(Protocol):
-    """Identity fields required to recognise the super administrator."""
+    """Define identity fields needed to recognise the super administrator.
+
+    Attributes:
+        username: Account username.
+        role: Role assigned to the account.
+    """
 
     username: str
     role: str
 
 
 class _GroupedRoleUser(Protocol):
-    """Identity fields required for group-scoped admin checks."""
+    """Define fields needed for group-scoped administrator checks.
+
+    Attributes:
+        role: Role assigned to the account.
+        group_id: Optional group identifier assigned to the account.
+    """
 
     role: str
     group_id: int | None
@@ -36,19 +46,18 @@ async def get_current_user(
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """
-    Retrieve the current authenticated user from JWT credentials.
+    """Retrieve the current authenticated user from JWT credentials.
 
     Args:
-        credentials (JwtAuthorizationCredentials):
-            JWT credentials obtained from the request.
-        db (AsyncSession): Database session dependency.
+        credentials: JWT credentials obtained from the request.
+        db: Database session used to load the account.
 
     Returns:
-        User: Authenticated User instance.
+        Authenticated user including group, profile, and site relationships.
 
     Raises:
-        HTTPException: If the username is invalid or the user does not exist.
+        HTTPException: If the token subject is invalid or the user no longer
+            exists.
     """
     username: str | None = credentials.subject.get('username')
     if not username:
@@ -72,30 +81,28 @@ async def get_current_user(
 
 
 def is_super_admin(user: _NamedRoleUser) -> bool:
-    """
-    Check if the given user is the super administrator.
+    """Return whether a user is the configured super administrator.
 
     Args:
-        user (User): User instance to check.
+        user: User-like object containing a username and role.
 
     Returns:
-        bool: True if the user is the super admin, False otherwise.
+        ``True`` only for the configured administrator with the admin role.
     """
     return user.username == SUPER_ADMIN_NAME and user.role == 'admin'
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    """
-    Dependency ensuring the user has admin-level permissions.
+    """Require administrator-level permission for a request.
 
     Args:
-        user (User): The currently authenticated user.
+        user: Currently authenticated user.
 
     Returns:
-        User: The authenticated admin user.
+        Authenticated user authorised to perform administrator operations.
 
     Raises:
-        HTTPException: If the user lacks admin privileges.
+        HTTPException: If the user does not have administrator privileges.
     """
     if user.role != 'admin' and not is_super_admin(user):
         raise HTTPException(status_code=403, detail='Admin required')
@@ -104,17 +111,16 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
 
 
 def require_super_admin(user: User = Depends(get_current_user)) -> User:
-    """
-    Dependency ensuring the user has super admin privileges.
+    """Require the configured super administrator for a request.
 
     Args:
-        user (User): The currently authenticated user.
+        user: Currently authenticated user.
 
     Returns:
-        User: The authenticated super admin user.
+        Authenticated user authorised as the super administrator.
 
     Raises:
-        HTTPException: If the user is not a super admin.
+        HTTPException: If the user is not the super administrator.
     """
     if not is_super_admin(user):
         raise HTTPException(status_code=403, detail='Super admin only')
@@ -123,14 +129,13 @@ def require_super_admin(user: User = Depends(get_current_user)) -> User:
 
 
 def ensure_not_super(target: User) -> None:
-    """
-    Ensure the target user is not the super admin.
+    """Prevent an operation from targeting the super administrator.
 
     Args:
-        target (User): The user to verify.
+        target: User targeted by the requested operation.
 
     Raises:
-        HTTPException: If attempting to operate on the super admin.
+        HTTPException: If the target is the configured super administrator.
     """
     if target.username == SUPER_ADMIN_NAME:
         raise HTTPException(
@@ -140,14 +145,14 @@ def ensure_not_super(target: User) -> None:
 
 
 def ensure_admin_with_group(user: _GroupedRoleUser) -> None:
-    """
-    Ensure the user is an admin associated with a group.
+    """Require an administrator who is assigned to a group.
 
     Args:
-        user (User): The user to verify.
+        user: User-like object whose role and group are checked.
 
     Raises:
-        HTTPException: If the user is not an admin or has no group assigned.
+        HTTPException: If the user is not an administrator or has no assigned
+            group.
     """
     if user.role != 'admin':
         raise HTTPException(status_code=403, detail='Admin required')
@@ -161,38 +166,28 @@ def _site_permission(
     site: Site | None = None,
     group_id: int | None = None,
 ) -> None:
-    """
-    Verify if the operating user has permission for
-        the specified site or group.
-
-    Permission Rules:
-        1. Super admin has unrestricted access.
-        2. Only users with the admin role can perform the action; additionally,
-            admin users must belong to a group.
-        3. Admin users can only operate on sites within their own group.
+    """Enforce site and group scope for an administrator operation.
 
     Args:
-        op (User): The user performing the operation.
-        site (Optional[Site], optional): Site instance to
-            verify permissions against. Defaults to None.
-        group_id (Optional[int], optional): Group ID to
-            verify permissions against. Defaults to None.
+        op: User performing the operation.
+        site: Optional site whose group membership is being checked.
+        group_id: Optional group identifier being checked.
 
     Raises:
-        HTTPException: If the user lacks the necessary permissions.
+        HTTPException: If the user is not permitted to operate on the supplied
+            site or group.
     """
-    # Super admin bypasses all checks.
+    # The configured super administrator has cross-group management rights.
     if is_super_admin(op):
         return
 
-    # Ensure user has admin role.
     if op.role != 'admin':
         raise HTTPException(status_code=403, detail='Admin required')
 
-    # Admin users must belong to a group.
     ensure_admin_with_group(op)
 
-    # Verify if the site belongs to the admin user's group.
+    # A site can be shared by multiple groups, so authorisation compares the
+    # operator's group against the complete site membership set.
     if site:
         site_group_ids = {g.id for g in site.groups}
     else:
@@ -204,7 +199,7 @@ def _site_permission(
             detail="Cannot manage other group's site",
         )
 
-    # Verify if provided group_id matches the admin user's group.
+    # Direct group operations must stay within the operator's assigned group.
     if group_id is not None and group_id != op.group_id:
         raise HTTPException(
             status_code=403,

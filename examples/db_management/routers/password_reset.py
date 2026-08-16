@@ -14,6 +14,9 @@ from examples.db_management.schemas.password_reset import (
     ForgotPasswordRequest,
 )
 from examples.db_management.schemas.password_reset import (
+    PasswordErrorResponse,
+)
+from examples.db_management.schemas.password_reset import (
     PasswordMessageResponse,
 )
 from examples.db_management.schemas.password_reset import ResetPasswordRequest
@@ -34,7 +37,20 @@ async def forgot_password(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> PasswordMessageResponse:
-    """Send a password reset link when the e-mail belongs to a user."""
+    """Issue a password-reset link when the email belongs to an account.
+
+    Args:
+        payload: Email address for the account to recover.
+        request: HTTP request used to apply IP-based rate limiting.
+        db: Database session used to locate the account.
+        redis: Redis connection used for token and rate-limit state.
+
+    Returns:
+        Generic reset-request message that does not disclose account existence.
+
+    Raises:
+        HTTPException: If the request exceeds reset rate limits.
+    """
     client_ip = request.client.host if request.client else None
     result = await request_password_reset(
         str(payload.email),
@@ -51,7 +67,16 @@ async def reset_password_endpoint(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> PasswordMessageResponse | JSONResponse:
-    """Reset a password using a one-time raw reset token."""
+    """Reset a password using a one-time raw reset token.
+
+    Args:
+        payload: Raw reset token and requested replacement password.
+        db: Database session used to update the account password.
+        redis: Redis connection used to consume token state.
+
+    Returns:
+        Success response, or a structured password-operation error response.
+    """
     try:
         result = await reset_password(
             payload.token,
@@ -60,13 +85,10 @@ async def reset_password_endpoint(
             redis,
         )
     except HTTPException as exc:
-        content = (
-            exc.detail
-            if isinstance(exc.detail, dict)
-            else {'message': str(exc.detail)}
-        )
         return JSONResponse(
             status_code=exc.status_code,
-            content=content,
+            content=PasswordErrorResponse.model_validate(
+                exc.detail,
+            ).model_dump(exclude_none=True),
         )
     return PasswordMessageResponse.model_validate(result)

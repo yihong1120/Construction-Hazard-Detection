@@ -23,7 +23,19 @@ async def get_legal_documents(
     locale: str = Query(default=DEFAULT_LEGAL_LOCALE),
     db: AsyncSession = Depends(get_db),
 ) -> LegalDocumentsResponse:
-    """Return active legal documents for signup consent."""
+    """Return legal documents currently required for signup consent.
+
+    Args:
+        locale: Preferred locale for legal-document content.
+        db: Database session used to load active documents.
+
+    Returns:
+        Current terms, privacy notice, and AI-specific terms.
+
+    Raises:
+        HTTPException: If a required document is unavailable in the requested
+            locale or its configured fallback.
+    """
     docs = await get_active_legal_documents(db, locale)
     return LegalDocumentsResponse(
         terms=LegalDocumentOut.model_validate(docs['terms']),

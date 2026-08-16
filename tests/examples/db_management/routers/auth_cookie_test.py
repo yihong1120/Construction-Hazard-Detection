@@ -14,6 +14,7 @@ from examples.db_management.routers import auth
 from examples.db_management.schemas.auth import AppleAuthRequest
 from examples.db_management.schemas.auth import GoogleAuthRequest
 from examples.db_management.schemas.auth import UserLogin
+from examples.db_management.services import web_auth_services as web_auth
 
 
 def make_request(
@@ -42,20 +43,19 @@ class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
     def test_web_request_detection_accepts_explicit_modes(self) -> None:
         """Explicit platform and cookie mode headers select the Web flow."""
         self.assertTrue(
-            auth._is_web_auth_request(
+            web_auth.is_web_auth_request(
                 make_request(headers={'x-client-platform': 'browser'}),
             ),
         )
         self.assertTrue(
-            auth._is_web_auth_request(
+            web_auth.is_web_auth_request(
                 make_request(headers={'x-auth-mode': 'web_cookie'}),
             ),
         )
 
-    def test_token_pair_omits_missing_refresh_token(self) -> None:
-        """Cookie responses accept services that omit a refresh token."""
-        result = auth._token_pair_response_data(
-            {'access_token': 'access'},
+    def test_token_pair_omits_refresh_token_for_cookie_response(self) -> None:
+        result = web_auth.token_pair_response(
+            {'access_token': 'access', 'refresh_token': 'refresh', 'feature_names': []},
             omit_refresh_token=True,
         )
 
@@ -68,7 +68,7 @@ class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
         response = Response()
         request = make_request(headers={'x-client-platform': 'web'})
         with (
-            patch.object(auth, 'LEGACY_WEB_TOKEN_ENDPOINTS_ENABLED', True),
+            patch.object(web_auth, 'LEGACY_WEB_TOKEN_ENDPOINTS_ENABLED', True),
             patch.object(
                 auth,
                 'login_user',
@@ -103,7 +103,7 @@ class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
         token_pair = {'access_token': 'access', 'refresh_token': 'refresh'}
 
         with (
-            patch.object(auth, 'LEGACY_WEB_TOKEN_ENDPOINTS_ENABLED', True),
+            patch.object(web_auth, 'LEGACY_WEB_TOKEN_ENDPOINTS_ENABLED', True),
             patch.object(
                 auth,
                 'login_with_google',
@@ -161,7 +161,7 @@ class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch.object(auth, 'LEGACY_WEB_TOKEN_ENDPOINTS_ENABLED', True),
+            patch.object(web_auth, 'LEGACY_WEB_TOKEN_ENDPOINTS_ENABLED', True),
             patch.object(auth, 'refresh_tokens', new=refresh_tokens),
         ):
             result = await auth.refresh(

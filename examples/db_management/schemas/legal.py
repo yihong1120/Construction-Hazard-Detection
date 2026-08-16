@@ -9,7 +9,13 @@ LegalDocumentType = Literal['terms', 'privacy', 'ai_terms']
 
 
 class LegalDocumentOut(BaseModel):
-    """Active legal document content returned to clients."""
+    """Represent active legal-document content presented to a client.
+
+    Attributes:
+        version: Immutable version identifier accepted by the client.
+        title: Localised document title.
+        content: Localised document body.
+    """
 
     version: str
     title: str
@@ -19,7 +25,13 @@ class LegalDocumentOut(BaseModel):
 
 
 class LegalDocumentsResponse(BaseModel):
-    """Grouped active legal documents required for signup."""
+    """Group every legal document required during signup.
+
+    Attributes:
+        terms: Current general terms of service.
+        privacy: Current privacy notice.
+        ai_terms: Current AI-specific terms of service.
+    """
 
     terms: LegalDocumentOut
     privacy: LegalDocumentOut

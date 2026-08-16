@@ -7,11 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.database import get_db
-from examples.auth.models import Site
 from examples.auth.models import StreamConfig
 from examples.auth.models import User
 from examples.db_management.deps import _site_permission
-from examples.db_management.deps import ensure_admin_with_group
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
 from examples.db_management.deps import require_admin
@@ -19,6 +17,14 @@ from examples.db_management.schemas.stream_config import SiteStreamConfigUpsert
 from examples.db_management.schemas.stream_config import StreamConfigCreate
 from examples.db_management.schemas.stream_config import StreamConfigRead
 from examples.db_management.schemas.stream_config import StreamConfigUpdate
+from examples.db_management.services.stream_config_services import \
+    _ensure_stream_name_available
+from examples.db_management.services.stream_config_services import \
+    _get_site_or_404
+from examples.db_management.services.stream_config_services import \
+    _list_site_stream_config_reads
+from examples.db_management.services.stream_config_services import \
+    _resolve_stream_group_id
 from examples.db_management.services.stream_config_services import (
     create_stream_config,
 )
@@ -36,137 +42,6 @@ from examples.db_management.services.stream_config_services import (
 )
 
 router = APIRouter(tags=['stream-config'])
-
-
-async def _get_site_or_404(site_id: int, db: AsyncSession) -> Site:
-    """Load a site or raise a stable 404."""
-    site = await db.get(Site, site_id)
-    if not site:
-        raise HTTPException(status_code=404, detail='Site not found.')
-    return site
-
-
-def _site_group_ids(site: Site) -> set[int]:
-    """Return group IDs associated with a site."""
-    return {group.id for group in site.groups}
-
-
-def _primary_site_group_id(site: Site) -> int:
-    """Return the deterministic default owner group for a site."""
-    group_ids = sorted(_site_group_ids(site))
-    if not group_ids:
-        raise HTTPException(
-            status_code=400,
-            detail='Site must have a group before configuring streams.',
-        )
-    return group_ids[0]
-
-
-def _resolve_stream_group_id(
-    site: Site,
-    me: User,
-    requested_group_id: int | None = None,
-) -> int:
-    """Resolve stream ownership from the authenticated user and site."""
-    if is_super_admin(me):
-        group_id = requested_group_id or _primary_site_group_id(site)
-    else:
-        ensure_admin_with_group(me)
-        group_id = me.group_id
-
-    if group_id not in _site_group_ids(site):
-        raise HTTPException(
-            status_code=403,
-            detail='Group is not associated with this site.',
-        )
-
-    return group_id
-
-
-async def _stream_config_to_read(
-    cfg: StreamConfig,
-    db: AsyncSession,
-    group_limit_cache: dict[int, tuple[int, int]],
-) -> StreamConfigRead:
-    """Serialize a StreamConfig and include current group usage limits."""
-    if cfg.group_id not in group_limit_cache:
-        group_limit_cache[cfg.group_id] = await get_group_stream_limit(
-            cfg.group_id, db,
-        )
-    current, max_streams = group_limit_cache[cfg.group_id]
-    return StreamConfigRead(
-        id=cfg.id,
-        stream_name=cfg.stream_name,
-        video_url=cfg.video_url,
-        model_key=cfg.model_key,
-        recognition_enabled=cfg.recognition_enabled,
-        work_start_hour=cfg.work_start_hour,
-        work_end_hour=cfg.work_end_hour,
-        detect_no_safety_vest_or_helmet=(
-            cfg.detect_no_safety_vest_or_helmet
-        ),
-        detect_near_machinery_or_vehicle=(
-            cfg.detect_near_machinery_or_vehicle
-        ),
-        detect_in_restricted_area=cfg.detect_in_restricted_area,
-        detect_in_utility_pole_restricted_area=(
-            cfg.detect_in_utility_pole_restricted_area
-        ),
-        detect_machinery_close_to_pole=(
-            cfg.detect_machinery_close_to_pole
-        ),
-        expire_date=cfg.expire_date,
-        total_stream_in_group=current,
-        max_allowed_streams=max_streams,
-        updated_at=cfg.updated_at,
-    )
-
-
-async def _ensure_stream_name_available(
-    site_id: int,
-    stream_name: str,
-    db: AsyncSession,
-    exclude_config_id: int | None = None,
-) -> None:
-    """Ensure a stream name is unique within a site."""
-    query = select(StreamConfig).where(
-        StreamConfig.site_id == site_id,
-        StreamConfig.stream_name == stream_name,
-    )
-    if exclude_config_id is not None:
-        query = query.where(StreamConfig.id != exclude_config_id)
-
-    exists = await db.scalar(query)
-    if exists:
-        raise HTTPException(
-            status_code=400,
-            detail='Stream name already exists in site.',
-        )
-
-
-async def _list_site_stream_config_reads(
-    site_id: int,
-    db: AsyncSession,
-    me: User,
-) -> list[StreamConfigRead]:
-    """List stream configs visible to the current admin for a site."""
-    site = await _get_site_or_404(site_id, db)
-    _site_permission(me, site=site)
-
-    visible_group_id: int | None = None
-    if not is_super_admin(me):
-        ensure_admin_with_group(me)
-        visible_group_id = me.group_id
-
-    stream_configs = await list_stream_configs(
-        site_id, db, group_id=visible_group_id,
-    )
-
-    group_limit_cache: dict[int, tuple[int, int]] = {}
-    return [
-        await _stream_config_to_read(c, db, group_limit_cache)
-        for c in stream_configs
-    ]
 
 
 @router.get('/list_stream_configs', response_model=list[StreamConfigRead])
@@ -200,7 +75,20 @@ async def endpoint_get_site_stream_config(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ) -> list[StreamConfigRead]:
-    """List stream settings by site without frontend group selection."""
+    """List stream settings for a site without accepting a group selection.
+
+    Args:
+        site_id: Identifier of the site whose streams are requested.
+        db: Database session used to load stream configurations.
+        me: Authenticated user whose site scope is enforced.
+
+    Returns:
+        Stream configurations visible to the authenticated user.
+
+    Raises:
+        HTTPException: If the site does not exist or is outside the user's
+            management scope.
+    """
     return await _list_site_stream_config_reads(site_id, db, me)
 
 
@@ -262,12 +150,27 @@ async def endpoint_put_site_stream_config(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ) -> list[StreamConfigRead]:
-    """Upsert stream settings by site without accepting frontend group_id."""
+    """Replace or create stream settings for a site-owned group.
+
+    Args:
+        site_id: Identifier of the site whose streams are being updated.
+        payload: Desired site-scoped stream configuration items.
+        db: Database session used to persist configurations.
+        me: Authenticated administrator whose scope determines the group.
+
+    Returns:
+        Current stream configurations visible to the administrator.
+
+    Raises:
+        HTTPException: If the site or an existing configuration is unavailable,
+            a name is duplicated, or the group's stream limit is reached.
+    """
     site = await _get_site_or_404(site_id, db)
     _site_permission(me, site=site)
     group_id = _resolve_stream_group_id(site, me)
     visible_group_id = None if is_super_admin(me) else group_id
 
+    # Validate the complete replacement before creating or changing any row.
     stream_names = [item.stream_name for item in payload.streams]
     if len(stream_names) != len(set(stream_names)):
         raise HTTPException(

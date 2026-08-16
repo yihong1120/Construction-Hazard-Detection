@@ -18,6 +18,7 @@ from examples.db_management.schemas.stream_config import SiteStreamConfigItem
 from examples.db_management.schemas.stream_config import SiteStreamConfigUpsert
 from examples.db_management.schemas.stream_config import StreamConfigCreate
 from examples.db_management.schemas.stream_config import StreamConfigUpdate
+from examples.db_management.services import stream_config_services
 
 
 class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
@@ -42,10 +43,17 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.site_mock: MagicMock = MagicMock()
         self.site_mock.groups = [group_mock, other_group_mock]
 
-    @patch('examples.db_management.routers.streams.list_stream_configs')
-    @patch('examples.db_management.routers.streams.get_group_stream_limit')
     @patch(
-        'examples.db_management.routers.streams.is_super_admin',
+        'examples.db_management.services.stream_config_services.'
+        'list_stream_configs',
+    )
+    @patch(
+        'examples.db_management.services.stream_config_services.'
+        'get_group_stream_limit',
+    )
+    @patch(
+        'examples.db_management.services.stream_config_services.'
+        'is_super_admin',
         return_value=False,
     )
     async def test_endpoint_list_stream_configs(
@@ -211,12 +219,26 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-        response = await streams.endpoint_put_site_stream_config(
-            1,
-            payload,
-            self.db,
-            self.current_user,
-        )
+        with (
+            patch.object(
+                stream_config_services,
+                'list_stream_configs',
+                new_callable=AsyncMock,
+                return_value=[existing],
+            ),
+            patch.object(
+                stream_config_services,
+                'get_group_stream_limit',
+                new_callable=AsyncMock,
+                return_value=(2, 5),
+            ),
+        ):
+            response = await streams.endpoint_put_site_stream_config(
+                1,
+                payload,
+                self.db,
+                self.current_user,
+            )
 
         mock_list.assert_any_await(1, self.db, group_id=1)
         mock_update.assert_awaited_once()
@@ -538,22 +560,34 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
         """A stream must have a site group and remain inside that site
         scope."""
         with self.assertRaisesRegex(HTTPException, 'must have a group'):
-            streams._primary_site_group_id(_site())
-        self.assertEqual(streams._primary_site_group_id(_site(2, 1)), 1)
+            stream_config_services._primary_site_group_id(_site())
+        self.assertEqual(
+            stream_config_services._primary_site_group_id(_site(2, 1)),
+            1,
+        )
 
         with patch(
-            'examples.db_management.routers.streams.is_super_admin',
+            'examples.db_management.services.stream_config_services.'
+            'is_super_admin',
             return_value=True,
         ):
             self.assertEqual(
-                streams._resolve_stream_group_id(self.site, self.admin, 2),
+                stream_config_services._resolve_stream_group_id(
+                    self.site,
+                    self.admin,
+                    2,
+                ),
                 2,
             )
             with self.assertRaisesRegex(
                 HTTPException,
                 'not associated',
             ):
-                streams._resolve_stream_group_id(self.site, self.admin, 99)
+                stream_config_services._resolve_stream_group_id(
+                    self.site,
+                    self.admin,
+                    99,
+                )
 
     async def test_stream_name_uniqueness_supports_exclusion_and_conflicts(
         self,
@@ -561,7 +595,7 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
         """Renaming excludes itself but still rejects an existing sibling
         name."""
         self.db.scalar = AsyncMock(return_value=None)
-        await streams._ensure_stream_name_available(
+        await stream_config_services._ensure_stream_name_available(
             1,
             'Camera A',
             self.db,
@@ -574,7 +608,7 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         self.db.scalar = AsyncMock(return_value=object())
         with self.assertRaisesRegex(HTTPException, 'already exists'):
-            await streams._ensure_stream_name_available(
+            await stream_config_services._ensure_stream_name_available(
                 1,
                 'Camera A',
                 self.db,

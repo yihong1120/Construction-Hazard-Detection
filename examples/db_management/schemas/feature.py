@@ -5,14 +5,25 @@ from pydantic import ConfigDict
 
 
 class FeatureCreate(BaseModel):
-    """Schema for creating a new feature."""
+    """Define input required to create a feature.
+
+    Attributes:
+        feature_name: Unique, human-readable feature name.
+        description: Optional explanation of the feature's purpose.
+    """
 
     feature_name: str
     description: str | None = None
 
 
 class FeatureUpdate(BaseModel):
-    """Schema for updating an existing feature's details."""
+    """Define a partial feature update.
+
+    Attributes:
+        feature_id: Identifier of the feature to update.
+        new_name: Replacement feature name when it should change.
+        new_description: Replacement description when it should change.
+    """
 
     feature_id: int
     new_name: str | None = None
@@ -20,13 +31,23 @@ class FeatureUpdate(BaseModel):
 
 
 class FeatureDelete(BaseModel):
-    """Schema for deleting a feature."""
+    """Identify a feature that should be deleted.
+
+    Attributes:
+        feature_id: Identifier of the feature to delete.
+    """
 
     feature_id: int
 
 
 class FeatureRead(BaseModel):
-    """Schema representing detailed information about a feature."""
+    """Represent a feature returned from persistent storage.
+
+    Attributes:
+        id: Database identifier of the feature.
+        feature_name: Human-readable feature name.
+        description: Optional explanation of the feature's purpose.
+    """
 
     id: int
     feature_name: str
@@ -35,7 +56,12 @@ class FeatureRead(BaseModel):
 
 
 class GroupFeatureUpdate(BaseModel):
-    """Schema for updating the set of features associated with a group."""
+    """Define the complete feature set assigned to a group.
+
+    Attributes:
+        group_id: Identifier of the group whose access is being updated.
+        feature_ids: Feature identifiers to assign to the group.
+    """
 
     group_id: int
     feature_ids: list[int]

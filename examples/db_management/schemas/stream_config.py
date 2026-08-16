@@ -9,7 +9,28 @@ from pydantic import Field
 
 
 class StreamConfigCreate(BaseModel):
-    """Schema representing a new stream configuration."""
+    """Define input required to create a stream configuration.
+
+    Attributes:
+        site_id: Identifier of the site that owns the stream.
+        stream_name: Unique stream name within the selected site.
+        video_url: Source URL used to ingest the stream.
+        model_key: Detection-model identifier selected for the stream.
+        recognition_enabled: Whether automated recognition is enabled.
+        work_start_hour: Start of the daily recognition window in local hours.
+        work_end_hour: End of the daily recognition window in local hours.
+        detect_no_safety_vest_or_helmet: Whether PPE violations are detected.
+        detect_near_machinery_or_vehicle: Whether proximity violations are
+            detected.
+        detect_in_restricted_area: Whether restricted-area violations are
+            detected.
+        detect_in_utility_pole_restricted_area: Whether utility-pole area
+            violations are detected.
+        detect_machinery_close_to_pole: Whether machinery-to-pole proximity is
+            detected.
+        expire_date: Optional time after which the configuration expires.
+        group_id: Optional group assigned to manage the stream.
+    """
 
     site_id: int
     stream_name: str
@@ -30,9 +51,25 @@ class StreamConfigCreate(BaseModel):
 
 
 class StreamConfigUpdate(BaseModel):
-    """Schema for updating an existing stream configuration.
+    """Define a partial update for an existing stream configuration.
 
-    All fields are optional to allow partial updates.
+    Attributes:
+        stream_name: Replacement name for the stream.
+        video_url: Replacement source URL for the stream.
+        model_key: Replacement detection-model identifier.
+        recognition_enabled: Whether automated recognition should run.
+        work_start_hour: Replacement start of the daily recognition window.
+        work_end_hour: Replacement end of the daily recognition window.
+        detect_no_safety_vest_or_helmet: Whether PPE violations are detected.
+        detect_near_machinery_or_vehicle: Whether proximity violations are
+            detected.
+        detect_in_restricted_area: Whether restricted-area violations are
+            detected.
+        detect_in_utility_pole_restricted_area: Whether utility-pole area
+            violations are detected.
+        detect_machinery_close_to_pole: Whether machinery-to-pole proximity is
+            detected.
+        expire_date: Replacement optional expiry time.
     """
 
     stream_name: str | None = None
@@ -52,7 +89,27 @@ class StreamConfigUpdate(BaseModel):
 
 
 class SiteStreamConfigItem(BaseModel):
-    """Site-scoped stream config payload without frontend group selection."""
+    """Define one stream in a site-scoped configuration replacement.
+
+    Attributes:
+        id: Existing stream identifier; omitted for a new stream.
+        stream_name: Unique stream name within the site.
+        video_url: Source URL, accepting the legacy ``rtsp_url`` input alias.
+        model_key: Detection-model identifier selected for the stream.
+        recognition_enabled: Whether automated recognition is enabled.
+        work_start_hour: Start of the daily recognition window in local hours.
+        work_end_hour: End of the daily recognition window in local hours.
+        detect_no_safety_vest_or_helmet: Whether PPE violations are detected.
+        detect_near_machinery_or_vehicle: Whether proximity violations are
+            detected.
+        detect_in_restricted_area: Whether restricted-area violations are
+            detected.
+        detect_in_utility_pole_restricted_area: Whether utility-pole area
+            violations are detected.
+        detect_machinery_close_to_pole: Whether machinery-to-pole proximity is
+            detected.
+        expire_date: Optional time after which the configuration expires.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -76,13 +133,41 @@ class SiteStreamConfigItem(BaseModel):
 
 
 class SiteStreamConfigUpsert(BaseModel):
-    """Site-scoped stream config upsert request."""
+    """Define a complete site-scoped stream-configuration replacement.
+
+    Attributes:
+        streams: Desired stream configurations for the selected site.
+    """
 
     streams: list[SiteStreamConfigItem]
 
 
 class StreamConfigRead(BaseModel):
-    """Stream configuration details retrieved from the database."""
+    """Represent a stream configuration returned from persistent storage.
+
+    Attributes:
+        id: Database identifier of the stream configuration.
+        stream_name: Unique stream name within its site.
+        video_url: Source URL used to ingest the stream.
+        model_key: Detection-model identifier selected for the stream.
+        recognition_enabled: Whether automated recognition is enabled.
+        work_start_hour: Start of the daily recognition window in local hours.
+        work_end_hour: End of the daily recognition window in local hours.
+        detect_no_safety_vest_or_helmet: Whether PPE violations are detected.
+        detect_near_machinery_or_vehicle: Whether proximity violations are
+            detected.
+        detect_in_restricted_area: Whether restricted-area violations are
+            detected.
+        detect_in_utility_pole_restricted_area: Whether utility-pole area
+            violations are detected.
+        detect_machinery_close_to_pole: Whether machinery-to-pole proximity is
+            detected.
+        expire_date: Optional time after which the configuration expires.
+        total_stream_in_group: Number of streams currently assigned to its
+            group.
+        max_allowed_streams: Maximum streams permitted for that group.
+        updated_at: Time at which the configuration was last changed.
+    """
 
     id: int
     stream_name: str

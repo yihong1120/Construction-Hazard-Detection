@@ -16,11 +16,21 @@ from examples.auth.models import LEGAL_DOCUMENT_TYPES
 from examples.auth.models import LegalDocument
 from examples.auth.models import UserConsent
 
+# Use one locale whenever a caller does not explicitly request a translation.
 DEFAULT_LEGAL_LOCALE = 'zh-TW'
 
 
 class SignupConsentPayload(Protocol):
-    """Minimal consent fields required from signup payloads."""
+    """Define the consent values required while registering a user.
+
+    Attributes:
+        accepted_terms: Whether the user accepted the general terms.
+        terms_version: Version of the general terms accepted by the user.
+        privacy_version: Version of the privacy notice accepted by the user.
+        notification_consent: Whether the user agreed to notifications.
+        ai_terms_accepted: Whether the user accepted the AI-specific terms.
+        ai_terms_version: Version of the AI-specific terms accepted by the user.
+    """
 
     accepted_terms: bool
     terms_version: str | None
@@ -31,7 +41,12 @@ class SignupConsentPayload(Protocol):
 
 
 def _now() -> datetime:
-    """Return a timezone-aware UTC timestamp."""
+    """Return the current timezone-aware UTC timestamp.
+
+    Returns:
+        Current time in UTC for document availability and consent audit data.
+    """
+    # UTC keeps effective-date comparisons and persisted audit events stable.
     return datetime.now(timezone.utc)
 
 
@@ -39,15 +54,25 @@ async def get_active_legal_documents(
     db: AsyncSession,
     locale: str = DEFAULT_LEGAL_LOCALE,
 ) -> dict[str, LegalDocument]:
-    """Load active legal documents for the requested locale.
+    """Load every required active legal document for a locale.
 
-    Missing documents fall back to the default locale. A 404 is raised if
-    any required document type is unavailable.
+    Args:
+        db: Asynchronous database session used to read legal documents.
+        locale: Preferred locale for the document text.
+
+    Returns:
+        Active documents keyed by their document type.
+
+    Raises:
+        HTTPException: If one or more required document types are unavailable
+            in the requested locale or the default locale.
     """
     requested = locale or DEFAULT_LEGAL_LOCALE
     docs = await _load_active_documents_for_locale(db, requested)
 
     if requested != DEFAULT_LEGAL_LOCALE:
+        # A partial translation inherits only the missing documents from the
+        # default locale; translated documents always take precedence.
         fallback_docs = await _load_active_documents_for_locale(
             db,
             DEFAULT_LEGAL_LOCALE,
@@ -74,7 +99,16 @@ async def _load_active_documents_for_locale(
     db: AsyncSession,
     locale: str,
 ) -> dict[str, LegalDocument]:
-    """Load the newest active legal document per type for one locale."""
+    """Load the newest effective active document of each type for a locale.
+
+    Args:
+        db: Asynchronous database session used to query legal documents.
+        locale: Locale whose documents should be selected.
+
+    Returns:
+        Available active documents keyed by document type.  The mapping may be
+        incomplete when a locale does not provide every required document.
+    """
     stmt = (
         select(LegalDocument)
         .where(
@@ -92,6 +126,7 @@ async def _load_active_documents_for_locale(
     result = await db.execute(stmt)
     docs: dict[str, LegalDocument] = {}
     for doc in result.scalars().all():
+        # The query ordering makes the first document per type the current one.
         docs.setdefault(doc.type, doc)
     return docs
 
@@ -101,7 +136,20 @@ async def validate_signup_consents(
     db: AsyncSession,
     locale: str = DEFAULT_LEGAL_LOCALE,
 ) -> dict[str, LegalDocument]:
-    """Validate mandatory signup consents against active document versions."""
+    """Validate required signup consents against the current document versions.
+
+    Args:
+        payload: Typed signup payload containing consent flags and versions.
+        db: Asynchronous database session used to retrieve active documents.
+        locale: Preferred locale for the documents presented at signup.
+
+    Returns:
+        Current legal documents keyed by document type, ready for audit storage.
+
+    Raises:
+        HTTPException: If a mandatory consent is absent, a submitted version
+            differs from the active version, or a required document is missing.
+    """
     if not payload.accepted_terms:
         raise HTTPException(400, 'accepted_terms is required.')
     if not payload.notification_consent:
@@ -110,6 +158,8 @@ async def validate_signup_consents(
         raise HTTPException(400, 'ai_terms_accepted is required.')
 
     docs = await get_active_legal_documents(db, locale)
+    # Pin consent to the exact version displayed during registration rather
+    # than accepting a bare affirmative flag.
     expected_versions = {
         'terms_version': docs[LEGAL_DOCUMENT_TYPE_TERMS].version,
         'privacy_version': docs[LEGAL_DOCUMENT_TYPE_PRIVACY].version,
@@ -145,8 +195,20 @@ async def record_user_consent(
     db: AsyncSession,
     request: Request | None = None,
 ) -> UserConsent:
-    """Persist one consent snapshot for a newly registered user."""
+    """Persist an immutable consent snapshot for a newly registered user.
+
+    Args:
+        user_id: Identifier of the user whose consents are being recorded.
+        payload: Validated signup payload containing accepted versions and flags.
+        db: Asynchronous database session used to persist the consent record.
+        request: Optional HTTP request used to capture audit metadata.
+
+    Returns:
+        Persisted consent record, including its database-generated fields.
+    """
     accepted_at = _now()
+    # Store the submitted versions with the event so later document updates do
+    # not alter the historical consent evidence.
     consent = UserConsent(
         user_id=user_id,
         terms_version=str(payload.terms_version),
@@ -172,9 +234,18 @@ async def record_user_consent(
 
 
 def _client_ip(request: Request | None) -> str | None:
-    """Extract a best-effort client IP from the request."""
+    """Extract a bounded client IP address from a request.
+
+    Args:
+        request: Optional HTTP request containing forwarded and peer addresses.
+
+    Returns:
+        The first forwarded or peer IP address, or ``None`` when unavailable.
+    """
     if request is None:
         return None
+    # A trusted reverse proxy appends the immediate peer after the originating
+    # address, so retain only the left-most value for the consent audit trail.
     forwarded = request.headers.get('x-forwarded-for')
     if forwarded:
         return forwarded.split(',', 1)[0].strip()[:45]
@@ -184,8 +255,17 @@ def _client_ip(request: Request | None) -> str | None:
 
 
 def _user_agent(request: Request | None) -> str | None:
-    """Extract a bounded user-agent string from the request."""
+    """Extract a bounded user-agent string from a request.
+
+    Args:
+        request: Optional HTTP request containing client headers.
+
+    Returns:
+        The user-agent value truncated to 255 characters, or ``None`` when the
+        request or header is unavailable.
+    """
     if request is None:
         return None
+    # Limit untrusted header data before persisting it with the consent record.
     value = request.headers.get('user-agent')
     return value[:255] if value else None

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from unittest.mock import call
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -11,7 +11,7 @@ import httpx
 from fastapi import HTTPException
 
 from examples.auth.models import USER_STATUS_EMAIL_UNVERIFIED
-from examples.auth.models import USER_STATUS_PENDING
+from examples.auth.models import USER_STATUS_PENDING_ADMIN_APPROVAL
 from examples.auth.models import USER_STATUS_REJECTED
 from examples.db_management.services import email_verification_services as svc
 
@@ -33,9 +33,7 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
         self.db.get = AsyncMock(return_value=user)
         self.db.commit = AsyncMock()
         self.redis.getdel = AsyncMock(
-            return_value=json.dumps(
-                {'user_id': 7, 'email': 'user@example.com'},
-            ),
+            return_value=b'7',
         )
         self.redis.delete = AsyncMock()
         self.redis.set = AsyncMock()
@@ -43,8 +41,8 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
         result = await svc.verify_email_token('raw-token', self.db, self.redis)
 
         self.assertEqual(result['code'], 'email_verified')
-        self.assertEqual(result['status'], USER_STATUS_PENDING)
-        self.assertEqual(user.status, USER_STATUS_PENDING)
+        self.assertEqual(result['status'], USER_STATUS_PENDING_ADMIN_APPROVAL)
+        self.assertEqual(user.status, USER_STATUS_PENDING_ADMIN_APPROVAL)
         self.assertIsNotNone(user.email_verified_at)
         self.db.commit.assert_awaited_once()
         self.redis.getdel.assert_awaited_once()
@@ -53,7 +51,7 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
 
     async def test_verify_email_token_rejects_used_token(self) -> None:
         self.redis.getdel = AsyncMock(return_value=None)
-        self.redis.get = AsyncMock(return_value='1')
+        self.redis.get = AsyncMock(return_value=b'1')
 
         with self.assertRaises(HTTPException) as ctx:
             await svc.verify_email_token('raw-token', self.db, self.redis)
@@ -199,13 +197,12 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
         mock_settings.email_verification_token_ttl_seconds = 86400
         mock_secrets.token_urlsafe.return_value = 'new-raw-token'
         user: MagicMock = MagicMock(id=8)
-        self.redis.get = AsyncMock(return_value='old-token-hash')
+        self.redis.get = AsyncMock(return_value=b'old-token-hash')
         self.redis.delete = AsyncMock()
         self.redis.set = AsyncMock()
 
         raw = await svc._create_email_verification_token(
             user,
-            'user@example.com',
             self.redis,
         )
 
@@ -214,7 +211,18 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
             'email_verification:old-token-hash',
         )
         self.redis.delete.assert_any_await('email_verification_user:8')
-        self.assertEqual(self.redis.set.await_count, 2)
+        self.redis.set.assert_has_awaits([
+            call(
+                'email_verification:' + svc._hash_token('new-raw-token'),
+                b'8',
+                ex=86400,
+            ),
+            call(
+                'email_verification_user:8',
+                svc._hash_token('new-raw-token').encode('ascii'),
+                ex=86400,
+            ),
+        ])
 
 
 if __name__ == '__main__':
@@ -275,7 +283,7 @@ class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
             svc._profile_email(MagicMock(profile=None))
         self.assertEqual(missing_email.exception.status_code, 400)
 
-    async def test_delete_existing_token_handles_bytes_and_absent_values(
+    async def test_delete_existing_token_removes_the_stored_hash(
         self,
     ) -> None:
         self.redis.get.return_value = b'old-hash'
@@ -410,22 +418,14 @@ class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['code'], 'verification_email_sent')
         send_signup.assert_awaited_once_with(user, self.redis)
 
-    async def test_verify_email_token_rejects_invalid_payload_and_missing_user(
+    async def test_verify_email_token_rejects_missing_user(
         self,
     ) -> None:
         with self.assertRaises(HTTPException) as empty_token:
             await svc.verify_email_token(None, self.db, self.redis)
         self.assertEqual(empty_token.exception.status_code, 400)
 
-        self.redis.getdel.return_value = b'not-json'
-        with self.assertRaises(HTTPException) as invalid_payload:
-            await svc.verify_email_token('token', self.db, self.redis)
-        self.assertEqual(
-            invalid_payload.exception.detail['code'],
-            'invalid_token',
-        )
-
-        self.redis.getdel.return_value = json.dumps({'user_id': 9})
+        self.redis.getdel.return_value = b'9'
         self.db.get.return_value = None
         with self.assertRaises(HTTPException) as missing_user:
             await svc.verify_email_token('token', self.db, self.redis)
@@ -442,7 +442,7 @@ class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
             ('unexpected', 'account_not_active'),
         ]:
             user = MagicMock(id=7, status=status, email_verified_at=None)
-            self.redis.getdel.return_value = json.dumps({'user_id': 7})
+            self.redis.getdel.return_value = b'7'
             self.db.get.return_value = user
             with self.assertRaises(HTTPException) as invalid_status:
                 await svc.verify_email_token('token', self.db, self.redis)

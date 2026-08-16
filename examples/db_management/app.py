@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable
+from collections.abc import Callable
+
 import uvicorn
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import Response
 
 from examples.auth.config import Settings
 from examples.auth.lifespan import global_lifespan
@@ -26,6 +31,12 @@ settings = Settings()
 
 
 def _allowed_cors_origins() -> list[str]:
+    """Return the configured non-empty CORS origins.
+
+    Returns:
+        A trimmed list of explicitly configured allowed origins.
+    """
+    # Drop empty entries so an accidental trailing comma grants no origin.
     return [
         origin.strip()
         for origin in settings.cors_allowed_origins.split(',')
@@ -38,9 +49,23 @@ app: FastAPI = FastAPI(lifespan=global_lifespan)
 
 
 @app.middleware('http')
-async def prevent_sensitive_response_caching(request, call_next):
-    """Keep browser/session/token responses out of intermediary caches."""
+async def prevent_sensitive_response_caching(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Prevent authenticated and token responses being cached.
+
+    Args:
+        request: The inbound HTTP request.
+        call_next: The application middleware chain.
+
+    Returns:
+        The downstream response, with ``Cache-Control: no-store`` added for
+        sensitive endpoints.
+    """
     response = await call_next(request)
+    # Authentication and signed-media data must not be stored by browsers or
+    # intermediary caches after the response leaves the application.
     if request.url.path.startswith((
         '/bff/',
         '/oauth/',
@@ -60,9 +85,7 @@ if allowed_origins:
         allow_headers=['*'],
     )
 
-# Include routers for authentication, user management,
-# site management, feature management, group management,
-# and stream configuration management
+# Keep routing composition here; endpoint implementations remain in routers.
 app.include_router(auth_router)
 app.include_router(oauth_router)
 app.include_router(playback_router)
@@ -77,8 +100,10 @@ app.include_router(stream_cfg_router)
 
 
 def main() -> None:
-    """
-    Main function to run the FastAPI application using Uvicorn.
+    """Run the database-management ASGI application with Uvicorn.
+
+    This entry point is intended for local execution. Production deployments
+    should invoke the ASGI application through their process manager.
     """
     uvicorn.run(app, host='127.0.0.1', port=8005, workers=4)
 

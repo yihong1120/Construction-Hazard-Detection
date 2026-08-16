@@ -4,6 +4,7 @@ import asyncio
 import unittest
 from datetime import timedelta
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -25,26 +26,46 @@ from examples.auth.session_store import auth_session_key
 from examples.auth.session_store import create_auth_session
 from examples.auth.session_store import create_media_session
 from examples.auth.session_store import get_media_session
-from examples.db_management.routers import playback
+from examples.db_management.routers import playback as playback_router
+from examples.db_management.schemas.auth import AccessTokenSubject
 from examples.db_management.schemas.playback import PlaybackRenewRequest
 from examples.db_management.schemas.playback import PlaybackWallRequest
+from examples.db_management.services import playback_services as playback
 from tests.examples.auth.session_store_test import FakeRedis
+
+
+def _access_subject(
+    username: str = 'alice',
+    user_id: int = 1,
+) -> dict[str, object]:
+    return {
+        'username': username,
+        'user_id': user_id,
+        'role': 'user',
+        'jti': 'access-jti',
+        'features': [],
+    }
+
+
+def _refresh_subject(username: str = 'alice') -> dict[str, str]:
+    return {
+        'username': username,
+        'family_id': 'refresh-family',
+        'token_id': 'refresh-token-id',
+    }
 
 
 class PlaybackRouterTest(unittest.TestCase):
     def setUp(self) -> None:
         app = FastAPI()
-        app.include_router(playback.router)
+        app.include_router(playback_router.router)
         self.redis = FakeRedis()
         self.db = AsyncMock()
         app.dependency_overrides[get_redis_pool] = lambda: self.redis
         app.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(app)
         self.access_token = jwt_access.create_access_token(
-            {
-                'username': 'ChangDar',
-                'user_id': 1,
-            },
+            _access_subject('ChangDar'),
         )
         self.headers = {'Authorization': f"Bearer {self.access_token}"}
 
@@ -55,6 +76,7 @@ class PlaybackRouterTest(unittest.TestCase):
             'label': 'Site A',
             'profile': 'clean',
             'rendition': 'detail',
+            'language': None,
             'state': 'ready',
             'status': 'ready',
             'media_hls_url': '/hazard/media/site_cam1/index.m3u8',
@@ -133,6 +155,7 @@ class PlaybackRouterTest(unittest.TestCase):
                 {
                     'session_id': 'stream-session-1',
                     'key': 'Cam1',
+                    'label': 'Site A',
                     'media_hls_url': '/hazard/media/site_cam1/index.m3u8',
                     'playback_url': (
                         '/hazard/api/stream-playback/sessions/'
@@ -141,11 +164,13 @@ class PlaybackRouterTest(unittest.TestCase):
                     'state': 'ready',
                     'status': 'ready',
                     'profile': 'overlay',
+                    'rendition': 'preview',
                     'language': 'zh-TW',
                 },
                 {
                     'session_id': 'stream-session-2',
                     'key': 'Cam2',
+                    'label': 'Site A',
                     'media_hls_url': '/hazard/media/site_cam2/index.m3u8',
                     'playback_url': (
                         '/hazard/api/stream-playback/sessions/'
@@ -154,6 +179,7 @@ class PlaybackRouterTest(unittest.TestCase):
                     'state': 'ready',
                     'status': 'ready',
                     'profile': 'overlay',
+                    'rendition': 'preview',
                     'language': 'zh-TW',
                 },
             ],
@@ -220,11 +246,11 @@ class PlaybackRouterTest(unittest.TestCase):
 
     def test_web_bff_session_uses_same_playback_endpoint(self) -> None:
         access = jwt_access.create_access_token(
-            {'username': 'alice', 'user_id': 2},
+            _access_subject(user_id=2),
             timedelta(minutes=15),
         )
         refresh = jwt_refresh.create_access_token(
-            {'username': 'alice'},
+            _refresh_subject(),
             timedelta(days=30),
         )
         session_id, session = asyncio.run(
@@ -252,6 +278,9 @@ class PlaybackRouterTest(unittest.TestCase):
             'state': 'ready',
             'status': 'ready',
             'profile': 'clean',
+            'rendition': 'detail',
+            'label': 'Site A',
+            'language': None,
         }
 
         with patch.object(
@@ -382,9 +411,6 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             'token',
         )
         self.assertIsNone(playback._bearer_token(_request('Basic token')))
-        self.assertEqual(playback._subject_user_id({'user_id': '7'}), 7)
-        self.assertIsNone(playback._subject_user_id({'user_id': 'invalid'}))
-
         with patch.object(
             playback.jwt_access,
             'decode_token',
@@ -398,7 +424,10 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 playback.jwt_access,
                 'decode_token',
-                return_value={'sub': 'alice'},
+                return_value={
+                    'subject': _access_subject(),
+                    'jti': 'access-jti',
+                },
             ),
             patch.object(
                 playback,
@@ -410,13 +439,13 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                 'token',
                 self.redis,
             )
-        self.assertEqual(credentials.subject, {'username': 'alice'})
+        self.assertEqual(credentials.subject, _access_subject())
 
         with (
             patch.object(
                 playback.jwt_access,
                 'decode_token',
-                return_value={'sub': 7},
+                return_value={'subject': 'alice'},
             ),
             patch.object(
                 playback,
@@ -432,7 +461,10 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Playback tokens fail closed when revocation cannot be verified."""
-        payload = {'subject': {'username': 'alice'}}
+        payload = {
+            'subject': _access_subject(),
+            'jti': 'access-jti',
+        }
         with (
             patch.object(
                 playback.jwt_access,
@@ -465,113 +497,38 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             await playback._decode_access_token('token', self.redis)
         self.assertEqual(unavailable.exception.status_code, 503)
 
-    def test_streaming_descriptors_ignore_each_invalid_required_value(
+    async def test_principal_resolution_rejects_expired_app_sessions(
         self,
     ) -> None:
-        """Only complete descriptors may restore HLS sessions."""
-        base: dict[str, object] = {
-            'session_id': 'session',
-            'label': 'SiteA',
-            'key': 'Camera1',
-            'profile': 'clean',
-            'rendition': 'detail',
-        }
-        for field in ('session_id', 'label', 'key', 'profile', 'rendition'):
-            item: dict[str, object] = dict(base)
-            item[field] = ''
-            self.assertEqual(
-                playback._streaming_session_descriptors([item]), {},
-            )
-
-    async def test_user_lookup_and_principal_resolution_failures(self) -> None:
-        self.db.scalar.return_value = '9'
-        self.assertEqual(
-            await playback._load_user_id_by_username(self.db, 'alice'),
-            9,
-        )
-        self.db.scalar.return_value = 'invalid'
-        with self.assertRaises(HTTPException) as invalid_user:
-            await playback._load_user_id_by_username(self.db, 'alice')
-        self.assertEqual(invalid_user.exception.detail, 'invalid_user')
-
-        with patch.object(
-            playback,
-            '_decode_access_token',
-            return_value=JwtAuthorizationCredentials(subject={}),
-        ):
-            with self.assertRaises(HTTPException) as invalid_bearer:
-                await playback._resolve_playback_principal(
-                    _request('Bearer token'),
-                    self.db,
-                    self.redis,
-                )
-        self.assertEqual(invalid_bearer.exception.status_code, 401)
-
         with patch.object(
             playback, 'get_auth_session', new=AsyncMock(return_value=None),
         ):
             with self.assertRaises(HTTPException) as expired_session:
                 await playback._resolve_playback_principal(
-                    _request(), self.db, self.redis,
+                    _request(), self.redis,
                 )
         self.assertEqual(
             expired_session.exception.detail,
             'app_session_expired',
         )
 
-        with patch.object(
-            playback,
-            'get_auth_session',
-            new=AsyncMock(return_value={'user': {'id': 1}}),
-        ):
-            with patch.object(playback, 'check_csrf'):
-                with patch.object(
-                    playback,
-                    'get_proxy_access_token',
-                    new=AsyncMock(return_value=('web-token', 'refresh')),
-                ):
-                    with patch.object(
-                        playback,
-                        '_decode_access_token',
-                        return_value=JwtAuthorizationCredentials(subject={}),
-                    ):
-                        with self.assertRaises(
-                            HTTPException,
-                        ) as invalid_web_token:
-                            await playback._resolve_playback_principal(
-                                _request(
-                                    session_id='session',
-                                ),
-                                self.db,
-                                self.redis,
-                            )
-        self.assertEqual(invalid_web_token.exception.status_code, 401)
-
-    async def test_principal_resolution_uses_database_and_bff_fallbacks(
+    async def test_principal_resolution_uses_access_subject(
         self,
     ) -> None:
         credentials = JwtAuthorizationCredentials(
-            subject={'username': 'alice'},
+            subject=cast(AccessTokenSubject, _access_subject(user_id=9)),
         )
         with patch.object(
             playback, '_decode_access_token', return_value=credentials,
         ):
-            with patch.object(
-                playback,
-                '_load_user_id_by_username',
-                new=AsyncMock(return_value=9),
-            ):
-                principal = await playback._resolve_playback_principal(
-                    _request('Bearer token'),
-                    self.db,
-                    self.redis,
-                )
+            principal = await playback._resolve_playback_principal(
+                _request('Bearer token'), self.redis,
+            )
         self.assertEqual(principal.parent, 'native:user:9')
 
         with patch.object(
             playback,
-            'get_auth_session',
-            new=AsyncMock(return_value={'user': {'id': 'bad'}}),
+            'get_auth_session', new=AsyncMock(return_value={}),
         ):
             with patch.object(playback, 'check_csrf'):
                 with patch.object(
@@ -584,22 +541,11 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                         '_decode_access_token',
                         return_value=credentials,
                     ):
-                        with patch.object(
-                            playback,
-                            '_load_user_id_by_username',
-                            new=AsyncMock(return_value=11),
-                        ):
-                            principal = (
-                                await playback._resolve_playback_principal(
-                                    _request(
-                                        session_id='session',
-                                    ),
-                                    self.db,
-                                    self.redis,
-                                )
-                            )
+                        principal = await playback._resolve_playback_principal(
+                            _request(session_id='session'), self.redis,
+                        )
         self.assertEqual(principal.platform, 'web')
-        self.assertEqual(principal.user_id, 11)
+        self.assertEqual(principal.user_id, 9)
 
     async def test_streaming_upstream_errors_and_detail_parsing(self) -> None:
         response = MagicMock()
@@ -787,7 +733,10 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                     principal=self.principal,
                     redis=self.redis,
                 )
-        self.assertEqual(no_cameras.exception.detail, 'cameras_not_found')
+        self.assertEqual(
+            no_cameras.exception.detail,
+            'invalid_streaming_upstream_response',
+        )
 
         with patch.object(
             playback,
@@ -800,7 +749,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=None),
             ):
                 with self.assertRaises(HTTPException) as expired:
-                    await playback.renew_playback_session(
+                    await playback_router.renew_playback_session(
                         PlaybackRenewRequest(
                             id='session',
                         ),
@@ -821,7 +770,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=False),
             ):
                 with self.assertRaises(HTTPException) as absent:
-                    await playback.delete_playback_session(
+                    await playback_router.delete_playback_session(
                         'session',
                         _request(),
                         self.db,
@@ -839,7 +788,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                 'delete_media_session',
                 new=AsyncMock(return_value=True),
             ):
-                response = await playback.delete_playback_session(
+                response = await playback_router.delete_playback_session(
                     'session',
                     _request(),
                     self.db,

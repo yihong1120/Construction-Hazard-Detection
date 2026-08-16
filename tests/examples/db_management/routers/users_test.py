@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Any
 from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -24,10 +25,13 @@ from examples.db_management.schemas.user import UpdateUsername
 from examples.db_management.schemas.user import UpdateUsernameById
 from examples.db_management.schemas.user import UpdateUserRole
 from examples.db_management.schemas.user import UserCreate
+from examples.db_management.schemas.user import UserDelete
 from examples.db_management.schemas.user import UserProfileBase
 from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
 from examples.db_management.schemas.user import UserSignup
+from examples.db_management.services import user_management_services as \
+    user_management
 
 
 class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
@@ -105,11 +109,21 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.profile.email, 'test@example.com')
 
     @patch(
-        'examples.db_management.routers.users.send_signup_verification_email',
+        'examples.db_management.services.user_management_services.'
+        'send_signup_verification_email',
     )
-    @patch('examples.db_management.routers.users.record_user_consent')
-    @patch('examples.db_management.routers.users.validate_signup_consents')
-    @patch('examples.db_management.routers.users.create_user')
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'record_user_consent',
+    )
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'validate_signup_consents',
+    )
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'create_user',
+    )
     async def test_signup_user(
         self,
         mock_create_user: AsyncMock,
@@ -192,9 +206,18 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 'email_unverified')
         self.assertIsNone(response.group_id)
 
-    @patch('examples.db_management.routers.users.record_user_consent')
-    @patch('examples.db_management.routers.users.validate_signup_consents')
-    @patch('examples.db_management.routers.users.create_user')
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'record_user_consent',
+    )
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'validate_signup_consents',
+    )
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'create_user',
+    )
     async def test_signup_user_rejects_missing_consents(
         self,
         mock_create_user: AsyncMock,
@@ -245,7 +268,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_user.group_id = 10
         mock_get_user_by_id.return_value = mock_user
 
-        payload: dict[str, int] = {'user_id': 1}
+        payload = UserDelete(user_id=1)
         response: dict[str, str] = await users.remove_user(
             payload,
             self.db,
@@ -510,8 +533,14 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0].terms_version, '2026-06-27')
         self.assertEqual(result[0].provider, 'google')
 
-    @patch('examples.db_management.routers.users._load_user_read')
-    @patch('examples.db_management.routers.users._get_group_or_404')
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'load_user_read',
+    )
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'get_group_or_404',
+    )
     @patch('examples.db_management.routers.users.get_user_by_id')
     async def test_approve_user_signup_admin_uses_own_group(
         self,
@@ -562,7 +591,10 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited_once()
         self.assertEqual(result.username, 'pending')
 
-    @patch('examples.db_management.routers.users._get_group_or_404')
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'get_group_or_404',
+    )
     @patch('examples.db_management.routers.users.get_user_by_id')
     async def test_approve_user_signup_rejects_other_group(
         self,
@@ -592,7 +624,10 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_not_awaited()
         mock_get_group.assert_not_called()
 
-    @patch('examples.db_management.routers.users._get_group_or_404')
+    @patch(
+        'examples.db_management.services.user_management_services.'
+        'get_group_or_404',
+    )
     @patch('examples.db_management.routers.users.get_user_by_id')
     async def test_approve_user_signup_requires_pending_state(
         self,
@@ -873,7 +908,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         me: MagicMock = MagicMock(role='admin', group_id=99, username='admin')
         db: AsyncMock = AsyncMock()
         with patch(
-            'examples.db_management.routers.users._get_group_or_404',
+            'examples.db_management.routers.users.get_group_or_404',
             AsyncMock(return_value=MagicMock(id=99)),
         ) as mock_get_group:
             response: dict[str, str] = await users.change_group(
@@ -924,7 +959,7 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
     """Cover the user-management authorization and alias edge cases."""
 
     def setUp(self) -> None:
-        self.admin = SimpleNamespace(
+        self.admin: Any = SimpleNamespace(
             username='admin',
             group_id=10,
             role='admin',
@@ -940,7 +975,7 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.db.execute.return_value = missing_result
 
         with self.assertRaisesRegex(HTTPException, 'Group not found'):
-            await users._get_group_or_404(999, self.db)
+            await user_management.get_group_or_404(999, self.db)
 
         group = SimpleNamespace(id=10)
         found_result = MagicMock()
@@ -948,29 +983,41 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             group
         )
         self.db.execute.return_value = found_result
-        self.assertIs(await users._get_group_or_404(10, self.db), group)
+        self.assertIs(
+            await user_management.get_group_or_404(10, self.db),
+            group,
+        )
 
         with (
-            patch.object(users, 'is_super_admin', return_value=False),
             patch.object(
-                users,
+                user_management,
+                'is_super_admin',
+                return_value=False,
+            ),
+            patch.object(
+                user_management,
                 'ensure_admin_with_group',
             ),
         ):
             with self.assertRaisesRegex(HTTPException, 'group_id is required'):
-                users._resolve_target_group_id(None, self.admin)
+                user_management.resolve_target_group_id(None, self.admin)
             with self.assertRaisesRegex(
                 HTTPException,
                 'Cannot manage users outside your group',
             ):
-                users._ensure_user_management_scope(
-                    SimpleNamespace(group_id=11),
+                target_user: Any = SimpleNamespace(group_id=11)
+                user_management.ensure_user_management_scope(
+                    target_user,
                     self.admin,
                 )
 
-        with patch.object(users, 'is_super_admin', return_value=True):
+        with patch.object(
+            user_management,
+            'is_super_admin',
+            return_value=True,
+        ):
             self.assertEqual(
-                users._resolve_target_group_id(99, self.admin),
+                user_management.resolve_target_group_id(99, self.admin),
                 99,
             )
 
@@ -1004,7 +1051,7 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             ) as seed_preferences,
             patch.object(
                 users,
-                '_load_user_read',
+                'load_user_read',
                 AsyncMock(return_value=expected),
             ),
             patch.object(users, 'invalidate_effective_site_cache'),
@@ -1031,7 +1078,7 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             users,
-            '_register_signup_user',
+            'register_signup_user',
             AsyncMock(return_value=expected),
         ) as register:
             result = await users.register_user(
@@ -1074,7 +1121,7 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             patch.object(users, 'ensure_not_super'),
             patch.object(
                 users,
-                '_load_user_read',
+                'load_user_read',
                 AsyncMock(return_value=rejected_result),
             ),
             patch.object(users, 'invalidate_effective_site_cache'),
@@ -1101,7 +1148,7 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             patch.object(users, 'ensure_not_super'),
             patch.object(
                 users,
-                '_approve_signup_user',
+                'approve_signup_user',
                 AsyncMock(return_value=approved_result),
             ) as approve,
         ):
@@ -1120,11 +1167,16 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """A resolved group is mandatory before activating or moving a user."""
         with patch.object(
-            users, '_resolve_target_group_id', return_value=None,
+            user_management, 'resolve_target_group_id', return_value=None,
         ):
             with self.assertRaisesRegex(HTTPException, 'group_id is required'):
-                await users._approve_signup_user(
-                    SimpleNamespace(id=5, group_id=None, status='pending'),
+                pending_user: Any = SimpleNamespace(
+                    id=5,
+                    group_id=None,
+                    status='pending',
+                )
+                await user_management.approve_signup_user(
+                    pending_user,
                     None,
                     self.db,
                     self.admin,
@@ -1138,8 +1190,8 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=target),
             ),
             patch.object(users, 'ensure_not_super'),
-            patch.object(users, '_ensure_user_management_scope'),
-            patch.object(users, '_resolve_target_group_id', return_value=None),
+            patch.object(users, 'ensure_user_management_scope'),
+            patch.object(users, 'resolve_target_group_id', return_value=None),
         ):
             with self.assertRaisesRegex(HTTPException, 'group_id is required'):
                 await users.change_group(

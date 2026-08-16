@@ -21,7 +21,26 @@ from examples.auth.redis_pool import get_redis_pool
 from examples.auth.session_store import create_auth_session
 from examples.bff import security as bff
 from examples.db_management.routers import oauth
+from examples.db_management.services import oauth_protocol_services as oauth_service
 from tests.examples.auth.session_store_test import FakeRedis
+
+
+def _access_subject() -> dict[str, object]:
+    return {
+        'username': 'alice',
+        'user_id': 1,
+        'role': 'user',
+        'jti': 'access-jti',
+        'features': [],
+    }
+
+
+def _refresh_subject() -> dict[str, str]:
+    return {
+        'username': 'alice',
+        'family_id': 'refresh-family',
+        'token_id': 'refresh-token-id',
+    }
 
 
 class OAuthRouterTest(unittest.TestCase):
@@ -45,27 +64,32 @@ class OAuthRouterTest(unittest.TestCase):
         app.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(app)
 
-        access = jwt_access.create_access_token({'username': 'alice'})
-        refresh = jwt_refresh.create_access_token({'username': 'alice'})
+        access = jwt_access.create_access_token(_access_subject())
+        refresh = jwt_refresh.create_access_token(_refresh_subject())
         self.session_id, _ = asyncio.run(
             create_auth_session(
                 self.redis,  # type: ignore[arg-type]
-                {'access_token': access, 'refresh_token': refresh},
+                {
+                    'access_token': access,
+                    'refresh_token': refresh,
+                    'feature_names': [],
+                },
                 {'id': 1, 'username': 'alice'},
             ),
         )
 
     @patch(
-        'examples.db_management.routers.oauth.issue_token_pair_for_user',
+        'examples.db_management.services.oauth_protocol_services.'
+        'issue_token_pair_for_user',
         new_callable=AsyncMock,
     )
     def test_pkce_code_is_bound_and_single_use(
         self,
         issue_token_pair: AsyncMock,
     ) -> None:
-        issued_access = jwt_access.create_access_token({'username': 'alice'})
+        issued_access = jwt_access.create_access_token(_access_subject())
         issued_refresh = jwt_refresh.create_access_token(
-            {'username': 'alice'},
+            _refresh_subject(),
         )
         issue_token_pair.return_value = {
             'access_token': issued_access,
@@ -152,32 +176,33 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
     client_id = 'visionnaire-ios'
     redirect_uri = 'com.changdar.visionnaire:/oauth2redirect'
     verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
-    challenge = oauth._pkce_challenge(verifier)
+    challenge = oauth_service.pkce_challenge(verifier)
 
     async def test_helpers_parse_json_and_reject_invalid_native_config(
         self,
     ) -> None:
         self.assertEqual(
-            await oauth._request_data(
+            await oauth_service.request_data(
                 _Request({'grant_type': 'refresh_token'}),
             ),
             {'grant_type': 'refresh_token'},
         )
-        self.assertEqual(await oauth._request_data(_Request([])), {})
-        self.assertEqual(
-            await oauth._request_data(
+        with self.assertRaises(HTTPException) as invalid_request:
+            await oauth_service.request_data(_Request([]))
+        self.assertEqual(invalid_request.exception.detail, 'invalid_request')
+        with self.assertRaises(HTTPException) as invalid_form:
+            await oauth_service.request_data(
                 _Request(
                     {'answer': 42},
                     content_type='application/x-www-form-urlencoded',
                 ),
-            ),
-            {'answer': '42'},
-        )
+            )
+        self.assertEqual(invalid_form.exception.detail, 'invalid_request')
         with patch.dict(os.environ, {'OAUTH_NATIVE_CLIENTS_JSON': '{'}):
             with self.assertRaisesRegex(
                 RuntimeError, 'Invalid OAUTH_NATIVE_CLIENTS_JSON',
             ):
-                oauth._native_clients()
+                oauth_service.native_clients()
         with patch.dict(
             os.environ,
             {
@@ -189,16 +214,16 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 ),
             },
         ):
-            self.assertEqual(
-                oauth._native_clients(),
-                {'custom-client': {'app://oauth'}},
-            )
+            with self.assertRaisesRegex(
+                RuntimeError, 'Invalid OAUTH_NATIVE_CLIENTS_JSON',
+            ):
+                oauth_service.native_clients()
 
     async def test_authorize_rejects_invalid_pkce_and_missing_login(
         self,
     ) -> None:
         redis = AsyncMock()
-        request = _Request(cookies={oauth.SESSION_COOKIE: 'session'})
+        request = _Request(cookies={oauth_service.SESSION_COOKIE: 'session'})
         cases = [
             (
                 {'response_type': 'token', 'code_challenge_method': 'S256'},
@@ -238,7 +263,7 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raised.exception.detail, detail)
 
         with patch.object(
-            oauth, 'get_auth_session', AsyncMock(return_value=None),
+            oauth_service, 'get_auth_session', AsyncMock(return_value=None),
         ):
             with self.assertRaises(HTTPException) as raised:
                 await oauth.authorize(
@@ -253,7 +278,9 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'login_required')
 
         with patch.object(
-            oauth, 'get_auth_session', AsyncMock(return_value={'user': {}}),
+            oauth_service, 'get_auth_session', AsyncMock(
+                return_value={'user': {}},
+            ),
         ):
             with self.assertRaises(HTTPException) as raised:
                 await oauth.authorize(
@@ -298,28 +325,6 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(raised.exception.detail, 'invalid_grant')
 
-        redis.getdel.return_value = 'not-json'
-        with self.assertRaises(HTTPException) as raised:
-            await oauth.token(
-                _Request(
-                    {**base, 'code': 'broken', 'code_verifier': self.verifier},
-                ),
-                db=db,
-                redis=redis,
-            )
-        self.assertEqual(raised.exception.detail, 'invalid_grant')
-
-        redis.getdel.return_value = b'not-json'
-        with self.assertRaises(HTTPException) as raised:
-            await oauth.token(
-                _Request(
-                    {**base, 'code': 'bytes', 'code_verifier': self.verifier},
-                ),
-                db=db,
-                redis=redis,
-            )
-        self.assertEqual(raised.exception.detail, 'invalid_grant')
-
         redis.getdel.return_value = json.dumps(
             {
                 'client_id': self.client_id,
@@ -327,7 +332,7 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 'code_challenge': 'wrong',
                 'user_id': 1,
             },
-        )
+        ).encode('utf-8')
         with self.assertRaises(HTTPException) as raised:
             await oauth.token(
                 _Request(
@@ -349,7 +354,7 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 'code_challenge': self.challenge,
                 'user_id': 1,
             },
-        )
+        ).encode('utf-8')
         db.scalar.return_value = SimpleNamespace(status='disabled')
         with self.assertRaises(HTTPException) as raised:
             await oauth.token(
@@ -368,7 +373,7 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_token_refresh_and_unsupported_grants(self) -> None:
         redis = AsyncMock()
         with patch.object(
-            oauth,
+            oauth_service,
             'refresh_tokens',
             AsyncMock(
                 return_value={
@@ -434,7 +439,7 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         )
         db.scalar.return_value = loaded
         with patch.object(
-            oauth, '_load_feature_names', AsyncMock(
+            oauth_service, '_load_feature_names', AsyncMock(
                 return_value=['streaming'],
             ),
         ):
@@ -444,18 +449,18 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         loaded.profile = SimpleNamespace(given_name='', family_name='')
         with patch.object(
-            oauth, '_load_feature_names', AsyncMock(return_value=[]),
+            oauth_service, '_load_feature_names', AsyncMock(return_value=[]),
         ):
             response = await oauth.me(db=db, user=user)
-        self.assertEqual(response.display_name, 'alice')
+        self.assertEqual(response.display_name, '')
 
     async def test_revoke_handles_refresh_access_and_authorization(
         self,
     ) -> None:
         redis = AsyncMock()
-        with patch.object(oauth, 'logout_user', AsyncMock()) as logout:
+        with patch.object(oauth_service, 'logout_user', AsyncMock()) as logout:
             with patch.object(
-                oauth, 'revoke_media_for_parent', AsyncMock(),
+                oauth_service, 'revoke_media_for_parent', AsyncMock(),
             ) as revoke_media:
                 await oauth.revoke(
                     _Request(

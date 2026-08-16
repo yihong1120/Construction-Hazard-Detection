@@ -1,22 +1,15 @@
 from __future__ import annotations
 
-import os
-from typing import cast
-from typing import Literal
-from urllib.parse import urlencode
-
 from fastapi import APIRouter
 from fastapi import Body
 from fastapi import Depends
 from fastapi import Header
-from fastapi import HTTPException
 from fastapi import Request
 from fastapi import Response
 from fastapi.responses import RedirectResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from examples.auth.config import Settings
 from examples.auth.database import get_db
 from examples.auth.models import User
 from examples.auth.redis_pool import get_redis_pool
@@ -48,85 +41,27 @@ from examples.db_management.services.oauth_services import list_user_identities
 from examples.db_management.services.oauth_services import login_with_apple
 from examples.db_management.services.oauth_services import login_with_google
 from examples.db_management.services.oauth_services import unlink_identity
+from examples.db_management.services.web_auth_services import (
+    apple_callback_redirect,
+)
+from examples.db_management.services.web_auth_services import (
+    clear_web_refresh_cookie,
+)
+from examples.db_management.services.web_auth_services import (
+    is_web_auth_request,
+)
+from examples.db_management.services.web_auth_services import (
+    refresh_token_from_cookie,
+)
+from examples.db_management.services.web_auth_services import (
+    reject_legacy_web_token_request,
+)
+from examples.db_management.services.web_auth_services import (
+    set_web_refresh_cookie,
+)
+from examples.db_management.services.web_auth_services import token_pair_response
 
 router = APIRouter(tags=['auth'])
-settings = Settings()
-LEGACY_WEB_TOKEN_ENDPOINTS_ENABLED = os.getenv(
-    'LEGACY_WEB_TOKEN_ENDPOINTS_ENABLED',
-    'false',
-).lower() in {'1', 'true', 'yes', 'on'}
-
-
-def _cookie_samesite() -> Literal['lax', 'strict', 'none']:
-    return cast(
-        Literal['lax', 'strict', 'none'],
-        settings.web_refresh_cookie_samesite,
-    )
-
-
-def _is_web_auth_request(request: Request) -> bool:
-    """Return whether refresh tokens should be handled by HttpOnly cookie."""
-    platform = request.headers.get('x-client-platform', '').strip().lower()
-    auth_mode = request.headers.get('x-auth-mode', '').strip().lower()
-    if platform in {'web', 'flutter-web', 'browser'}:
-        return True
-    if auth_mode in {'cookie', 'web-cookie', 'web_cookie'}:
-        return True
-    return bool(
-        request.headers.get('origin')
-        or request.headers.get('sec-fetch-site'),
-    )
-
-
-def _reject_legacy_web_token_request(request: Request) -> None:
-    if (
-        _is_web_auth_request(request)
-        and not LEGACY_WEB_TOKEN_ENDPOINTS_ENABLED
-    ):
-        raise HTTPException(
-            status_code=410,
-            detail='use_bff_auth_endpoint',
-        )
-
-
-def _set_web_refresh_cookie(response: Response, refresh_token: str) -> None:
-    """Set the Web-only refresh token cookie."""
-    response.set_cookie(
-        key=settings.web_refresh_cookie_name,
-        value=refresh_token,
-        max_age=settings.web_refresh_cookie_max_age_seconds,
-        httponly=True,
-        secure=settings.web_refresh_cookie_secure,
-        samesite=_cookie_samesite(),
-        path=settings.web_refresh_cookie_path,
-        domain=settings.web_refresh_cookie_domain or None,
-    )
-
-
-def _clear_web_refresh_cookie(response: Response) -> None:
-    """Clear the Web-only refresh token cookie."""
-    response.delete_cookie(
-        key=settings.web_refresh_cookie_name,
-        path=settings.web_refresh_cookie_path,
-        domain=settings.web_refresh_cookie_domain or None,
-        secure=settings.web_refresh_cookie_secure,
-        samesite=_cookie_samesite(),
-    )
-
-
-def _refresh_token_from_cookie(request: Request) -> str | None:
-    return request.cookies.get(settings.web_refresh_cookie_name)
-
-
-def _token_pair_response_data(
-    result: TokenPairData,
-    *,
-    omit_refresh_token: bool,
-) -> TokenPair:
-    data = dict(result)
-    if omit_refresh_token:
-        data.pop('refresh_token', None)
-    return TokenPair.model_validate(data)
 
 
 @router.post(
@@ -145,18 +80,26 @@ async def login(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> TokenPair:
-    """Authenticate user and return JWT tokens.
+    """Authenticate a password user and issue a token pair.
 
     Args:
-        payload (UserLogin): User credentials containing username and password.
-        db (AsyncSession): Database session.
-        redis (Redis): Redis connection pool.
+        payload: Submitted password-login credentials.
+        request: HTTP request used to select browser-cookie behaviour.
+        response: HTTP response that may receive a refresh-token cookie.
+        x_hcaptcha_bypass_key: Optional privileged hCaptcha bypass credential.
+        db: Database session used to authenticate the account.
+        redis: Redis connection used for token state and rate limiting.
 
     Returns:
-        TokenPair: Generated JWT access and refresh tokens.
+        Issued access-token details; browser clients receive their refresh token
+        in a secure cookie.
+
+    Raises:
+        HTTPException: If the request is a rejected legacy web-token request or
+            authentication fails.
     """
-    _reject_legacy_web_token_request(request)
-    use_web_cookie = _is_web_auth_request(request)
+    reject_legacy_web_token_request(request)
+    use_web_cookie = is_web_auth_request(request)
     result: TokenPairData = await login_user(
         payload,
         db,
@@ -165,10 +108,10 @@ async def login(
         client_ip=request.client.host if request.client else None,
         hash_refresh_token=use_web_cookie,
     )
-    refresh_token = result.get('refresh_token')
-    if use_web_cookie and isinstance(refresh_token, str):
-        _set_web_refresh_cookie(response, refresh_token)
-    return _token_pair_response_data(
+    if use_web_cookie:
+        # Web clients keep refresh tokens in an HTTP-only cookie, never JSON.
+        set_web_refresh_cookie(response, result['refresh_token'])
+    return token_pair_response(
         result,
         omit_refresh_token=use_web_cookie,
     )
@@ -180,7 +123,19 @@ async def verify_email(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> AuthMessageResponse:
-    """Verify an email verification token and advance signup status."""
+    """Verify an email token and advance the signup lifecycle.
+
+    Args:
+        payload: Raw verification token submitted by the client.
+        db: Database session used to update the account.
+        redis: Redis connection used to consume the one-time token.
+
+    Returns:
+        Verification result message and resulting account status.
+
+    Raises:
+        HTTPException: If the token is invalid, expired, or already consumed.
+    """
     result = await verify_email_token(payload.token, db, redis)
     return AuthMessageResponse.model_validate(result)
 
@@ -191,7 +146,19 @@ async def resend_email_verification(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> AuthMessageResponse:
-    """Send a new verification email for an unverified account."""
+    """Send a replacement verification email for an unverified account.
+
+    Args:
+        payload: Email address for the account requiring verification.
+        db: Database session used to locate the account.
+        redis: Redis connection used to enforce resend limits.
+
+    Returns:
+        Generic message describing the resend result.
+
+    Raises:
+        HTTPException: If the resend rate limit is exceeded.
+    """
     result = await resend_verification_email(str(payload.email), db, redis)
     return AuthMessageResponse.model_validate(result)
 
@@ -208,9 +175,25 @@ async def google_login(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> TokenPair:
-    """Authenticate or register a user with a verified Google ID token."""
-    _reject_legacy_web_token_request(request)
-    use_web_cookie = _is_web_auth_request(request)
+    """Authenticate or register a user with a verified Google identity token.
+
+    Args:
+        payload: Google token, optional profile claims, and legal consents.
+        request: HTTP request used to select browser-cookie behaviour.
+        response: HTTP response that may receive a refresh-token cookie.
+        db: Database session used to resolve or create the account.
+        redis: Redis connection used for token state and rate limiting.
+
+    Returns:
+        Issued access-token details; browser clients receive their refresh token
+        in a secure cookie.
+
+    Raises:
+        HTTPException: If provider-token validation or account registration
+            fails.
+    """
+    reject_legacy_web_token_request(request)
+    use_web_cookie = is_web_auth_request(request)
     result = await login_with_google(
         payload.id_token,
         db,
@@ -221,10 +204,9 @@ async def google_login(
         consent_payload=payload,
         hash_refresh_token=use_web_cookie,
     )
-    refresh_token = result.get('refresh_token')
-    if use_web_cookie and isinstance(refresh_token, str):
-        _set_web_refresh_cookie(response, refresh_token)
-    return _token_pair_response_data(
+    if use_web_cookie:
+        set_web_refresh_cookie(response, result['refresh_token'])
+    return token_pair_response(
         result,
         omit_refresh_token=use_web_cookie,
     )
@@ -242,9 +224,24 @@ async def apple_login(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> TokenPair:
-    """Authenticate or register a user with Sign in with Apple."""
-    _reject_legacy_web_token_request(request)
-    use_web_cookie = _is_web_auth_request(request)
+    """Authenticate or register a user with Sign in with Apple.
+
+    Args:
+        payload: Apple credentials, optional profile claims, and legal consents.
+        request: HTTP request used to select browser-cookie behaviour.
+        response: HTTP response that may receive a refresh-token cookie.
+        db: Database session used to resolve or create the account.
+        redis: Redis connection used for token state and rate limiting.
+
+    Returns:
+        Issued access-token details; browser clients receive their refresh token
+        in a secure cookie.
+
+    Raises:
+        HTTPException: If Apple-token validation or account registration fails.
+    """
+    reject_legacy_web_token_request(request)
+    use_web_cookie = is_web_auth_request(request)
     result = await login_with_apple(
         payload.identity_token,
         payload.authorization_code,
@@ -258,10 +255,9 @@ async def apple_login(
         consent_payload=payload,
         hash_refresh_token=use_web_cookie,
     )
-    refresh_token = result.get('refresh_token')
-    if use_web_cookie and isinstance(refresh_token, str):
-        _set_web_refresh_cookie(response, refresh_token)
-    return _token_pair_response_data(
+    if use_web_cookie:
+        set_web_refresh_cookie(response, result['refresh_token'])
+    return token_pair_response(
         result,
         omit_refresh_token=use_web_cookie,
     )
@@ -273,28 +269,15 @@ async def apple_login(
     include_in_schema=False,
 )
 async def apple_callback(request: Request) -> RedirectResponse:
-    """Redirect Apple callback parameters back to the native app."""
-    params: list[tuple[str, str]] = [
-        (key, value)
-        for key, value in request.query_params.multi_items()
-    ]
-    if request.method == 'POST':
-        form = await request.form()
-        params.extend(
-            (key, str(value))
-            for key, value in form.multi_items()
-        )
+    """Redirect Apple callback parameters to the native application.
 
-    query = urlencode(params)
-    suffix = f'?{query}' if query else ''
-    return RedirectResponse(
-        (
-            f'intent://callback{suffix}'
-            '#Intent;package=com.changdar.visionnaire;'
-            'scheme=signinwithapple;end'
-        ),
-        status_code=302,
-    )
+    Args:
+        request: Apple callback request containing query or form parameters.
+
+    Returns:
+        Redirect response targeting the native application's callback URI.
+    """
+    return await apple_callback_redirect(request)
 
 
 @router.get('/auth/identities', response_model=IdentityListResponse)
@@ -302,7 +285,15 @@ async def get_identities(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ) -> IdentityListResponse:
-    """Return linked provider login methods for the current user."""
+    """Return provider login methods linked to the current user.
+
+    Args:
+        db: Database session used to load linked identities.
+        me: Authenticated account that owns the identities.
+
+    Returns:
+        Linked provider identities and password-credential availability.
+    """
     return await list_user_identities(me, db)
 
 
@@ -312,7 +303,19 @@ async def link_google(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ) -> IdentityRead:
-    """Link or refresh the current user's Google login identity."""
+    """Link or refresh the current user's Google identity.
+
+    Args:
+        payload: Google identity token to validate and link.
+        db: Database session used to store the identity.
+        me: Authenticated account receiving the identity link.
+
+    Returns:
+        Persisted Google identity details.
+
+    Raises:
+        HTTPException: If the token is invalid or belongs to another user.
+    """
     return await link_google_identity(me, payload.id_token, db)
 
 
@@ -322,7 +325,20 @@ async def link_apple(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ) -> IdentityRead:
-    """Link or refresh the current user's Apple login identity."""
+    """Link or refresh the current user's Apple identity.
+
+    Args:
+        payload: Apple credentials used to validate and link the identity.
+        db: Database session used to store the identity.
+        me: Authenticated account receiving the identity link.
+
+    Returns:
+        Persisted Apple identity details.
+
+    Raises:
+        HTTPException: If the Apple credentials are invalid or belong to another
+            user.
+    """
     return await link_apple_identity(
         me,
         payload.identity_token,
@@ -338,7 +354,20 @@ async def unlink_provider_identity(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    """Unlink a provider login identity owned by the current user."""
+    """Unlink an external provider identity from the current user.
+
+    Args:
+        identity_id: Identifier of the linked identity to remove.
+        db: Database session used to remove the identity.
+        me: Authenticated account that owns the identity.
+
+    Returns:
+        Confirmation message for the unlink operation.
+
+    Raises:
+        HTTPException: If the identity does not belong to the current user or
+            removing it would leave no authentication method.
+    """
     return await unlink_identity(me, identity_id, db)
 
 
@@ -350,23 +379,25 @@ async def logout(
     authorization: str | None = Header(None),
     redis: Redis = Depends(get_redis_pool),
 ) -> dict[str, str]:
-    """Invalidate user session by revoking JWT tokens.
+    """Invalidate a user session by revoking supplied JWT tokens.
 
     Args:
-        payload (LogoutRequest): Contains the refresh token to revoke.
-        authorization (Optional[str]): JWT access token from header.
-        redis (Redis): Redis connection pool.
+        request: HTTP request that may contain a refresh-token cookie.
+        response: HTTP response whose refresh-token cookie is cleared.
+        payload: Optional request body containing a refresh token.
+        authorization: Optional access token from the authorisation header.
+        redis: Redis connection used to revoke token state.
 
     Returns:
-        dict[str, str]: Message indicating successful logout.
+        Confirmation message after logout processing.
     """
     refresh_token = (
         payload.refresh_token
         if payload and payload.refresh_token
-        else _refresh_token_from_cookie(request)
+        else refresh_token_from_cookie(request)
     )
     await logout_user(refresh_token, authorization, redis)
-    _clear_web_refresh_cookie(response)
+    clear_web_refresh_cookie(response)
     return {'message': 'Logged out successfully.'}
 
 
@@ -381,29 +412,36 @@ async def refresh(
     payload: RefreshRequest | None = Body(default=None),
     redis: Redis = Depends(get_redis_pool),
 ) -> TokenPair:
-    """Issue new JWT tokens using a valid refresh token.
+    """Issue a replacement token pair using a valid refresh token.
 
     Args:
-        payload (RefreshRequest): Contains the refresh token.
-        redis (Redis): Redis connection pool.
+        request: HTTP request that may contain a refresh-token cookie.
+        response: HTTP response that may receive the replacement cookie.
+        payload: Optional request body containing a refresh token.
+        redis: Redis connection used to rotate token state.
 
     Returns:
-        TokenPair: Newly issued access and refresh tokens.
+        Issued access-token details; browser clients receive their refresh token
+        in a secure cookie.
+
+    Raises:
+        HTTPException: If the request type is disallowed or the refresh token
+            cannot be rotated.
     """
-    _reject_legacy_web_token_request(request)
-    cookie_refresh = _refresh_token_from_cookie(request)
+    reject_legacy_web_token_request(request)
+    cookie_refresh = refresh_token_from_cookie(request)
     body_refresh = payload.refresh_token if payload else None
-    use_web_cookie = _is_web_auth_request(request) or bool(cookie_refresh)
+    use_web_cookie = is_web_auth_request(request) or bool(cookie_refresh)
     refresh_token = cookie_refresh or body_refresh
+    # Prefer the HTTP-only cookie so browser refresh tokens never need JSON.
     result: TokenPairData = await refresh_tokens(
         RefreshRequest(refresh_token=refresh_token),
         redis,
         hash_refresh_token=use_web_cookie,
     )
-    new_refresh = result.get('refresh_token')
-    if use_web_cookie and isinstance(new_refresh, str):
-        _set_web_refresh_cookie(response, new_refresh)
-    return _token_pair_response_data(
+    if use_web_cookie:
+        set_web_refresh_cookie(response, result['refresh_token'])
+    return token_pair_response(
         result,
         omit_refresh_token=use_web_cookie,
     )
