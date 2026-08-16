@@ -49,14 +49,19 @@ YOLO_INFERENCE_DEVICE: str = os.getenv(
 ).strip().lower()
 
 
+def _is_cuda_available() -> bool:
+    """Return whether PyTorch can initialise CUDA on this host."""
+    import torch
+
+    return torch.cuda.is_available()
+
+
 def get_inference_device() -> str:
     """Return a safe Ultralytics/SAHI device string for this host."""
     if YOLO_INFERENCE_DEVICE and YOLO_INFERENCE_DEVICE != 'auto':
         return YOLO_INFERENCE_DEVICE
     try:
-        import torch
-
-        return 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        return 'cuda:0' if _is_cuda_available() else 'cpu'
     except Exception as exc:
         warnings.warn(
             f'CUDA availability check failed, falling back to CPU: {exc}',
