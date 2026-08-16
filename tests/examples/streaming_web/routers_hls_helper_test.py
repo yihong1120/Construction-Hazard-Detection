@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
+from datetime import timezone
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -10,41 +12,53 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.db_management.schemas.auth import AccessTokenSubject
+from examples.streaming_web import playback_service
 from examples.streaming_web import routers
+from examples.streaming_web import streaming_api_service
+from examples.streaming_web import streaming_metadata_service
 from examples.streaming_web.schemas import StreamPlaybackBatchRequest
 from examples.streaming_web.schemas import StreamPlaybackRequest
+
+
+def _credentials(
+    subject: dict[str, object],
+) -> JwtAuthorizationCredentials:
+    """Create incomplete credentials for authentication guard tests."""
+    return JwtAuthorizationCredentials(
+        subject=cast(AccessTokenSubject, subject),
+    )
 
 
 class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     def test_overlay_and_media_session_helpers_cover_invalid_inputs(
         self,
     ) -> None:
-        options = routers._overlay_language_option_payloads(('en',))
-        self.assertEqual(options[0]['code'], 'en')
+        options = playback_service._overlay_language_options(('en',))
+        self.assertEqual(options[0].code, 'en')
         self.assertEqual(
-            routers._media_session_demand_ttl(
-                {'expires_at': 'bad'},
+            playback_service._media_session_demand_ttl(
+                {'expires_at': 0},
             ),
-            routers.MEDIA_PUBLISHER_IDLE_GRACE_SECONDS,
+            playback_service.MEDIA_PUBLISHER_IDLE_GRACE_SECONDS,
         )
         self.assertIsNone(
-            routers._media_hls_session_cookie(
+            playback_service._media_hls_session_cookie(
                 'hazard_site_cam',
                 None,
             ),
         )
-        self.assertIsNone(
-            routers._media_hls_session_cookie(
+        with self.assertRaisesRegex(HTTPException, 'invalid_hls_session'):
+            playback_service._media_hls_session_cookie(
                 'hazard_site_cam',
                 'invalid value',
-            ),
-        )
+            )
 
         with self.assertRaises(HTTPException) as raised:
-            routers._normalise_playback_profile('webrtc')
+            playback_service._normalise_playback_profile('webrtc')
         self.assertEqual(raised.exception.detail, 'unsupported_profile')
         with self.assertRaises(HTTPException) as raised:
-            routers._normalise_playback_rendition('thumbnail')
+            playback_service._normalise_playback_rendition('thumbnail')
         self.assertEqual(raised.exception.detail, 'unsupported_rendition')
 
     def test_hls_uri_and_playlist_rewriting_preserve_media_query_and_auth(
@@ -53,16 +67,18 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         media_path = 'hazard_site_camera'
         auth_query = 'mt=opaque-token'
         self.assertEqual(
-            routers._rewrite_hls_uri('segment.ts', media_path, ''),
+            playback_service._rewrite_hls_uri('segment.ts', media_path, ''),
             'segment.ts',
         )
         self.assertIn(
             '/hazard/media/hazard_site_camera/segment.ts?mt=opaque-token',
-            routers._rewrite_hls_uri('segment.ts', media_path, auth_query),
+            playback_service._rewrite_hls_uri(
+                'segment.ts', media_path, auth_query,
+            ),
         )
         self.assertIn(
             '/hazard/media/hazard_site_camera/part.ts?mt=opaque-token',
-            routers._rewrite_hls_uri(
+            playback_service._rewrite_hls_uri(
                 f"{media_path}/part.ts",
                 media_path,
                 auth_query,
@@ -73,14 +89,14 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
                 '/hazard/media/hazard_site_camera/absolute.ts?foo=bar&'
                 'mt=opaque-token'
             ),
-            routers._rewrite_hls_uri(
+            playback_service._rewrite_hls_uri(
                 'https://media.example/other/absolute.ts?foo=bar',
                 media_path,
                 auth_query,
             ),
         )
         self.assertEqual(
-            routers._rewrite_hls_uri(
+            playback_service._rewrite_hls_uri(
                 f"/hazard/media/{media_path}/already.ts",
                 media_path,
                 auth_query,
@@ -89,7 +105,7 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         )
 
         playlist = '\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\nsegment.ts\n'
-        rewritten = routers._rewrite_hls_playlist_media_urls(
+        rewritten = playback_service._rewrite_hls_playlist_media_urls(
             playlist,
             media_path=media_path,
             auth_query=auth_query,
@@ -108,43 +124,49 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         self.assertEqual(
-            routers._extract_media_path_from_uri('/not-media/path'),
+            playback_service._extract_media_path_from_uri('/not-media/path'),
             '',
         )
         self.assertEqual(
-            routers._extract_media_path_from_uri(
+            playback_service._extract_media_path_from_uri(
                 '/hazard/media/webrtc/hazard_site_cam/whep',
             ),
             'hazard_site_cam',
         )
         self.assertFalse(
-            routers._media_path_matches_site(
+            playback_service._media_path_matches_site(
                 'hazard_other_cam',
                 'site',
             ),
         )
-        self.assertIsNone(routers._decode_playback_session_payload(None))
         self.assertIsNone(
-            routers._decode_playback_session_payload(b'not-json'),
+            playback_service._decode_playback_session_payload(None),
         )
-        self.assertIsNone(
-            routers._decode_playback_session_payload('["not", "a", "dict"]'),
-        )
+        with self.assertRaises(ValueError):
+            playback_service._decode_playback_session_payload(b'not-json')
         self.assertEqual(
-            routers._decode_playback_session_payload(b'{"profile":"clean"}'),
+            playback_service._decode_playback_session_payload(
+                b'{"profile":"clean"}',
+            ),
             {'profile': 'clean'},
         )
-        self.assertIsNone(routers._decode_playback_session_payload(123))
+        with self.assertRaises(TypeError):
+            playback_service._decode_playback_session_payload(
+                cast(bytes, 123),
+            )
 
     def test_media_session_scope_and_selected_path_helpers(self) -> None:
-        base_path = routers.build_media_path('SiteA', 'Camera1')
-        preview_path = routers.build_preview_media_path(base_path)
-        overlay_path = routers.build_annotated_media_path(base_path, 'en')
+        base_path = playback_service.build_media_path('SiteA', 'Camera1')
+        preview_path = playback_service.build_preview_media_path(base_path)
+        overlay_path = playback_service.build_annotated_media_path(
+            base_path, 'en',
+        )
         self.assertTrue(
-            routers._opaque_media_session_allows_path(
+            playback_service._opaque_media_session_allows_path(
                 {
                     'site': 'SiteA',
                     'camera': 'Camera1',
+                    'cameras': ['Camera1'],
                     'quality': 'detail',
                     'profile': 'clean',
                 },
@@ -153,7 +175,7 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(
-            routers._opaque_media_session_allows_path(
+            playback_service._opaque_media_session_allows_path(
                 {
                     'site': 'SiteA',
                     'cameras': ['Camera1'],
@@ -164,10 +186,11 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertTrue(
-            routers._opaque_media_session_allows_path(
+            playback_service._opaque_media_session_allows_path(
                 {
                     'site': 'SiteA',
                     'camera': 'Camera1',
+                    'cameras': ['Camera1'],
                     'quality': 'detail',
                     'profile': 'overlay',
                 },
@@ -175,193 +198,61 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertFalse(
-            routers._opaque_media_session_allows_path(
-                {'site': 'SiteA', 'quality': 'detail', 'profile': 'unknown'},
+            playback_service._opaque_media_session_allows_path(
+                {
+                    'site': 'SiteA',
+                    'cameras': [],
+                    'quality': 'detail',
+                    'profile': 'unknown',
+                },
                 base_path,
             ),
         )
         self.assertFalse(
-            routers._opaque_media_session_allows_path(
+            playback_service._opaque_media_session_allows_path(
                 {'site': 'SiteA', 'quality': 'invalid', 'camera': 'Camera1'},
                 base_path,
             ),
         )
-        self.assertIsNone(routers._session_selected_media_path({}))
+        with self.assertRaises(KeyError):
+            playback_service._session_selected_media_path(
+                cast(playback_service.PlaybackSession, {}),
+            )
         self.assertEqual(
-            routers._session_selected_media_path(
-                {'base_media_path': base_path},
+            playback_service._session_selected_media_path(
+                cast(
+                    playback_service.PlaybackSession,
+                    {'base_media_path': base_path, 'profile': 'clean'},
+                ),
             ),
             base_path,
         )
         self.assertEqual(
-            routers._session_selected_media_path(
-                {
-                    'base_media_path': base_path,
-                    'profile': 'overlay',
-                    'overlay_media_path': overlay_path,
-                },
+            playback_service._session_selected_media_path(
+                cast(
+                    playback_service.PlaybackSession,
+                    {
+                        'base_media_path': base_path,
+                        'profile': 'overlay',
+                        'overlay_media_path': overlay_path,
+                    },
+                ),
             ),
             overlay_path,
         )
 
-    async def test_restore_playback_session_rejects_invalid_capability_data(
+    async def test_demand_and_media_session_indexes_propagate_failures(
         self,
     ) -> None:
-        """A media token can restore only a complete matching session scope."""
-        request = SimpleNamespace(query_params={}, headers={})
-        rds = AsyncMock()
-        descriptor: dict[str, object] = {
-            'label': 'SiteA',
-            'stream_name': 'Camera1',
-            'profile': 'clean',
-            'rendition': 'detail',
-        }
-        base: dict[str, object] = {
-            'username': 'alice',
-            'site': 'SiteA',
-            'cameras': ['Camera1'],
-            'profile': 'clean',
-            'quality': 'detail',
-            'playback_sessions': {'session': descriptor},
-        }
-        with patch.object(
-            routers,
-            'get_media_session',
-            new=AsyncMock(return_value=None),
-        ) as get_media:
-            assert await routers._restore_playback_session(
-                rds,
-                'session',
-                request,
-            ) is None
-
-            get_media.return_value = {'username': 'alice'}
-            assert await routers._restore_playback_session(
-                rds,
-                'session',
-                request,
-            ) is None
-
-            get_media.return_value = {'playback_sessions': {'session': []}}
-            assert await routers._restore_playback_session(
-                rds,
-                'session',
-                request,
-            ) is None
-
-            for field in (
-                'label',
-                'stream_name',
-                'profile',
-                'rendition',
-            ):
-                malformed = {
-                    **base,
-                    'playback_sessions': {
-                        'session': {
-                            **descriptor,
-                            field: '',
-                        },
-                    },
-                }
-                get_media.return_value = malformed
-                assert await routers._restore_playback_session(
-                    rds,
-                    'session',
-                    request,
-                ) is None
-
-            wrong_scope = {
-                **base,
-                'playback_sessions': {
-                    'session': {
-                        **descriptor,
-                        'label': 'OtherSite',
-                    },
-                },
-            }
-            get_media.return_value = wrong_scope
-            assert await routers._restore_playback_session(
-                rds,
-                'session',
-                request,
-            ) is None
-
-            get_media.return_value = {**base, 'quality': 'unexpected'}
-            assert await routers._restore_playback_session(
-                rds,
-                'session',
-                request,
-            ) is None
-
-            get_media.return_value = {**base, 'username': ''}
-            assert await routers._restore_playback_session(
-                rds,
-                'session',
-                request,
-            ) is None
-
-            invalid_language = {
-                **base,
-                'profile': 'overlay',
-                'playback_sessions': {
-                    'session': {
-                        **descriptor,
-                        'profile': 'overlay',
-                        'language': 7,
-                    },
-                },
-            }
-            get_media.return_value = invalid_language
-            assert await routers._restore_playback_session(
-                rds,
-                'session',
-                request,
-            ) is None
-
-            preview = {
-                **base,
-                'quality': 'preview',
-                'playback_sessions': {
-                    'session': {
-                        **descriptor,
-                        'rendition': 'preview',
-                    },
-                },
-            }
-            get_media.return_value = preview
-            restored = await routers._restore_playback_session(
-                rds,
-                'session',
-                request,
-            )
-            assert restored is not None
-            self.assertTrue(
-                str(restored['base_media_path']).endswith('_preview'),
-            )
-
-            with patch.object(
-                routers,
-                '_opaque_media_session_allows_path',
-                return_value=False,
-            ):
-                get_media.return_value = base
-                assert await routers._restore_playback_session(
-                    rds,
-                    'session',
-                    request,
-                ) is None
-
-    async def test_demand_and_media_session_indexes_tolerate_failures(
-        self,
-    ) -> None:
-        base_path = routers.build_media_path('SiteA', 'Camera1')
-        overlay_path = routers.build_annotated_media_path(base_path, 'en')
+        base_path = playback_service.build_media_path('SiteA', 'Camera1')
+        overlay_path = playback_service.build_annotated_media_path(
+            base_path, 'en',
+        )
         rds = AsyncMock()
         with patch.object(
-            routers, '_touch_overlay_demand', AsyncMock(),
+            playback_service, '_touch_overlay_demand', AsyncMock(),
         ) as touch_overlay:
-            await routers._touch_media_demand_from_media_path(
+            await playback_service._touch_media_demand_from_media_path(
                 rds,
                 overlay_path,
                 ttl_seconds=17,
@@ -374,17 +265,34 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(
-            routers,
+            playback_service,
             '_touch_clean_demand',
             AsyncMock(side_effect=RuntimeError('redis offline')),
         ):
-            await routers._touch_media_demand_from_media_path(rds, base_path)
+            with self.assertRaisesRegex(RuntimeError, 'redis offline'):
+                await playback_service._touch_media_demand_from_media_path(
+                    rds,
+                    base_path,
+                )
 
-        await routers._delete_playback_session_media_indexes(rds, {})
-        await routers._register_playback_session_media_path(rds, {}, base_path)
+        with self.assertRaises(KeyError):
+            await playback_service._delete_playback_session_media_indexes(
+                rds,
+                cast(playback_service.PlaybackSession, {}),
+            )
+        with self.assertRaises(KeyError):
+            await playback_service._register_playback_session_media_path(
+                rds,
+                cast(playback_service.PlaybackSession, {}),
+                base_path,
+            )
 
         rds.expire.side_effect = RuntimeError('redis offline')
-        await routers._refresh_playback_session_ttl(rds, 'session-1')
+        with self.assertRaisesRegex(RuntimeError, 'redis offline'):
+            await playback_service._refresh_playback_session_ttl(
+                rds,
+                'session-1',
+            )
 
     async def test_refreshes_and_prunes_invalid_media_session_indexes(
         self,
@@ -398,11 +306,16 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         rds.delete = AsyncMock()
         rds.expire = AsyncMock()
         with patch.object(
-            routers,
+            playback_service,
             '_load_playback_session',
-            AsyncMock(side_effect=[None, {'base_media_path': 'other-path'}]),
+            AsyncMock(
+                side_effect=[
+                    None,
+                    {'profile': 'clean', 'base_media_path': 'other-path'},
+                ],
+            ),
         ):
-            await routers._refresh_playback_sessions_for_media_path(
+            await playback_service._refresh_playback_sessions_for_media_path(
                 rds,
                 'hazard_site_cam',
             )
@@ -413,19 +326,23 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             yield b''
 
         rds.scan_iter.return_value = failing_keys()
-        await routers._refresh_playback_sessions_for_media_path(
-            rds, 'hazard_site_cam',
-        )
+        with self.assertRaisesRegex(RuntimeError, 'scan failed'):
+            await playback_service._refresh_playback_sessions_for_media_path(
+                rds,
+                'hazard_site_cam',
+            )
 
     async def test_playback_session_errors_and_startup_input_validation(
         self,
     ) -> None:
         rds = AsyncMock()
         with patch.object(
-            routers, '_load_playback_session', AsyncMock(return_value=None),
+            playback_service, '_load_playback_session', AsyncMock(
+                return_value=None,
+            ),
         ):
             with self.assertRaises(HTTPException) as raised:
-                await routers._create_or_update_playback_session(
+                await playback_service._create_or_update_playback_session(
                     rds,
                     session_id='missing',
                     username='alice',
@@ -438,12 +355,12 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'session_not_found')
 
         with patch.object(
-            routers,
+            playback_service,
             '_load_playback_session',
             AsyncMock(return_value={'username': 'bob'}),
         ):
             with self.assertRaises(HTTPException) as raised:
-                await routers._create_or_update_playback_session(
+                await playback_service._create_or_update_playback_session(
                     rds,
                     session_id='forbidden',
                     username='alice',
@@ -456,28 +373,32 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'session_forbidden')
 
         with patch.object(
-            routers, 'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS', 0.0,
+            playback_service, 'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS', 0.0,
         ):
-            await routers._wait_for_session_startup({})
-        with patch.object(
-            routers, 'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS', 1.0,
-        ):
-            await routers._wait_for_session_startup(
-                {'created_at': 'not-a-date'},
+            await playback_service._wait_for_session_startup(
+                cast(playback_service.PlaybackSession, {}),
             )
+        with patch.object(
+            playback_service, 'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS', 1.0,
+        ):
+            with self.assertRaises(ValueError):
+                await playback_service._wait_for_session_startup(
+                    cast(
+                        playback_service.PlaybackSession,
+                        {'created_at': 'not-a-date'},
+                    ),
+                )
 
     async def test_label_access_rejects_inactive_users(self) -> None:
-        credentials = JwtAuthorizationCredentials(
-            subject={'username': 'alice'},
-        )
+        credentials = _credentials({'username': 'alice'})
         inactive_user = SimpleNamespace(status='suspended')
         with patch.object(
-            routers,
-            'get_user_and_sites',
+            playback_service,
+            'load_user_access_context',
             AsyncMock(return_value=(inactive_user, ['SiteA'], 'user')),
         ):
             with self.assertRaises(HTTPException) as raised:
-                await routers._authorise_label_access(
+                await playback_service._authorise_label_access(
                     credentials, AsyncMock(), 'SiteA',
                 )
         self.assertEqual(raised.exception.detail, 'inactive_user')
@@ -490,10 +411,16 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         context.__aenter__ = AsyncMock(return_value=client)
         context.__aexit__ = AsyncMock(return_value=None)
 
-        client.get.side_effect = routers.httpx.TimeoutException('timed out')
-        with patch.object(routers.httpx, 'AsyncClient', return_value=context):
+        client.get.side_effect = playback_service.httpx.TimeoutException(
+            'timed out',
+        )
+        with patch.object(
+            playback_service.httpx,
+            'AsyncClient',
+            return_value=context,
+        ):
             with self.assertRaises(HTTPException) as raised:
-                await routers._fetch_internal_hls_playlist(
+                await playback_service._fetch_internal_hls_playlist(
                     'hazard_site_cam', media_query='',
                 )
         self.assertEqual(raised.exception.status_code, 502)
@@ -504,9 +431,13 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             text='unavailable',
             cookies={},
         )
-        with patch.object(routers.httpx, 'AsyncClient', return_value=context):
+        with patch.object(
+            playback_service.httpx,
+            'AsyncClient',
+            return_value=context,
+        ):
             with self.assertRaises(HTTPException) as raised:
-                await routers._fetch_internal_hls_playlist(
+                await playback_service._fetch_internal_hls_playlist(
                     'hazard_site_cam', media_query='quality=low',
                 )
         self.assertEqual(raised.exception.status_code, 503)
@@ -516,9 +447,13 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             text='  ',
             cookies={},
         )
-        with patch.object(routers.httpx, 'AsyncClient', return_value=context):
+        with patch.object(
+            playback_service.httpx,
+            'AsyncClient',
+            return_value=context,
+        ):
             with self.assertRaises(HTTPException) as raised:
-                await routers._fetch_internal_hls_playlist(
+                await playback_service._fetch_internal_hls_playlist(
                     'hazard_site_cam', media_query='',
                 )
         self.assertEqual(raised.exception.detail, 'media_playlist_not_ready')
@@ -543,10 +478,11 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertTrue(
-            await routers._has_other_overlay_sessions(
+            await playback_service._has_other_playback_session(
                 rds,
                 released_session_id='released',
                 base_media_path='hazard_site_cam',
+                profile='overlay',
                 language='en',
             ),
         )
@@ -556,30 +492,38 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             yield b''
 
         rds.scan_iter = lambda **_kwargs: failing_keys()
-        with patch('builtins.print'):
-            self.assertTrue(
-                await routers._has_other_clean_sessions(
-                    rds,
-                    released_session_id='released',
-                    base_media_path='hazard_site_cam',
-                ),
+        with self.assertRaisesRegex(RuntimeError, 'redis unavailable'):
+            await playback_service._has_other_playback_session(
+                rds,
+                released_session_id='released',
+                base_media_path='hazard_site_cam',
+                profile='clean',
             )
 
-        created_at = datetime.now().replace(tzinfo=None).isoformat()
+        created_at = datetime.now(timezone.utc).isoformat()
         with (
             patch.object(
-                routers,
+                playback_service,
                 'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS',
                 30.0,
             ),
-            patch.object(routers.asyncio, 'sleep', AsyncMock()) as sleep,
+            patch.object(
+                playback_service.asyncio,
+                'sleep',
+                AsyncMock(),
+            ) as sleep,
         ):
-            await routers._wait_for_session_startup({'created_at': created_at})
+            await playback_service._wait_for_session_startup(
+                cast(
+                    playback_service.PlaybackSession,
+                    {'created_at': created_at},
+                ),
+            )
         sleep.assert_awaited_once()
 
         request = SimpleNamespace(url=SimpleNamespace(query=''))
         with patch.object(
-            routers,
+            playback_service,
             '_load_playback_session',
             AsyncMock(return_value=None),
         ):
@@ -589,7 +533,7 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
                 )
 
         with patch.object(
-            routers,
+            playback_service,
             '_load_playback_session',
             AsyncMock(return_value={'session_id': 'present'}),
         ):
@@ -601,24 +545,38 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     async def test_playback_batch_and_endpoint_auth_guards(self) -> None:
         """Batch expansion and playback endpoints reject missing identity
         safely."""
-        legacy = SimpleNamespace(__fields_set__={'profile'})
-        self.assertTrue(routers._model_field_was_set(legacy, 'profile'))
-        self.assertFalse(routers._model_field_was_set(legacy, 'language'))
+        explicit_profile = StreamPlaybackRequest(profile='clean')
+        self.assertTrue(
+            streaming_api_service._model_field_was_set(
+                explicit_profile,
+                'profile',
+            ),
+        )
+        self.assertFalse(
+            streaming_api_service._model_field_was_set(
+                explicit_profile,
+                'language',
+            ),
+        )
 
         with self.assertRaisesRegex(HTTPException, 'label_required'):
-            await routers._build_batch_playback_requests(
+            await streaming_api_service._build_batch_playback_requests(
                 StreamPlaybackBatchRequest(),
                 AsyncMock(),
             )
 
         oversized = [
             StreamPlaybackRequest(key=f"Camera{index}")
-            for index in range(routers.MAX_STREAM_PLAYBACK_BATCH_STREAMS + 1)
+            for index in range(
+                streaming_api_service.MAX_STREAM_PLAYBACK_BATCH_STREAMS + 1,
+            )
         ]
         with self.assertRaisesRegex(
             HTTPException, 'stream_batch_limit_exceeded',
         ):
-            routers._enforce_stream_playback_batch_limit(oversized)
+            streaming_api_service._enforce_stream_playback_batch_limit(
+                oversized,
+            )
 
         credentials = SimpleNamespace(subject={})
         request = StreamPlaybackRequest(label='SiteA', key='Camera1')
@@ -655,12 +613,10 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Release cleanup and listing failures preserve their API
         contracts."""
-        credentials = JwtAuthorizationCredentials(
-            subject={'username': 'alice'},
-        )
+        credentials = _credentials({'username': 'alice'})
         rds = AsyncMock()
         with patch.object(
-            routers,
+            playback_service,
             '_load_playback_session',
             AsyncMock(return_value=None),
         ):
@@ -672,7 +628,7 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
                 )
 
         with patch.object(
-            routers,
+            playback_service,
             '_load_playback_session',
             AsyncMock(return_value={'username': 'bob'}),
         ):
@@ -690,18 +646,18 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         }
         with (
             patch.object(
-                routers,
+                playback_service,
                 '_load_playback_session',
                 AsyncMock(return_value=clean_session),
             ),
             patch.object(
-                routers,
+                playback_service,
                 '_delete_playback_session_media_indexes',
                 AsyncMock(),
             ),
             patch.object(
-                routers,
-                '_has_other_clean_sessions',
+                playback_service,
+                '_has_other_playback_session',
                 AsyncMock(return_value=False),
             ),
         ):
@@ -712,27 +668,30 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(response.status_code, 200)
         rds.delete.assert_any_await(
-            routers.build_clean_demand_key('hazard_site_camera'),
+            playback_service.build_clean_demand_key('hazard_site_camera'),
         )
 
         request = SimpleNamespace(url=SimpleNamespace(query='mt=token'))
         with (
             patch.object(
-                routers,
+                playback_service,
                 '_load_playback_session',
                 AsyncMock(return_value={'session_id': 'valid'}),
             ),
             patch.object(
-                routers,
+                playback_service,
                 '_refresh_playback_session_ttl',
                 AsyncMock(),
             ),
             patch.object(
-                routers,
+                playback_service,
                 '_select_session_playback',
                 AsyncMock(return_value={'hls_url': '/invalid/path'}),
             ),
-            patch.object(routers, '_wait_for_session_startup', AsyncMock()),
+            patch.object(
+                playback_service,
+                '_wait_for_session_startup', AsyncMock(),
+            ),
         ):
             with self.assertRaisesRegex(
                 HTTPException, 'invalid_media_playlist',
@@ -742,7 +701,7 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
                 )
 
         with self.assertRaisesRegex(HTTPException, 'label_required'):
-            await routers._negotiate_stream_playback(
+            await streaming_api_service.negotiate_stream_playback(
                 StreamPlaybackRequest(),
                 username='alice',
                 credentials=credentials,
@@ -751,19 +710,22 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             )
 
         with (
-            patch.object(routers, '_authorise_label_access', AsyncMock()),
             patch.object(
-                routers,
+                playback_service,
+                '_authorise_label_access', AsyncMock(),
+            ),
+            patch.object(
+                streaming_api_service,
                 'normalise_overlay_mode',
                 return_value='backend',
             ),
             patch.object(
-                routers,
+                streaming_api_service,
                 'normalise_label_language',
                 return_value='xx',
             ),
             patch.object(
-                routers,
+                playback_service,
                 '_allowed_overlay_languages',
                 return_value={'en'},
             ),
@@ -780,14 +742,18 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
 
         db = AsyncMock()
         db.execute.side_effect = RuntimeError('database unavailable')
-        with patch.object(routers, '_authorise_label_access', AsyncMock()):
-            response = await routers.get_streams_for_label_route(
-                'SiteA',
-                credentials=credentials,
-                db=db,
-                rds=rds,
-            )
-        self.assertEqual(response.body, b'{"streams":[]}')
+        with patch.object(
+            playback_service,
+            '_authorise_label_access',
+            AsyncMock(),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'database unavailable'):
+                await routers.get_streams_for_label_route(
+                    'SiteA',
+                    credentials=credentials,
+                    db=db,
+                    rds=rds,
+                )
 
     async def test_backend_overlay_metadata_builds_demand_and_ready_payload(
         self,
@@ -804,8 +770,15 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         credentials = SimpleNamespace(subject={'username': 'alice'})
         generator = MagicMock(return_value=events())
         with (
-            patch.object(routers, '_authorise_label_access', AsyncMock()),
-            patch.object(routers, 'metadata_stream_generator', generator),
+            patch.object(
+                playback_service,
+                '_authorise_label_access', AsyncMock(),
+            ),
+            patch.object(
+                streaming_metadata_service,
+                'metadata_stream_generator',
+                generator,
+            ),
         ):
             response = await routers.metadata_stream_id(
                 request,
@@ -830,12 +803,13 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Session scans skip stale rows and valid updates remove old
         indexes."""
-        base_path = routers.build_media_path('SiteA', 'Camera1')
+        base_path = playback_service.build_media_path('SiteA', 'Camera1')
         self.assertFalse(
-            routers._opaque_media_session_allows_path(
+            playback_service._opaque_media_session_allows_path(
                 {
                     'site': 'SiteA',
                     'camera': 'Camera1',
+                    'cameras': ['Camera1'],
                     'quality': 'detail',
                     'profile': 'unknown',
                 },
@@ -847,17 +821,17 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         existing = {'username': 'alice'}
         with (
             patch.object(
-                routers,
+                playback_service,
                 '_load_playback_session',
                 AsyncMock(return_value=existing),
             ),
             patch.object(
-                routers,
+                playback_service,
                 '_delete_playback_session_media_indexes',
                 AsyncMock(),
             ) as delete_indexes,
         ):
-            session = await routers._create_or_update_playback_session(
+            session = await playback_service._create_or_update_playback_session(
                 rds,
                 session_id='existing',
                 username='alice',
@@ -871,21 +845,21 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         delete_indexes.assert_awaited_once_with(rds, existing)
 
         async def stale_keys():
-            yield routers._playback_session_key('released').encode()
+            yield playback_service._playback_session_key('released').encode()
             yield b'stream_playback_session:stale'
 
         stale_rds = SimpleNamespace(
             scan_iter=lambda **_kwargs: stale_keys(),
             get=AsyncMock(return_value=b'not-json'),
         )
-        self.assertFalse(
-            await routers._has_other_overlay_sessions(
+        with self.assertRaises(ValueError):
+            await playback_service._has_other_playback_session(
                 stale_rds,
                 released_session_id='released',
                 base_media_path=base_path,
+                profile='overlay',
                 language='en',
-            ),
-        )
+            )
 
         async def clean_keys():
             yield b'stream_playback_session:clean'
@@ -899,51 +873,54 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertTrue(
-            await routers._has_other_clean_sessions(
+            await playback_service._has_other_playback_session(
                 rds,
                 released_session_id='released',
                 base_media_path=base_path,
+                profile='clean',
             ),
         )
 
         async def stale_clean_keys():
-            yield routers._playback_session_key('released').encode()
+            yield playback_service._playback_session_key('released').encode()
             yield b'stream_playback_session:stale'
 
         rds.scan_iter = lambda **_kwargs: stale_clean_keys()
         rds.get = AsyncMock(return_value=b'not-json')
-        self.assertFalse(
-            await routers._has_other_clean_sessions(
+        with self.assertRaises(ValueError):
+            await playback_service._has_other_playback_session(
                 rds,
                 released_session_id='released',
                 base_media_path=base_path,
-            ),
-        )
+                profile='clean',
+            )
 
         async def failing_keys():
             raise RuntimeError('redis unavailable')
             yield b''
 
         rds.scan_iter = lambda **_kwargs: failing_keys()
-        with patch('builtins.print'):
-            self.assertTrue(
-                await routers._has_other_overlay_sessions(
-                    rds,
-                    released_session_id='released',
-                    base_media_path=base_path,
-                    language='en',
-                ),
+        with self.assertRaisesRegex(RuntimeError, 'redis unavailable'):
+            await playback_service._has_other_playback_session(
+                rds,
+                released_session_id='released',
+                base_media_path=base_path,
+                profile='overlay',
+                language='en',
             )
 
         with (
-            patch.object(routers, '_authorise_label_access', AsyncMock()),
             patch.object(
-                routers,
+                playback_service,
+                '_authorise_label_access', AsyncMock(),
+            ),
+            patch.object(
+                streaming_metadata_service,
                 'normalise_label_language',
                 return_value='xx',
             ),
             patch.object(
-                routers,
+                playback_service,
                 '_allowed_overlay_languages',
                 return_value={'en'},
             ),

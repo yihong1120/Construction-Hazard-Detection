@@ -8,17 +8,18 @@ from examples.streaming_web.routers import (
     router as streaming_web_router,
 )
 
-# Initialise the FastAPI app with a custom lifespan handler
+# Reuse the common lifespan so worker resources have one lifecycle contract.
 app = FastAPI(lifespan=global_lifespan)
 
-# Include routers for authentication and user management
-# and streaming web services
+# Route declarations remain in the router module; this file only composes them.
 app.include_router(streaming_web_router)
 
 
 def main() -> None:
-    """
-    Main function to run the FastAPI application using Uvicorn.
+    """Run the local streaming-web application with Uvicorn.
+
+    The development entry point deliberately binds to the loopback interface,
+    leaving public deployment configuration to the process manager.
     """
     uvicorn.run(
         app, host='127.0.0.1', port=8800,

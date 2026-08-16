@@ -15,8 +15,7 @@ class TestMediaPathParsingCoverage(unittest.TestCase):
         self.assertIsNone(
             media_paths.parse_annotated_media_path('other_annotated_emg'),
         )
-        self.assertIsNone(
+        with self.assertRaises(ValueError):
             media_paths.parse_annotated_media_path(
                 'hazard_camera_annotated___8',
-            ),
-        )
+            )

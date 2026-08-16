@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from typing import cast
 from unittest import mock
 
 import cv2
@@ -52,35 +53,11 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertEqual(normalise_label_language('zh'), 'zh-TW')
         self.assertEqual(normalise_label_language('missing'), 'en')
 
-    def test_env_helpers_parse_configured_values(self) -> None:
-        """Exercise this test."""
-        with mock.patch.dict(
-            'os.environ',
-            {
-                'STREAMING_OVERLAY_TEST_BOOL': 'yes',
-                'STREAMING_OVERLAY_TEST_INT': 'bad',
-            },
-        ):
-            self.assertTrue(
-                renderer._env_bool(
-                    'STREAMING_OVERLAY_TEST_BOOL',
-                    False,
-                ),
-            )
-            self.assertEqual(
-                renderer._env_int('STREAMING_OVERLAY_TEST_INT', 7),
-                7,
-            )
-        self.assertTrue(renderer._env_bool('MISSING_OVERLAY_BOOL', True))
-        self.assertEqual(renderer._env_int('MISSING_OVERLAY_INT', 7), 7)
-
     def test_has_warning(self) -> None:
         """Exercise this test."""
         self.assertTrue(
             has_warning(
-                json.dumps({
-                    'warning_no_hardhat': {'count': 2},
-                }),
+                {'warning_no_hardhat': {'count': 2}},
             ),
         )
         self.assertTrue(
@@ -89,18 +66,13 @@ class OverlayRendererTest(unittest.TestCase):
             }),
         )
         self.assertFalse(
-            has_warning(
-                json.dumps({
-                    'warning_no_hardhat': {'count': 0},
-                }),
-            ),
+            has_warning({'warning_no_hardhat': {'count': 0}}),
         )
         self.assertFalse(
             has_warning({
                 'warning_no_hardhat': {'count': False},
             }),
         )
-        self.assertFalse(has_warning(''))
 
     def test_render_overlay_frame_bad_input_returns_original(self) -> None:
         """Exercise this test."""
@@ -133,24 +105,36 @@ class OverlayRendererTest(unittest.TestCase):
         frame = np.zeros((0, 0, 3), dtype=np.uint8)
 
         self.assertIs(
-            render_overlay_array(frame, overlay_mode='none'),
+            render_overlay_array(
+                frame,
+                detection_items=[],
+                warnings={},
+                cone_polygons=[],
+                pole_polygons=[],
+                overlay_mode='none',
+            ),
             frame,
         )
         self.assertIs(
-            render_overlay_array(frame, overlay_mode='backend'),
+            render_overlay_array(
+                frame,
+                detection_items=[],
+                warnings={},
+                cone_polygons=[],
+                pole_polygons=[],
+                overlay_mode='backend',
+            ),
             frame,
         )
-
-    def test_parse_json_returns_none_for_bad_json(self) -> None:
-        """Exercise this test."""
-        self.assertIsNone(renderer._parse_json('{bad json'))
 
     def test_render_overlay_frame_none_returns_original(self) -> None:
         """Exercise this test."""
         frame_bytes = self._jpeg_frame()
         rendered = render_overlay_frame(
             frame_bytes,
-            detection_items_json=json.dumps([[40, 40, 180, 210, 0.93, 5]]),
+            detection_items_json=json.dumps(
+                [[40, 40, 180, 210, 0.93, 5, -1, 0]],
+            ),
             overlay_mode='none',
         )
         self.assertEqual(rendered, frame_bytes)
@@ -160,7 +144,9 @@ class OverlayRendererTest(unittest.TestCase):
         frame_bytes = self._jpeg_frame()
         rendered = render_overlay_frame(
             frame_bytes,
-            detection_items_json=json.dumps([[40, 40, 180, 210, 0.93, 5, 12]]),
+            detection_items_json=json.dumps(
+                [[40, 40, 180, 210, 0.93, 5, 12, 0]],
+            ),
             warnings_json=json.dumps({
                 'warning_people_in_controlled_area': {'count': 1},
             }),
@@ -193,17 +179,17 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertEqual(rendered.shape[:2], (240, 320))
         self.assertFalse(np.array_equal(rendered, frame))
 
-    def test_render_overlay_array_accepts_json_strings(self) -> None:
-        """Exercise this test."""
+    def test_render_overlay_array_accepts_strict_decoded_data(self) -> None:
+        """The array renderer consumes the detector's decoded payload."""
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
         rendered = render_overlay_array(
             frame.copy(),
-            detection_items=json.dumps([[40, 40, 180, 210, 0.93, 5, 12]]),
-            warnings=json.dumps({
+            detection_items=[[40, 40, 180, 210, 0.93, 5, 12, 0]],
+            warnings={
                 'warning_people_in_controlled_area': {'count': 1},
-            }),
-            cone_polygons='[]',
-            pole_polygons='[]',
+            },
+            cone_polygons=[],
+            pole_polygons=[],
             overlay_mode='backend',
             label_language='zh-TW',
         )
@@ -220,6 +206,8 @@ class OverlayRendererTest(unittest.TestCase):
             frame.copy(),
             detection_items=[[40, 40, 180, 210, 0.93, 5, 12]],
             warnings={'warning_close_to_vehicle': {'count': 2}},
+            cone_polygons=[],
+            pole_polygons=[],
             overlay_mode='backend',
             label_language='en',
         )
@@ -240,6 +228,8 @@ class OverlayRendererTest(unittest.TestCase):
                 [107, 105, 200, 200, 0.85, 10, 1, 1],
             ],
             warnings={'warning_close_to_vehicle': {'count': 1}},
+            cone_polygons=[],
+            pole_polygons=[],
             overlay_mode='backend',
             label_language='en',
             box_thickness=3,
@@ -268,6 +258,8 @@ class OverlayRendererTest(unittest.TestCase):
                     'person_track_ids': ['42'],
                 },
             },
+            cone_polygons=[],
+            pole_polygons=[],
             overlay_mode='backend',
             label_language='en',
             box_thickness=3,
@@ -295,6 +287,8 @@ class OverlayRendererTest(unittest.TestCase):
                     'person_bboxes': [[40, 40, 80, 120]],
                 },
             },
+            cone_polygons=[],
+            pole_polygons=[],
             overlay_mode='backend',
             label_language='en',
             box_thickness=3,
@@ -311,8 +305,10 @@ class OverlayRendererTest(unittest.TestCase):
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
         rendered = render_overlay_array(
             frame.copy(),
-            detection_items=[[40, 40, 80, 180, 0.93, 4]],
+            detection_items=[[40, 40, 80, 180, 0.93, 4, -1, 0]],
             warnings={},
+            cone_polygons=[],
+            pole_polygons=[],
             overlay_mode='backend',
             label_language='en',
         )
@@ -327,9 +323,9 @@ class OverlayRendererTest(unittest.TestCase):
         rendered = render_overlay_array(
             frame.copy(),
             detection_items=[
-                [10, 20, 50, 90, 0.93, 5],
-                [80, 20, 120, 90, 0.91, 5],
-                [150, 20, 190, 90, 0.89, 5],
+                [10, 20, 50, 90, 0.93, 5, -1, 0],
+                [80, 20, 120, 90, 0.91, 5, -1, 0],
+                [150, 20, 190, 90, 0.89, 5, -1, 0],
             ],
             warnings={},
             cone_polygons=[],
@@ -353,7 +349,7 @@ class OverlayRendererTest(unittest.TestCase):
             frame.copy(),
             detection_items=[],
             warnings={},
-            cone_polygons=[polygon],
+            cone_polygons=[cast(renderer.PolygonCoordinates, polygon)],
             pole_polygons=[],
             overlay_mode='backend',
             label_language='en',
@@ -374,17 +370,11 @@ class OverlayRendererTest(unittest.TestCase):
 
         np.testing.assert_array_equal(rendered, reference)
 
-    def test_cached_detection_parser_handles_json_and_invalid_data(
+    def test_cached_detection_parser_handles_strict_tracker_rows(
         self,
     ) -> None:
-        """Exercise this test."""
         detections = renderer._detections_for_overlay(
-            json.dumps([{
-                'class_name': 'person',
-                'confidence': 0.9,
-                'bbox': {'x': 0.1, 'y': 0.1, 'w': 0.2, 'h': 0.3},
-                'track_id': 'abc',
-            }]),
+            json.dumps([[0.1, 0.1, 0.3, 0.4, 0.9, 5, 12, 0]]),
             200,
             100,
             0.4,
@@ -396,16 +386,6 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertEqual(len(detections), 1)
         self.assertEqual(detections[0].bbox, (20, 10, 60, 40))
         self.assertTrue(detections[0].is_warning)
-        self.assertEqual(
-            renderer._detections_for_overlay(
-                '{"bad": true}', 200, 100, 0.4, '',
-            ),
-            (),
-        )
-        self.assertEqual(
-            renderer._detections_from_data({'bad': True}, 200, 100, 0.4, {}),
-            (),
-        )
 
     def test_detections_from_data_adds_explicit_warning_target_overlay(
         self,
@@ -427,18 +407,16 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertEqual(len(detections), 1)
         self.assertTrue(detections[0].is_warning)
 
-    def test_detection_parser_skips_low_confidence_and_invalid_boxes(
+    def test_detection_parser_skips_low_confidence_and_degenerate_boxes(
         self,
     ) -> None:
         """Exercise this test."""
         parsed = tuple(
             renderer._iter_detections_from_data(
                 [
-                    [0.1, 0.1, 0.2, 0.2, 0.2, 5],
-                    [10, 10, 10, 20, 0.9, 5],
-                    'bad',
-                    {'bbox': [], 'confidence': 0.9},
-                    [0.2, 0.2, 0.3, 0.4, 0.95, 5, -1],
+                    [0.1, 0.1, 0.2, 0.2, 0.2, 5, -1, 0],
+                    [10, 10, 10, 20, 0.9, 5, -1, 0],
+                    [0.2, 0.2, 0.3, 0.4, 0.95, 5, -1, 0],
                 ],
                 frame_width=200,
                 frame_height=100,
@@ -451,36 +429,23 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertEqual(len(parsed), 1)
         self.assertEqual(parsed[0].bbox, (40, 20, 60, 40))
         self.assertIsNone(parsed[0].track_id)
-        self.assertIsNone(
-            renderer._parse_dict_detection(
-                {'bbox': [1], 'confidence': 0.9},
-                frame_width=200,
-                frame_height=100,
-                warning_classes=set(),
-                warning_targets=set(),
-            ),
-        )
 
-    def test_warning_targets_and_counts_cover_edge_formats(self) -> None:
-        """Exercise this test."""
-        warnings = {
+    def test_warning_targets_and_counts_use_the_detector_schema(self) -> None:
+        """Warnings are dictionaries with an integer count field."""
+        warnings: renderer.WarningPayload = {
             'warning_no_hardhat': {'count': 1},
             'warning_close_to_vehicle': {
-                'count': '2',
-                'person_bboxes': [[0.1, 0.1, 0.2, 0.3], 'bad'],
+                'count': 2,
+                'person_bboxes': [[0.1, 0.1, 0.2, 0.3]],
             },
-            'warning_no_safety_vest': {'count': object()},
-            'warning_people_in_utility_pole_controlled_area': 1,
-            'detect_machinery_close_to_pole': True,
+            'warning_no_safety_vest': {'count': 1},
+            'warning_people_in_utility_pole_controlled_area': {'count': 1},
+            'detect_machinery_close_to_pole': {'count': 1},
         }
 
         self.assertEqual(
             renderer._warning_targets(warnings, 200, 100),
             {(20, 10, 40, 30)},
-        )
-        self.assertEqual(
-            renderer._explicit_person_warning_bboxes('bad', 200, 100),
-            set(),
         )
         self.assertEqual(
             renderer._warning_classes(warnings),
@@ -492,11 +457,7 @@ class OverlayRendererTest(unittest.TestCase):
                 'vehicle',
             },
         )
-        self.assertEqual(renderer._warning_count({'count': b'3'}), 3)
-        self.assertEqual(renderer._warning_count({'count': object()}), 1)
-        self.assertEqual(renderer._warning_count({'count': 'bad'}), 1)
-        self.assertEqual(renderer._warning_count(False), 0)
-        self.assertEqual(renderer._warning_count(2.8), 2)
+        self.assertEqual(renderer._warning_count({'count': 3}), 3)
         self.assertEqual(
             renderer._bbox_iou((0, 0, 1, 1), (2, 2, 3, 3)),
             0.0,
@@ -616,13 +577,13 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertEqual(len(renderer._color_for_class('unknown-class')), 3)
         self.assertTrue(renderer._is_bright((255, 255, 255)))
 
-    def test_polygon_helpers_cover_invalid_and_normalised_data(self) -> None:
-        """Exercise this test."""
+    def test_polygon_helpers_normalise_detector_coordinates(self) -> None:
+        """Polygon payloads use the detector's list-of-coordinate format."""
         polygons = renderer._normalised_polygons_for_overlay(
             json.dumps([[
-                {'x': 0.1, 'y': 0.1},
-                {'x': 0.3, 'y': 0.1},
-                {'x': 0.3, 'y': 0.3},
+                [0.1, 0.1],
+                [0.3, 0.1],
+                [0.3, 0.3],
             ]]),
             100,
             50,
@@ -633,17 +594,10 @@ class OverlayRendererTest(unittest.TestCase):
             polygons[0],
             np.array([[10, 5], [30, 5], [30, 15]], dtype=np.int32),
         )
-        self.assertEqual(
-            renderer._normalised_polygons_for_overlay(
-                '{"bad": true}', 100, 50,
-            ),
-            (),
-        )
         frame = np.zeros((20, 20, 3), dtype=np.uint8)
         renderer._draw_polygons(
             frame,
             (
-                ('{"bad": true}', (255, 0, 0), (255, 0, 0), 0.4),
                 (
                     json.dumps([[[1, 1], [10, 1], [10, 10]]]),
                     (255, 0, 0),
@@ -653,27 +607,13 @@ class OverlayRendererTest(unittest.TestCase):
             ),
         )
         self.assertTrue(frame.any())
-        self.assertIsNone(
+        np.testing.assert_array_equal(
             renderer._normalise_polygon(
-                [[1, 2], [3, 4]], 10, 10,
-            ),
-        )
-        self.assertIsNone(
-            renderer._normalise_polygon([[1, 2], [3, 4], ['bad', 5]], 10, 10),
-        )
-        self.assertIsNone(
-            renderer._normalise_polygon(
-                [
-                    {'x': 1, 'y': 2},
-                    {'x': 3},
-                    {'x': 4, 'y': 5},
-                ],
+                [[1, 2], [3, 4], [4, 5]],
                 10,
                 10,
             ),
-        )
-        self.assertIsNone(
-            renderer._normalise_polygon([[1, 2], object(), [4, 5]], 10, 10),
+            np.array([[1, 2], [3, 4], [4, 5]], dtype=np.int32),
         )
 
     def test_roi_blend_helpers_cover_noop_edges(self) -> None:

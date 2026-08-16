@@ -25,14 +25,19 @@ streaming_web
 ## 檔案
 
 - `app.py`：FastAPI application 設定。
-- `routers.py`：stream listing、metadata、media auth、overlay 與 ICE routes。
-- `ws_handlers.py`：metadata-only WebSocket 與 SSE generators。
-- `redis_service.py`：讀取 compact live warning metadata。
-- `media_paths.py`：編碼與解碼 MediaMTX path names。
-- `overlay_renderer.py`：支援多語 overlay rendering helpers。
+- `routers.py`：只保留含 dependency injection 的 HTTP 與 WebSocket 宣告。
+- `application_services.py`：request-scoped application-service composition。
+- `streaming_api_service.py`：media authorisation 與 playback API policy。
+- `playback_service.py`：playback sessions、playlists 與 producer demand leases。
+- `stream_catalog_service.py`：授權後的 site 與 stream catalogues。
+- `streaming_metadata_service.py`：授權後的 SSE 與 WebSocket response setup。
+- `streaming_metadata_handlers.py`：共用 metadata SSE 與 WebSocket transports。
+- `redis_service.py` 與 `metadata_keys.py`：compact metadata Redis contract。
+- `media_paths.py`：canonical MediaMTX paths、public URLs 與 demand keys。
+- `overlay_renderer.py`：支援多語且有快取的 overlay rendering helpers。
 - `webrtc_service.py`：STUN/TURN ICE-server response builder。
-- `schemas.py`：response models。
-- `utils.py`：小型 encoding 與 WebSocket helpers。
+- `schemas.py`：驗證過的 HTTP 與 Redis payload contracts。
+- `nginx.hazard-media.conf`：Nginx media proxy 與 authorisation configuration。
 
 ## 執行
 
@@ -40,7 +45,8 @@ streaming_web
 uvicorn examples.streaming_web.app:app \
   --host 127.0.0.1 \
   --port 8800 \
-  --workers 2
+  --workers 2 \
+  --timeout-graceful-shutdown 10
 ```
 
 ## Endpoints
@@ -59,7 +65,6 @@ uvicorn examples.streaming_web.app:app \
   與工地權限，因此 HLS segment 授權不會查詢 PostgreSQL。
 - `GET /stream-playback/sessions/{id}/index.m3u8`：stable playlist endpoint，會
   依目前 clean/overlay 狀態取 MediaMTX playlist，並將 `mt` 補到 fragment URL。
-- `POST /streams/{label}/{stream_id}/playback`：選擇 playback language 與 overlay mode。
 - `GET /webrtc/ice-servers`：WebRTC clients 使用的 STUN/TURN settings。
 - `GET /media-auth`：給 Nginx `auth_request` 驗證 MediaMTX paths。
 

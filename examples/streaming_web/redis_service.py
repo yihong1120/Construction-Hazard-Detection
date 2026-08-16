@@ -1,97 +1,93 @@
 from __future__ import annotations
 
-import base64
-import re
-from typing import Any
+import redis.asyncio as redis
 
-from examples.streaming_web.utils import Utils
+from examples.streaming_web.metadata_keys import encode_stream_id
+from examples.streaming_web.metadata_keys import is_metadata_key
+from examples.streaming_web.metadata_keys import metadata_key_stream_id
+from examples.streaming_web.metadata_keys import metadata_key_stream_name
+from examples.streaming_web.schemas import FrameOutData
 
 _stream_scan_count = 500
-_metadata_key_pattern = re.compile(
-    r'stream_metadata:([A-Za-z0-9\-_]+=*)\|([A-Za-z0-9\-_]+=*)',
-)
-_stream_name_cache_max_items = 512
-_stream_name_cache: dict[str, str] = {}
-
-
-def build_metadata_key(site: str, stream_name: str) -> str:
-    """Build the Redis key used for compact live-view metadata."""
-    return f"stream_metadata:{Utils.encode(site)}|{Utils.encode(stream_name)}"
 
 
 def _extract_stream_id(redis_key: str) -> str:
-    """Return the encoded stream-name segment from a metadata key."""
-    match = _metadata_key_pattern.match(redis_key)
-    if match:
-        return match.group(2)
-    splitted = redis_key.split('|')
-    return splitted[-1] if len(splitted) >= 2 else ''
+    """Extract the encoded stream identifier from a metadata key.
+
+    Args:
+        redis_key: Canonical Redis metadata key.
+
+    Returns:
+        Encoded identifier for the configured stream.
+    """
+    return metadata_key_stream_id(redis_key)
 
 
 def _decode_stream_name(redis_key: str) -> str:
-    """Decode the stream-name portion of a metadata key."""
-    splitted = redis_key.split('|')
-    if len(splitted) < 2:
-        return 'Unknown'
+    """Decode the configured stream name from a metadata key.
 
-    encoded_name = splitted[-1]
-    cached = _stream_name_cache.get(encoded_name)
-    if cached is not None:
-        return cached
+    Args:
+        redis_key: Canonical Redis metadata key.
 
-    try:
-        decoded = base64.urlsafe_b64decode(encoded_name).decode('utf-8')
-    except Exception:
-        return 'Unknown'
-    if len(_stream_name_cache) >= _stream_name_cache_max_items:
-        _stream_name_cache.clear()
-    _stream_name_cache[encoded_name] = decoded
-    return decoded
-
-
-def _decode_bytes(value: bytes | None) -> str:
-    """Decode a Redis byte value into text, defaulting to an empty string."""
-    return value.decode('utf-8') if value else ''
+    Returns:
+        Original configured stream name.
+    """
+    return metadata_key_stream_name(redis_key)
 
 
 def _build_metadata_record(
     redis_key: str,
-    message_id: bytes | str,
+    message_id: bytes,
     data: dict[bytes, bytes],
-) -> dict[str, Any]:
-    """Build a compact metadata record from a Redis stream message."""
-    message_id_str = (
-        message_id.decode('utf-8')
-        if isinstance(message_id, bytes)
-        else message_id
-    )
+) -> FrameOutData:
+    """Build the public metadata record from one Redis Stream message.
+
+    Args:
+        redis_key: Canonical key from which the message was read.
+        message_id: Redis-assigned identifier for the message.
+        data: Binary field map stored by the frame producer.
+
+    Returns:
+        Decoded frame metadata suitable for client delivery.
+    """
     return {
-        'id': message_id_str,
+        'id': message_id.decode('utf-8'),
         'key': _decode_stream_name(redis_key),
         'stream_id': _extract_stream_id(redis_key),
         'redis_key': redis_key,
-        'has_warning': _decode_bytes(data.get(b'has_warning')),
+        'has_warning': data[b'has_warning'] == b'1',
     }
 
 
-async def get_metadata_keys_for_label(rds: Any, label: str) -> list[str]:
-    """Retrieve all compact live metadata keys in Redis for a given label."""
-    encoded_label = base64.urlsafe_b64encode(
-        label.encode('utf-8'),
-    ).decode('utf-8')
+async def get_metadata_keys_for_label(
+    rds: redis.Redis,
+    label: str,
+) -> list[str]:
+    """Retrieve canonical live metadata keys for a site label.
+
+    Args:
+        rds: Redis connection used for incremental scanning.
+        label: Unencoded site label to match.
+
+    Returns:
+        Sorted canonical metadata keys for the requested site.
+    """
+    encoded_label = encode_stream_id(label)
     cursor: int = 0
     matching_keys: list[str] = []
 
     while True:
         cursor, keys = await rds.scan(
             cursor=cursor,
-            match=f"stream_metadata:{encoded_label}|*",
+            match=f'stream_metadata:{encoded_label}|*',
             count=_stream_scan_count,
         )
 
+        # Scan can return unrelated historical keys, so retain only the exact
+        # key contract consumed by the metadata delivery services.
         for key in keys:
-            decoded_key: str = key.decode('utf-8', errors='ignore')
-            if _metadata_key_pattern.match(decoded_key):
+            decoded_key = key.decode('utf-8')
+            if is_metadata_key(decoded_key):
                 matching_keys.append(decoded_key)
 
         if cursor == 0:
@@ -101,12 +97,22 @@ async def get_metadata_keys_for_label(rds: Any, label: str) -> list[str]:
 
 
 async def fetch_latest_metadata_for_key(
-    rds: Any,
+    rds: redis.Redis,
     redis_key: str,
     last_id: str,
     block_ms: int = 2000,
-) -> dict[str, Any] | None:
-    """Wait for the next compact metadata message for one Redis key."""
+) -> FrameOutData | None:
+    """Wait for the next compact metadata message for one Redis key.
+
+    Args:
+        rds: Redis connection used for the blocking stream read.
+        redis_key: Canonical stream key to consume.
+        last_id: Most recently delivered Redis message identifier.
+        block_ms: Maximum wait time in milliseconds.
+
+    Returns:
+        The next decoded frame record, or ``None`` when no new record arrives.
+    """
     messages = await rds.xread(
         {redis_key: last_id},
         count=1,
@@ -120,11 +126,7 @@ async def fetch_latest_metadata_for_key(
         return None
 
     message_id, data = stream_messages[0]
-    message_id_str = (
-        message_id.decode('utf-8')
-        if isinstance(message_id, bytes)
-        else message_id
-    )
+    message_id_str = message_id.decode('utf-8')
     if message_id_str == last_id:
         return None
 

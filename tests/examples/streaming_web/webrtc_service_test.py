@@ -28,44 +28,24 @@ class WebRtcServiceTest(unittest.TestCase):
             ('1700000600:alice', 'LHzsQVfbI581fwl4uDb0pmdZnnM='),
         )
 
-    @patch.dict(
-        'os.environ',
-        {
-            'STREAMING_WEBRTC_STUN_URLS': '',
-            'STREAMING_WEBRTC_TURN_URLS': '',
-        },
-        clear=False,
-    )
-    def test_get_public_ice_servers_uses_default_stun(self) -> None:
-        """Exercise this test."""
-        self.assertEqual(
-            get_public_ice_servers(),
-            [{'urls': ['stun:stun.l.google.com:19302']}],
-        )
+    @patch.dict('os.environ', {}, clear=True)
+    def test_get_public_ice_servers_requires_stun_configuration(self) -> None:
+        """STUN endpoints must be configured explicitly."""
+        with self.assertRaises(KeyError):
+            get_public_ice_servers('alice')
 
     @patch.dict(
         'os.environ',
         {
             'STREAMING_WEBRTC_STUN_URLS': 'stun:a, stun:b',
-            'STREAMING_WEBRTC_TURN_URLS': 'turn:relay',
-            'STREAMING_WEBRTC_TURN_USERNAME': 'user',
-            'STREAMING_WEBRTC_TURN_CREDENTIAL': 'secret',
-            'STREAMING_WEBRTC_TURN_SHARED_SECRET': '',
         },
-        clear=False,
+        clear=True,
     )
-    def test_get_public_ice_servers_includes_static_turn(self) -> None:
-        """Exercise this test."""
+    def test_get_public_ice_servers_uses_configured_stun(self) -> None:
+        """Return the configured STUN endpoints without TURN."""
         self.assertEqual(
-            get_public_ice_servers(),
-            [
-                {'urls': ['stun:a', 'stun:b']},
-                {
-                    'urls': ['turn:relay'],
-                    'username': 'user',
-                    'credential': 'secret',
-                },
-            ],
+            get_public_ice_servers('alice'),
+            [{'urls': ['stun:a', 'stun:b']}],
         )
 
     @patch.dict(
@@ -74,9 +54,9 @@ class WebRtcServiceTest(unittest.TestCase):
             'STREAMING_WEBRTC_STUN_URLS': 'stun:relay',
             'STREAMING_WEBRTC_TURN_URLS': 'turn:relay',
             'STREAMING_WEBRTC_TURN_SHARED_SECRET': 'turn-secret',
-            'STREAMING_WEBRTC_TURN_TTL_SECONDS': 'not-an-integer',
+            'STREAMING_WEBRTC_TURN_TTL_SECONDS': '600',
         },
-        clear=False,
+        clear=True,
     )
     @patch(
         'examples.streaming_web.webrtc_service.time.time',
@@ -86,8 +66,7 @@ class WebRtcServiceTest(unittest.TestCase):
         self,
         mock_time: MagicMock,
     ) -> None:
-        """TURN REST credentials use the default TTL when env input is
-        invalid."""
+        """TURN REST credentials use the explicitly configured TTL."""
         servers = get_public_ice_servers('alice')
 
         self.assertEqual(servers[0], {'urls': ['stun:relay']})
@@ -97,6 +76,21 @@ class WebRtcServiceTest(unittest.TestCase):
             'XHKohCPbA/hq/kAmxP3/ALxaTSI=',
         )
         mock_time.assert_called_once()
+
+    @patch.dict(
+        'os.environ',
+        {
+            'STREAMING_WEBRTC_STUN_URLS': 'stun:relay',
+            'STREAMING_WEBRTC_TURN_URLS': 'turn:relay',
+            'STREAMING_WEBRTC_TURN_SHARED_SECRET': 'turn-secret',
+            'STREAMING_WEBRTC_TURN_TTL_SECONDS': 'not-an-integer',
+        },
+        clear=True,
+    )
+    def test_get_public_ice_servers_rejects_invalid_turn_ttl(self) -> None:
+        """Invalid TURN TTL configuration must fail rather than fall back."""
+        with self.assertRaises(ValueError):
+            get_public_ice_servers('alice')
 
 
 if __name__ == '__main__':

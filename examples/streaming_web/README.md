@@ -25,14 +25,19 @@ streaming_web
 ## Files
 
 - `app.py`: FastAPI application setup.
-- `routers.py`: stream listing, metadata, media auth, overlay, and ICE routes.
-- `ws_handlers.py`: metadata-only WebSocket and SSE generators.
-- `redis_service.py`: reads compact live warning metadata.
-- `media_paths.py`: encodes and decodes MediaMTX path names.
-- `overlay_renderer.py`: language-aware overlay rendering helpers.
+- `routers.py`: HTTP and WebSocket declarations with dependency injection only.
+- `application_services.py`: request-scoped application-service composition.
+- `streaming_api_service.py`: media authorisation and playback API policy.
+- `playback_service.py`: playback sessions, playlists, and producer demand leases.
+- `stream_catalog_service.py`: authorised site and stream catalogues.
+- `streaming_metadata_service.py`: authorised SSE and WebSocket response setup.
+- `streaming_metadata_handlers.py`: shared metadata SSE and WebSocket transports.
+- `redis_service.py` and `metadata_keys.py`: compact metadata Redis contract.
+- `media_paths.py`: canonical MediaMTX paths, public URLs, and demand keys.
+- `overlay_renderer.py`: localised, cached overlay rendering helpers.
 - `webrtc_service.py`: STUN/TURN ICE-server response builder.
-- `schemas.py`: response models.
-- `utils.py`: small encoding and WebSocket helpers.
+- `schemas.py`: validated HTTP and Redis payload contracts.
+- `nginx.hazard-media.conf`: Nginx media proxy and authorisation configuration.
 
 ## Run
 
@@ -40,7 +45,8 @@ streaming_web
 uvicorn examples.streaming_web.app:app \
   --host 127.0.0.1 \
   --port 8800 \
-  --workers 2
+  --workers 2 \
+  --timeout-graceful-shutdown 10
 ```
 
 ## Endpoints
@@ -58,11 +64,9 @@ uvicorn examples.streaming_web.app:app \
   enabled; disabled streams do not reserve a wall tile.
 - Media playback uses a short-lived, revocable Redis capability. Its user
   status and site access are checked when the capability is issued, so HLS
-  segment authorization does not query PostgreSQL.
+  segment authorisation does not query PostgreSQL.
 - `GET /stream-playback/sessions/{id}/index.m3u8`: stable playlist endpoint
   that fetches the current MediaMTX playlist and appends `mt` to fragment URLs.
-- `POST /streams/{label}/{stream_id}/playback`: language and overlay-mode
-  playback selection.
 - `GET /webrtc/ice-servers`: STUN/TURN settings for WebRTC clients.
 - `GET /media-auth`: Nginx `auth_request` endpoint for MediaMTX paths.
 

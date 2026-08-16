@@ -6,8 +6,9 @@ import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
-from typing import cast
+from typing import NotRequired
+from typing import TypeAlias
+from typing import TypedDict
 
 import cv2
 import numpy as np
@@ -294,57 +295,80 @@ DETECTION_WARNING_KEYS: dict[str, str] = {
     'no_vest': 'warning_no_safety_vest',
 }
 
-
-def _env_bool(name: str, default: bool) -> bool:
-    """Read a boolean environment setting."""
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+TrackingDetection: TypeAlias = list[float]
+TrackingDetections: TypeAlias = list[TrackingDetection]
+WarningBoundingBox: TypeAlias = list[float | int]
 
 
-def _env_int(name: str, default: int) -> int:
-    """Read an integer environment setting."""
-    value = os.getenv(name)
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
+class WarningDetails(TypedDict):
+    """Represent one detector warning and optional proximity evidence.
+
+    Attributes:
+        count: Number of active instances for the warning type.
+        person_bboxes: Optional person boxes associated with a proximity warning.
+        person_track_ids: Optional tracking identifiers for affected people.
+    """
+
+    count: int
+    person_bboxes: NotRequired[list[WarningBoundingBox]]
+    person_track_ids: NotRequired[list[str]]
+
+
+WarningPayload: TypeAlias = dict[str, WarningDetails]
+PolygonCoordinates: TypeAlias = list[list[float]]
+PolygonCollection: TypeAlias = list[PolygonCoordinates]
 
 
 _overlay_parse_cache_size = max(
     16,
-    _env_int('STREAMING_OVERLAY_PARSE_CACHE_SIZE', 256),
+    int(os.getenv('STREAMING_OVERLAY_PARSE_CACHE_SIZE', '256')),
 )
-_overlay_max_labels = max(0, _env_int('STREAMING_OVERLAY_MAX_LABELS', 40))
-_overlay_draw_labels = _env_bool('STREAMING_OVERLAY_DRAW_LABELS', True)
-_overlay_label_warnings_only = _env_bool(
-    'STREAMING_OVERLAY_LABEL_WARNINGS_ONLY',
-    False,
+_overlay_max_labels = max(
+    0,
+    int(os.getenv('STREAMING_OVERLAY_MAX_LABELS', '40')),
 )
-_overlay_draw_warning_summary = _env_bool(
-    'STREAMING_OVERLAY_DRAW_WARNING_SUMMARY',
-    True,
+_overlay_draw_labels = (
+    os.getenv('STREAMING_OVERLAY_DRAW_LABELS', 'true').lower() == 'true'
 )
-_overlay_draw_warning_status = _env_bool(
-    'STREAMING_OVERLAY_DRAW_WARNING_STATUS',
-    False,
+_overlay_label_warnings_only = (
+    os.getenv(
+        'STREAMING_OVERLAY_LABEL_WARNINGS_ONLY',
+        'false',
+    ).lower() == 'true'
+)
+_overlay_draw_warning_summary = (
+    os.getenv(
+        'STREAMING_OVERLAY_DRAW_WARNING_SUMMARY',
+        'true',
+    ).lower() == 'true'
+)
+_overlay_draw_warning_status = (
+    os.getenv(
+        'STREAMING_OVERLAY_DRAW_WARNING_STATUS',
+        'false',
+    ).lower() == 'true'
 )
 _overlay_max_warning_summary_items = max(
     1,
-    _env_int('STREAMING_OVERLAY_MAX_WARNING_SUMMARY_ITEMS', 5),
+    int(os.getenv('STREAMING_OVERLAY_MAX_WARNING_SUMMARY_ITEMS', '5')),
 )
 _overlay_text_bitmap_cache_size = max(
     128,
-    _env_int('STREAMING_OVERLAY_TEXT_BITMAP_CACHE_SIZE', 4096),
+    int(os.getenv('STREAMING_OVERLAY_TEXT_BITMAP_CACHE_SIZE', '4096')),
 )
 
 
 @dataclass(frozen=True)
 class DetectionOverlay:
-    """Normalised detection data used for drawing overlays."""
+    """Represent one normalised detection ready for drawing.
+
+    Attributes:
+        class_name: Canonical detector class name.
+        confidence: Detector confidence score.
+        bbox: Clipped pixel bounding box in left, top, right, bottom order.
+        track_id: Optional detector tracking identifier.
+        is_warning: Whether the detection should use warning presentation.
+    """
 
     class_name: str
     confidence: float
@@ -355,7 +379,13 @@ class DetectionOverlay:
 
 @dataclass(frozen=True)
 class _RenderedTextBitmap:
-    """Cached text pixels for small ROI overlay drawing."""
+    """Represent cached multilingual text pixels for ROI drawing.
+
+    Attributes:
+        bgra: Four-channel text pixels in OpenCV channel order.
+        width: Bitmap width in pixels.
+        height: Bitmap height in pixels.
+    """
 
     bgra: np.ndarray
     width: int
@@ -363,7 +393,14 @@ class _RenderedTextBitmap:
 
 
 def normalise_overlay_mode(value: str | None) -> str:
-    """Return the supported overlay mode for a user supplied value."""
+    """Normalise a user-supplied overlay mode to a supported value.
+
+    Args:
+        value: Optional raw mode from a request or configuration.
+
+    Returns:
+        ``backend`` for recognised truthy overlay modes; otherwise ``none``.
+    """
     mode = (value or 'none').strip().lower()
     if mode in {'1', 'true', 'yes', 'on', 'backend', 'annotated'}:
         return 'backend'
@@ -371,7 +408,14 @@ def normalise_overlay_mode(value: str | None) -> str:
 
 
 def normalise_label_language(value: str | None) -> str:
-    """Return the overlay label language used by live OpenCV rendering."""
+    """Normalise an overlay label language for live rendering.
+
+    Args:
+        value: Optional language code or recognised language alias.
+
+    Returns:
+        Supported canonical language code, defaulting to English.
+    """
     language = (value or 'en').strip().replace('_', '-')
     if language in CLASS_LABELS:
         return language
@@ -386,16 +430,31 @@ def normalise_label_language(value: str | None) -> str:
 
 def render_overlay_frame(
     frame_bytes: bytes,
-    detection_items_json: str = '',
-    warnings_json: str = '',
-    cone_polygons_json: str = '',
-    pole_polygons_json: str = '',
+    detection_items_json: str = '[]',
+    warnings_json: str = '{}',
+    cone_polygons_json: str = '[]',
+    pole_polygons_json: str = '[]',
     overlay_mode: str = 'none',
     label_language: str = 'en',
     min_confidence: float = 0.4,
     box_thickness: int = 2,
 ) -> bytes:
-    """Draw backend overlays on an encoded frame when requested."""
+    """Draw backend overlays on an encoded JPEG or PNG frame.
+
+    Args:
+        frame_bytes: Encoded source image bytes.
+        detection_items_json: JSON tracked detection rows.
+        warnings_json: JSON detector-warning payload.
+        cone_polygons_json: JSON controlled-area cone polygons.
+        pole_polygons_json: JSON utility-pole controlled-area polygons.
+        overlay_mode: Requested overlay mode.
+        label_language: Requested label language.
+        min_confidence: Minimum detection confidence to draw.
+        box_thickness: Requested bounding-box line thickness.
+
+    Returns:
+        Original bytes when no overlay can be rendered, otherwise JPEG bytes.
+    """
     if normalise_overlay_mode(overlay_mode) != 'backend':
         return frame_bytes
 
@@ -405,10 +464,10 @@ def render_overlay_frame(
 
     frame = render_overlay_array(
         frame,
-        detection_items=detection_items_json,
-        warnings=warnings_json,
-        cone_polygons=cone_polygons_json,
-        pole_polygons=pole_polygons_json,
+        detection_items=_parse_tracking_detections(detection_items_json),
+        warnings=_parse_warning_payload(warnings_json),
+        cone_polygons=_parse_polygon_collection(cone_polygons_json),
+        pole_polygons=_parse_polygon_collection(pole_polygons_json),
         overlay_mode='backend',
         label_language=label_language,
         min_confidence=min_confidence,
@@ -427,26 +486,38 @@ def render_overlay_frame(
 
 def render_overlay_array(
     frame: np.ndarray,
-    detection_items: object = None,
-    warnings: object = None,
-    cone_polygons: object = None,
-    pole_polygons: object = None,
+    detection_items: TrackingDetections,
+    warnings: WarningPayload,
+    cone_polygons: PolygonCollection,
+    pole_polygons: PolygonCollection,
     overlay_mode: str = 'backend',
     label_language: str = 'en',
     min_confidence: float = 0.4,
     box_thickness: int = 2,
 ) -> np.ndarray:
-    """Draw backend overlays directly on a BGR frame without JSON/JPEG hops."""
+    """Draw backend overlays directly on a BGR frame.
+
+    Args:
+        frame: Mutable BGR image array to annotate in place.
+        detection_items: Decoded tracked detection rows.
+        warnings: Decoded detector-warning payload.
+        cone_polygons: Decoded controlled-area cone polygons.
+        pole_polygons: Decoded utility-pole controlled-area polygons.
+        overlay_mode: Requested overlay mode.
+        label_language: Requested label language.
+        min_confidence: Minimum detection confidence to draw.
+        box_thickness: Requested bounding-box line thickness.
+
+    Returns:
+        The supplied frame after any requested drawing operations.
+    """
     if normalise_overlay_mode(overlay_mode) != 'backend':
         return frame
     if frame is None or frame.size == 0:
         return frame
 
     label_language = normalise_label_language(label_language)
-    detection_items = _parse_if_json(detection_items)
-    warnings = _parse_if_json(warnings)
-    cone_polygons = _parse_if_json(cone_polygons)
-    pole_polygons = _parse_if_json(pole_polygons)
+    # Geometry is rendered before detections so boxes and labels remain legible.
     _draw_polygon_data(
         frame,
         (
@@ -475,7 +546,14 @@ def render_overlay_array(
 
 
 def _decode_image(frame_bytes: bytes) -> np.ndarray | None:
-    """Decode JPEG or PNG bytes into an OpenCV frame."""
+    """Decode JPEG or PNG bytes into an OpenCV BGR frame.
+
+    Args:
+        frame_bytes: Encoded image bytes.
+
+    Returns:
+        Decoded BGR frame, or ``None`` when decoding produces no pixels.
+    """
     buffer = np.frombuffer(frame_bytes, dtype=np.uint8)
     frame = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
     if frame is None or frame.size == 0:
@@ -483,22 +561,40 @@ def _decode_image(frame_bytes: bytes) -> np.ndarray | None:
     return frame
 
 
-@lru_cache(maxsize=_overlay_parse_cache_size)
-def _parse_json(value: str) -> Any:
-    """Parse JSON text for cached overlay metadata."""
-    if not value:
-        return None
-    try:
-        return json.loads(value)
-    except Exception:
-        return None
+def _parse_tracking_detections(value: str) -> TrackingDetections:
+    """Decode tracked YOLO rows emitted by the detector pipeline.
+
+    Args:
+        value: JSON array of trusted tracking rows.
+
+    Returns:
+        Decoded tracking rows.
+    """
+    return json.loads(value)
 
 
-def _parse_if_json(value: object) -> object:
-    """Parse JSON strings while leaving already-decoded overlay data intact."""
-    if isinstance(value, str):
-        return _parse_json(value)
-    return value
+def _parse_warning_payload(value: str) -> WarningPayload:
+    """Decode the warning payload emitted by the danger detector.
+
+    Args:
+        value: JSON warning payload.
+
+    Returns:
+        Decoded warning map keyed by warning type.
+    """
+    return json.loads(value)
+
+
+def _parse_polygon_collection(value: str) -> PolygonCollection:
+    """Decode one detector polygon collection.
+
+    Args:
+        value: JSON polygon collection.
+
+    Returns:
+        Decoded polygon coordinate lists.
+    """
+    return json.loads(value)
 
 
 @lru_cache(maxsize=_overlay_parse_cache_size)
@@ -509,11 +605,20 @@ def _detections_for_overlay(
     min_confidence: float,
     warnings_json: str,
 ) -> tuple[DetectionOverlay, ...]:
-    """Return cached detections normalised for overlay drawing."""
-    data = _parse_json(value)
-    if not isinstance(data, list):
-        return ()
-    warnings = _parse_json(warnings_json)
+    """Return cached detections normalised for overlay drawing.
+
+    Args:
+        value: JSON tracked detection rows.
+        frame_width: Target frame width in pixels.
+        frame_height: Target frame height in pixels.
+        min_confidence: Minimum detection confidence to retain.
+        warnings_json: JSON detector-warning payload.
+
+    Returns:
+        Cached normalised detections including explicit warning targets.
+    """
+    data = _parse_tracking_detections(value)
+    warnings = _parse_warning_payload(warnings_json)
     warning_targets = _warning_targets(warnings, frame_width, frame_height)
     detections = tuple(
         _iter_detections_from_data(
@@ -529,15 +634,24 @@ def _detections_for_overlay(
 
 
 def _detections_from_data(
-    data: object,
+    data: TrackingDetections,
     frame_width: int,
     frame_height: int,
     min_confidence: float,
-    warnings: object,
+    warnings: WarningPayload,
 ) -> tuple[DetectionOverlay, ...]:
-    """Return detections from already-decoded metadata."""
-    if not isinstance(data, list):
-        return ()
+    """Normalise detections from already-decoded metadata.
+
+    Args:
+        data: Decoded tracked detection rows.
+        frame_width: Target frame width in pixels.
+        frame_height: Target frame height in pixels.
+        min_confidence: Minimum detection confidence to retain.
+        warnings: Decoded detector-warning payload.
+
+    Returns:
+        Normalised detections including explicit warning targets.
+    """
     warning_targets = _warning_targets(warnings, frame_width, frame_height)
     detections = tuple(
         _iter_detections_from_data(
@@ -554,18 +668,29 @@ def _detections_from_data(
 
 def _draw_detections_from_data(
     frame: np.ndarray,
-    data: object,
+    data: TrackingDetections,
     frame_width: int,
     frame_height: int,
     min_confidence: float,
-    warnings: object,
+    warnings: WarningPayload,
     label_language: str,
     box_thickness: int,
 ) -> dict[str, int]:
-    """Draw decoded detections and return warning counts."""
-    if not isinstance(data, list):
-        return {}
+    """Draw decoded detections and return inferred warning counts.
 
+    Args:
+        frame: Mutable BGR image array to annotate.
+        data: Decoded tracked detection rows.
+        frame_width: Frame width in pixels.
+        frame_height: Frame height in pixels.
+        min_confidence: Minimum detection confidence to draw.
+        warnings: Decoded detector-warning payload.
+        label_language: Canonical label language.
+        box_thickness: Requested bounding-box line thickness.
+
+    Returns:
+        Count of drawn detections for each inferred warning key.
+    """
     warning_targets = _warning_targets(warnings, frame_width, frame_height)
     warning_classes = _warning_classes(warnings)
     warning_counts: dict[str, int] = {}
@@ -609,7 +734,19 @@ def _draw_detection_and_update_counts(
     label_count: int,
     warning_counts: dict[str, int],
 ) -> int:
-    """Draw one detection and update the warning summary state."""
+    """Draw one detection and update warning-summary state.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        detection: Normalised detection to draw.
+        label_language: Canonical label language.
+        box_thickness: Requested bounding-box line thickness.
+        label_count: Number of labels already drawn.
+        warning_counts: Mutable inferred warning-count map.
+
+    Returns:
+        Updated number of labels drawn.
+    """
     draw_label = _should_draw_label(detection, label_count)
     _draw_detection(
         frame,
@@ -625,7 +762,14 @@ def _draw_detection_and_update_counts(
 def _warning_target_overlays(
     warning_targets: set[tuple[int, int, int, int]],
 ) -> tuple[DetectionOverlay, ...]:
-    """Return direct red person boxes for algorithm-marked warning targets."""
+    """Build direct red person boxes for algorithm-marked warning targets.
+
+    Args:
+        warning_targets: Clipped person boxes associated with warnings.
+
+    Returns:
+        Synthetic warning detections sorted by bounding box.
+    """
     return tuple(
         DetectionOverlay(
             class_name='person',
@@ -638,16 +782,28 @@ def _warning_target_overlays(
 
 
 def _iter_detections_from_data(
-    data: list[object],
+    data: TrackingDetections,
     frame_width: int,
     frame_height: int,
     warning_classes: set[str],
     warning_targets: set[tuple[int, int, int, int]],
     min_confidence: float,
 ) -> Iterator[DetectionOverlay]:
-    """Yield valid detections above the configured confidence threshold."""
+    """Yield valid detections above the configured confidence threshold.
+
+    Args:
+        data: Decoded tracked detection rows.
+        frame_width: Frame width in pixels.
+        frame_height: Frame height in pixels.
+        warning_classes: Classes that should receive warning presentation.
+        warning_targets: Explicit person boxes associated with warnings.
+        min_confidence: Minimum detection confidence to retain.
+
+    Yields:
+        Normalised valid detections that meet the confidence threshold.
+    """
     for item in data:
-        detection = _parse_detection_item(
+        detection = _parse_tracking_detection(
             item,
             frame_width=frame_width,
             frame_height=frame_height,
@@ -659,92 +815,25 @@ def _iter_detections_from_data(
         yield detection
 
 
-def _parse_detection_item(
-    item: Any,
+def _parse_tracking_detection(
+    item: TrackingDetection,
     frame_width: int,
     frame_height: int,
     warning_classes: set[str],
     warning_targets: set[tuple[int, int, int, int]],
 ) -> DetectionOverlay | None:
-    """Parse one detection item from dict or list representation."""
-    if isinstance(item, dict):
-        return _parse_dict_detection(
-            item,
-            frame_width=frame_width,
-            frame_height=frame_height,
-            warning_classes=warning_classes,
-            warning_targets=warning_targets,
-        )
-    if isinstance(item, list | tuple) and len(item) >= 6:
-        return _parse_list_detection(
-            item,
-            frame_width=frame_width,
-            frame_height=frame_height,
-            warning_classes=warning_classes,
-            warning_targets=warning_targets,
-        )
-    return None
+    """Parse one tracked YOLO row into clipped overlay coordinates.
 
+    Args:
+        item: Trusted tracking row with geometry, confidence, class, and ID.
+        frame_width: Frame width in pixels.
+        frame_height: Frame height in pixels.
+        warning_classes: Classes that should receive warning presentation.
+        warning_targets: Explicit person boxes associated with warnings.
 
-def _parse_dict_detection(
-    item: dict[str, Any],
-    frame_width: int,
-    frame_height: int,
-    warning_classes: set[str],
-    warning_targets: set[tuple[int, int, int, int]],
-) -> DetectionOverlay | None:
-    """Parse a dictionary detection into overlay co-ordinates."""
-    bbox_raw = item.get('bbox') or {}
-    if not isinstance(bbox_raw, dict):
-        return None
-
-    class_name = str(
-        item.get('class_name')
-        or item.get('class')
-        or item.get('label')
-        or 'unknown',
-    ).lower()
-    confidence = float(item.get('confidence') or item.get('conf') or 0.0)
-    x = float(bbox_raw.get('x') or 0.0)
-    y = float(bbox_raw.get('y') or 0.0)
-    width = float(bbox_raw.get('width') or bbox_raw.get('w') or 0.0)
-    height = float(bbox_raw.get('height') or bbox_raw.get('h') or 0.0)
-    if _looks_normalized([x, y, width, height]):
-        x *= frame_width
-        width *= frame_width
-        y *= frame_height
-        height *= frame_height
-    bbox = _clip_bbox(
-        int(round(x)),
-        int(round(y)),
-        int(round(x + width)),
-        int(round(y + height)),
-        frame_width,
-        frame_height,
-    )
-    if bbox is None:
-        return None
-    track_id = item.get('track_id') or item.get('id')
-    return DetectionOverlay(
-        class_name=class_name,
-        confidence=confidence,
-        bbox=bbox,
-        track_id=str(track_id) if track_id not in {None, ''} else None,
-        is_warning=(
-            class_name in warning_classes
-            or _is_warning_target(class_name, bbox, warning_targets)
-        ),
-    )
-
-
-def _parse_list_detection(
-    item: list[Any] | tuple[Any, ...],
-    frame_width: int,
-    frame_height: int,
-    warning_classes: set[str],
-    warning_targets: set[tuple[int, int, int, int]],
-) -> DetectionOverlay | None:
-    """Parse a YOLO-style list detection into overlay co-ordinates."""
+    Returns:
+        Normalised detection, or ``None`` for a degenerate bounding box.
+    """
     x1, y1, x2, y2 = (float(item[i]) for i in range(4))
     confidence = float(item[4])
     class_id = int(float(item[5]))
@@ -764,12 +853,12 @@ def _parse_list_detection(
     )
     if bbox is None:
         return None
-    track_id = item[6] if len(item) >= 7 else None
+    track_id = int(item[6])
     return DetectionOverlay(
         class_name=class_name,
         confidence=confidence,
         bbox=bbox,
-        track_id=str(track_id) if track_id not in {None, '', -1} else None,
+        track_id=str(track_id) if track_id >= 0 else None,
         is_warning=(
             class_name in warning_classes
             or _is_warning_target(class_name, bbox, warning_targets)
@@ -785,7 +874,19 @@ def _clip_bbox(
     frame_width: int,
     frame_height: int,
 ) -> tuple[int, int, int, int] | None:
-    """Clip a bounding box to frame bounds."""
+    """Clip a bounding box to frame bounds.
+
+    Args:
+        x1: First horizontal coordinate.
+        y1: First vertical coordinate.
+        x2: Second horizontal coordinate.
+        y2: Second vertical coordinate.
+        frame_width: Frame width in pixels.
+        frame_height: Frame height in pixels.
+
+    Returns:
+        Ordered clipped pixel box, or ``None`` when it has no area.
+    """
     left = max(0, min(x1, x2, frame_width - 1))
     top = max(0, min(y1, y2, frame_height - 1))
     right = max(0, min(max(x1, x2), frame_width - 1))
@@ -796,24 +897,32 @@ def _clip_bbox(
 
 
 def _looks_normalized(values: list[float]) -> bool:
-    """Return whether all co-ordinates look normalised to 0..1."""
+    """Determine whether all coordinates appear normalised to zero through one.
+
+    Args:
+        values: Coordinates to inspect.
+
+    Returns:
+        ``True`` when every value is within the inclusive unit interval.
+    """
     return all(0.0 <= value <= 1.0 for value in values)
 
 
 def _warning_targets(
-    warnings_value: object,
+    warnings: WarningPayload,
     frame_width: int,
     frame_height: int,
 ) -> set[tuple[int, int, int, int]]:
-    """Return person boxes that should be highlighted as warning targets."""
-    warnings = (
-        _parse_json(warnings_value)
-        if isinstance(warnings_value, str)
-        else warnings_value
-    )
-    if not isinstance(warnings, dict) or not warnings:
-        return set()
+    """Return person boxes that should be highlighted as warning targets.
 
+    Args:
+        warnings: Decoded detector-warning payload.
+        frame_width: Frame width in pixels.
+        frame_height: Frame height in pixels.
+
+    Returns:
+        Clipped explicit person boxes for active proximity warnings.
+    """
     targets: set[tuple[int, int, int, int]] = set()
     proximity_keys = (
         ('warning_close_to_machinery', 'machinery'),
@@ -821,7 +930,7 @@ def _warning_targets(
     )
     for key, _ in proximity_keys:
         warning = warnings.get(key)
-        if _warning_count(warning) <= 0:
+        if warning is None or _warning_count(warning) <= 0:
             continue
         targets.update(
             _explicit_person_warning_bboxes(
@@ -835,18 +944,22 @@ def _warning_targets(
 
 
 def _explicit_person_warning_bboxes(
-    warning: object,
+    warning: WarningDetails,
     frame_width: int,
     frame_height: int,
 ) -> set[tuple[int, int, int, int]]:
-    """Return explicit person boxes from a warning payload."""
-    if not isinstance(warning, dict):
-        return set()
-    bboxes = warning.get('person_bboxes')
-    if not isinstance(bboxes, list):
-        return set()
+    """Extract explicit person boxes from one warning payload.
+
+    Args:
+        warning: Warning details containing optional person boxes.
+        frame_width: Frame width in pixels.
+        frame_height: Frame height in pixels.
+
+    Returns:
+        Set of clipped valid person boxes.
+    """
     targets = set()
-    for bbox_raw in bboxes:
+    for bbox_raw in warning.get('person_bboxes', []):
         bbox = _normalise_warning_bbox(bbox_raw, frame_width, frame_height)
         if bbox is not None:
             targets.add(bbox)
@@ -854,13 +967,20 @@ def _explicit_person_warning_bboxes(
 
 
 def _normalise_warning_bbox(
-    bbox_raw: object,
+    bbox_raw: WarningBoundingBox,
     frame_width: int,
     frame_height: int,
 ) -> tuple[int, int, int, int] | None:
-    """Normalise a warning bbox to clipped pixel co-ordinates."""
-    if not isinstance(bbox_raw, list | tuple) or len(bbox_raw) < 4:
-        return None
+    """Normalise a warning box to clipped pixel coordinates.
+
+    Args:
+        bbox_raw: Detector box in normalised or pixel coordinates.
+        frame_width: Frame width in pixels.
+        frame_height: Frame height in pixels.
+
+    Returns:
+        Ordered clipped pixel box, or ``None`` when it has no area.
+    """
     x1, y1, x2, y2 = (float(bbox_raw[i]) for i in range(4))
     if _looks_normalized([x1, y1, x2, y2]):
         x1 *= frame_width
@@ -882,7 +1002,16 @@ def _is_warning_target(
     bbox: tuple[int, int, int, int],
     warning_targets: set[tuple[int, int, int, int]],
 ) -> bool:
-    """Return whether a detection matches an explicit warning target."""
+    """Determine whether a detection matches an explicit warning target.
+
+    Args:
+        class_name: Canonical detection class name.
+        bbox: Clipped pixel bounding box for the detection.
+        warning_targets: Explicit warning person boxes.
+
+    Returns:
+        ``True`` when a person overlaps a warning target sufficiently.
+    """
     if class_name != 'person':
         return False
     return any(_bbox_iou(bbox, target) >= 0.85 for target in warning_targets)
@@ -892,7 +1021,15 @@ def _bbox_iou(
     first: tuple[int, int, int, int],
     second: tuple[int, int, int, int],
 ) -> float:
-    """Calculate intersection over union for two pixel boxes."""
+    """Calculate intersection over union for two pixel boxes.
+
+    Args:
+        first: First left, top, right, bottom pixel box.
+        second: Second left, top, right, bottom pixel box.
+
+    Returns:
+        Intersection-over-union score between zero and one.
+    """
     left = max(first[0], second[0])
     top = max(first[1], second[1])
     right = min(first[2], second[2])
@@ -906,16 +1043,15 @@ def _bbox_iou(
     return intersection / union if union > 0 else 0.0
 
 
-def _warning_classes(warnings_value: object) -> set[str]:
-    """Return detection classes that should be drawn as warnings."""
-    warnings = (
-        _parse_json(warnings_value)
-        if isinstance(warnings_value, str)
-        else warnings_value
-    )
-    if not isinstance(warnings, dict) or not warnings:
-        return set()
+def _warning_classes(warnings: WarningPayload) -> set[str]:
+    """Return detection classes that should receive warning presentation.
 
+    Args:
+        warnings: Decoded detector-warning payload.
+
+    Returns:
+        Canonical classes implicated by active warning types.
+    """
     classes: set[str] = set()
     if 'warning_no_hardhat' in warnings:
         classes.add('no-hardhat')
@@ -930,70 +1066,66 @@ def _warning_classes(warnings_value: object) -> set[str]:
     return classes
 
 
-def has_warning(warnings_json: str | object) -> bool:
-    """Return whether warning metadata contains at least one active warning."""
-    warnings = (
-        _parse_json(warnings_json)
-        if isinstance(warnings_json, str)
-        else warnings_json
-    )
-    if not isinstance(warnings, dict):
-        return False
+def has_warning(warnings: WarningPayload) -> bool:
+    """Determine whether warning metadata contains an active warning.
+
+    Args:
+        warnings: Decoded detector-warning payload.
+
+    Returns:
+        ``True`` when any warning count is positive.
+    """
     return any(_warning_count(value) > 0 for value in warnings.values())
 
 
-def _warning_count(value: object) -> int:
-    """Return the active warning count represented by a value."""
-    if isinstance(value, dict):
-        raw: object = value.get('count', 1)
-        if isinstance(raw, bool):
-            return int(raw)
-        if not isinstance(raw, int | float | str | bytes | bytearray):
-            return 1 if value else 0
-        try:
-            return int(raw)
-        except (TypeError, ValueError):
-            return 1 if value else 0
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int | float):
-        return int(value)
-    return 1 if value else 0
+def _warning_count(value: WarningDetails) -> int:
+    """Extract the active warning count from warning details.
+
+    Args:
+        value: Typed warning details.
+
+    Returns:
+        Active warning count.
+    """
+    return value['count']
 
 
 def _warning_summary_lines(
-    warnings_value: object,
+    warnings: WarningPayload,
     label_language: str,
     detections: tuple[DetectionOverlay, ...] = (),
     detection_warning_counts: dict[str, int] | None = None,
 ) -> list[str]:
-    """Build translated warning summary lines for an overlay."""
-    warnings = (
-        _parse_json(warnings_value)
-        if isinstance(warnings_value, str)
-        else warnings_value
-    )
+    """Build translated warning-summary lines for an overlay.
 
+    Args:
+        warnings: Decoded detector-warning payload.
+        label_language: Requested label language.
+        detections: Optional normalised detections for inferred warnings.
+        detection_warning_counts: Optional precomputed inferred warning counts.
+
+    Returns:
+        Bounded translated warning-summary lines.
+    """
     language = normalise_label_language(label_language)
     labels = WARNING_LABELS.get(language, WARNING_LABELS['en'])
     lines: list[str] = []
     emitted_keys: set[str] = set()
 
-    if isinstance(warnings, dict):
-        for key, value in warnings.items():
-            count = _warning_count(value)
-            if count <= 0:
-                continue
-            lines.append(
-                _format_warning_summary_line(
-                    key,
-                    count,
-                    labels,
-                ),
-            )
-            emitted_keys.add(key)
-            if len(lines) >= _overlay_max_warning_summary_items:
-                return lines
+    for key, value in warnings.items():
+        count = _warning_count(value)
+        if count <= 0:
+            continue
+        lines.append(
+            _format_warning_summary_line(
+                key,
+                count,
+                labels,
+            ),
+        )
+        emitted_keys.add(key)
+        if len(lines) >= _overlay_max_warning_summary_items:
+            return lines
 
     inferred_counts = (
         detection_warning_counts
@@ -1017,14 +1149,22 @@ def _warning_summary_lines(
 
 def _draw_warning_summary(
     frame: np.ndarray,
-    warnings_json: object,
+    warnings: WarningPayload,
     label_language: str,
     detections: tuple[DetectionOverlay, ...] = (),
     detection_warning_counts: dict[str, int] | None = None,
 ) -> None:
-    """Draw the active warning summary in the frame corner."""
+    """Draw the active warning summary in a frame corner.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        warnings: Decoded detector-warning payload.
+        label_language: Requested label language.
+        detections: Optional normalised detections for inferred warnings.
+        detection_warning_counts: Optional precomputed inferred warning counts.
+    """
     lines = _warning_summary_lines(
-        warnings_json,
+        warnings,
         label_language,
         detections=detections,
         detection_warning_counts=detection_warning_counts,
@@ -1092,7 +1232,14 @@ def _draw_warning_summary(
 def _warning_counts_from_detections(
     detections: tuple[DetectionOverlay, ...],
 ) -> dict[str, int]:
-    """Count warning detections by warning key."""
+    """Count normalised warning detections by warning key.
+
+    Args:
+        detections: Normalised detections to inspect.
+
+    Returns:
+        Count of detections for each mapped warning key.
+    """
     counts: dict[str, int] = {}
     for detection in detections:
         _add_detection_warning_count(counts, detection)
@@ -1103,7 +1250,12 @@ def _add_detection_warning_count(
     counts: dict[str, int],
     detection: DetectionOverlay,
 ) -> None:
-    """Increment the warning count represented by a detection."""
+    """Increment the warning count represented by one detection.
+
+    Args:
+        counts: Mutable inferred warning-count map.
+        detection: Normalised detection to map to a warning key.
+    """
     key = DETECTION_WARNING_KEYS.get(detection.class_name)
     if not key:
         return
@@ -1115,14 +1267,31 @@ def _format_warning_summary_line(
     count: int,
     labels: dict[str, str],
 ) -> str:
-    """Format one translated warning summary line."""
+    """Format one translated warning-summary line.
+
+    Args:
+        key: Canonical warning key.
+        count: Active count for the warning.
+        labels: Translation map for the selected language.
+
+    Returns:
+        Localised label with a count suffix when greater than one.
+    """
     label = labels.get(key) or key
     suffix = f' x{count}' if count > 1 else ''
     return f'{label}{suffix}'
 
 
 def _should_draw_label(detection: DetectionOverlay, label_count: int) -> bool:
-    """Return whether a detection label should be drawn."""
+    """Determine whether a detection label should be drawn.
+
+    Args:
+        detection: Normalised detection considered for label drawing.
+        label_count: Number of labels already drawn on the frame.
+
+    Returns:
+        ``True`` when label configuration permits another label.
+    """
     if not _overlay_draw_labels:
         return False
     if _overlay_label_warnings_only and not detection.is_warning:
@@ -1137,7 +1306,15 @@ def _draw_detection(
     box_thickness: int,
     draw_label: bool = True,
 ) -> None:
-    """Draw one detection box and optional label."""
+    """Draw one detection box and optional label.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        detection: Normalised detection to draw.
+        label_language: Canonical label language.
+        box_thickness: Requested bounding-box line thickness.
+        draw_label: Whether a label badge should be drawn.
+    """
     if detection.class_name in {'safety-cone', 'cone'}:
         return
 
@@ -1166,7 +1343,14 @@ def _draw_label(
     rgb: tuple[int, int, int],
     label_language: str,
 ) -> None:
-    """Draw a filled label badge for one detection."""
+    """Draw a filled localised label badge for one detection.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        detection: Normalised detection to label.
+        rgb: Badge colour in RGB order.
+        label_language: Canonical label language.
+    """
     x1, y1, x2, _ = detection.bbox
     label = _format_label(detection, label_language)
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -1224,7 +1408,12 @@ def _draw_polygons(
         ...,
     ],
 ) -> None:
-    """Draw polygons parsed from cached JSON strings."""
+    """Draw polygons parsed from cached JSON strings.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        polygon_specs: JSON polygons with fill colour, border colour, and alpha.
+    """
     for polygons_json, fill_rgb, stroke_rgb, fill_alpha in polygon_specs:
         polygons = _normalised_polygons_for_overlay(
             polygons_json,
@@ -1239,11 +1428,21 @@ def _draw_polygons(
 def _draw_polygon_data(
     frame: np.ndarray,
     polygon_specs: tuple[
-        tuple[object, tuple[int, int, int], tuple[int, int, int], float],
+        tuple[
+            PolygonCollection,
+            tuple[int, int, int],
+            tuple[int, int, int],
+            float,
+        ],
         ...,
     ],
 ) -> None:
-    """Draw polygons from already-decoded data."""
+    """Draw polygons from already-decoded data.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        polygon_specs: Decoded polygons with fill colour, border colour, and alpha.
+    """
     for polygon_data, fill_rgb, stroke_rgb, fill_alpha in polygon_specs:
         polygons = _normalised_polygons_from_data(
             polygon_data,
@@ -1262,7 +1461,15 @@ def _draw_polygon_rois(
     stroke_rgb: tuple[int, int, int],
     fill_alpha: float,
 ) -> None:
-    """Draw polygon fills using bounded ROI copies instead of full frames."""
+    """Draw polygon fills using bounded ROI copies.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        polygons: Clipped polygon points in pixel coordinates.
+        fill_rgb: Polygon fill colour in RGB order.
+        stroke_rgb: Polygon outline colour in RGB order.
+        fill_alpha: Fill opacity between zero and one.
+    """
     fill_bgr = _rgb_to_bgr(fill_rgb)
     stroke_bgr = _rgb_to_bgr(stroke_rgb)
     alpha = max(0.0, min(1.0, fill_alpha))
@@ -1283,7 +1490,14 @@ def _blend_polygon_fill_roi(
     fill_bgr: tuple[int, int, int],
     alpha: float,
 ) -> None:
-    """Blend a polygon fill into the smallest affected frame region."""
+    """Blend a polygon fill into the smallest affected frame region.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        points: Clipped polygon points in pixel coordinates.
+        fill_bgr: Fill colour in OpenCV BGR order.
+        alpha: Fill opacity between zero and one.
+    """
     if alpha <= 0:
         return
     x, y, width, height = cv2.boundingRect(points)
@@ -1315,10 +1529,17 @@ def _normalised_polygons_for_overlay(
     frame_width: int,
     frame_height: int,
 ) -> tuple[np.ndarray, ...]:
-    """Return cached pixel polygons parsed from JSON."""
-    data = _parse_json(polygons_json)
-    if not isinstance(data, list):
-        return ()
+    """Return cached pixel polygons parsed from JSON.
+
+    Args:
+        polygons_json: JSON polygon collection.
+        frame_width: Target frame width in pixels.
+        frame_height: Target frame height in pixels.
+
+    Returns:
+        Valid clipped polygon arrays cached by geometry and frame size.
+    """
+    data = _parse_polygon_collection(polygons_json)
 
     polygons: list[np.ndarray] = []
     for polygon in data:
@@ -1329,14 +1550,20 @@ def _normalised_polygons_for_overlay(
 
 
 def _normalised_polygons_from_data(
-    data: object,
+    data: PolygonCollection,
     frame_width: int,
     frame_height: int,
 ) -> tuple[np.ndarray, ...]:
-    """Return pixel polygons parsed from decoded data."""
-    if not isinstance(data, list):
-        return ()
+    """Normalise pixel polygons from decoded data.
 
+    Args:
+        data: Decoded polygon collection.
+        frame_width: Target frame width in pixels.
+        frame_height: Target frame height in pixels.
+
+    Returns:
+        Valid clipped polygon arrays.
+    """
     polygons: list[np.ndarray] = []
     for polygon in data:
         points = _normalise_polygon(polygon, frame_width, frame_height)
@@ -1346,29 +1573,21 @@ def _normalised_polygons_from_data(
 
 
 def _normalise_polygon(
-    polygon: Any,
+    polygon: PolygonCoordinates,
     frame_width: int,
     frame_height: int,
 ) -> np.ndarray | None:
-    """Normalise one polygon to clipped pixel co-ordinates."""
-    if not isinstance(polygon, list) or len(polygon) < 3:
-        return None
+    """Normalise one polygon to clipped pixel coordinates.
 
-    points: list[tuple[float, float]] = []
-    for point in polygon:
-        if isinstance(point, dict):
-            x = point.get('x')
-            y = point.get('y')
-        elif isinstance(point, list | tuple) and len(point) >= 2:
-            x, y = point[0], point[1]
-        else:
-            return None
-        if x is None or y is None:
-            return None
-        try:
-            points.append((float(cast(Any, x)), float(cast(Any, y))))
-        except Exception:
-            return None
+    Args:
+        polygon: Polygon coordinates in normalised or pixel form.
+        frame_width: Target frame width in pixels.
+        frame_height: Target frame height in pixels.
+
+    Returns:
+        Integer OpenCV polygon points, or ``None`` when no points are valid.
+    """
+    points = [(float(point[0]), float(point[1])) for point in polygon]
 
     if _points_look_normalized(points):
         points = [
@@ -1387,7 +1606,14 @@ def _normalise_polygon(
 
 
 def _points_look_normalized(points: list[tuple[float, float]]) -> bool:
-    """Return whether polygon points look normalised to 0..1."""
+    """Determine whether polygon points appear normalised to zero through one.
+
+    Args:
+        points: Polygon points to inspect.
+
+    Returns:
+        ``True`` when every point lies in the inclusive unit square.
+    """
     return all(
         0.0 <= x <= 1.0 and 0.0 <= y <= 1.0
         for x, y in points
@@ -1398,7 +1624,15 @@ def _format_label(
     detection: DetectionOverlay,
     label_language: str,
 ) -> str:
-    """Format a detection label for display."""
+    """Format a localised detection label for display.
+
+    Args:
+        detection: Normalised detection to label.
+        label_language: Requested label language.
+
+    Returns:
+        Localised display label for the detection class.
+    """
     return _translate_class_name(
         detection.class_name,
         label_language,
@@ -1406,7 +1640,15 @@ def _format_label(
 
 
 def _translate_class_name(class_name: str, label_language: str) -> str:
-    """Translate a class name for the selected overlay language."""
+    """Translate a detection class name for the selected language.
+
+    Args:
+        class_name: Canonical or alias detector class name.
+        label_language: Requested label language.
+
+    Returns:
+        Localised class label with English as a final fallback.
+    """
     language = normalise_label_language(label_language)
     key = class_name.lower()
     labels = CLASS_LABELS.get(language, CLASS_LABELS['en'])
@@ -1420,7 +1662,18 @@ def _measure_label_text(
     scale: float,
     thickness: int,
 ) -> tuple[int, int, int]:
-    """Measure label text using Pillow when OpenCV cannot render it."""
+    """Measure label text using Pillow when OpenCV cannot render it.
+
+    Args:
+        label: Localised text to measure.
+        frame: Target BGR image array.
+        font: OpenCV font identifier for ASCII text.
+        scale: OpenCV font scale for ASCII text.
+        thickness: OpenCV text thickness.
+
+    Returns:
+        Text width, height, and baseline in pixels.
+    """
     if _needs_pillow_text(label):
         rendered = _render_pillow_text_bitmap(
             label,
@@ -1446,7 +1699,18 @@ def _draw_label_text(
     thickness: int,
     text_area: tuple[int, int, int, int],
 ) -> None:
-    """Draw label text using the appropriate text renderer."""
+    """Draw label text using the appropriate text renderer.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        label: Localised text to draw.
+        text_origin: Text baseline origin in pixels.
+        font: OpenCV font identifier for ASCII text.
+        scale: OpenCV font scale for ASCII text.
+        text_color: Text colour in BGR order.
+        thickness: OpenCV text thickness.
+        text_area: Bounding area that clips the text bitmap.
+    """
     if _needs_pillow_text(label):
         _draw_pillow_text(
             frame,
@@ -1480,12 +1744,26 @@ def _draw_label_text(
 
 
 def _needs_pillow_text(label: str) -> bool:
-    """Return whether OpenCV's Hershey font is unsafe for this label."""
+    """Determine whether OpenCV's Hershey font is unsafe for a label.
+
+    Args:
+        label: Localised text to inspect.
+
+    Returns:
+        ``True`` when non-ASCII glyph rendering requires Pillow.
+    """
     return any(ord(char) > 127 for char in label)
 
 
 def _font_pixel_size(frame: np.ndarray) -> int:
-    """Return a readable Pillow font size for the frame."""
+    """Calculate a readable Pillow font size for a frame.
+
+    Args:
+        frame: Target BGR image array.
+
+    Returns:
+        Bounded pixel font size scaled to the smaller frame dimension.
+    """
     min_side = min(frame.shape[:2])
     return max(14, min(32, round(min_side / 32)))
 
@@ -1494,7 +1772,14 @@ def _font_pixel_size(frame: np.ndarray) -> int:
 def _load_overlay_font(
     size: int,
 ) -> ImageFont.FreeTypeFont | ImageFont.ImageFont | None:
-    """Load a font that supports multilingual overlay labels."""
+    """Load a font that supports multilingual overlay labels.
+
+    Args:
+        size: Requested font size in pixels.
+
+    Returns:
+        First usable configured or system font, or ``None`` when unavailable.
+    """
     configured = os.getenv('STREAMING_OVERLAY_FONT_PATH', '').strip()
     candidates = [
         configured,
@@ -1506,6 +1791,8 @@ def _load_overlay_font(
         '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf',
         '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
     ]
+    # Prefer the explicit deployment font, then common Noto fonts with broad
+    # CJK and Thai coverage before accepting a system fallback.
     for candidate in candidates:
         if not candidate:
             continue
@@ -1526,7 +1813,15 @@ def _draw_pillow_text(
     text_color: tuple[int, int, int],
     text_area: tuple[int, int, int, int],
 ) -> None:
-    """Draw non-ASCII text with cached Pillow bitmaps."""
+    """Draw non-ASCII text with cached Pillow bitmaps.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        label: Localised non-ASCII text to draw.
+        text_origin: Requested text baseline origin in pixels.
+        text_color: Text colour in BGR order.
+        text_area: Bounding area that clips the rendered text.
+    """
     rendered = _render_pillow_text_bitmap(
         label,
         _font_pixel_size(frame),
@@ -1550,7 +1845,16 @@ def _render_pillow_text_bitmap(
     font_size: int,
     text_color: tuple[int, int, int],
 ) -> _RenderedTextBitmap | None:
-    """Render one text string once, so hot frames only alpha-blend a ROI."""
+    """Render one text string once for subsequent ROI alpha blending.
+
+    Args:
+        label: Localised text to render.
+        font_size: Requested font size in pixels.
+        text_color: Text colour in BGR order.
+
+    Returns:
+        Cached BGRA text bitmap, or ``None`` when no font is available.
+    """
     font = _load_overlay_font(font_size)
     if font is None:
         return None
@@ -1591,7 +1895,14 @@ def _blend_bgra_roi(
     x: int,
     y: int,
 ) -> None:
-    """Alpha-blend cached text into only the affected frame rectangle."""
+    """Alpha-blend cached text into only the affected frame rectangle.
+
+    Args:
+        frame: Mutable BGR image array to annotate.
+        bgra: Cached four-channel text bitmap in OpenCV channel order.
+        x: Requested destination left coordinate.
+        y: Requested destination top coordinate.
+    """
     frame_height, frame_width = frame.shape[:2]
     text_height, text_width = bgra.shape[:2]
     dst_x1 = max(0, x)
@@ -1621,7 +1932,14 @@ def _blend_bgra_roi(
 
 
 def _color_for_class(class_name: str) -> tuple[int, int, int]:
-    """Return a stable RGB colour for a detection class."""
+    """Return a stable RGB colour for a detection class.
+
+    Args:
+        class_name: Canonical or alias detector class name.
+
+    Returns:
+        Configured semantic colour or deterministic vivid fallback colour.
+    """
     key = class_name.lower()
     if key in CLASS_COLORS_RGB:
         return CLASS_COLORS_RGB[key]
@@ -1635,25 +1953,53 @@ def _color_for_class(class_name: str) -> tuple[int, int, int]:
 
 
 def _line_thickness(frame: np.ndarray) -> int:
-    """Return box line thickness for a frame size."""
+    """Calculate box line thickness for a frame size.
+
+    Args:
+        frame: Target BGR image array.
+
+    Returns:
+        Bounded line thickness in pixels.
+    """
     min_side = min(frame.shape[:2])
     return max(2, min(4, round(min_side / 360)))
 
 
 def _font_scale(frame: np.ndarray) -> float:
-    """Return OpenCV font scale for a frame size."""
+    """Calculate OpenCV font scale for a frame size.
+
+    Args:
+        frame: Target BGR image array.
+
+    Returns:
+        Bounded OpenCV font scale.
+    """
     min_side = min(frame.shape[:2])
     return max(0.45, min(0.75, min_side / 1000))
 
 
 def _is_bright(rgb: tuple[int, int, int]) -> bool:
-    """Return whether an RGB colour is visually bright."""
+    """Determine whether an RGB colour is visually bright.
+
+    Args:
+        rgb: Colour in red, green, blue order.
+
+    Returns:
+        ``True`` when luminance exceeds the legibility threshold.
+    """
     r, g, b = rgb
     luminance = 0.299 * r + 0.587 * g + 0.114 * b
     return luminance > 150
 
 
 def _rgb_to_bgr(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
-    """Convert an RGB colour tuple to OpenCV BGR order."""
+    """Convert an RGB colour tuple to OpenCV BGR order.
+
+    Args:
+        rgb: Colour in red, green, blue order.
+
+    Returns:
+        Same colour in blue, green, red order for OpenCV.
+    """
     r, g, b = rgb
     return b, g, r
