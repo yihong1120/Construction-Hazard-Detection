@@ -38,9 +38,11 @@ class TestSiteNotificationPreferences(unittest.IsolatedAsyncioTestCase):
         self.user.role = 'admin'
         self.user.group_id = 1
 
-    @patch('examples.local_notification_server.routers.list_sites')
     @patch(
-        'examples.local_notification_server.routers.'
+        'examples.local_notification_server.site_preference_service.list_sites',
+    )
+    @patch(
+        'examples.local_notification_server.site_preference_service.'
         'list_effective_sites_for_user',
         new_callable=AsyncMock,
     )
@@ -89,13 +91,15 @@ class TestSiteNotificationPreferences(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.local_notification_server.routers.'
+        'examples.local_notification_server.site_preference_service.'
         'refresh_site_notification_user_cache',
         new_callable=AsyncMock,
     )
-    @patch('examples.local_notification_server.routers.list_sites')
     @patch(
-        'examples.local_notification_server.routers.'
+        'examples.local_notification_server.site_preference_service.list_sites',
+    )
+    @patch(
+        'examples.local_notification_server.site_preference_service.'
         'list_effective_sites_for_user',
         new_callable=AsyncMock,
     )
@@ -172,9 +176,11 @@ class TestSiteNotificationPreferences(unittest.IsolatedAsyncioTestCase):
         mock_refresh_site_cache.assert_any_await('Site1', self.db, mock_redis)
         mock_refresh_site_cache.assert_any_await('Site2', self.db, mock_redis)
 
-    @patch('examples.local_notification_server.routers.list_sites')
     @patch(
-        'examples.local_notification_server.routers.'
+        'examples.local_notification_server.site_preference_service.list_sites',
+    )
+    @patch(
+        'examples.local_notification_server.site_preference_service.'
         'list_effective_sites_for_user',
         new_callable=AsyncMock,
     )
@@ -205,55 +211,11 @@ class TestSiteNotificationPreferences(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 403)
 
-    @patch('examples.local_notification_server.routers.list_sites')
     @patch(
-        'examples.local_notification_server.routers.'
-        'list_effective_sites_for_user',
-        new_callable=AsyncMock,
+        'examples.local_notification_server.site_preference_service.list_sites',
     )
-    async def test_update_site_notification_preferences_empty_payload(
-        self,
-        mock_list_effective_sites_for_user: AsyncMock,
-        mock_list_sites: MagicMock,
-    ) -> None:
-        """Empty payload returns the current effective preferences."""
-        group = MagicMock(name='GroupA')
-        group.name = 'GroupA'
-        site = MagicMock()
-        site.id = 1
-        site.name = 'Site1'
-        site.groups = [group]
-        self.user.id = 5
-        mock_list_sites.return_value = [site]
-        mock_list_effective_sites_for_user.return_value = [site]
-
-        pref_result = MagicMock()
-        pref_result.all.return_value = []
-        self.db.execute.side_effect = [pref_result]
-
-        result = await update_site_notification_preferences(
-            SiteNotificationPreferenceUpdateRequest(preferences=[]),
-            self.db,
-            self.user,
-            AsyncMock(),
-        )
-
-        self.assertEqual(
-            result,
-            [
-                SiteNotificationPreferenceOut(
-                    site_id=1,
-                    site_name='Site1',
-                    group_name='GroupA',
-                    is_enabled=True,
-                ),
-            ],
-        )
-        self.db.commit.assert_not_awaited()
-
-    @patch('examples.local_notification_server.routers.list_sites')
     @patch(
-        'examples.local_notification_server.routers.'
+        'examples.local_notification_server.site_preference_service.'
         'list_effective_sites_for_user',
         new_callable=AsyncMock,
     )

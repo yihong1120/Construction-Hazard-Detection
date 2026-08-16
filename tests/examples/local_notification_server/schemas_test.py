@@ -4,28 +4,43 @@ import unittest
 
 from pydantic import ValidationError
 
+from examples.local_notification_server.schemas import (
+    DeviceRegistrationRequest,
+)
 from examples.local_notification_server.schemas import NotificationList
 from examples.local_notification_server.schemas import NotificationOut
+from examples.local_notification_server.schemas import (
+    SiteNotificationPreferenceUpdateRequest,
+)
 from examples.local_notification_server.schemas import SiteNotifyRequest
-from examples.local_notification_server.schemas import TokenRequest
 
 
-class TestTokenRequest(unittest.TestCase):
+class TestDeviceRegistrationRequest(unittest.TestCase):
     """
-    Unit tests for the TokenRequest schema.
+    Unit tests for the device-registration schema.
     """
 
     def test_valid_data(self) -> None:
         """
-        Test TokenRequest with valid user ID and device token.
+        Test the strict device-registration request schema.
         """
         data = {
-            'user_id': 123,
             'device_token': 'abc123',
+            'device_lang': 'en-GB',
+            'platform': 'web',
         }
-        token_request = TokenRequest(**data)
-        self.assertEqual(token_request.user_id, 123)
+        token_request = DeviceRegistrationRequest(**data)
         self.assertEqual(token_request.device_token, 'abc123')
+
+    def test_rejects_legacy_or_extra_fields(self) -> None:
+        """Reject fields outside the explicit device-registration contract."""
+        with self.assertRaises(ValidationError):
+            DeviceRegistrationRequest(
+                device_token='abc123',
+                device_lang='en-GB',
+                platform='web',
+                user_id=123,
+            )
 
 
 class TestSiteNotifyRequest(unittest.TestCase):
@@ -43,6 +58,10 @@ class TestSiteNotifyRequest(unittest.TestCase):
             'body': {
                 'warning_no_safety_vest': {},
             },
+            'type': 'site_alert',
+            'title': 'Safety alert',
+            'deep_link': '/sites/my-site',
+            'metadata': {},
         }
         site_notify_request = SiteNotifyRequest(**data)
         self.assertEqual(site_notify_request.site, 'MySite')
@@ -62,14 +81,21 @@ class TestSiteNotifyRequest(unittest.TestCase):
             'site': 'AnotherSite',
             'stream_name': 'Title',
             'body': {
-                'some_key': {'desc': 123},
+                'warning_no_hardhat': {'count': 123},
             },
             'image_path': 'https://example.com/image.png',
+            'type': 'violation',
+            'title': 'Violation alert',
+            'deep_link': '/violations',
+            'metadata': {},
         }
         site_notify_request = SiteNotifyRequest(**data)
         self.assertEqual(site_notify_request.site, 'AnotherSite')
         self.assertEqual(site_notify_request.stream_name, 'Title')
-        self.assertEqual(site_notify_request.body, {'some_key': {'desc': 123}})
+        self.assertEqual(
+            site_notify_request.body,
+            {'warning_no_hardhat': {'count': 123}},
+        )
         self.assertEqual(
             site_notify_request.image_path,
             'https://example.com/image.png',
@@ -89,6 +115,10 @@ class TestSiteNotifyRequest(unittest.TestCase):
                     'person_track_ids': ['42'],
                 },
             },
+            'type': 'violation',
+            'title': 'Violation alert',
+            'deep_link': '/violations',
+            'metadata': {},
         }
 
         site_notify_request = SiteNotifyRequest(**data)
@@ -148,8 +178,12 @@ class TestSiteNotifyRequest(unittest.TestCase):
             'site': 'ExtraSite',
             'stream_name': 'Test',
             'body': {
-                'some_key': {'something': 123},
+                'warning_no_hardhat': {'count': 123},
             },
+            'type': 'violation',
+            'title': 'Violation alert',
+            'deep_link': '/violations',
+            'metadata': {},
             'extra_field': 'should_not_fail',
         }
         site_notify_request = SiteNotifyRequest(**data)
@@ -157,11 +191,38 @@ class TestSiteNotifyRequest(unittest.TestCase):
         self.assertEqual(site_notify_request.stream_name, 'Test')
         self.assertEqual(
             site_notify_request.body, {
-                'some_key': {'something': 123},
+                'warning_no_hardhat': {'count': 123},
             },
         )
         # By default, Pydantic ignores unexpected fields
         self.assertFalse(hasattr(site_notify_request, 'extra_field'))
+
+    def test_unknown_warning_key_is_rejected(self) -> None:
+        """Notification payloads must contain translatable warning keys."""
+        with self.assertRaises(ValidationError):
+            SiteNotifyRequest(
+                site='MySite',
+                stream_name='Cam1',
+                body={'unknown_warning': {}},
+            )
+
+    def test_notification_content_fields_are_required(self) -> None:
+        """Notification producers must provide all display and route fields."""
+        with self.assertRaises(ValidationError) as context:
+            SiteNotifyRequest(
+                site='MySite',
+                stream_name='Cam1',
+                body={'warning_no_hardhat': {'count': 1}},
+            )
+        self.assertIn('type', str(context.exception))
+        self.assertIn('title', str(context.exception))
+        self.assertIn('deep_link', str(context.exception))
+        self.assertIn('metadata', str(context.exception))
+
+    def test_site_preference_payload_rejects_an_empty_list(self) -> None:
+        """A preference replacement must contain at least one site value."""
+        with self.assertRaises(ValidationError):
+            SiteNotificationPreferenceUpdateRequest(preferences=[])
 
     def test_notification_deep_link_fields(self) -> None:
         """Site notifications accept notification-center metadata."""

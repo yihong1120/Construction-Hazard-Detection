@@ -10,7 +10,6 @@ from examples.local_notification_server.fcm_service import (
     _is_invalid_registration_token_error,
 )
 from examples.local_notification_server.fcm_service import _token_log_id
-from examples.local_notification_server.fcm_service import FcmSendResult
 from examples.local_notification_server.fcm_service import init_firebase_app
 from examples.local_notification_server.fcm_service import (
     send_fcm_notification_service,
@@ -64,27 +63,12 @@ class TestInitFirebaseApp(unittest.TestCase):
         mock_init_app.assert_not_called()
         mock_cred.assert_not_called()
 
-    def test_init_firebase_app_empty_cred_path(self) -> None:
-        """Test that init_firebase_app raises ValueError if cred_path is
-        empty."""
-        with self.assertRaises(ValueError) as ctx:
-            init_firebase_app('', 'dummy-project')
-        self.assertIn('cred_path', str(ctx.exception))
-
-    def test_init_firebase_app_empty_project_id(self) -> None:
-        """Test that init_firebase_app raises ValueError if project_id is
-        empty."""
-        with self.assertRaises(ValueError) as ctx:
-            init_firebase_app('dummy/path.json', '')
-        self.assertIn('project_id', str(ctx.exception))
-
 
 class TestFcmTokenHelpers(unittest.TestCase):
     """Tests for safe token logging and Firebase error compatibility."""
 
     def test_token_log_id_never_returns_the_raw_token(self) -> None:
-        """Token logs expose a bounded hash and handle absent values."""
-        self.assertEqual(_token_log_id(None), '<missing-token>')
+        """Token logs expose a bounded hash rather than the raw token."""
         self.assertNotEqual(
             _token_log_id(
                 'raw-device-token',
@@ -128,15 +112,6 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
     """Test suite for sending FCM notifications using the
     send_fcm_notification_service function."""
 
-    async def test_no_tokens(self) -> None:
-        """Test that sending notifications with an empty token list returns
-        False."""
-        result = await send_fcm_notification_service([], 'Title', 'Body')
-        self.assertFalse(result)
-        self.assertIsInstance(result, FcmSendResult)
-        self.assertEqual(result.success_count, 0)
-        self.assertEqual(result.failure_count, 0)
-
     @patch('firebase_admin.messaging.send_each')
     async def test_all_success(self, mock_send_each: MagicMock) -> None:
         """Test that the service returns True when all tokens send
@@ -151,7 +126,12 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
         mock_send_each.return_value = mock_response
 
         tokens = ['valid_token']
-        result = await send_fcm_notification_service(tokens, 'Title', 'Body')
+        result = await send_fcm_notification_service(
+            tokens,
+            'Title',
+            'Body',
+            data={'type': 'test'},
+        )
         self.assertTrue(result)
         self.assertEqual(result.success_count, 1)
         self.assertEqual(result.failure_count, 0)
@@ -180,7 +160,12 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
         mock_send_each.return_value = mock_response
 
         tokens = ['valid_token', 'invalid_token']
-        result = await send_fcm_notification_service(tokens, 'Title', 'Body')
+        result = await send_fcm_notification_service(
+            tokens,
+            'Title',
+            'Body',
+            data={'type': 'test'},
+        )
         self.assertFalse(result)
         self.assertEqual(result.success_count, 1)
         self.assertEqual(result.failure_count, 1)
@@ -196,7 +181,12 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
         mock_send_each.side_effect = Exception('FCM send error')
 
         tokens = ['token']
-        result = await send_fcm_notification_service(tokens, 'Title', 'Body')
+        result = await send_fcm_notification_service(
+            tokens,
+            'Title',
+            'Body',
+            data={'type': 'test'},
+        )
         self.assertFalse(result)
         self.assertEqual(result.success_count, 0)
         self.assertEqual(result.failure_count, 1)

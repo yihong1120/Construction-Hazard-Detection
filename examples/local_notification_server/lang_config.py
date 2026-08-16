@@ -1,6 +1,20 @@
 from __future__ import annotations
 
+from typing import Literal
+from typing import TypeAlias
+
 from src.warning_types import Warnings
+
+NotificationLanguage: TypeAlias = Literal[
+    'en-GB',
+    'zh-TW',
+    'zh-CN',
+    'fr-FR',
+    'vi-VN',
+    'id-ID',
+    'th-TH',
+    'ja-JP',
+]
 
 LANGUAGES = {
     'en-GB': {
@@ -278,55 +292,17 @@ LANGUAGES = {
 }
 
 
-LANGUAGE_ALIASES: dict[str, str] = {
-    'en': 'en-GB',
-    'en-gb': 'en-GB',
-    'en-us': 'en-GB',
-    'zh': 'zh-TW',
-    'zh-tw': 'zh-TW',
-    'zh-hant': 'zh-TW',
-    'zh-hk': 'zh-TW',
-    'zh-mo': 'zh-TW',
-    'zh-cn': 'zh-CN',
-    'zh-hans': 'zh-CN',
-    'fr': 'fr-FR',
-    'fr-fr': 'fr-FR',
-    'vi': 'vi-VN',
-    'vi-vn': 'vi-VN',
-    'id': 'id-ID',
-    'id-id': 'id-ID',
-    'th': 'th-TH',
-    'th-th': 'th-TH',
-    'ja': 'ja-JP',
-    'jp': 'ja-JP',
-    'ja-jp': 'ja-JP',
-}
-
-
-def normalize_language(language: str | None) -> str | None:
-    """Return the supported notification language code for a device value.
-
-    Args:
-        language: Raw language value from a device or client request.
-
-    Returns:
-        Normalised BCP 47 language code, or None when unsupported.
-    """
-    if not language:
-        return None
-    candidate = language.strip().replace('_', '-')
-    if candidate in LANGUAGES:
-        return candidate
-    return LANGUAGE_ALIASES.get(candidate.lower())
-
-
 class Translator:
-    """Translate warning payloads into supported notification languages."""
+    """Render validated warning payloads in supported notification languages.
+
+    The service accepts only keys present in ``LANGUAGES``; this class therefore
+    performs direct template rendering without locale fallback behaviour.
+    """
 
     @staticmethod
     def translate_from_dict(
         body_dict: Warnings,
-        language: str,
+        language: NotificationLanguage,
     ) -> list[str]:
         """Translate warning payload entries into the requested language.
 
@@ -344,51 +320,17 @@ class Translator:
             language: Requested locale code, such as `en-GB` or `zh-TW`.
 
         Returns:
-            Translated warning messages. Unsupported languages return an empty
-            list.
+            Translated warning messages for the requested canonical language.
         """
-        normalized_language = normalize_language(language)
-        if normalized_language is None:
-            return []
-
         translations: list[str] = []
-        lang_map = LANGUAGES[normalized_language]
+        lang_map = LANGUAGES[language]
 
         for key, placeholders in body_dict.items():
-            template = lang_map.get(key)
-            if not template:
-                # If the key has no template, use the key itself as the message
-                translations.append(key)
-                continue
-
-            msg = template
-            # Replace placeholders like {count} in the template
+            msg = lang_map[key]
+            # Templates are constrained by the validated warning payload shape.
             for ph_key, ph_value in placeholders.items():
                 msg = msg.replace(f"{{{ph_key}}}", str(ph_value))
 
             translations.append(msg)
 
         return translations
-
-
-def main() -> None:
-    """Print a small translation demonstration for local manual testing."""
-    body_dict = {
-        'warning_no_hardhat': {'count': 2},
-        'warning_no_safety_vest': {'count': 1},
-        'warning_people_in_utility_pole_controlled_area': {'count': 3},
-    }
-    language = 'en-GB'
-
-    translations = Translator.translate_from_dict(body_dict, language)
-    print(translations)
-    # Possible output:
-    # [
-    #   "Warning: 2 people are not wearing a hardhat!",
-    #   "Warning: 1 people are not wearing a safety vest!",
-    #   "Warning: 3 people have entered the utility pole restricted area!"
-    # ]
-
-
-if __name__ == '__main__':
-    main()

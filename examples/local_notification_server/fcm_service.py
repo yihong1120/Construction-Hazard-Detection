@@ -4,17 +4,22 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-import firebase_admin
+import firebase_admin  # type: ignore[import-untyped]
 from firebase_admin import credentials
 from firebase_admin import messaging
 
 logger = logging.getLogger(__name__)
 
 
-def _token_log_id(device_token: str | None) -> str:
-    """Return a non-sensitive identifier for an FCM token in logs."""
-    if not device_token:
-        return '<missing-token>'
+def _token_log_id(device_token: str) -> str:
+    """Return a non-sensitive FCM token identifier for logs.
+
+    Args:
+        device_token: Raw FCM registration token.
+
+    Returns:
+        Short deterministic token hash suitable for diagnostic logs.
+    """
     return hashlib.sha256(device_token.encode('utf-8')).hexdigest()[:12]
 
 
@@ -48,15 +53,8 @@ def init_firebase_app(cred_path: str, project_id: str) -> None:
         cred_path: Path to the Firebase service account key JSON file.
         project_id: GCP/Firebase project ID.
 
-    Raises:
-        ValueError: Raised when `cred_path` or `project_id` is empty.
     """
-    # Validate input parameters
-    if not cred_path:
-        raise ValueError('cred_path must be a non-empty string.')
-    if not project_id:
-        raise ValueError('project_id must be a non-empty string.')
-    # Initialise only if not already done
+    # Firebase keeps a process-wide app registry, so workers initialise once.
     if not firebase_admin._apps:
         cred: credentials.Certificate = credentials.Certificate(cred_path)
         firebase_admin.initialize_app(
@@ -68,7 +66,7 @@ def init_firebase_app(cred_path: str, project_id: str) -> None:
 ANDROID_CFG: messaging.AndroidConfig = messaging.AndroidConfig(
     priority='high',
     notification=messaging.AndroidNotification(
-        # Must match the Flutter side
+        # This channel identifier must match the Flutter client configuration.
         channel_id='high_importance_channel',
         sound='default',
         default_vibrate_timings=True,
@@ -76,11 +74,11 @@ ANDROID_CFG: messaging.AndroidConfig = messaging.AndroidConfig(
 )
 
 APNS_CFG: messaging.APNSConfig = messaging.APNSConfig(
-    # General alert; for Critical use 5 + CriticalSound
+    # Use a normal alert priority; critical alerts require a distinct payload.
     headers={'apns-priority': '10'},
     payload=messaging.APNSPayload(
         aps=messaging.Aps(
-            # iOS plays default sound
+            # iOS clients play their configured default notification sound.
             sound='default',
             badge=1,
         ),
@@ -100,8 +98,8 @@ async def send_fcm_notification_service(
     device_tokens: list[str],
     title: str,
     body: str,
+    data: dict[str, str],
     image_path: str | None = None,
-    data: dict[str, str] | None = None,
 ) -> FcmSendResult:
     """Send one FCM notification payload to a batch of device tokens.
 
@@ -110,21 +108,16 @@ async def send_fcm_notification_service(
         title: Notification title.
         body: Notification body text.
         image_path: Optional image URL or path included in the notification.
-        data: Optional custom FCM data payload.
+        data: Custom FCM data payload.
 
     Returns:
         Batch send result. It is truthy only when all messages in the batch
         were sent successfully.
     """
-    # Return early if no device tokens are provided
-    if not device_tokens:
-        logger.error('No device tokens provided.')
-        return FcmSendResult(success_count=0, failure_count=0)
-
-    # Construct FCM messages for each device token
+    # Callers construct batches only from the canonical token cache.
     messages: list[messaging.Message] = []
     for token in device_tokens:
-        # Create a message for each device
+        # Firebase requires one Message object for every target token.
         msg: messaging.Message = messaging.Message(
             token=token,
             notification=messaging.Notification(
@@ -132,7 +125,7 @@ async def send_fcm_notification_service(
                 body=body,
                 image=image_path,
             ),
-            data=data or {},
+            data=data,
             android=ANDROID_CFG,
             apns=APNS_CFG,
             webpush=WEBPUSH_CFG,
@@ -140,7 +133,7 @@ async def send_fcm_notification_service(
         messages.append(msg)
 
     try:
-        # Send all messages using Firebase Admin SDK
+        # The SDK response preserves message order for precise failure mapping.
         response: messaging.BatchResponse = messaging.send_each(messages)
         invalid_tokens: list[str] = []
         for idx, res in enumerate(response.responses):
@@ -175,10 +168,9 @@ def _is_invalid_registration_token_error(exc: object) -> bool:
     Returns:
         True when the token should be removed from Redis.
     """
-    if isinstance(exc, messaging.UnregisteredError):
-        return True
-    if isinstance(exc, messaging.SenderIdMismatchError):
-        return True
+    match exc:
+        case messaging.UnregisteredError() | messaging.SenderIdMismatchError():
+            return True
 
     code = str(getattr(exc, 'code', '') or '').lower()
     if code in {

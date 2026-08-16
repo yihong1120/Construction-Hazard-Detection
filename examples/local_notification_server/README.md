@@ -17,9 +17,12 @@ tokens, and language-specific notification text.
 ## Files
 
 - `app.py`: FastAPI application and Firebase initialisation lifespan.
-- `routers.py`: token and notification endpoints.
-- `services.py`: Redis token lookup, site subscription, and send orchestration.
-- `fcm_service.py`: Firebase Admin SDK wrapper.
+- `routers.py`: HTTP endpoints and dependency injection only.
+- `notification_delivery_service.py`: token registration, deduplication, and FCM delivery workflows.
+- `notification_centre_service.py`: notification-centre queries and state changes.
+- `site_preference_service.py`: scoped per-site notification preference workflows.
+- `services.py`: durable persistence, Redis cache, translation, and bounded FCM batch primitives.
+- `fcm_service.py`: Firebase Admin SDK transport adapter.
 - `lang_config.py`: supported languages and warning translations.
 - `schemas.py`: request and response models.
 
@@ -36,6 +39,7 @@ uvicorn examples.local_notification_server.app:app \
 
 ```dotenv
 FIREBASE_CRED_PATH=/secure/path/firebase-service-account.json
+FIREBASE_PROJECT_ID=your-firebase-project-id
 FCM_API_URL=http://127.0.0.1:8003
 DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection
 REDIS_HOST=127.0.0.1
@@ -45,10 +49,23 @@ JWT_SECRET_KEY=replace-with-a-long-random-secret
 FCM_TOKEN_ENCRYPTION_KEY=replace-with-a-fernet-key
 ```
 
+## Container Deployment
+
+Build from the repository root so the shared `examples/auth`,
+`examples/db_management`, and `src` packages are available:
+
+```bash
+docker build -f examples/local_notification_server/Dockerfile -t local-notification-server .
+```
+
+Mount the Firebase service-account JSON as a runtime secret at
+`/run/secrets/firebase-service-account.json`, or override
+`FIREBASE_CRED_PATH` with the mounted location. The image never copies
+credentials from the build context.
+
 Keep the Firebase service-account JSON outside the repository.
-`FCM_TOKEN_ENCRYPTION_KEY` encrypts device tokens at rest in the database. If it
-is omitted, the service derives a key from `JWT_SECRET_KEY`, but a separate
-Fernet key is recommended for production:
+`FCM_TOKEN_ENCRYPTION_KEY` is required and encrypts device tokens at rest in
+the database. It must be a valid Fernet key:
 
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -56,11 +73,16 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 ## Endpoints
 
-- `POST /store_token`: stores an encrypted DB token record and refreshes the
-  Redis send cache. The API does not return raw tokens or token hashes.
-- `DELETE /delete_token`: disables a device token in DB and removes it from
+- `PUT /devices`: stores an encrypted DB token record and refreshes the
+  Redis send cache. A bearer token determines the owner. The required JSON
+  fields are `device_token`, a supported canonical BCP 47 `device_lang`, and
+  `platform` (`web`, `ios`, or `android`). The API does not return raw tokens
+  or token hashes.
+- `DELETE /devices`: disables the current user's device token in DB and removes it from
   Redis cache.
 - `POST /send_fcm_notification`: sends one site warning to subscribed users.
+  Its payload must provide `type`, `title`, `deep_link`, and `metadata`; the
+  service does not infer notification content or navigation values.
 - `GET /notifications?status=unread&type=violation&page=1&page_size=20`:
   lists the current user's in-app notifications.
 - `GET /notifications/unread_count`: returns the unread badge count.
@@ -73,9 +95,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 - `PUT /notifications/site_preferences`: updates site notification
   subscriptions.
 
-`/send_fcm_notification` accepts `deep_link`; the service copies the same value
-to FCM `data.deep_link` and the notification record. If omitted, violation
-notifications default to `/violations?violation_id={id}`.
+`/send_fcm_notification` copies the required `deep_link` and `type` values
+directly into FCM data and the notification record. Event producers own these
+values and must provide the complete notification contract.
 
 ## Runtime Notes
 

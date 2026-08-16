@@ -1,28 +1,29 @@
-# Use the shared base image
+# Build this image from the repository root so shared packages can be copied.
 FROM base:latest
 
-# 設定工作目錄
 WORKDIR /app
 
-# Copy the application code into the container
-COPY examples/local_notification_server /app
+# Copy only runtime packages required by the notification application.
+COPY --chown=appuser:appuser examples/auth /app/examples/auth
+COPY --chown=appuser:appuser examples/db_management /app/examples/db_management
+COPY --chown=appuser:appuser \
+    examples/local_notification_server \
+    /app/examples/local_notification_server
+COPY --chown=appuser:appuser src /app/src
 
-# 安裝依賴
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Service-account credentials are mounted at runtime and are never baked in.
+ENV FIREBASE_CRED_PATH=/run/secrets/firebase-service-account.json
 
-# 複製 local_notification_server 目錄內容到容器
-# COPY . /app/examples/local_notification_server
-
-# 複製 Firebase 憑證檔案（如有需要，可依實際情況調整）
-COPY construction-harzard-detection-firebase-adminsdk-fbsvc-ca9d30aff7.json /app/examples/local_notification_server/
-
-# Define environment variables for Redis configuration (can be overridden at runtime)
-ENV REDIS_HOST=redis
-ENV REDIS_PORT=6379
-ENV REDIS_PASSWORD='password'
-
-# Expose the application port
 EXPOSE 8003
 
-# 預設啟動 FastAPI 服務
-CMD ["uvicorn", "examples.local_notification_server.app:app", "--host", "0.0.0.0", "--port", "8003"]
+USER appuser
+
+# The process manager may override the command to configure worker count.
+CMD [
+    "uvicorn",
+    "examples.local_notification_server.app:app",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "8003"
+]

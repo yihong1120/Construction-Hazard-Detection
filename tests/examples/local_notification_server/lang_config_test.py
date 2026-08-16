@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
-from unittest.mock import patch
+from typing import cast
 
 from examples.local_notification_server.lang_config import LANGUAGES
-from examples.local_notification_server.lang_config import main
-from examples.local_notification_server.lang_config import normalize_language
+from examples.local_notification_server.lang_config import NotificationLanguage
 from examples.local_notification_server.lang_config import Translator
 
 
@@ -85,14 +84,13 @@ class TestLangConfig(unittest.TestCase):
 
         1) Correctly replaces placeholders.
         2) Returns the string if no placeholder is present.
-        3) Returns the key itself if it is not found in LANGUAGES.
+        3) Fails for a warning key that has no translation.
         """
         body_dict: dict[str, dict[str, Any]] = {
             'warning_close_to_vehicle': {'count': '3'},
             'warning_no_safety_vest': {'count': '1'},  # Provide placeholder
-            'non_existent_key': {'test': '1'},
         }
-        language = 'zh-TW'
+        language: NotificationLanguage = 'zh-TW'
 
         result = Translator.translate_from_dict(body_dict, language)
         self.assertIsInstance(result, list)
@@ -103,29 +101,24 @@ class TestLangConfig(unittest.TestCase):
         # 2) Check replaced placeholder for safety vest
         self.assertIn('有1人未穿著安全背心', result[1])
 
-        # 3) Key not found => returns the key itself
-        self.assertEqual(result[2], 'non_existent_key')
+        with self.assertRaises(KeyError):
+            Translator.translate_from_dict(
+                {'non_existent_key': {'test': '1'}},
+                language,
+            )
 
-    def test_translate_from_dict_skips_unsupported_language(self) -> None:
-        """
-        Ensure unsupported language codes do not switch to another locale.
-        """
+    def test_translate_from_dict_rejects_unsupported_language(self) -> None:
+        """Unsupported language codes fail instead of changing locale."""
         body_dict: dict[str, dict[str, Any]] = {
             'warning_close_to_vehicle': {'count': '2'},
         }
         language = 'xx-XX'  # Invalid code
 
-        result = Translator.translate_from_dict(body_dict, language)
-        self.assertEqual(result, [])
-
-    def test_normalize_language_aliases(self) -> None:
-        """Common app language tags collapse to supported notification tags."""
-        self.assertEqual(normalize_language('en'), 'en-GB')
-        self.assertEqual(normalize_language('zh_Hant'), 'zh-TW')
-        self.assertEqual(normalize_language('zh-CN'), 'zh-CN')
-        self.assertEqual(normalize_language('ja'), 'ja-JP')
-        self.assertIsNone(normalize_language('missing'))
-        self.assertIsNone(normalize_language(None))
+        with self.assertRaises(KeyError):
+            Translator.translate_from_dict(
+                body_dict,
+                cast(NotificationLanguage, language),
+            )
 
     def test_translate_from_dict_placeholder_replacement(self) -> None:
         """
@@ -134,48 +127,11 @@ class TestLangConfig(unittest.TestCase):
         body_dict: dict[str, dict[str, Any]] = {
             'warning_people_in_controlled_area': {'count': '5'},
         }
-        language = 'en-GB'
+        language: NotificationLanguage = 'en-GB'
 
         result = Translator.translate_from_dict(body_dict, language)
         # Expect: "Warning: 5 people have entered the controlled area!"
         self.assertIn('5 people have entered the controlled area!', result[0])
-
-    def test_main_function_output(self) -> None:
-        """
-        Check that main() prints the expected lines for en-GB language.
-        """
-        with patch('builtins.print') as mock_print:
-            main()
-            printed_lines: list[str] = []
-            for call_args in mock_print.call_args_list:
-                printed_lines.extend(call_args[0])
-
-            # Check for specific warning messages in the printed output
-            self.assertTrue(
-                any(
-                    'Warning: 2 people are not wearing a hardhat!' in line
-                    for line in printed_lines
-                ),
-                "Did not print 'Warning: 2 people are not wearing a hardhat!'",
-            )
-            self.assertTrue(
-                any(
-                    'Warning: 1 people are not wearing a safety vest!' in line
-                    for line in printed_lines
-                ),
-                "Did not print 'Warning: 1 people "
-                "are not wearing a safety vest!'",
-            )
-            self.assertTrue(
-                any(
-                    'Warning: 3 people have '
-                    'entered the utility pole restricted area!'
-                    in line
-                    for line in printed_lines
-                ),
-                "Did not print 'Warning: 3 people have "
-                "entered the utility pole restricted area!'",
-            )
 
     def test_missing_placeholder(self) -> None:
         """
@@ -185,7 +141,7 @@ class TestLangConfig(unittest.TestCase):
         body_dict: dict[str, dict[str, Any]] = {
             'warning_close_to_machinery': {'x': '1'},
         }
-        language = 'en-GB'
+        language: NotificationLanguage = 'en-GB'
 
         result = Translator.translate_from_dict(body_dict, language)
         self.assertIn('{count}', result[0])
