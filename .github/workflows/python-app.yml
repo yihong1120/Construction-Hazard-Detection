@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       JWT_SECRET_KEY: ci-test-jwt-secret-not-for-production
-      DATABASE_URL: postgresql://ci:ci@localhost:5432/construction_hazard_detection_test
+      DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/construction_hazard_detection_test
 
     steps:
     - uses: actions/checkout@v7
