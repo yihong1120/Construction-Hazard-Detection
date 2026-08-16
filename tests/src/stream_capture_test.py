@@ -57,9 +57,10 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.stream_capture.cap)
 
         # Verify that VideoCapture was called correctly
-        mock_video_capture.assert_called_once_with(
-            self.stream_capture.stream_url,
-        )
+        call = mock_video_capture.call_args
+        assert call is not None
+        self.assertEqual(call.args[0], self.stream_capture.stream_url)
+        self.assertEqual(call.args[1], stream_capture.cv2.CAP_FFMPEG)
 
         # Release resources
         await self.stream_capture.release_resources()
@@ -82,7 +83,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_video_capture.return_value.isOpened.return_value = True
 
         # Set `read()` to return two frames successfully
-        mock_frame = MagicMock(name='MockFrame')
+        mock_frame = np.zeros((4, 4, 3), dtype=np.uint8)
         mock_video_capture.return_value.read.side_effect = [
             (True, mock_frame),  # First iteration
             (True, mock_frame),  # Second iteration
@@ -115,7 +116,10 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         await generator.aclose()
 
         # Verify that `cv2.VideoCapture` was called twice
-        mock_video_capture.assert_called_with(self.stream_capture.stream_url)
+        call = mock_video_capture.call_args
+        assert call is not None
+        self.assertEqual(call.args[0], self.stream_capture.stream_url)
+        self.assertEqual(call.args[1], stream_capture.cv2.CAP_FFMPEG)
 
     @patch('cv2.VideoCapture')
     @patch.object(StreamCapture, 'capture_generic_frames')
@@ -250,13 +254,85 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
                 ),
             )
 
+    def test_timestamp_watchdog_reconnects_only_after_source_stalls(
+        self,
+    ) -> None:
+        """A progressing source PTS keeps a visually static camera healthy."""
+        capture = self.stream_capture
+        capture.timestamp_reconnect_seconds = 2
+        capture.timestamp_sample_seconds = 1
+        capture.cap = MagicMock()
+        capture.cap.get.side_effect = [
+            1_000.0,
+            2_000.0,
+            2_000.0,
+            2_000.0,
+        ]
+        with patch.object(
+            stream_capture.time,
+            'monotonic',
+            side_effect=[0.0, 1.0, 2.0, 3.0],
+        ):
+            self.assertFalse(
+                capture._should_reconnect_after_stalled_source_timestamp(),
+            )
+            self.assertFalse(
+                capture._should_reconnect_after_stalled_source_timestamp(),
+            )
+            self.assertFalse(
+                capture._should_reconnect_after_stalled_source_timestamp(),
+            )
+            self.assertTrue(
+                capture._should_reconnect_after_stalled_source_timestamp(),
+            )
+
+    def test_timestamp_watchdog_skips_unusable_or_fast_samples(self) -> None:
+        """Unavailable PTS values never turn a quiet scene into a reconnect."""
+        capture = self.stream_capture
+        capture.timestamp_reconnect_seconds = 2
+        self.assertFalse(
+            capture._should_reconnect_after_stalled_source_timestamp(),
+        )
+
+        capture.cap = object()
+        with patch.object(stream_capture.time, 'monotonic', return_value=0.0):
+            self.assertFalse(
+                capture._should_reconnect_after_stalled_source_timestamp(),
+            )
+
+        capture.cap = MagicMock()
+        capture.cap.get.return_value = float('nan')
+        with patch.object(stream_capture.time, 'monotonic', return_value=1.0):
+            self.assertFalse(
+                capture._should_reconnect_after_stalled_source_timestamp(),
+            )
+
+        capture.cap.get.return_value = 1_000.0
+        with patch.object(
+            stream_capture.time,
+            'monotonic',
+            side_effect=[2.0, 2.5],
+        ):
+            self.assertFalse(
+                capture._should_reconnect_after_stalled_source_timestamp(),
+            )
+            self.assertFalse(
+                capture._should_reconnect_after_stalled_source_timestamp(),
+            )
+        self.assertEqual(capture.cap.get.call_count, 2)
+
+        capture.timestamp_reconnect_seconds = 0
+        self.assertFalse(
+            capture._should_reconnect_after_stalled_source_timestamp(),
+        )
+
     @patch('cv2.VideoCapture')
     @patch('cv2.Mat')
     @patch('time.sleep', return_value=None)
     async def test_execute_capture(
         self,
         mock_sleep: MagicMock,
-        mock_mat: MagicMock,
+        _mock_mat: MagicMock,
         mock_video_capture: MagicMock,
     ) -> None:
         """
@@ -268,7 +344,10 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         """
         # Mock VideoCapture object's read method to
         # return a frame and True indicating successful read
-        mock_video_capture.return_value.read.return_value = (True, mock_mat)
+        mock_video_capture.return_value.read.return_value = (
+            True,
+            np.zeros((4, 4, 3), dtype=np.uint8),
+        )
         mock_video_capture.return_value.isOpened.return_value = True
 
         # Execute capture frame generator and get the first frame and timestamp
@@ -443,7 +522,10 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
             mock_streams (MagicMock): Mock for streamlink.streams.
         """
         # Mock VideoCapture object's behaviour
-        mock_video_capture.return_value.read.return_value = (True, MagicMock())
+        mock_video_capture.return_value.read.return_value = (
+            True,
+            np.zeros((4, 4, 3), dtype=np.uint8),
+        )
         mock_video_capture.return_value.isOpened.return_value = True
 
         # Execute capture frame generator
@@ -532,7 +614,9 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         """
         # Mock VideoCapture object's multiple failures and one success read
         instance: MagicMock = mock_video_capture.return_value
-        instance.read.side_effect = [(False, None)] * 5 + [(True, MagicMock())]
+        instance.read.side_effect = [
+            (False, None),
+        ] * 5 + [(True, np.zeros((4, 4, 3), dtype=np.uint8))]
         instance.isOpened.return_value = True
 
         # Mock capture_generic_frames method and execute
@@ -615,7 +699,9 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         # return False 5 times and then True
         mock_video_capture.return_value.read.side_effect = [
             (False, None),
-        ] * 5 + [(True, MagicMock())] * 5
+        ] * 5 + [
+            (True, np.zeros((4, 4, 3), dtype=np.uint8)),
+        ] * 5
         mock_video_capture.return_value.isOpened.return_value = True
 
         # Use the generic frame capture method to
@@ -721,6 +807,19 @@ def test_nonnegative_float_environment_uses_default_for_invalid_value(
     ) == 1.5
 
 
+def test_visual_freeze_watchdog_is_disabled_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Quiet scenes never trigger the legacy pixel-difference watchdog."""
+    monkeypatch.delenv(
+        'STREAM_CAPTURE_FREEZE_RECONNECT_SECONDS', raising=False,
+    )
+
+    capture = StreamCapture('rtsp://camera.example/live')
+
+    assert capture.freeze_reconnect_seconds == 0
+
+
 def test_frozen_frame_watchdog_skips_invalid_fast_and_moving_frames() -> None:
     """Only sustained identical valid frames trigger the reconnect signal."""
     capture = StreamCapture('rtsp://camera.example/live')
@@ -778,3 +877,54 @@ def test_execute_capture_reconnects_after_frozen_frame() -> None:
         assert np.array_equal(frame, np.ones((2, 2, 3), dtype=np.uint8))
 
     asyncio.run(run_case())
+
+
+def test_execute_capture_signals_normal_read_failure() -> None:
+    """A decoder read failure invalidates downstream media state."""
+    async def run_case() -> None:
+        capture = StreamCapture('rtsp://camera.example/live', 0)
+        good_frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        capture.cap = SimpleNamespace(
+            read=MagicMock(
+                side_effect=[
+                    (False, None),
+                    (True, good_frame),
+                ],
+            ),
+        )
+        with (
+            patch.object(capture, 'initialise_stream', new=AsyncMock()),
+            patch.object(capture, 'release_resources', new=AsyncMock()),
+            patch.object(stream_capture.asyncio, 'sleep', new=AsyncMock()),
+        ):
+            generator = capture.execute_capture()
+            frame, _timestamp = await generator.__anext__()
+            await generator.aclose()
+
+        assert capture.reconnect_event.is_set()
+        assert np.array_equal(frame, good_frame)
+
+    asyncio.run(run_case())
+
+
+def test_progressing_source_timestamp_disables_visual_fallback() -> None:
+    """A healthy PTS prevents quiet video from triggering visual reconnect."""
+    capture = StreamCapture('rtsp://camera.example/live')
+    capture.freeze_reconnect_seconds = 1
+    capture.freeze_frame_delta = 1
+    capture.cap = MagicMock()
+    capture.cap.get.return_value = 1_000.0
+    frozen_frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    capture._freeze_last_sample = frozen_frame.copy()
+    capture._freeze_last_sample_at = 0
+    capture._freeze_last_motion_at = 0
+
+    with patch.object(stream_capture.time, 'monotonic', return_value=2):
+        assert (
+            capture._should_reconnect_after_stalled_source_timestamp()
+            is False
+        )
+        assert (
+            capture._should_reconnect_after_frozen_frame(frozen_frame)
+            is False
+        )

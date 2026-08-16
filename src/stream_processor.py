@@ -24,15 +24,19 @@ from examples.streaming_web.media_paths import build_media_path
 from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_overlay_ready_key
 from examples.streaming_web.media_paths import build_preview_media_path
+from examples.streaming_web.metadata_keys import build_metadata_key
 from examples.streaming_web.overlay_renderer import (
     normalise_label_language,
 )
+from examples.streaming_web.overlay_renderer import PolygonCollection
 from examples.streaming_web.overlay_renderer import (
     render_overlay_array,
 )
 from examples.streaming_web.overlay_renderer import (
     SUPPORTED_LABEL_LANGUAGES,
 )
+from examples.streaming_web.overlay_renderer import TrackingDetections
+from examples.streaming_web.overlay_renderer import WarningPayload
 from src.danger_detector import DangerDetector
 from src.media_restreamer import MediaSourceRestreamer
 from src.media_stream_publisher import MediaStreamPublisher
@@ -97,6 +101,7 @@ class _LatestFrameState:
     frame: np.ndarray | None = None
     timestamp: float = 0.0
     sequence: int = 0
+    generation: int = 0
 
 
 @dataclass
@@ -108,10 +113,10 @@ class _LatestDetectionState:
     frame: np.ndarray | None = None
     timestamp: float = 0.0
     sequence: int = 0
-    warnings: object = None
-    cone_polys: object = None
-    pole_polys: object = None
-    track_data: object = None
+    warnings: WarningPayload = field(default_factory=dict)
+    cone_polys: PolygonCollection = field(default_factory=list)
+    pole_polys: PolygonCollection = field(default_factory=list)
+    track_data: TrackingDetections | None = None
 
 
 @dataclass(frozen=True)
@@ -120,10 +125,10 @@ class _OverlaySnapshot:
 
     sequence: tuple[int, int]
     frame: np.ndarray
-    warnings: object = None
-    cone_polys: object = None
-    pole_polys: object = None
-    track_data: object = None
+    warnings: WarningPayload = field(default_factory=dict)
+    cone_polys: PolygonCollection = field(default_factory=list)
+    pole_polys: PolygonCollection = field(default_factory=list)
+    track_data: TrackingDetections | None = None
 
 
 @dataclass
@@ -286,7 +291,6 @@ async def _run_single_stream(
     yolo_detector = YoloDetector(
         model_key=model_key,
         output_folder=site,
-        detect_with_server=True,
         worker_client=YoloWorkerClient(
             cast(WorkerQueue, yolo_request_queue),
             cast(WorkerResultReceiver, yolo_result_queue),
@@ -389,6 +393,7 @@ async def _run_decoupled_media_server_loop(
     latest_detection = _LatestDetectionState()
     stop_event = asyncio.Event()
     source_reconnect_event = _capture_reconnect_event(streaming_capture)
+    clean_reconnect_event = asyncio.Event()
     demand_cache = _MediaDemandCache()
     tasks = {
         asyncio.create_task(
@@ -416,6 +421,18 @@ async def _run_decoupled_media_server_loop(
             ),
         ),
     }
+    if source_reconnect_event is not None:
+        tasks.add(
+            asyncio.create_task(
+                _synchronise_capture_reconnects(
+                    reconnect_event=source_reconnect_event,
+                    clean_reconnect_event=clean_reconnect_event,
+                    latest_frame=latest_frame,
+                    latest_detection=latest_detection,
+                    stop_event=stop_event,
+                ),
+            ),
+        )
     if publish_overlay_streams:
         tasks.add(
             asyncio.create_task(
@@ -445,7 +462,7 @@ async def _run_decoupled_media_server_loop(
                     source_url=video_url,
                     use_source_restreamer=restream_clean_source,
                     stop_event=stop_event,
-                    source_reconnect_event=source_reconnect_event,
+                    source_reconnect_event=clean_reconnect_event,
                     demand_cache=demand_cache,
                     rendition='detail',
                 ),
@@ -463,7 +480,7 @@ async def _run_decoupled_media_server_loop(
                     source_url=video_url,
                     use_source_restreamer=False,
                     stop_event=stop_event,
-                    source_reconnect_event=source_reconnect_event,
+                    source_reconnect_event=None,
                     demand_cache=demand_cache,
                     rendition='preview',
                 ),
@@ -518,6 +535,38 @@ def _capture_reconnect_event(
     return event if isinstance(event, asyncio.Event) else None
 
 
+async def _synchronise_capture_reconnects(
+    reconnect_event: asyncio.Event,
+    clean_reconnect_event: asyncio.Event,
+    latest_frame: _LatestFrameState,
+    latest_detection: _LatestDetectionState,
+    stop_event: asyncio.Event,
+) -> None:
+    """Invalidate stale frames and notify the direct source restreamer."""
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(reconnect_event.wait(), timeout=1.0)
+        except asyncio.TimeoutError:
+            continue
+        reconnect_event.clear()
+        async with latest_frame.lock:
+            latest_frame.frame = None
+            latest_frame.timestamp = 0.0
+            latest_frame.sequence += 1
+            latest_frame.generation += 1
+            latest_frame.event.set()
+        async with latest_detection.lock:
+            latest_detection.frame = None
+            latest_detection.timestamp = 0.0
+            latest_detection.sequence = 0
+            latest_detection.warnings.clear()
+            latest_detection.cone_polys.clear()
+            latest_detection.pole_polys.clear()
+            latest_detection.track_data = None
+            latest_detection.event.clear()
+        clean_reconnect_event.set()
+
+
 async def _detect_latest_frames(
     latest_frame: _LatestFrameState,
     yolo_detector: YoloDetector,
@@ -554,6 +603,7 @@ async def _detect_latest_frames(
             frame = latest_frame.frame
             ts = latest_frame.timestamp
             last_sequence = latest_frame.sequence
+            source_generation = latest_frame.generation
             latest_frame.event.clear()
 
         try:
@@ -568,6 +618,12 @@ async def _detect_latest_frames(
             )
             await asyncio.sleep(1.0)
             continue
+        async with latest_frame.lock:
+            if (
+                latest_frame.generation != source_generation
+                or latest_frame.frame is None
+            ):
+                continue
         try:
             (
                 last_notification_time,
@@ -636,10 +692,10 @@ async def _record_detection_result(
         latest_detection.frame = frame
         latest_detection.timestamp = timestamp
         latest_detection.sequence = sequence
-        latest_detection.warnings = warnings
-        latest_detection.cone_polys = cone_polys
-        latest_detection.pole_polys = pole_polys
-        latest_detection.track_data = track_data
+        latest_detection.warnings = cast(WarningPayload, warnings)
+        latest_detection.cone_polys = cast(PolygonCollection, cone_polys)
+        latest_detection.pole_polys = cast(PolygonCollection, pole_polys)
+        latest_detection.track_data = cast(TrackingDetections, track_data)
         latest_detection.event.set()
 
     should_send_violation = (
@@ -650,7 +706,7 @@ async def _record_detection_result(
             last_notification_time,
         )
     )
-    if _warning_event_due(
+    if is_working and _warning_event_due(
         warnings,
         current_timestamp,
         last_warning_event_time,
@@ -1084,61 +1140,43 @@ async def _publish_requested_clean_frames(
                     media_path,
                 )
                 if not requested:
-                    if clean_restreamer is not None:
-                        await clean_restreamer.close()
-                        clean_restreamer = None
+                    clean_restreamer, clean_publisher = (
+                        await _close_clean_media_publishers(
+                            clean_restreamer,
+                            clean_publisher,
+                        )
+                    )
+                    await asyncio.sleep(frame_interval)
+                    continue
+
+                if use_source_restreamer and rendition == 'detail':
+                    clean_restreamer = await _ensure_clean_restreamer(
+                        clean_restreamer,
+                        source_reconnect_event,
+                        source_url,
+                        publish_url,
+                        site,
+                        stream_name,
+                    )
+                    await asyncio.sleep(frame_interval)
+                    continue
+
+                async with latest_frame.lock:
+                    frame = latest_frame.frame
+                if frame is None:
                     if clean_publisher is not None:
                         await clean_publisher.close()
                         clean_publisher = None
                     await asyncio.sleep(frame_interval)
                     continue
-
-                if use_source_restreamer and rendition == 'detail':
-                    if (
-                        source_reconnect_event is not None
-                        and source_reconnect_event.is_set()
-                    ):
-                        source_reconnect_event.clear()
-                        if clean_restreamer is not None:
-                            print(
-                                f'[{site}:{stream_name}] Restarting clean '
-                                'source restream after frozen-frame '
-                                'reconnect',
-                                flush=True,
-                            )
-                            await clean_restreamer.restart()
-                    if clean_restreamer is None:
-                        clean_restreamer = MediaSourceRestreamer(
-                            source_url=source_url,
-                            publish_url=publish_url,
-                        )
-                        print(
-                            f'[{site}:{stream_name}] Starting clean source '
-                            f'restream: {publish_url}',
-                            flush=True,
-                        )
-                        await clean_restreamer.start()
-                    await asyncio.sleep(frame_interval)
-                    continue
-
-                if clean_publisher is None:
-                    clean_publisher = _media_publisher(
-                        publish_url,
-                        rendition=rendition,
-                    )
-                    print(
-                        f'[{site}:{stream_name}] Starting {rendition} clean '
-                        f'stream: '
-                        f'{publish_url}',
-                        flush=True,
-                    )
-
-                async with latest_frame.lock:
-                    frame = latest_frame.frame
-                if frame is not None:
-                    await clean_publisher.publish(
-                        frame,
-                    )
+                clean_publisher = _ensure_clean_publisher(
+                    clean_publisher,
+                    publish_url,
+                    rendition,
+                    site,
+                    stream_name,
+                )
+                await clean_publisher.publish(frame)
             except Exception as exc:
                 print(
                     f'[{site}:{stream_name}] Clean media publish error, '
@@ -1148,10 +1186,71 @@ async def _publish_requested_clean_frames(
                 await asyncio.sleep(0.5)
             await asyncio.sleep(frame_interval)
     finally:
+        await _close_clean_media_publishers(clean_restreamer, clean_publisher)
+
+
+async def _close_clean_media_publishers(
+    clean_restreamer: MediaSourceRestreamer | None,
+    clean_publisher: MediaStreamPublisher | None,
+) -> tuple[None, None]:
+    """Close clean-stream publishers and reset their local state."""
+    if clean_restreamer is not None:
+        await clean_restreamer.close()
+    if clean_publisher is not None:
+        await clean_publisher.close()
+    return None, None
+
+
+async def _ensure_clean_restreamer(
+    clean_restreamer: MediaSourceRestreamer | None,
+    source_reconnect_event: asyncio.Event | None,
+    source_url: str,
+    publish_url: str,
+    site: str,
+    stream_name: str,
+) -> MediaSourceRestreamer:
+    """Restart or start the clean source restream requested by a viewer."""
+    if source_reconnect_event is not None and source_reconnect_event.is_set():
+        source_reconnect_event.clear()
         if clean_restreamer is not None:
-            await clean_restreamer.close()
-        if clean_publisher is not None:
-            await clean_publisher.close()
+            print(
+                f'[{site}:{stream_name}] Restarting clean source restream '
+                'after capture-watchdog reconnect',
+                flush=True,
+            )
+            await clean_restreamer.restart()
+    if clean_restreamer is not None:
+        return clean_restreamer
+    restreamer = MediaSourceRestreamer(
+        source_url=source_url,
+        publish_url=publish_url,
+    )
+    print(
+        f'[{site}:{stream_name}] Starting clean source restream: '
+        f'{publish_url}',
+        flush=True,
+    )
+    await restreamer.start()
+    return restreamer
+
+
+def _ensure_clean_publisher(
+    clean_publisher: MediaStreamPublisher | None,
+    publish_url: str,
+    rendition: str,
+    site: str,
+    stream_name: str,
+) -> MediaStreamPublisher:
+    """Create a requested clean-frame publisher once per media path."""
+    if clean_publisher is not None:
+        return clean_publisher
+    publisher = _media_publisher(publish_url, rendition=rendition)
+    print(
+        f'[{site}:{stream_name}] Starting {rendition} clean stream: '
+        f'{publish_url}',
+        flush=True,
+    )
+    return publisher
 
 
 async def _clean_stream_requested(
@@ -1166,7 +1265,7 @@ async def _clean_stream_requested(
 
 def _stream_metadata_key(site: str, stream_name: str) -> str:
     """Build the compact live metadata stream key."""
-    return f'stream_metadata:{Utils.encode(site)}|{Utils.encode(stream_name)}'
+    return build_metadata_key(site, stream_name)
 
 
 def _warning_event_throttle_seconds() -> int:
@@ -1228,10 +1327,10 @@ async def _store_media_server_viewer_data(
 
 def _build_media_publish_frame(
     frame: np.ndarray,
-    warnings: object,
-    cone_polys: object,
-    pole_polys: object,
-    track_data: object,
+    warnings: WarningPayload,
+    cone_polys: PolygonCollection,
+    pole_polys: PolygonCollection,
+    track_data: TrackingDetections,
     label_language: str = 'en',
 ) -> np.ndarray:
     """Return the annotated frame published to MediaMTX."""

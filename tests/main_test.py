@@ -15,6 +15,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
+from unittest.mock import ANY
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -601,10 +602,10 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         yolo_detector.close.assert_not_called()
         streaming_capture.release_resources.assert_not_called()
 
-    async def test_record_detection_keeps_live_warning_outside_working_hours(
+    async def test_record_detection_suppresses_live_warning_outside_working_hours(
         self,
     ) -> None:
-        """Off-shift detections remain visible without creating an alert."""
+        """Off-shift detections do not reach SSE or notification clients."""
         latest_detection = processor._LatestDetectionState()
         warning = {'warning_no_hardhat': {'count': 1}}
         danger_detector = MagicMock()
@@ -645,7 +646,56 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         async with latest_detection.lock:
             self.assertEqual(latest_detection.warnings, warning)
-        store_viewer_data.assert_awaited_once()
+        store_viewer_data.assert_not_awaited()
+        send_violation.assert_not_awaited()
+
+    async def test_record_detection_publishes_live_warning_during_working_hours(
+        self,
+    ) -> None:
+        """Working-time warnings remain available to SSE clients."""
+        latest_detection = processor._LatestDetectionState()
+        warning = {'warning_no_hardhat': {'count': 1}}
+        danger_detector = MagicMock()
+        danger_detector.detect_danger.return_value = (warning, [], [])
+
+        with (
+            patch(
+                'src.stream_processor.Utils.should_notify',
+                return_value=False,
+            ),
+            patch(
+                'src.stream_processor._store_media_server_viewer_data',
+                new_callable=AsyncMock,
+            ) as store_viewer_data,
+            patch(
+                'src.stream_processor._send_violation_and_notification',
+                new_callable=AsyncMock,
+            ) as send_violation,
+        ):
+            await processor._record_detection_result(
+                frame=np.zeros((4, 4, 3), dtype=np.uint8),
+                timestamp=1_640_995_200.0,
+                sequence=1,
+                track_data=[],
+                danger_detector=danger_detector,
+                fcm_sender=AsyncMock(),
+                violation_sender=AsyncMock(),
+                redis_manager=MagicMock(),
+                latest_detection=latest_detection,
+                site='SiteA',
+                stream_name='Cam1',
+                work_start_hour=0,
+                work_end_hour=24,
+                metadata_key='stream_metadata:site|cam',
+                last_notification_time=0,
+                last_warning_event_time=None,
+            )
+
+        store_viewer_data.assert_awaited_once_with(
+            redis_manager=ANY,
+            metadata_key='stream_metadata:site|cam',
+            warnings=warning,
+        )
         send_violation.assert_not_awaited()
 
     async def test_detect_latest_frames_publishes_detected_frame(self) -> None:
@@ -3327,6 +3377,95 @@ def test_clean_restreamer_restarts_after_frozen_source_signal() -> None:
         restreamer.start.assert_awaited_once()
         restreamer.restart.assert_awaited_once()
         restreamer.close.assert_awaited_once()
+
+    asyncio.run(run_case())
+
+
+def test_capture_reconnect_invalidates_shared_frames() -> None:
+    """A source outage removes stale video and forwards a clean restart."""
+    async def run_case() -> None:
+        reconnect_event = asyncio.Event()
+        clean_reconnect_event = asyncio.Event()
+        latest_frame = processor._LatestFrameState(
+            frame=np.zeros((2, 2, 3), dtype=np.uint8),
+            timestamp=10.0,
+            sequence=4,
+            generation=2,
+        )
+        latest_detection = processor._LatestDetectionState(
+            frame=np.ones((2, 2, 3), dtype=np.uint8),
+            timestamp=10.0,
+            sequence=4,
+            warnings={'warning': {'count': 1}},
+            track_data=[[1, 1, 2, 2, 0.9, 0]],
+        )
+        task = asyncio.create_task(
+            processor._synchronise_capture_reconnects(
+                reconnect_event=reconnect_event,
+                clean_reconnect_event=clean_reconnect_event,
+                latest_frame=latest_frame,
+                latest_detection=latest_detection,
+                stop_event=asyncio.Event(),
+            ),
+        )
+        reconnect_event.set()
+        await asyncio.wait_for(clean_reconnect_event.wait(), timeout=1.0)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+        assert latest_frame.frame is None
+        assert latest_frame.timestamp == 0.0
+        assert latest_frame.sequence == 5
+        assert latest_frame.generation == 3
+        assert latest_detection.frame is None
+        assert latest_detection.warnings == {}
+        assert latest_detection.track_data is None
+
+    asyncio.run(run_case())
+
+
+def test_detection_result_is_discarded_across_reconnect() -> None:
+    """An in-flight result from the old decoder generation is never used."""
+    async def run_case() -> None:
+        latest_frame = processor._LatestFrameState(
+            frame=np.zeros((2, 2, 3), dtype=np.uint8),
+            timestamp=10.0,
+            sequence=1,
+        )
+        latest_frame.event.set()
+        stop_event = asyncio.Event()
+        yolo_detector = AsyncMock()
+
+        async def reconnect_during_detection(
+            _frame: np.ndarray,
+        ) -> tuple[list[object], list[object]]:
+            async with latest_frame.lock:
+                latest_frame.frame = None
+                latest_frame.generation += 1
+            stop_event.set()
+            return [], []
+
+        yolo_detector.generate_detections.side_effect = (
+            reconnect_during_detection
+        )
+        danger_detector = MagicMock()
+        await processor._detect_latest_frames(
+            latest_frame=latest_frame,
+            yolo_detector=yolo_detector,
+            danger_detector=danger_detector,
+            fcm_sender=AsyncMock(),
+            violation_sender=AsyncMock(),
+            redis_manager=MagicMock(),
+            latest_detection=processor._LatestDetectionState(),
+            site='SiteA',
+            stream_name='Cam1',
+            work_start_hour=0,
+            work_end_hour=24,
+            metadata_key='stream_metadata:site|cam',
+            stop_event=stop_event,
+        )
+
+        danger_detector.detect_danger.assert_not_called()
 
     asyncio.run(run_case())
 

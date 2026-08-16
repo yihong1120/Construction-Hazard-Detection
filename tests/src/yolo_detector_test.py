@@ -20,7 +20,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
     detector_server: YoloDetector
     model_key: str
     output_folder: str
-    detect_with_server: bool
 
     def setUp(self) -> None:
         """Set up test environment and detector instances before each test."""
@@ -40,7 +39,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         # Verify all configuration is set correctly
         self.assertEqual(detector.model_key, self.model_key)
         self.assertEqual(detector.output_folder, self.output_folder)
-        self.assertTrue(detector.detect_with_server)
 
     async def test_generate_detections(self) -> None:
         """Shared-worker results receive a persistent remote track ID."""
@@ -59,8 +57,7 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_server_detection_requires_worker_client(self) -> None:
-        """Server detection mode fails fast without a shared worker."""
-        self.detector.detect_with_server = True
+        """Detection fails fast without a shared worker."""
         self.detector.worker_client = None
 
         with self.assertRaisesRegex(
@@ -71,24 +68,8 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
                 np.zeros((32, 32, 3), dtype=np.uint8),
             )
 
-    async def test_legacy_local_mode_delegates_to_local_detector(self) -> None:
-        """Legacy callers use the isolated local implementation."""
-        with patch(
-            'src.local_yolo_detector.LocalYoloDetector',
-        ) as local_detector:
-            local_detector.return_value.generate_detections = AsyncMock(
-                return_value=([], []),
-            )
-            detector = YoloDetector(detect_with_server=False)
-            await detector.generate_detections(
-                np.zeros((2, 2, 3), dtype=np.uint8),
-            )
-
-        local_detector.assert_called_once()
-        local_detector.return_value.generate_detections.assert_awaited_once()
-
     async def test_close_method(self) -> None:
-        """close remains a no-op compatibility hook."""
+        """close is a no-op when no worker client is attached."""
         await self.detector.close()
 
     def test_remove_overlapping_labels(self) -> None:

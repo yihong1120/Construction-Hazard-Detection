@@ -34,33 +34,7 @@ def precision_kwargs(
     enabled: bool,
     quantize: QuantizeValue | None = None,
 ) -> dict[str, PrecisionValue]:
-    """Return the supported Ultralytics precision flag for this install.
-
-    Newer Ultralytics versions renamed the inference-time ``half`` flag to
-    ``quantize``. Older versions still only accept ``half``. Checking the
-    runtime config keeps both environments working without deprecation noise.
-    """
-    try:
-        from ultralytics.cfg import DEFAULT_CFG_DICT
-    except Exception:
-        return {'half': _legacy_half_value(enabled, quantize)}
-
-    if 'quantize' in DEFAULT_CFG_DICT:
-        if quantize is not None:
-            return {'quantize': quantize}
-        return {'quantize': 16 if enabled else 32}
-    return {'half': _legacy_half_value(enabled, quantize)}
-
-
-def _legacy_half_value(
-    enabled: bool,
-    quantize: QuantizeValue | None,
-) -> bool:
-    """Map an explicit quantize request to the closest legacy half setting."""
-    if quantize is None:
-        return enabled
-
-    value = str(quantize).strip().lower()
-    if value in _FP32_VALUES:
-        return False
-    return True
+    """Return precision options for the pinned Ultralytics release."""
+    return {
+        'quantize': quantize if quantize is not None else (16 if enabled else 32),
+    }

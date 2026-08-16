@@ -101,7 +101,6 @@ class FCMSender:
         message: Warnings,
         image_path: str | None = None,
         violation_id: int | None = None,
-        deep_link: str | None = None,
     ) -> bool:
         """
         Send FCM push notification to a specific site and stream
@@ -114,10 +113,6 @@ class FCMSender:
             image_path (Optional[str]):
                 Image URL to display in the notification.
             violation_id (Optional[int]): Violation record ID.
-            deep_link (Optional[str]): App route shared with the in-app
-                notification center. If omitted, the notification API derives
-                a default route from `violation_id`.
-
         Returns:
             bool:
                 True if the API call and push notification succeed,
@@ -136,7 +131,17 @@ class FCMSender:
             'body': message,
             'image_path': image_path,
             'violation_id': violation_id,
-            'deep_link': deep_link,
+            'type': 'violation',
+            'title': 'Safety violation alert',
+            'deep_link': (
+                f'/violations?violation_id={violation_id}'
+                if violation_id is not None else '/violations'
+            ),
+            'metadata': {
+                'site': site,
+                'stream_name': stream_name,
+                'violation_id': violation_id,
+            },
         }
         endpoint: str = f"{self.api_url}/send_fcm_notification"
 
@@ -186,6 +191,13 @@ class FCMSender:
                     return False
 
             except httpx.HTTPStatusError as exc:
+                if 400 <= exc.response.status_code < 500:
+                    # Schema and authorisation rejections cannot succeed later.
+                    self.logger.error(
+                        'FCM API rejected the notification payload: %d',
+                        exc.response.status_code,
+                    )
+                    return False
                 self.logger.error(
                     'API responded with error status (attempt %d): %d',
                     attempt + 1,

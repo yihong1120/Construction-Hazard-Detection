@@ -84,34 +84,22 @@ class DangerDetector:
         ):
             self.check_cone_restricted_area(datas, warnings, cone_polygons_raw)
 
-        detect_safety = (
-            not self.detection_items
-            or self.detection_items.get(
-                'detect_no_safety_vest_or_helmet', False,
-            )
+        detect_safety = self._feature_enabled(
+            'detect_no_safety_vest_or_helmet',
         )
-        detect_proximity = (
-            not self.detection_items
-            or self.detection_items.get(
-                'detect_near_machinery_or_vehicle', False,
-            )
+        detect_proximity = self._feature_enabled(
+            'detect_near_machinery_or_vehicle',
         )
-
-        persons: list[list[float]] = []
-        machinery_vehicles: list[list[float]] = []
-        count_no_hardhat = 0
-        count_no_vest = 0
-        if detect_safety or detect_proximity:
-            for detection in datas:
-                class_id = detection[5]
-                if class_id == 5:
-                    persons.append(detection)
-                elif class_id == 8 or class_id == 10:
-                    machinery_vehicles.append(detection)
-                elif detect_safety and class_id == 2:
-                    count_no_hardhat += 1
-                elif detect_safety and class_id == 4:
-                    count_no_vest += 1
+        (
+            persons,
+            machinery_vehicles,
+            count_no_hardhat,
+            count_no_vest,
+        ) = self._collect_safety_detections(
+            datas,
+            detect_safety,
+            detect_proximity,
+        )
 
         # (C) detect_no_safety_vest_or_helmet
         if detect_safety:
@@ -154,6 +142,39 @@ class DangerDetector:
         pole_polygons_coords = Utils.polygons_to_coords(pole_polygons_raw)
 
         return warnings, cone_polygons_coords, pole_polygons_coords
+
+    def _feature_enabled(self, feature: str) -> bool:
+        """Return whether a configured safety check should run."""
+        return not self.detection_items or self.detection_items.get(
+            feature,
+            False,
+        )
+
+    @staticmethod
+    def _collect_safety_detections(
+        datas: list[list[float]],
+        detect_safety: bool,
+        detect_proximity: bool,
+    ) -> tuple[list[list[float]], list[list[float]], int, int]:
+        """Partition detections once for safety and proximity checks."""
+        persons: list[list[float]] = []
+        machinery_vehicles: list[list[float]] = []
+        count_no_hardhat = 0
+        count_no_vest = 0
+        if not (detect_safety or detect_proximity):
+            return persons, machinery_vehicles, count_no_hardhat, count_no_vest
+
+        for detection in datas:
+            class_id = detection[5]
+            if class_id == 5:
+                persons.append(detection)
+            elif class_id in {8, 10}:
+                machinery_vehicles.append(detection)
+            elif detect_safety and class_id == 2:
+                count_no_hardhat += 1
+            elif detect_safety and class_id == 4:
+                count_no_vest += 1
+        return persons, machinery_vehicles, count_no_hardhat, count_no_vest
 
     # Checks if personnel enter the controlled area formed by the safety cone
     def check_cone_restricted_area(
@@ -256,35 +277,11 @@ class DangerDetector:
 
         spatial_index = self._build_spatial_index(machinery_vehicles)
         for person in persons:
-            is_driver = False
-            close_to_machinery = False
-            close_to_vehicle = False
-            for mv in self._nearby_machinery_vehicles(person, spatial_index):
-                if self._is_driver_detection(person, mv):
-                    is_driver = True
-                    break
-
-                class_id = mv[5]
-                if (
-                    class_id == 8
-                    and not close_to_machinery
-                    and self._is_dangerously_close_detection(
-                        person, mv, 'machinery',
-                    )
-                ):
-                    close_to_machinery = True
-                elif (
-                    class_id == 10
-                    and not close_to_vehicle
-                    and self._is_dangerously_close_detection(
-                        person, mv, 'vehicle',
-                    )
-                ):
-                    close_to_vehicle = True
-
+            is_driver, close_to_machinery, close_to_vehicle = (
+                self._person_proximity_flags(person, spatial_index)
+            )
             if is_driver:
                 continue
-
             if close_to_machinery:
                 count_machinery += 1
                 machinery_person_bboxes.append(self._bbox(person))
@@ -307,6 +304,35 @@ class DangerDetector:
                 'person_bboxes': vehicle_person_bboxes,
                 'person_track_ids': vehicle_person_track_ids,
             }
+
+    def _person_proximity_flags(
+        self,
+        person: list[float],
+        spatial_index: _SpatialIndex,
+    ) -> tuple[bool, bool, bool]:
+        """Classify one person against nearby machinery and vehicles."""
+        close_to_machinery = False
+        close_to_vehicle = False
+        for machinery_vehicle in self._nearby_machinery_vehicles(
+            person,
+            spatial_index,
+        ):
+            if self._is_driver_detection(person, machinery_vehicle):
+                return True, False, False
+            class_id = machinery_vehicle[5]
+            if class_id == 8 and self._is_dangerously_close_detection(
+                person,
+                machinery_vehicle,
+                'machinery',
+            ):
+                close_to_machinery = True
+            elif class_id == 10 and self._is_dangerously_close_detection(
+                person,
+                machinery_vehicle,
+                'vehicle',
+            ):
+                close_to_vehicle = True
+        return False, close_to_machinery, close_to_vehicle
 
     @staticmethod
     def _append_track_id(track_ids: list[str], detection: list[float]) -> None:

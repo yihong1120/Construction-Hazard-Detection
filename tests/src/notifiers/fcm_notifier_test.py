@@ -280,6 +280,52 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         )
         mock_get_valid_token.assert_awaited_once()
         mock_post.assert_awaited_once()
+        post_call = mock_post.await_args
+        assert post_call is not None
+        self.assertEqual(
+            post_call.kwargs['json'],
+            {
+                'site': self.site,
+                'stream_name': self.stream_name,
+                'body': self.mock_message,
+                'image_path': None,
+                'violation_id': None,
+                'type': 'violation',
+                'title': 'Safety violation alert',
+                'deep_link': '/violations',
+                'metadata': {
+                    'site': self.site,
+                    'stream_name': self.stream_name,
+                    'violation_id': None,
+                },
+            },
+        )
+
+    @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
+    @patch('httpx.AsyncClient.post', new_callable=AsyncMock)
+    async def test_send_fcm_does_not_retry_invalid_payloads(
+        self: TestFCMSender,
+        mock_post: AsyncMock,
+        mock_get_valid_token: AsyncMock,
+    ) -> None:
+        """A permanent 422 response is not retried as a transient failure."""
+        mock_get_valid_token.return_value = 'valid_token'
+        response = MagicMock(status_code=422)
+        response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            'Unprocessable Content',
+            request=MagicMock(),
+            response=response,
+        )
+        mock_post.return_value = response
+
+        result = await self.sender.send_fcm_message_to_site(
+            site=self.site,
+            stream_name=self.stream_name,
+            message=self.mock_message,
+        )
+
+        self.assertFalse(result)
+        mock_post.assert_awaited_once()
 
     @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)
     @patch('httpx.AsyncClient.post', new_callable=AsyncMock)

@@ -8,12 +8,13 @@ import os
 import time
 from collections.abc import AsyncGenerator
 from typing import TypedDict
+from typing import TypeGuard
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
 
 import cv2
 import numpy as np
-import speedtest
+import speedtest  # type: ignore[import-untyped]
 import streamlink
 
 
@@ -107,7 +108,7 @@ class StreamCapture:
         )
         self.freeze_reconnect_seconds = _nonnegative_float_env(
             'STREAM_CAPTURE_FREEZE_RECONNECT_SECONDS',
-            20.0,
+            0.0,
         )
         self.freeze_sample_seconds = max(
             0.1,
@@ -120,10 +121,26 @@ class StreamCapture:
             'STREAM_CAPTURE_FREEZE_FRAME_DELTA',
             0.2,
         )
+        self.timestamp_reconnect_seconds = _nonnegative_float_env(
+            'STREAM_CAPTURE_TIMESTAMP_RECONNECT_SECONDS',
+            30.0,
+        )
+        self.timestamp_sample_seconds = max(
+            0.1,
+            _nonnegative_float_env(
+                'STREAM_CAPTURE_TIMESTAMP_SAMPLE_SECONDS',
+                1.0,
+            ),
+        )
         self.reconnect_event = asyncio.Event()
+        self._reconnecting = False
         self._freeze_last_sample: np.ndarray | None = None
         self._freeze_last_sample_at: float | None = None
         self._freeze_last_motion_at: float | None = None
+        self._timestamp_last_value_ms: float | None = None
+        self._timestamp_last_sample_at: float | None = None
+        self._timestamp_last_progress_at: float | None = None
+        self._source_timestamp_available = False
 
     async def initialise_stream(self, stream_url: str) -> None:
         """
@@ -143,28 +160,125 @@ class StreamCapture:
     @staticmethod
     def _create_capture(stream_url: str) -> cv2.VideoCapture:
         """Create a configured OpenCV capture object."""
-        cap = cv2.VideoCapture(stream_url)
-        cap.set(
-            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
-            float(os.getenv('STREAM_CAPTURE_OPEN_TIMEOUT_MS', '5000.0')),
-        )
-        cap.set(
-            cv2.CAP_PROP_READ_TIMEOUT_MSEC,
-            float(os.getenv('STREAM_CAPTURE_READ_TIMEOUT_MS', '5000.0')),
+        # OpenCV's FFmpeg open/read timeouts are open-only properties. Passing
+        # them after VideoCapture() has connected leaves the backend's 30-second
+        # defaults active during a source outage.
+        cap = cv2.VideoCapture(
+            stream_url,
+            cv2.CAP_FFMPEG,
+            [
+                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+                int(
+                    float(
+                        os.getenv(
+                            'STREAM_CAPTURE_OPEN_TIMEOUT_MS',
+                            '5000',
+                        ),
+                    ),
+                ),
+                cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+                int(
+                    float(
+                        os.getenv(
+                            'STREAM_CAPTURE_READ_TIMEOUT_MS',
+                            '5000',
+                        ),
+                    ),
+                ),
+            ],
         )
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return cap
 
     def _reset_frozen_frame_watchdog(self) -> None:
-        """Forget samples from the previous RTSP connection."""
+        """Forget visual and timestamp samples from the prior connection."""
         self._freeze_last_sample = None
         self._freeze_last_sample_at = None
         self._freeze_last_motion_at = None
+        self._timestamp_last_value_ms = None
+        self._timestamp_last_sample_at = None
+        self._timestamp_last_progress_at = None
+        self._source_timestamp_available = False
+
+    def _begin_reconnect(self) -> None:
+        """Broadcast one reconnect transition for the current source outage."""
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        self.reconnect_event.set()
+
+    def _mark_connected(self) -> None:
+        """Mark the source healthy after a usable decoded frame arrives."""
+        self._reconnecting = False
+
+    @staticmethod
+    def _is_usable_frame(frame: object) -> TypeGuard[np.ndarray]:
+        """Return whether a decoded frame has a complete BGR image layout."""
+        return (
+            isinstance(frame, np.ndarray)
+            and frame.dtype == np.uint8
+            and frame.ndim == 3
+            and frame.shape[0] > 0
+            and frame.shape[1] > 0
+            and frame.shape[2] == 3
+            and frame.size == frame.shape[0] * frame.shape[1] * 3
+        )
+
+    def _should_reconnect_after_stalled_source_timestamp(self) -> bool:
+        """Reconnect only when a usable source timestamp stops advancing.
+
+        A decoded frame can be visually static while the camera and RTSP
+        transport are healthy.  Source timestamps distinguish that case from
+        a decoder that repeatedly returns a stale frame.  Some OpenCV/RTSP
+        backends do not expose timestamps; those sources intentionally skip
+        this watchdog instead of guessing from scene motion.
+        """
+        cap = self.cap
+        if self.timestamp_reconnect_seconds <= 0 or cap is None:
+            return False
+        now = time.monotonic()
+        if (
+            self._timestamp_last_sample_at is not None
+            and now - self._timestamp_last_sample_at
+            < self.timestamp_sample_seconds
+        ):
+            return False
+        try:
+            timestamp_ms = float(cap.get(cv2.CAP_PROP_POS_MSEC))
+        except (AttributeError, TypeError, ValueError, cv2.error):
+            self._source_timestamp_available = False
+            self._timestamp_last_value_ms = None
+            self._timestamp_last_sample_at = None
+            self._timestamp_last_progress_at = None
+            return False
+        if not np.isfinite(timestamp_ms) or timestamp_ms <= 0:
+            self._source_timestamp_available = False
+            self._timestamp_last_value_ms = None
+            self._timestamp_last_sample_at = None
+            self._timestamp_last_progress_at = None
+            return False
+
+        self._source_timestamp_available = True
+        previous_timestamp_ms = self._timestamp_last_value_ms
+        self._timestamp_last_value_ms = timestamp_ms
+        self._timestamp_last_sample_at = now
+        if (
+            previous_timestamp_ms is None
+            or timestamp_ms != previous_timestamp_ms
+        ):
+            self._timestamp_last_progress_at = now
+            return False
+        return (
+            self._timestamp_last_progress_at is not None
+            and now - self._timestamp_last_progress_at
+            >= self.timestamp_reconnect_seconds
+        )
 
     def _should_reconnect_after_frozen_frame(self, frame: np.ndarray) -> bool:
         """Return whether a valid-but-frozen source frame needs a reconnect."""
         if (
             self.freeze_reconnect_seconds <= 0
+            or self._source_timestamp_available
             or not isinstance(frame, np.ndarray)
             or frame.ndim < 2
         ):
@@ -189,7 +303,12 @@ class StreamCapture:
         if previous_sample is None or previous_sample.shape != sample.shape:
             self._freeze_last_motion_at = now
             return False
-        delta = float(np.mean(cv2.absdiff(sample, previous_sample)))
+        delta = float(
+            np.asarray(
+                cv2.absdiff(sample, previous_sample),
+                dtype=np.float64,
+            ).mean(),
+        )
         if delta > self.freeze_frame_delta:
             self._freeze_last_motion_at = now
             return False
@@ -231,8 +350,9 @@ class StreamCapture:
                 self.cap.read() if self.cap is not None else (False, None)
             )
 
-            if not ret or frame is None:
+            if not ret or not self._is_usable_frame(frame):
                 fail_count += 1
+                self._begin_reconnect()
                 print(
                     'Failed to read frame, trying to reinitialise stream. '
                     f"Fail count: {fail_count}, "
@@ -267,17 +387,22 @@ class StreamCapture:
                 # Mark as successfully captured
                 self.successfully_captured = True
 
-                if self._should_reconnect_after_frozen_frame(frame):
+                if (
+                    self._should_reconnect_after_stalled_source_timestamp()
+                    or self._should_reconnect_after_frozen_frame(frame)
+                ):
                     print(
-                        'Frozen source frame detected; reconnecting stream. '
+                        'Capture watchdog detected a stalled source; '
+                        'reconnecting stream. '
                         f'source={_redact_stream_url(self.stream_url)}',
                         flush=True,
                     )
-                    self.reconnect_event.set()
+                    self._begin_reconnect()
                     await self.release_resources()
                     await asyncio.sleep(self.reopen_delay)
                     await self.initialise_stream(self.stream_url)
                     continue
+                self._mark_connected()
 
             # Process the frame if the capture interval has elapsed
             current_time = datetime.datetime.now()
@@ -377,8 +502,9 @@ class StreamCapture:
             )
 
             # Handle failed frame reads
-            if not ret or frame is None:
+            if not ret or not self._is_usable_frame(frame):
                 fail_count += 1
+                self._begin_reconnect()
                 print(
                     'Failed to read frame from generic stream. '
                     f"Fail count: {fail_count}, "
@@ -415,6 +541,7 @@ class StreamCapture:
 
                 # Mark as successfully captured
                 self.successfully_captured = True
+                self._mark_connected()
 
             current_time = datetime.datetime.now()
             elapsed_time = (current_time - last_process_time).total_seconds()

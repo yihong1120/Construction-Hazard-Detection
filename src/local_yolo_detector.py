@@ -1,10 +1,3 @@
-"""Optional local YOLO and SAHI inference for interactive tools.
-
-The production stream pipeline uses :class:`src.yolo_detector.YoloDetector`,
-which submits frames to the shared worker.  This module intentionally owns
-the heavyweight local model loading used by the MCP single-frame tool and the
-desktop preview CLI.
-"""
 from __future__ import annotations
 
 import argparse
@@ -157,8 +150,27 @@ class LocalYoloDetector:
                 for row in sahi_detections
             ]
 
+        results = self._track_ultralytics(frame)
+        if results is None:
+            self._cleanup_prev_centers()
+            return [], []
+
+        boxes = results[0].boxes
+        if boxes is None or len(boxes) == 0:
+            self._cleanup_prev_centers()
+            return [], []
+
+        detections, tracked = self._build_tracking_detections(
+            self._ultralytics_box_rows(boxes),
+        )
+
+        self._cleanup_prev_centers()
+        return detections, tracked
+
+    def _track_ultralytics(self, frame: np.ndarray) -> Any | None:
+        """Track a frame and release the local model after a CUDA OOM."""
         try:
-            results = self.ultralytics_model.track(
+            return self.ultralytics_model.track(
                 frame,
                 persist=True,
                 verbose=False,
@@ -175,34 +187,36 @@ class LocalYoloDetector:
                 'Returning empty detections.',
             )
             self._release_local_model()
-            self._cleanup_prev_centers()
-            return [], []
+            return None
 
-        boxes = results[0].boxes
-        if boxes is None or len(boxes) == 0:
-            self._cleanup_prev_centers()
-            return [], []
-
+    @staticmethod
+    def _ultralytics_box_rows(boxes: Any) -> list[list[float]]:
+        """Normalize Ultralytics box representations into row data."""
         box_data = getattr(boxes, 'data', None)
         if isinstance(box_data, (np.ndarray, torch.Tensor)):
             if hasattr(box_data, 'cpu'):
                 box_data = box_data.cpu()
-            box_rows = box_data.tolist()
-        else:
-            xyxy_rows = boxes.xyxy.tolist()
-            confidences = boxes.conf.tolist()
-            class_ids = boxes.cls.tolist()
-            track_ids = None if boxes.id is None else boxes.id.tolist()
-            box_rows = [
-                [
-                    *coordinates,
-                    *([] if track_ids is None else [track_ids[index]]),
-                    confidences[index],
-                    class_ids[index],
-                ]
-                for index, coordinates in enumerate(xyxy_rows)
-            ]
+            return box_data.tolist()
 
+        xyxy_rows = boxes.xyxy.tolist()
+        confidences = boxes.conf.tolist()
+        class_ids = boxes.cls.tolist()
+        track_ids = None if boxes.id is None else boxes.id.tolist()
+        return [
+            [
+                *coordinates,
+                *([] if track_ids is None else [track_ids[index]]),
+                confidences[index],
+                class_ids[index],
+            ]
+            for index, coordinates in enumerate(xyxy_rows)
+        ]
+
+    def _build_tracking_detections(
+        self,
+        box_rows: list[list[float]],
+    ) -> tuple[list[list[float]], list[list[float]]]:
+        """Build detector and tracker rows while updating track movement."""
         detections: list[list[float]] = []
         tracked: list[list[float]] = []
         for row in box_rows:
@@ -210,28 +224,27 @@ class LocalYoloDetector:
             confidence = float(row[-2])
             class_id = int(row[-1])
             track_id = int(row[-3]) if len(row) == 7 else -1
-            is_moving = 0
-
-            if track_id != -1:
-                center = (
-                    (xyxy[0] + xyxy[2]) * 0.5,
-                    (xyxy[1] + xyxy[3]) * 0.5,
-                )
-                previous = self.prev_centers.get(track_id)
-                if previous:
-                    distance_sq = (
-                        (center[0] - previous[0]) ** 2
-                        + (center[1] - previous[1]) ** 2
-                    )
-                    is_moving = int(distance_sq > self.movement_thr_sq)
-                self.prev_centers[track_id] = center
-                self.prev_centers_last_seen[track_id] = self.frame_count
-
+            is_moving = self._track_is_moving(track_id, xyxy)
             detections.append(xyxy + [confidence, class_id])
             tracked.append(xyxy + [confidence, class_id, track_id, is_moving])
-
-        self._cleanup_prev_centers()
         return detections, tracked
+
+    def _track_is_moving(self, track_id: int, xyxy: list[float]) -> int:
+        """Update a tracked object's centre and return its movement state."""
+        if track_id == -1:
+            return 0
+        center = ((xyxy[0] + xyxy[2]) * 0.5, (xyxy[1] + xyxy[3]) * 0.5)
+        previous = self.prev_centers.get(track_id)
+        is_moving = 0
+        if previous:
+            distance_sq = (
+                (center[0] - previous[0]) ** 2
+                + (center[1] - previous[1]) ** 2
+            )
+            is_moving = int(distance_sq > self.movement_thr_sq)
+        self.prev_centers[track_id] = center
+        self.prev_centers_last_seen[track_id] = self.frame_count
+        return is_moving
 
     @staticmethod
     def _is_cuda_oom(exc: Exception) -> bool:

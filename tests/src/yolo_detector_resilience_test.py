@@ -50,49 +50,9 @@ class TestYoloDetectorResilience(unittest.TestCase):
         rows = [[1, 2, 3, 4, 0.9, 1]]
         self.assertIs(self.detector._without_indices(rows, set()), rows)
 
-    def test_local_detection_requires_compatibility_detector(self) -> None:
-        """Server-mode callers receive an actionable local-inference error."""
-        with self.assertRaisesRegex(RuntimeError, 'Local inference'):
-            import asyncio
-
-            asyncio.run(
-                self.detector._detect_local(
-                    np.zeros((2, 2, 3), dtype=np.uint8),
-                ),
-            )
-
-    def test_local_compatibility_close_and_main_delegate(self) -> None:
-        """Test local detector compatibility and preview CLI delegation."""
-        local_detector = ModuleType('src.local_yolo_detector')
-        setattr(local_detector, 'LocalYoloDetector', lambda **_kwargs: None)
-        setattr(local_detector, 'main', AsyncMock())
-        local = SimpleNamespace(close=AsyncMock())
-        self.detector._local_detector = local
-
+    def test_tracking_and_worker_close_paths(self) -> None:
+        """Tracking state stays consistent and worker clients close."""
         import asyncio
-
-        asyncio.run(self.detector.close())
-        local.close.assert_awaited_once()
-        with patch.dict(
-            sys.modules,
-            {'src.local_yolo_detector': local_detector},
-        ):
-            asyncio.run(detector_module.main())
-        getattr(local_detector, 'main').assert_awaited_once()
-
-    def test_local_delegation_tracking_and_worker_close_paths(self) -> None:
-        """Compatibility calls delegate cleanly and worker clients close."""
-        import asyncio
-
-        local = SimpleNamespace(
-            _detect_local=AsyncMock(return_value=[[1, 2, 3, 4, 0.9, 1]]),
-        )
-        self.detector._local_detector = local
-        assert asyncio.run(
-            self.detector._detect_local(np.zeros((2, 2, 3), dtype=np.uint8)),
-        ) == [[1, 2, 3, 4, 0.9, 1]]
-
-        self.detector._local_detector = None
         self.assertEqual(self.detector.frame_count, 0)
         self.detector.track_detections([])
         self.assertEqual(self.detector.frame_count, 1)

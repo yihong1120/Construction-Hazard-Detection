@@ -195,35 +195,60 @@ class MediaStreamPublisher:
         stderr_task = self._stderr_task
         self._stderr_task = None
         if process is None:
-            if (
-                stderr_task is not None
-                and stderr_task is not asyncio.current_task()
-            ):
-                stderr_task.cancel()
+            self._cancel_detached_stderr_task(stderr_task)
             return
-        if process.stdin is not None and not process.stdin.is_closing():
-            try:
-                process.stdin.close()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-        if process.returncode is None:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+        self._close_process_stdin(process)
+        await self._terminate_process(process)
+        await self._await_stderr_task(stderr_task)
+        self._release_nvenc_session()
+
+    @staticmethod
+    def _cancel_detached_stderr_task(
+        stderr_task: _CancellableTask | None,
+    ) -> None:
+        """Cancel a stderr reader when its ffmpeg process is already gone."""
         if (
             stderr_task is not None
             and stderr_task is not asyncio.current_task()
         ):
-            if not stderr_task.done():
-                stderr_task.cancel()
-            try:
-                await stderr_task
-            except asyncio.CancelledError:
-                pass
-        self._release_nvenc_session()
+            stderr_task.cancel()
+
+    @staticmethod
+    def _close_process_stdin(process: _FfmpegProcess) -> None:
+        """Close ffmpeg stdin without surfacing a completed-pipe error."""
+        stdin = process.stdin
+        if stdin is None or stdin.is_closing():
+            return
+        try:
+            stdin.close()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    @staticmethod
+    async def _terminate_process(process: _FfmpegProcess) -> None:
+        """Terminate ffmpeg, escalating after its graceful shutdown timeout."""
+        if process.returncode is not None:
+            return
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+
+    @staticmethod
+    async def _await_stderr_task(
+        stderr_task: _CancellableTask | None,
+    ) -> None:
+        """Stop and await a stderr reader owned by a closing process."""
+        if stderr_task is None or stderr_task is asyncio.current_task():
+            return
+        if not stderr_task.done():
+            stderr_task.cancel()
+        try:
+            await stderr_task
+        except asyncio.CancelledError:
+            pass
 
     def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
         """Normalise size and dimensions before sending to ffmpeg."""
@@ -359,37 +384,15 @@ class MediaStreamPublisher:
             while True:
                 process = self._process
                 latest_frame = self._latest_frame
-                if process is None or process.stdin is None:
+                if not self._can_write_to_process(process):
                     self._started = False
                     return
-                if process.returncode is not None:
-                    self._started = False
-                    return
+                assert process is not None
                 if latest_frame is not None:
-                    try:
-                        payload = memoryview(latest_frame).cast('B')
-                        transport = getattr(process.stdin, 'transport', None)
-                        if transport is not None:
-                            transport.set_write_buffer_limits(
-                                high=len(payload) * 2,
-                                low=len(payload),
-                            )
-                            if (
-                                transport.get_write_buffer_size()
-                                > len(payload)
-                            ):
-                                await asyncio.sleep(frame_interval)
-                                continue
-                        process.stdin.write(payload)
-                        await asyncio.wait_for(
-                            process.stdin.drain(),
-                            timeout=max(1.0, frame_interval * 3),
-                        )
-                    except (
-                        asyncio.TimeoutError,
-                        BrokenPipeError,
-                        ConnectionResetError,
-                        RuntimeError,
+                    if not await self._write_latest_frame(
+                        process,
+                        latest_frame,
+                        frame_interval,
                     ):
                         await self._stop_process()
                         self._started = False
@@ -403,6 +406,50 @@ class MediaStreamPublisher:
                 )
         except asyncio.CancelledError:
             raise
+
+    @staticmethod
+    def _can_write_to_process(process: _FfmpegProcess | None) -> bool:
+        """Return whether an ffmpeg process can accept a frame."""
+        return (
+            process is not None
+            and process.stdin is not None
+            and process.returncode is None
+        )
+
+    @staticmethod
+    async def _write_latest_frame(
+        process: _FfmpegProcess,
+        frame: np.ndarray,
+        frame_interval: float,
+    ) -> bool:
+        """Write one latest frame while applying a bounded pipe backlog."""
+        stdin = process.stdin
+        if stdin is None:
+            return False
+        try:
+            payload = memoryview(frame).cast('B')
+            transport = getattr(stdin, 'transport', None)
+            if transport is not None:
+                transport.set_write_buffer_limits(
+                    high=len(payload) * 2,
+                    low=len(payload),
+                )
+                if transport.get_write_buffer_size() > len(payload):
+                    await asyncio.sleep(frame_interval)
+                    return True
+            stdin.write(payload)
+            await asyncio.wait_for(
+                stdin.drain(),
+                timeout=max(1.0, frame_interval * 3),
+            )
+        except (
+            asyncio.TimeoutError,
+            BrokenPipeError,
+            ConnectionResetError,
+            RuntimeError,
+        ):
+            return False
+        return True
 
     def _build_ffmpeg_command(
         self,

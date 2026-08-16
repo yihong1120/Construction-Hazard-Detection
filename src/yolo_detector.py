@@ -23,21 +23,13 @@ def _linear_sum_assignment() -> Any:
 
 
 class YoloDetector:
-    """Submit production frames to a shared worker and track its results.
-
-    Passing `detect_with_server=False` remains a compatibility bridge for
-    external callers. It lazily delegates to `LocalYoloDetector`, keeping
-    Ultralytics and SAHI out of the production stream process.
-    """
+    """Submit production frames to a shared worker and track its results."""
 
     def __init__(
         self,
         model_key: str = 'yolo26n',
         output_folder: str | None = None,
-        detect_with_server: bool = True,
-        use_ultralytics: bool = True,
         movement_thr: float = 40.0,
-        fps: int = 1,
         max_id_keep: int = 10,
         remote_tracker: str = 'centroid',
         remote_cost_threshold: float = 0.7,
@@ -46,7 +38,6 @@ class YoloDetector:
         """Initialise shared-worker inference and per-camera tracking state."""
         self.model_key = model_key
         self.output_folder = output_folder
-        self.detect_with_server = detect_with_server
         self.worker_client = worker_client
         self.movement_thr = movement_thr
         self.movement_thr_sq = movement_thr * movement_thr
@@ -56,37 +47,12 @@ class YoloDetector:
         self.remote_cost_threshold = remote_cost_threshold
         self.remote_tracks: dict[int, dict] = {}
         self.next_remote_id = 0
-        self._local_detector: Any | None = None
-
-        if not detect_with_server:
-            from src.local_yolo_detector import LocalYoloDetector
-
-            self._local_detector = LocalYoloDetector(
-                model_key=model_key,
-                output_folder=output_folder,
-                use_ultralytics=use_ultralytics,
-                movement_thr=movement_thr,
-                fps=fps,
-                max_id_keep=max_id_keep,
-            )
-
-    async def _detect_local(self, frame: np.ndarray) -> list[list[float]]:
-        """Delegate legacy local calls to the optional local detector."""
-        if self._local_detector is None:
-            raise RuntimeError(
-                'Local inference is not enabled. '
-                'Use LocalYoloDetector instead.',
-            )
-        return await self._local_detector._detect_local(frame)
 
     async def generate_detections(
         self,
         frame: np.ndarray,
     ) -> tuple[list[list[float]], list[list[float]]]:
         """Generate detections through the shared worker and track them."""
-        if self._local_detector is not None:
-            return await self._local_detector.generate_detections(frame)
-
         self.frame_count += 1
         detections = await self._detect_remote(frame)
         return detections, self._track_remote(detections)
@@ -593,13 +559,9 @@ class YoloDetector:
             self.remote_tracks.pop(tid, None)
 
     async def close(self) -> None:
-        """Release the active worker or compatibility local detector."""
-        if self._local_detector is not None:
-            await self._local_detector.close()
-            return
-        close = getattr(self.worker_client, 'close', None)
-        if close is not None:
-            await close()
+        """Release the active worker client when one is attached."""
+        if self.worker_client is not None:
+            await self.worker_client.close()
 
     def remove_overlapping_labels(
         self,
@@ -752,16 +714,3 @@ class YoloDetector:
             for i, detection in enumerate(datas)
             if i not in to_remove
         ]
-
-
-async def main() -> None:
-    """Run the optional local preview CLI for backward-compatible commands."""
-    from src.local_yolo_detector import main as local_main
-
-    await local_main()
-
-
-if __name__ == '__main__':
-    import asyncio
-
-    asyncio.run(main())
