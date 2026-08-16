@@ -195,7 +195,6 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_redis.delete.assert_awaited_once_with(
             'site_notification_users:Site',
             'site_notification_users_ready:Site',
-            'site_notification_users_lock:Site',
         )
         mock_refresh_site_cache.assert_awaited_once_with(
             'Updated Name',
@@ -251,7 +250,6 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_redis.delete.assert_any_call(
             'site_notification_users:Site',
             'site_notification_users_ready:Site',
-            'site_notification_users_lock:Site',
         )
 
     async def test_delete_site_not_found(self) -> None:

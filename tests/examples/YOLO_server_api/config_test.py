@@ -3,10 +3,11 @@ from __future__ import annotations
 import importlib
 import inspect
 import os
+import sys
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 from unittest.mock import patch
-
-import torch
 
 from examples.YOLO_server_api import config
 
@@ -233,27 +234,36 @@ class TestYoloServerConfigCoverage(unittest.TestCase):
         with patch.object(config, 'YOLO_INFERENCE_DEVICE', 'cuda:2'):
             self.assertEqual(config.get_inference_device(), 'cuda:2')
 
+        cuda_available = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True),
+        )
         with (
             patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
-            patch.object(torch.cuda, 'is_available', return_value=True),
+            patch.dict(sys.modules, {'torch': cuda_available}),
         ):
             self.assertEqual(config.get_inference_device(), 'cuda:0')
 
+        cuda_unavailable = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: False),
+        )
         with (
             patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
-            patch.object(torch.cuda, 'is_available', return_value=False),
+            patch.dict(sys.modules, {'torch': cuda_unavailable}),
         ):
             self.assertEqual(config.get_inference_device(), 'cpu')
 
     def test_inference_device_falls_back_when_cuda_probe_fails(self) -> None:
         """CUDA probe failures produce a warning and retain a CPU fallback."""
+        unavailable_cuda = SimpleNamespace(
+            cuda=SimpleNamespace(
+                is_available=Mock(
+                    side_effect=RuntimeError('CUDA probe failed'),
+                ),
+            ),
+        )
         with (
             patch.object(config, 'YOLO_INFERENCE_DEVICE', 'auto'),
-            patch.object(
-                torch.cuda,
-                'is_available',
-                side_effect=RuntimeError('CUDA probe failed'),
-            ),
+            patch.dict(sys.modules, {'torch': unavailable_cuda}),
             self.assertWarnsRegex(UserWarning, 'falling back to CPU'),
         ):
             self.assertEqual(config.get_inference_device(), 'cpu')
