@@ -9,18 +9,6 @@ from pydantic_settings import BaseSettings
 load_dotenv()
 
 
-def _postgres_async_url(database_url: str) -> str:
-    """Normalize PostgreSQL URLs to the asyncpg driver."""
-    replacements = (
-        ('postgres://', 'postgresql+asyncpg://'),
-        ('postgresql://', 'postgresql+asyncpg://'),
-    )
-    for old, new in replacements:
-        if database_url.startswith(old):
-            return database_url.replace(old, new, 1)
-    return database_url
-
-
 def _join_env_values(*names: str) -> str:
     """Return comma-separated non-empty environment values."""
     return ','.join(
@@ -189,11 +177,9 @@ class Settings(BaseSettings):
             'http://localhost:8080,http://127.0.0.1:8080'
         ),
     )
-    sqlalchemy_database_uri: str = _postgres_async_url(
-        os.getenv(
-            'DATABASE_URL',
-            'postgresql+asyncpg://user:password@localhost/dbname',
-        ),
+    sqlalchemy_database_uri: str = os.getenv(
+        'DATABASE_URL',
+        'postgresql+asyncpg://user:password@localhost/dbname',
     )
     sqlalchemy_track_modifications: bool = False
 

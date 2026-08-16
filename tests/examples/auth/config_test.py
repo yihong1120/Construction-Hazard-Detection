@@ -5,7 +5,6 @@ import unittest
 from unittest import mock
 
 from examples.auth.config import _env_bool
-from examples.auth.config import _postgres_async_url
 from examples.auth.config import Settings
 
 
@@ -63,19 +62,10 @@ class TestSettings(unittest.TestCase):
         # correctly loaded.
         self.assertFalse(settings.sqlalchemy_track_modifications)
 
-    def test_configuration_helpers_normalise_urls_and_missing_booleans(
+    def test_configuration_boolean_helper(
         self,
     ) -> None:
-        """Low-level settings helpers keep legacy URLs and defaults
-        predictable."""
-        self.assertEqual(
-            _postgres_async_url('postgres://user:password@host/database'),
-            'postgresql+asyncpg://user:password@host/database',
-        )
-        self.assertEqual(
-            _postgres_async_url('sqlite+aiosqlite:///application.db'),
-            'sqlite+aiosqlite:///application.db',
-        )
+        """Boolean settings retain their documented parsing behaviour."""
         with mock.patch.dict(os.environ, {}, clear=False):
             self.assertTrue(_env_bool('MISSING_BOOLEAN_SWITCH', True))
         with mock.patch.dict(

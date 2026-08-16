@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import time
 import unittest
 from collections.abc import Set as AbstractSet
 from datetime import timedelta
@@ -28,19 +26,39 @@ from examples.auth.session_store import renew_media_session
 from examples.auth.session_store import touch_auth_session
 from examples.bff.proxy import resolve_upstream
 from examples.db_management.services import auth_services
-from examples.streaming_web.routers import _opaque_media_session_allows_path
+from examples.streaming_web.playback_service import (
+    _opaque_media_session_allows_path,
+)
+
+
+def _access_subject() -> dict[str, object]:
+    return {
+        'username': 'alice',
+        'user_id': 1,
+        'role': 'user',
+        'jti': 'access-jti',
+        'features': [],
+    }
+
+
+def _refresh_subject() -> dict[str, str]:
+    return {
+        'username': 'alice',
+        'family_id': 'refresh-family',
+        'token_id': 'refresh-token-id',
+    }
 
 
 class FakeRedis:
     def __init__(self) -> None:
-        self.data: dict[str, object] = {}
+        self.data: dict[str, bytes] = {}
         self.ttls: dict[str, int] = {}
-        self.sets: dict[str, set[str]] = {}
+        self.sets: dict[str, set[bytes]] = {}
 
-    async def get(self, key: str) -> object | None:
+    async def get(self, key: str) -> bytes | None:
         return self.data.get(key)
 
-    async def getdel(self, key: str) -> object | None:
+    async def getdel(self, key: str) -> bytes | None:
         value = self.data.get(key)
         await self.delete(key)
         return value
@@ -51,7 +69,7 @@ class FakeRedis:
     async def set(
         self,
         key: str,
-        value: object,
+        value: bytes,
         *,
         ex: int | None = None,
         nx: bool = False,
@@ -75,16 +93,16 @@ class FakeRedis:
     async def ttl(self, key: str) -> int:
         return self.ttls.get(key, -1)
 
-    async def sadd(self, key: str, *values: str) -> int:
+    async def sadd(self, key: str, *values: bytes) -> int:
         target = self.sets.setdefault(key, set())
         before = len(target)
         target.update(values)
         return len(target) - before
 
-    async def smembers(self, key: str) -> AbstractSet[str]:
+    async def smembers(self, key: str) -> AbstractSet[bytes]:
         return set(self.sets.get(key, set()))
 
-    async def srem(self, key: str, *values: str) -> int:
+    async def srem(self, key: str, *values: bytes) -> int:
         target = self.sets.get(key, set())
         before = len(target)
         target.difference_update(values)
@@ -103,11 +121,11 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         access = jwt_access.create_access_token(
-            {'username': 'alice'},
+            _access_subject(),
             timedelta(minutes=15),
         )
         refresh = jwt_refresh.create_access_token(
-            {'username': 'alice'},
+            _refresh_subject(),
             timedelta(days=30),
         )
         session_id, stored = await create_auth_session(
@@ -139,11 +157,15 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_touch_auth_session_renews_idle_ttl(self) -> None:
         """Active BFF sessions receive a full rolling idle lifetime."""
-        access = jwt_access.create_access_token({'username': 'alice'})
-        refresh = jwt_refresh.create_access_token({'username': 'alice'})
+        access = jwt_access.create_access_token(_access_subject())
+        refresh = jwt_refresh.create_access_token(_refresh_subject())
         session_id, _ = await create_auth_session(
             self.redis,  # type: ignore[arg-type]
-            {'access_token': access, 'refresh_token': refresh},
+            {
+                'access_token': access,
+                'refresh_token': refresh,
+                'feature_names': [],
+            },
             {'id': 1, 'username': 'alice'},
         )
         self.redis.ttls[auth_session_key(session_id)] = 1
@@ -162,11 +184,15 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
     async def test_parent_logout_revokes_media_without_revoking_auth_early(
         self,
     ) -> None:
-        access = jwt_access.create_access_token({'username': 'alice'})
-        refresh = jwt_refresh.create_access_token({'username': 'alice'})
+        access = jwt_access.create_access_token(_access_subject())
+        refresh = jwt_refresh.create_access_token(_refresh_subject())
         session_id, _ = await create_auth_session(
             self.redis,  # type: ignore[arg-type]
-            {'access_token': access, 'refresh_token': refresh},
+            {
+                'access_token': access,
+                'refresh_token': refresh,
+                'feature_names': [],
+            },
             {'id': 1, 'username': 'alice'},
         )
         media_token, _ = await create_media_session(
@@ -365,13 +391,14 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
             await self.redis.get(
                 auth_services._refresh_family_revoked_key(family),
             ),
-            '1',
+            b'1',
         )
 
     def test_media_scope_is_exact(self) -> None:
         session = {
             'site': 'Site A',
             'camera': 'Cam 1',
+            'cameras': ['Cam 1'],
             'profile': 'clean',
             'quality': 'detail',
         }
@@ -463,7 +490,6 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
     def test_text_crypto_and_jwt_helpers(self) -> None:
         self.assertIsNone(store._text(None))
         self.assertEqual(store._text(b'value'), 'value')
-        self.assertEqual(store._text(7), '7')
         self.assertEqual(store._digest('value'), store._digest('value'))
         with patch.dict(
             'os.environ', {'BFF_TOKEN_ENCRYPTION_KEY': 'test-key'},
@@ -476,17 +502,11 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store._jwt_exp(token), 1234)
         self.assertEqual(store._jwt_exp('not-a-jwt'), 0)
 
-    async def test_auth_session_invalid_states_and_token_save(self) -> None:
+    async def test_auth_session_token_save(self) -> None:
         self.assertIsNone(await store.get_auth_session(self.redis, None))
         session_id = 'session'
         key = store.auth_session_key(session_id)
-        self.redis.data[key] = b'not-json'
-        self.assertIsNone(await store.get_auth_session(self.redis, session_id))
-        self.redis.data[key] = b''
-        self.assertIsNone(await store.get_auth_session(self.redis, session_id))
-        self.redis.data[key] = json.dumps([])
-        self.assertIsNone(await store.get_auth_session(self.redis, session_id))
-        self.redis.data[key] = json.dumps({'revoked': True})
+        self.redis.data[key] = b'{"revoked":true}'
         self.assertIsNone(await store.get_auth_session(self.redis, session_id))
 
         _, session = await store.create_auth_session(
@@ -494,11 +514,11 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
             {
                 'access_token': 'access',
                 'refresh_token': 'refresh',
-                'feature_names': 'bad',
+                'feature_names': ['stream'],
             },
             {'id': 1, 'username': 'alice'},
         )
-        self.assertEqual(session['feature_names'], [])
+        self.assertEqual(session['feature_names'], ['stream'])
         await store.save_auth_tokens(
             self.redis,
             session_id,
@@ -557,7 +577,7 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
             language='zh-TW',
             quality='preview',
             purpose='wall',
-            demand_keys=['demand:one', 'demand:one', '', 7],
+            demand_keys=['demand:one', 'demand:one'],
         )
         self.assertEqual(session['scope'], 'batch')
         self.assertEqual(session['cameras'], ['Cam 1', 'Cam 2'])
@@ -567,37 +587,20 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
             store.MEDIA_SESSION_TTL_SECONDS,
         )
         self.assertEqual(
-            store.media_session_cameras(
-                {'camera': 'Cam 1'},
-            ),
-            ('Cam 1',),
-        )
-        self.assertEqual(
-            store.media_session_cameras(
-                {'cameras': ['Cam 1', '', 2, 'Cam 1']},
-            ),
-            ('Cam 1',),
-        )
-        self.assertEqual(
             store.media_session_demand_keys(
-                {'demand_keys': ['one', '', 3, 'one']},
+                {'demand_keys': ['one', 'one']},
             ),
             ('one',),
         )
-        self.assertEqual(store.media_session_demand_keys({}), ())
 
-    async def test_media_lookup_rejects_missing_invalid_and_expired_data(
+    async def test_media_lookup_rejects_missing_and_expired_data(
         self,
     ) -> None:
         self.assertIsNone(await store.get_media_session(self.redis, None))
         token = 'token'
         token_key = store.media_session_key(token)
-        self.redis.data[token_key] = 'bad-json'
-        self.assertIsNone(await store.get_media_session(self.redis, token))
-        self.redis.data[token_key] = json.dumps([])
-        self.assertIsNone(await store.get_media_session(self.redis, token))
-        self.redis.data[token_key] = json.dumps(
-            {'expires_at': int(time.time()) - 1},
+        self.redis.data[token_key] = (
+            b'{"expires_at":0}'
         )
         self.assertIsNone(await store.get_media_session(self.redis, token))
 
@@ -605,31 +608,13 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
             await store.get_media_session_by_id(self.redis, None),
         )
         public_key = f"{store.MEDIA_PUBLIC_PREFIX}:public"
-        self.redis.data[public_key] = b''
-        self.assertIsNone(
-            await store.get_media_session_by_id(self.redis, 'public'),
-        )
-        self.redis.data[public_key] = token_key
-        self.redis.data[token_key] = b''
-        self.assertIsNone(
-            await store.get_media_session_by_id(self.redis, 'public'),
-        )
-        self.redis.data[token_key] = 'bad-json'
-        self.assertIsNone(
-            await store.get_media_session_by_id(self.redis, 'public'),
-        )
-        self.redis.data[token_key] = json.dumps([])
-        self.assertIsNone(
-            await store.get_media_session_by_id(self.redis, 'public'),
-        )
-        self.redis.data[token_key] = json.dumps(
-            {'expires_at': int(time.time()) - 1},
-        )
+        self.redis.data[public_key] = token_key.encode('utf-8')
+        self.redis.data[token_key] = b'{"expires_at":0}'
         self.assertIsNone(
             await store.get_media_session_by_id(self.redis, 'public'),
         )
 
-    async def test_renew_media_session_rejects_bad_or_unowned_sessions(
+    async def test_renew_media_session_rejects_unowned_or_expired_sessions(
         self,
     ) -> None:
         public_id = 'public'
@@ -641,7 +626,7 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
         token_key = 'media:key'
-        self.redis.data[public_key] = token_key
+        self.redis.data[public_key] = token_key.encode('utf-8')
         self.assertIsNone(
             await store.renew_media_session(
                 self.redis, public_id, owner='parent',
@@ -649,30 +634,16 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(public_key, self.redis.data)
 
-        self.redis.data[public_key] = token_key
-        self.redis.data[token_key] = 'bad-json'
-        self.assertIsNone(
-            await store.renew_media_session(
-                self.redis, public_id, owner='parent',
-            ),
-        )
-        self.redis.data[token_key] = json.dumps([])
-        self.assertIsNone(
-            await store.renew_media_session(
-                self.redis, public_id, owner='parent',
-            ),
-        )
-        self.redis.data[token_key] = json.dumps(
-            {'parent': 'other', 'expires_at': time.time() + 10},
+        self.redis.data[public_key] = token_key.encode('utf-8')
+        self.redis.data[token_key] = (
+            b'{"parent":"other","expires_at":9999999999}'
         )
         self.assertIsNone(
             await store.renew_media_session(
                 self.redis, public_id, owner='parent',
             ),
         )
-        self.redis.data[token_key] = json.dumps(
-            {'parent': 'parent', 'expires_at': 0},
-        )
+        self.redis.data[token_key] = b'{"parent":"parent","expires_at":0}'
         self.assertIsNone(
             await store.renew_media_session(
                 self.redis, public_id, owner='parent',
@@ -687,17 +658,13 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
         token_key = 'media:key'
-        self.redis.data[public_key] = token_key
+        self.redis.data[public_key] = token_key.encode('utf-8')
         self.assertFalse(
             await store.delete_media_session(self.redis, public_id),
         )
         self.assertNotIn(public_key, self.redis.data)
-        self.redis.data[public_key] = token_key
-        self.redis.data[token_key] = 'bad-json'
-        self.assertFalse(
-            await store.delete_media_session(self.redis, public_id),
-        )
-        self.redis.data[token_key] = json.dumps({'parent': 'other'})
+        self.redis.data[public_key] = token_key.encode('utf-8')
+        self.redis.data[token_key] = b'{"parent":"other"}'
         self.assertFalse(
             await store.delete_media_session(
                 self.redis, public_id, owner='parent',
@@ -711,11 +678,9 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
 
         parent = 'parent'
         parent_key = f"{store.MEDIA_PARENT_PREFIX}:{store._digest(parent)}"
-        self.redis.sets[parent_key] = {'', 'empty', 'bad', 'valid'}
-        self.redis.data['empty'] = b''
-        self.redis.data['bad'] = 'bad-json'
-        self.redis.data['valid'] = json.dumps({'id': 'public-id'})
-        self.redis.data[f"{store.MEDIA_PUBLIC_PREFIX}:public-id"] = 'valid'
+        self.redis.sets[parent_key] = {b'valid'}
+        self.redis.data['valid'] = b'{"id":"public-id"}'
+        self.redis.data[f"{store.MEDIA_PUBLIC_PREFIX}:public-id"] = b'valid'
         await store.revoke_media_for_parent(self.redis, parent)
         self.assertNotIn(parent_key, self.redis.sets)
         self.assertNotIn(

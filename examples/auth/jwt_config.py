@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 from typing import Any
+from typing import cast
 from uuid import uuid4
 
 import jwt
@@ -14,27 +16,67 @@ from fastapi import Request
 from fastapi import status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
+from pydantic import ValidationError
 from redis.exceptions import RedisError
 
 from examples.auth.config import Settings
 from examples.auth.token_revocation import is_access_token_revoked
+from examples.db_management.schemas.auth import AccessTokenSubject
+from examples.db_management.schemas.auth import AccessTokenSubjectModel
+from examples.db_management.schemas.auth import RefreshTokenSubject
+from examples.db_management.schemas.auth import RefreshTokenSubjectModel
+
+
+def access_token_subject_from_payload(
+    payload: Mapping[str, object],
+) -> AccessTokenSubject:
+    """Return the validated, canonical access-token subject."""
+    try:
+        subject = cast(
+            AccessTokenSubject,
+            AccessTokenSubjectModel.model_validate(
+                payload['subject'],
+            ).model_dump(
+                exclude_none=True,
+            ),
+        )
+        if payload['jti'] != subject['jti']:
+            raise InvalidTokenError('Access-token JTI does not match subject')
+        return subject
+    except (KeyError, ValidationError) as exc:
+        raise InvalidTokenError('Invalid token subject') from exc
+
+
+def refresh_token_subject_from_payload(
+    payload: Mapping[str, object],
+) -> RefreshTokenSubject:
+    """Return the validated, canonical refresh-token subject."""
+    try:
+        return cast(
+            RefreshTokenSubject,
+            RefreshTokenSubjectModel.model_validate(
+                payload['subject'],
+            ).model_dump(exclude_none=True),
+        )
+    except (KeyError, ValidationError) as exc:
+        raise InvalidTokenError('Invalid token subject') from exc
 
 
 @dataclass(slots=True)
 class JwtAuthorizationCredentials:
     """Decoded JWT credentials exposed to FastAPI security dependencies."""
 
-    subject: dict[str, Any]
+    subject: AccessTokenSubject
     payload: dict[str, Any] = field(default_factory=dict)
     token: str = ''
 
     def __getitem__(self, key: str) -> Any:
         """Support existing handlers that read claims as a mapping."""
-        return self.subject[key]
+        return cast(Any, self.subject)[key]
 
     def get(self, key: str, default: Any = None) -> Any:
         """Support existing handlers that use mapping-style claim access."""
-        return self.subject.get(key, default)
+        return cast(Any, self.subject).get(key, default)
 
 
 class PyJWTBearer:
@@ -61,15 +103,30 @@ class PyJWTBearer:
 
     def create_access_token(
         self,
-        subject: dict[str, Any],
+        subject: Mapping[str, object],
         expires_delta: timedelta | None = None,
     ) -> str:
         """Create a signed JWT using PyJWT."""
         now = datetime.now(timezone.utc)
         expire = now + (expires_delta or timedelta(minutes=15))
+        subject_data: AccessTokenSubject | RefreshTokenSubject
+        if self.token_use == 'access':
+            raw_subject = dict(subject)
+            raw_subject['jti'] = raw_subject.get('jti') or str(uuid4())
+            subject_data = cast(
+                AccessTokenSubject,
+                AccessTokenSubjectModel.model_validate(
+                    raw_subject,
+                ).model_dump(),
+            )
+        else:
+            subject_data = cast(
+                RefreshTokenSubject,
+                RefreshTokenSubjectModel.model_validate(subject).model_dump(),
+            )
         to_encode: dict[str, Any] = {
-            'sub': subject.get('username'),
-            'subject': subject,
+            'sub': subject_data['username'],
+            'subject': subject_data,
             'token_use': self.token_use,
             'aud': f'docformify:{self.token_use}',
             'iss': 'docformify',
@@ -77,10 +134,10 @@ class PyJWTBearer:
             'exp': expire,
         }
         if self.token_use == 'access':
-            jti = subject.get('jti')
-            to_encode['jti'] = jti if isinstance(jti, str) and jti else str(
-                uuid4(),
-            )
+            to_encode['jti'] = cast(
+                AccessTokenSubject,
+                subject_data,
+            )['jti']
         return jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
 
     def decode_token(
@@ -104,6 +161,10 @@ class PyJWTBearer:
         )
         if payload.get('token_use') != self.token_use:
             raise InvalidTokenError('Invalid token use')
+        if self.token_use == 'access':
+            payload['subject'] = access_token_subject_from_payload(payload)
+        else:
+            payload['subject'] = refresh_token_subject_from_payload(payload)
         return payload
 
     async def __call__(self, request: Request) -> JwtAuthorizationCredentials:
@@ -117,16 +178,21 @@ class PyJWTBearer:
             if token is None:
                 raise credentials_exception
             payload = self.decode_token(token)
-            if self.token_use == 'access':
-                redis_client = getattr(request.app.state, 'redis_client', None)
-                redis = getattr(redis_client, 'client', None)
-                if redis is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail='Authentication revocation service unavailable',
-                    )
-                if await is_access_token_revoked(redis, payload):
-                    raise credentials_exception
+            if self.token_use != 'access':
+                raise credentials_exception
+            subject = access_token_subject_from_payload(payload)
+            redis_client = getattr(request.app.state, 'redis_client', None)
+            redis = getattr(redis_client, 'client', None)
+            if redis is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail='Authentication revocation service unavailable',
+                )
+            if await is_access_token_revoked(
+                redis,
+                {'jti': subject['jti']},
+            ):
+                raise credentials_exception
         except InvalidTokenError:
             raise credentials_exception
         except RedisError as exc:
@@ -134,14 +200,6 @@ class PyJWTBearer:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail='Authentication revocation service unavailable',
             ) from exc
-
-        subject = payload.get('subject')
-        if not isinstance(subject, dict):
-            sub = payload.get('sub')
-            subject = {'username': sub} if isinstance(sub, str) else {}
-
-        if not subject:
-            raise credentials_exception
 
         return JwtAuthorizationCredentials(
             subject=subject,

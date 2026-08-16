@@ -22,20 +22,27 @@ from examples.bff.proxy import resolve_upstream
 
 
 class BffServicesTest(unittest.TestCase):
-    def test_deployed_web_service_aliases_match_canonical_routes(self) -> None:
-        aliases = {
-            'detect': 'detection',
-            'db_management': 'management',
-            'file_manage': 'files',
-            'streaming_web': 'streaming',
-        }
+    def test_db_management_service_is_allowlisted(self) -> None:
+        """The Web client can reach db_management routes through the BFF."""
+        base, suffix = resolve_upstream('db_management/list_sites')
 
-        for legacy, canonical in aliases.items():
-            with self.subTest(legacy=legacy):
-                self.assertEqual(
-                    resolve_upstream(f"{legacy}/resource"),
-                    resolve_upstream(f"{canonical}/resource"),
-                )
+        self.assertTrue(base)
+        self.assertEqual(suffix, 'list_sites')
+
+    def test_legacy_management_service_is_not_allowlisted(self) -> None:
+        """Only the canonical db_management public name is accepted."""
+        with self.assertRaises(HTTPException) as raised:
+            resolve_upstream('management/list_sites')
+
+        self.assertEqual(raised.exception.status_code, 404)
+        self.assertEqual(raised.exception.detail, 'bff_route_not_allowed')
+
+    def test_streaming_web_labels_route_is_allowlisted(self) -> None:
+        """The deployed stream page can reach its labels endpoint."""
+        base, suffix = resolve_upstream('streaming_web/labels')
+
+        self.assertTrue(base)
+        self.assertEqual(suffix, 'labels')
 
     def test_fcm_service_is_allowlisted(self) -> None:
         base, suffix = resolve_upstream('fcm/notifications/unread_count')
@@ -800,6 +807,30 @@ def test_streaming_proxy_maps_open_and_iteration_errors(
         _run(_collect_stream(response))
     assert upstream.closed is True
     assert client.closed is True
+
+    interrupted_upstream = FakeResponse(
+        chunks=(b'retry: 15000\n\n',),
+        stream_error=httpx.RemoteProtocolError('incomplete chunked read'),
+    )
+    interrupted_client = FakeAsyncClient(interrupted_upstream)
+    monkeypatch.setattr(
+        proxy.httpx,
+        'AsyncClient',
+        lambda **_kwargs: interrupted_client,
+    )
+    interrupted_response = _run(
+        proxy._proxy_streaming_request(
+            _request(accept='text/event-stream'),
+            AsyncMock(),
+            'session',
+            'http://upstream/events',
+            'token',
+        ),
+    )
+
+    assert _run(_collect_stream(interrupted_response)) == [b'retry: 15000\n\n']
+    assert interrupted_upstream.closed is True
+    assert interrupted_client.closed is True
 
     cancelled_upstream = FakeResponse(stream_error=asyncio.CancelledError())
     cancelled_client = FakeAsyncClient(cancelled_upstream)

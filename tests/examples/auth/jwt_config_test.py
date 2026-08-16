@@ -15,6 +15,28 @@ from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import jwt_refresh
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.jwt_config import PyJWTBearer
+from examples.db_management.schemas.auth import AccessTokenSubject
+
+
+def _access_subject(
+    username: str = 'alice',
+    user_id: int = 1,
+) -> AccessTokenSubject:
+    return {
+        'username': username,
+        'user_id': user_id,
+        'role': 'user',
+        'jti': 'access-jti',
+        'features': [],
+    }
+
+
+def _refresh_subject(username: str = 'alice') -> dict[str, str]:
+    return {
+        'username': username,
+        'family_id': 'refresh-family',
+        'token_id': 'refresh-token-id',
+    }
 
 
 class TestJwtConfig(unittest.TestCase):
@@ -35,7 +57,9 @@ class TestJwtConfig(unittest.TestCase):
             'jwt_access should use the same secret key as Settings.',
         )
 
-        token: str = jwt_access.create_access_token(subject={'foo': 'bar'})
+        token: str = jwt_access.create_access_token(
+            subject=_access_subject('access-user'),
+        )
         self.assertIsInstance(
             token,
             str,
@@ -57,7 +81,9 @@ class TestJwtConfig(unittest.TestCase):
             'jwt_refresh should use the same secret key as Settings.',
         )
 
-        token: str = jwt_refresh.create_access_token(subject={'spam': 'ham'})
+        token: str = jwt_refresh.create_access_token(
+            subject=_refresh_subject('refresh-user'),
+        )
         self.assertIsInstance(
             token,
             str,
@@ -71,11 +97,11 @@ class TestJwtConfig(unittest.TestCase):
 
     def test_credentials_support_existing_mapping_access(self) -> None:
         """Existing handlers can read JWT claims as a mapping."""
-        credentials = JwtAuthorizationCredentials({'username': 'alice'})
+        credentials = JwtAuthorizationCredentials(_access_subject())
 
         self.assertEqual(credentials['username'], 'alice')
-        self.assertIsNone(credentials.get('role'))
-        self.assertEqual(credentials.get('role', 'viewer'), 'viewer')
+        self.assertEqual(credentials.get('role'), 'user')
+        self.assertEqual(credentials.get('role', 'viewer'), 'user')
 
 
 if __name__ == '__main__':
@@ -95,10 +121,10 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
         self.bearer = PyJWTBearer('test-secret-key-with-at-least-32-bytes')
         self.request = MagicMock()
 
-    async def test_bearer_returns_full_subject_and_legacy_sub_fallback(
+    async def test_bearer_returns_full_subject(
         self,
     ) -> None:
-        """Both current and legacy token payloads expose a username subject."""
+        """Valid tokens expose their full subject payload."""
         with (
             patch.object(
                 self.bearer,
@@ -110,7 +136,11 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
                 'decode_token',
                 new=MagicMock(
                     return_value={
-                        'subject': {'username': 'alice', 'role': 'admin'},
+                        'subject': {
+                            **_access_subject(),
+                            'role': 'admin',
+                        },
+                        'jti': 'access-jti',
                     },
                 ),
             ),
@@ -126,30 +156,12 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
             {
                 'username': 'alice',
                 'role': 'admin',
+                'user_id': 1,
+                'jti': 'access-jti',
+                'features': [],
             },
         )
         self.assertEqual(credentials.token, 'current-token')
-
-        with (
-            patch.object(
-                self.bearer,
-                'oauth2_scheme',
-                new=AsyncMock(return_value='legacy-token'),
-            ),
-            patch.object(
-                self.bearer,
-                'decode_token',
-                new=MagicMock(return_value={'sub': 'legacy'}),
-            ),
-            patch(
-                'examples.auth.jwt_config.is_access_token_revoked',
-                new=AsyncMock(return_value=False),
-            ),
-        ):
-            credentials = await self.bearer(self.request)
-
-        self.assertEqual(credentials.subject, {'username': 'legacy'})
-        self.assertEqual(credentials.payload, {'sub': 'legacy'})
 
     async def test_bearer_rejects_missing_invalid_or_subjectless_tokens(
         self,
@@ -190,14 +202,15 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
         """PyJWT decoding validates tokens created with the configured
         secret."""
         token = self.bearer.create_access_token(
-            {'username': 'alice'},
+            _access_subject(),
             expires_delta=timedelta(minutes=1),
         )
 
         payload = self.bearer.decode_token(token)
 
         self.assertEqual(payload['sub'], 'alice')
-        self.assertEqual(payload['subject'], {'username': 'alice'})
+        self.assertEqual(payload['subject']['username'], 'alice')
+        self.assertIsInstance(payload['subject']['jti'], str)
 
     def test_decode_rejects_token_for_another_use(self) -> None:
         """A refresh payload cannot be accepted by the access bearer."""
@@ -222,7 +235,12 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.bearer,
                 'decode_token',
-                new=MagicMock(return_value={'subject': {'username': 'alice'}}),
+                new=MagicMock(
+                    return_value={
+                        'subject': _access_subject(),
+                        'jti': 'access-jti',
+                    },
+                ),
             ),
             self.assertRaises(HTTPException) as error,
         ):
@@ -242,7 +260,12 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.bearer,
                 'decode_token',
-                new=MagicMock(return_value={'subject': {'username': 'alice'}}),
+                new=MagicMock(
+                    return_value={
+                        'subject': _access_subject(),
+                        'jti': 'access-jti',
+                    },
+                ),
             ),
             patch(
                 'examples.auth.jwt_config.is_access_token_revoked',
@@ -254,8 +277,8 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(error.exception.status_code, 503)
 
-    async def test_bearer_rejects_non_string_legacy_subject(self) -> None:
-        """A malformed legacy sub claim cannot become an authenticated user."""
+    async def test_bearer_rejects_non_mapping_subject(self) -> None:
+        """A non-mapping subject cannot become an authenticated user."""
         self.request.app.state.redis_client.client = MagicMock()
         with (
             patch.object(
@@ -266,7 +289,7 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.bearer,
                 'decode_token',
-                new=MagicMock(return_value={'sub': 7}),
+                new=MagicMock(return_value={'subject': 'alice'}),
             ),
             patch(
                 'examples.auth.jwt_config.is_access_token_revoked',

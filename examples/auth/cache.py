@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
 from typing import cast
 
 from fastapi import HTTPException
@@ -81,14 +80,16 @@ return { current, ttl }
         Args:
             role: The user's role (e.g., ``'user'`` or ``'guest'``).
             username: The username to scope the counter.
-            method: HTTP method. Currently unused in the key for compatibility.
+            method: HTTP method.
             path: The request path component.
 
         Returns:
             The Redis key for the rate limiter counter.
         """
-        # Backwards-compatible shape: no prefix and no HTTP method included.
-        return f"rate_limit:{role}:{username}:{path}"
+        return (
+            f"{self.project_prefix}:rate_limit:{role}:{username}:"
+            f"{method}:{path}"
+        )
 
     async def get_user_data(
         self,
@@ -103,19 +104,13 @@ return { current, ttl }
             username: Username used to compose the Redis key.
 
         Returns:
-            If the entry exists and contains valid JSON, a dictionary is
-            returned; otherwise ``None`` is returned.
+            The cached user dictionary, or ``None`` when no entry exists.
         """
         key: str = self._user_key(username)
         raw_data: bytes | None = await redis_pool.get(key)
         if raw_data is None:
             return None
-        try:
-            # json.loads accepts bytes (UTF-8 by default)
-            return json.loads(raw_data)
-        except Exception:
-            # Treat corrupted/non-JSON payloads as missing user data
-            return None
+        return json.loads(raw_data)
 
     async def set_user_data(
         self,
@@ -133,7 +128,7 @@ return { current, ttl }
         """
         key: str = self._user_key(username)
         # Compact JSON to avoid unnecessary whitespace.
-        await redis_pool.set(key, json.dumps(data))
+        await redis_pool.set(key, json.dumps(data).encode('utf-8'))
 
     async def _ensure_rate_limit_script(self, redis_pool: Redis) -> str:
         """
@@ -147,9 +142,9 @@ return { current, ttl }
         """
         if self._rate_limit_sha:
             return self._rate_limit_sha
-        sha = await redis_pool.script_load(self._RATE_LIMIT_LUA)
-        self._rate_limit_sha = (
-            sha if isinstance(sha, str) else cast(bytes, sha).decode()
+        self._rate_limit_sha = cast(
+            str,
+            await redis_pool.script_load(self._RATE_LIMIT_LUA),
         )
         return self._rate_limit_sha
 
@@ -173,34 +168,29 @@ return { current, ttl }
         # Single RTT using EVALSHA.
         try:
             sha = await self._ensure_rate_limit_script(redis_pool)
-            res: Sequence[object] = await redis_pool.evalsha(
-                sha,
-                1,
-                key,
-                window_seconds,
+            current, ttl = cast(
+                list[int], await redis_pool.evalsha(
+                    sha,
+                    1,
+                    key,
+                    window_seconds,
+                ),
             )
-            # Validate response shape
-            if not isinstance(res, (list, tuple)) or len(res) < 2:
-                raise ValueError('Invalid evalsha response shape')
-            current = int(res[0])
-            ttl = int(res[1])
             return current, ttl
         except NoScriptError:
             # Script was flushed; load and retry once
-            sha2 = await redis_pool.script_load(self._RATE_LIMIT_LUA)
-            self._rate_limit_sha = (
-                sha2 if isinstance(sha2, str) else cast(bytes, sha2).decode()
+            self._rate_limit_sha = cast(
+                str,
+                await redis_pool.script_load(self._RATE_LIMIT_LUA),
             )
-            res = await redis_pool.evalsha(
-                self._rate_limit_sha,
-                1,
-                key,
-                window_seconds,
+            current, ttl = cast(
+                list[int], await redis_pool.evalsha(
+                    self._rate_limit_sha,
+                    1,
+                    key,
+                    window_seconds,
+                ),
             )
-            if not isinstance(res, (list, tuple)) or len(res) < 2:
-                raise ValueError('Invalid evalsha response shape')
-            current = int(res[0])
-            ttl = int(res[1])
             return current, ttl
 
     async def preload_script(self, redis_pool: Redis) -> None:
@@ -236,22 +226,9 @@ return { current, ttl }
                 found in Redis, if the token JTI has been rotated/revoked, or
                 if the rate limit is exceeded.
         """
-        payload: dict[str, object] = cast(
-            dict[str, object], jwt_creds.subject,
-        )
-        username_obj: object = payload.get('username')
-        token_jti_obj: object = payload.get('jti')
-
-        # Validate presence and type of required token fields
-        if not all(
-            isinstance(v, str) and v
-            for v in (username_obj, token_jti_obj)
-        ):
-            raise HTTPException(
-                status_code=401, detail='Token is missing or invalid fields',
-            )
-        username: str = cast(str, username_obj)
-        token_jti: str = cast(str, token_jti_obj)
+        subject = jwt_creds.subject
+        username = subject['username']
+        token_jti = subject['jti']
 
         # Obtain Redis connection
         redis_pool: Redis = request.app.state.redis_client.client
@@ -267,13 +244,7 @@ return { current, ttl }
                 status_code=401, detail='No such user in Redis',
             )
 
-        jti_src = user_data.get('jti_list', [])
-        if isinstance(jti_src, (list, tuple)):
-            jti_list: list[str] = [
-                s for s in jti_src if isinstance(s, str) and s
-            ]
-        else:
-            jti_list = []
+        jti_list = cast(list[str], user_data['jti_list'])
 
         if token_jti not in jti_list:
             raise HTTPException(
@@ -281,10 +252,7 @@ return { current, ttl }
             )
 
         # Determine role and quotas
-        role_any: object = payload.get('role', 'user')
-        role: str = (
-            role_any if isinstance(role_any, str) and role_any else 'user'
-        )
+        role = subject['role']
         max_requests, window_seconds = self.limits.get(
             role, self.limits['user'],
         )
@@ -311,9 +279,7 @@ return { current, ttl }
         response.headers['X-RateLimit-Remaining'] = str(remaining)
         response.headers['X-RateLimit-Limit'] = str(max_requests)
         # Use TTL as reset countdown; if negative/unknown, fall back to window
-        reset_seconds = ttl if isinstance(
-            ttl, int,
-        ) and ttl >= 0 else window_seconds
+        reset_seconds = ttl if ttl >= 0 else window_seconds
         response.headers['X-RateLimit-Reset'] = str(int(reset_seconds))
         return remaining
 

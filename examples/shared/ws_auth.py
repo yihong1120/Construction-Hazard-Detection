@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from collections.abc import Awaitable
-from collections.abc import Iterable
 from collections.abc import Mapping
 from typing import cast
 from typing import NoReturn
@@ -13,7 +12,9 @@ from redis.asyncio import Redis
 
 from examples.auth.cache import get_user_data
 from examples.auth.cache import set_user_data
+from examples.auth.jwt_config import access_token_subject_from_payload
 from examples.auth.token_cleanup import prune_user_cache
+from examples.db_management.schemas.auth import AccessTokenSubject
 
 
 class WebSocketLike(Protocol):
@@ -26,7 +27,7 @@ class WebSocketLike(Protocol):
         """Return request headers."""
 
     @property
-    def query_params(self) -> object:
+    def query_params(self) -> Mapping[str, str]:
         """Return request query parameters."""
 
     def close(self, code: int, reason: str) -> Awaitable[None]:
@@ -54,29 +55,6 @@ AUTO_REGISTER_JTI: bool = os.getenv(
 ).lower() == 'true'
 
 
-def _to_str_dict(obj: object) -> dict[str, str]:
-    """
-    Coerce a mapping-like or iterable of pairs into a string-keyed dictionary.
-
-    Args:
-        obj: A mapping-like object or an iterable of ``(key, value)`` pairs.
-
-    Returns:
-        A new dictionary with stringified keys and values. Returns an empty
-        dictionary when coercion is not possible.
-    """
-    if isinstance(obj, Mapping):
-        m = cast(Mapping[object, object], obj)
-        return {str(k): str(v) for k, v in m.items()}
-    if isinstance(obj, Iterable):
-        try:
-            it = cast(Iterable[tuple[object, object]], obj)
-            return {str(k): str(v) for k, v in it}
-        except Exception:
-            return {}
-    return {}
-
-
 def extract_token_from_ws(websocket: WebSocketLike) -> str | None:
     """
     Extract a JWT from a WebSocket request.
@@ -93,14 +71,7 @@ def extract_token_from_ws(websocket: WebSocketLike) -> str | None:
     if auth and auth.lower().startswith('bearer '):
         return auth.split(' ', 1)[1]
     # Then query param
-    try:
-        query_params = _to_str_dict(websocket.query_params)
-        tok = query_params.get('token')
-        if tok:
-            return tok
-    except Exception:
-        pass
-    return None
+    return websocket.query_params.get('token')
 
 
 async def _fail_ws(
@@ -156,7 +127,7 @@ async def _decode_or_fail(
         The decoded JWT payload as a dictionary.
     """
     try:
-        return cast(
+        payload = cast(
             dict[str, object],
             jwt.decode(
                 token,
@@ -164,6 +135,8 @@ async def _decode_or_fail(
                 algorithms=[settings.ALGORITHM],
             ),
         )
+        payload['subject'] = access_token_subject_from_payload(payload)
+        return payload
     except Exception as e:  # noqa: BLE001 - deliberate broad catch to close WS
         await _fail_ws(
             websocket,
@@ -177,31 +150,18 @@ async def _decode_or_fail(
 
 def _extract_identity(
     payload: dict[str, object],
-) -> tuple[str | None, str | None, dict[str, object]]:
+) -> tuple[str, str, AccessTokenSubject]:
     """
-    Return (username, jti, subject_data) from payload if present.
+    Return the canonical username, JTI, and subject from an access token.
 
     Args:
         payload: The decoded JWT payload.
 
     Returns:
-        A tuple of (username, jti, subject_data). ``username`` and ``j
+        A tuple of (username, jti, subject_data).
     """
-    subject_obj = payload.get('subject')
-    subject_data: dict[str, object]
-    if isinstance(subject_obj, dict):
-        subject_data = cast(dict[str, object], subject_obj)
-    else:
-        subject_data = {}
-    username = cast(
-        str | None,
-        subject_data.get('username'),
-    ) or cast(str | None, payload.get('username'))
-    jti = cast(
-        str | None,
-        subject_data.get('jti'),
-    ) or cast(str | None, payload.get('jti'))
-    return username, jti, subject_data
+    subject_data = access_token_subject_from_payload(payload)
+    return subject_data['username'], subject_data['jti'], subject_data
 
 
 def _build_autoreg_cache(
@@ -209,7 +169,7 @@ def _build_autoreg_cache(
     username: str,
     jti: str,
     payload: dict[str, object],
-    subject_data: dict[str, object],
+    subject_data: AccessTokenSubject,
 ) -> dict[str, object]:
     """
     Build a user cache dictionary that adds a missing JTI to the active list.
@@ -224,51 +184,35 @@ def _build_autoreg_cache(
     Returns:
         A new user cache dictionary with the JTI added to the active list.
     """
-    # Start from existing cache or construct a minimal skeleton
-    cache: dict[str, object] = user_data or {
+    # Start from the canonical cache shape when the user has no prior session.
+    cache: dict[str, object] = dict(user_data) if user_data is not None else {
         'db_user': {
             'id': cast(
                 object,
-                subject_data.get('user_id') or payload.get('user_id'),
+                subject_data['user_id'],
             ),
             'username': username,
             'role': cast(
                 object,
-                subject_data.get('role') or payload.get('role'),
+                subject_data['role'],
             ),
             'group_id': None,
             'status': 'active',
         },
         'jti_list': [],
+        'jti_meta': {},
         'refresh_tokens': [],
+        'refresh_token_hashes': [],
+        'refresh_token_families': {},
+        'feature_names': [],
     }
-    # Ensure jti_list is a list
-    jtis_obj = cache.get('jti_list')
-    if isinstance(jtis_obj, list):
-        jtis = list(cast(list[str], jtis_obj))
-    else:
-        jtis = []
+    jtis = list(cast(list[str], cache['jti_list']))
     if jti not in jtis:
         jtis.append(jti)
     cache['jti_list'] = jtis
 
-    # Record exp if present and parseable
-    try:
-        exp_val = payload.get('exp')
-        exp_ts: int | None = None
-        if isinstance(exp_val, (int, float, str)):
-            exp_ts = int(exp_val)
-        if exp_ts is not None:
-            jti_meta_obj = cache.get('jti_meta')
-            if isinstance(jti_meta_obj, dict):
-                jti_meta = cast(dict[str, int], jti_meta_obj)
-            else:
-                jti_meta = {}
-            jti_meta[jti] = exp_ts
-            cache['jti_meta'] = jti_meta
-    except Exception:
-        # Ignore malformed exp
-        pass
+    jti_meta = cast(dict[str, int], cache['jti_meta'])
+    jti_meta[jti] = cast(int, payload['exp'])
     return cache
 
 
@@ -285,11 +229,7 @@ def get_model_key_from_ws(websocket: WebSocketLike) -> str | None:
     mk = websocket.headers.get('x-model-key')
     if mk:
         return mk
-    try:
-        query_params = _to_str_dict(websocket.query_params)
-        return query_params.get('model')
-    except Exception:
-        return None
+    return websocket.query_params.get('model')
 
 
 async def authenticate_websocket(
@@ -351,18 +291,7 @@ async def authenticate_websocket(
         )
 
     # Read user identity from payload
-    username, jti, subject_data = _extract_identity(payload)
-    if username is None or jti is None:
-        await _fail_ws(
-            websocket,
-            code=1008,
-            reason='Invalid token data',
-            tag=tag,
-            log_msg='Missing username or JTI in token',
-            exit_reason='missing_user_or_jti',
-        )
-    username_str: str = username
-    jti_str: str = jti
+    username_str, jti_str, subject_data = _extract_identity(payload)
 
     # Prune and validate JTI in cache for the user
     await prune_user_cache(rds, username_str)
@@ -371,11 +300,10 @@ async def authenticate_websocket(
     )
 
     # Validate JTI against cache list
-    jti_is_active = False
-    if user_data is not None:
-        jl_obj = user_data.get('jti_list')
-        if isinstance(jl_obj, list):
-            jti_is_active = jti_str in jl_obj
+    jti_is_active = (
+        user_data is not None
+        and jti_str in cast(list[str], user_data['jti_list'])
+    )
     if not jti_is_active:
         if auto_register_jti:
             print(

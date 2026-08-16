@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import cast
 
 from jwt.exceptions import InvalidTokenError
 from redis.asyncio import Redis
@@ -8,25 +9,15 @@ from redis.asyncio import Redis
 from examples.auth.cache import get_user_data
 from examples.auth.cache import set_user_data
 from examples.auth.jwt_config import jwt_refresh
+from examples.db_management.schemas.auth import UserCache
 
 
-def _typed_refresh_tokens(cache: dict[str, object]) -> list[str]:
-    """
-    Return list of refresh tokens if present and validly typed.
-
-    Args:
-        cache: The user cache dictionary.
-
-    Returns:
-        A list of refresh tokens as strings.
-    """
-    raw = cache.get('refresh_tokens', [])
-    if isinstance(raw, list):
-        return [t for t in raw if isinstance(t, str)]
-    return []
+def _refresh_tokens(cache: UserCache) -> list[str]:
+    """Return the cache's canonical refresh-token list."""
+    return cache['refresh_tokens']
 
 
-def _prune_refresh_tokens(cache: dict[str, object]) -> tuple[list[str], bool]:
+def _prune_refresh_tokens(cache: UserCache) -> tuple[list[str], bool]:
     """
     Return valid refresh tokens and whether the list changed.
 
@@ -39,7 +30,7 @@ def _prune_refresh_tokens(cache: dict[str, object]) -> tuple[list[str], bool]:
     valid refresh tokens and changed is a boolean indicating if the
     list was modified.
     """
-    tokens = _typed_refresh_tokens(cache)
+    tokens = _refresh_tokens(cache)
     if not tokens:
         # Nothing to validate
         return tokens, False
@@ -59,38 +50,8 @@ def _prune_refresh_tokens(cache: dict[str, object]) -> tuple[list[str], bool]:
     return new_tokens, changed or (new_tokens != tokens)
 
 
-def _typed_jti(cache: dict[str, object]) -> tuple[list[str], dict[str, int]]:
-    """
-    Return (jti_list, jti_meta) if present and validly typed.
-
-    Args:
-        cache: The user cache dictionary.
-
-    Returns:
-        A tuple of (jti_list, jti_meta) where jti_list is a list of JTI
-        strings and jti_meta is a dictionary mapping JTI strings to their
-        expiration timestamps.
-    """
-    jti_list_raw = cache.get('jti_list', [])
-    if isinstance(jti_list_raw, list):
-        jti_list = [j for j in jti_list_raw if isinstance(j, str)]
-    else:
-        jti_list = []
-
-    jti_meta_raw = cache.get('jti_meta', {})
-    if isinstance(jti_meta_raw, dict):
-        jti_meta = {
-            k: int(v)
-            for k, v in jti_meta_raw.items()
-            if isinstance(k, str) and isinstance(v, int)
-        }
-    else:
-        jti_meta = {}
-    return jti_list, jti_meta
-
-
 def _prune_jti(
-    cache: dict[str, object],
+    cache: UserCache,
     now: int,
 ) -> tuple[list[str], dict[str, int], bool]:
     """
@@ -106,7 +67,8 @@ def _prune_jti(
         the filtered JTI metadata dictionary, and changed is a boolean
         indicating if any changes were made.
     """
-    jti_list, jti_meta = _typed_jti(cache)
+    jti_list = cache['jti_list']
+    jti_meta = cache['jti_meta']
     if not jti_meta and not jti_list:
         return jti_list, jti_meta, False
 
@@ -128,7 +90,7 @@ def _prune_jti(
 async def prune_user_cache(
     redis_pool: Redis,
     username: str,
-) -> dict[str, object] | None:
+) -> UserCache | None:
     """
     Prune a user's cached authentication data in Redis.
 
@@ -140,7 +102,8 @@ async def prune_user_cache(
         The updated cache dictionary if present, otherwise ``None`` when no
         cache entry exists.
     """
-    cache: dict[str, object] | None = await get_user_data(redis_pool, username)
+    raw_cache = await get_user_data(redis_pool, username)
+    cache = cast(UserCache, raw_cache) if raw_cache is not None else None
     if not cache:
         return None
 
@@ -149,19 +112,17 @@ async def prune_user_cache(
 
     # Refresh tokens pruning
     new_refresh_tokens, changed_refresh = _prune_refresh_tokens(cache)
-    if new_refresh_tokens != _typed_refresh_tokens(cache):
+    if new_refresh_tokens != _refresh_tokens(cache):
         cache['refresh_tokens'] = new_refresh_tokens
     changed = changed or changed_refresh
 
     # JTI metadata pruning
     new_jti_list, new_jti_meta, changed_jti = _prune_jti(cache, now)
-    if new_jti_list is not None:
-        cache['jti_list'] = new_jti_list
-    if new_jti_meta is not None:
-        cache['jti_meta'] = new_jti_meta
+    cache['jti_list'] = new_jti_list
+    cache['jti_meta'] = new_jti_meta
     changed = changed or changed_jti
 
     if changed:
-        await set_user_data(redis_pool, username, cache)
+        await set_user_data(redis_pool, username, cast(dict[str, object], cache))
 
     return cache

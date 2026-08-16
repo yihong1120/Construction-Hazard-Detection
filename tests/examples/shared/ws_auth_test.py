@@ -2,11 +2,30 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 from examples.shared import ws_auth as wa
+
+
+def _access_payload(
+    username: str = 'alice',
+    jti: str = 'jti',
+    user_id: int = 1,
+    role: str = 'user',
+    exp: int = 1_700_000_000,
+) -> dict[str, object]:
+    return {
+        'subject': {
+            'username': username,
+            'user_id': user_id,
+            'role': role,
+            'jti': jti,
+            'features': [],
+        },
+        'jti': jti,
+        'exp': exp,
+    }
 
 
 class TestExtractionHelpers(unittest.TestCase):
@@ -91,40 +110,6 @@ class TestExtractionHelpers(unittest.TestCase):
         ws3 = self.make_ws()
         self.assertIsNone(wa.get_model_key_from_ws(ws3))
 
-    def test__to_str_dict_variants(self) -> None:
-        """Test coercion to `dict[str, str]` across various input types."""
-        from examples.shared import ws_auth as wa
-
-        # Mapping input
-        self.assertEqual(
-            wa._to_str_dict(
-                {'a': 1, 2: 'b'},
-            ), {'a': '1', '2': 'b'},
-        )
-
-        # Iterable of pairs
-        pairs = [('x', 10), ('y', 20)]
-        self.assertEqual(wa._to_str_dict(pairs), {'x': '10', 'y': '20'})
-
-        # Bad iterable (not pairs) falls back to {}
-        bad_iterable = [1, 2, 3]
-        self.assertEqual(wa._to_str_dict(bad_iterable), {})
-
-        # Non-iterable, non-mapping -> {}
-        self.assertEqual(wa._to_str_dict(object()), {})
-
-    def test_extract_token_and_model_key_when_to_str_dict_raises(self) -> None:
-        """Test robustness when `_to_str_dict` raises exceptions."""
-        ws = self.make_ws()
-        with patch(
-            'examples.shared.ws_auth._to_str_dict',
-            side_effect=RuntimeError('boom'),
-        ):
-            # extract_token_from_ws should swallow and return None
-            self.assertIsNone(wa.extract_token_from_ws(ws))
-            # get_model_key_from_ws should swallow and return None
-            self.assertIsNone(wa.get_model_key_from_ws(ws))
-
 
 class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
     """
@@ -165,13 +150,7 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
 
     async def test_success_when_jti_active(self) -> None:
         """Test successful authentication when JTI is active in cache."""
-        payload = {
-            'subject': {
-                'username': 'alice',
-                'jti': 'j1',
-            },
-            'exp': 1700000000,
-        }
+        payload = _access_payload(jti='j1')
 
         ws = self.make_ws(
             headers={
@@ -213,15 +192,12 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
 
     async def test_success_auto_register_missing_jti(self) -> None:
         """Test auto-registration appends and persists missing JTI."""
-        payload = {
-            'subject': {
-                'username': 'bob',
-                'jti': 'j2',
-                'role': 'user',
-                'user_id': 7,
-            },
-            'exp': 1700000100,
-        }
+        payload = _access_payload(
+            username='bob',
+            jti='j2',
+            user_id=7,
+            exp=1_700_000_100,
+        )
         ws = self.make_ws(
             headers={
                 'authorization': 'Bearer token',
@@ -235,7 +211,23 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
             patch('examples.shared.ws_auth.prune_user_cache', new=AsyncMock()),
             patch(
                 'examples.shared.ws_auth.get_user_data',
-                new=AsyncMock(return_value={'jti_list': []}),
+                new=AsyncMock(
+                    return_value={
+                        'db_user': {
+                            'id': 7,
+                            'username': 'bob',
+                            'role': 'user',
+                            'group_id': None,
+                            'status': 'active',
+                        },
+                        'jti_list': [],
+                        'jti_meta': {},
+                        'refresh_tokens': [],
+                        'refresh_token_hashes': [],
+                        'refresh_token_families': {},
+                        'feature_names': [],
+                    },
+                ),
             ) as mock_get,
             patch(
                 'examples.shared.ws_auth.set_user_data',
@@ -294,35 +286,35 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code, 1008)
         self.assertIn('Invalid token', reason)
 
-    async def test_empty_payload(self) -> None:
-        """Test signal error and close on empty payload."""
+    async def test_empty_payload_is_invalid_token(self) -> None:
+        """Empty token payloads fail the access-token schema."""
         ws = self.make_ws(headers={'authorization': 'Bearer t'})
         with patch('examples.shared.ws_auth.jwt.decode', return_value={}):
             with self.assertRaises(SystemExit) as cm:
                 await wa.authenticate_websocket(ws, object(), self.settings)
-        self.assertEqual(str(cm.exception), 'empty_payload')
+        self.assertEqual(str(cm.exception), 'invalid_token')
         code, reason = ws.closed[-1]
         self.assertEqual(code, 1008)
-        self.assertIn('Empty token payload', reason)
+        self.assertIn('Invalid token', reason)
 
-    async def test_missing_username_or_jti(self) -> None:
-        """Test error and close on missing username or JTI."""
+    async def test_rejects_incomplete_access_subject(self) -> None:
+        """Incomplete access-token subjects fail at the decode boundary."""
         ws = self.make_ws(headers={'authorization': 'Bearer t'})
         payload = {'subject': {'username': 'eve'}}  # missing jti
         with patch('examples.shared.ws_auth.jwt.decode', return_value=payload):
             with self.assertRaises(SystemExit) as cm:
                 await wa.authenticate_websocket(ws, object(), self.settings)
-        self.assertEqual(str(cm.exception), 'missing_user_or_jti')
+        self.assertEqual(str(cm.exception), 'invalid_token')
         code, reason = ws.closed[-1]
         self.assertEqual(code, 1008)
-        self.assertIn('Invalid token data', reason)
+        self.assertIn('Invalid token', reason)
 
     async def test_jti_not_active_and_no_auto_register(self) -> None:
         """Test raise and close on inactive JTI without auto-register."""
         from examples.shared import ws_auth as wa
 
         ws = self.make_ws(headers={'authorization': 'Bearer t'})
-        payload = {'subject': {'username': 'zoe', 'jti': 'JX'}}
+        payload = _access_payload(username='zoe', jti='JX')
         with (
             patch('examples.shared.ws_auth.jwt.decode', return_value=payload),
             patch('examples.shared.ws_auth.prune_user_cache', new=AsyncMock()),
@@ -352,15 +344,13 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
 
         Ensures default keys exist and expiry is recorded as seconds.
         """
-        payload = {
-            'subject': {
-                'username': 'neo',
-                'jti': 'jN',
-                'role': 'admin',
-                'user_id': 42,
-            },
-            'exp': '1700000200',  # string -> int conversion path
-        }
+        payload = _access_payload(
+            username='neo',
+            jti='jN',
+            user_id=42,
+            role='admin',
+            exp=1_700_000_200,
+        )
         ws = self.make_ws(
             headers={
                 'authorization': 'Bearer token',
@@ -404,160 +394,17 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
         self.assertIn('jti_meta', cache)
         self.assertEqual(cache['jti_meta']['jN'], 1700000200)
 
-    async def test_auto_register_exp_meta_try_except_path(self) -> None:
-        """
-        Test graceful handling of exceptions when accessing JTI meta cache.
-        """
-        payload = {
-            'subject': {'username': 'trinity', 'jti': 'jT'},
-            'exp': 1700000300,
-        }
-        ws = self.make_ws(
-            headers={
-                'authorization': 'Bearer token',
-            },
-        )
-        rds = object()
-        settings = self.settings
-
-        class JankyCache(dict):
-            """Tests for JankyCache."""
-
-            def get(self, key: Any, default: Any = None) -> Any:
-                """Support get.
-
-                Args:
-                    key: Test helper value.
-                    default: Test helper value.
-                """
-                if key == 'jti_meta':
-                    raise RuntimeError('boom')
-                return super().get(key, default)
-
-        janky = JankyCache({'jti_list': []})
-
-        with (
-            patch('examples.shared.ws_auth.jwt.decode', return_value=payload),
-            patch('examples.shared.ws_auth.prune_user_cache', new=AsyncMock()),
-            patch(
-                'examples.shared.ws_auth.get_user_data',
-                new=AsyncMock(return_value=janky),
-            ),
-            patch(
-                'examples.shared.ws_auth.set_user_data',
-                new=AsyncMock(),
-            ) as mock_set,
-        ):
-            username, jti, out_payload = await wa.authenticate_websocket(
-                ws,
-                rds,
-                settings,
-                auto_register_jti=True,
-                client_tag='[T]',
-            )
-
-        self.assertEqual((username, jti), ('trinity', 'jT'))
-        self.assertEqual(out_payload, payload)
-        # set_user_data called with our janky cache object
-        args, _ = mock_set.call_args
-        self.assertIs(args[2], janky)
-        # jti_meta should not be present due to the induced failure
-        self.assertNotIn('jti_meta', janky)
-
-    async def test_flat_payload_without_subject_uses_top_level_fields(
-        self,
-    ) -> None:
-        """Test support for flat payloads by reading top-level username/JTI."""
-        payload = {
-            'username': 'flat',
-            'jti': 'flatJTI',
-        }
-        ws = self.make_ws(
-            headers={
-                'authorization': 'Bearer token',
-            },
-        )
-        rds = object()
-        settings = self.settings
-
-        with (
-            patch('examples.shared.ws_auth.jwt.decode', return_value=payload),
-            patch('examples.shared.ws_auth.prune_user_cache', new=AsyncMock()),
-            patch(
-                'examples.shared.ws_auth.get_user_data',
-                new=AsyncMock(return_value={'jti_list': ['flatJTI']}),
-            ),
-        ):
-            username, jti, out_payload = await wa.authenticate_websocket(
-                ws,
-                rds,
-                settings,
-                auto_register_jti=False,
-                client_tag='[T]',
-            )
-
-        self.assertEqual((username, jti), ('flat', 'flatJTI'))
-        self.assertEqual(out_payload, payload)
-
-    async def test_auto_register_when_jti_list_is_not_list(self) -> None:
-        """Test coercion of non-list jti_list to list and append JTI."""
-        payload = {
-            'subject': {
-                'username': 'morpheus',
-                'jti': 'jM',
-            },
-            'exp': 1700000400,
-        }
-        ws = self.make_ws(
-            headers={
-                'authorization': 'Bearer token',
-            },
-        )
-        rds = object()
-        settings = self.settings
-
-        bad_cache = {'jti_list': 'oops'}
-
-        with (
-            patch('examples.shared.ws_auth.jwt.decode', return_value=payload),
-            patch('examples.shared.ws_auth.prune_user_cache', new=AsyncMock()),
-            patch(
-                'examples.shared.ws_auth.get_user_data',
-                new=AsyncMock(return_value=bad_cache),
-            ),
-            patch(
-                'examples.shared.ws_auth.set_user_data',
-                new=AsyncMock(),
-            ) as mock_set,
-        ):
-            username, jti, _ = await wa.authenticate_websocket(
-                ws,
-                rds,
-                settings,
-                auto_register_jti=True,
-                client_tag='[T]',
-            )
-
-        self.assertEqual((username, jti), ('morpheus', 'jM'))
-        args, _ = mock_set.call_args
-        cache = args[2]
-        self.assertIs(cache, bad_cache)
-        self.assertIsInstance(cache['jti_list'], list)
-        self.assertIn('jM', cache['jti_list'])
-
     async def test_auto_register_with_existing_jti_meta_dict(self) -> None:
         """
         Test preservation of existing jti_meta entries and add current JTI.
         """
         from examples.shared import ws_auth as wa
 
-        payload = {
-            'subject': {
-                'username': 'smith',
-                'jti': 'jS',
-            },
-            'exp': 1700000500,
-        }
+        payload = _access_payload(
+            username='smith',
+            jti='jS',
+            exp=1_700_000_500,
+        )
         ws = self.make_ws(
             headers={
                 'authorization': 'Bearer token',
@@ -566,7 +413,21 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
         rds = object()
         settings = self.settings
 
-        cache_with_meta = {'jti_list': [], 'jti_meta': {'old': 1}}
+        cache_with_meta = {
+            'db_user': {
+                'id': 1,
+                'username': 'smith',
+                'role': 'user',
+                'group_id': None,
+                'status': 'active',
+            },
+            'jti_list': [],
+            'jti_meta': {'old': 1},
+            'refresh_tokens': [],
+            'refresh_token_hashes': [],
+            'refresh_token_families': {},
+            'feature_names': [],
+        }
 
         with (
             patch('examples.shared.ws_auth.jwt.decode', return_value=payload),
@@ -591,7 +452,7 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((username, jti), ('smith', 'jS'))
         args, _ = mock_set.call_args
         cache = args[2]
-        self.assertIs(cache, cache_with_meta)
+        self.assertIsNot(cache, cache_with_meta)
         self.assertIn('jS', cache['jti_list'])
         self.assertIn('old', cache['jti_meta'])
         self.assertIn('jS', cache['jti_meta'])

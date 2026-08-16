@@ -7,7 +7,9 @@ import os
 import secrets
 import time
 from collections.abc import Mapping
+from collections.abc import Sequence
 from typing import Any
+from typing import cast
 
 import jwt
 from cryptography.fernet import Fernet
@@ -30,12 +32,10 @@ MEDIA_SESSION_TTL_SECONDS = max(
 )
 
 
-def _text(value: object) -> str | None:
+def _text(value: bytes | None) -> str | None:
     if value is None:
         return None
-    if isinstance(value, bytes):
-        return value.decode('utf-8')
-    return str(value)
+    return value.decode('utf-8')
 
 
 def _digest(value: str) -> str:
@@ -88,12 +88,7 @@ async def create_auth_session(
     """Store server-side tokens and return a 256-bit opaque session id."""
     access_token = str(token_pair['access_token'])
     refresh_token = str(token_pair['refresh_token'])
-    raw_features = token_pair.get('feature_names')
-    feature_names = (
-        [str(value) for value in raw_features]
-        if isinstance(raw_features, (list, tuple))
-        else []
-    )
+    feature_names = list(cast(Sequence[str], token_pair['feature_names']))
     session_id = secrets.token_urlsafe(32)
     key = auth_session_key(session_id)
     now = int(time.time())
@@ -112,7 +107,7 @@ async def create_auth_session(
     }
     await redis.set(
         key,
-        json.dumps(data, separators=(',', ':')),
+        json.dumps(data, separators=(',', ':')).encode('utf-8'),
         ex=AUTH_SESSION_TTL_SECONDS,
     )
     return session_id, data
@@ -124,14 +119,11 @@ async def get_auth_session(
 ) -> dict[str, Any] | None:
     if not session_id:
         return None
-    raw = _text(await redis.get(auth_session_key(session_id)))
-    if not raw:
+    raw = await redis.get(auth_session_key(session_id))
+    if raw is None:
         return None
-    try:
-        data = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict) or data.get('revoked') is True:
+    data = json.loads(raw)
+    if data['revoked']:
         return None
     return data
 
@@ -175,7 +167,7 @@ async def save_auth_tokens(
         session['feature_names'] = feature_names
     await redis.set(
         key,
-        json.dumps(session, separators=(',', ':')),
+        json.dumps(session, separators=(',', ':')).encode('utf-8'),
         ex=AUTH_SESSION_TTL_SECONDS,
     )
 
@@ -196,7 +188,7 @@ async def acquire_refresh_lock(
     owner = secrets.token_urlsafe(18)
     acquired = await redis.set(
         f'{auth_session_key(session_id)}:refresh-lock',
-        owner,
+        owner.encode('utf-8'),
         ex=ttl_seconds,
         nx=True,
     )
@@ -220,23 +212,22 @@ async def create_media_session(
     username: str,
     site: str,
     camera: str | None = None,
-    cameras: list[str] | tuple[str, ...] | None = None,
+    cameras: Sequence[str] | None = None,
     profile: str,
     parent: str,
     platform: str,
     language: str | None = None,
     quality: str | None = None,
     purpose: str | None = None,
-    demand_keys: list[object] | tuple[object, ...] | None = None,
+    demand_keys: Sequence[str] | None = None,
     playback_sessions: Mapping[str, Mapping[str, object]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Create a separately revocable, narrowly scoped media capability."""
     is_batch = cameras is not None
-    scoped_cameras = list(
-        dict.fromkeys(
-            cameras if cameras is not None else ([camera] if camera else []),
-        ),
+    camera_scope = cameras if cameras is not None else (
+        (camera,) if camera else ()
     )
+    scoped_cameras = list(dict.fromkeys(camera_scope))
     if not scoped_cameras:
         raise ValueError('media session requires at least one camera')
     token = secrets.token_urlsafe(32)
@@ -263,32 +254,21 @@ async def create_media_session(
         data['quality'] = quality
     if purpose:
         data['purpose'] = purpose
-    scoped_demand_keys = list(
-        dict.fromkeys(
-            key for key in (demand_keys or ())
-            if isinstance(key, str) and key
-        ),
-    )
-    if scoped_demand_keys:
-        data['demand_keys'] = scoped_demand_keys
-    if playback_sessions:
-        data['playback_sessions'] = {
-            session_id: dict(descriptor)
-            for session_id, descriptor in playback_sessions.items()
-            if isinstance(session_id, str)
-            and session_id
-            and isinstance(descriptor, Mapping)
-        }
+    data['demand_keys'] = list(dict.fromkeys(demand_keys or ()))
+    data['playback_sessions'] = {
+        session_id: dict(descriptor)
+        for session_id, descriptor in (playback_sessions or {}).items()
+    }
     token_key = media_session_key(token)
     parent_key = f'{MEDIA_PARENT_PREFIX}:{_digest(parent)}'
-    payload = json.dumps(data, separators=(',', ':'))
+    payload = json.dumps(data, separators=(',', ':')).encode('utf-8')
     await redis.set(token_key, payload, ex=MEDIA_SESSION_TTL_SECONDS)
     await redis.set(
         f'{MEDIA_PUBLIC_PREFIX}:{public_id}',
-        token_key,
+        token_key.encode('utf-8'),
         ex=MEDIA_SESSION_TTL_SECONDS,
     )
-    await redis.sadd(parent_key, token_key)
+    await redis.sadd(parent_key, token_key.encode('utf-8'))
     await redis.expire(parent_key, AUTH_SESSION_TTL_SECONDS)
     await _refresh_media_session_demands(redis, data)
     return token, data
@@ -296,34 +276,14 @@ async def create_media_session(
 
 def media_session_cameras(session: Mapping[str, object]) -> tuple[str, ...]:
     """Return the exact, de-duplicated camera scope of a media session."""
-    raw_cameras = session.get('cameras')
-    cameras: list[str] = []
-    if isinstance(raw_cameras, (list, tuple)):
-        cameras.extend(
-            camera
-            for camera in raw_cameras
-            if isinstance(camera, str) and camera
-        )
-    if not cameras:
-        camera = session.get('camera')
-        if isinstance(camera, str) and camera:
-            cameras.append(camera)
-    return tuple(dict.fromkeys(cameras))
+    return tuple(dict.fromkeys(cast(list[str], session['cameras'])))
 
 
 def media_session_demand_keys(
     session: Mapping[str, object],
 ) -> tuple[str, ...]:
     """Return the producer-demand leases owned by a media capability."""
-    raw_keys = session.get('demand_keys')
-    if not isinstance(raw_keys, (list, tuple)):
-        return ()
-    return tuple(
-        dict.fromkeys(
-            key for key in raw_keys
-            if isinstance(key, str) and key
-        ),
-    )
+    return tuple(dict.fromkeys(cast(list[str], session['demand_keys'])))
 
 
 async def _refresh_media_session_demands(
@@ -341,16 +301,11 @@ async def get_media_session(
 ) -> dict[str, Any] | None:
     if not token:
         return None
-    raw = _text(await redis.get(media_session_key(token)))
-    if not raw:
+    raw = await redis.get(media_session_key(token))
+    if raw is None:
         return None
-    try:
-        data = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    if int(data.get('expires_at') or 0) <= int(time.time()):
+    data = json.loads(raw)
+    if int(data['expires_at']) <= int(time.time()):
         return None
     return data
 
@@ -367,18 +322,13 @@ async def get_media_session_by_id(
             f'{MEDIA_PUBLIC_PREFIX}:{public_id}',
         ),
     )
-    if not token_key:
+    if token_key is None:
         return None
-    raw = _text(await redis.get(token_key))
-    if not raw:
+    raw = await redis.get(token_key)
+    if raw is None:
         return None
-    try:
-        data = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    if int(data.get('expires_at') or 0) <= int(time.time()):
+    data = json.loads(raw)
+    if int(data['expires_at']) <= int(time.time()):
         return None
     return data
 
@@ -397,28 +347,27 @@ async def renew_media_session(
     """
     public_key = f'{MEDIA_PUBLIC_PREFIX}:{public_id}'
     token_key = _text(await redis.get(public_key))
-    if not token_key:
+    if token_key is None:
         return None
-    raw = _text(await redis.get(token_key))
-    if not raw:
+    raw = await redis.get(token_key)
+    if raw is None:
         await redis.delete(public_key)
         return None
-    try:
-        data = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    if data.get('parent') != owner:
+    data = json.loads(raw)
+    if data['parent'] != owner:
         return None
 
     now = int(time.time())
-    if int(data.get('expires_at') or 0) <= now:
+    if int(data['expires_at']) <= now:
         return None
     data['expires_at'] = now + MEDIA_SESSION_TTL_SECONDS
-    payload = json.dumps(data, separators=(',', ':'))
+    payload = json.dumps(data, separators=(',', ':')).encode('utf-8')
     await redis.set(token_key, payload, ex=MEDIA_SESSION_TTL_SECONDS)
-    await redis.set(public_key, token_key, ex=MEDIA_SESSION_TTL_SECONDS)
+    await redis.set(
+        public_key,
+        token_key.encode('utf-8'),
+        ex=MEDIA_SESSION_TTL_SECONDS,
+    )
     await _refresh_media_session_demands(redis, data)
     return data
 
@@ -431,39 +380,29 @@ async def delete_media_session(
 ) -> bool:
     public_key = f'{MEDIA_PUBLIC_PREFIX}:{public_id}'
     token_key = _text(await redis.get(public_key))
-    if not token_key:
+    if token_key is None:
         return False
-    raw = _text(await redis.get(token_key))
-    if not raw:
+    raw = await redis.get(token_key)
+    if raw is None:
         await redis.delete(public_key)
         return False
-    try:
-        data = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
+    data = json.loads(raw)
+    if owner is not None and data['parent'] != owner:
         return False
-    if owner is not None and data.get('parent') != owner:
-        return False
-    parent = str(data.get('parent') or '')
+    parent = data['parent']
     await redis.delete(token_key, public_key)
-    if parent:
-        await redis.srem(f'{MEDIA_PARENT_PREFIX}:{_digest(parent)}', token_key)
+    await redis.srem(f'{MEDIA_PARENT_PREFIX}:{_digest(parent)}', token_key)
     return True
 
 
 async def revoke_media_for_parent(redis: Redis, parent: str) -> None:
     parent_key = f'{MEDIA_PARENT_PREFIX}:{_digest(parent)}'
     members = await redis.smembers(parent_key)
-    for member in members or ():
+    for member in members:
         token_key = _text(member)
-        if not token_key:
-            continue
-        raw = _text(await redis.get(token_key))
-        if raw:
-            try:
-                public_id = str(json.loads(raw).get('id') or '')
-            except (TypeError, json.JSONDecodeError):
-                public_id = ''
-            if public_id:
-                await redis.delete(f'{MEDIA_PUBLIC_PREFIX}:{public_id}')
+        raw = await redis.get(token_key)
+        if raw is not None:
+            public_id = json.loads(raw)['id']
+            await redis.delete(f'{MEDIA_PUBLIC_PREFIX}:{public_id}')
         await redis.delete(token_key)
     await redis.delete(parent_key)

@@ -12,7 +12,8 @@ BFF module 與 db_management 共用 port `8005`，啟動同一個 process：
 uvicorn examples.db_management.app:app \
   --host 127.0.0.1 \
   --port 8005 \
-  --workers 4
+  --workers 4 \
+  --timeout-graceful-shutdown 10
 ```
 
 在 HTTPS `server {}` 內加入：

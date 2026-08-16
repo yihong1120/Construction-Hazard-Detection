@@ -33,7 +33,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         # Make redis_pool a valid AsyncMock with .get as an async method
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.get = AsyncMock(
-            return_value='{"username": "test_user", "role": "user"}',
+            return_value=b'{"username": "test_user", "role": "user"}',
         )
 
         user_data = await get_user_data(redis_pool, 'test_user')
@@ -77,21 +77,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
 
         redis_pool.set.assert_awaited_once_with(
             f"{PROJECT_PREFIX}:user_cache:test_user",
-            json.dumps(user_data_dict),
-        )
-
-    async def test_get_user_data_invalid_json(self) -> None:
-        """
-        Test behavior when cached data is invalid JSON (should return None).
-        """
-        redis_pool = AsyncMock(spec=Redis)
-        # return invalid JSON bytes
-        redis_pool.get = AsyncMock(return_value=b'{invalid_json}')
-
-        user_data = await get_user_data(redis_pool, 'bad_user')
-        self.assertIsNone(user_data)
-        redis_pool.get.assert_awaited_once_with(
-            f"{PROJECT_PREFIX}:user_cache:bad_user",
+            json.dumps(user_data_dict).encode('utf-8'),
         )
 
     async def test_preload_and_cached_script(self) -> None:
@@ -132,7 +118,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         redis_pool.script_load = AsyncMock(return_value='sha-invalid')
         redis_pool.evalsha = AsyncMock(return_value=[1])
 
-        with self.assertRaisesRegex(ValueError, 'Invalid evalsha response'):
+        with self.assertRaises(ValueError):
             await service._incr_and_get_ttl(redis_pool, 'invalid', 60)
 
     async def test_incr_get_ttl_noscript_reload(self) -> None:
@@ -200,11 +186,11 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         'examples.auth.cache.get_user_data',
         return_value={'jti_list': ['abc']},
     )
-    async def test_custom_rate_limiter_with_response_and_default_role(
+    async def test_custom_rate_limiter_with_response_and_negative_ttl(
         self, mock_get_user_data: Any,
     ) -> None:
         """
-        Call wrapper with explicit Response, default role, and negative TTL.
+        Call wrapper with explicit Response and negative TTL.
         """
         service_response = Response()
         redis_pool = AsyncMock(spec=Redis)
@@ -219,9 +205,11 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
 
         creds = MagicMock()
         creds.subject = {
-            # role missing -> default to 'user'
             'username': 'u1',
+            'user_id': 1,
+            'role': 'user',
             'jti': 'abc',
+            'features': [],
         }
 
         remaining = await custom_rate_limiter(
@@ -433,50 +421,6 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
                 exc.exception.detail,
                 'Token jti is invalid or replaced',
             )
-
-    async def test_rate_limiter_missing_or_invalid_fields(self) -> None:
-        """
-        Test rate limiter with missing/invalid username or jti fields.
-        """
-        redis_pool = AsyncMock(spec=Redis)
-        mock_request = MagicMock(spec=Request)
-        mock_request.app.state.redis_client.client = redis_pool
-        mock_request.url.path = '/rate_limit_test'
-
-        # Missing username
-        mock_credentials = MagicMock()
-        mock_credentials.subject = {'role': 'guest', 'jti': 'test_jti'}
-        with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(
-                mock_request, Response(),
-                mock_credentials,
-            )
-        self.assertEqual(exc.exception.status_code, 401)
-        self.assertIn('missing or invalid fields', exc.exception.detail)
-
-        # Missing jti
-        mock_credentials.subject = {'role': 'guest', 'username': 'test_user'}
-        with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(
-                mock_request, Response(),
-                mock_credentials,
-            )
-        self.assertEqual(exc.exception.status_code, 401)
-        self.assertIn('missing or invalid fields', exc.exception.detail)
-
-        # Invalid data types
-        mock_credentials.subject = {
-            'role': 'guest',
-            'username': 123, 'jti': ['bad_jti'],
-        }
-        with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(
-                mock_request,
-                Response(),
-                mock_credentials,
-            )
-        self.assertEqual(exc.exception.status_code, 401)
-        self.assertIn('missing or invalid fields', exc.exception.detail)
 
     async def test_rate_limiter_no_user_in_redis(self) -> None:
         """
