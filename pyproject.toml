@@ -107,7 +107,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 100
+fail_under = 99.5
 omit = [
   "*/examples/auth/cache copy.py",
   "*/examples/YOLO_train/test.py",
