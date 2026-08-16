@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
+from typing import Annotated
 from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import field_validator
 from pydantic import model_validator
+from pydantic import RootModel
+from pydantic import StrictInt
 
 
 FeedbackType = Literal[
@@ -18,10 +21,44 @@ FeedbackType = Literal[
 ]
 FeedbackStatus = Literal['pending', 'reviewed', 'accepted', 'rejected']
 ViolationReviewStatus = Literal['pending', 'resolved', 'dismissed']
+ViolationDetectionRow = Annotated[list[float], Field(min_length=7)]
+
+
+class ViolationDetectionRows(RootModel[list[ViolationDetectionRow]]):
+    """Validate tracked YOLO rows stored with a violation record.
+
+    Attributes:
+        root: Detection rows with at least seven numeric values each.
+    """
+
+
+class ViolationWarning(BaseModel):
+    """Represent one structured warning emitted by the danger detector.
+
+    Attributes:
+        count: Number of objects or events triggering the warning.
+    """
+
+    count: StrictInt
+
+
+class ViolationWarningPayload(RootModel[dict[str, ViolationWarning]]):
+    """Validate warning data stored with a violation record.
+
+    Attributes:
+        root: Mapping of detector warning key to structured warning count.
+    """
 
 
 class FeedbackDetectionItem(BaseModel):
-    """Detection data normalised for feedback UI selection."""
+    """Represent a detection normalised for feedback selection.
+
+    Attributes:
+        id: Stable detection identifier accepted by feedback endpoints.
+        label: Optional detected class label.
+        confidence: Optional detector confidence.
+        bbox: Optional ``[x1, y1, x2, y2]`` bounding box.
+    """
     id: str
     label: str | None = None
     confidence: float | None = None
@@ -29,7 +66,14 @@ class FeedbackDetectionItem(BaseModel):
 
 
 class NormalizedBBox(BaseModel):
-    """Normalized bounding box using image-relative 0..1 co-ordinates."""
+    """Represent an image-relative bounding box using 0..1 co-ordinates.
+
+    Attributes:
+        x: Left edge ratio.
+        y: Top edge ratio.
+        w: Width ratio.
+        h: Height ratio.
+    """
     x: float
     y: float
     w: float
@@ -38,14 +82,34 @@ class NormalizedBBox(BaseModel):
     @field_validator('x', 'y', 'w', 'h')
     @classmethod
     def validate_ratio(cls, value: float) -> float:
-        """Keep normalized co-ordinates in the 0..1 range."""
+        """Validate an image-relative co-ordinate ratio.
+
+        Args:
+            value: Candidate ratio.
+
+        Returns:
+            Ratio constrained to the inclusive 0..1 range.
+
+        Raises:
+            ValueError: If the ratio falls outside the accepted range.
+        """
         if value < 0 or value > 1:
             raise ValueError('bbox ratio must be between 0 and 1')
         return value
 
 
 class ViolationOverlayObject(BaseModel):
-    """Structured overlay object for frontend painters."""
+    """Represent one frontend overlay object for a violation image.
+
+    Attributes:
+        object_id: Stable detection identifier.
+        label: Optional detected class label.
+        confidence: Optional detector confidence.
+        bbox: Image-relative bounding box.
+        is_flagged: Whether feedback flagged this object.
+        flag_reason: Optional reason for the flag.
+        flag_note: Optional reviewer or feedback note.
+    """
     object_id: str
     label: str | None = None
     confidence: float | None = None
@@ -56,7 +120,20 @@ class ViolationOverlayObject(BaseModel):
 
 
 class ViolationFeedbackCreate(BaseModel):
-    """Structured feedback submitted against a stored violation record."""
+    """Define structured feedback submitted against a violation record.
+
+    Attributes:
+        type: Classification of feedback supplied by the reviewer.
+        anonymous_id: Optional non-identifying client feedback identifier.
+        target_detection_id: Optional detection selected by the reviewer.
+        original_label: Optional detector label before correction.
+        corrected_label: Optional reviewer-supplied replacement label.
+        original_bbox: Optional detector bounding box.
+        corrected_bbox: Optional reviewer-supplied bounding box.
+        model_version: Optional detector model version.
+        confidence: Optional detector confidence.
+        note: Optional reviewer explanation.
+    """
     type: FeedbackType
     anonymous_id: str | None = Field(default=None, max_length=80)
     target_detection_id: str | None = Field(default=None, max_length=120)
@@ -74,7 +151,18 @@ class ViolationFeedbackCreate(BaseModel):
         cls,
         value: list[float] | None,
     ) -> list[float] | None:
-        """Validate pixel or normalised [x1, y1, x2, y2] boxes."""
+        """Validate pixel or normalised ``[x1, y1, x2, y2]`` boxes.
+
+        Args:
+            value: Optional candidate bounding box.
+
+        Returns:
+            Validated bounding box, or ``None`` when absent.
+
+        Raises:
+            ValueError: If the box is incomplete, non-finite, negative, or
+                unordered.
+        """
         if value is None:
             return None
         if len(value) != 4:
@@ -92,7 +180,17 @@ class ViolationFeedbackCreate(BaseModel):
     @field_validator('confidence')
     @classmethod
     def validate_confidence(cls, value: float | None) -> float | None:
-        """Keep confidence values in the standard 0..1 range."""
+        """Validate a detector confidence in the inclusive 0..1 range.
+
+        Args:
+            value: Optional candidate confidence.
+
+        Returns:
+            Validated confidence, or ``None`` when absent.
+
+        Raises:
+            ValueError: If the confidence falls outside the accepted range.
+        """
         if value is None:
             return None
         if value < 0 or value > 1:
@@ -101,7 +199,14 @@ class ViolationFeedbackCreate(BaseModel):
 
     @model_validator(mode='after')
     def validate_type_requirements(self) -> ViolationFeedbackCreate:
-        """Require the fields needed by each feedback type."""
+        """Validate fields required by the selected feedback type.
+
+        Returns:
+            The validated feedback payload.
+
+        Raises:
+            ValueError: If the selected feedback type lacks required fields.
+        """
         has_original_target = (
             bool(self.target_detection_id)
             or self.original_bbox is not None
@@ -126,7 +231,23 @@ class ViolationFeedbackCreate(BaseModel):
 
 
 class ViolationFeedbackResponse(BaseModel):
-    """Response returned after feedback is stored for review."""
+    """Represent feedback persisted for later review.
+
+    Attributes:
+        id: Feedback database identifier.
+        violation_id: Associated violation identifier.
+        type: Submitted feedback classification.
+        target_detection_id: Optional targeted detection identifier.
+        original_label: Optional detector label.
+        corrected_label: Optional reviewer correction.
+        original_bbox: Optional detector bounding box.
+        corrected_bbox: Optional reviewer bounding box.
+        model_version: Optional detector model version.
+        confidence: Optional detector confidence.
+        note: Optional reviewer explanation.
+        status: Feedback review status.
+        created_at: Time at which feedback was submitted.
+    """
     id: int
     violation_id: int
     type: FeedbackType
@@ -143,7 +264,23 @@ class ViolationFeedbackResponse(BaseModel):
 
 
 class ViolationFeedbackItem(BaseModel):
-    """Feedback summary returned with a violation detail response."""
+    """Represent feedback embedded in a violation-detail response.
+
+    Attributes:
+        id: Feedback database identifier.
+        type: Submitted feedback classification.
+        note: Optional reviewer explanation.
+        target_detection_id: Optional targeted detection identifier.
+        original_label: Optional detector label.
+        corrected_label: Optional reviewer correction.
+        original_bbox: Optional detector bounding box.
+        corrected_bbox: Optional reviewer bounding box.
+        model_version: Optional detector model version.
+        confidence: Optional detector confidence.
+        status: Feedback review status.
+        submitted_by: Optional user identifier of the submitter.
+        submitted_at: Time at which feedback was submitted.
+    """
     id: int
     type: FeedbackType
     note: str | None = None
@@ -160,13 +297,30 @@ class ViolationFeedbackItem(BaseModel):
 
 
 class ViolationReviewUpdate(BaseModel):
-    """Review state update for a flagged violation record."""
+    """Define a review-state update for a flagged violation record.
+
+    Attributes:
+        review_status: New flagged-record review status.
+        review_note: Optional reviewer explanation.
+    """
     review_status: ViolationReviewStatus
     review_note: str | None = Field(default=None, max_length=1000)
 
 
 class ViolationReviewAuditItem(BaseModel):
-    """Audit event returned for violation review history."""
+    """Represent one immutable review-history audit event.
+
+    Attributes:
+        id: Audit database identifier.
+        violation_id: Reviewed violation identifier.
+        actor_user_id: Optional identifier of the reviewing user.
+        action: Stable audit action name.
+        old_status: Optional review status before the event.
+        new_status: Review status after the event.
+        note: Optional reviewer explanation.
+        flagged_reason: Optional original flag reason.
+        created_at: Time at which the event was recorded.
+    """
     id: int
     violation_id: int
     actor_user_id: int | None = None
@@ -195,21 +349,36 @@ class SiteOut(BaseModel):
 
 
 class ViolationFilterCamera(BaseModel):
-    """A camera option scoped to an accessible construction site."""
+    """Represent a camera option scoped to an accessible site.
+
+    Attributes:
+        stream_id: Stable stream configuration identifier.
+        name: Human-readable camera name.
+    """
 
     stream_id: str
     name: str
 
 
 class ViolationTypeOption(BaseModel):
-    """A canonical violation type exposed to client filter controls."""
+    """Represent a canonical type exposed to client filter controls.
+
+    Attributes:
+        code: Stable violation-type code.
+        label: Localised display label.
+    """
 
     code: str
     label: str
 
 
 class ViolationFilterOptions(BaseModel):
-    """Filter options available to the authenticated user at one site."""
+    """Represent filters available to an authenticated user at one site.
+
+    Attributes:
+        cameras: Authorised camera options.
+        violation_types: Canonical violation-type options.
+    """
 
     cameras: list[ViolationFilterCamera]
     violation_types: list[ViolationTypeOption]
@@ -290,18 +459,40 @@ class UploadViolationResponse(BaseModel):
 
 
 class ViolationAnalyticsTopSite(BaseModel):
+    """Represent the most frequent site in an analytics result.
+
+    Attributes:
+        site_id: Database identifier of the site.
+        site_name: Human-readable site name.
+        count: Number of matching violations.
+    """
     site_id: int
     site_name: str
     count: int
 
 
 class ViolationAnalyticsTopType(BaseModel):
+    """Represent the most frequent type in an analytics result.
+
+    Attributes:
+        type: Canonical violation-type code.
+        label: Localised display label.
+        count: Number of matching violations.
+    """
     type: str
     label: str
     count: int
 
 
 class ViolationAnalyticsSummary(BaseModel):
+    """Represent headline counts for a violation analytics result.
+
+    Attributes:
+        total: Total matching violations in the requested range.
+        today: Matching violations in the current UTC day.
+        top_site: Optional most frequent matching site.
+        top_type: Optional most frequent matching type.
+    """
     total: int
     today: int
     top_site: ViolationAnalyticsTopSite | None = None
@@ -309,28 +500,63 @@ class ViolationAnalyticsSummary(BaseModel):
 
 
 class ViolationAnalyticsTrendItem(BaseModel):
+    """Represent one time-bucket count in an analytics trend.
+
+    Attributes:
+        bucket: ISO time bucket label.
+        count: Number of matching violations in the bucket.
+    """
     bucket: str
     count: int
 
 
 class ViolationAnalyticsTypeItem(BaseModel):
+    """Represent one canonical type count in analytics.
+
+    Attributes:
+        type: Canonical violation-type code.
+        label: Localised display label.
+        count: Number of matching violations.
+    """
     type: str
     label: str
     count: int
 
 
 class ViolationAnalyticsSiteItem(BaseModel):
+    """Represent one site count in analytics.
+
+    Attributes:
+        site_id: Database identifier of the site.
+        site_name: Human-readable site name.
+        count: Number of matching violations.
+    """
     site_id: int
     site_name: str
     count: int
 
 
 class ViolationAnalyticsHourItem(BaseModel):
+    """Represent one UTC-hour count in analytics.
+
+    Attributes:
+        hour: UTC hour from zero to twenty-three.
+        count: Number of matching violations.
+    """
     hour: int
     count: int
 
 
 class ViolationAnalyticsResponse(BaseModel):
+    """Represent all aggregates returned by a violation analytics query.
+
+    Attributes:
+        summary: Headline totals and top values.
+        trend: Counts grouped by requested time bucket.
+        by_type: Counts grouped by violation type.
+        by_site: Counts grouped by site.
+        by_hour: Counts grouped by UTC hour.
+    """
     summary: ViolationAnalyticsSummary
     trend: list[ViolationAnalyticsTrendItem]
     by_type: list[ViolationAnalyticsTypeItem]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import cast
 from typing import ClassVar
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.db_management.schemas.auth import AccessTokenSubject
 from examples.violation_records.app import app
 from examples.violation_records.app import main
 
@@ -33,7 +35,10 @@ class TestViolationRecordsApp(unittest.IsolatedAsyncioTestCase):
             Mock implementation of the jwt_access dependency for testing.
             """
             return JwtAuthorizationCredentials(
-                subject={'username': 'test_user'},
+                subject=cast(
+                    AccessTokenSubject,
+                    {'username': 'test_user'},
+                ),
             )
 
         # Override the jwt_access dependency with a mock implementation.

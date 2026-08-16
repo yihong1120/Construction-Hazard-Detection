@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
 from dataclasses import dataclass
+
+from examples.violation_records.schemas import ViolationWarning
+from examples.violation_records.schemas import ViolationWarningPayload
 
 
 @dataclass(frozen=True)
 class ViolationTypeDefinition:
-    """Canonical type metadata derived from structured warning keys."""
+    """Define canonical metadata for one violation type.
+
+    Attributes:
+        code: Stable API and database identifier.
+        label: Localised display label for clients.
+        warning_keys: Detector warning keys that activate the type.
+    """
 
     code: str
     label: str
@@ -52,59 +59,75 @@ VIOLATION_TYPE_DEFINITIONS: tuple[ViolationTypeDefinition, ...] = (
     ),
 )
 
+# Index canonical definitions once for request-time filter validation.
 VIOLATION_TYPE_BY_CODE: dict[str, ViolationTypeDefinition] = {
     definition.code: definition for definition in VIOLATION_TYPE_DEFINITIONS
 }
 
-# Keep existing analytics clients working while publishing only canonical
-# codes.
-VIOLATION_TYPE_ALIASES: dict[str, str] = {
-    'no_helmet': 'no_safety_helmet',
-    'no_hardhat': 'no_safety_helmet',
-    'no_vest': 'no_safety_vest',
-    'controlled_area': 'restricted_area',
-}
-
 
 def normalise_violation_type(code: str) -> str | None:
-    """Return a canonical type code, accepting documented legacy aliases."""
+    """Return a supported canonical violation-type code.
+
+    Args:
+        code: Client-supplied type code.
+
+    Returns:
+        Canonical code, or ``None`` when unsupported or blank.
+    """
     normalized = code.strip()
     if not normalized:
         return None
-    normalized = VIOLATION_TYPE_ALIASES.get(normalized, normalized)
     return normalized if normalized in VIOLATION_TYPE_BY_CODE else None
 
 
-def violation_type_codes_from_warnings(
-    warnings: object,
-) -> list[str]:
-    """Derive canonical codes from the warning payload's structured keys."""
-    payload: object = warnings
-    if isinstance(warnings, str):
-        try:
-            payload = json.loads(warnings)
-        except json.JSONDecodeError:
-            return []
+def parse_warning_payload(
+    warnings_json: str | None,
+) -> ViolationWarningPayload | None:
+    """Decode the canonical warning payload stored with a violation.
 
-    if not isinstance(payload, Mapping):
+    Args:
+        warnings_json: Optional persisted detector-warning JSON.
+
+    Returns:
+        Validated warning payload, or ``None`` when no warning data exists.
+    """
+    if warnings_json is None:
+        return None
+    return ViolationWarningPayload.model_validate_json(warnings_json)
+
+
+def violation_type_codes_from_warnings(
+    warnings_json: str | None,
+) -> list[str]:
+    """Derive canonical codes from structured detector-warning keys.
+
+    Args:
+        warnings_json: Optional persisted detector-warning JSON.
+
+    Returns:
+        Active canonical violation-type codes.
+    """
+    payload = parse_warning_payload(warnings_json)
+    if payload is None:
         return []
 
     return [
         definition.code
         for definition in VIOLATION_TYPE_DEFINITIONS
         if any(
-            _is_active_warning(payload.get(key))
+            _is_active_warning(payload.root.get(key))
             for key in definition.warning_keys
         )
     ]
 
 
-def _is_active_warning(value: object) -> bool:
-    """Treat zero-count warning entries as inactive."""
-    if isinstance(value, Mapping) and 'count' in value:
-        count = value['count']
-        if isinstance(count, bool):
-            return count
-        if isinstance(count, (int, float)):
-            return count > 0
-    return bool(value)
+def _is_active_warning(value: ViolationWarning | None) -> bool:
+    """Return whether a detector warning has a positive count.
+
+    Args:
+        value: Optional structured detector warning.
+
+    Returns:
+        ``True`` when the warning exists and records one or more instances.
+    """
+    return value is not None and value.count > 0

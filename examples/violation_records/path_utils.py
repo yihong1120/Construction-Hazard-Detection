@@ -9,21 +9,25 @@ from examples.violation_records.settings import STATIC_DIR
 
 
 def _normalize_safe_rel_path(image_path: str, path_cls: type = Path) -> Path:
-    """Normalize and sanitize a user-provided image path to a
-    safe relative Path.
+    """Normalise and sanitise a user-provided relative image path.
 
-    - Reject absolute paths or traversal tokens ('..').
-    - Strip leading static/ if present to avoid duplication.
-    - Sanitize each segment; reject empty results.
+    Args:
+        image_path: Untrusted relative image path supplied by a client.
+        path_cls: Path implementation used to construct and inspect the path.
 
-    Raises HTTPException(400) on invalid inputs.
+    Returns:
+        Sanitised relative path rooted below the static media directory.
+
+    Raises:
+        HTTPException: If the path is absolute, traverses directories, or has
+            an invalid component.
     """
     raw_path = path_cls(image_path)
     if raw_path.is_absolute() or '..' in raw_path.parts:
         raise HTTPException(status_code=400, detail='Invalid path')
 
     if raw_path.parts and raw_path.parts[0] == STATIC_DIR.name:
-        raw_path = path_cls(*raw_path.parts[1:])
+        raise HTTPException(status_code=400, detail='Invalid path')
 
     safe_parts: list[str] = []
     for part in raw_path.parts:
@@ -42,9 +46,19 @@ def _resolve_and_authorize(
     username: str,
     path_cls: type = Path,
 ) -> Path:
-    """Resolve rel_path under base_dir and ensure containment.
+    """Resolve a media path below its authorised base directory.
 
-    Raises 403 on escape attempts. Returns the resolved absolute path.
+    Args:
+        base_dir: Root directory authorised for violation media.
+        rel_path: Sanitised relative media path.
+        username: Requesting username for security logging.
+        path_cls: Path implementation used to resolve filesystem paths.
+
+    Returns:
+        Resolved absolute path contained by ``base_dir``.
+
+    Raises:
+        HTTPException: If resolution attempts to escape the media directory.
     """
     base_dir = base_dir.resolve()
     full_path = (base_dir / rel_path).resolve()
@@ -60,7 +74,16 @@ def _resolve_and_authorize(
 
 
 def _determine_media_type(full_path: Path) -> str:
-    """Return appropriate media type for supported image suffix; else 400.
+    """Return the media type for a supported violation image.
+
+    Args:
+        full_path: Authorised image path whose suffix is inspected.
+
+    Returns:
+        PNG or JPEG media type for the image.
+
+    Raises:
+        HTTPException: If the file suffix is unsupported.
     """
     suffix = full_path.suffix.lower()
     allowed_ext = {'.png', '.jpg', '.jpeg'}

@@ -6,6 +6,7 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from typing import Literal
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -13,8 +14,9 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 from PIL import Image
+from pydantic import ValidationError
 
-from examples.violation_records import routers
+from examples.violation_records import violation_services as routers
 from examples.violation_records.schemas import FeedbackDetectionItem
 from examples.violation_records.schemas import ViolationFeedbackItem
 from examples.violation_records.schemas import ViolationItem
@@ -38,44 +40,27 @@ def _feedback(
 class TestViolationRouterHelpers(unittest.TestCase):
     def test_detection_and_warning_json_decoding(self) -> None:
         self.assertIsNone(routers._decode_detection_items(None))
-        self.assertIsNone(routers._decode_detection_items('{not json'))
-        self.assertEqual(routers._decode_detection_items('[1, 2]'), [1, 2])
         self.assertEqual(
-            routers._decode_detection_items('{"detection_items": [3]}'),
-            [3],
+            routers._decode_detection_items(
+                '[[1, 2, 3, 4, 0.9, 5, 12]]',
+            ),
+            [[1.0, 2.0, 3.0, 4.0, 0.9, 5.0, 12.0]],
         )
-        self.assertEqual(
-            routers._decode_detection_items('{"items": [4]}'),
-            [4],
-        )
-        self.assertIsNone(routers._decode_detection_items('{"items": "bad"}'))
+        with self.assertRaises(ValidationError):
+            routers._decode_detection_items('{not json')
+        with self.assertRaises(ValidationError):
+            routers._decode_detection_items('[[1, 2, 3, 4]]')
 
         self.assertIsNone(routers._warning_text_from_json(None))
         self.assertEqual(
             routers._warning_text_from_json(
-                '{not json',
+                '{"near_vehicle": {"count": 2}, '
+                '"helmet": {"count": 1}, "skip": {"count": 0}}',
             ),
-            '{not json',
+            'near_vehicle: 2, helmet: 1',
         )
-        self.assertEqual(
-            routers._warning_text_from_json(
-                '"plain warning"',
-            ),
-            'plain warning',
-        )
-        self.assertEqual(
-            routers._warning_text_from_json(
-                '{"near_vehicle": {"count": 2}, "helmet": true, "skip": 0}',
-            ),
-            'near_vehicle: 2, helmet',
-        )
-        self.assertEqual(
-            routers._warning_text_from_json(
-                '["one", "two"]',
-            ),
-            'one, two',
-        )
-        self.assertIsNone(routers._warning_text_from_json('123'))
+        with self.assertRaises(ValidationError):
+            routers._warning_text_from_json('{not json')
 
     def test_media_url_and_detection_bbox_helpers(self) -> None:
         request = SimpleNamespace(
@@ -97,72 +82,48 @@ class TestViolationRouterHelpers(unittest.TestCase):
         )
 
         self.assertEqual(
-            routers._bbox_from_dict({'x1': 1, 'y1': 2, 'x2': 3, 'y2': 4}),
+            routers._bbox_from_detection_item(
+                [1.0, 2.0, 3.0, 4.0, 0.9, 5.0, 12.0],
+            ),
             [1.0, 2.0, 3.0, 4.0],
         )
-        self.assertEqual(
-            routers._bbox_from_dict({'x': 1, 'y': 2, 'w': 3, 'h': 4}),
-            [1.0, 2.0, 4.0, 6.0],
-        )
-        self.assertIsNone(routers._bbox_from_dict({'x': 1}))
-        self.assertEqual(
-            routers._bbox_from_detection_item({'bbox': [1, 2, 3, 4]}),
-            [1.0, 2.0, 3.0, 4.0],
-        )
-        self.assertEqual(
-            routers._bbox_from_detection_item((1, 2, 3, 4, 0.9)),
-            [1.0, 2.0, 3.0, 4.0],
-        )
-        self.assertIsNone(routers._bbox_from_detection_item({'box': ['bad']}))
 
     def test_feedback_detection_normalisation_and_ids(self) -> None:
-        item = {
-            'id': 'tracked',
-            'class_name': 'worker',
-            'confidence': 0.9,
-            'bbox': {'x': 1, 'y': 2, 'width': 3, 'height': 4},
-            'track_id': 99,
-        }
+        item = [1.0, 2.0, 4.0, 6.0, 0.9, 5.0, 99.0]
         normalized = routers._feedback_detection_from_item(item, 0)
-        assert normalized is not None
-        self.assertEqual(normalized.id, 'tracked')
-        self.assertEqual(normalized.label, 'worker')
+        self.assertEqual(normalized.id, 'det_0')
+        self.assertEqual(normalized.label, 'class-5')
         self.assertEqual(normalized.bbox, [1.0, 2.0, 4.0, 6.0])
         self.assertEqual(
             routers._feedback_detection_id_candidates(item, 0),
-            {'det_0', 'tracked', '99'},
+            {'det_0', '99'},
         )
 
         list_item = [1, 2, 3, 4, 0.75, 5, 12]
         normalized_list = routers._feedback_detection_from_item(list_item, 1)
-        assert normalized_list is not None
         self.assertEqual(normalized_list.id, 'det_1')
         self.assertEqual(normalized_list.label, 'class-5')
         self.assertEqual(
             routers._feedback_detection_id_candidates(list_item, 1),
             {'det_1', '12'},
         )
-        self.assertIsNone(routers._feedback_detection_from_item('invalid', 2))
         detections = routers._feedback_detections_from_json(
-            '[{"id":"one","bbox":[1,2,3,4]}, "bad"]',
+            '[[1,2,3,4,0.9,2,8]]',
         )
-        assert detections is not None
-        self.assertEqual([item.id for item in detections], ['one'])
+        self.assertEqual([item.id for item in detections or []], ['det_0'])
         self.assertEqual(
             routers._feedback_detection_ids_from_json(
-                '[{"id":"one"}, [1,2,3,4,0.9,2,8]]',
+                '[[1,2,3,4,0.9,2,8]]',
             ),
-            {'det_0', 'one', 'det_1', '8'},
+            {'det_0', '8'},
         )
-        self.assertIsNone(
-            routers._feedback_detection_ids_from_json('bad json'),
-        )
+        with self.assertRaises(ValidationError):
+            routers._feedback_detection_ids_from_json('bad json')
 
     def test_bbox_and_overlay_helpers(self) -> None:
         self.assertEqual(routers._clamp_ratio(-0.1), 0.0)
         self.assertEqual(routers._clamp_ratio(2), 1.0)
         self.assertIsNone(routers._bbox_to_normalized(None, (100, 100)))
-        self.assertIsNone(routers._bbox_to_normalized(['bad'] * 4, (100, 100)))
         self.assertIsNone(
             routers._bbox_to_normalized(
                 [3, 2, 1, 4],
@@ -269,18 +230,6 @@ class TestViolationRouterHelpers(unittest.TestCase):
             'Site A',
         )
         self.assertEqual(routers._scalar_value(7), 7)
-        with patch.object(routers, 'STATIC_DIR', Path('/tmp/static')):
-            self.assertEqual(
-                routers._path_candidates_for_db(
-                    Path('2026/image.jpg'),
-                    Path('/tmp/static/2026/image.jpg'),
-                ),
-                [
-                    '2026/image.jpg',
-                    'static/2026/image.jpg',
-                    '/tmp/static/2026/image.jpg',
-                ],
-            )
 
         timestamp = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
         item = ViolationItem(
@@ -291,19 +240,7 @@ class TestViolationRouterHelpers(unittest.TestCase):
             image_path='image.jpg',
             created_at=timestamp,
         )
-        self.assertEqual(routers._cursor_payload(item), (timestamp, 7))
-        self.assertEqual(
-            routers._cursor_payload(
-                SimpleNamespace(
-                    detection_time=timestamp,
-                    id=8,
-                ),
-            ),
-            (timestamp, 8),
-        )
-        cursor = routers._encode_violation_cursor(
-            (7, 'Site', 'Cam', timestamp),
-        )
+        cursor = routers._encode_violation_cursor(item)
         self.assertEqual(
             routers._decode_violation_cursor(
                 cursor,
@@ -318,22 +255,6 @@ class TestViolationRouterHelpers(unittest.TestCase):
             routers._normalise_utc(datetime(2026, 7, 24)).tzinfo,
             timezone.utc,
         )
-        self.assertEqual(
-            routers._format_bucket(
-                timestamp,
-                'hour',
-            ),
-            '2026-07-24T12:00:00Z',
-        )
-        self.assertEqual(routers._format_bucket(timestamp, 'week'), '2026-W30')
-        self.assertEqual(
-            routers._format_bucket(
-                timestamp,
-                'day',
-            ),
-            '2026-07-24',
-        )
-        self.assertEqual(routers._format_bucket('raw', 'day'), 'raw')
 
     def test_analytics_database_expressions_and_type_validation(self) -> None:
         for dialect in ['postgresql', 'mysql', 'mariadb', 'sqlite', 'unknown']:
@@ -352,28 +273,14 @@ class TestViolationRouterHelpers(unittest.TestCase):
             self.assertTrue(str(routers._analytics_hour_expr(db)))
             self.assertTrue(str(routers._type_condition('near_vehicle', db)))
 
-        self.assertEqual(
-            routers._canonical_violation_type('no_helmet'),
-            'no_safety_helmet',
-        )
+        with self.assertRaises(HTTPException) as invalid_type:
+            routers._canonical_violation_type('no_helmet')
+        self.assertEqual(invalid_type.exception.status_code, 422)
         with self.assertRaises(HTTPException) as invalid_type:
             routers._canonical_violation_type('unknown')
         self.assertEqual(invalid_type.exception.status_code, 422)
 
-    def test_invalid_detection_values_and_feedback_bbox_matching(self) -> None:
-        """Malformed detector values are ignored without breaking feedback
-        UI."""
-        self.assertIsNone(
-            routers._bbox_from_detection_item({'bbox': [1, 2, 'bad', 4]}),
-        )
-        malformed_confidence = routers._feedback_detection_from_item(
-            [1, 2, 3, 4, 'bad-confidence', 1],
-            0,
-        )
-        self.assertIsNotNone(malformed_confidence)
-        assert malformed_confidence is not None
-        self.assertEqual(malformed_confidence.bbox, [1.0, 2.0, 3.0, 4.0])
-
+    def test_feedback_bbox_matching(self) -> None:
         detection = FeedbackDetectionItem(
             id='det_1',
             bbox=[1, 2, 3, 4],
@@ -490,8 +397,8 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.db = MagicMock()
         self.db.execute = AsyncMock()
-        self.credentials = SimpleNamespace(subject={'username': 'reviewer'})
-        self.missing_credentials = SimpleNamespace(subject={})
+        self.credentials: Any = SimpleNamespace(subject={'username': 'reviewer'})
+        self.missing_credentials: Any = SimpleNamespace(subject={})
 
     async def test_range_and_stream_filter_reject_invalid_requests(
         self,
@@ -547,12 +454,15 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_violation_list_applies_cursor_filter(self) -> None:
         """A valid cursor adds keyset filtering before an empty page
         response."""
+        timestamp = datetime(2026, 7, 24, tzinfo=timezone.utc)
         cursor = routers._encode_violation_cursor(
-            (
-                7,
-                'Roadwork',
-                'Cam 1',
-                datetime(2026, 7, 24, tzinfo=timezone.utc),
+            ViolationItem(
+                id=7,
+                site_name='Roadwork',
+                stream_name='Cam 1',
+                detection_time=timestamp,
+                image_path='image.jpg',
+                created_at=timestamp,
             ),
         )
         self.db.execute.return_value = SimpleNamespace(all=lambda: [])
@@ -866,7 +776,7 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         self.db.rollback = AsyncMock(
             side_effect=RuntimeError('rollback unavailable'),
         )
-        payload = SimpleNamespace(
+        payload: Any = SimpleNamespace(
             review_status='resolved',
             review_note='confirmed',
         )
@@ -892,13 +802,3 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-
-def test_bbox_dict_rejects_missing_width_or_height() -> None:
-    """Partial xywh metadata must not become a misleading zero-size box."""
-    assert routers._bbox_from_dict(
-        {'x': 1, 'y': 2, 'width': None, 'height': 3},
-    ) is None
-    assert routers._bbox_from_dict(
-        {'x': 1, 'y': 2, 'width': 3, 'height': None},
-    ) is None

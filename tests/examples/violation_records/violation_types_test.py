@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from pydantic import ValidationError
+
 from examples.violation_records.violation_types import (
     normalise_violation_type,
 )
@@ -22,12 +24,8 @@ class TestViolationTypes(unittest.TestCase):
 
         self.assertEqual(codes, ['no_safety_helmet', 'near_vehicle'])
 
-    def test_legacy_alias_normalises_to_canonical_code(self) -> None:
-        self.assertEqual(
-            normalise_violation_type(
-                'no_helmet',
-            ), 'no_safety_helmet',
-        )
+    def test_requires_canonical_type_code(self) -> None:
+        self.assertIsNone(normalise_violation_type('no_helmet'))
         self.assertEqual(
             normalise_violation_type(
                 'near_vehicle',
@@ -35,20 +33,18 @@ class TestViolationTypes(unittest.TestCase):
         )
         self.assertIsNone(normalise_violation_type('free-text warning'))
 
-    def test_invalid_and_inactive_warning_values_are_ignored(self) -> None:
-        """Malformed, empty, and zero-count warning payloads are harmless."""
+    def test_requires_structured_warning_payload(self) -> None:
+        """Persisted warnings have one canonical JSON structure."""
         self.assertIsNone(normalise_violation_type('   '))
-        self.assertEqual(violation_type_codes_from_warnings('{bad json'), [])
-        self.assertEqual(
-            violation_type_codes_from_warnings(['not-a-mapping']), [],
-        )
+        with self.assertRaises(ValidationError):
+            violation_type_codes_from_warnings('{bad json')
+        with self.assertRaises(ValidationError):
+            violation_type_codes_from_warnings(
+                '{"warning_no_hardhat": {"count": true}}',
+            )
         self.assertEqual(
             violation_type_codes_from_warnings(
-                {
-                    'warning_no_hardhat': {'count': False},
-                    'warning_no_safety_vest': {'count': 0},
-                    'warning_close_to_vehicle': {'count': 1.5},
-                },
+                '{"warning_no_safety_vest": {"count": 0}}',
             ),
-            ['near_vehicle'],
+            [],
         )

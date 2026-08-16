@@ -10,7 +10,6 @@ from fastapi import HTTPException
 from examples.violation_records.path_utils import _determine_media_type
 from examples.violation_records.path_utils import _normalize_safe_rel_path
 from examples.violation_records.path_utils import _resolve_and_authorize
-from examples.violation_records.settings import STATIC_DIR
 
 
 class TestNormalizeSafeRelPath(unittest.TestCase):
@@ -35,11 +34,11 @@ class TestNormalizeSafeRelPath(unittest.TestCase):
         self.assertEqual(cm.exception.status_code, 400)
         self.assertIn('Invalid path', cm.exception.detail)
 
-    def test_strip_leading_static(self) -> None:
-        """A leading 'static/' segment should be normalised away."""
-        p: str = f"{STATIC_DIR.name}/2025-01-01/img.png"
-        out: Path = _normalize_safe_rel_path(p)
-        self.assertEqual(out, Path('2025-01-01') / 'img.png')
+    def test_reject_leading_static(self) -> None:
+        """The API accepts only paths relative to the static directory."""
+        with self.assertRaises(HTTPException) as cm:
+            _normalize_safe_rel_path('static/2025-01-01/img.png')
+        self.assertEqual(cm.exception.status_code, 400)
 
     def test_dot_segment_invalid(self) -> None:
         """A '.' segment must trigger a 400 Invalid path error.

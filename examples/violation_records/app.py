@@ -6,16 +6,18 @@ from fastapi import FastAPI
 from examples.auth.lifespan import global_lifespan
 from examples.violation_records.routers import router as violation_router
 
-# Initialise the FastAPI app with a custom lifespan handler
+# Share database and Redis lifecycle management with the other API services.
 app: FastAPI = FastAPI(lifespan=global_lifespan)
 
-# Include routers for violation records
+# Keep endpoint implementation in the router and service modules.
 app.include_router(violation_router)
 
 
 def main() -> None:
-    """
-    Main function to run the FastAPI application using Uvicorn.
+    """Run the violation-record ASGI application with Uvicorn.
+
+    This entry point is intended for local development; deployed processes
+    should be managed by the production process supervisor.
     """
     uvicorn.run(
         'examples.violation_records.app:app',

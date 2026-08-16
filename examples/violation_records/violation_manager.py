@@ -15,6 +15,8 @@ from examples.auth.models import Site
 from examples.auth.models import StreamConfig
 from examples.auth.models import Violation
 from examples.shared.filename_utils import sanitize_filename
+from examples.violation_records.schemas import ViolationDetectionRows
+from examples.violation_records.schemas import ViolationWarningPayload
 from examples.violation_records.settings import STATIC_DIR
 from examples.violation_records.violation_types import (
     violation_type_codes_from_warnings,
@@ -24,29 +26,33 @@ _upload_chunk_size: Final[int] = 1024 * 1024
 
 
 class EmptyViolationImageError(ValueError):
-    """Raised when an uploaded violation image has no bytes."""
+    """Raise when an uploaded violation image contains no bytes.
+
+    This error lets the HTTP layer distinguish an empty upload from a storage
+    or database failure.
+    """
 
 
 class ViolationImageReadError(OSError):
-    """Raised when streaming an uploaded violation image fails."""
+    """Raise when streaming an uploaded violation image fails.
+
+    The partially written file is removed before this error leaves the manager.
+    """
 
 
 class ViolationManager:
-    """
-    A manager class responsible for storing violation records in both the local
-    file system (for images) and the database via SQLAlchemy ORM.
+    """Store violation evidence images and their database records.
+
+    Images are persisted before their matching database row so a committed row
+    never points to a file that was not successfully written.
     """
 
     def __init__(self, base_dir: str | Path | None = None) -> None:
-        """
-        Initialise the manager with a base directory for storing images.
-
-        This creates the specified base directory if it does not already exist.
+        """Initialise a manager with a base directory for evidence images.
 
         Args:
-            base_dir (str | Path | None, optional): The base directory path
-                where images will be stored. If None, defaults to STATIC_DIR
-                from settings. Defaults to None.
+            base_dir: Optional base directory; defaults to configured static
+                media storage.
         """
         self.base_dir: Path = Path(base_dir or STATIC_DIR)
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -88,6 +94,14 @@ class ViolationManager:
         """
         image_path: Path | None = None
         try:
+            if warnings_json is not None:
+                warnings_json = ViolationWarningPayload.model_validate_json(
+                    warnings_json,
+                ).model_dump_json()
+            if detections_json is not None:
+                detections_json = ViolationDetectionRows.model_validate_json(
+                    detections_json,
+                ).model_dump_json()
             detection_time = detection_time.astimezone()
             image_path = self._build_image_path(detection_time)
             if image_file is not None:
@@ -130,7 +144,14 @@ class ViolationManager:
             return None
 
     def _build_image_path(self, detection_time: datetime) -> Path:
-        """Create the day directory and return a unique image path."""
+        """Create a date directory and return a unique evidence image path.
+
+        Args:
+            detection_time: Detection time used to partition image storage.
+
+        Returns:
+            Writable absolute PNG path below the manager base directory.
+        """
         date_folder: str = detection_time.strftime('%Y-%m-%d')
         day_dir: Path = self.base_dir / date_folder
         day_dir.mkdir(parents=True, exist_ok=True)
@@ -143,7 +164,15 @@ class ViolationManager:
         image_bytes: bytes | None,
         image_path: Path,
     ) -> None:
-        """Write an in-memory image payload to disk."""
+        """Write an in-memory evidence image to disk.
+
+        Args:
+            image_bytes: Image bytes supplied by an internal caller.
+            image_path: Destination path for the evidence image.
+
+        Raises:
+            EmptyViolationImageError: If no image bytes were supplied.
+        """
         if not image_bytes:
             raise EmptyViolationImageError('Empty image file')
         async with aiofiles.open(image_path, mode='wb') as f:
@@ -155,7 +184,17 @@ class ViolationManager:
         image_path: Path,
         chunk_size: int,
     ) -> None:
-        """Stream an UploadFile-like object to disk in bounded chunks."""
+        """Stream an uploaded evidence image to disk in bounded chunks.
+
+        Args:
+            image_file: UploadFile-compatible asynchronous image source.
+            image_path: Destination path for the evidence image.
+            chunk_size: Maximum bytes read and written per iteration.
+
+        Raises:
+            EmptyViolationImageError: If the upload contains no bytes.
+            ViolationImageReadError: If the upload cannot be read or written.
+        """
         wrote_any = False
         try:
             async with aiofiles.open(image_path, mode='wb') as f:
@@ -187,7 +226,22 @@ class ViolationManager:
         cone_polygon_json: str | None,
         pole_polygon_json: str | None,
     ) -> Violation:
-        """Insert the database row after the image has been persisted."""
+        """Insert the database row after its evidence image is persisted.
+
+        Args:
+            db: Database session used to persist the violation.
+            site: Site name associated with the violation.
+            stream_name: Camera name associated with the violation.
+            detection_time: Time at which the violation was detected.
+            image_path: Persisted absolute evidence-image path.
+            warnings_json: Optional validated warning JSON.
+            detections_json: Optional validated detection JSON.
+            cone_polygon_json: Optional safety-cone polygon JSON.
+            pole_polygon_json: Optional utility-pole polygon JSON.
+
+        Returns:
+            Persisted violation ORM record.
+        """
         stream_config_id = await self._find_stream_config_id(
             db,
             site,
@@ -198,7 +252,7 @@ class ViolationManager:
             stream_name=stream_name,
             stream_config_id=stream_config_id,
             detection_time=detection_time,
-            image_path=str(image_path),
+            image_path=image_path.relative_to(self.base_dir).as_posix(),
             warnings_json=warnings_json,
             violation_type_codes=violation_type_codes_from_warnings(
                 warnings_json,
@@ -218,7 +272,17 @@ class ViolationManager:
         site: str,
         stream_name: str,
     ) -> int | None:
-        """Resolve the immutable camera ID while retaining legacy uploads."""
+        """Resolve a stable camera identifier while retaining legacy uploads.
+
+        Args:
+            db: Database session used to find the configured camera.
+            site: Site name associated with the upload.
+            stream_name: Camera name associated with the upload.
+
+        Returns:
+            Stable stream configuration identifier, or ``None`` for a legacy
+            upload with no configured camera.
+        """
         statement = (
             select(StreamConfig.id)
             .join(Site, StreamConfig.site_id == Site.id)

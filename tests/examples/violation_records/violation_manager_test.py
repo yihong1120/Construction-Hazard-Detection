@@ -34,8 +34,8 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
         self.mock_image_bytes = b'fake_image_bytes'
 
         # Example strings for JSON fields.
-        self.mock_warnings_json = '{"warning": true}'
-        self.mock_detections_json = '{"detections": []}'
+        self.mock_warnings_json = '{"warning": {"count": 1}}'
+        self.mock_detections_json = '[[0, 0, 1, 1, 0.9, 0, -1]]'
         self.mock_cone_polygon_json = '{"cones": []}'
         self.mock_pole_polygon_json = '{"poles": []}'
 
@@ -119,6 +119,10 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
 
         # 4) Database calls
         self.mock_db.add.assert_called_once()
+        self.assertEqual(
+            self.mock_db.add.call_args.args[0].image_path,
+            '2025-04-09/12345678-1234-5678-1234-567812345678.png',
+        )
         self.mock_db.commit.assert_awaited_once()
         self.mock_db.refresh.assert_awaited_once()
 

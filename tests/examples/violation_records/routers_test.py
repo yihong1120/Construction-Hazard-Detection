@@ -9,6 +9,7 @@ from datetime import timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from typing import cast
 from typing import ClassVar
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -24,17 +25,27 @@ from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.user_service import _cache_ttl
 from examples.auth.user_service import _user_sites_cache
+from examples.db_management.schemas.auth import AccessTokenSubject
 from examples.shared.filename_utils import sanitize_filename
-from examples.violation_records.routers import _validate_analytics_range
-from examples.violation_records.routers import get_user_sites_cached
 from examples.violation_records.routers import router
-from examples.violation_records.routers import upload_violation
 from examples.violation_records.violation_manager import (
     EmptyViolationImageError,
 )
 from examples.violation_records.violation_manager import (
     ViolationImageReadError,
 )
+from examples.violation_records.violation_services import _validate_analytics_range
+from examples.violation_records.violation_services import get_user_sites_cached
+from examples.violation_records.violation_services import upload_violation
+
+
+def _credentials(
+    subject: dict[str, object],
+) -> JwtAuthorizationCredentials:
+    """Create intentionally incomplete credentials for route guard tests."""
+    return JwtAuthorizationCredentials(
+        subject=cast(AccessTokenSubject, subject),
+    )
 
 
 class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
@@ -73,7 +84,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         # Override jwt_access dependency
         def override_jwt() -> Any:
             """Support override_jwt."""
-            return JwtAuthorizationCredentials(
+            return _credentials(
                 subject={'username': 'test_user'},
             )
 
@@ -277,8 +288,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             detection_time=detection_time or datetime.now(),
             image_path=image_path,
             created_at=datetime(2023, 1, 3),
-            detections_json='some detection',
-            warnings_json='some warning',
+            detections_json='[[0, 0, 1, 1, 0.9, 0, -1]]',
+            warnings_json='{}',
             cone_polygon_json='some cone polygons',
             pole_polygon_json='some pole polygons',
             is_flagged=False,
@@ -342,7 +353,9 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     async def test_get_user_sites_cached_user_not_found(self) -> None:
         """Test get_user_sites_cached function when user is not found."""
-        from examples.violation_records.routers import get_user_sites_cached
+        from examples.violation_records.violation_services import (
+            get_user_sites_cached,
+        )
         from fastapi import HTTPException
 
         # Mock database to return None for user
@@ -474,7 +487,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
-            return JwtAuthorizationCredentials(subject={})
+            return _credentials(subject={})
 
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -489,7 +502,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         # Restore
         self.client.app.dependency_overrides[jwt_access] = (
-            lambda: JwtAuthorizationCredentials(
+            lambda: _credentials(
                 subject={'username': 'test_user'},
             )
         )
@@ -497,7 +510,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     # /api/get_violation_image Tests
     ###################################################
-    @patch('examples.violation_records.routers.Path')
+    @patch('examples.violation_records.violation_services.Path')
     def test_get_violation_image_dotdot(self, mock_path: MagicMock) -> None:
         """If the path contains '..', return 400 for 'Invalid path'."""
         path_mock = MagicMock()
@@ -508,7 +521,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(resp.status_code, 400)
 
-    @patch('examples.violation_records.routers.Path')
+    @patch('examples.violation_records.violation_services.Path')
     def test_get_violation_image_not_relative(
         self,
         mock_path: MagicMock,
@@ -533,7 +546,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.get('/api/get_violation_image?image_path=some.jpg')
         self.assertEqual(resp.status_code, 403)
 
-    @patch('examples.violation_records.routers.Path')
+    @patch('examples.violation_records.violation_services.Path')
     def test_get_violation_image_not_found(self, mock_path: MagicMock) -> None:
         """If the requested file does not exist, return 404."""
         path_mock = MagicMock()
@@ -552,11 +565,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 404)
 
     @patch(
-        'examples.violation_records.routers.get_user_sites_cached',
+        'examples.violation_records.violation_services.get_user_sites_cached',
         new_callable=AsyncMock,
         return_value=['SiteA'],
     )
-    @patch('examples.violation_records.routers.Path')
+    @patch('examples.violation_records.violation_services.Path')
     def test_get_violation_image_success_png(
         self,
         mock_path: MagicMock,
@@ -587,11 +600,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.headers['content-type'], 'image/png')
 
     @patch(
-        'examples.violation_records.routers.get_user_sites_cached',
+        'examples.violation_records.violation_services.get_user_sites_cached',
         new_callable=AsyncMock,
         return_value=['SiteA'],
     )
-    @patch('examples.violation_records.routers.Path')
+    @patch('examples.violation_records.violation_services.Path')
     def test_get_violation_image_success_jpeg_and_header_sanitised(
         self,
         mock_path: MagicMock,
@@ -626,7 +639,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             resp.headers['content-disposition'],
         )
 
-    @patch('examples.violation_records.routers.Path')
+    @patch('examples.violation_records.violation_services.Path')
     def test_get_violation_image_unsupported_file_type(
         self,
         mock_path: MagicMock,
@@ -657,43 +670,14 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()['detail'], 'Invalid path segment')
 
-    @patch(
-        'examples.violation_records.routers.get_user_sites_cached',
-        new_callable=AsyncMock,
-        return_value=['SiteA'],
-    )
-    @patch('examples.violation_records.routers.Path')
-    def test_get_violation_image_leading_static_normalised(
-        self,
-        mock_path: MagicMock,
-        mock_get_user_sites: AsyncMock,
-    ) -> None:
-        """If image_path starts with 'static/', it should be normalised to
-        avoid constructing 'static/static/...'.
-
-        Expect success for valid PNG.
-        """
-        path_mock = MagicMock()
-        path_mock.resolve.return_value = path_mock
-        path_mock.__truediv__.return_value = path_mock
-        # Simulate parts starting with 'static' followed by valid subpath
-        path_mock.parts = ('static', '2025-01-01', 'img.png')
-        path_mock.is_absolute.return_value = False
-        # Keep under base_dir and existing file
-        path_mock.exists.return_value = True
-        path_mock.suffix.lower.return_value = '.png'
-        path_mock.name = 'img.png'
-        mock_path.return_value = path_mock
-        mock_get_user_sites.return_value = ['SiteA']
-        self.fake_db.execute.return_value = self._exec_scalar(1)
-
+    def test_get_violation_image_rejects_leading_static(self) -> None:
+        """The image route only accepts canonical relative paths."""
         resp = self.client.get(
             '/api/get_violation_image?image_path=static/2025-01-01/img.png',
         )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.headers['content-type'], 'image/png')
+        self.assertEqual(resp.status_code, 400)
 
-    @patch('examples.violation_records.routers.Path')
+    @patch('examples.violation_records.violation_services.Path')
     def test_get_violation_image_dot_segment_invalid(
         self,
         mock_path: MagicMock,
@@ -714,7 +698,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.json()['detail'], 'Invalid path')
 
     @patch(
-        'examples.violation_records.routers.get_user_sites_cached',
+        'examples.violation_records.violation_services.get_user_sites_cached',
         new_callable=AsyncMock,
         return_value=['SiteA'],
     )
@@ -732,7 +716,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             source.parent.mkdir(parents=True)
             Image.new('RGB', (24, 24), color='white').save(source)
             with patch(
-                'examples.violation_records.routers.STATIC_DIR', base_dir,
+                'examples.violation_records.violation_services.STATIC_DIR', base_dir,
             ):
                 resp = self.client.get(
                     '/api/get_violation_image'
@@ -742,7 +726,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 403)
 
     @patch(
-        'examples.violation_records.routers.get_user_sites_cached',
+        'examples.violation_records.violation_services.get_user_sites_cached',
         new_callable=AsyncMock,
         return_value=['SiteA'],
     )
@@ -760,7 +744,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             Image.new('RGB', (800, 600), color='white').save(source)
 
             with patch(
-                'examples.violation_records.routers.STATIC_DIR', base_dir,
+                'examples.violation_records.violation_services.STATIC_DIR', base_dir,
             ):
                 resp = self.client.get(
                     '/api/get_violation_thumbnail'
@@ -778,7 +762,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     # /api/violations Tests
     ###################################################
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_user_not_found(
         self,
         mock_get_user_sites: AsyncMock,
@@ -794,7 +778,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.get('/api/violations')
         self.assertEqual(resp.status_code, 404)
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_no_sites(
         self,
         mock_get_user_sites: AsyncMock,
@@ -808,7 +792,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             {'total': 0, 'items': [], 'next_cursor': None},
         )
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_site_id_403(
         self,
         mock_get_user_sites: AsyncMock,
@@ -823,7 +807,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.get('/api/violations?site_id=2')
         self.assertEqual(resp.status_code, 403)
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_with_filters(
         self,
         mock_get_user_sites: AsyncMock,
@@ -854,8 +838,11 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['total'], 2)
         self.assertEqual(len(data['items']), 2)
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_with_camera_and_type_filters(
         self,
         mock_get_user_sites: AsyncMock,
@@ -884,7 +871,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.json()['total'], 1)
         self.assertEqual(self.fake_db.execute.await_count, 2)
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_rejects_non_numeric_stream_id(
         self,
         mock_get_user_sites: AsyncMock,
@@ -895,7 +882,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         admin = self.make_user('test_user', [site_a], role='admin')
         with patch(
             (
-                'examples.violation_records.routers.'
+                'examples.violation_records.violation_services.'
                 'load_user_with_effective_sites'
             ),
             new=AsyncMock(return_value=(admin, [site_a])),
@@ -908,7 +895,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             'stream_id must be a positive stream configuration ID',
         )
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_get_violation_filter_options_success(
         self,
         mock_load_user: AsyncMock,
@@ -942,7 +932,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_get_violation_filter_options_rejects_other_group(
         self,
         mock_load_user: AsyncMock,
@@ -964,7 +957,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(resp.json()['detail'], 'No access to group_id')
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_success(
         self,
         mock_get_user_sites: AsyncMock,
@@ -994,7 +987,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             data['items'][0]['image_url'],
         )
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_cursor_pagination_returns_next_cursor(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1028,7 +1021,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(data['next_cursor'], str)
         self.assertTrue(data['next_cursor'])
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_invalid_cursor(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1041,7 +1034,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 422)
         self.assertEqual(resp.json()['detail'], 'Invalid cursor')
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_violations_empty_tail_page_counts_total(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1062,7 +1055,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.fake_db.execute.await_count, 2)
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_get_flagged_violations_admin_success(
         self,
         mock_load_user: AsyncMock,
@@ -1101,7 +1097,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['items'][0]['flag_reason'], 'false_positive')
         self.assertEqual(data['items'][0]['review_status'], 'pending')
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_get_flagged_violations_regular_user_forbidden(
         self,
         mock_load_user: AsyncMock,
@@ -1116,7 +1115,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 403)
         self.fake_db.execute.assert_not_called()
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_get_next_review_violation_success(
         self,
         mock_load_user: AsyncMock,
@@ -1153,7 +1155,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['feedbacks'][0]['note'], '測試')
         self.assertEqual(data['review_audit_logs'], [])
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_get_next_review_violation_empty(
         self,
         mock_load_user: AsyncMock,
@@ -1173,7 +1178,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     # /api/violations/analytics Tests
     ###################################################
     @patch(
-        'examples.violation_records.routers.load_user_with_effective_sites',
+        'examples.violation_records.violation_services.load_user_with_effective_sites',
     )
     async def test_get_violation_analytics_success(
         self,
@@ -1193,8 +1198,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             self._exec_scalar(12),
             self._exec_all(
                 [
-                    (datetime(2026, 6, 20), 18),
-                    (datetime(2026, 6, 21), 22),
+                    ('2026-06-20', 18),
+                    ('2026-06-21', 22),
                 ],
             ),
             self._exec_all(
@@ -1244,7 +1249,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('image_path', str(data))
 
     @patch(
-        'examples.violation_records.routers.load_user_with_effective_sites',
+        'examples.violation_records.violation_services.load_user_with_effective_sites',
     )
     async def test_get_violation_analytics_applies_camera_and_type_everywhere(
         self,
@@ -1306,7 +1311,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             self.assertIn('violations.violation_type_codes', statement)
 
     @patch(
-        'examples.violation_records.routers.load_user_with_effective_sites',
+        'examples.violation_records.violation_services.load_user_with_effective_sites',
     )
     async def test_get_violation_analytics_empty(
         self,
@@ -1344,7 +1349,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.violation_records.routers.load_user_with_effective_sites',
+        'examples.violation_records.violation_services.load_user_with_effective_sites',
     )
     async def test_get_violation_analytics_prefix_stripped_alias(
         self,
@@ -1372,7 +1377,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.json()['summary']['total'], 0)
 
     @patch(
-        'examples.violation_records.routers.load_user_with_effective_sites',
+        'examples.violation_records.violation_services.load_user_with_effective_sites',
     )
     async def test_get_violation_analytics_site_id_403(
         self,
@@ -1396,7 +1401,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 403)
 
     @patch(
-        'examples.violation_records.routers.load_user_with_effective_sites',
+        'examples.violation_records.violation_services.load_user_with_effective_sites',
     )
     async def test_get_violation_analytics_range_too_large(
         self,
@@ -1431,7 +1436,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(end_utc, end)
 
     @patch(
-        'examples.violation_records.routers.load_user_with_effective_sites',
+        'examples.violation_records.violation_services.load_user_with_effective_sites',
     )
     async def test_get_violation_analytics_regular_user_forbidden(
         self,
@@ -1462,7 +1467,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     # /api/violations/{violation_id} Tests
     ###################################################
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_single_violation_user_not_found(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1477,7 +1482,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.get('/api/violations/9999')
         self.assertEqual(resp.status_code, 404)
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_single_violation_forbidden_violation_none(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1489,7 +1494,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.get('/api/violations/1234')
         self.assertEqual(resp.status_code, 403)
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_single_violation_forbidden_site_mismatch(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1502,7 +1507,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.get('/api/violations/88')
         self.assertEqual(resp.status_code, 403)
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_single_violation_success(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1537,7 +1542,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['feedbacks'][0]['note'], '測試')
         self.assertEqual(data['feedbacks'][0]['target_detection_id'], 'det_0')
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_single_violation_includes_normalized_overlay_objects(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1557,7 +1562,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            'examples.violation_records.routers._image_size_for_violation',
+            'examples.violation_records.violation_services._image_size_for_violation',
             return_value=(400, 400),
         ):
             resp = self.client.get('/api/violations/77')
@@ -1573,7 +1578,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(overlay['bbox']['y'], 0.1)
         self.assertEqual(overlay['bbox']['w'], 0.35)
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_get_single_flagged_violation_includes_audit_logs(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1610,7 +1615,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
-            return JwtAuthorizationCredentials(subject={})
+            return _credentials(subject={})
 
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -1622,7 +1627,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         # Restore
         self.client.app.dependency_overrides[jwt_access] = (
-            lambda: JwtAuthorizationCredentials(
+            lambda: _credentials(
                 subject={'username': 'test_user'},
             )
         )
@@ -1632,7 +1637,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
-            return JwtAuthorizationCredentials(subject={})
+            return _credentials(subject={})
 
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -1644,7 +1649,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         # Restore
         self.client.app.dependency_overrides[jwt_access] = (
-            lambda: JwtAuthorizationCredentials(
+            lambda: _credentials(
                 subject={'username': 'test_user'},
             )
         )
@@ -1652,7 +1657,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     # /api/violations/{violation_id}/feedback Tests
     ###################################################
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_submit_violation_feedback_success(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1703,7 +1708,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(feedback.note, 'shadow')
         self.fake_db.commit.assert_awaited_once()
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_submit_violation_feedback_accepts_note_only(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1741,7 +1746,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(viol.is_flagged)
         self.assertEqual(viol.review_status, 'pending')
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_submit_violation_feedback_forbidden_record(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1761,7 +1766,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 403)
         self.fake_db.add.assert_not_called()
 
-    @patch('examples.violation_records.routers.get_user_sites_cached')
+    @patch('examples.violation_records.violation_services.get_user_sites_cached')
     async def test_submit_violation_feedback_rejects_unknown_detection(
         self,
         mock_get_user_sites: AsyncMock,
@@ -1796,7 +1801,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
-            return JwtAuthorizationCredentials(subject={})
+            return _credentials(subject={})
 
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -1812,7 +1817,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 401)
 
         self.client.app.dependency_overrides[jwt_access] = (
-            lambda: JwtAuthorizationCredentials(
+            lambda: _credentials(
                 subject={'username': 'test_user'},
             )
         )
@@ -1820,7 +1825,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     # /api/violations/{violation_id}/audit-log Tests
     ###################################################
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_get_violation_audit_log_admin_success(
         self,
         mock_load_user: AsyncMock,
@@ -1849,7 +1857,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data[0]['actor_user_id'], 7)
         self.assertEqual(data[0]['note'], 'Confirmed violation')
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_get_violation_audit_log_regular_user_forbidden(
         self,
         mock_load_user: AsyncMock,
@@ -1867,7 +1878,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     ###################################################
     # /api/violations/{violation_id}/review Tests
     ###################################################
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_review_violation_admin_success(
         self,
         mock_load_user: AsyncMock,
@@ -1915,7 +1929,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit_log.flagged_reason, 'false_positive')
         self.fake_db.commit.assert_awaited_once()
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_review_violation_regular_user_forbidden(
         self,
         mock_load_user: AsyncMock,
@@ -1933,7 +1950,10 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 403)
         self.fake_db.add.assert_not_called()
 
-    @patch('examples.violation_records.routers.load_user_with_effective_sites')
+    @patch(
+        'examples.violation_records.violation_services.'
+        'load_user_with_effective_sites',
+    )
     async def test_review_violation_forbidden_record(
         self,
         mock_load_user: AsyncMock,
@@ -1952,7 +1972,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 403)
         self.fake_db.add.assert_not_called()
 
-    @patch('examples.violation_records.routers.Path')
+    @patch('examples.violation_records.violation_services.Path')
     def test_get_violation_image_missing_username(
         self,
         mock_path: MagicMock,
@@ -1965,7 +1985,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
-            return JwtAuthorizationCredentials(subject={})
+            return _credentials(subject={})
 
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -1977,7 +1997,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         # Restore
         self.client.app.dependency_overrides[jwt_access] = (
-            lambda: JwtAuthorizationCredentials(
+            lambda: _credentials(
                 subject={'username': 'test_user'},
             )
         )
@@ -1986,7 +2006,8 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
     # /api/upload tests
     ###################################################
     @patch(
-        'examples.violation_records.routers.violation_manager.save_violation',
+        'examples.violation_records.violation_services.'
+        'violation_manager.save_violation',
         new_callable=AsyncMock,
     )
     async def test_upload_violation_success(
@@ -2016,7 +2037,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
             pole_polygon_json=None,
             image=mock_file_obj,
             db=self.fake_db,
-            credentials=JwtAuthorizationCredentials(
+            credentials=_credentials(
                 subject={'username': 'test_user'},
             ),
         )
@@ -2029,7 +2050,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         def override_jwt_no_username() -> Any:
             """Support override_jwt_no_username."""
-            return JwtAuthorizationCredentials(subject={})
+            return _credentials(subject={})
 
         self.client.app.dependency_overrides[jwt_access] = (
             override_jwt_no_username
@@ -2045,7 +2066,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
 
         # Restore
         self.client.app.dependency_overrides[jwt_access] = (
-            lambda: JwtAuthorizationCredentials(
+            lambda: _credentials(
                 subject={'username': 'test_user'},
             )
         )
@@ -2073,14 +2094,15 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
                 pole_polygon_json=None,
                 image=mock_file_obj,
                 db=self.fake_db,
-                credentials=JwtAuthorizationCredentials(
+                credentials=_credentials(
                     subject={'username': 'test_user'},
                 ),
             )
         self.assertEqual(raised.exception.status_code, 403)
 
     @patch(
-        'examples.violation_records.routers.violation_manager.save_violation',
+        'examples.violation_records.violation_services.'
+        'violation_manager.save_violation',
         new_callable=AsyncMock,
     )
     async def test_upload_violation_empty_image(
@@ -2111,14 +2133,15 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
                 pole_polygon_json=None,
                 image=mock_file_obj,
                 db=self.fake_db,
-                credentials=JwtAuthorizationCredentials(
+                credentials=_credentials(
                     subject={'username': 'test_user'},
                 ),
             )
         self.assertEqual(raised.exception.status_code, 400)
 
     @patch(
-        'examples.violation_records.routers.violation_manager.save_violation',
+        'examples.violation_records.violation_services.'
+        'violation_manager.save_violation',
         new_callable=AsyncMock,
     )
     async def test_upload_violation_read_error(
@@ -2149,14 +2172,15 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
                 pole_polygon_json=None,
                 image=mock_file_obj,
                 db=self.fake_db,
-                credentials=JwtAuthorizationCredentials(
+                credentials=_credentials(
                     subject={'username': 'test_user'},
                 ),
             )
         self.assertEqual(raised.exception.status_code, 400)
 
     @patch(
-        'examples.violation_records.routers.violation_manager.save_violation',
+        'examples.violation_records.violation_services.'
+        'violation_manager.save_violation',
         new_callable=AsyncMock,
     )
     async def test_upload_violation_save_fail(
@@ -2188,7 +2212,7 @@ class TestViolationRouters(unittest.IsolatedAsyncioTestCase):
                 pole_polygon_json=None,
                 image=mock_file_obj,
                 db=self.fake_db,
-                credentials=JwtAuthorizationCredentials(
+                credentials=_credentials(
                     subject={'username': 'test_user'},
                 ),
             )
@@ -2200,6 +2224,6 @@ if __name__ == '__main__':
 
 """Pytest \
 
---cov=examples.violation_records.routers \
+--cov=examples.violation_records.violation_services \
 --cov-report=term-missing tests/examples/violation_records/routers_test.py
 """

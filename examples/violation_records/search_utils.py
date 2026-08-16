@@ -10,7 +10,7 @@ from ckip_transformers.nlp import CkipWordSegmenter
 # Synonyms mapping
 # ---------------------------
 SYNONYMS_MAP = {
-    # === Hardhat (安全帽) related ===
+    # Hardhat-related search terms.
     '帽': ['hardhat', 'no_hardhat'],
     '帽子': ['hardhat', 'no_hardhat'],
     'hat': ['hardhat', 'no_hardhat'],
@@ -24,7 +24,7 @@ SYNONYMS_MAP = {
     'no hardhat': ['warning_no_hardhat'],
     'not wearing hardhat': ['warning_no_hardhat'],
 
-    # === Vest (安全背心) related ===
+    # Safety-vest-related search terms.
     '背': ['safety_vest', 'no_safety_vest', 'vest'],
     '背心': ['safety_vest', 'no_safety_vest', 'vest'],
     'vest': ['safety_vest', 'no_safety_vest', 'vest'],
@@ -38,31 +38,31 @@ SYNONYMS_MAP = {
     'no vest': ['warning_no_safety_vest'],
     'no safety vest': ['warning_no_safety_vest'],
 
-    # === Person (人員) related ===
+    # Person-related search terms.
     '人': ['person'],
     '人員': ['person'],
     'person': ['person'],
     'personne': ['person'],
     'personnes': ['person'],
 
-    # === Machinery (機具) related ===
+    # Machinery-related search terms.
     '機具': ['machinery'],
     'machine': ['machinery'],
     'machinery': ['machinery'],
     'machinerie': ['machinery'],
 
-    # === Vehicle (車輛) related ===
+    # Vehicle-related search terms.
     '車': ['vehicle'],
     '車輛': ['vehicle'],
     'vehicle': ['vehicle'],
     'voiture': ['vehicle'],
 
-    # === Cone (安全錐) related ===
+    # Safety-cone-related search terms.
     '錐': ['cone'],
     '安全錐': ['cone'],
     'cone': ['cone'],
 
-    # === Mask (口罩) related ===
+    # Face-mask-related search terms.
     '口罩': ['mask'],
     'mask': ['mask'],
     '無口罩': ['no_mask'],
@@ -105,9 +105,7 @@ SYNONYMS_MAP = {
     '進入電線桿控制區': ['detect_in_utility_pole_restricted_area'],
 }
 
-# ---------------------------
-# Stop words definition (can be extended as needed)
-# ---------------------------
+# Stop words are kept separate because Chinese tokenisation needs exact tokens.
 ENGLISH_STOP_WORDS = {
     'the', 'is', 'at', 'which',
     'on', 'a', 'an', 'and', 'or', 'of', 'to', 'in',
@@ -146,7 +144,14 @@ class SearchUtils:
     def _build_synonym_index(
         synonym_items: Iterable[tuple[str, list[str]]],
     ) -> dict[str, tuple[tuple[str, tuple[str, ...]], ...]]:
-        """Group synonym keys by first character to reduce substring checks."""
+        """Group synonym keys by first character to reduce substring checks.
+
+        Args:
+            synonym_items: Normalised synonym key and expansion pairs.
+
+        Returns:
+            Immutable first-character index for query-time matching.
+        """
         grouped: defaultdict[str, list[tuple[str, tuple[str, ...]]]] = (
             defaultdict(list)
         )
@@ -176,7 +181,14 @@ class SearchUtils:
 
     @lru_cache(maxsize=512)
     def _tokenize_cached(self, user_input: str) -> tuple[str, ...]:
-        """Tokenise input once and cache the immutable token tuple."""
+        """Tokenise input once and cache an immutable token tuple.
+
+        Args:
+            user_input: Raw user-provided search text.
+
+        Returns:
+            Lower-cased meaningful tokens with stop words removed.
+        """
         tokens = self.ws_driver([user_input])[0]
         filtered_tokens: list[str] = []
         for token in tokens:
@@ -203,17 +215,24 @@ class SearchUtils:
 
     @lru_cache(maxsize=512)
     def _expand_synonyms_cached(self, user_input: str) -> tuple[str, ...]:
-        """Expand synonyms and cache repeated query terms."""
+        """Expand synonyms and cache repeated query terms.
+
+        Args:
+            user_input: Raw user-provided search text.
+
+        Returns:
+            Immutable set-derived token and synonym expansion sequence.
+        """
         tokens = self._tokenize_cached(user_input)
         results: set[str] = set()
         for token in tokens:
             for first_char in frozenset(token):
                 synonym_items = self._synonym_index.get(first_char, ())
                 for key, vlist in synonym_items:
-                    # If the key is a substring of the token, add synonyms.
+                    # Substring matching supports compound CJK search terms.
                     if key in token:
                         results.update(vlist)
-            # Always add the original token
+            # Keep the literal token so exact detector labels remain searchable.
             results.add(token)
         return tuple(results)
 
