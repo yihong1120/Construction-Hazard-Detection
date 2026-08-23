@@ -48,6 +48,15 @@ jobs:
           --cov=main \
           --cov=src \
           --cov=examples \
+          --cov-report=xml:coverage.xml \
           --cov-report=term-missing \
           -n auto \
           tests/
+    - name: Upload coverage to Codecov
+      if: ${{ !cancelled() }}
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: coverage.xml
+        disable_search: true
+        fail_ci_if_error: true
