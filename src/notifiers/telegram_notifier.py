@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import os
-from io import BytesIO
 from typing import TypedDict
 
 import numpy as np
 from dotenv import load_dotenv
-from PIL import Image
 from telegram import Bot
 from telegram import Message
+
+from src.notifiers.image_encoding import encode_png
 
 
 class InputData(TypedDict):
@@ -67,16 +67,9 @@ class TelegramNotifier:
         bot = Bot(token=bot_token)
 
         if image is not None:
-            # Convert NumPy array to PIL Image
-            image_pil = Image.fromarray(image)
-            buffer = BytesIO()
-            # Save image to BytesIO buffer as PNG
-            image_pil.save(buffer, format='PNG')
-            buffer.seek(0)
-            # Send photo with caption
             response = await bot.send_photo(
                 chat_id=chat_id,
-                photo=buffer,
+                photo=encode_png(image),
                 caption=message,
             )
         else:

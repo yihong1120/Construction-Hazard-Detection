@@ -17,7 +17,9 @@ from unittest.mock import patch
 from cryptography.fernet import Fernet
 from cryptography.fernet import InvalidToken
 
+from examples.local_notification_server import push_dispatch as dispatch
 from examples.local_notification_server import services as svc
+from examples.local_notification_server import site_recipient_cache
 from examples.local_notification_server.schemas import (
     DeviceRegistrationRequest,
 )
@@ -48,7 +50,7 @@ class TestServices(unittest.TestCase):
             {b't1': b'en-GB', b't2': b'zh-TW'},
             {b't3': b'fr-FR', b't4': b'ja-JP'},
         ]
-        got = svc._decode_lang_token_map(raw)
+        got = dispatch._decode_lang_token_map(raw)
         # Convert to plain dict for assertion
         got_dict = {k: list(v) for k, v in got.items()}
         self.assertEqual(got_dict['en-GB'], ['t1'])
@@ -65,7 +67,7 @@ class TestServices(unittest.TestCase):
             {b't1': b'en-GB', b't3': b'en-GB'},
         ]
 
-        got = svc._decode_lang_token_map(raw)
+        got = dispatch._decode_lang_token_map(raw)
         got_dict = {k: list(v) for k, v in got.items()}
 
         self.assertEqual(got_dict['zh-TW'], ['t1', 't2'])
@@ -85,11 +87,11 @@ class TestServices(unittest.TestCase):
             metadata={'violation_id': 123},
         )
         db = MagicMock()
-        db.add_all = MagicMock()
+        db.execute = AsyncMock()
         db.commit = AsyncMock()
 
         count = self._run_async(
-            svc.create_notification_records_for_users(
+            dispatch.create_notification_records_for_users(
                 req,
                 [5, 5, 6],
                 db,
@@ -97,18 +99,19 @@ class TestServices(unittest.TestCase):
         )
 
         self.assertEqual(count, 3)
-        records = db.add_all.call_args.args[0]
-        self.assertEqual([record.user_id for record in records], [5, 5, 6])
-        self.assertEqual(records[0].type, 'violation')
+        statement, records = db.execute.await_args.args
+        self.assertEqual(statement.table.name, 'notifications')
+        self.assertEqual([record['user_id'] for record in records], [5, 5, 6])
+        self.assertEqual(records[0]['type'], 'violation')
         self.assertEqual(
-            records[0].deep_link,
+            records[0]['deep_link'],
             '/violations?violation_id=123',
         )
-        self.assertEqual(records[0].metadata_json['violation_id'], 123)
+        self.assertEqual(records[0]['metadata_json']['violation_id'], 123)
         db.commit.assert_awaited_once()
 
     @patch(
-        'examples.local_notification_server.services.'
+        'examples.local_notification_server.push_dispatch.'
         'send_fcm_notification_service',
         new_callable=AsyncMock,
     )
@@ -128,7 +131,7 @@ class TestServices(unittest.TestCase):
             deep_link='/violations?violation_id=123',
             metadata={'violation_id': 123},
         )
-        mock_send.return_value = svc.FcmSendResult(1, 0)
+        mock_send.return_value = dispatch.FcmSendResult(1, 0)
 
         pipe_one = MagicMock()
         pipe_one.hgetall = MagicMock()
@@ -143,10 +146,10 @@ class TestServices(unittest.TestCase):
         rds = MagicMock()
         rds.pipeline.side_effect = [pipe_one, pipe_two]
 
-        async def collect() -> list[svc.PushTaskResult]:
+        async def collect() -> list[dispatch.PushTaskResult]:
             """Support collect."""
-            tasks: list[Awaitable[svc.PushTaskResult]] = []
-            async for task in svc._iter_push_tasks_streaming(
+            tasks: list[Awaitable[dispatch.PushTaskResult]] = []
+            async for task in dispatch.iter_push_tasks_streaming(
                 req,
                 [1, 2, 3],
                 rds,
@@ -156,13 +159,13 @@ class TestServices(unittest.TestCase):
 
             return await asyncio.gather(*tasks)
 
-        with patch.object(svc, '_token_fetch_chunk_size', 2):
-            with patch.object(svc, '_fcm_batch_size', 2):
+        with patch.object(dispatch, '_token_fetch_chunk_size', 2):
+            with patch.object(dispatch, '_fcm_batch_size', 2):
                 results = self._run_async(collect())
 
         self.assertEqual(
             results,
-            [svc.FcmSendResult(1, 0), svc.FcmSendResult(1, 0)],
+            [dispatch.FcmSendResult(1, 0), dispatch.FcmSendResult(1, 0)],
         )
         self.assertEqual(rds.pipeline.call_count, 2)
         self.assertEqual(pipe_one.hgetall.call_count, 2)
@@ -201,7 +204,7 @@ class TestServices(unittest.TestCase):
         rds.pipeline.return_value = pipe
 
         stats = self._run_async(
-            svc.diagnose_push_preflight(req, [1, 2, 3], rds),
+            dispatch.diagnose_push_preflight(req, [1, 2, 3], rds),
         )
 
         self.assertEqual(stats['recipient_users'], 3)
@@ -221,7 +224,7 @@ class TestServices(unittest.TestCase):
         mock_redis.smembers.return_value = {b'7', b'3'}
 
         user_ids = self._run_async(
-            svc.get_site_notification_user_ids_cached(
+            site_recipient_cache.get_site_notification_user_ids_cached(
                 'SiteA',
                 mock_session,
                 mock_redis,
@@ -253,7 +256,7 @@ class TestServices(unittest.TestCase):
         mock_redis.pipeline.return_value = pipe
 
         user_ids = self._run_async(
-            svc.get_site_notification_user_ids_cached(
+            site_recipient_cache.get_site_notification_user_ids_cached(
                 'SiteA',
                 mock_session,
                 mock_redis,
@@ -287,7 +290,7 @@ class TestServices(unittest.TestCase):
         mock_redis.delete = AsyncMock()
 
         user_ids = self._run_async(
-            svc.get_site_notification_user_ids_cached(
+            site_recipient_cache.get_site_notification_user_ids_cached(
                 'Missing',
                 mock_session,
                 mock_redis,
@@ -319,7 +322,7 @@ class TestServices(unittest.TestCase):
         mock_redis.pipeline.return_value = pipe
 
         user_ids = self._run_async(
-            svc.refresh_site_notification_user_cache(
+            site_recipient_cache.refresh_site_notification_user_cache(
                 'SiteA',
                 mock_session,
                 mock_redis,
@@ -345,7 +348,7 @@ class TestServices(unittest.TestCase):
         mock_redis.delete = AsyncMock()
 
         user_ids = self._run_async(
-            svc.get_site_notification_user_ids_cached(
+            site_recipient_cache.get_site_notification_user_ids_cached(
                 'Missing',
                 mock_session,
                 mock_redis,
@@ -364,7 +367,7 @@ class TestServices(unittest.TestCase):
         mock_redis = AsyncMock()
 
         self._run_async(
-            svc.invalidate_site_notification_user_cache(
+            site_recipient_cache.invalidate_site_notification_user_cache(
                 ['SiteA', 'SiteB'],
                 mock_redis,
             ),
@@ -382,14 +385,14 @@ class TestServices(unittest.TestCase):
     ) -> None:
         """It executes an async iterable of tasks with bounded concurrency."""
 
-        async def task_stream() -> AsyncIterator[Awaitable[svc.FcmSendResult]]:
+        async def task_stream() -> AsyncIterator[Awaitable[dispatch.FcmSendResult]]:
             """Support task_stream."""
-            yield AsyncMock(return_value=svc.FcmSendResult(1, 0))()
-            yield AsyncMock(return_value=svc.FcmSendResult(0, 1))()
-            yield AsyncMock(return_value=svc.FcmSendResult(1, 0))()
+            yield AsyncMock(return_value=dispatch.FcmSendResult(1, 0))()
+            yield AsyncMock(return_value=dispatch.FcmSendResult(0, 1))()
+            yield AsyncMock(return_value=dispatch.FcmSendResult(1, 0))()
 
         ok, total, successful, err = self._run_async(
-            svc._execute_push_tasks_bounded_streaming(
+            dispatch.execute_push_tasks_bounded_streaming(
                 task_stream(),
                 AsyncMock(),
                 timeout=1.0,
@@ -408,10 +411,10 @@ class TestServices(unittest.TestCase):
         """It forwards invalid FCM tokens to the optional handler."""
 
         async def task_stream(
-        ) -> AsyncIterator[Awaitable[svc.FcmSendResult]]:
+        ) -> AsyncIterator[Awaitable[dispatch.FcmSendResult]]:
             """Support task_stream."""
             yield AsyncMock(
-                return_value=svc.FcmSendResult(
+                return_value=dispatch.FcmSendResult(
                     success_count=0,
                     failure_count=1,
                     invalid_tokens=('bad-token',),
@@ -421,7 +424,7 @@ class TestServices(unittest.TestCase):
         cleanup = AsyncMock()
 
         ok, total, successful, err = self._run_async(
-            svc._execute_push_tasks_bounded_streaming(
+            dispatch.execute_push_tasks_bounded_streaming(
                 task_stream(),
                 timeout=1.0,
                 max_concurrency=1,
@@ -461,6 +464,14 @@ tests/examples/local_notification_server/services_test.py
 
 
 def _row(token: str = 'device-token') -> svc.FcmDeviceToken:
+    """Perform row.
+
+    Args:
+        token: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     now = datetime(2026, 7, 24, 8, 0, tzinfo=timezone.utc)
     return svc.FcmDeviceToken(
         user_id=7,
@@ -476,7 +487,13 @@ def _row(token: str = 'device-token') -> svc.FcmDeviceToken:
 
 
 class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
+
+    """Provide TestNotificationServicesCoverage.
+    """
+
     def test_token_crypto_and_serialisation_helpers(self) -> None:
+        """Test token crypto and serialisation helpers.
+        """
         valid_key = Fernet.generate_key().decode('utf-8')
         with patch.object(
             svc,
@@ -509,6 +526,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_token_cache_write(self) -> None:
+        """Test token cache write.
+        """
         row = _row()
         row.last_success_at = datetime(2026, 7, 24, 8, 1, tzinfo=timezone.utc)
 
@@ -521,6 +540,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_registers_and_updates_device_tokens(self) -> None:
+        """Test registers and updates device tokens.
+        """
         request = DeviceRegistrationRequest(
             device_token='device-token',
             device_lang='en-GB',
@@ -577,6 +598,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         second_db.add.assert_called_once()
 
     async def test_device_status_loading_and_cache_refresh(self) -> None:
+        """Test device status loading and cache refresh.
+        """
         row = _row()
         result = SimpleNamespace(
             scalars=lambda: SimpleNamespace(all=lambda: [row]),
@@ -605,6 +628,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_marks_token_delivery_success_failure_and_invalidity(
         self,
     ) -> None:
+        """Test marks token delivery success failure and invalidity.
+        """
         db = MagicMock()
         db.execute = AsyncMock()
         db.commit = AsyncMock()
@@ -638,6 +663,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_token_deletion_and_recipient_cache_refresh(self) -> None:
+        """Test token deletion and recipient cache refresh.
+        """
         db = MagicMock()
         db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
         db.commit = AsyncMock()
@@ -653,12 +680,12 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
 
         rds.exists = AsyncMock(return_value=False)
         with patch.object(
-            svc,
+            site_recipient_cache,
             'refresh_site_notification_user_cache',
             AsyncMock(return_value=[7]),
         ) as refresh:
             self.assertEqual(
-                await svc.get_site_notification_user_ids_cached(
+                await site_recipient_cache.get_site_notification_user_ids_cached(
                     'S1', db, rds,
                 ),
                 [7],
@@ -666,6 +693,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         refresh.assert_awaited_once_with('S1', db, rds)
 
     async def test_notification_content_and_push_task_contracts(self) -> None:
+        """Test notification content and push task contracts.
+        """
         request = SiteNotifyRequest(
             site='S1',
             stream_name='Cam1',
@@ -676,31 +705,33 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
             metadata={},
         )
         db = MagicMock()
-        db.add_all = MagicMock()
+        db.execute = AsyncMock()
         db.commit = AsyncMock()
         self.assertEqual(
-            await svc.create_notification_records_for_users(request, [7], db),
+            await dispatch.create_notification_records_for_users(request, [7], db),
             1,
         )
-        db.add_all.assert_called_once()
-        records = db.add_all.call_args.args[0]
+        db.execute.assert_awaited_once()
+        records = db.execute.await_args.args[1]
         self.assertEqual(
-            records[0].body,
+            records[0]['body'],
             'S1 - Cam1\n警告: 有1人未佩戴安全帽!',
         )
 
         with patch.object(
-            svc,
+            dispatch,
             'send_fcm_notification_service',
             new_callable=AsyncMock,
-            return_value=svc.FcmSendResult(1, 0),
+            return_value=dispatch.FcmSendResult(1, 0),
         ):
-            task = svc._build_push_task(request, 'en-GB', ['token'])
-            self.assertEqual(await task, svc.FcmSendResult(1, 0))
+            task = dispatch.build_push_task(request, 'en-GB', ['token'])
+            self.assertEqual(await task, dispatch.FcmSendResult(1, 0))
 
     async def test_undecryptable_rows_are_disabled_during_cache_refresh(
         self,
     ) -> None:
+        """Test undecryptable rows are disabled during cache refresh.
+        """
         row = _row()
         result = SimpleNamespace(
             scalars=lambda: SimpleNamespace(all=lambda: [row]),
@@ -729,6 +760,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_undecryptable_rows_are_disabled_when_loading_tokens(
         self,
     ) -> None:
+        """Test undecryptable rows are disabled when loading tokens.
+        """
         row = _row()
         result = SimpleNamespace(
             scalars=lambda: SimpleNamespace(all=lambda: [row]),
@@ -750,6 +783,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_preflight_and_streaming_builder_use_canonical_tokens(
         self,
     ) -> None:
+        """Test preflight and streaming builder use canonical tokens.
+        """
         request = SiteNotifyRequest(
             site='S1',
             stream_name='Cam1',
@@ -764,42 +799,61 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         pipe.execute = AsyncMock(return_value=[{b'token': b'en-GB'}])
         rds = MagicMock()
         rds.pipeline.return_value = pipe
-        stats = await svc.diagnose_push_preflight(request, [7], rds)
+        stats = await dispatch.diagnose_push_preflight(request, [7], rds)
         self.assertEqual(stats['token_entries'], 1)
 
-        async def complete_task() -> bool:
-            return True
+        async def complete_task() -> dispatch.FcmSendResult:
+            """Perform complete task.
+
+            Returns:
+                The callable result.
+            """
+            return dispatch.FcmSendResult(success_count=1, failure_count=0)
 
         pipe.execute.return_value = [{b'token': b'en-GB'}]
-        with patch.object(svc, '_fcm_batch_size', 1):
-            with patch.object(
-                svc, '_build_push_task', return_value=complete_task(),
-            ):
-                generator = svc._iter_push_tasks_streaming(request, [7], rds)
-                task = await generator.__anext__()
-                self.assertTrue(await task)
-                with self.assertRaises(StopAsyncIteration):
-                    await generator.__anext__()
+        generator = dispatch.iter_push_tasks_streaming(
+            request,
+            [7],
+            rds,
+            fcm_batch_size=1,
+            build_push_task_fn=lambda *_args: complete_task(),
+        )
+        task = await generator.__anext__()
+        self.assertTrue(await task)
+        with self.assertRaises(StopAsyncIteration):
+            await generator.__anext__()
 
     async def test_streaming_bounded_executor_handles_empty_timeout_and_error(
         self,
     ) -> None:
-        async def empty_stream():
+        """Test streaming bounded executor handles empty timeout and error.
+        """
+        async def empty_stream() -> Any:
+            """Perform empty stream.
+
+            Returns:
+                The callable result.
+            """
             if False:
                 yield asyncio.sleep(0)
 
         self.assertEqual(
-            await svc._execute_push_tasks_bounded_streaming(
+            await dispatch.execute_push_tasks_bounded_streaming(
                 empty_stream(),
                 AsyncMock(),
             ),
             (True, 0, 0, None),
         )
 
-        async def pending_stream():
+        async def pending_stream() -> Any:
+            """Perform pending stream.
+
+            Returns:
+                The callable result.
+            """
             yield asyncio.Event().wait()
 
-        timeout_result = await svc._execute_push_tasks_bounded_streaming(
+        timeout_result = await dispatch.execute_push_tasks_bounded_streaming(
             pending_stream(),
             AsyncMock(),
             timeout=0.01,
@@ -809,11 +863,16 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
             (False, None, None, 'FCM notification sending timed out.'),
         )
 
-        async def failing_stream():
+        async def failing_stream() -> Any:
+            """Perform failing stream.
+
+            Returns:
+                The callable result.
+            """
             raise RuntimeError('stream failed')
             yield asyncio.sleep(0)
 
-        error_result = await svc._execute_push_tasks_bounded_streaming(
+        error_result = await dispatch.execute_push_tasks_bounded_streaming(
             failing_stream(),
             AsyncMock(),
         )

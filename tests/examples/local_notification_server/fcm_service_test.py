@@ -141,10 +141,10 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
 
     @patch('firebase_admin.messaging.send_each')
     async def test_partial_fail(self, mock_send_each: MagicMock) -> None:
-        """Test that the service returns False when at least one token fails.
+        """Test partial fail.
 
         Args:
-            mock_send_each (MagicMock): Mocked send_each function.
+            mock_send_each: Value used by this callable.
         """
         mock_response = MagicMock()
         mock_response.failure_count = 1
@@ -173,10 +173,10 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
 
     @patch('firebase_admin.messaging.send_each')
     async def test_exception(self, mock_send_each: MagicMock) -> None:
-        """Test that the service returns False when an exception occurs.
+        """Test exception.
 
         Args:
-            mock_send_each (MagicMock): Mocked send_each function.
+            mock_send_each: Value used by this callable.
         """
         mock_send_each.side_effect = Exception('FCM send error')
 

@@ -79,7 +79,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 - `POST /send_fcm_notification`：對訂閱使用者發送一筆工地警示。
   payload 必須提供 `type`、`title`、`deep_link` 與 `metadata`；服務不會推論
   通知內容或導頁資訊。
-- `GET /notifications?status=unread&type=violation&page=1&page_size=20`：
+- `GET /notifications?status=unread&type=violation&page_size=20&cursor=<next_cursor>`：
   列出目前使用者的 app 內通知。
 - `GET /notifications/unread_count`：取得未讀 badge 數量。
 - `PATCH /notifications/{id}/read`：將單筆通知標為已讀。

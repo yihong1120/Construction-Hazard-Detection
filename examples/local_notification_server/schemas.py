@@ -218,19 +218,15 @@ class NotificationOut(BaseModel):
 
 
 class NotificationList(BaseModel):
-    """Paginated notification-centre response.
+    """Cursor-paginated notification-centre response.
 
     Attributes:
-        total: Number of records matching the filters.
-        page: One-based result page.
-        page_size: Maximum number of records in the page.
         items: Notification records in descending creation order.
+        next_cursor: Exclusive cursor for the next page, if one exists.
     """
 
-    total: int
-    page: int
-    page_size: int
     items: list[NotificationOut]
+    next_cursor: str | None = None
 
 
 class NotificationUnreadCount(BaseModel):

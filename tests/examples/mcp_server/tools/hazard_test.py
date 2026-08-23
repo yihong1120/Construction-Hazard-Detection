@@ -31,24 +31,17 @@ class DetectViolationsListInputTests(unittest.IsolatedAsyncioTestCase):
             tool = HazardTools()
             result = await tool.detect_violations(
                 detections=detections,
-                image_width=1920,
-                image_height=1080,
-                working_hour_only=True,
-                site_config={'k': 'v'},
             )
 
             # Detector should be initialised once with default detection items.
             mock_dd.assert_called_once()
             inst.detect_danger.assert_called_once_with(detections)
 
-            # Response shape & meta
+            # Response shape
             self.assertEqual(result['warnings'], fake_warnings)
             self.assertEqual(result['cone_polygons'], fake_cones)
             self.assertEqual(result['pole_polygons'], fake_poles)
-            self.assertEqual(result['meta']['image_width'], 1920)
-            self.assertEqual(result['meta']['image_height'], 1080)
-            self.assertTrue(result['meta']['working_hour_only'])
-            self.assertTrue(result['meta']['site_config_provided'])
+            self.assertNotIn('meta', result)
 
 
 class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
@@ -79,7 +72,7 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
             )
 
             inst.detect_danger.assert_called_once_with(expected)
-            self.assertIn('meta', res)
+            self.assertNotIn('meta', res)
 
     async def test_detect_violations_normalises_dict_input(self) -> None:
         """Normalise explicit detection dict keys."""
@@ -216,45 +209,6 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
             tool = HazardTools()
             await tool._init_detector(custom)
             mock_dd.assert_called_once_with(custom)
-
-
-class UtilsDelegationTests(unittest.IsolatedAsyncioTestCase):
-    """Delegation tests for helper methods that wrap Utils."""
-
-    async def test_filter_warnings_by_working_hour_delegates(self) -> None:
-        """filter_warnings_by_working_hour should delegate to Utils."""
-        sample_warnings: dict[str, dict[str, int]] = {'a': {'x': 1}}
-        with patch('examples.mcp_server.tools.hazard.Utils') as mock_utils:
-            mock_utils.filter_warnings_by_working_hour.return_value = {
-                'a': {'x': 0},
-            }
-            tool = HazardTools()
-            out = await tool.filter_warnings_by_working_hour(
-                sample_warnings,
-                True,
-            )
-            mock_utils.filter_warnings_by_working_hour.assert_called_once_with(
-                sample_warnings, True,
-            )
-            self.assertEqual(out, {'a': {'x': 0}})
-
-    async def test_should_notify_delegates_with_default_cooldown(self) -> None:
-        """should_notify should delegate to Utils with default cooldown."""
-        with patch('examples.mcp_server.tools.hazard.Utils') as mock_utils:
-            mock_utils.should_notify.return_value = True
-            tool = HazardTools()
-            out = await tool.should_notify(1000, 500)
-            mock_utils.should_notify.assert_called_once_with(1000, 500, 300)
-            self.assertTrue(out)
-
-    async def test_should_notify_delegates_with_custom_cooldown(self) -> None:
-        """should_notify should delegate to Utils with custom cooldown."""
-        with patch('examples.mcp_server.tools.hazard.Utils') as mock_utils:
-            mock_utils.should_notify.return_value = False
-            tool = HazardTools()
-            out = await tool.should_notify(2000, 1500, cooldown_period=120)
-            mock_utils.should_notify.assert_called_once_with(2000, 1500, 120)
-            self.assertFalse(out)
 
 
 if __name__ == '__main__':

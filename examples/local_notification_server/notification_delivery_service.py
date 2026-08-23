@@ -12,6 +12,19 @@ from examples.auth.models import User
 from examples.local_notification_server.fcm_service import (
     send_fcm_notification_service,
 )
+from examples.local_notification_server.push_dispatch import (
+    create_notification_records_for_users,
+)
+from examples.local_notification_server.push_dispatch import (
+    execute_push_tasks_bounded_streaming,
+)
+from examples.local_notification_server.push_dispatch import (
+    iter_push_tasks_streaming,
+)
+from examples.local_notification_server.push_dispatch import (
+    preflight_from_token_stats,
+)
+from examples.local_notification_server.push_dispatch import PushTokenStats
 from examples.local_notification_server.schemas import (
     DeviceRegistrationRequest,
 )
@@ -24,20 +37,10 @@ from examples.local_notification_server.schemas import (
 from examples.local_notification_server.schemas import SiteNotifyRequest
 from examples.local_notification_server.schemas import TestNotificationResponse
 from examples.local_notification_server.services import (
-    _execute_push_tasks_bounded_streaming,
-)
-from examples.local_notification_server.services import (
-    _iter_push_tasks_streaming,
-)
-from examples.local_notification_server.services import (
-    create_notification_records_for_users,
-)
-from examples.local_notification_server.services import (
     delete_fcm_token_metadata,
 )
-from examples.local_notification_server.services import diagnose_push_preflight
 from examples.local_notification_server.services import (
-    get_site_notification_user_ids_cached,
+    ensure_fcm_token_cache_for_users,
 )
 from examples.local_notification_server.services import (
     load_active_fcm_device_tokens,
@@ -50,8 +53,8 @@ from examples.local_notification_server.services import (
 from examples.local_notification_server.services import (
     record_fcm_token_registration,
 )
-from examples.local_notification_server.services import (
-    refresh_fcm_token_cache_for_users,
+from examples.local_notification_server.site_recipient_cache import (
+    get_site_notification_user_ids_cached,
 )
 
 _dedupe_ttl_with_violation_id = 600
@@ -207,13 +210,19 @@ async def send_site_notification(
         user_ids,
         db,
     )
-    await refresh_fcm_token_cache_for_users(user_ids, db, rds)
+    await ensure_fcm_token_cache_for_users(user_ids, db, rds)
     preparation_started_at = time.monotonic()
-    push_tasks = _iter_push_tasks_streaming(req, user_ids, rds)
+    token_stats = PushTokenStats()
+    push_tasks = iter_push_tasks_streaming(
+        req,
+        user_ids,
+        rds,
+        token_stats=token_stats,
+    )
     preparation_seconds = time.monotonic() - preparation_started_at
     delivery_started_at = time.monotonic()
     ok, total_batches, successful_batches, error_message = (
-        await _execute_push_tasks_bounded_streaming(
+        await execute_push_tasks_bounded_streaming(
             push_tasks,
             timeout=30.0,
             invalid_token_handler=(
@@ -246,8 +255,9 @@ async def send_site_notification(
         'notification_records': record_count,
     }
     if total_batches == 0:
-        # Return diagnostics when cache entries exist but none can be delivered.
-        preflight = await diagnose_push_preflight(req, user_ids, rds)
+        # The streaming dispatch already read these hashes; reuse its counts
+        # instead of making a second full Redis pass on this failure path.
+        preflight = preflight_from_token_stats(req, user_ids, token_stats)
         stats['preflight'] = preflight
         message = (
             f"Site '{req.site}' has no device tokens."
@@ -280,7 +290,7 @@ async def send_test_notification(
     Returns:
         Aggregated test-notification delivery result.
     """
-    await refresh_fcm_token_cache_for_users([me.id], db, rds)
+    await ensure_fcm_token_cache_for_users([me.id], db, rds)
     device_tokens = await load_active_fcm_device_tokens(me.id, db)
     if not device_tokens:
         return TestNotificationResponse(

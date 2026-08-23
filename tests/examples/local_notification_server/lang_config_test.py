@@ -95,7 +95,7 @@ class TestLangConfig(unittest.TestCase):
         result = Translator.translate_from_dict(body_dict, language)
         self.assertIsInstance(result, list)
 
-        # 1) Check placeholder is replaced: '有3人過於靠近車輛'
+# Verify the expected Chinese placeholder is replaced: '有3人過於靠近車輛'.
         self.assertIn('有3人過於靠近車輛', result[0])
 
         # 2) Check replaced placeholder for safety vest

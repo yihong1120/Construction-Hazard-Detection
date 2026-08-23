@@ -163,6 +163,11 @@ class TestLineBot(unittest.TestCase):
                 pass
 
             def __str__(self) -> str:
+                """Perform str.
+
+                Returns:
+                    The callable result.
+                """
                 return 'fake-api-exception'
 
         self.mock_line_bot_api.side_effect = _FakeApiException()

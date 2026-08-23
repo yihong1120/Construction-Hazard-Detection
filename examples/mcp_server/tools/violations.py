@@ -1,22 +1,18 @@
 from __future__ import annotations
 
 import base64
-import inspect
 import logging
 import os
 from typing import Any
 
 import httpx
 
+from examples.mcp_server.config import get_env_int
 from examples.mcp_server.config import get_env_var
-from src.utils import TokenManager
+from src.auth_tokens import TokenManager
 
 
-async def _maybe_await(value: Any) -> Any:
-    """Await value if it's awaitable; otherwise return value directly."""
-    if inspect.isawaitable(value):
-        return await value
-    return value
+_UPSTREAM_TIMEOUT_SECONDS = max(1, get_env_int('MCP_UPSTREAM_TIMEOUT_SECONDS', 20))
 
 
 class ViolationsTools:
@@ -36,7 +32,6 @@ class ViolationsTools:
         start_time: str | None = None,
         end_time: str | None = None,
         limit: int = 20,
-        offset: int = 0,
     ) -> dict:
         """Search violation records with filtering.
 
@@ -46,7 +41,6 @@ class ViolationsTools:
             start_time: Start of time range filter (ISO 8601).
             end_time: End of time range filter (ISO 8601).
             limit: Maximum number of records to return (1-100).
-            offset: Starting record offset.
 
         Returns:
             dict[str, Any]: A mapping including the total count and an items
@@ -60,7 +54,6 @@ class ViolationsTools:
             # Build query parameters
             params: dict[str, Any] = {
                 'limit': min(max(limit, 1), 100),
-                'offset': max(offset, 0),
             }
 
             if site_id is not None:
@@ -72,7 +65,7 @@ class ViolationsTools:
             if end_time:
                 params['end_time'] = end_time
 
-            # Get authorization headers
+            # Get authorisation headers.
             headers = await self._get_auth_headers()
 
             # Make request
@@ -81,8 +74,8 @@ class ViolationsTools:
                 params=params,
                 headers=headers,
             )
-            await _maybe_await(response.raise_for_status())
-            return await _maybe_await(response.json())
+            response.raise_for_status()
+            return response.json()
 
         except Exception as e:
             self.logger.error(f"Failed to search violations: {e}")
@@ -102,7 +95,7 @@ class ViolationsTools:
             client = self._client
             assert client is not None
 
-            # Get authorization headers
+            # Get authorisation headers.
             headers = await self._get_auth_headers()
 
             # Make request
@@ -110,8 +103,8 @@ class ViolationsTools:
                 f"{self._base_url}/violations/{violation_id}",
                 headers=headers,
             )
-            await _maybe_await(response.raise_for_status())
-            return await _maybe_await(response.json())
+            response.raise_for_status()
+            return response.json()
 
         except Exception as e:
             self.logger.error(f"Failed to get violation {violation_id}: {e}")
@@ -138,7 +131,7 @@ class ViolationsTools:
             assert client is not None
 
             if as_base64:
-                # Get authorization headers
+                # Get authorisation headers.
                 headers = await self._get_auth_headers()
 
                 # Make request
@@ -147,7 +140,7 @@ class ViolationsTools:
                     params={'image_path': image_path},
                     headers=headers,
                 )
-                await _maybe_await(response.raise_for_status())
+                response.raise_for_status()
 
                 # Convert response to base64
                 image_base64 = base64.b64encode(
@@ -202,7 +195,7 @@ class ViolationsTools:
             client = self._client
             assert client is not None
 
-            # Get authorization headers
+            # Get authorisation headers.
             headers = await self._get_auth_headers()
 
             # Make request
@@ -210,50 +203,12 @@ class ViolationsTools:
                 f"{self._base_url}/my_sites",
                 headers=headers,
             )
-            await _maybe_await(response.raise_for_status())
-            return await _maybe_await(response.json())
+            response.raise_for_status()
+            return response.json()
 
         except Exception as e:
             self.logger.error(f"Failed to get my sites: {e}")
             raise
-
-    async def get_image_by_violation_id(
-        self,
-        violation_id: int,
-        as_base64: bool = False,
-    ) -> dict:
-        """Convenience: fetch image via violation id -> image_path ->
-        get_image.
-
-        Args:
-            violation_id: Violation record id.
-            as_base64: When true, return base64 content.
-
-        Returns:
-            dict: Same shape as get_image.
-        """
-        try:
-            details = await self.get(violation_id)
-            image_path = details.get('image_path') or details.get('image')
-            if not image_path:
-                return {
-                    'success': False,
-                    'message': 'No image_path in violation record',
-                    'violation_id': violation_id,
-                }
-            return await self.get_image(
-                image_path=image_path,
-                as_base64=as_base64,
-            )
-        except Exception as e:
-            self.logger.error(
-                f"Failed to get image by violation id {violation_id}: {e}",
-            )
-            return {
-                'success': False,
-                'message': str(e),
-                'violation_id': violation_id,
-            }
 
     async def _ensure_client(self) -> None:
         """Ensure the HTTP client and token manager are initialised."""
@@ -261,8 +216,18 @@ class ViolationsTools:
             self._base_url = get_env_var(
                 'VIOLATION_RECORD_API_URL',
             ).rstrip('/')
-            # Remove timeout limit
-            self._client = httpx.AsyncClient(timeout=None)
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    _UPSTREAM_TIMEOUT_SECONDS,
+                    connect=min(5.0, _UPSTREAM_TIMEOUT_SECONDS),
+                ),
+                limits=httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                    keepalive_expiry=30,
+                ),
+                http2=True,
+            )
         if self._token_manager is None:
             self._token_manager = TokenManager(
                 api_url=get_env_var('DB_MANAGEMENT_API_URL'),

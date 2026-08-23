@@ -248,7 +248,7 @@ class TestNotificationSchemas(unittest.TestCase):
     """Unit tests for notification-center response schemas."""
 
     def test_notification_list_schema(self) -> None:
-        """Notification list exposes total, pagination, and items."""
+        """Notification list exposes an optional keyset cursor and items."""
         from datetime import datetime
         from datetime import timezone
 
@@ -264,13 +264,11 @@ class TestNotificationSchemas(unittest.TestCase):
         )
 
         result = NotificationList(
-            total=1,
-            page=1,
-            page_size=20,
             items=[item],
+            next_cursor='eyJpZCI6MX0',
         )
 
-        self.assertEqual(result.total, 1)
+        self.assertEqual(result.next_cursor, 'eyJpZCI6MX0')
         self.assertEqual(result.items[0].metadata['violation_id'], 1)
 
 

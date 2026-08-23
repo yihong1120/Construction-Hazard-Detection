@@ -98,8 +98,6 @@ class TypedDictShapeTests(unittest.TestCase):
             'model_key': str,
             'engine': str,
             'tracker': str,
-            'confidence_threshold': float,
-            'track_objects': bool,
             'frame_size': list[int],
         }
         self._assert_annotations(S.InferenceMeta, expected)
@@ -120,17 +118,6 @@ class TypedDictShapeTests(unittest.TestCase):
         self._assert_annotations(S.InferenceResponse, expected)
         self.assertTrue(getattr(S.InferenceResponse, '__total__', True))
 
-    def test_hazard_meta_annotations_and_total(self) -> None:
-        """HazardMeta includes optional ints and booleans (union with None)."""
-        expected = {
-            'image_width': int | None,
-            'image_height': int | None,
-            'working_hour_only': bool | None,
-            'site_config_provided': bool,
-        }
-        self._assert_annotations(S.HazardMeta, expected)
-        self.assertTrue(getattr(S.HazardMeta, '__total__', True))
-
     def test_hazard_response_annotations_and_total(self) -> None:
         """HazardResponse contains warning counts and polygon
         coordinate lists.
@@ -139,7 +126,6 @@ class TypedDictShapeTests(unittest.TestCase):
             'warnings': dict[str, dict[str, object]],
             'cone_polygons': S.PolygonsCoords,
             'pole_polygons': S.PolygonsCoords,
-            'meta': S.HazardMeta,
         }
         self._assert_annotations(S.HazardResponse, expected)
         self.assertTrue(getattr(S.HazardResponse, '__total__', True))
@@ -182,8 +168,6 @@ class StructuralValidatorsTests(unittest.TestCase):
             'model_key': str,
             'engine': str,
             'tracker': str,
-            'confidence_threshold': float,
-            'track_objects': bool,
             'frame_size': list,
         }
         for k, t in required.items():
@@ -216,24 +200,6 @@ class StructuralValidatorsTests(unittest.TestCase):
             return False
         return self._validate_inference_meta(r['meta'])
 
-    def _validate_hazard_meta(self, m: object) -> bool:
-        """Support _validate_hazard_meta."""
-        if not isinstance(m, dict):
-            return False
-        int_or_none = (int, type(None))
-        bool_or_none = (bool, type(None))
-        for key, allowed in (
-            ('image_width', int_or_none),
-            ('image_height', int_or_none),
-            ('working_hour_only', bool_or_none),
-        ):
-            if key not in m or not isinstance(m[key], allowed):
-                return False
-        return (
-            'site_config_provided' in m
-            and isinstance(m['site_config_provided'], bool)
-        )
-
     def _validate_hazard_response(self, r: object) -> bool:
         """Support _validate_hazard_response."""
         if not isinstance(r, dict):
@@ -242,7 +208,6 @@ class StructuralValidatorsTests(unittest.TestCase):
             'warnings',
             'cone_polygons',
             'pole_polygons',
-            'meta',
         } <= set(r.keys()):
             return False
         w = r['warnings']
@@ -259,7 +224,7 @@ class StructuralValidatorsTests(unittest.TestCase):
             and self._is_polygonscoords(r['pole_polygons'])
         ):
             return False
-        return self._validate_hazard_meta(r['meta'])
+        return True
 
     def test_detection_like_dict_variants_are_acceptable(self) -> None:
         """Demonstrate permissible variants for DetectionLikeDict keys."""
@@ -285,8 +250,6 @@ class StructuralValidatorsTests(unittest.TestCase):
                 'model_key': 'yolo11n',
                 'engine': 'onnx',
                 'tracker': 'bytetrack',
-                'confidence_threshold': 0.5,
-                'track_objects': True,
                 'frame_size': [1920, 1080],
             },
         }
@@ -298,12 +261,6 @@ class StructuralValidatorsTests(unittest.TestCase):
             'warnings': {'zone_a': {'no_helmet': 3, 'no_vest': 1}},
             'cone_polygons': [[[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]],
             'pole_polygons': [[[10.0, 10.0], [11.0, 10.0], [10.5, 11.0]]],
-            'meta': {
-                'image_width': 1920,
-                'image_height': 1080,
-                'working_hour_only': None,
-                'site_config_provided': True,
-            },
         }
         self.assertTrue(self._validate_hazard_response(hr))
 
@@ -328,8 +285,6 @@ class StructuralValidatorsTests(unittest.TestCase):
                 'model_key': 'yolo',
                 'engine': 'onnx',
                 'tracker': 'bytetrack',
-                'confidence_threshold': 0.4,
-                'track_objects': True,
                 'frame_size': [1920, '1080'],  # wrong type
             },
         }
@@ -341,12 +296,6 @@ class StructuralValidatorsTests(unittest.TestCase):
             'warnings': {'zone_a': {'no_helmet': '3'}},  # wrong type
             'cone_polygons': [[[0.0, 0.0], [1.0, 0.0]]],
             'pole_polygons': [[[1.0, 1.0], [2.0, 2.0]]],
-            'meta': {
-                'image_width': None,
-                'image_height': None,
-                'working_hour_only': False,
-                'site_config_provided': True,
-            },
         }
         self.assertFalse(self._validate_hazard_response(hr))
 

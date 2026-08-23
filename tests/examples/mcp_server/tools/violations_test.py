@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import httpx
 
-from examples.mcp_server.tools.violations import _maybe_await
 from examples.mcp_server.tools.violations import ViolationsTools
 
 
@@ -105,7 +104,7 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_search_success(self) -> None:
         """Exercise this test."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.json.return_value = {'total': 1, 'items': []}
         mock_response.raise_for_status.return_value = None
         client = AsyncMock()
@@ -139,7 +138,7 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     async def test_search_with_start_end_time_params(self) -> None:
         # Ensure start_time/end_time branches are covered
         """Exercise this test."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.json.return_value = {'total': 0, 'items': []}
         # non-awaitable path for _maybe_await
         mock_response.raise_for_status.return_value = None
@@ -153,7 +152,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
             start_time=start_time,
             end_time=end_time,
             limit=10,
-            offset=5,
         )
         # Verify that params include start_time and end_time
         client.get.assert_awaited()
@@ -172,7 +170,7 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_get_success(self) -> None:
         """Exercise this test."""
-        resp = AsyncMock()
+        resp = MagicMock()
         resp.json.return_value = {'id': 1}
         resp.raise_for_status.return_value = None
         client = AsyncMock()
@@ -207,7 +205,7 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_get_image_as_base64_success(self) -> None:
         """Exercise this test."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.content = b'data'
         mock_response.headers = {'content-type': 'image/png'}
         mock_response.raise_for_status.return_value = None
@@ -272,7 +270,7 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_my_sites_success(self) -> None:
         """Exercise this test."""
-        resp = AsyncMock()
+        resp = MagicMock()
         resp.json.return_value = [{'id': 1}]
         resp.raise_for_status.return_value = None
         client = AsyncMock()
@@ -297,42 +295,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
                 await self.tool.my_sites()
         self.logger.error.assert_called_once()
 
-    # --- get_image_by_violation_id ---
-
-    @patch.object(
-        ViolationsTools,
-        'get',
-        AsyncMock(return_value={'image_path': 'a.jpg'}),
-    )
-    @patch.object(
-        ViolationsTools,
-        'get_image',
-        AsyncMock(return_value={'img': 'data'}),
-    )
-    async def test_get_image_by_violation_id_success(self) -> None:
-        """Exercise this test."""
-        res = await self.tool.get_image_by_violation_id(1)
-        self.assertEqual(res['img'], 'data')
-
-    @patch.object(ViolationsTools, 'get', AsyncMock(return_value={'id': 1}))
-    async def test_get_image_by_violation_id_no_image(self) -> None:
-        """Exercise this test."""
-        res = await self.tool.get_image_by_violation_id(1)
-        self.assertFalse(res['success'])
-        self.assertIn('No image_path', res['message'])
-
-    @patch.object(
-        ViolationsTools,
-        'get',
-        AsyncMock(side_effect=RuntimeError('bad')),
-    )
-    async def test_get_image_by_violation_id_exception(self) -> None:
-        """Exercise this test."""
-        res = await self.tool.get_image_by_violation_id(1)
-        self.assertFalse(res['success'])
-        self.assertIn('bad', res['message'])
-        self.logger.error.assert_called_once()
-
     # --- close ---
 
     async def test_close(self) -> None:
@@ -342,15 +304,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         await self.tool.close()
         client.aclose.assert_awaited_once()
         self.assertIsNone(self.tool._client)
-
-    # --- _maybe_await ---
-
-    async def test__maybe_await_non_awaitable(self) -> None:
-        # Directly exercise the non-awaitable branch to cover return-on-line
-        """Exercise this test."""
-        value = {'a': 1}
-        result = await _maybe_await(value)
-        self.assertIs(result, value)
 
 
 if __name__ == '__main__':

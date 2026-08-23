@@ -43,8 +43,6 @@ class InferenceMeta(TypedDict):
     model_key: str
     engine: str
     tracker: str
-    confidence_threshold: float
-    track_objects: bool
     frame_size: list[int]  # [width, height]
 
 
@@ -56,19 +54,9 @@ class InferenceResponse(TypedDict):
     meta: InferenceMeta
 
 
-class HazardMeta(TypedDict):
-    """Metadata returned with a hazard response."""
-
-    image_width: int | None
-    image_height: int | None
-    working_hour_only: bool | None
-    site_config_provided: bool
-
-
 class HazardResponse(TypedDict):
     """Safety hazard analysis response payload."""
 
     warnings: MutableWarnings
     cone_polygons: PolygonsCoords
     pole_polygons: PolygonsCoords
-    meta: HazardMeta

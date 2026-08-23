@@ -6,9 +6,6 @@ from typing import cast
 from examples.mcp_server.schemas import DetectionLikeDict
 from examples.mcp_server.schemas import HazardResponse
 from src.danger_detector import DangerDetector
-from src.utils import Utils
-from src.warning_types import MutableWarnings
-from src.warning_types import Warnings
 
 
 class HazardTools:
@@ -25,11 +22,6 @@ class HazardTools:
     async def detect_violations(
         self,
         detections: list[list[float]] | list[DetectionLikeDict],
-        # Optional contextual parameters (accepted for compatibility)
-        image_width: int | None = None,
-        image_height: int | None = None,
-        working_hour_only: bool | None = None,
-        site_config: dict | None = None,
         detection_items: dict[str, bool] | None = None,
     ) -> HazardResponse:
         """Analyse detection results for safety violations.
@@ -38,16 +30,11 @@ class HazardTools:
             detections: Either raw lists of ``[x1, y1, x2, y2, conf, cls]`` or
                 object dictionaries with keys such as ``bbox``/``box``,
                 ``confidence``/``conf`` and ``class``/``cls``.
-            image_width: Optional image width used for contextual checks.
-            image_height: Optional image height used for contextual checks.
-            working_hour_only: When provided, may be used to filter warnings
-                to working hours only.
-            site_config: Optional site-specific configuration.
             detection_items: Fine-grained toggles for individual safety checks.
 
         Returns:
             dict[str, Any]: A mapping with ``warnings``, ``cone_polygons``,
-            ``pole_polygons`` and a ``meta`` section.
+                and ``pole_polygons``.
         """
         try:
             # Initialise detector if needed
@@ -68,12 +55,6 @@ class HazardTools:
                 'warnings': warnings,
                 'cone_polygons': cone_polygons,
                 'pole_polygons': pole_polygons,
-                'meta': {
-                    'image_width': image_width,
-                    'image_height': image_height,
-                    'working_hour_only': working_hour_only,
-                    'site_config_provided': bool(site_config),
-                },
             }
 
         except Exception as e:
@@ -152,44 +133,3 @@ class HazardTools:
 
         self._detector = DangerDetector(detection_items)
         self.logger.info('Initialized danger detector')
-
-    async def filter_warnings_by_working_hour(
-        self,
-        warnings: Warnings,
-        is_working_hour: bool,
-    ) -> MutableWarnings:
-        """Filter warnings based on working hours.
-
-        Args:
-            warnings: Mapping of warning types and their parameters.
-            is_working_hour: Whether the current time is within working hours.
-
-        Returns:
-            A filtered warnings mapping.
-        """
-        return Utils.filter_warnings_by_working_hour(
-            warnings,
-            is_working_hour,
-        )
-
-    async def should_notify(
-        self,
-        timestamp: int,
-        last_notification_time: int,
-        cooldown_period: int = 300,
-    ) -> bool:
-        """Check whether a notification should be sent based on cooldown.
-
-        Args:
-            timestamp: Current timestamp.
-            last_notification_time: Timestamp of the last notification.
-            cooldown_period: Cooldown period in seconds.
-
-        Returns:
-            ``True`` if a notification should be sent.
-        """
-        return Utils.should_notify(
-            timestamp,
-            last_notification_time,
-            cooldown_period,
-        )

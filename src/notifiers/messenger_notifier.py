@@ -3,107 +3,89 @@ from __future__ import annotations
 import os
 from io import BytesIO
 
+import httpx
 import numpy as np
-import requests
-from dotenv import load_dotenv
 from PIL import Image
+
+_MESSENGER_MESSAGES_URL = 'https://graph.facebook.com/v11.0/me/messages'
 
 
 class MessengerNotifier:
-    """Send notifications through Facebook Messenger."""
+    """Send text or image notifications through Facebook Messenger."""
 
-    def __init__(self) -> None:
-        """Load environment variables for Messenger credentials."""
-        load_dotenv()
+    def __init__(
+        self,
+        page_access_token: str | None = None,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        """Perform init.
 
-    def send_notification(
+        Args:
+            page_access_token: Value used by this callable.
+            client: Value used by this callable.
+        """
+        self.page_access_token = (
+            page_access_token or os.getenv('FACEBOOK_PAGE_ACCESS_TOKEN')
+        )
+        self._client = client
+        self._owns_client = client is None
+
+    async def send_notification(
         self,
         recipient_id: str,
         message: str,
         image: np.ndarray | None = None,
-        page_access_token: str | None = None,
     ) -> int:
-        """
-        Sends a notification to a specified recipient via Facebook Messenger.
-
-        Args:
-            recipient_id (str): The recipient's ID.
-            message (str): The text message to send.
-            image (np.ndarray): Optional image as a NumPy array (RGB format).
-            page_access_token (str, optional): The token for the Facebook page.
-                Defaults to environment variable 'FACEBOOK_PAGE_ACCESS_TOKEN'.
-
-        Returns:
-            int: The HTTP status code of the response.
-
-        Raises:
-            ValueError: If 'FACEBOOK_PAGE_ACCESS_TOKEN' is missing.
-
-        Notes:
-            - If image is provided, it sends a message with image attachment.
-            - Otherwise, sends a text message.
-        """
-        page_access_token = page_access_token or os.getenv(
-            'FACEBOOK_PAGE_ACCESS_TOKEN',
-        )
-        if not page_access_token:
+        """Send a text message or PNG attachment and return its HTTP status."""
+        token = self.page_access_token
+        if not token:
             raise ValueError('FACEBOOK_PAGE_ACCESS_TOKEN missing.')
 
-        headers = {'Authorization': f"Bearer {page_access_token}"}
-        url = (
-            f"https://graph.facebook.com/v11.0/me/messages?"
-            f"access_token={page_access_token}"
-        )
-
-        if image is not None:
-            # Prepare image data
-            image_pil = Image.fromarray(image)
-            buffer = BytesIO()
-            image_pil.save(buffer, format='PNG')
-            buffer.seek(0)
-            files = {'filedata': ('image.png', buffer, 'image/png')}
-
-            # Send message with image attachment
-            response = requests.post(
-                url=url,
+        client = self._http_client()
+        headers = {'Authorization': f'Bearer {token}'}
+        if image is None:
+            response = await client.post(
+                _MESSENGER_MESSAGES_URL,
+                params={'access_token': token},
                 headers=headers,
-                files=files,
-                data={
-                    'recipient': f'{{"id":"{recipient_id}"}}',
-                    'message': '{"attachment":{"type":"image","payload":{}}}',
+                json={
+                    'message': {'text': message},
+                    'recipient': {'id': recipient_id},
                 },
             )
         else:
-            # Send plain text message
-            payload = {
-                'message': {'text': message},
-                'recipient': {'id': recipient_id},
-            }
-            response = requests.post(
-                url=url,
+            response = await client.post(
+                _MESSENGER_MESSAGES_URL,
+                params={'access_token': token},
                 headers=headers,
-                json=payload,
+                data={
+                    'recipient': f'{{"id":"{recipient_id}"}}',
+                    'message': (
+                        '{"attachment":{"type":"image","payload":{}}}'
+                    ),
+                },
+                files={'filedata': ('image.png', _png_bytes(image), 'image/png')},
             )
-
         return response.status_code
 
+    async def aclose(self) -> None:
+        """Close a client created for standalone use."""
+        if self._owns_client and self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
-# Example usage
-def main() -> None:
-    """Send a sample Messenger notification for direct script execution."""
-    notifier = MessengerNotifier()
-    recipient_id = 'your_recipient_id_here'
-    message = 'Hello, Messenger!'
-    image = np.zeros((100, 100, 3), dtype=np.uint8)  # Example image (black)
-    page_access_token = 'your_page_access_token_here'
-    response_code = notifier.send_notification(
-        recipient_id,
-        message,
-        image=image,
-        page_access_token=page_access_token,
-    )
-    print(f"Response code: {response_code}")
+    def _http_client(self) -> httpx.AsyncClient:
+        """Return the injected transport or lazily create one for reuse."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(10.0, connect=5.0),
+            )
+        return self._client
 
 
-if __name__ == '__main__':
-    main()
+def _png_bytes(image: np.ndarray) -> bytes:
+    """Encode an RGB image without blocking the network event loop."""
+    buffer = BytesIO()
+    Image.fromarray(image).save(buffer, format='PNG')
+    return buffer.getvalue()

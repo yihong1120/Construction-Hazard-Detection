@@ -83,7 +83,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 - `POST /send_fcm_notification`: sends one site warning to subscribed users.
   Its payload must provide `type`, `title`, `deep_link`, and `metadata`; the
   service does not infer notification content or navigation values.
-- `GET /notifications?status=unread&type=violation&page=1&page_size=20`:
+- `GET /notifications?status=unread&type=violation&page_size=20&cursor=<next_cursor>`:
   lists the current user's in-app notifications.
 - `GET /notifications/unread_count`: returns the unread badge count.
 - `PATCH /notifications/{id}/read`: marks one notification as read.

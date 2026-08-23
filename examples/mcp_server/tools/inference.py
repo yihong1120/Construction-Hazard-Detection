@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 
 import cv2
-import httpx
 import numpy as np
 
 from examples.mcp_server.config import get_env_int
 from examples.mcp_server.schemas import InferenceResponse
+from src.async_http_client import AsyncHttpClientOwner
 from src.local_yolo_detector import LocalYoloDetector
+
+
+_REMOTE_IMAGE_TIMEOUT_SECONDS = max(
+    1,
+    get_env_int('MCP_REMOTE_IMAGE_TIMEOUT_SECONDS', 20),
+)
+_MAX_REMOTE_IMAGE_BYTES = max(
+    1,
+    get_env_int('MCP_MAX_REMOTE_IMAGE_BYTES', 10 * 1024 * 1024),
+)
 
 
 class InferenceTools:
@@ -23,14 +34,14 @@ class InferenceTools:
         """Initialise lazy inference resources."""
         self.logger = logging.getLogger(__name__)
         self._detector: LocalYoloDetector | None = None
+        self._http_client = AsyncHttpClientOwner(
+            timeout=_REMOTE_IMAGE_TIMEOUT_SECONDS,
+        )
 
     async def detect_frame(
         self,
         image_base64: str | None = None,
         image_url: str | None = None,
-        # Compatibility params accepted but currently not used directly
-        confidence_threshold: float = 0.5,
-        track_objects: bool = False,
         model_key: str = 'yolo26n',
         use_ultralytics: bool = True,
         movement_thr: float = 40.0,
@@ -42,11 +53,6 @@ class InferenceTools:
                 ``image_url``.
             image_url: URL pointing to an image resource. Provide either this
                 or ``image_base64``.
-            confidence_threshold: Minimum confidence to report (currently
-                surfaced in metadata only; the underlying engine may apply its
-                own thresholding).
-            track_objects: Whether to enable tracking in the detector (metadata
-                only if unsupported by the current engine).
             model_key: Identifier for the YOLO model to use.
             use_ultralytics: Prefer the Ultralytics engine locally.
             movement_thr: Movement threshold in pixels for tracking heuristics.
@@ -82,8 +88,6 @@ class InferenceTools:
                 'model_key': model_key,
                 'engine': 'ultralytics' if use_ultralytics else 'sahi',
                 'tracker': 'ultralytics_builtin',
-                'confidence_threshold': confidence_threshold,
-                'track_objects': track_objects,
                 # [width, height]
                 'frame_size': list(frame.shape[:2][::-1]),
             },
@@ -114,19 +118,39 @@ class InferenceTools:
                         ',', 1,
                     )[1]  # Remove data URL prefix
 
-                image_bytes = base64.b64decode(image_base64)
+                if len(image_base64) > ((_MAX_REMOTE_IMAGE_BYTES + 2) // 3) * 4:
+                    raise ValueError('Base64 image exceeds size limit')
+                image_bytes = base64.b64decode(image_base64, validate=True)
                 nparr = np.frombuffer(image_bytes, np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                frame = await asyncio.to_thread(
+                    cv2.imdecode,
+                    nparr,
+                    cv2.IMREAD_COLOR,
+                )
 
             elif image_url:
-                # Download image from URL. Timeout removed to support very slow
-                # networks and large media.
-                async with httpx.AsyncClient(timeout=None) as client:
-                    response = await client.get(image_url)
+                client = await self._http_client._get_client()
+                async with client.stream('GET', image_url) as response:
                     response.raise_for_status()
-
-                nparr = np.frombuffer(response.content, np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    content_length = response.headers.get('content-length')
+                    if (
+                        content_length is not None
+                        and int(content_length) > _MAX_REMOTE_IMAGE_BYTES
+                    ):
+                        raise ValueError('Remote image exceeds size limit')
+                    chunks: list[bytes] = []
+                    total_bytes = 0
+                    async for chunk in response.aiter_bytes():
+                        total_bytes += len(chunk)
+                        if total_bytes > _MAX_REMOTE_IMAGE_BYTES:
+                            raise ValueError('Remote image exceeds size limit')
+                        chunks.append(chunk)
+                nparr = np.frombuffer(b''.join(chunks), np.uint8)
+                frame = await asyncio.to_thread(
+                    cv2.imdecode,
+                    nparr,
+                    cv2.IMREAD_COLOR,
+                )
 
             else:
                 return None
@@ -136,8 +160,8 @@ class InferenceTools:
 
             return frame
 
-        except Exception as e:
-            self.logger.error(f"Failed to load image: {e}")
+        except Exception:
+            self.logger.exception('Failed to load image')
             return None
 
     async def _init_detector(
@@ -171,3 +195,4 @@ class InferenceTools:
         if self._detector:
             await self._detector.close()
             self._detector = None
+        await self._http_client.close()

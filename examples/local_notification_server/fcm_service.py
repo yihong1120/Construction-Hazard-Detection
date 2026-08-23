@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -134,7 +135,13 @@ async def send_fcm_notification_service(
 
     try:
         # The SDK response preserves message order for precise failure mapping.
-        response: messaging.BatchResponse = messaging.send_each(messages)
+        # firebase-admin exposes only a blocking transport.  The dispatcher
+        # limits the number of in-flight batches, while this hand-off keeps
+        # Redis reads, request cancellation, and other API work responsive.
+        response: messaging.BatchResponse = await asyncio.to_thread(
+            messaging.send_each,
+            messages,
+        )
         invalid_tokens: list[str] = []
         for idx, res in enumerate(response.responses):
             if not res.success:

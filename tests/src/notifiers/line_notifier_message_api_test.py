@@ -6,6 +6,7 @@ import os
 import unittest
 from datetime import datetime
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -106,7 +107,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         'src.notifiers.line_notifier_message_api.LineMessenger.'
-        'delete_old_images',
+        '_delete_old_images',
     )
     @patch(
         'src.notifiers.line_notifier_message_api.LineMessenger.'
@@ -129,7 +130,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         'src.notifiers.line_notifier_message_api.LineMessenger.'
-        'delete_old_images',
+        '_delete_old_images',
     )
     @patch(
         'src.notifiers.line_notifier_message_api.LineMessenger.'
@@ -234,9 +235,9 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         Test exception during deletion of image from Cloudinary.
         """
         mock_destroy.side_effect = Exception('boom')
-        with patch('builtins.print') as mock_print:
+        with patch.object(self.messenger.logger, 'error') as mock_error:
             self.messenger.delete_image_from_cloudinary('pid')
-            mock_print.assert_called_once()
+            mock_error.assert_called_once()
 
     @patch(
         'src.notifiers.line_notifier_message_api.LineMessenger.'
@@ -268,7 +269,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         'src.notifiers.line_notifier_message_api.LineMessenger.'
-        'delete_old_images',
+        '_delete_old_images',
     )
     @patch(
         'src.notifiers.line_notifier_message_api.LineMessenger.'
@@ -347,25 +348,30 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs['message'], 'Hello, LINE Messaging API!')
         self.assertEqual(kwargs['image_bytes'], frame_bytes)
 
-    @patch('requests.post')
+    @patch('aiohttp.ClientSession.post')
     async def test_push_message_api_error(self, mock_post: MagicMock) -> None:
         """
-        Test push_message API error path (should print error and return code).
+        Test push_message API error path logs an error and returns its code.
         """
-        mock_post.return_value.status_code = 401
-        mock_post.return_value.text = (
-            '{"message":"Authentication failed. Confirm that '
-            'the access token the authorization header is valid."}'
+        mock_response = unittest.mock.AsyncMock()
+        mock_response.status = 401
+        mock_response.text = unittest.mock.AsyncMock(
+            return_value=(
+                '{"message":"Authentication failed. Confirm that '
+                'the access token the authorization header is valid."}'
+            ),
         )
-        with patch('builtins.print') as mock_print:
+        mock_post.return_value.__aenter__.return_value = mock_response
+        with patch.object(self.messenger.logger, 'error') as mock_error:
             code = await self.messenger.push_message(
                 recipient_id=self.recipient_id,
                 message=self.message,
             )
-            mock_print.assert_any_call(
-                'Error: 401, '
+            mock_error.assert_called_once_with(
+                'LINE API returned %s: %s',
+                401,
                 '{"message":"Authentication failed. Confirm that '
-                'the access token in the authorization header is valid."}',
+                'the access token the authorization header is valid."}',
             )
             self.assertEqual(code, 401)
 
@@ -395,7 +401,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         """
         open_orig = open
 
-        def open_side_effect(path: Any, *args, **kwargs) -> Any:
+        def open_side_effect(path: Any, *args: Any, **kwargs: Any) -> Any:
             """Support open_side_effect.
 
             Args:
@@ -414,26 +420,15 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
     def test_save_image_records_exception(self) -> None:
         """
-        Test save_image_records exception handling (should print error).
+        Test save_image_records exception handling (should log an error).
         """
-        open_orig = open
-
-        def open_side_effect(path: Any, *args, **kwargs) -> Any:
-            """Support open_side_effect.
-
-            Args:
-                path: Test helper value.
-            """
-            if path == 'dummy.json':
-                raise Exception('save error')
-            return open_orig(path, *args, **kwargs)
-        with patch('builtins.open', side_effect=open_side_effect):
+        with patch.object(Path, 'open', side_effect=OSError('save error')):
             messenger = LineMessenger(
                 channel_access_token='x', image_record_file='dummy.json',
             )
-            with patch('builtins.print') as mock_print:
+            with patch.object(messenger.logger, 'error') as mock_error:
                 messenger.save_image_records()
-                mock_print.assert_called()
+                mock_error.assert_called_once()
 
     @patch(
         'cloudinary.uploader.destroy',
@@ -447,9 +442,9 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         Test delete_image_from_cloudinary exception handling.
         """
         messenger = LineMessenger(channel_access_token='x')
-        with patch('builtins.print') as mock_print:
+        with patch.object(messenger.logger, 'error') as mock_error:
             messenger.delete_image_from_cloudinary('pid')
-            mock_print.assert_called()
+            mock_error.assert_called_once()
 
 
 if __name__ == '__main__':

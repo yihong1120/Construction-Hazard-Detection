@@ -1,223 +1,90 @@
 from __future__ import annotations
 
-import os
-import subprocess
 import unittest
-from io import BytesIO
-from unittest.mock import MagicMock
-from unittest.mock import patch
 
+import httpx
 import numpy as np
-from PIL import Image
 
-from src.notifiers.wechat_notifier import main
 from src.notifiers.wechat_notifier import WeChatNotifier
 
 
-class TestWeChatNotifier(unittest.TestCase):
-    """
-    Unit tests for the WeChatNotifier class methods.
-    """
+class WeChatNotifierTests(unittest.IsolatedAsyncioTestCase):
+    """Verify WeChat token caching and async image delivery."""
 
-    wechat_notifier: WeChatNotifier
+    async def test_token_is_cached_and_image_is_uploaded(self) -> None:
+        """Test token is cached and image is uploaded.
+        """
+        requests: list[httpx.Request] = []
 
-    @classmethod
-    def setUpClass(cls) -> None:
-        """
-        Set up the WeChatNotifier instance for tests.
-        """
-        cls.wechat_notifier = WeChatNotifier(
-            corp_id='test_corp_id',
-            corp_secret='test_corp_secret',
-            agent_id=1000002,
-        )
+        def handler(request: httpx.Request) -> httpx.Response:
+            """Perform handler.
 
-    @patch('requests.get')
-    def test_get_access_token(self, mock_get: MagicMock) -> None:
-        """
-        Test the get_access_token method.
-        """
-        mock_response = MagicMock()
-        mock_response.json.return_value = {'access_token': 'test_access_token'}
-        mock_get.return_value = mock_response
-        access_token: str = self.wechat_notifier.get_access_token()
-        self.assertEqual(access_token, 'test_access_token')
-        mock_get.assert_called_once_with(
-            'https://qyapi.weixin.qq.com/cgi-bin/gettoken?'
-            'corpid=test_corp_id&corpsecret=test_corp_secret',
-        )
+            Args:
+                request: Value used by this callable.
 
-    @patch('requests.post')
-    def test_send_notification_no_image(self, mock_post: MagicMock) -> None:
-        """
-        Test sending a notification without an image.
-        """
-        mock_response = MagicMock()
-        mock_response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
-        mock_post.return_value = mock_response
-        user_id: str = 'test_user_id'
-        message: str = 'Hello, WeChat!'
-        response = self.wechat_notifier.send_notification(user_id, message)
-        self.assertEqual(response, {'errcode': 0, 'errmsg': 'ok'})
-        url: str = (
-            f"https://qyapi.weixin.qq.com/cgi-bin/message/send?"
-            f"access_token={self.wechat_notifier.access_token}"
-        )
-        payload = {
-            'touser': user_id,
-            'msgtype': 'text',
-            'agentid': self.wechat_notifier.agent_id,
-            'text': {
-                'content': message,
-            },
-            'safe': 0,
-        }
+            Returns:
+                The callable result.
+            """
+            requests.append(request)
+            if request.url.path.endswith('/gettoken'):
+                return httpx.Response(
+                    200,
+                    json={'access_token': 'token', 'expires_in': 7200},
+                )
+            if request.url.path.endswith('/media/upload'):
+                return httpx.Response(200, json={'media_id': 'media'})
+            return httpx.Response(200, json={'errcode': 0, 'errmsg': 'ok'})
 
-        mock_post.assert_called_once_with(url, json=payload)
-
-    @patch('requests.post')
-    @patch.object(WeChatNotifier, 'upload_media')
-    def test_send_notification_with_image(
-        self,
-        mock_upload_media: MagicMock,
-        mock_post: MagicMock,
-    ) -> None:
-        """
-        Test sending a notification with an image.
-        """
-        mock_post.return_value.json.return_value = {
-            'errcode': 0, 'errmsg': 'ok',
-        }
-        mock_upload_media.return_value = 'test_media_id'
-        user_id: str = 'test_user_id'
-        message: str = 'Hello, WeChat!'
-        image: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-        response = self.wechat_notifier.send_notification(
-            user_id, message, image=image,
-        )
-        self.assertEqual(response, {'errcode': 0, 'errmsg': 'ok'})
-        url: str = (
-            f"https://qyapi.weixin.qq.com/cgi-bin/message/send?"
-            f"access_token={self.wechat_notifier.access_token}"
-        )
-        payload = {
-            'touser': user_id,
-            'msgtype': 'image',
-            'agentid': self.wechat_notifier.agent_id,
-            'image': {
-                'media_id': 'test_media_id',
-            },
-            'safe': 0,
-        }
-
-        mock_post.assert_called_once_with(url, json=payload)
-
-    @patch('requests.post')
-    def test_upload_media(self, mock_post: MagicMock) -> None:
-        """
-        Test the upload_media method.
-        """
-        mock_response = MagicMock()
-        mock_response.json.return_value = {'media_id': 'test_media_id'}
-        mock_post.return_value = mock_response
-        image: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-        buffer: BytesIO = BytesIO()
-        image_pil: Image.Image = Image.fromarray(image)
-        image_pil.save(buffer, format='PNG')
-        buffer.seek(0)
-        media_id: str = self.wechat_notifier.upload_media(image)
-        self.assertEqual(media_id, 'test_media_id')
-
-        args, kwargs = mock_post.call_args
-        self.assertEqual(kwargs['files']['media'][0], 'image.png')
-        self.assertIsInstance(kwargs['files']['media'][1], BytesIO)
-        self.assertEqual(kwargs['files']['media'][2], 'image/png')
-
-    @patch(
-        'src.notifiers.wechat_notifier.WeChatNotifier.send_notification',
-        return_value={'errcode': 0, 'errmsg': 'ok'},
-    )
-    @patch(
-        'src.notifiers.wechat_notifier.WeChatNotifier.get_access_token',
-        return_value='test_access_token',
-    )
-    @patch('src.notifiers.wechat_notifier.os.getenv')
-    def test_main(
-        self,
-        mock_getenv: MagicMock,
-        mock_get_access_token: MagicMock,
-        mock_send_notification: MagicMock,
-    ) -> None:
-        """
-        Test the main function.
-        """
-        mock_getenv.side_effect = lambda key: {
-            'WECHAT_CORP_ID': 'test_corp_id',
-            'WECHAT_CORP_SECRET': 'test_corp_secret',
-            'WECHAT_AGENT_ID': '1000002',
-        }.get(key, '')
-
-        # Verify logging.info is called with a static, non-sensitive message
-        with patch('src.notifiers.wechat_notifier.logging.info') as mock_log:
-            main()
-            mock_send_notification.assert_called_once()
-            args, kwargs = mock_send_notification.call_args
-            self.assertEqual(args[0], 'your_user_id_here')
-            self.assertEqual(args[1], 'Hello, WeChat!')
-            if len(args) > 2:
-                self.assertIsInstance(args[2], np.ndarray)
-                self.assertEqual(args[2].shape, (100, 100, 3))
-            mock_log.assert_called_once_with(
-                'WeChat send_notification completed',
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            notifier = WeChatNotifier(
+                corp_id='corp',
+                corp_secret='secret',
+                agent_id=1,
+                client=client,
+            )
+            self.assertEqual(
+                await notifier.send_notification('user', 'hello'),
+                {'errcode': 0, 'errmsg': 'ok'},
+            )
+            self.assertEqual(
+                await notifier.send_notification(
+                    'user',
+                    'image',
+                    image=np.zeros((2, 2, 3), dtype=np.uint8),
+                ),
+                {'errcode': 0, 'errmsg': 'ok'},
             )
 
-    @patch('requests.post')
-    @patch.dict(
-        os.environ, {
-            'WECHAT_CORP_ID': 'test_corp_id',
-            'WECHAT_CORP_SECRET': 'test_corp_secret',
-            'WECHAT_AGENT_ID': '1000002',
-        },
-    )
-    def test_main_as_script(self, mock_post: MagicMock) -> None:
-        """
-        Test running the wechat_notifier.py script as the main program.
-        """
-        mock_response: MagicMock = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
+        token_requests = [
+            request for request in requests if request.url.path.endswith('/gettoken')
+        ]
+        self.assertEqual(len(token_requests), 1)
+        self.assertTrue(any(b'media' in request.content for request in requests))
 
-        # Get the absolute path to the wechat_notifier.py script
-        script_path = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                '../../../src/notifiers/wechat_notifier.py',
+    async def test_requires_wechat_credentials(self) -> None:
+        """Test requires wechat credentials.
+        """
+        notifier = WeChatNotifier(corp_id='', corp_secret='')
+        with self.assertRaisesRegex(ValueError, 'WECHAT_CORP_ID'):
+            await notifier.get_access_token()
+
+    async def test_rejects_a_token_response_without_a_token(self) -> None:
+        """Malformed token responses fail explicitly instead of caching None."""
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, json={}),
             ),
-        )
+        ) as client:
+            notifier = WeChatNotifier('corp', 'secret', client=client)
+            with self.assertRaisesRegex(ValueError, 'did not return an access token'):
+                await notifier.get_access_token()
 
-        # Run the script using subprocess
-        result = subprocess.run(
-            ['python', script_path],
-            capture_output=True, text=True,
-        )
-
-        # Print stdout and stderr for debugging
-        print('STDOUT:', result.stdout)
-        print('STDERR:', result.stderr)
-
-        # Assert that the script runs without errors
-        self.assertEqual(
-            result.returncode, 0,
-            'Script exited with a non-zero status.',
-        )
-
-
-if __name__ == '__main__':
-    unittest.main()
-
-'''
-pytest \
-    --cov=src.notifiers.wechat_notifier \
-    --cov-report=term-missing \
-    tests/src/notifiers/wechat_notifier_test.py
-'''
+    async def test_standalone_notifier_reuses_and_closes_its_client(self) -> None:
+        """A standalone notifier owns a reusable client until closed."""
+        notifier = WeChatNotifier('corp', 'secret')
+        client = notifier._http_client()
+        self.assertIs(client, notifier._http_client())
+        await notifier.aclose()
+        self.assertTrue(client.is_closed)

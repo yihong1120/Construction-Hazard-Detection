@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import httpx
+
+from examples.mcp_server.tools.notify import _decode_optional_image
 from examples.mcp_server.tools.notify import NotifyTools
 
 
@@ -19,7 +22,7 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         with patch(
             'examples.mcp_server.tools.notify.LineMessenger',
             return_value=fake_line,
-        ):
+        ), patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'):
             tool = NotifyTools()
             img_b64 = base64.b64encode(b'abc').decode()
             res = await tool.line_push('uid', 'hello', img_b64)
@@ -28,6 +31,14 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res['status_code'], 200)
         self.assertIn('successfully', res['message'])
 
+    def test_decode_optional_image_accepts_a_data_url(self) -> None:
+        """The shared decoder accepts both raw Base64 and browser data URLs."""
+        encoded = base64.b64encode(b'image').decode()
+
+        assert _decode_optional_image(encoded) == b'image'
+        assert _decode_optional_image(f'data:image/png;base64,{encoded}') == b'image'
+        assert _decode_optional_image(None) is None
+
     async def test_line_push_with_data_url_prefix(self) -> None:
         """Should handle data URL prefix correctly."""
         fake_line = AsyncMock()
@@ -35,7 +46,7 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         with patch(
             'examples.mcp_server.tools.notify.LineMessenger',
             return_value=fake_line,
-        ):
+        ), patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'):
             tool = NotifyTools()
             img = (
                 'data:image/png;base64,'
@@ -52,6 +63,7 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
                 'examples.mcp_server.tools.notify.LineMessenger',
                 side_effect=RuntimeError('boom'),
             ),
+            patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'),
             patch(
                 'examples.mcp_server.tools.notify.logging.getLogger',
             ) as mock_logger,
@@ -69,51 +81,41 @@ class BroadcastSendTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_broadcast_send_success(self) -> None:
         """Should send broadcast successfully."""
-        fake_broadcast = MagicMock()
-        fake_broadcast.broadcast_message.return_value = True
-        with patch(
-            'examples.mcp_server.tools.notify.BroadcastNotifier',
-            return_value=fake_broadcast,
-        ):
-            tool = NotifyTools()
-            res = await tool.broadcast_send('message')
+        client = AsyncMock()
+        client.post.return_value = MagicMock(is_success=True, status_code=200)
+        tool = NotifyTools()
+        tool._http_client = client
+        res = await tool.broadcast_send('message')
         self.assertTrue(res['success'])
         self.assertIn('successfully', res['message'])
+        client.post.assert_awaited_once()
 
     async def test_broadcast_send_failure(self) -> None:
         """Should return failure message."""
-        fake_broadcast = MagicMock()
-        fake_broadcast.broadcast_message.return_value = False
-        with patch(
-            'examples.mcp_server.tools.notify.BroadcastNotifier',
-            return_value=fake_broadcast,
-        ):
-            tool = NotifyTools()
-            res = await tool.broadcast_send('message')
+        client = AsyncMock()
+        client.post.return_value = MagicMock(is_success=False, status_code=503)
+        tool = NotifyTools()
+        tool._http_client = client
+        res = await tool.broadcast_send('message')
         self.assertFalse(res['success'])
         self.assertIn('Failed', res['message'])
 
-    async def test_broadcast_send_raises_and_logs(self) -> None:
-        """Should log and raise on exception."""
+    async def test_broadcast_send_logs_network_failure(self) -> None:
+        """Network failures return the normal failed delivery response."""
+        client = AsyncMock()
+        client.post.side_effect = httpx.ConnectError('boom')
         with (
-            patch(
-                'examples.mcp_server.tools.notify.BroadcastNotifier',
-                side_effect=RuntimeError('boom'),
-            ),
             patch(
                 'examples.mcp_server.tools.notify.logging.getLogger',
             ) as mock_logger,
-            patch(
-                'examples.mcp_server.tools.notify.get_env_var',
-                return_value='url',
-            ),
         ):
             tool = NotifyTools()
+            tool._http_client = client
             logger = mock_logger.return_value
             tool.logger = logger
-            with self.assertRaises(RuntimeError):
-                await tool.broadcast_send('fail')
-            logger.error.assert_called_once()
+            result = await tool.broadcast_send('fail')
+            self.assertFalse(result['success'])
+            logger.warning.assert_called_once()
 
 
 class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
@@ -257,43 +259,22 @@ class EnsureInitialisationTests(unittest.IsolatedAsyncioTestCase):
         """Should create messenger only once."""
         with patch(
             'examples.mcp_server.tools.notify.LineMessenger',
-        ) as mock_line:
+        ) as mock_line, patch(
+            'examples.mcp_server.tools.notify.aiohttp.ClientSession',
+        ) as mock_session:
             tool = NotifyTools()
             await tool._ensure_line_messenger()
             await tool._ensure_line_messenger()
             mock_line.assert_called_once()
+            mock_session.assert_called_once()
 
-    async def test_ensure_broadcast_notifier_with_url_and_env(self) -> None:
-        """Should handle both explicit and env-based URLs."""
-        with (
-            patch(
-                'examples.mcp_server.tools.notify.BroadcastNotifier',
-            ) as mock_bcast,
-            patch(
-                'examples.mcp_server.tools.notify.get_env_var',
-                return_value='env_url',
-            ),
-        ):
-            tool = NotifyTools()
-            # explicit URL
-            await tool._ensure_broadcast_notifier('explicit_url')
-            # call again -> should not recreate
-            await tool._ensure_broadcast_notifier('explicit_url')
-            mock_bcast.assert_called_once()
-
-        # ensure env var version works
-        with (
-            patch(
-                'examples.mcp_server.tools.notify.BroadcastNotifier',
-            ) as mock_bcast2,
-            patch(
-                'examples.mcp_server.tools.notify.get_env_var',
-                return_value='env_url',
-            ),
-        ):
-            tool2 = NotifyTools()
-            await tool2._ensure_broadcast_notifier(None)
-            mock_bcast2.assert_called_once()
+    async def test_broadcast_client_is_reused(self) -> None:
+        """One NotifyTools instance owns one reusable broadcast transport."""
+        tool = NotifyTools()
+        first = tool._broadcast_http_client()
+        second = tool._broadcast_http_client()
+        self.assertIs(first, second)
+        await tool.close()
 
     async def test_ensure_telegram_notifier_initialises_once(self) -> None:
         """Should create telegram notifier only once."""

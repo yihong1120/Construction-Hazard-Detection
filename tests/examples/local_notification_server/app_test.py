@@ -51,7 +51,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         async def fake_begin() -> AsyncIterator[SimpleNamespace]:
             """Support fake_begin."""
 
-            async def run_sync(fn: Any, *args, **kwargs) -> None:
+            async def run_sync(fn: Any, *args: Any, **kwargs: Any) -> None:
                 """Support run_sync.
 
                 Args:
@@ -74,24 +74,29 @@ class TestLocalNotificationServer(unittest.TestCase):
                 'FCM_TOKEN_ENCRYPTION_KEY': fernet_key,
                 'FIREBASE_CRED_PATH': '/tmp/test-firebase-credentials.json',
                 'FIREBASE_PROJECT_ID': 'test-project',
+                'AUTO_CREATE_SCHEMA': 'true',
             },
         ):
             with patch('examples.auth.lifespan.engine', fake_engine):
                 with patch(
-                    'firebase_admin.credentials.Certificate',
-                    return_value=MagicMock(),
+                    'examples.auth.lifespan.drain_site_media_cleanup_jobs',
+                    new_callable=AsyncMock,
                 ):
                     with patch(
-                        'firebase_admin.initialize_app',
+                        'firebase_admin.credentials.Certificate',
                         return_value=MagicMock(),
                     ):
                         with patch(
-                            'examples.auth.redis_pool.RedisClient.connect',
-                            new_callable=AsyncMock,
+                            'firebase_admin.initialize_app',
+                            return_value=MagicMock(),
                         ):
-                            # Using TestClient triggers the lifespan context.
-                            with TestClient(app):
-                                pass
+                            with patch(
+                                'examples.auth.redis_pool.RedisClient.connect',
+                                new_callable=AsyncMock,
+                            ):
+                                # Using TestClient triggers the lifespan context.
+                                with TestClient(app):
+                                    pass
 
         self.assertTrue(
             flag,

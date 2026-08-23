@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -16,7 +19,10 @@ from examples.mcp_server.tools.model import ModelTools
 from examples.mcp_server.tools.notify import NotifyTools
 from examples.mcp_server.tools.record import RecordTools
 from examples.mcp_server.tools.streaming import StreamingTools
-from examples.mcp_server.tools.utils import UtilsTools
+from examples.mcp_server.tools.utils import bbox_intersection
+from examples.mcp_server.tools.utils import calculate_polygon_area
+from examples.mcp_server.tools.utils import point_in_polygon
+from examples.mcp_server.tools.utils import validate_detection_data
 from examples.mcp_server.tools.violations import ViolationsTools
 
 
@@ -28,10 +34,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Initialise FastMCP server
-mcp = FastMCP('construction-hazard-detection')
-
-
 # Initialise tool instances lazily used by MCP tool handlers
 inference_tools = InferenceTools()
 hazard_tools = HazardTools()
@@ -40,7 +42,23 @@ notify_tools = NotifyTools()
 record_tools = RecordTools()
 streaming_tools = StreamingTools()
 model_tools = ModelTools()
-utils_tools = UtilsTools()
+
+
+@asynccontextmanager
+async def _mcp_lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
+    """Close tool-owned network and model resources at server shutdown."""
+    try:
+        yield {}
+    finally:
+        await asyncio.gather(
+            inference_tools.close(),
+            violations_tools.close(),
+            notify_tools.close(),
+            return_exceptions=True,
+        )
+
+
+mcp = FastMCP('construction-hazard-detection', lifespan=_mcp_lifespan)
 
 
 # === INFERENCE TOOLS ===
@@ -51,24 +69,16 @@ utils_tools = UtilsTools()
 )
 async def inference_detect_frame(
     image_base64: str,
-    confidence_threshold: float = 0.5,
-    track_objects: bool = False,
 ) -> InferenceResponse:
     """Detect objects in an image using a YOLO model.
 
     Args:
         image_base64: Base64-encoded image data.
-        confidence_threshold: Minimum confidence threshold for detections
-            (0.0–1.0).
-        track_objects: Whether to enable object tracking.
-
     Returns:
         dict[str, Any]: A mapping with detections, tracked objects and meta.
     """
     return await inference_tools.detect_frame(
         image_base64=image_base64,
-        confidence_threshold=confidence_threshold,
-        track_objects=track_objects,
     )
 
 
@@ -80,29 +90,16 @@ async def inference_detect_frame(
 )
 async def hazard_detect_violations(
     detections: list[DetectionLikeDict] | list[list[float]],
-    image_width: int,
-    image_height: int,
-    working_hour_only: bool = True,
-    site_config: dict | None = None,
 ) -> HazardResponse:
     """Analyse detections for safety violations.
 
     Args:
         detections: List of detection objects with bbox, class and confidence.
-        image_width: Width of the source image in pixels.
-        image_height: Height of the source image in pixels.
-        working_hour_only: Whether to filter by working hours.
-        site_config: Optional site-specific configuration.
-
     Returns:
         dict[str, Any]: Violation analysis with warnings and messages.
     """
     return await hazard_tools.detect_violations(
         detections=detections,
-        image_width=image_width,
-        image_height=image_height,
-        working_hour_only=working_hour_only,
-        site_config=site_config,
     )
 
 
@@ -115,7 +112,6 @@ async def violations_search(
     start_time: str | None = None,
     end_time: str | None = None,
     limit: int = 20,
-    offset: int = 0,
 ) -> dict:
     """Search violation records with filters."""
     return await violations_tools.search(
@@ -124,7 +120,6 @@ async def violations_search(
         start_time=start_time,
         end_time=end_time,
         limit=limit,
-        offset=offset,
     )
 
 
@@ -144,24 +139,6 @@ async def violations_get_image(
     """Get violation image by ID."""
     return await violations_tools.get_image(
         image_path=image_path,
-        as_base64=as_base64,
-    )
-
-
-@mcp.tool(
-    name='violations_get_image_by_id',
-    description='Get violation image by violation_id (convenience)',
-)
-async def violations_get_image_by_id(
-    violation_id: int,
-    as_base64: bool = False,
-) -> dict:
-    """Get violation image by violation id.
-
-    This fetches the details first to resolve the image_path.
-    """
-    return await violations_tools.get_image_by_violation_id(
-        violation_id=violation_id,
         as_base64=as_base64,
     )
 
@@ -198,6 +175,34 @@ async def notify_broadcast_send(
     return await notify_tools.broadcast_send(
         message=message,
         broadcast_url=broadcast_url,
+    )
+
+
+@mcp.tool(name='notify_messenger_send', description='Notify Facebook Messenger')
+async def notify_messenger_send(
+    recipient_id: str,
+    message: str,
+    image_base64: str | None = None,
+) -> dict:
+    """Send a notification via Facebook Messenger."""
+    return await notify_tools.messenger_send(
+        recipient_id=recipient_id,
+        message=message,
+        image_base64=image_base64,
+    )
+
+
+@mcp.tool(name='notify_wechat_send', description='Notify WeChat Work')
+async def notify_wechat_send(
+    user_id: str,
+    message: str,
+    image_base64: str | None = None,
+) -> dict:
+    """Send a notification via WeChat Work."""
+    return await notify_tools.wechat_send(
+        user_id=user_id,
+        message=message,
+        image_base64=image_base64,
     )
 
 
@@ -318,18 +323,16 @@ async def streaming_capture_frame(
 # === MODEL MANAGEMENT TOOLS ===
 
 @mcp.tool(
-    name='model_fetch',
-    description='Model Fetch',
+    name='model_sync',
+    description='Download a newer model atomically',
 )
-async def model_fetch(
+async def model_sync(
     model_name: str,
-    model_version: str | None = None,
     force_download: bool = False,
 ) -> dict:
-    """Fetch and download ML model."""
-    return await model_tools.fetch_model(
+    """Synchronise a model from the authenticated model distributor."""
+    return await model_tools.sync_model(
         model_name=model_name,
-        model_version=model_version,
         force_download=force_download,
     )
 
@@ -338,21 +341,6 @@ async def model_fetch(
 async def model_list_available() -> dict:
     """List available models from repository."""
     return await model_tools.list_available_models()
-
-
-@mcp.tool(
-    name='model_update',
-    description='Model Update',
-)
-async def model_update(
-    model_name: str,
-    target_version: str | None = None,
-) -> dict:
-    """Update model to latest or specific version."""
-    return await model_tools.update_model(
-        model_name=model_name,
-        target_version=target_version,
-    )
 
 
 @mcp.tool()
@@ -367,57 +355,45 @@ async def model_get_local() -> dict:
     name='utils_calculate_polygon_area',
     description='Utils Calculate Polygon Area',
 )
-async def utils_calculate_polygon_area(
+def utils_calculate_polygon_area(
     polygon_points: list[list[float]],
 ) -> dict:
     """Calculate area of a polygon."""
-    return await utils_tools.calculate_polygon_area(
-        polygon_points=polygon_points,
-    )
+    return calculate_polygon_area(polygon_points)
 
 
 @mcp.tool(
     name='utils_point_in_polygon',
     description='Utils Point In Polygon',
 )
-async def utils_point_in_polygon(
+def utils_point_in_polygon(
     point: list[float],
     polygon_points: list[list[float]],
 ) -> dict:
     """Check if point is inside polygon."""
-    return await utils_tools.point_in_polygon(
-        point=point,
-        polygon_points=polygon_points,
-    )
+    return point_in_polygon(point, polygon_points)
 
 
 @mcp.tool(
     name='utils_bbox_intersection',
     description='Utils Bbox Intersection',
 )
-async def utils_bbox_intersection(
+def utils_bbox_intersection(
     bbox1: list[float],
     bbox2: list[float],
 ) -> dict:
     """Calculate intersection of two bounding boxes."""
-    return await utils_tools.bbox_intersection(
-        bbox1=bbox1,
-        bbox2=bbox2,
-    )
+    return bbox_intersection(bbox1, bbox2)
 
 
 @mcp.tool()
-async def utils_validate_detections(
+def utils_validate_detections(
     detections: list[dict],
     image_width: int,
     image_height: int,
 ) -> dict:
     """Validate detection data format and coordinates."""
-    return await utils_tools.validate_detection_data(
-        detections=detections,
-        image_width=image_width,
-        image_height=image_height,
-    )
+    return validate_detection_data(detections, image_width, image_height)
 
 
 def _configure_mcp_transport(transport_config: TransportConfig) -> None:

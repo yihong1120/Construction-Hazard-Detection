@@ -1,330 +1,58 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from pathlib import Path
-from typing import TypedDict
 
 from src.model_fetcher import ModelFetcher
 
 
-class CachedModelInfo(TypedDict, total=False):
-    """Cached model metadata."""
-
-    path: str
-    version: str | None
-    size: int
-    fetch_time: float
-    update_time: float
-
-
 class ModelTools:
-    """Tools for managing ML models and model operations."""
+    """Expose only real model repository operations to MCP handlers."""
 
-    def __init__(self) -> None:
-        """Initialise lazy model management resources."""
-        self.logger = logging.getLogger(__name__)
-        self._model_fetcher: ModelFetcher | None = None
-        self._current_models: dict[str, CachedModelInfo] = {}
-
-    async def fetch_model(
-        self,
-        model_name: str,
-        model_version: str | None = None,
-        force_download: bool = False,
-    ) -> dict:
-        """Fetch and download an ML model.
+    def __init__(self, fetcher: ModelFetcher | None = None) -> None:
+        """Perform init.
 
         Args:
-            model_name: Name of the model to fetch.
-            model_version: Specific version (uses latest if not provided).
-            force_download: Force re-download even if the model exists.
-
-        Returns:
-            dict[str, Any]: Download status and model information.
+            fetcher: Value used by this callable.
         """
-        try:
-            fetcher = await self._ensure_model_fetcher()
+        self._fetcher = fetcher or ModelFetcher()
 
-            # Request update for a single model synchronously in a thread
-            # Note: model_version is ignored by current ModelFetcher API
-            last_time = fetcher.get_last_update_time(model_name)
-            await asyncio.to_thread(
-                fetcher.request_new_model,
-                model_name,
-                last_time,
-            )
-
-            model_path = Path(
-                fetcher.local_dir,
-                f"best_{model_name}.pt",
-            )
-            success = bool(model_path.exists())
-            model_info = {}
-            if success:
-                stat = model_path.stat()
-                model_info = {
-                    'version': None,
-                    'size': stat.st_size,
-                    'modified': stat.st_mtime,
-                }
-                self._current_models[model_name] = {
-                    'path': str(model_path),
-                    'version': None,
-                    'size': stat.st_size,
-                    'fetch_time': asyncio.get_event_loop().time(),
-                }
-
-            return {
-                'success': success,
-                'model_name': model_name,
-                'model_path': str(model_path) if success else None,
-                'model_info': model_info,
-                'message': (
-                    f"Model {model_name} downloaded to {model_path}"
-                    if success
-                    else (
-                        'Failed to fetch model '
-                        '(API not configured or network error)'
-                    )
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to fetch model: {e}")
-            raise
+    async def sync_model(
+        self, model_name: str, *, force_download: bool = False,
+    ) -> dict:
+        """Fetch a newer model and atomically install it when one exists."""
+        last_update_time = self._fetcher.get_last_update_time(model_name)
+        updated = await asyncio.to_thread(
+            self._fetcher.request_new_model,
+            model_name,
+            last_update_time,
+            force_download=force_download,
+        )
+        model_path = self._fetcher.local_dir / f'best_{model_name}.pt'
+        return {
+            'success': updated or model_path.is_file(),
+            'updated': updated,
+            'model_name': model_name,
+            'model_path': str(model_path) if model_path.is_file() else None,
+        }
 
     async def list_available_models(self) -> dict:
-        """List available models from the model repository.
-
-        Returns:
-            dict[str, Any]: List of available models and counts.
-        """
-        try:
-            fetcher = await self._ensure_model_fetcher()
-
-            # List models from ModelFetcher configuration
-            models = list(fetcher.models)
-
-            return {
-                'success': True,
-                'available_models': models,
-                'count': len(models),
-                'message': f"Listed {len(models)} configured models",
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to list available models: {e}")
-            raise
-
-    async def get_model_info(
-        self,
-        model_name: str,
-    ) -> dict:
-        """Get detailed information about a specific model.
-
-        Args:
-            model_name: Name of the model.
-
-        Returns:
-            dict[str, Any]: Model information.
-        """
-        try:
-            fetcher = await self._ensure_model_fetcher()
-
-            # Inspect local filesystem for model info
-            p = Path(fetcher.local_dir, f"best_{model_name}.pt")
-            if bool(p.exists()):
-                stat = p.stat()
-                model_info = {
-                    'path': str(p),
-                    'size': stat.st_size,
-                    'modified': stat.st_mtime,
-                }
-                return {
-                    'success': True,
-                    'model_name': model_name,
-                    'model_info': model_info,
-                    'message': f"Local model found at {p}",
-                }
-            return {
-                'success': False,
-                'model_name': model_name,
-                'model_info': None,
-                'message': (
-                    'Model not found locally and remote info not '
-                    'implemented'
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to get model info: {e}")
-            raise
-
-    async def update_model(
-        self,
-        model_name: str,
-        target_version: str | None = None,
-    ) -> dict:
-        """Update a model to the latest or a specific version.
-
-        Args:
-            model_name: Name of the model to update.
-            target_version: Specific version to update to (latest if ``None``).
-
-        Returns:
-            dict[str, Any]: Update status and new version details.
-        """
-        try:
-            fetcher = await self._ensure_model_fetcher()
-
-            # Request update for a single model
-            last_time = fetcher.get_last_update_time(model_name)
-            await asyncio.to_thread(
-                fetcher.request_new_model,
-                model_name,
-                last_time,
-            )
-            p = Path(fetcher.local_dir, f"best_{model_name}.pt")
-            success = bool(p.exists())
-            if success:
-                stat = p.stat()
-                self._current_models[model_name] = {
-                    'path': str(p),
-                    'version': None,
-                    'size': stat.st_size,
-                    'update_time': asyncio.get_event_loop().time(),
-                }
-
-            return {
-                'success': success,
-                'model_name': model_name,
-                'previous_version': None,
-                'new_version': None,
-                'model_path': str(p) if success else None,
-                'message': (
-                    f"Model {model_name} updated"
-                    if success
-                    else (
-                        'Model update failed '
-                        '(API not configured or network error)'
-                    )
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to update model: {e}")
-            raise
-
-    async def validate_model(
-        self,
-        model_name: str,
-        test_input: str | None = None,
-    ) -> dict:
-        """Validate model integrity and performance.
-
-        Args:
-            model_name: Name of the model to validate.
-            test_input: Optional test input (uses default if not provided).
-
-        Returns:
-            dict[str, Any]: Validation results.
-        """
-        try:
-            fetcher = await self._ensure_model_fetcher()
-
-            # Check if local model file exists
-            p = Path(fetcher.local_dir, f"best_{model_name}.pt")
-            exists = bool(p.exists())
-            return {
-                'success': True,
-                'model_name': model_name,
-                'is_valid': exists,
-                'validation_results': {
-                    'exists': exists,
-                    'path': str(p) if exists else None,
-                },
-                'message': (
-                    'Local model exists'
-                    if exists
-                    else 'Local model not found; deep validation not '
-                         'implemented'
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to validate model: {e}")
-            raise
+        """List the model identifiers configured for the download client."""
+        models = list(self._fetcher.models)
+        return {
+            'success': True,
+            'available_models': models,
+            'count': len(models),
+        }
 
     async def get_local_models(self) -> dict:
-        """Get a list of locally cached models.
-
-        Returns:
-            dict[str, Any]: Local model information and counts.
-        """
-        try:
-            fetcher = await self._ensure_model_fetcher()
-
-            # Scan local model directories
-            model_files: list[str] = []
-            search_dirs = [
-                Path(fetcher.local_dir),
-                Path('models/onnx'),
-                Path('models/int8_engine'),
-            ]
-            exts = {'.pt', '.onnx', '.engine', '.plan'}
-            for d in search_dirs:
-                if d.exists():
-                    for p in d.rglob('*'):
-                        if p.is_file() and p.suffix.lower() in exts:
-                            model_files.append(str(p))
-
-            return {
-                'success': True,
-                'local_models': model_files,
-                'cached_models': self._current_models,
-                'count': len(model_files),
-                'message': f"Found {len(model_files)} local model files",
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to get local models: {e}")
-            raise
-
-    async def cleanup_old_models(
-        self,
-        keep_versions: int = 2,
-    ) -> dict:
-        """Clean up old model versions to save disk space.
-
-        Args:
-            keep_versions: Number of versions to keep per model.
-
-        Returns:
-            dict[str, Any]: Cleanup results and freed space.
-        """
-        try:
-            await self._ensure_model_fetcher()
-
-            # Nothing to cleanup for single-version files
-            return {
-                'success': True,
-                'cleaned_models': 0,
-                'freed_space_mb': 0,
-                'keep_versions': keep_versions,
-                'message': (
-                    'Cleanup not implemented for single-file models; '
-                    'nothing to do'
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to cleanup old models: {e}")
-            raise
-
-    async def _ensure_model_fetcher(self) -> ModelFetcher:
-        """Ensure the model fetcher is initialised and return it."""
-        if self._model_fetcher is None:
-            self._model_fetcher = ModelFetcher()
-            self.logger.info('Initialised model fetcher')
-        return self._model_fetcher
+        """List known local model artefacts without a recursive workspace scan."""
+        models = [
+            str(path)
+            for name in self._fetcher.models
+            if (path := self._fetcher.local_dir / f'best_{name}.pt').is_file()
+        ]
+        return {
+            'success': True,
+            'local_models': models,
+            'count': len(models),
+        }

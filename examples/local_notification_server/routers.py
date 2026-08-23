@@ -150,8 +150,8 @@ async def list_notifications(
         default=None,
         alias='type',
     ),
-    page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     me: User = Depends(get_current_user),
 ) -> NotificationList:
@@ -160,8 +160,8 @@ async def list_notifications(
     Args:
         status: Optional read-status filter.
         notification_type: Optional notification category filter.
-        page: One-based page number.
         page_size: Maximum number of records to return.
+        cursor: Exclusive cursor returned by the previous page.
         db: Database session dependency.
         me: Authenticated user.
 
@@ -171,8 +171,8 @@ async def list_notifications(
     return await list_notifications_service(
         status,
         notification_type,
-        page,
         page_size,
+        cursor,
         db,
         me,
     )

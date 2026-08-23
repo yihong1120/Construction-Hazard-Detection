@@ -81,6 +81,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         # Redis mock: use MagicMock for correct pipeline chain
         self.mock_redis: MagicMock = MagicMock()
         self.mock_redis.get = AsyncMock(return_value=None)
+        self.mock_redis.mget = AsyncMock(return_value=[b'1'])
         self.mock_redis.exists = AsyncMock(return_value=0)
         self.mock_redis.smembers = AsyncMock(return_value=set())
         self.mock_redis.set = AsyncMock()
@@ -439,9 +440,10 @@ class TestLocalNotificationServer(unittest.TestCase):
         self,
         mock_get_user_ids: AsyncMock,
     ) -> None:
-        """Test sending a notification for a non-existent site.
+        """Test send fcm notification site not found.
 
-        Expects a 200 response with success=False and a specific message.
+        Args:
+            mock_get_user_ids: Value used by this callable.
         """
         _ = mock_get_user_ids
         self.mock_redis.set = AsyncMock(return_value=True)
@@ -483,9 +485,10 @@ class TestLocalNotificationServer(unittest.TestCase):
         self,
         mock_get_user_ids: AsyncMock,
     ) -> None:
-        """Test sending a notification for a site that has no users.
+        """Test send fcm notification site no users.
 
-        Expects a 200 response with success=False and a relevant message.
+        Args:
+            mock_get_user_ids: Value used by this callable.
         """
         _ = mock_get_user_ids
         self.mock_redis.set = AsyncMock(return_value=True)
@@ -572,7 +575,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(resp_json['stats']['preflight']['unique_tokens'], 0)
 
     @patch(
-        'examples.local_notification_server.services.'
+        'examples.local_notification_server.push_dispatch.'
         'send_fcm_notification_service',
         new_callable=AsyncMock,
     )
@@ -633,7 +636,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         )
 
     @patch(
-        'examples.local_notification_server.services.'
+        'examples.local_notification_server.push_dispatch.'
         'send_fcm_notification_service',
         new_callable=AsyncMock,
     )
@@ -641,10 +644,10 @@ class TestLocalNotificationServer(unittest.TestCase):
         self,
         mock_send_fcm: AsyncMock,
     ) -> None:
-        """Test overall failure when all notifications fail to send.
+        """Test send fcm notification all fail.
 
         Args:
-            mock_send_fcm (AsyncMock): Mocked FCM notification sending service.
+            mock_send_fcm: Value used by this callable.
         """
         self.mock_redis.set = AsyncMock(return_value=True)
 
@@ -687,7 +690,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertEqual(mock_send_fcm.await_count, 2)
 
     @patch(
-        'examples.local_notification_server.notification_delivery_service.'
+        'examples.local_notification_server.push_dispatch.'
         'send_fcm_notification_service',
         new_callable=AsyncMock,
     )
@@ -731,7 +734,7 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.assertIn('timed out', response.json()['message'])
 
     @patch(
-        'examples.local_notification_server.notification_delivery_service.'
+        'examples.local_notification_server.push_dispatch.'
         'send_fcm_notification_service',
         new_callable=AsyncMock,
     )
@@ -852,31 +855,28 @@ class TestNotificationCenterRoutes(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(**values)
 
     async def test_list_notifications_filters_and_paginates(self) -> None:
-        """List notifications returns total, pagination, and items."""
-        count_result = MagicMock()
-        count_result.scalar.return_value = 1
+        """List notifications returns one keyset page and cursor."""
         item_result = MagicMock()
         item_result.scalars.return_value.all.return_value = [
             self._notification(),
         ]
-        self.db.execute = AsyncMock(side_effect=[count_result, item_result])
+        self.db.execute = AsyncMock(return_value=item_result)
 
         result = await list_notifications(
             status='unread',
             notification_type='violation',
-            page=1,
             page_size=20,
+            cursor=None,
             db=self.db,
             me=self.user,
         )
 
-        self.assertEqual(result.total, 1)
-        self.assertEqual(result.page, 1)
+        self.assertIsNone(result.next_cursor)
         self.assertEqual(
             result.items[0].deep_link,
             '/violations?violation_id=1',
         )
-        self.assertEqual(self.db.execute.await_count, 2)
+        self.assertEqual(self.db.execute.await_count, 1)
 
     async def test_get_notification_unread_count(self) -> None:
         """Unread badge returns only the current user's unread total."""
@@ -932,7 +932,7 @@ class TestNotificationCenterRoutes(unittest.IsolatedAsyncioTestCase):
         with (
             patch(
                 'examples.local_notification_server.notification_delivery_service.'
-                'refresh_fcm_token_cache_for_users',
+                'ensure_fcm_token_cache_for_users',
                 new=AsyncMock(return_value=1),
             ),
             patch(
@@ -967,7 +967,7 @@ class TestNotificationCenterRoutes(unittest.IsolatedAsyncioTestCase):
         with (
             patch(
                 'examples.local_notification_server.notification_delivery_service.'
-                'refresh_fcm_token_cache_for_users',
+                'ensure_fcm_token_cache_for_users',
                 new=AsyncMock(return_value=0),
             ),
             patch(
@@ -1043,7 +1043,13 @@ tests/examples/local_notification_server/routers_test.py
 
 
 class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
+
+    """Provide TestNotificationRouterBranches.
+    """
+
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db = MagicMock()
         self.db.execute = AsyncMock()
         self.db.commit = AsyncMock()
@@ -1083,23 +1089,23 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 routers,
-                'refresh_fcm_token_cache_for_users',
+                'ensure_fcm_token_cache_for_users',
                 new=AsyncMock(),
             ),
             patch.object(
                 routers,
-                '_iter_push_tasks_streaming',
+                'iter_push_tasks_streaming',
                 return_value=[],
             ),
             patch.object(
                 routers,
-                '_execute_push_tasks_bounded_streaming',
+                'execute_push_tasks_bounded_streaming',
                 new=AsyncMock(return_value=(True, 0, 0, None)),
             ),
             patch.object(
                 routers,
-                'diagnose_push_preflight',
-                new=AsyncMock(return_value={'unique_tokens': 1}),
+                'preflight_from_token_stats',
+                return_value={'unique_tokens': 1},
             ),
         ):
             result = await router_endpoints.send_fcm_notification(
@@ -1117,23 +1123,20 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_notifications_accepts_read_filter(self) -> None:
         """Read notifications use the dedicated read condition."""
-        count_result = MagicMock()
-        count_result.scalar.return_value = 0
         item_result = MagicMock()
         item_result.scalars.return_value.all.return_value = []
-        self.db.execute.side_effect = [count_result, item_result]
+        self.db.execute.return_value = item_result
 
         result = await router_endpoints.list_notifications(
             status='read',
-            page=2,
             page_size=10,
+            cursor=None,
             db=self.db,
             me=self.user,
         )
 
-        self.assertEqual(result.total, 0)
-        self.assertEqual(result.page, 2)
         self.assertEqual(result.items, [])
+        self.assertIsNone(result.next_cursor)
 
     async def test_structured_fcm_results_track_success_failure_and_invalidity(
         self,
@@ -1143,7 +1146,7 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 routers,
-                'refresh_fcm_token_cache_for_users',
+                'ensure_fcm_token_cache_for_users',
                 new=AsyncMock(),
             ),
             patch.object(
@@ -1220,7 +1223,7 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 routers,
-                'refresh_fcm_token_cache_for_users',
+                'ensure_fcm_token_cache_for_users',
                 new=AsyncMock(),
             ),
             patch.object(

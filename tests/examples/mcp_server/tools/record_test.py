@@ -135,7 +135,7 @@ class BatchSendViolationsTests(unittest.IsolatedAsyncioTestCase):
         tool = RecordTools()
         results = [{'success': True}, {'success': False}, {'success': True}]
 
-        async def fake_send(**_) -> Any:
+        async def fake_send(**_: Any) -> Any:
             """Support fake_send."""
             return results.pop(0)
 

@@ -1,25 +1,14 @@
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import logging
-from collections import defaultdict
-from collections.abc import AsyncIterable
-from collections.abc import AsyncIterator
-from collections.abc import Awaitable
-from collections.abc import Callable
-from collections.abc import Coroutine
 from collections.abc import Iterable
 from collections.abc import Mapping
 from datetime import datetime
 from datetime import timezone
 from typing import Any
 from typing import cast
-from typing import DefaultDict
-from typing import Final
 
 import redis.asyncio as redis
-from cryptography.fernet import Fernet
 from cryptography.fernet import InvalidToken
 from redis.asyncio.client import Pipeline
 from sqlalchemy import select
@@ -29,106 +18,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.config import Settings
 from examples.auth.models import FcmDeviceToken
-from examples.auth.models import Notification
-from examples.auth.models import Site
-from examples.auth.models import SiteNotificationPreference
-from examples.auth.models import User
-from examples.auth.models import USER_STATUS_ACTIVE
-from examples.local_notification_server.fcm_service import (
-    FcmSendResult,
+from examples.local_notification_server.fcm_token_crypto import (
+    decrypt_token,
 )
-from examples.local_notification_server.fcm_service import (
-    send_fcm_notification_service,
+from examples.local_notification_server.fcm_token_crypto import (
+    disable_undecryptable_token as _disable_undecryptable_fcm_token,
 )
-from examples.local_notification_server.lang_config import LANGUAGES
-from examples.local_notification_server.lang_config import NotificationLanguage
-from examples.local_notification_server.lang_config import Translator
+from examples.local_notification_server.fcm_token_crypto import encrypt_token
+from examples.local_notification_server.fcm_token_crypto import fcm_token_hash
 from examples.local_notification_server.schemas import DeviceRegistrationRequest
-from examples.local_notification_server.schemas import SiteNotifyRequest
-from src.warning_types import Warnings
-
-# Bound cache rebuilding and FCM fan-out so one busy site cannot monopolise a worker.
-_recipient_index_ready_value: Final[str] = '1'
-_token_fetch_chunk_size: Final[int] = 500
-_fcm_batch_size: Final[int] = 100
-_fcm_max_concurrency: Final[int] = 8
-_notification_record_language: Final[NotificationLanguage] = 'zh-TW'
 settings = Settings()
 logger = logging.getLogger(__name__)
-
-PushTaskResult = FcmSendResult
-
-
-def fcm_token_hash(device_token: str) -> str:
-    """Hash an FCM token for metadata keys and API responses.
-
-    Args:
-        device_token: Raw Firebase Cloud Messaging registration token.
-
-    Returns:
-        Stable SHA-256 hexadecimal digest that is safe to retain in metadata.
-    """
-    return hashlib.sha256(device_token.encode('utf-8')).hexdigest()
-
-
-def _fcm_token_fernet() -> Fernet:
-    """Build the configured Fernet encryptor for FCM tokens at rest.
-
-    Returns:
-        Fernet instance created from ``FCM_TOKEN_ENCRYPTION_KEY``.
-
-    Raises:
-        ValueError: If the required key is absent or not a Fernet key.
-    """
-    return Fernet(settings.fcm_token_encryption_key.encode('utf-8'))
+_token_cache_ttl_seconds = 86400 * 30
 
 
 def encrypt_fcm_token(device_token: str) -> str:
-    """Encrypt an FCM token before storing it in the database.
-
-    Args:
-        device_token: Raw Firebase Cloud Messaging registration token.
-
-    Returns:
-        URL-safe Fernet ciphertext encoded as UTF-8 text.
-    """
-    return _fcm_token_fernet().encrypt(
-        device_token.encode('utf-8'),
-    ).decode('utf-8')
+    """Encrypt an FCM token with the current application key."""
+    return encrypt_token(device_token, settings.fcm_token_encryption_key)
 
 
 def decrypt_fcm_token(encrypted_token: str) -> str:
-    """Decrypt an FCM token loaded from the database.
-
-    Args:
-        encrypted_token: Fernet-encrypted device token from the database.
-
-    Returns:
-        Decrypted UTF-8 device token.
-
-    Raises:
-        cryptography.fernet.InvalidToken: If stored encrypted data cannot be
-            verified with the configured Fernet key.
-    """
-    return _fcm_token_fernet().decrypt(
-        encrypted_token.encode('utf-8'),
-    ).decode('utf-8')
-
-
-def _disable_undecryptable_fcm_token(
-    row: FcmDeviceToken,
-    occurred_at: datetime,
-) -> None:
-    """Mark an FCM registration unusable when its encrypted token is unreadable.
-
-    Args:
-        row: Persisted FCM registration that could not be decrypted.
-        occurred_at: UTC timestamp used for the failure and disabled fields.
-    """
-    row.disabled_at = occurred_at
-    row.last_failure_at = occurred_at
-    row.failure_reason = 'token_decryption_failed'
-    row.updated_at = occurred_at
+    """Decrypt an FCM token with the current application key."""
+    return decrypt_token(encrypted_token, settings.fcm_token_encryption_key)
 
 
 def _token_index_key(user_id: int) -> str:
@@ -154,6 +65,11 @@ def _token_meta_key(user_id: int, token_hash: str) -> str:
         Redis key containing metadata for the token registration.
     """
     return f'fcm_token_meta:{user_id}:{token_hash}'
+
+
+def _token_cache_ready_key(user_id: int) -> str:
+    """Build the marker that distinguishes a cold token cache from no tokens."""
+    return f'fcm_tokens_ready:{user_id}'
 
 
 def _decode_redis_string(value: bytes) -> str:
@@ -214,7 +130,7 @@ def _queue_token_cache_write(
         mapping['failure_reason'] = row.failure_reason
     # Redis is a rebuildable delivery cache, so every entry uses the same TTL.
     pipe.hset(user_key, device_token, row.device_lang)
-    pipe.expire(user_key, 86400 * 30)
+    pipe.expire(user_key, _token_cache_ttl_seconds)
     pipe.sadd(_token_index_key(row.user_id), row.device_token_hash)
     pipe.hset(
         meta_key,
@@ -223,8 +139,9 @@ def _queue_token_cache_write(
             mapping,
         ),
     )
-    pipe.expire(meta_key, 86400 * 30)
-    pipe.expire(_token_index_key(row.user_id), 86400 * 30)
+    pipe.expire(meta_key, _token_cache_ttl_seconds)
+    pipe.expire(_token_index_key(row.user_id), _token_cache_ttl_seconds)
+    pipe.set(_token_cache_ready_key(row.user_id), '1', ex=_token_cache_ttl_seconds)
 
 
 async def record_fcm_token_registration(
@@ -452,6 +369,14 @@ async def refresh_fcm_token_cache_for_users(
         # Atomically replace the entire rebuildable cache for each recipient.
         pipe.delete(f'fcm_tokens:{user_id}')
         pipe.delete(_token_index_key(user_id))
+        # A ready marker also records a deliberate empty token set.  Without
+        # it, every notification would query the database again for users who
+        # have never registered a device.
+        pipe.set(
+            _token_cache_ready_key(user_id),
+            '1',
+            ex=_token_cache_ttl_seconds,
+        )
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
     cached = 0
@@ -477,6 +402,33 @@ async def refresh_fcm_token_cache_for_users(
         await db.commit()
     await pipe.execute()
     return cached
+
+
+async def ensure_fcm_token_cache_for_users(
+    user_ids: list[int],
+    db: AsyncSession,
+    rds: redis.Redis,
+) -> int:
+    """Hydrate only cold recipient token caches from the durable store.
+
+    Device registration and invalid-token handling keep active caches current.
+    This function is therefore a cache-through miss path, rather than the
+    former per-notification full rebuild.
+    """
+    unique_user_ids = list(dict.fromkeys(user_ids))
+    if not unique_user_ids:
+        return 0
+    ready_values = await rds.mget(
+        [_token_cache_ready_key(user_id) for user_id in unique_user_ids],
+    )
+    missing_ids = [
+        user_id
+        for user_id, ready in zip(unique_user_ids, ready_values)
+        if ready is None
+    ]
+    if not missing_ids:
+        return 0
+    return await refresh_fcm_token_cache_for_users(missing_ids, db, rds)
 
 
 async def mark_fcm_tokens_success(
@@ -633,552 +585,3 @@ async def mark_invalid_fcm_tokens_for_users(
                 },
             )
         await pipe.execute()
-
-
-def _site_user_cache_key(site_name: str) -> str:
-    """Build the Redis set key for site notification recipients.
-
-    Args:
-        site_name: Site name used by notification requests.
-
-    Returns:
-        Redis set key containing recipient user IDs.
-    """
-    return f'site_notification_users:{site_name}'
-
-
-def _site_user_cache_ready_key(site_name: str) -> str:
-    """Build the Redis readiness key for a site recipient index.
-
-    Args:
-        site_name: Site name used by notification requests.
-
-    Returns:
-        Redis key indicating that the recipient index is ready.
-    """
-    return f'site_notification_users_ready:{site_name}'
-
-
-async def _fetch_site_notification_user_ids_from_db(
-    site_name: str,
-    db: AsyncSession,
-) -> list[int] | None:
-    """Load current recipient user IDs for a site from the database.
-
-    Args:
-        site_name: Site name to look up.
-        db: Async database session dependency.
-
-    Returns:
-        Active recipient user IDs, or None when the site does not exist.
-    """
-    stmt = select(Site.id).where(Site.name == site_name)
-    site_id_row = (await db.execute(stmt)).first()
-    if site_id_row is None:
-        return None
-    site_id = site_id_row[0]
-
-    users_stmt = (
-        select(SiteNotificationPreference.user_id)
-        .join(User, User.id == SiteNotificationPreference.user_id)
-        .where(
-            SiteNotificationPreference.site_id == site_id,
-            SiteNotificationPreference.is_enabled.is_(True),
-            User.status == USER_STATUS_ACTIVE,
-        )
-    )
-    # Only explicit opt-ins from active accounts may enter the delivery index.
-    return list((await db.execute(users_stmt)).scalars().all())
-
-
-async def refresh_site_notification_user_cache(
-    site_name: str,
-    db: AsyncSession,
-    rds: redis.Redis,
-) -> list[int] | None:
-    """Rebuild the Redis recipient index for a site from the database.
-
-    Args:
-        site_name: Site name to rebuild.
-        db: Async database session dependency.
-        rds: Redis connection used to write the recipient index.
-
-    Returns:
-        Active recipient user IDs, or None when the site does not exist.
-    """
-    user_ids = await _fetch_site_notification_user_ids_from_db(site_name, db)
-    if user_ids is None:
-        await invalidate_site_notification_user_cache([site_name], rds)
-        return None
-
-    pipe = rds.pipeline()
-    cache_key = _site_user_cache_key(site_name)
-    ready_key = _site_user_cache_ready_key(site_name)
-    # A ready marker distinguishes an empty subscription from a cold cache.
-    pipe.delete(cache_key)
-    if user_ids:
-        pipe.sadd(cache_key, *user_ids)
-    pipe.set(ready_key, _recipient_index_ready_value)
-    await pipe.execute()
-    return user_ids
-
-
-async def _get_site_user_index_members(
-    site_name: str,
-    rds: redis.Redis,
-) -> list[int]:
-    """Read recipient IDs from the Redis set for a site.
-
-    Args:
-        site_name: Site name to read.
-        rds: Redis connection used to read the recipient index.
-
-    Returns:
-        Recipient user IDs from Redis.
-    """
-    members = cast(
-        Awaitable[set[bytes]],
-        rds.smembers(_site_user_cache_key(site_name)),
-    )
-    return [int(member) for member in await members]
-
-
-async def invalidate_site_notification_user_cache(
-    site_names: list[str],
-    rds: redis.Redis,
-) -> None:
-    """Delete Redis recipient indexes for the given sites.
-
-    Args:
-        site_names: Site names whose indexes should be removed.
-        rds: Redis connection used to delete cache keys.
-    """
-    keys: list[str] = []
-    for site_name in site_names:
-        keys.extend([
-            _site_user_cache_key(site_name),
-            _site_user_cache_ready_key(site_name),
-        ])
-    if keys:
-        await rds.delete(*keys)
-
-
-async def get_site_notification_user_ids_cached(
-    site_name: str,
-    db: AsyncSession,
-    rds: redis.Redis,
-) -> list[int] | None:
-    """Get notification recipient IDs using the Redis site index.
-
-    Args:
-        site_name: Site name to look up.
-        db: Database session used for cold-cache rebuilds.
-        rds: Redis connection used as the live recipient index.
-
-    Returns:
-        Recipient user IDs if the site exists; otherwise ``None``.
-    """
-    ready_key = _site_user_cache_ready_key(site_name)
-    if await rds.exists(ready_key):
-        return await _get_site_user_index_members(site_name, rds)
-    return await refresh_site_notification_user_cache(site_name, db, rds)
-
-
-def _decode_lang_token_map(
-    raw_maps: Iterable[Mapping[bytes, bytes]],
-) -> DefaultDict[NotificationLanguage, list[str]]:
-    """Decode Redis hash results into a language-to-tokens map.
-
-    Args:
-        raw_maps: Byte mappings representing users' token-to-language entries.
-
-    Returns:
-        Tokens grouped by canonical BCP 47 language code.
-    """
-    lang_to_tokens: DefaultDict[NotificationLanguage, list[str]] = (
-        defaultdict(list)
-    )
-    for raw_map in raw_maps:
-        for token_b, lang_b in raw_map.items():
-            token: str = _decode_redis_string(token_b)
-            lang = cast(NotificationLanguage, _decode_redis_string(lang_b))
-            lang_to_tokens[lang].append(token)
-    return lang_to_tokens
-
-
-async def diagnose_push_preflight(
-    req: SiteNotifyRequest,
-    user_ids: list[int],
-    rds: redis.Redis,
-) -> dict[str, object]:
-    """Return diagnostics for why notification recipients did not send.
-
-    Args:
-        req: Validated notification request.
-        user_ids: Recipient user IDs to inspect.
-        rds: Redis connection used to read token hashes.
-
-    Returns:
-        JSON-serialisable diagnostics for log and API responses.
-    """
-    diagnostics = await _collect_push_token_diagnostics(user_ids, rds)
-    tokens_by_language = cast(
-        Mapping[NotificationLanguage, int],
-        diagnostics['tokens_by_language'],
-    )
-    translated_languages, sendable_tokens = _sendable_push_languages(
-        req.body,
-        tokens_by_language,
-    )
-
-    return {
-        'recipient_users': len(user_ids),
-        'users_with_tokens': diagnostics['users_with_tokens'],
-        'token_entries': diagnostics['token_entries'],
-        'unique_tokens': diagnostics['unique_tokens'],
-        'sendable_tokens': sendable_tokens,
-        'tokens_by_language': dict(
-            sorted(tokens_by_language.items()),
-        ),
-        'body_keys': list(req.body.keys()),
-        'translated_languages': sorted(translated_languages),
-    }
-
-
-async def _collect_push_token_diagnostics(
-    user_ids: list[int],
-    rds: redis.Redis,
-) -> dict[str, object]:
-    """Collect recipient-token counts in Redis-sized chunks.
-
-    Args:
-        user_ids: Recipient identifiers whose cached tokens are inspected.
-        rds: Redis connection used to read token-to-language hashes.
-
-    Returns:
-        Aggregate counts and per-language token totals.
-    """
-    users_with_tokens = 0
-    token_entries = 0
-    tokens_by_language: DefaultDict[NotificationLanguage, int] = defaultdict(
-        int,
-    )
-    for start in range(0, len(user_ids), _token_fetch_chunk_size):
-        pipe = rds.pipeline()
-        for user_id in user_ids[start:start + _token_fetch_chunk_size]:
-            pipe.hgetall(f'fcm_tokens:{user_id}')
-        results: list[dict[bytes, bytes]] = await pipe.execute()
-        for raw_map in results:
-            if raw_map:
-                users_with_tokens += 1
-            for _raw_token, raw_language in raw_map.items():
-                token_entries += 1
-                language = cast(
-                    NotificationLanguage,
-                    _decode_redis_string(raw_language),
-                )
-                tokens_by_language[language] += 1
-    return {
-        'users_with_tokens': users_with_tokens,
-        'token_entries': token_entries,
-        'unique_tokens': token_entries,
-        'tokens_by_language': tokens_by_language,
-    }
-
-
-def _sendable_push_languages(
-    body: Warnings,
-    tokens_by_language: Mapping[NotificationLanguage, int],
-) -> tuple[list[NotificationLanguage], int]:
-    """Return languages with complete translations and their token count.
-
-    Args:
-        body: Validated warning payload to translate.
-        tokens_by_language: Token count for every recipient language.
-
-    Returns:
-        Languages that can render the payload and their total token count.
-    """
-    translated_languages: list[NotificationLanguage] = []
-    sendable_tokens = 0
-    for language, token_count in tokens_by_language.items():
-        Translator.translate_from_dict(body, language)
-        translated_languages.append(language)
-        sendable_tokens += token_count
-    return translated_languages, sendable_tokens
-
-
-async def create_notification_records_for_users(
-    req: SiteNotifyRequest,
-    user_ids: list[int],
-    db: AsyncSession,
-) -> int:
-    """Persist one notification-centre record for each recipient user.
-
-    Args:
-        req: Validated site-notification request.
-        user_ids: Potential recipient user identifiers.
-        db: Database session used to create notification records.
-
-    Returns:
-        Number of recipient records persisted.
-    """
-    record_body = f'{req.site} - {req.stream_name}\n' + '\n'.join(
-        Translator.translate_from_dict(
-            req.body, _notification_record_language,
-        ),
-    )
-    records = [
-        Notification(
-            user_id=user_id,
-            type=req.notification_type,
-            title=req.title,
-            body=record_body,
-            deep_link=req.deep_link,
-            metadata_json=req.metadata,
-        )
-        for user_id in user_ids
-    ]
-    db.add_all(records)
-    await db.commit()
-    return len(user_ids)
-
-
-def _build_push_task(
-    req: SiteNotifyRequest,
-    lang: NotificationLanguage,
-    tokens: list[str],
-) -> Awaitable[PushTaskResult]:
-    """Build one FCM batch task for one canonical language.
-
-    Args:
-        req: Validated notification request.
-        lang: Canonical language code for the target tokens.
-        tokens: Device tokens in this batch.
-
-    Returns:
-        Awaitable send task.
-    """
-    title = LANGUAGES[lang]['warning_notification']
-    translated_lines = Translator.translate_from_dict(req.body, lang)
-    data = {
-        'navigate': 'violation_list_page',
-        'violation_id': (
-            str(req.violation_id) if req.violation_id is not None else ''
-        ),
-        'deep_link': req.deep_link,
-        'type': req.notification_type,
-    }
-
-    body: str = f"{req.site} - {req.stream_name}\n" + \
-        '\n'.join(translated_lines)
-
-    logger.info(
-        'FCM notification batch prepared lang=%s tokens=%d body_lines=%d '
-        'data_keys=%s',
-        lang,
-        len(tokens),
-        len(translated_lines),
-        sorted(data),
-    )
-
-    return send_fcm_notification_service(
-        device_tokens=tokens,
-        title=title,
-        body=body,
-        image_path=req.image_path,
-        data=data,
-    )
-
-
-async def _iter_push_tasks_streaming(
-    req: SiteNotifyRequest,
-    user_ids: list[int],
-    rds: redis.Redis,
-) -> AsyncIterator[Awaitable[PushTaskResult]]:
-    """Stream Redis token chunks into FCM batch tasks.
-
-    This avoids materialising all device tokens in a single
-    ``lang_to_tokens`` map. Memory is bounded by the Redis chunk, one partial
-    FCM batch per active language, and the executor's active tasks.
-
-    Args:
-        req: Validated notification request.
-        user_ids: Recipient user IDs to fetch tokens for.
-        rds: Redis connection used to read token hashes.
-
-    Yields:
-        Awaitable FCM batch send tasks.
-    """
-    pending_batches: DefaultDict[NotificationLanguage, list[str]] = (
-        defaultdict(list)
-    )
-
-    for start in range(0, len(user_ids), _token_fetch_chunk_size):
-        # Read bounded Redis chunks before forming language-specific FCM batches.
-        pipe = rds.pipeline()
-        for user_id in user_ids[start:start + _token_fetch_chunk_size]:
-            pipe.hgetall(f'fcm_tokens:{user_id}')
-
-        redis_results: list[dict[bytes, bytes]] = await pipe.execute()
-        chunk_tokens = _decode_lang_token_map(redis_results)
-
-        for lang, tokens in chunk_tokens.items():
-            batch = pending_batches[lang]
-            for token in tokens:
-                batch.append(token)
-                if len(batch) >= _fcm_batch_size:
-                    task = _build_push_task(req, lang, list(batch))
-                    batch.clear()
-                    yield task
-
-    for lang, tokens in pending_batches.items():
-        if not tokens:
-            continue
-        yield _build_push_task(req, lang, list(tokens))
-
-
-async def _execute_push_tasks_bounded_streaming(
-    push_tasks: AsyncIterable[Awaitable[PushTaskResult]],
-    invalid_token_handler: Callable[[tuple[str, ...]], Awaitable[object]],
-    timeout: float = 30.0,
-    max_concurrency: int = _fcm_max_concurrency,
-) -> tuple[bool, int | None, int | None, str | None]:
-    """Execute streamed push tasks with bounded concurrency.
-
-    The async iterable may fetch Redis chunks while producing tasks, so this
-    executor pulls only enough batches to fill the concurrency window.
-
-    Args:
-        push_tasks: Async iterable that yields awaitable FCM batch send tasks.
-        timeout: Maximum execution time in seconds.
-        max_concurrency: Maximum number of active send tasks.
-        invalid_token_handler: Callback receiving invalid tokens.
-
-    Returns:
-        Tuple of `(ok, total_batches, successful_batches, error_message)`.
-    """
-    window = _run_streaming_push_task_window(
-        push_tasks,
-        max_concurrency,
-        invalid_token_handler,
-    )
-    return await _complete_push_task_window(window, timeout)
-
-
-async def _fill_pending_streaming_push_tasks(
-    task_iter: AsyncIterator[Awaitable[PushTaskResult]],
-    pending: set[asyncio.Future[PushTaskResult]],
-    max_workers: int,
-) -> None:
-    """Fill a streaming FCM task window until capacity or iterator exhaustion.
-
-    Args:
-        task_iter: Async iterator yielding unscheduled FCM batch tasks.
-        pending: Mutable set of currently scheduled tasks.
-        max_workers: Maximum number of concurrently scheduled tasks.
-    """
-    while len(pending) < max_workers:
-        try:
-            awaitable = await task_iter.__anext__()
-        except StopAsyncIteration:
-            return
-        pending.add(asyncio.ensure_future(awaitable))
-
-
-async def _collect_completed_push_tasks(
-    pending: set[asyncio.Future[PushTaskResult]],
-) -> tuple[int, int, set[str]]:
-    """Await completed tasks and aggregate their FCM result details.
-
-    Args:
-        pending: Currently scheduled FCM batch tasks.
-
-    Returns:
-        Completed count, successful count, and invalid tokens from the window.
-    """
-    done, _ = await asyncio.wait(
-        pending,
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    pending.difference_update(done)
-    successful_batches = 0
-    invalid_tokens: set[str] = set()
-    for task in done:
-        result = await task
-        successful_batches += int(
-            result.success_count > 0 and result.failure_count == 0,
-        )
-        invalid_tokens.update(result.invalid_tokens)
-    return len(done), successful_batches, invalid_tokens
-
-
-async def _run_streaming_push_task_window(
-    push_tasks: AsyncIterable[Awaitable[PushTaskResult]],
-    max_workers: int,
-    invalid_token_handler: Callable[[tuple[str, ...]], Awaitable[object]],
-) -> tuple[int, int]:
-    """Run lazily streamed push tasks with bounded concurrency.
-
-    Args:
-        push_tasks: Async iterable yielding FCM batch tasks on demand.
-        max_workers: Maximum number of concurrently scheduled tasks.
-        invalid_token_handler: Callback for invalid FCM tokens.
-
-    Returns:
-        Total and successful FCM batch counts.
-    """
-    pending: set[asyncio.Future[PushTaskResult]] = set()
-    total_batches = 0
-    successful_batches = 0
-    invalid_tokens: set[str] = set()
-    task_iter = push_tasks.__aiter__()
-    try:
-        await _fill_pending_streaming_push_tasks(
-            task_iter,
-            pending,
-            max_workers,
-        )
-        while pending:
-            total, successful, invalid = await _collect_completed_push_tasks(
-                pending,
-            )
-            total_batches += total
-            successful_batches += successful
-            invalid_tokens.update(invalid)
-            await _fill_pending_streaming_push_tasks(
-                task_iter,
-                pending,
-                max_workers,
-            )
-    finally:
-        # Cancel scheduled work and release the stream's Redis resources.
-        for task in pending:
-            task.cancel()
-    if invalid_tokens:
-        await invalid_token_handler(tuple(sorted(invalid_tokens)))
-    return total_batches, successful_batches
-
-
-async def _complete_push_task_window(
-    window: Coroutine[Any, Any, tuple[int, int]],
-    timeout: float,
-) -> tuple[bool, int | None, int | None, str | None]:
-    """Apply the public timeout and error contract to one task window.
-
-    Args:
-        window: FCM task-window coroutine aggregation operation.
-        timeout: Maximum time allowed for all work in the window.
-
-    Returns:
-        Completion flag, total batches, successful batches, and error code.
-    """
-    try:
-        total, successful = await asyncio.wait_for(window, timeout=timeout)
-        return True, total, successful, None
-    except asyncio.TimeoutError:
-        window.close()
-        return False, None, None, 'FCM notification sending timed out.'
-    except Exception:
-        window.close()
-        return False, None, None, 'internal_error'

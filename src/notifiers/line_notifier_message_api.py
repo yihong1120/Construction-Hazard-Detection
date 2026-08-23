@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import io
-import json
 import logging
 import os
+import threading
 from datetime import datetime
 from datetime import timedelta
 from typing import TypedDict
@@ -13,7 +12,9 @@ import aiohttp
 import cloudinary.uploader
 import numpy as np
 from dotenv import load_dotenv
-from PIL import Image
+
+from src.notifiers.image_encoding import encode_png
+from src.notifiers.image_records import ImageRecordStore
 
 
 class InputData(TypedDict):
@@ -38,6 +39,7 @@ class LineMessenger:
         channel_access_token: str | None = None,
         image_record_file: str = 'config/image_records.json',
         check_interval_days: int = 1,
+        session: aiohttp.ClientSession | None = None,
     ) -> None:
         """
         Initialise the LineMessenger instance.
@@ -47,12 +49,14 @@ class LineMessenger:
                 LINE Messaging API channel access token.
             image_record_file (str): Path to JSON file to store image records.
             check_interval_days (int): Number of days to check for old images.
+            session: Lifespan-owned session reused for LINE HTTP requests.
         Raises:
             ValueError:
                 If no channel access token is provided
                 or found in environment variables.
         """
         load_dotenv()
+        self.logger = logging.getLogger(__name__)
         self.channel_access_token: str | None = (
             channel_access_token or os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
         )
@@ -73,6 +77,12 @@ class LineMessenger:
         # Set image record file and check interval
         self.image_record_file: str = image_record_file
         self.check_interval_days: int = check_interval_days
+        self._session = session
+        self._records_lock = threading.Lock()
+        self._image_records = ImageRecordStore(
+            image_record_file,
+            self.logger,
+        )
 
         # Load upload records
         self.image_records: dict[str, str] = self.load_image_records()
@@ -88,23 +98,13 @@ class LineMessenger:
         Returns:
             dict[str, str]: The image records dictionary.
         """
-        try:
-            if os.path.exists(self.image_record_file):
-                with open(self.image_record_file) as file:
-                    return json.load(file)
-        except Exception as e:
-            logging.error(f"Failed to load image records: {e}")
-        return {}
+        return self._image_records.load()
 
     def save_image_records(self) -> None:
         """
         Save image records to JSON file.
         """
-        try:
-            with open(self.image_record_file, 'w') as file:
-                json.dump(self.image_records, file)
-        except Exception as e:
-            print(f"Failed to save image records: {e}")
+        self._image_records.save(self.image_records)
 
     # --------------------------------------------------------------------- #
     # Public API
@@ -157,25 +157,54 @@ class LineMessenger:
                 },
             )
 
-        # ---------- Call LINE API ----------
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                'https://api.line.me/v2/bot/message/push',
-                headers=headers,
-                json=msg_payload,
-            ) as resp:
-                resp_text: str = await resp.text()
-                if resp.status == 200:
-                    print('Message sent successfully.')
-                else:
-                    print(f"Error: {resp.status}, {resp_text}")
+        # Direct scripts retain a short-lived fallback.  MCP passes a session
+        # from its lifespan and therefore reuses DNS, TCP, and TLS state.
+        if self._session is None:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                status = await self._post_line_message(
+                    session,
+                    headers,
+                    msg_payload,
+                )
+        else:
+            status = await self._post_line_message(
+                self._session,
+                headers,
+                msg_payload,
+            )
 
-                if public_id:
-                    # Record image upload time and delete old images daily
-                    self.record_image_upload(public_id)
-                    self.delete_old_images_with_interval()
+        if public_id:
+            # Cloudinary and record-store operations are synchronous SDK/file
+            # calls.  Keep them outside the MCP event loop.
+            await asyncio.to_thread(
+                self._record_image_upload_and_cleanup,
+                public_id,
+            )
+        return status
 
-                return resp.status
+    async def _post_line_message(
+        self,
+        session: aiohttp.ClientSession,
+        headers: dict[str, str],
+        payload: dict[str, object],
+    ) -> int:
+        """Post one LINE payload through the supplied session."""
+        async with session.post(
+            'https://api.line.me/v2/bot/message/push',
+            headers=headers,
+            json=payload,
+        ) as response:
+            response_text = await response.text()
+            if response.status == 200:
+                self.logger.info('LINE message sent successfully')
+            else:
+                self.logger.error(
+                    'LINE API returned %s: %s',
+                    response.status,
+                    response_text,
+                )
+            return response.status
 
     async def upload_image_to_cloudinary(
         self,
@@ -201,8 +230,8 @@ class LineMessenger:
                 ),
             )
             return res['secure_url'], res['public_id']
-        except Exception as e:
-            print(f"Failed to upload image to Cloudinary: {e}")
+        except Exception as exc:
+            self.logger.error('Failed to upload image to Cloudinary: %s', exc)
             return '', ''
 
     # --------------------------------------------------------------------- #
@@ -219,32 +248,50 @@ class LineMessenger:
         self.image_records[public_id] = datetime.now().isoformat()
         self.save_image_records()
 
+    def _record_image_upload_and_cleanup(self, public_id: str) -> None:
+        """Persist one upload and due cleanup with one locked file update."""
+        with self._records_lock:
+            self.image_records[public_id] = datetime.now().isoformat()
+            if self._cleanup_is_due():
+                self.image_records['last_checked'] = datetime.now().isoformat()
+                self._delete_old_images()
+            self.save_image_records()
+
+    def _cleanup_is_due(self) -> bool:
+        """Return whether the configured Cloudinary cleanup interval elapsed."""
+        last_checked = self.image_records.get('last_checked')
+        if not last_checked:
+            return True
+        try:
+            last_checked_time = datetime.fromisoformat(last_checked)
+        except ValueError:
+            return True
+        return (
+            datetime.now() - last_checked_time
+            > timedelta(days=self.check_interval_days)
+        )
+
     def delete_old_images_with_interval(self) -> None:
         """
         Delete images older than 7 days, but perform the check only once
         every `check_interval_days`.
         """
-        last_checked: str | None = self.image_records.get('last_checked')
-        should_check: bool = True
-        if last_checked:
-            try:
-                last_checked_time = datetime.fromisoformat(last_checked)
-                should_check = (
-                    datetime.now() - last_checked_time
-                    > timedelta(days=self.check_interval_days)
-                )
-            except ValueError:
-                pass  # treat as no last_checked
-
-        if should_check:
-            self.image_records['last_checked'] = datetime.now().isoformat()
-            self.delete_old_images()
-            self.save_image_records()
+        with self._records_lock:
+            if self._cleanup_is_due():
+                self.image_records['last_checked'] = datetime.now().isoformat()
+                self._delete_old_images()
+                self.save_image_records()
 
     def delete_old_images(self) -> None:
         """
         Delete Cloudinary images older than 7 days.
         """
+        with self._records_lock:
+            self._delete_old_images()
+            self.save_image_records()
+
+    def _delete_old_images(self) -> None:
+        """Remove expired records; the caller owns locking and persistence."""
         now: datetime = datetime.now()
         expired: list[str] = [
             pid for pid, ts in self.image_records.items()
@@ -256,8 +303,6 @@ class LineMessenger:
             self.delete_image_from_cloudinary(pid)
             self.image_records.pop(pid, None)
 
-        self.save_image_records()
-
     def delete_image_from_cloudinary(self, public_id: str) -> None:
         """
         Delete an image from Cloudinary via public_id.
@@ -268,11 +313,19 @@ class LineMessenger:
         try:
             res = cloudinary.uploader.destroy(public_id)
             if res.get('result') == 'ok':
-                print(f"Deleted Cloudinary image {public_id}.")
+                self.logger.info('Deleted Cloudinary image %s', public_id)
             else:
-                print(f"Failed to delete {public_id}. Response: {res}")
-        except Exception as e:
-            print(f"Error deleting image from Cloudinary: {e}")
+                self.logger.error(
+                    'Failed to delete Cloudinary image %s: %s',
+                    public_id,
+                    res,
+                )
+        except Exception as exc:
+            self.logger.error(
+                'Error deleting Cloudinary image %s: %s',
+                public_id,
+                exc,
+            )
 
 # ------------------------------------------------------------------------- #
 # Example usage
@@ -289,13 +342,10 @@ async def main() -> None:
 
     message: str = 'Hello, LINE Messaging API!'
 
-    # Build a 640×480 black PNG with Pillow
+    # Build a 640×480 black PNG using the shared notification encoder.
     height, width = 480, 640
     frame = np.zeros((height, width, 3), dtype=np.uint8)
-    img = Image.fromarray(frame)
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    frame_bytes = buf.getvalue()
+    frame_bytes = encode_png(frame).getvalue()
 
     resp_code = await messenger.push_message(
         recipient_id=recipient_id,

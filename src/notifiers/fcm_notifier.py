@@ -7,14 +7,15 @@ import os
 import httpx
 from dotenv import load_dotenv
 
-from src.utils import TokenManager
+from src.async_http_client import AsyncHttpClientOwner
+from src.auth_tokens import TokenManager
 from src.warning_types import Warnings
 
 # Load environment variables
 load_dotenv()
 
 
-class FCMSender:
+class FCMSender(AsyncHttpClientOwner):
     """
     Class for sending FCM push notifications via backend API.
     Each instance maintains its own token state.
@@ -53,46 +54,13 @@ class FCMSender:
             'is_refreshing': False,
         }
         self.max_retries = max_retries
-        self.timeout = timeout
         self.logger = logging.getLogger(__name__)
-
-        # Create an HTTP client connection pool
-        self._client: httpx.AsyncClient | None = None
-        self._client_lock = asyncio.Lock()
+        super().__init__(timeout)
 
         # Create a TokenManager instance using the shared token state
         self.token_manager = TokenManager(
             shared_token=self.shared_token,
         )
-
-    async def _get_client(self) -> httpx.AsyncClient:
-        """
-        Obtain or create the HTTP client connection pool.
-
-        Returns:
-            httpx.AsyncClient: Asynchronous HTTP client.
-        """
-        async with self._client_lock:
-            if self._client is None or self._client.is_closed:
-                self._client = httpx.AsyncClient(
-                    timeout=httpx.Timeout(self.timeout),
-                    limits=httpx.Limits(
-                        max_keepalive_connections=5,
-                        max_connections=10,
-                        keepalive_expiry=30,
-                    ),
-                    http2=True,  # 啟用 HTTP/2 以提升效能
-                )
-            return self._client
-
-    async def close(self) -> None:
-        """
-        Close the HTTP client connection pool.
-        """
-        async with self._client_lock:
-            if self._client and not self._client.is_closed:
-                await self._client.aclose()
-                self._client = None
 
     async def send_fcm_message_to_site(
         self,
@@ -170,11 +138,14 @@ class FCMSender:
                     new_token = await self.token_manager.get_valid_token()
                     headers['Authorization'] = f'Bearer {new_token}'
 
-                    if attempt < self.max_retries:
-                        await asyncio.sleep(backoff_delay)
-                        backoff_delay *= 2
-                        continue
-                    return False
+                    next_delay = await self._next_retry_delay(
+                        attempt,
+                        backoff_delay,
+                    )
+                    if next_delay is None:
+                        return False
+                    backoff_delay = next_delay
+                    continue
 
                 response.raise_for_status()
                 result: dict[str, object] = response.json()
@@ -184,11 +155,13 @@ class FCMSender:
                 self.logger.error(
                     f"API request failed (attempt {attempt + 1}): {exc}",
                 )
-                if attempt < self.max_retries:
-                    await asyncio.sleep(backoff_delay)
-                    backoff_delay *= 2
-                else:
+                next_delay = await self._next_retry_delay(
+                    attempt,
+                    backoff_delay,
+                )
+                if next_delay is None:
                     return False
+                backoff_delay = next_delay
 
             except httpx.HTTPStatusError as exc:
                 if 400 <= exc.response.status_code < 500:
@@ -203,10 +176,23 @@ class FCMSender:
                     attempt + 1,
                     exc.response.status_code,
                 )
-                if attempt < self.max_retries:
-                    await asyncio.sleep(backoff_delay)
-                    backoff_delay *= 2
-                else:
+                next_delay = await self._next_retry_delay(
+                    attempt,
+                    backoff_delay,
+                )
+                if next_delay is None:
                     return False
+                backoff_delay = next_delay
 
         return False
+
+    async def _next_retry_delay(
+        self,
+        attempt: int,
+        delay: int,
+    ) -> int | None:
+        """Return the next exponential delay, or stop after the final try."""
+        if attempt >= self.max_retries:
+            return None
+        await asyncio.sleep(delay)
+        return delay * 2

@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import httpx
 
+from src.auth_tokens import TokenManager
 from src.notifiers.fcm_notifier import FCMSender
-from src.utils import TokenManager
 
 
 class TestFCMSender(unittest.IsolatedAsyncioTestCase):

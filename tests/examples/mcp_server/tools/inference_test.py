@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import unittest
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -10,6 +11,35 @@ import cv2
 import numpy as np
 
 from examples.mcp_server.tools.inference import InferenceTools
+
+
+def _install_streaming_image_client(
+    tool: InferenceTools,
+    content: bytes,
+) -> MagicMock:
+    """Install a pooled-client double that streams one image payload."""
+    response = MagicMock()
+    response.headers = {}
+    response.raise_for_status = MagicMock()
+
+    async def aiter_bytes() -> object:
+        """Perform aiter bytes.
+
+        Returns:
+            The callable result.
+        """
+        yield content
+
+    response.aiter_bytes = aiter_bytes
+    stream_context = MagicMock()
+    stream_context.__aenter__ = AsyncMock(return_value=response)
+    stream_context.__aexit__ = AsyncMock(return_value=None)
+    client = MagicMock()
+    client.stream.return_value = stream_context
+    owner = MagicMock()
+    owner._get_client = AsyncMock(return_value=client)
+    tool._http_client = owner
+    return client
 
 
 class DetectFrameTests(unittest.IsolatedAsyncioTestCase):
@@ -67,7 +97,7 @@ class DetectFrameTests(unittest.IsolatedAsyncioTestCase):
         fake_dets = [[0, 0, 1, 1, 0.5, 0]]
         fake_trk: list[list[int]] = []
 
-        async def init_side_effect(*args, **kwargs) -> None:
+        async def init_side_effect(*args: Any, **kwargs: Any) -> None:
             # Install a detector after init is called
             """Support init_side_effect."""
             detector = AsyncMock()
@@ -133,24 +163,20 @@ class LoadImageTests(unittest.IsolatedAsyncioTestCase):
             tool.logger = logger
             res = await tool._load_image('%%%notbase64%%%', None)
             self.assertIsNone(res)
-            logger.error.assert_called_once()
+            logger.exception.assert_called_once()
 
     async def test_load_image_from_url_success(self) -> None:
         """Should download image and decode it."""
         fake_bytes = b'fakeimage'
         fake_frame = np.zeros((1, 1, 3), dtype=np.uint8)
-        mock_response = MagicMock()
-        mock_response.content = fake_bytes
-        mock_response.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value.get.return_value = mock_response
-        with (
-            patch('httpx.AsyncClient', return_value=mock_client),
-            patch('cv2.imdecode', return_value=fake_frame),
-        ):
-            tool = InferenceTools()
+        tool = InferenceTools()
+        mock_client = _install_streaming_image_client(tool, fake_bytes)
+        with patch('cv2.imdecode', return_value=fake_frame):
             res = await tool._load_image(None, 'http://example.com/img.jpg')
         self.assertTrue(isinstance(res, np.ndarray))
+        mock_client.stream.assert_called_once_with(
+            'GET', 'http://example.com/img.jpg',
+        )
 
     async def test_load_image_returns_none_when_inputs_missing(self) -> None:
         """When both inputs are None, loader should return None."""
@@ -174,7 +200,7 @@ class LoadImageTests(unittest.IsolatedAsyncioTestCase):
             tool.logger = logger
             res = await tool._load_image(encoded, None)
             self.assertIsNone(res)
-            logger.error.assert_called_once()
+            logger.exception.assert_called_once()
 
     async def test_load_image_handles_data_url_prefix(self) -> None:
         """Data URL prefix should be stripped before decoding."""
@@ -191,27 +217,22 @@ class LoadImageTests(unittest.IsolatedAsyncioTestCase):
     async def test_load_image_url_all_decoders_fail(self) -> None:
         """URL path: when cv2 returns None, it should log and return None."""
         fake_bytes = b'img'
-        mock_response = MagicMock()
-        mock_response.content = fake_bytes
-        mock_response.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value.get.return_value = mock_response
+        tool = InferenceTools()
+        _install_streaming_image_client(tool, fake_bytes)
         with (
-            patch('httpx.AsyncClient', return_value=mock_client),
             patch('cv2.imdecode', return_value=None),
             patch(
                 'examples.mcp_server.tools.inference.logging.getLogger',
             ) as mock_logger,
         ):
             logger = mock_logger.return_value
-            tool = InferenceTools()
             tool.logger = logger
             result = await tool._load_image(
                 None,
                 'http://example.com/fail.jpg',
             )
             self.assertIsNone(result)
-            logger.error.assert_called_once()
+            logger.exception.assert_called_once()
 
     async def test_load_image_logs_error_on_exception(self) -> None:
         """Should catch unexpected exceptions and log error."""
@@ -226,7 +247,7 @@ class LoadImageTests(unittest.IsolatedAsyncioTestCase):
             tool.logger = logger
             result = await tool._load_image('YWJj', None)
             self.assertIsNone(result)
-            logger.error.assert_called_once()
+            logger.exception.assert_called_once()
 
 
 class InitDetectorTests(unittest.IsolatedAsyncioTestCase):

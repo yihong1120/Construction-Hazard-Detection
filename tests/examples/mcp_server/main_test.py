@@ -34,7 +34,6 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         self.record_tools = AsyncMock(spec=main.RecordTools)
         self.streaming_tools = AsyncMock(spec=main.StreamingTools)
         self.model_tools = AsyncMock(spec=main.ModelTools)
-        self.utils_tools = AsyncMock(spec=main.UtilsTools)
         for patcher in (
             patch.object(main, 'inference_tools', self.inference_tools),
             patch.object(main, 'hazard_tools', self.hazard_tools),
@@ -43,7 +42,6 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
             patch.object(main, 'record_tools', self.record_tools),
             patch.object(main, 'streaming_tools', self.streaming_tools),
             patch.object(main, 'model_tools', self.model_tools),
-            patch.object(main, 'utils_tools', self.utils_tools),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -52,7 +50,7 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
     async def test_inference_detect_frame(self) -> None:
         """Exercise this test."""
         self.inference_tools.detect_frame.return_value = {'ok': True}
-        res = await main.inference_detect_frame('img', 0.7, True)
+        res = await main.inference_detect_frame('img')
         self.assertTrue(res['ok'])
         self.inference_tools.detect_frame.assert_awaited_once()
 
@@ -60,7 +58,7 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
     async def test_hazard_detect_violations(self) -> None:
         """Exercise this test."""
         self.hazard_tools.detect_violations.return_value = {'hazard': True}
-        res = await main.hazard_detect_violations([], 100, 200)
+        res = await main.hazard_detect_violations([])
         self.assertTrue(res['hazard'])
 
     # === violations ===
@@ -82,14 +80,6 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         res = await main.violations_get_image('a', False)
         self.assertIn('url', res)
 
-    async def test_violations_get_image_by_id(self) -> None:
-        """Exercise this test."""
-        self.violations_tools.get_image_by_violation_id.return_value = {
-            'img': 'x',
-        }
-        res = await main.violations_get_image_by_id(1)
-        self.assertEqual(res['img'], 'x')
-
     async def test_violations_my_sites(self) -> None:
         """Exercise this test."""
         self.violations_tools.my_sites.return_value = [{'id': 1}]
@@ -108,6 +98,17 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         self.notify_tools.broadcast_send.return_value = {'sent': True}
         res = await main.notify_broadcast_send('m')
         self.assertTrue(res['sent'])
+
+    async def test_notify_messenger_and_wechat_send(self) -> None:
+        """Expose optional Messenger and WeChat Work feature handlers."""
+        self.notify_tools.messenger_send.return_value = {'messenger': True}
+        self.notify_tools.wechat_send.return_value = {'wechat': True}
+        self.assertTrue(
+            (await main.notify_messenger_send('recipient', 'message'))['messenger'],
+        )
+        self.assertTrue(
+            (await main.notify_wechat_send('user', 'message'))['wechat'],
+        )
 
     async def test_notify_telegram_send(self) -> None:
         """Exercise this test."""
@@ -169,35 +170,30 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
     # === model ===
     async def test_model_all(self) -> None:
         """Exercise this test."""
-        self.model_tools.fetch_model.return_value = {'fetched': 1}
+        self.model_tools.sync_model.return_value = {'updated': 1}
         self.model_tools.list_available_models.return_value = {'list': []}
-        self.model_tools.update_model.return_value = {'updated': 1}
         self.model_tools.get_local_models.return_value = {'local': []}
-        self.assertIn('fetched', (await main.model_fetch('a')))
+        self.assertIn('updated', (await main.model_sync('a')))
         self.assertIn('list', (await main.model_list_available()))
-        self.assertIn('updated', (await main.model_update('a')))
         self.assertIn('local', (await main.model_get_local()))
 
     # === utils ===
     async def test_utils_all(self) -> None:
         """Exercise this test."""
-        self.utils_tools.calculate_polygon_area.return_value = {'area': 1}
-        self.utils_tools.point_in_polygon.return_value = {'inside': True}
-        self.utils_tools.bbox_intersection.return_value = {'area': 2}
-        self.utils_tools.validate_detection_data.return_value = {'ok': True}
         self.assertEqual(
-            (await main.utils_calculate_polygon_area([]))['area'],
-            1,
+            main.utils_calculate_polygon_area([])['area'], 0.0,
         )
         self.assertTrue(
-            (await main.utils_point_in_polygon([], []))['inside'],
+            not main.utils_point_in_polygon([0, 0], [])['is_inside'],
         )
         self.assertEqual(
-            (await main.utils_bbox_intersection([], []))['area'],
-            2,
+            main.utils_bbox_intersection([0, 0, 1, 1], [2, 2, 3, 3])[
+                'intersection_area'
+            ],
+            0.0,
         )
         self.assertTrue(
-            (await main.utils_validate_detections([], 1, 1))['ok'],
+            main.utils_validate_detections([], 1, 1)['is_valid'],
         )
 
 

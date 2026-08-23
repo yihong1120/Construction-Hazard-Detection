@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import base64
+import json
+from datetime import datetime
 from typing import Any
 from typing import cast
 
 from fastapi import HTTPException
+from sqlalchemy import and_
 from sqlalchemy import func
+from sqlalchemy import or_
 from sqlalchemy import select
 from sqlalchemy import update
 from sqlalchemy.engine import CursorResult
@@ -76,11 +81,34 @@ async def _get_owned_notification(
     return notification
 
 
+def _decode_notification_cursor(cursor: str) -> tuple[datetime, int]:
+    """Decode the exclusive keyset position for one notification page."""
+    try:
+        padded = cursor + '=' * (-len(cursor) % 4)
+        payload = json.loads(
+            base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'),
+        )
+        return datetime.fromisoformat(payload['created_at']), int(payload['id'])
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(
+            status_code=422, detail='invalid_notification_cursor',
+        ) from exc
+
+
+def _encode_notification_cursor(notification: Notification) -> str:
+    """Encode the last returned row as the next exclusive keyset position."""
+    payload = json.dumps(
+        {'created_at': notification.created_at.isoformat(), 'id': notification.id},
+        separators=(',', ':'),
+    ).encode('utf-8')
+    return base64.urlsafe_b64encode(payload).decode('ascii').rstrip('=')
+
+
 async def list_notifications(
     status: NotificationStatus | None,
     notification_type: NotificationType | None,
-    page: int,
     page_size: int,
+    cursor: str | None,
     db: AsyncSession,
     me: User,
 ) -> NotificationList:
@@ -89,8 +117,8 @@ async def list_notifications(
     Args:
         status: Optional read-status filter.
         notification_type: Optional notification-category filter.
-        page: One-based page number.
         page_size: Maximum number of items in the page.
+        cursor: Optional exclusive cursor from the previous response.
         db: Database session used for queries.
         me: Authenticated user owning the records.
 
@@ -104,24 +132,33 @@ async def list_notifications(
         conditions.append(Notification.is_read.is_(True))
     if notification_type is not None:
         conditions.append(Notification.type == notification_type)
-    # Count and page queries share the same immutable ownership/filter conditions.
-    total_result = await db.execute(
-        select(func.count()).select_from(Notification).where(*conditions),
-    )
+    if cursor is not None:
+        created_at, notification_id = _decode_notification_cursor(cursor)
+        conditions.append(
+            or_(
+                Notification.created_at < created_at,
+                and_(
+                    Notification.created_at == created_at,
+                    Notification.id < notification_id,
+                ),
+            ),
+        )
     items_result = await db.execute(
         select(Notification)
         .where(*conditions)
         .order_by(Notification.created_at.desc(), Notification.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size),
+        .limit(page_size + 1),
     )
+    items = list(items_result.scalars().all())
+    has_next_page = len(items) > page_size
+    visible_items = items[:page_size]
     return NotificationList(
-        total=int(cast(int, total_result.scalar())),
-        page=page,
-        page_size=page_size,
-        items=[
-            _notification_to_out(item) for item in items_result.scalars().all()
-        ],
+        items=[_notification_to_out(item) for item in visible_items],
+        next_cursor=(
+            _encode_notification_cursor(visible_items[-1])
+            if has_next_page and visible_items
+            else None
+        ),
     )
 
 

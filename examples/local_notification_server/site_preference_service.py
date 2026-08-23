@@ -20,7 +20,7 @@ from examples.local_notification_server.schemas import (
 from examples.local_notification_server.schemas import (
     SiteNotificationPreferenceUpdateRequest,
 )
-from examples.local_notification_server.services import (
+from examples.local_notification_server.site_recipient_cache import (
     refresh_site_notification_user_cache,
 )
 
