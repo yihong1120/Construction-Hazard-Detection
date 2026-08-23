@@ -4,12 +4,10 @@ import logging
 import runpy
 import sys
 import unittest
-from collections.abc import Callable
 from contextlib import redirect_stderr
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
-from typing import cast
 from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -21,18 +19,6 @@ def _run_as_script(relative_path: str) -> dict[str, object]:
     return runpy.run_path(
         str(PROJECT_ROOT / relative_path),
         run_name='__main__',
-    )
-
-
-def _load_migration_runner() -> dict[str, object]:
-    """Load migration-runner helpers without invoking its command line.
-
-    Returns:
-        The migration runner's module namespace.
-    """
-    return runpy.run_path(
-        str(PROJECT_ROOT / 'scripts/apply_postgres_migrations.py'),
-        run_name='postgres_migration_runner_test',
     )
 
 
@@ -130,42 +116,6 @@ class ScriptEntrypointTests(unittest.TestCase):
             _run_as_script('src/danger_detector.py')
             _run_as_script('src/monitor_logger.py')
             _run_as_script('examples/local_notification_server/lang_config.py')
-
-    def test_migration_sql_splitter_preserves_postgresql_dollar_blocks(
-        self,
-    ) -> None:
-        """Concurrent-index SQL must not share an asyncpg query batch."""
-        namespace = _load_migration_runner()
-        splitter = cast(
-            Callable[[str], list[str]],
-            namespace['split_sql_statements'],
-        )
-        execution_units = cast(
-            Callable[[str], list[str]],
-            namespace['statements_for_execution'],
-        )
-        source = '''
-        DO $body$
-        BEGIN
-            PERFORM 1;
-        END
-        $body$;
-        CREATE INDEX CONCURRENTLY example_index ON example_table (id);
-        INSERT INTO schema_migrations (version, checksum)
-        VALUES ('example', 'checksum');
-        '''
-
-        statements = splitter(source)
-
-        self.assertEqual(len(statements), 3)
-        self.assertIn('PERFORM 1;', statements[0])
-        self.assertIn('CREATE INDEX CONCURRENTLY', statements[1])
-        self.assertIn('INSERT INTO schema_migrations', statements[2])
-        self.assertEqual(execution_units(source), statements)
-        self.assertEqual(
-            execution_units('SELECT 1; SELECT 2;'),
-            ['SELECT 1; SELECT 2;'],
-        )
 
 
 if __name__ == '__main__':

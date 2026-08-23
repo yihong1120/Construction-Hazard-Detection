@@ -12,32 +12,10 @@ expecting library version 10.14.1.48 got ...
 
 ## 解决方案
 
-### 方法 1: 批量重建所有模型（推荐）
+批量重建與受管 deployment 的工具屬於私有 operator tooling，不隨 application
+source 發布。需要在本機重建單一 engine 時，可直接使用 Ultralytics CLI。
 
-```bash
-# 在项目根目录执行
-uv run python scripts/rebuild_tensorrt_engines.py
-```
-
-这个脚本会：
-1. 自动备份旧的 engine 文件到 `models/int8_engine_backup/`
-2. 从 PT 或 ONNX 文件重新导出所有模型
-3. 使用 INT8 量化以获得最佳性能
-4. 优先使用 `examples/YOLO_train/cv_dataset/*.yaml` 作为 INT8 校准数据，若不存在才回退到 `coco128.yaml`
-
-**预计时间**: 每个模型约 2-5 分钟，总计 10-25 分钟
-
-### 方法 2: 重建单个模型（快速测试）
-
-```bash
-# 重建特定模型
-uv run python scripts/rebuild_single_engine.py yolo11m
-
-# 或指定完整名称
-uv run python scripts/rebuild_single_engine.py best_yolo11m
-```
-
-### 方法 3: 手动使用 Ultralytics CLI
+### 手動使用 Ultralytics CLI
 
 ```bash
 # 从 PT 文件导出
@@ -74,7 +52,8 @@ A: 通常 1-3 分钟，取决于模型大小和GPU性能。
 A: 可以，设置 `half=True` 使用 FP16，或两者都不设置使用 FP32。但 INT8 通常提供最佳的速度/精度平衡。
 
 ### Q: 校准数据集从哪里来？
-A: 脚本会优先使用 repo 内的 `examples/YOLO_train/cv_dataset/` 数据集 YAML；如果找不到才会用 `coco128.yaml`（可能触发下载）。
+A: 在 `data=` 指定 repo 内的 `examples/YOLO_train/cv_dataset/` 数据集 YAML；若使用
+`coco128.yaml`，Ultralytics 可能会下载该数据集。
 
 ### Q: 导出失败怎么办？
 A:

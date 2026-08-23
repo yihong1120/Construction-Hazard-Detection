@@ -153,15 +153,6 @@ the MCP server, install `uv sync --extra social-notifications`.
 
 ### 2. Download Models
 
-To preview cleanup of ignored logs, editor history, generated training runs,
-and transient media without touching active model files:
-
-```bash
-python scripts/cleanup_local_artifacts.py --days 14
-```
-
-Add `--apply` only after reviewing the printed paths.
-
 ```bash
 hf download yihong1120/Construction-Hazard-Detection \
   --repo-type model \
@@ -301,14 +292,9 @@ cat ./scripts/init.postgres.sql | docker exec -i postgres-container \
   psql -U username -d construction_hazard_detection
 ```
 
-For an existing database, use the migration ledger instead. After confirming
-the schema is current through the stated baseline, record it once and apply
-only later migrations:
-
-```bash
-uv run python scripts/apply_postgres_migrations.py --baseline 20260827
-uv run python scripts/apply_postgres_migrations.py
-```
+For an existing database, follow the organisation's database change-management
+runbook. Migration assets and privileged operator tooling are intentionally
+not distributed with the application source.
 
 ### 5. Configure MediaMTX
 

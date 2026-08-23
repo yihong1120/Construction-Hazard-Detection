@@ -146,14 +146,6 @@ uv sync --locked --all-extras --no-extra yolo-gpu
 
 ### 2. 下載模型
 
-若要預覽清理被忽略的 log、編輯器歷史、訓練輸出與暫存媒體（不會碰模型檔）：
-
-```bash
-python scripts/cleanup_local_artifacts.py --days 14
-```
-
-確認輸出路徑後才加上 `--apply` 永久刪除。
-
 ```bash
 hf download yihong1120/Construction-Hazard-Detection \
   --repo-type model \
@@ -276,13 +268,8 @@ cat ./scripts/init.postgres.sql | docker exec -i postgres-container \
   psql -U username -d construction_hazard_detection
 ```
 
-既有 database 應使用 migration ledger。確認 schema 已到達指定 baseline 後，先記錄
-歷史 migration，再只執行後續 migration：
-
-```bash
-uv run python scripts/apply_postgres_migrations.py --baseline 20260827
-uv run python scripts/apply_postgres_migrations.py
-```
+既有 database 請依組織的資料庫變更管理流程處理。migration 與特權 operator 工具
+刻意不隨 application source 發布。
 
 ### 5. 設定 MediaMTX
 

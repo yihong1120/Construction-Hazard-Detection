@@ -210,13 +210,6 @@ APPLE_REDIRECT_URI=https://changdar-server.mooo.com/hazard/api/db_management/aut
 APPLE_PRIVATE_KEY_PATH=config/secrets/apple/AuthKey_NGC4QBS7ZY.p8
 ```
 
-若已套用舊版 `user_identities` migration，請再執行：
-
-```bash
-psql "$DATABASE_URL" \
-  -f scripts/migrations/20260621_upgrade_user_identities_login_methods_postgres.sql
-```
-
 ## 忘記密碼
 
 `POST /password/forgot` 不論 e-mail 是否存在都回傳：

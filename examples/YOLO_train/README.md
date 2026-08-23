@@ -13,9 +13,6 @@ files through the YOLO worker path.
   TensorRT `.engine` files.
 - `test.py`: small prediction/testing helper.
 
-TensorRT engine rebuild helpers live in `scripts/rebuild_tensorrt_engines.py`
-and `scripts/rebuild_single_engine.py`.
-
 ## Train A Model
 
 ```bash

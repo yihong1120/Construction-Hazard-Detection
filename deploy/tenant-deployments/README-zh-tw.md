@@ -104,17 +104,9 @@ CSRF 或 JWT middleware。成功時只會回傳九個固定欄位：
 `503`。啟用碼到期、撤銷或已兌換回 `410`；不存在／格式無效回 `403`；超過限制回
 `429`。
 
-建立 code 不使用公開管理 API。migration 套用後，由受信任的後端 operator 執行：
-
-```bash
-python scripts/create_deployment_enrollment_code.py \
-  --deployment-id <deployment-uuid> \
-  --created-by '<ticket-or-operator>' \
-  --expires-in-hours 24
-```
-
-此命令只會在 commit 成功後向 stdout 印出一次原始 code；請立即透過核准的公司管道
-交付，且不要將它貼入 ticket、log 或 source control。
+建立 code 使用受信任的私有 operator tooling；migration 與該 tooling 刻意不隨
+application source 發布。原始 code 只能在 commit 成功後透過核准的公司管道交付，
+不可貼入 ticket、log 或 source control。
 
 ## 已登入的裝置邀請管理
 

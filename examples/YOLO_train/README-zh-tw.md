@@ -11,9 +11,6 @@ YOLO worker 使用已匯出的 `.pt` 模型。
 - `export_int8_engine.py`：將 `models/pt` 內指定 `.pt` checkpoint 匯出成 INT8 TensorRT `.engine`。
 - `test.py`：小型預測/測試 helper。
 
-TensorRT engine 重建工具位於 `scripts/rebuild_tensorrt_engines.py` 與
-`scripts/rebuild_single_engine.py`。
-
 ## 訓練模型
 
 ```bash

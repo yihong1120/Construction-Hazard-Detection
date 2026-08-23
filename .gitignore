@@ -56,14 +56,17 @@ examples/YOLO_data_augmentation/visualised_image.jpg
 predictions.json
 /dummy.json
 
-# Local database migration history. Explicit deployment migrations are kept.
-scripts/migrations/*
-!scripts/migrations/20260823_optimize_notification_cursor.sql
-!scripts/migrations/20260823_optimize_notification_cursor_postgres.sql
-!scripts/migrations/20260824_add_site_media_cleanup_jobs_postgres.sql
-!scripts/migrations/20260824_normalize_user_profile_email_postgres.sql
-!scripts/migrations/20260825_optimize_site_media_cleanup_outbox_postgres.sql
-!scripts/migrations/20260826_add_violation_keyset_indexes_postgres.sql
+# Local operations and maintenance tooling.  Compose and CI retain only the
+# base Dockerfiles and the PostgreSQL bootstrap schema below this directory.
+scripts/apply_postgres_migrations.py
+scripts/cleanup_local_artifacts.py
+scripts/create_deployment_enrollment_code.py
+scripts/init.sql
+scripts/migrations/
+scripts/normalise_python_conventions.py
+scripts/rebuild_single_engine.py
+scripts/rebuild_tensorrt_engines.py
+scripts/send_test_fcm_notification.py
 
 # Build artifacts
 build/

@@ -183,13 +183,6 @@ APPLE_REDIRECT_URI=https://changdar-server.mooo.com/hazard/api/db_management/aut
 APPLE_PRIVATE_KEY_PATH=config/secrets/apple/AuthKey_NGC4QBS7ZY.p8
 ```
 
-If the earlier `user_identities` migration was already applied, run:
-
-```bash
-psql "$DATABASE_URL" \
-  -f scripts/migrations/20260621_upgrade_user_identities_login_methods_postgres.sql
-```
-
 ## Password Reset
 
 `POST /password/forgot` always returns:
