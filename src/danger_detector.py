@@ -9,7 +9,12 @@ from shapely.geometry import Point
 from shapely.geometry import Polygon
 from sklearn.cluster import HDBSCAN
 
-from src.utils import Utils
+from src.geometry import build_utility_pole_union
+from src.geometry import calculate_people_in_controlled_area
+from src.geometry import count_people_in_polygon
+from src.geometry import detect_polygon_from_cones
+from src.geometry import normalise_bbox
+from src.geometry import polygons_to_coords
 
 
 _SPATIAL_MIN_CELL_SIZE = 64.0
@@ -67,7 +72,7 @@ class DangerDetector:
                 list[Polygon],              # pole_polygons
             ]
         """
-        # 0. Filter static machinery / vehicles and normalize bboxes.
+        # 0. Filter static machinery / vehicles and normalise bounding boxes.
         datas = self._filter_and_normalise_static_machinery(datas)
         warnings: dict[str, dict[str, object]] = {}
 
@@ -138,8 +143,8 @@ class DangerDetector:
             self.check_pole_restricted_area(datas, warnings, pole_polygons_raw)
 
         # 3. Convert polygon coordinates (for front-end visualization)
-        cone_polygons_coords = Utils.polygons_to_coords(cone_polygons_raw)
-        pole_polygons_coords = Utils.polygons_to_coords(pole_polygons_raw)
+        cone_polygons_coords = polygons_to_coords(cone_polygons_raw)
+        pole_polygons_coords = polygons_to_coords(pole_polygons_raw)
 
         return warnings, cone_polygons_coords, pole_polygons_coords
 
@@ -192,10 +197,10 @@ class DangerDetector:
             warnings: A dictionary to store warning messages.
             polygons: A list to store the detected polygon areas.
         """
-        new_polygons = Utils.detect_polygon_from_cones(datas, self.clusterer)
+        new_polygons = detect_polygon_from_cones(datas, self.clusterer)
         polygons.extend(new_polygons)
 
-        people_count = Utils.calculate_people_in_controlled_area(
+        people_count = calculate_people_in_controlled_area(
             new_polygons, datas,
         )
         if people_count > 0:
@@ -218,12 +223,12 @@ class DangerDetector:
             warnings: A dictionary to store warning messages.
             pole_polygons: A list to store the detected polygon areas.
         """
-        pole_union_poly = Utils.build_utility_pole_union(datas, self.clusterer)
+        pole_union_poly = build_utility_pole_union(datas, self.clusterer)
         if not pole_union_poly.is_empty:
             pole_polygons.append(pole_union_poly)
 
             # Count people in the utility pole controlled area
-            count_in_pole_area = Utils.count_people_in_polygon(
+            count_in_pole_area = count_people_in_polygon(
                 pole_union_poly, datas,
             )
             if count_in_pole_area > 0:
@@ -623,7 +628,7 @@ class DangerDetector:
                 and detection[7] != 1
             ):
                 continue
-            normalised.append(Utils.normalise_bbox(detection))
+            normalised.append(normalise_bbox(detection))
         return normalised
 
 

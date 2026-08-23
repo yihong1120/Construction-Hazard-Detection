@@ -15,19 +15,15 @@ class TestConfig(unittest.TestCase):
     """
 
     def test_use_tensorrt_exists(self) -> None:
-        """Test that the USE_TENSORRT variable exists in config.
-
-        Ensures the config module contains the USE_TENSORRT attribute.
-        """
         # Check existence of USE_TENSORRT
+        """Test use tensorrt exists.
+        """
         self.assertTrue(hasattr(config, 'USE_TENSORRT'))
 
     def test_use_tensorrt_type(self) -> None:
-        """Test that USE_TENSORRT is a boolean value.
-
-        Ensures the type of USE_TENSORRT is bool.
-        """
         # Check type of USE_TENSORRT
+        """Test use tensorrt type.
+        """
         self.assertIsInstance(config.USE_TENSORRT, bool)
 
     def test_use_tensorrt_default(self) -> None:
@@ -45,11 +41,9 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.USE_TENSORRT, expected_value)
 
     def test_use_tensorrt_can_be_false(self) -> None:
-        """Test that USE_TENSORRT can be set to False.
-
-        Ensures the variable is mutable and can be disabled for testing.
-        """
         # Save original value and restore after test
+        """Test use tensorrt can be false.
+        """
         original_value: bool = config.USE_TENSORRT
         try:
             config.USE_TENSORRT = False
@@ -58,11 +52,9 @@ class TestConfig(unittest.TestCase):
             config.USE_TENSORRT = original_value
 
     def test_use_tensorrt_docstring(self) -> None:
-        """Test that USE_TENSORRT has a comment in the source code.
-
-        Ensures the source code contains documentation for USE_TENSORRT.
-        """
         # Check for comment and variable in source
+        """Test use tensorrt docstring.
+        """
         source: str = inspect.getsource(config)
         self.assertIn('USE_TENSORRT', source)
         self.assertIn('Whether to use TensorRT for inference', source)
@@ -224,6 +216,10 @@ pytest \
 
 
 class TestYoloServerConfigCoverage(unittest.TestCase):
+
+    """Provide TestYoloServerConfigCoverage.
+    """
+
     def test_inference_device_honours_explicit_and_auto_detection(
         self,
     ) -> None:

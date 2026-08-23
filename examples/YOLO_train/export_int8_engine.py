@@ -4,7 +4,9 @@ import argparse
 import shutil
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Protocol
 
 import yaml
 from ultralytics import YOLO
@@ -12,7 +14,40 @@ from ultralytics import YOLO
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class ExportArguments(Protocol):
+    """Describe CLI values required to export one TensorRT engine.
+
+    Attributes:
+        output_dir: Directory receiving an exported engine.
+        fraction: Fraction of calibration data to use.
+        device: Ultralytics execution device identifier.
+        imgsz: Inference image size.
+        batch: Calibration batch size.
+        workspace: Optional TensorRT workspace size in GiB.
+        dynamic: Whether to create a dynamic-shape engine.
+        overwrite: Whether an existing output can be replaced.
+    """
+
+    output_dir: Path
+    fraction: float
+    device: str
+    imgsz: int
+    batch: int
+    workspace: float | None
+    dynamic: bool
+    overwrite: bool
+
+
 def checkpoint(name: str, model_dir: Path) -> Path:
+    """Perform checkpoint.
+
+    Args:
+        name: Value used by this callable.
+        model_dir: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     raw = Path(name).expanduser()
     raw_pt = raw if raw.suffix else raw.with_suffix('.pt')
     stem = raw.stem if raw.suffix else raw.name
@@ -31,6 +66,14 @@ def checkpoint(name: str, model_dir: Path) -> Path:
 
 
 def data_yaml(value: str) -> Path:
+    """Perform data yaml.
+
+    Args:
+        value: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     raw = Path(value).expanduser()
     paths = [raw] if raw.is_absolute() else [ROOT / raw, Path.cwd() / raw]
     for path in paths:
@@ -41,6 +84,15 @@ def data_yaml(value: str) -> Path:
 
 
 def yaml_entries(root: Path, value: object) -> list[Path]:
+    """Perform yaml entries.
+
+    Args:
+        root: Value used by this callable.
+        value: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     if isinstance(value, str):
         path = Path(value).expanduser()
         return [path if path.is_absolute() else root / path]
@@ -52,6 +104,15 @@ def yaml_entries(root: Path, value: object) -> list[Path]:
 
 
 def calibration_yaml(source: Path, tmp: Path) -> Path:
+    """Perform calibration yaml.
+
+    Args:
+        source: Value used by this callable.
+        tmp: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     data = yaml.safe_load(source.read_text(encoding='utf-8')) or {}
     if not isinstance(data, dict):
         raise ValueError(f"Calibration yaml must be a mapping: {source}")
@@ -88,6 +149,15 @@ def calibration_yaml(source: Path, tmp: Path) -> Path:
 
 
 def output_path(value: Path | None, output_dir: Path) -> Path | None:
+    """Perform output path.
+
+    Args:
+        value: Value used by this callable.
+        output_dir: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     if value is None:
         return None
     value = value.expanduser()
@@ -99,7 +169,23 @@ def output_path(value: Path | None, output_dir: Path) -> Path | None:
     return (ROOT / value).resolve()
 
 
-def export_engine(model: Path, data: Path, target: Path | None, args) -> Path:
+def export_engine(
+    model: Path,
+    data: Path,
+    target: Path | None,
+    args: ExportArguments,
+) -> Path:
+    """Perform export engine.
+
+    Args:
+        model: Value used by this callable.
+        data: Value used by this callable.
+        target: Value used by this callable.
+        args: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     exported = Path(
         YOLO(str(model)).export(
             format='engine',
@@ -125,6 +211,11 @@ def export_engine(model: Path, data: Path, target: Path | None, args) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Perform build parser.
+
+    Returns:
+        The callable result.
+    """
     parser = argparse.ArgumentParser(
         description='Export .pt checkpoints to INT8 TensorRT .engine files.',
     )
@@ -161,7 +252,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv=None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    """Perform main.
+
+    Args:
+        argv: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     args = build_parser().parse_args(argv)
     if args.output and len(args.models) != 1:
         build_parser().error('--output can only be used with one model')

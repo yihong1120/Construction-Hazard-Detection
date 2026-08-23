@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 import os
 from typing import cast
 
@@ -28,6 +29,9 @@ WS_INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(8)
 AUTO_REGISTER_JTI: bool = get_auto_register_jti()
 
 
+logger = logging.getLogger(__name__)
+
+
 def _env_bool(name: str, default: bool) -> bool:
     """Read a boolean environment setting."""
     value = os.getenv(name)
@@ -51,10 +55,10 @@ async def _get_model_key_from_ws(
         client_ip: str,
         username: str,
 ) -> str | None:
-    """從 Header/Query/第一個訊息解析 model_key。"""
+    """Resolve the model key from headers, query parameters or the first message."""
     model_key: str | None = websocket.headers.get('x-model-key')
     if model_key:
-        print(
+        logger.info(
             (
                 f"[YOLO-WebSocket] {client_ip} ({username}): "
                 'Model key from header'
@@ -62,7 +66,7 @@ async def _get_model_key_from_ws(
         )
         return model_key
 
-    print(
+    logger.info(
         (
             f"[YOLO-WebSocket] {client_ip} ({username}): "
             'Waiting for model key in first message'
@@ -73,7 +77,7 @@ async def _get_model_key_from_ws(
         config_data: dict[str, object] = json.loads(first_message)
         model_key = cast(str | None, config_data.get('model_key'))
         if not model_key:
-            print(
+            logger.info(
                 (
                     f"[YOLO-WebSocket] {client_ip} ({username}): "
                     'No model_key found in first message'
@@ -84,7 +88,7 @@ async def _get_model_key_from_ws(
                 reason='Missing model_key in configuration',
             )
             return None
-        print(
+        logger.info(
             (
                 f"[YOLO-WebSocket] {client_ip} ({username}): "
                 'Model key from first message'
@@ -92,7 +96,7 @@ async def _get_model_key_from_ws(
         )
         return model_key
     except Exception as e:
-        print(
+        logger.info(
             (
                 f"[YOLO-WebSocket] {client_ip} ({username}): "
                 f"Failed to parse first message: {e}"
@@ -123,7 +127,7 @@ async def _send_ready_config(
         f"{client_ip} ({username})",
     )
     if not success:
-        print(
+        logger.info(
             (
                 f"[YOLO-WebSocket] {client_ip} ({username}): "
                 'Failed to send configuration response'
@@ -147,7 +151,7 @@ async def _process_frame_and_respond(
         websocket, datas, f"{client_ip} ({username})",
     )
     if not success:
-        print(
+        logger.info(
             (
                 f"[YOLO-WebSocket] {client_ip} ({username}): "
                 'Failed to send results, stopping'
@@ -172,7 +176,7 @@ async def _prepare_model_and_notify(
         return None
     model_instance = model_loader.get_model(model_key)
     if model_instance is None:
-        print(
+        logger.info(
             (
                 f"[YOLO-WebSocket] {client_ip} ({username}): "
                 f"Model {model_key} not found"
@@ -180,7 +184,7 @@ async def _prepare_model_and_notify(
         )
         await websocket.close(code=1003, reason='Model not found')
         return None
-    print(
+    logger.info(
         (
             f"[YOLO-WebSocket] {client_ip} ({username}): "
             f"Using model {model_key}"
@@ -212,7 +216,7 @@ async def _detect_loop(
             f"{client_ip} ({username})",
         )
         if img_bytes is None:
-            print(
+            logger.info(
                 (
                     f"[YOLO-WebSocket] {client_ip} ({username}): "
                     'Failed to receive image data, connection may be closed'
@@ -240,13 +244,13 @@ async def handle_websocket_detect(
 ) -> None:
     """Handle one YOLO websocket detection session."""
     client_ip: str = websocket.client.host if websocket.client else 'unknown'
-    print(f"[YOLO-WebSocket] New connection from {client_ip}")
+    logger.info(f"[YOLO-WebSocket] New connection from {client_ip}")
 
     await websocket.accept()
 
     if _should_bypass_local_auth(client_ip):
         username = os.getenv('YOLO_WS_LOCAL_USERNAME') or 'local-main'
-        print(
+        logger.info(
             (
                 f"[YOLO-WebSocket] {client_ip}: "
                 'Localhost auth bypass enabled'
@@ -263,7 +267,7 @@ async def handle_websocket_detect(
         if not authenticated_username:
             return
         username = authenticated_username
-        print(f"[YOLO-WebSocket] {client_ip}: Authenticated as {username}")
+        logger.info(f"[YOLO-WebSocket] {client_ip}: Authenticated as {username}")
 
     session_start: float = start_session_timer()
 
@@ -278,11 +282,11 @@ async def handle_websocket_detect(
             websocket, session_start, model_instance, client_ip, username,
         )
     except WebSocketDisconnect:
-        print(
+        logger.info(
             f"[YOLO-WebSocket] {client_ip} ({username}): Client disconnected",
         )
     except Exception as e:
-        print(
+        logger.info(
             (
                 f"[YOLO-WebSocket] {client_ip} ({username}): "
                 f"Unexpected error: {e}"
@@ -296,4 +300,4 @@ async def handle_websocket_detect(
         except Exception:
             pass
     finally:
-        print(f"[YOLO-WebSocket] {client_ip} ({username}): Connection closed")
+        logger.info(f"[YOLO-WebSocket] {client_ip} ({username}): Connection closed")

@@ -336,7 +336,7 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         }
         # two detections: one matches tid=1, one unmatched (different class)
         dets = [
-            [11.0, 11.0, 19.0, 19.0, 0.95, 0],  # near center, class 0 => match
+            [11.0, 11.0, 19.0, 19.0, 0.95, 0],  # Near centre, class 0 => match.
             [30.0, 30.0, 40.0, 40.0, 0.80, 1],  # different class => new track
         ]
         out = d._track_remote_hungarian(dets)
@@ -354,7 +354,7 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         d = self.detector_server
         d.remote_tracker = 'centroid'
         d.movement_thr_sq = 4.0  # threshold for distance^2
-        # existing track class 0 at center (10,10)
+        # Existing track class 0 at centre (10, 10).
         d.remote_tracks = {
             1: {
                 'bbox': (8.0, 8.0, 12.0, 12.0),
@@ -368,7 +368,7 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         out = d._track_remote_centroid(dets)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0][6], 1)
-        # moving flag depends on prev center -> should be 1
+        # Movement flag depends on the previous centre and should be 1.
         self.assertIn(out[0][7], (0, 1))
 
     def test_centroid_tracker_prune_on_empty(self) -> None:
@@ -404,7 +404,7 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         """Test centroid tracker distance threshold validation."""
         d = self.detector_server
         d.remote_tracker = 'centroid'
-        # one track at center (0,0), class 0
+        # One track at centre (0, 0), class 0.
         d.remote_tracks = {
             1: {
                 'bbox': (-1.0, -1.0, 1.0, 1.0),
@@ -416,7 +416,7 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         d.movement_thr_sq = 4.0
         # detection at distance^2 exactly equal to movement_thr_sq*4 (boundary)
         # movement_thr_sq*4 = 16. Require dist_sq < 16 to match -> won't match
-        dets = [[4.0, 0.0, 6.0, 2.0, 0.9, 0]]  # center at (5,1) -> dist^2=26
+        dets = [[4.0, 0.0, 6.0, 2.0, 0.9, 0]]  # Centre at (5, 1), distance squared 26.
         out = d._track_remote_centroid(dets)
         # since no match, new track created
         self.assertEqual(len(out), 1)
@@ -442,7 +442,7 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
                 'cls': 0,
             },
         }
-        dets = [[2.0, 2.0, 4.0, 4.0, 0.9, 0]]  # center (3,3)
+        dets = [[2.0, 2.0, 4.0, 4.0, 0.9, 0]]  # Centre at (3, 3).
         out = d._track_remote_centroid(dets)
         # Should assign to the closer track id=2
         self.assertEqual(out[0][6], 2)

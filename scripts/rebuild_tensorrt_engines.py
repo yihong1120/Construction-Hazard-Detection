@@ -50,13 +50,13 @@ def rebuild_engine(
     model_name: str,
     calibration_data: str,
 ) -> str | None:
-    """从 PT 或 ONNX 模型重新导出 TensorRT engine。
+    """Re-export a TensorRT engine from a PT or ONNX model.
 
     Args:
-        model_path: 原始模型路径 (.pt 或 .onnx)
-        output_dir: 输出目录
-        model_name: 模型名称
-        calibration_data: 校准数据 yaml
+        model_path: Source model path (``.pt`` or ``.onnx``).
+        output_dir: Destination directory for the exported engine.
+        model_name: Name used for the output engine file.
+        calibration_data: Calibration dataset YAML path.
     """
     print(f"\n{'='*60}")
     print(f"正在处理: {model_path.name}")
@@ -80,7 +80,7 @@ def rebuild_engine(
 
         engine_path = model.export(**export_kwargs)
 
-        # 统一输出位置与命名，供 server 读取
+        # Use the server's standard output location and file name.
         target_path = output_dir / f'{model_name}.engine'
         final_path = _move_engine(engine_path, target_path)
         print(f"✅ 成功导出: {final_path}")
@@ -93,20 +93,20 @@ def rebuild_engine(
 
 
 def main() -> None:
-    """主函数：批量重新构建所有 TensorRT engine"""
+    """Rebuild every configured TensorRT engine in a batch."""
 
-    # 项目根目录
+    # Repository root directory.
     project_root = Path(__file__).parent.parent
 
-    # 模型目录
+    # Model directories.
     pt_dir = project_root / 'models' / 'pt'
     onnx_dir = project_root / 'models' / 'onnx'
     output_dir = project_root / 'models' / 'int8_engine'
 
-    # 确保输出目录存在
+    # Ensure that the output directory exists.
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 备份旧的 engine 文件
+    # Back up existing engine files.
     backup_dir = project_root / 'models' / 'int8_engine_backup'
     if any(output_dir.glob('*.engine')):
         print(f"\n📦 备份旧的 engine 文件到: {backup_dir}")
@@ -116,7 +116,7 @@ def main() -> None:
             engine_file.rename(backup_path)
             print(f"   已备份: {engine_file.name}")
 
-    # 模型列表
+    # Models to rebuild.
     model_names = [
         'best_yolo11n',
         'best_yolo11s',
@@ -135,7 +135,7 @@ def main() -> None:
     results: dict[str, str] = {}
 
     for model_name in model_names:
-        # 优先使用 PT 文件，如果不存在则使用 ONNX
+        # Prefer PT files and fall back to ONNX files.
         pt_path = pt_dir / f'{model_name}.pt'
         onnx_path = onnx_dir / f'{model_name}.onnx'
 
@@ -148,7 +148,7 @@ def main() -> None:
             results[model_name] = 'NOT_FOUND'
             continue
 
-        # 重新导出
+        # Re-export the engine.
         engine_path = rebuild_engine(
             model_path=model_path,
             output_dir=output_dir,
@@ -157,7 +157,7 @@ def main() -> None:
         )
         results[model_name] = 'SUCCESS' if engine_path else 'FAILED'
 
-    # 打印总结
+    # Print the summary.
     print(f"\n{'='*60}")
     print('重建总结:')
     print(f"{'='*60}")
@@ -174,7 +174,7 @@ def main() -> None:
 
 
 def get_tensorrt_version() -> str:
-    """获取 TensorRT 版本"""
+    """Return the installed TensorRT version."""
     return trt.__version__
 
 

@@ -14,9 +14,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
+import examples.auth.models
 import examples.YOLO_server_api.models
+from examples.auth.database import Base
 from examples.auth.database import get_db
-from examples.auth.models import Base
 
 DetectionModelManager = (
     examples.YOLO_server_api.models.DetectionModelManager
@@ -107,7 +108,7 @@ class TestDetectionModelManager(unittest.TestCase):
             )
             mock_sahi_module.AutoDetectionModel = mock_auto_detection_class
 
-            def side_effect(name: Any, *args, **kwargs) -> Any:
+            def side_effect(name: Any, *args: Any, **kwargs: Any) -> Any:
                 """Support side_effect.
 
                 Args:
@@ -323,7 +324,7 @@ class TestDetectionModelManager(unittest.TestCase):
             patch('builtins.__import__') as mock_import,
         ):
             # Mock import to raise an exception for SAHI
-            def side_effect(name: Any, *args, **kwargs) -> Any:
+            def side_effect(name: Any, *args: Any, **kwargs: Any) -> Any:
                 """Support side_effect.
 
                 Args:
@@ -695,12 +696,9 @@ class TestModelFileChangeHandler(unittest.TestCase):
 
 
 class TestDatabase(unittest.TestCase):
-    """Test cases for database connectivity and session management.
 
-    Ensures proper database session creation and resource management
-    for the authentication system.
+    """Provide TestDatabase.
     """
-
     @staticmethod
     async def async_get_db() -> AsyncSession:
         """
@@ -936,7 +934,16 @@ class TestLRUEviction(unittest.TestCase):
         class FailingDict(dict):
             """Tests for FailingDict."""
 
-            def __setitem__(self, key, value):
+            def __setitem__(self, key: Any, value: Any) -> Any:
+                """Perform setitem.
+
+                Args:
+                    key: Value used by this callable.
+                    value: Value used by this callable.
+
+                Returns:
+                    The callable result.
+                """
                 if value is None:
                     raise Exception('Simulated failure')
                 super().__setitem__(key, value)

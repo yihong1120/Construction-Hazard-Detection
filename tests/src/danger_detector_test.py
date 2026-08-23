@@ -6,9 +6,9 @@ from unittest.mock import patch
 
 from shapely.geometry import Polygon
 
+import src.geometry as utils
 from src.danger_detector import DangerDetector
 from src.danger_detector import main
-from src.utils import Utils
 
 
 class TestDangerDetector(unittest.TestCase):
@@ -104,7 +104,7 @@ class TestDangerDetector(unittest.TestCase):
             [250, 250, 270, 270, 0.85, 6, -1, 0],
             [450, 450, 470, 470, 0.92, 6, -1, 0],
         ]
-        data = [Utils.normalise_bbox(item) for item in data]
+        data = [utils.normalise_bbox(item) for item in data]
         warnings, cone_polygons, pole_polygons = self.detector.detect_danger(
             data,
         )
@@ -425,12 +425,12 @@ class TestDangerDetector(unittest.TestCase):
         }
         detector = DangerDetector(detection_items)
 
-        # Mock the Utils.build_utility_pole_union to return a non-empty polygon
+        # Mock the utils.build_utility_pole_union to return a non-empty polygon
         with patch(
-            'src.utils.Utils.build_utility_pole_union',
+            'src.danger_detector.build_utility_pole_union',
         ) as mock_build_union:
             with patch(
-                'src.utils.Utils.count_people_in_polygon',
+                'src.danger_detector.count_people_in_polygon',
             ) as mock_count_people:
                 # Mock a non-empty polygon
                 from shapely.geometry import Polygon

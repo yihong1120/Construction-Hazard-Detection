@@ -18,6 +18,8 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
     """Verify optional local inference independently of the stream worker."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         patcher = patch.object(local_module, 'YOLO', MagicMock())
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -34,8 +36,19 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
         factory_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
         class DetectionFactory:
+            """Provide DetectionFactory.
+            """
             @staticmethod
             def from_pretrained(*args: object, **kwargs: object) -> str:
+                """Perform from pretrained.
+
+                Args:
+                    *args: Value used by this callable.
+                    **kwargs: Value used by this callable.
+
+                Returns:
+                    The callable result.
+                """
                 factory_calls.append((args, kwargs))
                 return 'sahi-model'
 
@@ -46,6 +59,8 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
         ultralytics_module = ModuleType('ultralytics')
 
         class FakeYolo:
+            """Provide FakeYolo.
+            """
             pass
 
         setattr(ultralytics_module, 'YOLO', FakeYolo)

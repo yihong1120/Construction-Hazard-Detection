@@ -20,6 +20,11 @@ class ResettableDataLoader:
     """Small dataloader stand-in that exposes the exporter contract."""
 
     def __init__(self, batches: list[dict[str, torch.Tensor]]) -> None:
+        """Perform init.
+
+        Args:
+            batches: Value used by this callable.
+        """
         self.batches = batches
         self.dataset = list(
             range(sum(batch['img'].shape[0] for batch in batches)),
@@ -27,13 +32,25 @@ class ResettableDataLoader:
         self.batch_size = batches[0]['img'].shape[0]
         self.reset_count = 0
 
-    def __iter__(self):
+    def __iter__(self) -> Any:
+        """Perform iter.
+
+        Returns:
+            The callable result.
+        """
         return iter(self.batches)
 
     def __len__(self) -> int:
+        """Perform len.
+
+        Returns:
+            The callable result.
+        """
         return len(self.batches)
 
     def reset(self) -> None:
+        """Perform reset.
+        """
         self.reset_count += 1
 
 
@@ -267,7 +284,7 @@ def test_modelopt_export_api_requires_pinned_version(
     """An incompatible environment gets a direct dependency repair message."""
     monkeypatch.setattr(subject, 'ultralytics_version', '0.0.0')
 
-    with pytest.raises(RuntimeError, match='pip install -r requirements.txt'):
+    with pytest.raises(RuntimeError, match='uv sync --locked'):
         subject._require_modelopt_export_support()
 
 
@@ -314,6 +331,15 @@ def test_set_calibration_batch_size_restores_export_batch(
     seen_batches: list[int] = []
 
     def upstream(exporter: Any, _prefix: str) -> str:
+        """Perform upstream.
+
+        Args:
+            exporter: Value used by this callable.
+            _prefix: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         seen_batches.append(exporter.args.batch)
         return 'dataloader'
 
@@ -426,10 +452,27 @@ def test_main_exports_and_moves_engine(
     calls: list[dict[str, object]] = []
 
     class FakeYolo:
+
+        """Provide FakeYolo.
+        """
+
         def __init__(self, model_path: str) -> None:
+            """Perform init.
+
+            Args:
+                model_path: Value used by this callable.
+            """
             self.model_path = model_path
 
         def export(self, **kwargs: object) -> str:
+            """Perform export.
+
+            Args:
+                **kwargs: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             calls.append(kwargs)
             return str(exported)
 
@@ -712,10 +755,27 @@ def test_main_adds_detect_head_exclusion_to_mixed_precision_export(
     monkeypatch.setattr(subject, 'build_data_yaml', lambda value: Path(value))
 
     class FakeYolo:
+
+        """Provide FakeYolo.
+        """
+
         def __init__(self, _path: str) -> None:
+            """Perform init.
+
+            Args:
+                _path: Value used by this callable.
+            """
             pass
 
         def export(self, **_kwargs: object) -> str:
+            """Perform export.
+
+            Args:
+                **_kwargs: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             return str(args.output)
 
     monkeypatch.setattr(subject, 'YOLO', FakeYolo)

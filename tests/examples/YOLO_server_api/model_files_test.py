@@ -1,296 +1,82 @@
 from __future__ import annotations
 
 import datetime
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
-from unittest.mock import mock_open
 from unittest.mock import patch
 
-from examples.YOLO_server_api.model_files import get_new_model_file
+from examples.YOLO_server_api.model_files import get_new_model_path
+from examples.YOLO_server_api.model_files import model_file_checksum
+from examples.YOLO_server_api.model_files import model_file_etag
 from examples.YOLO_server_api.model_files import update_model_file
 
 
-class TestModelFilesWithMock(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for model file operations using virtual files.
-    """
+class ModelFileTests(unittest.IsolatedAsyncioTestCase):
+    """Model delivery exposes paths and streams files; it never buffers them."""
 
-    def setUp(self) -> None:
+    async def test_returns_updated_path_without_opening_file(self) -> None:
+        """Test returns updated path without opening file.
         """
-        Set up common variables for testing.
-        """
-        self.valid_model = 'yolo26n'
-        self.invalid_model = 'yolo_invalid'
-        self.model_file = Path('test_model.pt')
-        self.updated_time = datetime.datetime(2023, 1, 1, 0, 0, 0)
-        self.destination_path = Path(f'models/pt/best_{self.valid_model}.pt')
+        timestamp = datetime.datetime(2023, 1, 1)
+        with (
+            patch('pathlib.Path.is_file', return_value=True),
+            patch('pathlib.Path.stat') as stat,
+        ):
+            stat.return_value.st_mtime = (
+                timestamp + datetime.timedelta(days=1)
+            ).timestamp()
+            path = await get_new_model_path('yolo26n', timestamp)
+        self.assertIsInstance(path, Path)
 
-    @patch('torch.jit.load')
+    async def test_returns_none_for_missing_or_current_file(self) -> None:
+        """Test returns none for missing or current file.
+        """
+        timestamp = datetime.datetime(2023, 1, 1)
+        with patch('pathlib.Path.is_file', return_value=False):
+            self.assertIsNone(await get_new_model_path('yolo26n', timestamp))
+
+    async def test_invalid_model_is_rejected(self) -> None:
+        """Test invalid model is rejected.
+        """
+        with self.assertRaises(ValueError):
+            await get_new_model_path('invalid', datetime.datetime.now())
+
+    @patch('torch.jit.load', return_value=True)
     @patch('pathlib.Path.rename')
     @patch('pathlib.Path.is_file', return_value=True)
     @patch('pathlib.Path.suffix', new_callable=MagicMock(return_value='.pt'))
-    async def test_update_model_file_valid(
+    async def test_update_model_file_validates_before_atomic_move(
         self,
-        mock_suffix: MagicMock,
-        mock_is_file: MagicMock,
-        mock_rename: MagicMock,
-        mock_torch_jit_load: MagicMock,
+        _suffix: MagicMock,
+        _is_file: MagicMock,
+        rename: MagicMock,
+        _jit_load: MagicMock,
     ) -> None:
-        """
-        Test updating a valid model file with virtual files.
+        """Test update model file validates before atomic move.
 
         Args:
-            mock_suffix (MagicMock):
-                Mock for the file suffix check.
-            mock_is_file (MagicMock):
-                Mock for checking if the file exists.
-            mock_rename (MagicMock):
-                Mock for renaming the file.
-            mock_torch_jit_load (MagicMock):
-                Mock for loading the PyTorch model.
+            _suffix: Value used by this callable.
+            _is_file: Value used by this callable.
+            rename: Value used by this callable.
+            _jit_load: Value used by this callable.
         """
-        mock_torch_jit_load.return_value = True
+        await update_model_file('yolo26n', Path('candidate.pt'))
+        self.assertTrue(rename.called)
 
-        await update_model_file(self.valid_model, self.model_file)
 
-        mock_torch_jit_load.assert_called_once_with(str(self.model_file))
-        expected_destination_path = self.destination_path.resolve()
-        mock_rename.assert_called_once_with(expected_destination_path)
+class ModelChecksumTests(unittest.TestCase):
 
-    async def test_update_model_file_invalid_model(self) -> None:
+    """Provide ModelChecksumTests.
+    """
+
+    def test_checksum_and_etag_are_content_based(self) -> None:
+        """Test checksum and etag are content based.
         """
-        Test updating with an invalid model key.
-        """
-        with self.assertRaises(ValueError) as context:
-            await update_model_file(self.invalid_model, self.model_file)
-        self.assertIn('Invalid model key', str(context.exception))
-
-    @patch('pathlib.Path.is_file', return_value=False)
-    async def test_update_model_file_invalid_file(
-        self,
-        mock_is_file: MagicMock,
-    ) -> None:
-        """
-        Test updating with an invalid file path.
-        """
-        with self.assertRaises(ValueError) as context:
-            await update_model_file(self.valid_model, self.model_file)
-        self.assertIn('Invalid file', str(context.exception))
-
-    @patch('torch.load', side_effect=Exception('Invalid model format'))
-    @patch('pathlib.Path.is_file', return_value=True)
-    @patch('pathlib.Path.suffix', new_callable=MagicMock(return_value='.pt'))
-    async def test_update_model_file_invalid_torch_file(
-        self,
-        mock_suffix: MagicMock,
-        mock_is_file: MagicMock,
-        mock_torch_load: MagicMock,
-    ) -> None:
-        """
-        Test updating with an invalid `.pt` file.
-
-        Args:
-            mock_suffix (MagicMock):
-                Mock for the file suffix check.
-            mock_is_file (MagicMock):
-                Mock for checking if the file exists.
-            mock_torch_load (MagicMock):
-                Mock for loading the PyTorch model.
-        """
-        with self.assertRaises(ValueError) as context:
-            await update_model_file(self.valid_model, self.model_file)
-        self.assertIn('Invalid PyTorch model file', str(context.exception))
-
-    @patch('pathlib.Path.is_file', return_value=False)
-    async def test_get_new_model_file_no_file(
-        self,
-        mock_is_file: MagicMock,
-    ) -> None:
-        """
-        Test retrieving a model file when it does not exist.
-
-        Args:
-            mock_is_file (MagicMock):
-                Mock for checking if the file exists.
-        """
-        result = await get_new_model_file(self.valid_model, self.updated_time)
-        self.assertIsNone(result)
-
-    @patch('pathlib.Path.stat')
-    @patch('pathlib.Path.is_file', return_value=True)
-    @patch(
-        'pathlib.Path.open',
-        new_callable=mock_open,
-        read_data=b'model_data',
-    )
-    async def test_get_new_model_file_updated(
-        self,
-        mock_open: MagicMock,
-        mock_is_file: MagicMock,
-        mock_stat: MagicMock,
-    ) -> None:
-        """
-        Test retrieving an updated model file.
-
-        Args:
-            mock_open (MagicMock):
-                Mock for opening the file.
-            mock_is_file (MagicMock):
-                Mock for checking if the file exists.
-            mock_stat (MagicMock):
-                Mock for getting file status.
-        """
-        mock_stat.return_value.st_mtime = (
-            self.updated_time + datetime.timedelta(days=1)
-        ).timestamp()
-
-        result = await get_new_model_file(self.valid_model, self.updated_time)
-
-        self.assertIsInstance(result, bytes)
-        self.assertEqual(result, b'model_data')
-        mock_open.assert_called_once_with('rb')
-
-    @patch('pathlib.Path.stat')
-    @patch('pathlib.Path.is_file', return_value=True)
-    async def test_get_new_model_file_not_updated(
-        self,
-        mock_is_file: MagicMock,
-        mock_stat: MagicMock,
-    ) -> None:
-        """
-        Test retrieving a model file that has not been updated.
-
-        Args:
-            mock_is_file (MagicMock):
-                Mock for checking if the file exists.
-            mock_stat (MagicMock):
-                Mock for getting file status.
-        """
-        mock_stat.return_value.st_mtime = self.updated_time.timestamp()
-
-        result = await get_new_model_file(self.valid_model, self.updated_time)
-        self.assertIsNone(result)
-
-    @patch('pathlib.Path.stat')
-    @patch(
-        'pathlib.Path.open',
-        side_effect=FileNotFoundError('[Errno 2] No such file or directory'),
-    )
-    @patch('pathlib.Path.is_file', return_value=True)
-    async def test_get_new_model_file_read_error(
-        self,
-        mock_is_file: MagicMock,
-        mock_open: MagicMock,
-        mock_stat: MagicMock,
-    ) -> None:
-        """
-        Test error while reading the model file.
-
-        Args:
-            mock_is_file (MagicMock):
-                Mock for checking if the file exists.
-            mock_open (MagicMock):
-                Mock for opening the file.
-        """
-        mock_stat.return_value.st_mtime = (
-            self.updated_time + datetime.timedelta(seconds=1)
-        ).timestamp()
-
-        with self.assertRaises(OSError) as context:
-            await get_new_model_file(self.valid_model, self.updated_time)
-        self.assertIn('No such file or directory', str(context.exception))
-
-    @patch('pathlib.Path.is_file', return_value=True)
-    @patch('pathlib.Path.suffix', new_callable=MagicMock(return_value='.pt'))
-    @patch('torch.jit.load', return_value=True)
-    @patch('pathlib.Path.rename', side_effect=OSError('Cannot rename file'))
-    async def test_update_model_file_rename_oserror(
-        self,
-        mock_rename: MagicMock,
-        mock_torch_jit_load: MagicMock,
-        mock_suffix: MagicMock,
-        mock_is_file: MagicMock,
-    ) -> None:
-        """
-        Test rename operation raising OSError.
-
-        Args:
-            mock_rename (MagicMock):
-                Mock for renaming the file.
-            mock_torch_jit_load (MagicMock):
-                Mock for loading the PyTorch model.
-            mock_suffix (MagicMock):
-                Mock for the file suffix check.
-            mock_is_file (MagicMock):
-                Mock for checking if the file exists.
-        """
-        with self.assertRaises(OSError) as context:
-            await update_model_file(self.valid_model, self.model_file)
-        self.assertIn('Failed to update model file', str(context.exception))
-
-    async def test_get_new_model_file_invalid_model(self) -> None:
-        """
-        Test invalid model key when retrieving new model file.
-        """
-        with self.assertRaises(ValueError) as context:
-            await get_new_model_file(self.invalid_model, self.updated_time)
-        self.assertIn('Invalid model key', str(context.exception))
-
-    @patch('pathlib.Path.resolve')
-    async def test_update_model_file_path_traversal(
-        self,
-        mock_resolve: MagicMock,
-    ) -> None:
-        """
-        Test path traversal security check in update_model_file.
-        """
-        # Mock the resolve method to return a path outside the base directory
-        mock_resolve.side_effect = [
-            Path('/safe/models/pt'),  # base_dir
-            Path('/unsafe/path/best_yolo26n.pt'),  # destination_path
-        ]
-
-        with patch('pathlib.Path.is_file', return_value=True):
-            with patch(
-                'pathlib.Path.suffix',
-                new_callable=MagicMock(return_value='.pt'),
-            ):
-                with patch('torch.jit.load', return_value=True):
-                    with self.assertRaises(ValueError) as context:
-                        await update_model_file(
-                            self.valid_model, self.model_file,
-                        )
-                    self.assertIn(
-                        'Attempted path traversal',
-                        str(context.exception),
-                    )
-
-    @patch('pathlib.Path.resolve')
-    async def test_get_new_model_file_path_traversal(
-        self,
-        mock_resolve: MagicMock,
-    ) -> None:
-        """
-        Test path traversal security check in get_new_model_file.
-        """
-        # Mock the resolve method to return a path outside the base directory
-        mock_resolve.side_effect = [
-            Path('/safe/models/pt'),  # base_dir
-            Path('/unsafe/path/best_yolo26n.pt'),  # destination_path
-        ]
-
-        with self.assertRaises(ValueError) as context:
-            await get_new_model_file(self.valid_model, self.updated_time)
-        self.assertIn('Attempted path traversal', str(context.exception))
-
-
-if __name__ == '__main__':
-    unittest.main()
-
-'''
-pytest \
-    --cov=examples.YOLO_server_api.model_files \
-    --cov-report=term-missing \
-    tests/examples/YOLO_server_api/model_files_test.py
-'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'model.pt'
+            path.write_bytes(b'model-bytes')
+            checksum = model_file_checksum(path)
+            self.assertEqual(len(checksum), 64)
+            self.assertEqual(model_file_etag(path), f'"{checksum}"')

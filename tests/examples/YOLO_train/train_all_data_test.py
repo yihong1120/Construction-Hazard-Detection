@@ -52,6 +52,12 @@ def test_train_on_all_data_writes_filtered_temporary_config(
     observed: list[str] = []
 
     def train_model(data_config: str, **_kwargs: object) -> None:
+        """Perform train model.
+
+        Args:
+            data_config: Value used by this callable.
+            **_kwargs: Value used by this callable.
+        """
         observed.append(Path(data_config).read_text())
 
     with patch.object(handler, 'load_model') as load_model:

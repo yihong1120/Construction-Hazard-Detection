@@ -10,6 +10,11 @@ from examples.YOLO_train import export_int8_engine
 
 
 def test_checkpoint_accepts_model_key(tmp_path: Path) -> None:
+    """Test checkpoint accepts model key.
+
+    Args:
+        tmp_path: Value used by this callable.
+    """
     model_dir = tmp_path / 'models' / 'pt'
     ckpt = model_dir / 'best_yolo26n.pt'
     ckpt.parent.mkdir(parents=True)
@@ -33,6 +38,12 @@ def test_checkpoint_prefers_model_dir_for_bare_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Test checkpoint prefers model dir for bare key.
+
+    Args:
+        tmp_path: Value used by this callable.
+        monkeypatch: Value used by this callable.
+    """
     root = tmp_path / 'repo'
     model_dir = root / 'models' / 'pt'
     preferred = model_dir / 'best_yolo26n.pt'
@@ -53,6 +64,12 @@ def test_data_yaml_accepts_dataset_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Test data yaml accepts dataset dir.
+
+    Args:
+        tmp_path: Value used by this callable.
+        monkeypatch: Value used by this callable.
+    """
     root = tmp_path / 'repo'
     dataset = root / 'examples' / 'YOLO_train' / 'cv_dataset'
     data_yaml = dataset / 'data.yaml'
@@ -66,6 +83,11 @@ def test_data_yaml_accepts_dataset_dir(
 
 
 def test_calibration_yaml_keeps_valid_split_yaml(tmp_path: Path) -> None:
+    """Test calibration yaml keeps valid split yaml.
+
+    Args:
+        tmp_path: Value used by this callable.
+    """
     dataset = tmp_path / 'dataset'
     (dataset / 'train' / 'images').mkdir(parents=True)
     (dataset / 'val' / 'images').mkdir(parents=True)
@@ -82,6 +104,11 @@ def test_calibration_yaml_keeps_valid_split_yaml(tmp_path: Path) -> None:
 def test_calibration_yaml_maps_flat_images_to_train_and_val(
     tmp_path: Path,
 ) -> None:
+    """Test calibration yaml maps flat images to train and val.
+
+    Args:
+        tmp_path: Value used by this callable.
+    """
     dataset = tmp_path / 'cv_dataset'
     images = dataset / 'images'
     images.mkdir(parents=True)
@@ -99,6 +126,11 @@ def test_calibration_yaml_maps_flat_images_to_train_and_val(
 
 
 def test_calibration_yaml_reports_missing_images(tmp_path: Path) -> None:
+    """Test calibration yaml reports missing images.
+
+    Args:
+        tmp_path: Value used by this callable.
+    """
     dataset = tmp_path / 'cv_dataset'
     dataset.mkdir()
     data_yaml = dataset / 'data.yaml'
@@ -135,6 +167,12 @@ def test_output_path_resolves_bare_and_project_relative_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Test output path resolves bare and project relative paths.
+
+    Args:
+        tmp_path: Value used by this callable.
+        monkeypatch: Value used by this callable.
+    """
     root = tmp_path / 'repo'
     output_dir = root / 'models' / 'int8_engine'
     monkeypatch.setattr(export_int8_engine, 'ROOT', root)
@@ -156,6 +194,12 @@ def test_export_engine_passes_ultralytics_args(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Test export engine passes ultralytics args.
+
+    Args:
+        tmp_path: Value used by this callable.
+        monkeypatch: Value used by this callable.
+    """
     checkpoint = tmp_path / 'models' / 'pt' / 'best_yolo26n.pt'
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_text('model')
@@ -165,10 +209,27 @@ def test_export_engine_passes_ultralytics_args(
     calls: list[dict[str, Any]] = []
 
     class FakeYOLO:
+
+        """Provide FakeYOLO.
+        """
+
         def __init__(self, model_path: str) -> None:
+            """Perform init.
+
+            Args:
+                model_path: Value used by this callable.
+            """
             self.model_path = Path(model_path)
 
         def export(self, **kwargs: Any) -> str:
+            """Perform export.
+
+            Args:
+                **kwargs: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             calls.append(kwargs)
             exported = self.model_path.with_suffix('.engine')
             exported.write_text('engine')
@@ -219,10 +280,27 @@ def test_export_engine_respects_existing_output_policy(
     target.write_text('old engine')
 
     class FakeYOLO:
+
+        """Provide FakeYOLO.
+        """
+
         def __init__(self, _model_path: str) -> None:
+            """Perform init.
+
+            Args:
+                _model_path: Value used by this callable.
+            """
             pass
 
         def export(self, **_kwargs: Any) -> str:
+            """Perform export.
+
+            Args:
+                **_kwargs: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             generated.write_text('new engine')
             return str(generated)
 
@@ -283,6 +361,17 @@ def test_main_exports_every_requested_model(
         target: Path | None,
         args: Any,
     ) -> Path:
+        """Perform export.
+
+        Args:
+            model: Value used by this callable.
+            exported_data: Value used by this callable.
+            target: Value used by this callable.
+            args: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         exports.append((model, exported_data, target))
         assert args.model_dir == model_dir.resolve()
         assert args.output_dir == output_dir.resolve()
@@ -304,6 +393,8 @@ def test_main_exports_every_requested_model(
 
 
 def test_main_rejects_output_with_multiple_models() -> None:
+    """Test main rejects output with multiple models.
+    """
     with pytest.raises(SystemExit):
         export_int8_engine.main(['yolo26n', 'yolo26s', '--output', 'one'])
 

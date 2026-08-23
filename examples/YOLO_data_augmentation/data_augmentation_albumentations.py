@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import gc
 import os
 import random
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -14,6 +14,9 @@ import albumentations as A
 import cv2
 import numpy as np
 from tqdm import tqdm
+
+
+_FDA_REFERENCE_CACHE_SIZE = 8
 
 
 class DataAugmentation:
@@ -43,6 +46,10 @@ class DataAugmentation:
         """
         self.train_path = Path(train_path)
         self.num_augmentations = num_augmentations
+        self._source_image_paths: tuple[Path, ...] | None = None
+        self._fda_reference_cache: OrderedDict[
+            tuple[Path, tuple[int, int] | None], np.ndarray,
+        ] = OrderedDict()
 
     def resize_image_and_bboxes(
         self,
@@ -105,6 +112,14 @@ class DataAugmentation:
 
     @staticmethod
     def _random_crop_size(image_shape: tuple[int, int]) -> tuple[int, int]:
+        """Perform random crop size.
+
+        Args:
+            image_shape: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         image_height, image_width = image_shape
         crop_height = min(random.randint(400, 800), image_height)
         crop_width = min(random.randint(400, 800), image_width)
@@ -161,7 +176,7 @@ class DataAugmentation:
     def safe_rotate_transform() -> A.BasicTransform:
         """Create a safe rotation transform."""
         return A.SafeRotate(
-            limit=(-45, 45),
+            angle_range=(-45, 45),
             border_mode=cv2.BORDER_REFLECT_101,
             p=1,
         )
@@ -170,7 +185,7 @@ class DataAugmentation:
     def random_scale_transform() -> A.BasicTransform:
         """Create a bounding-box-aware scale transform."""
         return A.RandomScale(
-            scale_limit=(-0.25, 0.35),
+            scale_range=(-0.25, 0.35),
             interpolation=cv2.INTER_LINEAR,
             p=1,
         )
@@ -187,14 +202,18 @@ class DataAugmentation:
 
     @staticmethod
     def _create_bbox_params() -> A.BboxParams:
-        kwargs = {
-            'format': 'yolo',
-            'label_fields': ['class_labels'],
-            'clip': True,
-            'filter_invalid_bboxes': True,
-            'min_visibility': DataAugmentation.min_bbox_visibility,
-        }
-        return A.BboxParams(**kwargs)
+        """Perform create bbox params.
+
+        Returns:
+            The callable result.
+        """
+        return A.BboxParams(
+            format='yolo',
+            label_fields=['class_labels'],
+            clip=True,
+            filter_invalid_bboxes=True,
+            min_visibility=DataAugmentation.min_bbox_visibility,
+        )
 
     def normalize_bboxes_with_albumentations(
         self,
@@ -202,6 +221,16 @@ class DataAugmentation:
         bboxes: list[list[float]],
         class_labels: list[int],
     ) -> tuple[list[list[float]], list[int]]:
+        """Perform normalize bboxes with albumentations.
+
+        Args:
+            image: Value used by this callable.
+            bboxes: Value used by this callable.
+            class_labels: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         transform = A.Compose(
             [A.NoOp(p=1)],
             bbox_params=self._create_bbox_params(),
@@ -218,6 +247,15 @@ class DataAugmentation:
         bbox_augmentations: Sequence[A.BasicTransform | A.BaseCompose],
         crop_bbox_augmentations: Sequence[A.BasicTransform | A.BaseCompose],
     ) -> list[A.BasicTransform | A.BaseCompose]:
+        """Perform choose bbox transforms.
+
+        Args:
+            bbox_augmentations: Value used by this callable.
+            crop_bbox_augmentations: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         if crop_bbox_augmentations and (
             not bbox_augmentations
             or random.random() < self.crop_transform_probability
@@ -237,6 +275,15 @@ class DataAugmentation:
         bbox: Sequence[float],
         grid: tuple[int, int],
     ) -> bool:
+        """Perform bbox stays in single grid cell.
+
+        Args:
+            bbox: Value used by this callable.
+            grid: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         x_center, y_center, width, height = bbox
         if width <= 0 or height <= 0:
             return False
@@ -261,6 +308,15 @@ class DataAugmentation:
         bboxes: Sequence[Sequence[float]],
         grid: tuple[int, int],
     ) -> bool:
+        """Perform can use random grid shuffle.
+
+        Args:
+            bboxes: Value used by this callable.
+            grid: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         return all(
             cls._bbox_stays_in_single_grid_cell(bbox, grid)
             for bbox in bboxes
@@ -272,6 +328,15 @@ class DataAugmentation:
         bboxes: Sequence[Sequence[float]],
         candidate_grids: Sequence[tuple[int, int]],
     ) -> list[tuple[int, int]]:
+        """Perform safe random grid shuffle grids.
+
+        Args:
+            bboxes: Value used by this callable.
+            candidate_grids: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         return [
             grid
             for grid in candidate_grids
@@ -347,11 +412,7 @@ class DataAugmentation:
         Returns:
             list[np.ndarray]: List of RGB images.
         """
-        image_paths = [
-            p
-            for p in self.train_path.glob('images/*.jpg')
-            if '_aug_' not in p.stem
-        ]
+        image_paths = self._get_source_image_paths()
         if not image_paths:
             return []
 
@@ -362,20 +423,53 @@ class DataAugmentation:
 
         refs: list[np.ndarray] = []
         for p in chosen:
-            img = cv2.imread(str(p))
-            if img is None:
-                continue
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            if target_shape is not None and img.shape[:2] != target_shape:
-                target_height, target_width = target_shape
-                img = cv2.resize(
-                    img,
-                    (target_width, target_height),
-                    interpolation=cv2.INTER_LINEAR,
-                )
-            refs.append(img)
+            image = self._load_fda_reference_image(p, target_shape)
+            if image is not None:
+                refs.append(image)
 
         return refs
+
+    def _get_source_image_paths(self) -> tuple[Path, ...]:
+        """Index original training images once for this worker instance."""
+        # An initially empty dataset can receive files later in the same CLI
+        # process.  Once non-empty, keep the immutable source index so newly
+        # generated ``*_aug_`` files never cause a repeated directory scan.
+        if not self._source_image_paths:
+            paths: list[Path] = []
+            for pattern in ('*.jpg', '*.jpeg', '*.png'):
+                paths.extend(self.train_path.glob(f'images/{pattern}'))
+            self._source_image_paths = tuple(
+                path for path in paths if '_aug_' not in path.stem
+            )
+        return self._source_image_paths
+
+    def _load_fda_reference_image(
+        self,
+        image_path: Path,
+        target_shape: tuple[int, int] | None,
+    ) -> np.ndarray | None:
+        """Load a shaped FDA reference from a small per-worker LRU cache."""
+        cache_key = (image_path, target_shape)
+        cached = self._fda_reference_cache.pop(cache_key, None)
+        if cached is not None:
+            self._fda_reference_cache[cache_key] = cached
+            return cached
+
+        image = cv2.imread(str(image_path))
+        if image is None:
+            return None
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if target_shape is not None and image.shape[:2] != target_shape:
+            target_height, target_width = target_shape
+            image = cv2.resize(
+                image,
+                (target_width, target_height),
+                interpolation=cv2.INTER_LINEAR,
+            )
+        self._fda_reference_cache[cache_key] = image
+        if len(self._fda_reference_cache) > _FDA_REFERENCE_CACHE_SIZE:
+            self._fda_reference_cache.popitem(last=False)
+        return image
 
     def get_random_target_image(self) -> np.ndarray:
         """
@@ -384,11 +478,9 @@ class DataAugmentation:
         Returns:
             np.ndarray: The target image.
         """
-        image_paths = [
-            p for p in self.train_path.glob(
-                'images/*.jpg',
-            ) if '_aug_' not in p.stem
-        ]
+        image_paths = self._get_source_image_paths()
+        if not image_paths:
+            raise ValueError('No reference images are available')
         random_image_path = random.choice(image_paths)
         image = cv2.imread(str(random_image_path))
         if image is None:
@@ -445,7 +537,7 @@ class DataAugmentation:
         bbox_augmentations.extend([
             A.RandomRotate90(p=1),
             A.Rotate(
-                limit=(-45, 45),
+                angle_range=(-45, 45),
                 border_mode=cv2.BORDER_REFLECT_101,
                 rotate_method='ellipse',
                 crop_border=True,
@@ -474,7 +566,7 @@ class DataAugmentation:
             A.ElasticTransform(alpha=1, sigma=50, p=1),
             A.GridDistortion(p=1),
             A.OpticalDistortion(
-                distort_limit=(0.05, 0.1), p=1.0,
+                distort_range=(0.05, 0.1), p=1.0,
             ),
         ])
         if safe_grid_shuffle_grids:
@@ -488,45 +580,45 @@ class DataAugmentation:
         non_bbox_augmentations = [
             # Colour and brightness adjustments
             A.RandomBrightnessContrast(
-                brightness_limit=(0.0, 0.03),
-                contrast_limit=(0.0, 0.03),
+                brightness_range=(0.0, 0.03),
+                contrast_range=(0.0, 0.03),
                 p=1.0,
             ),
             A.RGBShift(
-                r_shift_limit=(-3, 3),
-                g_shift_limit=(-3, 3),
-                b_shift_limit=(-3, 3),
+                r_shift_range=(-3, 3),
+                g_shift_range=(-3, 3),
+                b_shift_range=(-3, 3),
                 p=1.0,
             ),
             A.HueSaturationValue(
-                hue_shift_limit=(-3, 3),
-                sat_shift_limit=(-5, 5),
-                val_shift_limit=(-3, 3),
+                hue_shift_range=(-3, 3),
+                sat_shift_range=(-5, 5),
+                val_shift_range=(-3, 3),
                 p=1.0,
             ),
             A.ColorJitter(
-                brightness=(0.92, 1.08),
-                contrast=(0.92, 1.08),
-                saturation=(0.85, 1.15),
-                hue=(-0.05, 0.05),
+                brightness_range=(0.92, 1.08),
+                contrast_range=(0.92, 1.08),
+                saturation_range=(0.85, 1.15),
+                hue_range=(-0.05, 0.05),
                 p=1.0,  # Wider hue/saturation shifts
             ),
             A.PlanckianJitter(p=1),
             # Blur and noise
-            A.MotionBlur(blur_limit=(3, 7), p=1.0),
-            A.GaussianBlur(blur_limit=(1, 3), p=1.0),
+            A.MotionBlur(blur_range=(3, 7), p=1.0),
+            A.GaussianBlur(blur_range=(1, 3), p=1.0),
             A.GaussNoise(std_range=(0.1, 0.5), p=1.0),
             A.ISONoise(
-                color_shift=(0.01, 0.05),
-                intensity=(0.05, 0.2),
+                color_shift_range=(0.01, 0.05),
+                intensity_range=(0.05, 0.2),
                 p=1.0,
             ),
-            A.MedianBlur(blur_limit=(3, 3), p=1.0),
+            A.MedianBlur(blur_range=(3, 3), p=1.0),
             # Colour space and contrast adjustments
-            A.CLAHE(clip_limit=(2, 2), p=1.0),
+            A.CLAHE(clip_range=(2, 2), p=1.0),
             A.Sharpen(
-                alpha=(0.1, 0.3),
-                lightness=(0.7, 1.0),
+                alpha_range=(0.1, 0.3),
+                lightness_range=(0.7, 1.0),
                 p=1.0,
             ),
             A.CoarseDropout(
@@ -541,7 +633,7 @@ class DataAugmentation:
             # Special effects
             A.RandomShadow(
                 shadow_roi=(0, 0.5, 1, 1),
-                num_shadows_limit=(1, 1), shadow_dimension=5, p=1.0,
+                num_shadows_range=(1, 1), shadow_dimension=5, p=1.0,
             ),
             # Stronger night/low-light style fog/haze
             A.RandomFog(alpha_coef=0.08, fog_coef_range=(0.3, 0.6), p=1.0),
@@ -558,13 +650,13 @@ class DataAugmentation:
                 flare_roi=(0.02, 0.04, 0.08, 0.08),
                 angle_range=(0, 1), p=1,
             ),
-            A.Defocus(radius=(3, 5), p=1),
+            A.Defocus(radius_range=(3, 5), p=1),
             # Other augmentations
             A.RandomToneCurve(scale=0.05, p=1.0),
-            A.RandomGamma(gamma_limit=(90, 110), p=1.0),
+            A.RandomGamma(gamma_range=(90, 110), p=1.0),
             A.Superpixels(
-                p_replace=(0.1, 0.1),
-                n_segments=(100, 100), p=1,
+                p_replace_range=(0.1, 0.1),
+                n_segments_range=(100, 100), p=1,
             ),
             # Stronger compression artifacts
             A.ImageCompression(quality_range=(30, 70), p=1.0),
@@ -572,15 +664,15 @@ class DataAugmentation:
             A.PixelDropout(dropout_prob=0.05, p=1),
             A.Emboss(p=1),
             # Fourier Domain Adaptation for domain/style shift
-            A.FDA(beta_limit=(0.5, 0.5), p=1),
-            # CCTV/監視器常見影像退化
+            A.FDA(beta_range=(0.5, 0.5), p=1),
+            # Common CCTV image degradations.
             A.Downscale(p=1.0),
             A.GridDropout(ratio=0.5, random_offset=True, p=1.0),
             A.MultiplicativeNoise(
                 multiplier=(0.9, 1.1),
                 per_channel=True, p=1.0,
             ),
-            A.ZoomBlur(max_factor=(1.01, 1.08), p=1.0),
+            A.ZoomBlur(max_factor_range=(1.01, 1.08), p=1.0),
             A.Solarize(p=1.0),
             A.Spatter(p=1),
             A.ToSepia(p=1),
@@ -604,7 +696,7 @@ class DataAugmentation:
 
         chosen_transforms = chosen_bbox_transforms + chosen_non_bbox_transforms
 
-        # Return the augmentation pipeline (不做 Normalize，離線輸出不需要)
+        # Offline output does not require an additional normalisation stage.
         return A.Compose(
             chosen_transforms,
             bbox_params=self._create_bbox_params(),
@@ -627,11 +719,7 @@ class DataAugmentation:
         Returns:
             dict: The transformed image and bounding boxes.
         """
-        bboxes, class_labels = self.normalize_bboxes_with_albumentations(
-            image, bboxes, class_labels,
-        )
-
-        # 先執行主增強（不含 MaskDropout）
+        # Apply the primary augmentation without MaskDropout first.
         aug_transform = self.random_transform(
             has_bboxes=bool(bboxes),
             image_shape=image.shape[:2],
@@ -646,19 +734,13 @@ class DataAugmentation:
         if fda_refs:
             kwargs['fda_metadata'] = fda_refs
 
+        # The main Compose owns bbox validation and filtering.  The source
+        # image was normalised at the input boundary, so an extra NoOp Compose
+        # here only repeats work for every generated image.
         transformed = aug_transform(**kwargs)
-        transformed_bboxes, transformed_labels = (
-            self.normalize_bboxes_with_albumentations(
-                transformed['image'],
-                transformed['bboxes'],
-                transformed['class_labels'],
-            )
-        )
-        transformed['bboxes'] = transformed_bboxes
-        transformed['class_labels'] = transformed_labels
 
-        # 再依照機率套用 MaskDropout（用變換後影像尺寸產生遮罩，避免尺寸不匹配）
-        if transformed_bboxes and random.random() < 0.6:
+        # Apply MaskDropout probabilistically using the transformed image size.
+        if transformed['bboxes'] and random.random() < 0.6:
             post_mask = self.generate_random_mask(
                 image_shape=transformed['image'].shape[:2],
             )
@@ -679,15 +761,6 @@ class DataAugmentation:
                 class_labels=transformed['class_labels'],
                 mask=post_mask,
             )
-            transformed_bboxes, transformed_labels = (
-                self.normalize_bboxes_with_albumentations(
-                    transformed['image'],
-                    transformed['bboxes'],
-                    transformed['class_labels'],
-                )
-            )
-            transformed['bboxes'] = transformed_bboxes
-            transformed['class_labels'] = transformed_labels
 
         return transformed
 
@@ -702,8 +775,6 @@ class DataAugmentation:
             print('Error processing image: None')
             return
 
-        # Initialise image and bboxes to None or an empty array
-        image = None
         bboxes: list[list[float]] = []
 
         try:
@@ -742,7 +813,7 @@ class DataAugmentation:
                 image, bboxes, class_labels, image_path,
             )
 
-            # Ensure the coordinates are between 0 and 1，並過濾無效 bbox
+            # Keep coordinates within 0 and 1 and filter invalid bounding boxes.
             bboxes, class_labels = self.normalize_bboxes_with_albumentations(
                 image, bboxes, class_labels,
             )
@@ -762,12 +833,6 @@ class DataAugmentation:
 
         except Exception as e:
             print(f"Error processing image: {image_path}: {e}")
-        finally:
-            if image is not None:
-                del image
-            if bboxes is not None:
-                del bboxes
-            gc.collect()
 
     def _write_augmented_images(
         self,
@@ -784,17 +849,10 @@ class DataAugmentation:
                 bboxes=bboxes,
                 class_labels=class_labels,
             )
-            image_aug, bboxes_raw, class_labels_raw = (
+            image_aug, bboxes_aug, class_labels_aug = (
                 transformed['image'],
                 transformed['bboxes'],
                 transformed['class_labels'],
-            )
-            bboxes_aug, class_labels_aug = (
-                self.normalize_bboxes_with_albumentations(
-                    image_aug,
-                    bboxes_raw,
-                    class_labels_raw,
-                )
             )
             if had_objects and not bboxes_aug:
                 continue
@@ -839,23 +897,22 @@ class DataAugmentation:
         Args:
             batch_size (int): The number of images to process in each batch.
         """
-        image_paths: list[Path] = []
-        for ext in ('*.jpg', '*.jpeg', '*.png'):
-            image_paths.extend(self.train_path.glob(f'images/{ext}'))
+        image_paths = self._get_source_image_paths()
         cpu_count = os.cpu_count() or 1
         num_workers = max(1, min(batch_size, cpu_count - 1))
 
         print(f"Using {num_workers} parallel workers for data augmentation.")
 
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            list(
-                tqdm(
-                    executor.map(
-                        self.augment_image,
-                        image_paths,
-                    ), total=len(image_paths),
-                ),
-            )
+        with ProcessPoolExecutor(
+            max_workers=num_workers,
+            initializer=_init_augmentation_worker,
+            initargs=(str(self.train_path), self.num_augmentations),
+        ) as executor:
+            for _ in tqdm(
+                executor.map(_augment_image_in_worker, image_paths),
+                total=len(image_paths),
+            ):
+                pass
 
     @staticmethod
     def read_label_file(
@@ -960,6 +1017,22 @@ class DataAugmentation:
 
             image_path.rename(new_image_path)
             label_path.rename(new_label_path)
+
+
+_worker_augmenter: DataAugmentation | None = None
+
+
+def _init_augmentation_worker(train_path: str, num_augmentations: int) -> None:
+    """Build one augmentation runtime and its caches per worker process."""
+    global _worker_augmenter
+    _worker_augmenter = DataAugmentation(train_path, num_augmentations)
+
+
+def _augment_image_in_worker(image_path: Path) -> None:
+    """Process one path using the worker-local augmentation runtime."""
+    if _worker_augmenter is None:
+        raise RuntimeError('Data augmentation worker was not initialized')
+    _worker_augmenter.augment_image(image_path)
 
 
 def main() -> None:

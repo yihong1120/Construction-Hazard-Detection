@@ -22,6 +22,13 @@ class StubTransform:
         args: tuple[object, ...],
         kwargs: dict[str, object],
     ) -> None:
+        """Perform init.
+
+        Args:
+            name: Value used by this callable.
+            args: Value used by this callable.
+            kwargs: Value used by this callable.
+        """
         self.name = name
         self.args = args
         self.kwargs = kwargs
@@ -31,10 +38,29 @@ class AlbumentationsStub:
     """Expose the flexible transform factory API used by the builder."""
 
     def __init__(self) -> None:
+        """Perform init.
+        """
         self.created: list[StubTransform] = []
 
     def __getattr__(self, name: str) -> Any:
+        """Perform getattr.
+
+        Args:
+            name: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         def factory(*args: object, **kwargs: object) -> StubTransform:
+            """Perform factory.
+
+            Args:
+                *args: Value used by this callable.
+                **kwargs: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             transform = StubTransform(name, args, kwargs)
             self.created.append(transform)
             return transform
@@ -76,6 +102,36 @@ def test_random_transform_builds_a_bbox_aware_pipeline(
     )
     assert any(
         item.name == 'RandomGridShuffle'
+        for item in albumentations.created
+    )
+    blur_ranges = {
+        item.name: item.kwargs['blur_range']
+        for item in albumentations.created
+        if item.name in {'MotionBlur', 'GaussianBlur', 'MedianBlur'}
+    }
+    assert blur_ranges == {
+        'MotionBlur': (3, 7),
+        'GaussianBlur': (1, 3),
+        'MedianBlur': (3, 3),
+    }
+    deprecated_range_params = {
+        'blur_limit',
+        'brightness_limit',
+        'contrast_limit',
+        'r_shift_limit',
+        'g_shift_limit',
+        'b_shift_limit',
+        'hue_shift_limit',
+        'sat_shift_limit',
+        'val_shift_limit',
+        'clip_limit',
+        'gamma_limit',
+        'num_shadows_limit',
+        'distort_limit',
+        'beta_limit',
+    }
+    assert all(
+        not deprecated_range_params.intersection(item.kwargs)
         for item in albumentations.created
     )
 
@@ -127,10 +183,31 @@ def test_mask_dropout_uses_the_post_transform_pipeline(
         },
     )
 
+    created: list[StubTransform] = []
+
     def transform_factory(**kwargs: object) -> StubTransform:
-        return StubTransform('MaskDropout', (), kwargs)
+        """Perform transform factory.
+
+        Args:
+            **kwargs: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
+        transform = StubTransform('MaskDropout', (), kwargs)
+        created.append(transform)
+        return transform
 
     def compose_factory(*_args: object, **_kwargs: object) -> MagicMock:
+        """Perform compose factory.
+
+        Args:
+            *_args: Value used by this callable.
+            **_kwargs: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         return post
 
     albumentations = type(
@@ -168,6 +245,9 @@ def test_mask_dropout_uses_the_post_transform_pipeline(
     assert result['bboxes'] == bboxes
     assert primary.call_args.kwargs['fda_metadata'] == [image]
     post.assert_called_once()
+    mask_dropout = next(item for item in created if item.name == 'MaskDropout')
+    assert mask_dropout.kwargs['max_objects'] == (1, 3)
+    assert 'max_objects_range' not in mask_dropout.kwargs
 
 
 def test_generate_mask_and_flip_transforms_cover_all_shape_variants(

@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import logging
-import time
+import os
 from pathlib import Path
 
 import requests
-import schedule
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -20,9 +18,10 @@ class ModelFetcher:
 
     def __init__(
         self,
-        api_url: str = 'http://your-server-address/get_new_model',
+        api_url: str | None = None,
         models: list[str] | None = None,
         local_dir: str = 'models/pt',
+        bearer_token: str | None = None,
     ) -> None:
         """Initialise the model fetcher.
 
@@ -32,11 +31,22 @@ class ModelFetcher:
                 when omitted.
             local_dir: Directory where model files are stored.
         """
-        self.api_url = api_url
+        self.api_url = (
+            api_url
+            or os.getenv('MODEL_FETCH_API_URL')
+            or 'http://your-server-address/get_new_model'
+        )
         self.models = models or [
             'yolo26n', 'yolo26s', 'yolo26m', 'yolo26l', 'yolo26x',
         ]
         self.local_dir = Path(local_dir)
+        self.bearer_token = bearer_token or os.getenv(
+            'MODEL_FETCH_BEARER_TOKEN',
+        ) or ''
+        self.max_download_bytes = max(
+            1,
+            int(os.getenv('MODEL_FETCH_MAX_BYTES', str(6 * 1024**3))),
+        )
 
     def get_last_update_time(self, model: str) -> str:
         """
@@ -58,87 +68,94 @@ class ModelFetcher:
             last_mod_time = datetime.datetime(1970, 1, 1)
         return last_mod_time.isoformat()
 
-    def download_and_save_model(
+    def request_new_model(
         self,
         model: str,
-        model_file_content: bytes,
-    ) -> None:
-        """
-        Download and save the model file to the local directory.
-
-        Args:
-            model (str): The name of the model.
-            model_file_content (bytes): The content of the model file.
-
-        Returns:
-            None
-        """
-        local_file_path = self.local_dir / f'best_{model}.pt'
-        self.local_dir.mkdir(parents=True, exist_ok=True)
-        with open(local_file_path, 'wb') as f:
-            f.write(model_file_content)
-        logger.info(f"Model {model} successfully updated at {local_file_path}")
-
-    def request_new_model(self, model: str, last_update_time: str) -> None:
-        """
-        Request a new model file from the server.
+        last_update_time: str,
+        *,
+        force_download: bool = False,
+    ) -> bool:
+        """Download a newer model as a bounded authenticated byte stream.
 
         Args:
             model (str): The name of the model.
             last_update_time (str): The last modification time of local model.
 
         Returns:
-            None
+            ``True`` when a new model was atomically installed.
         """
+        if not self.bearer_token:
+            raise ValueError('MODEL_FETCH_BEARER_TOKEN is required')
+        requested_timestamp = (
+            '1970-01-01T00:00:00'
+            if force_download else last_update_time
+        )
         try:
-            response = requests.get(
+            response = requests.post(
                 self.api_url,
-                params={'model': model, 'last_update_time': last_update_time},
-                timeout=10,  # Set timeout for the request
+                json={
+                    'model': model,
+                    'last_update_time': requested_timestamp,
+                },
+                headers={'Authorization': f'Bearer {self.bearer_token}'},
+                timeout=(5, 120),
+                stream=True,
             )
-
-            if response.status_code == 200:
-                data = response.json()
-                if 'model_file' in data:
-                    model_file_content = bytes.fromhex(data['model_file'])
-                    self.download_and_save_model(model, model_file_content)
-                else:
-                    logger.info(f"Model {model} is already up to date.")
-            else:
+            if response.status_code == 204:
+                logger.info('Model %s is already up to date.', model)
+                response.close()
+                return False
+            if response.status_code != 200:
                 logger.error(
-                    f"Failed to fetch model {model}. "
-                    f"Server returned status code: {response.status_code}",
+                    'Failed to fetch model %s. Server returned status code: %s',
+                    model,
+                    response.status_code,
                 )
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error requesting model {model}: {e}")
-
-    def update_all_models(self) -> None:
-        """Attempt to update all configured model files."""
-        for model in self.models:
+                response.close()
+                return False
+            content_length = int(response.headers.get('content-length', '0'))
+            if content_length > self.max_download_bytes:
+                response.close()
+                raise ValueError('Model download exceeds configured size limit')
             try:
-                logger.info(f"Checking for updates for model {model}...")
-                last_update_time = self.get_last_update_time(model)
-                self.request_new_model(model, last_update_time)
-            except Exception as e:
-                logger.error(f"Failed to update model {model}: {e}")
+                self._stream_model_to_disk(model, response)
+                return True
+            finally:
+                response.close()
+        except requests.exceptions.RequestException as e:
+            logger.error('Error requesting model %s: %s', model, e)
+            return False
 
-
-# Schedule the task to run every hour
-def schedule_task() -> None:
-    """Run one scheduled model update task."""
-    updater = ModelFetcher()
-    updater.update_all_models()
-
-
-def run_scheduler_loop() -> None:
-    """Run pending scheduled tasks until the process is interrupted."""
-    logger.info('Starting scheduled tasks. Press Ctrl+C to exit.')
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-
-if __name__ == '__main__':
-    # Execute the scheduled task every hour
-    schedule.every(1).hour.do(schedule_task)
-    run_scheduler_loop()
+    def _stream_model_to_disk(
+        self,
+        model: str,
+        response: requests.Response,
+    ) -> None:
+        """Write a response to a temporary file and atomically install it."""
+        destination = self.local_dir / f'best_{model}.pt'
+        temporary = destination.with_suffix(f'{destination.suffix}.part')
+        self.local_dir.mkdir(parents=True, exist_ok=True)
+        written = 0
+        digest = hashlib.sha256()
+        try:
+            with temporary.open('wb') as output:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    written += len(chunk)
+                    if written > self.max_download_bytes:
+                        raise ValueError(
+                            'Model download exceeds configured size limit',
+                        )
+                    output.write(chunk)
+                    digest.update(chunk)
+            if written == 0:
+                raise ValueError('Model download was empty')
+            expected_checksum = response.headers.get('x-model-sha256')
+            if expected_checksum and digest.hexdigest() != expected_checksum:
+                raise ValueError('Model download checksum verification failed')
+            temporary.replace(destination)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+        logger.info('Model %s atomically updated path=%s', model, destination)

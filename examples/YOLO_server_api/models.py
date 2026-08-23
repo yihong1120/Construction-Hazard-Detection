@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from pathlib import Path
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 
 # Type alias used across the manager
 ModelType = Union['YOLO', 'AutoDetectionModel']
+logger = logging.getLogger(__name__)
 
 
 class ModelFileChangeHandler(FileSystemEventHandler):
@@ -66,7 +68,7 @@ class ModelFileChangeHandler(FileSystemEventHandler):
         name = sanitize_filename(raw_name)
         if name in self.model_manager.model_names:
             self.model_manager._safe_load(name)
-            print(f'🟢  Model {name} hot-reloaded (watcher).')
+            logger.info('YOLO model hot-reloaded model=%s source=watcher', name)
 
 
 class DetectionModelManager:
@@ -185,11 +187,11 @@ class DetectionModelManager:
         try:
             self.models[name] = self.load_single_model(name)
             self._touch_lru(name)
-            print(f'✅ Loaded model: {name}')
+            logger.info('YOLO model loaded model=%s', name)
             self._enforce_lru_limit()
-        except Exception as e:
+        except Exception:
             self.models[name] = None
-            print(f'❌ Failed loading model {name}: {e}')
+            logger.exception('YOLO model load failed model=%s', name)
 
     def _touch_lru(self, name: str) -> None:
         """Mark a model as recently used by updating the LRU order.
@@ -223,7 +225,7 @@ class DetectionModelManager:
                     # Release reference explicitly
                     self.models[evict_name] = None
                     loaded_count -= 1
-                    print(f'🧹 Evicted model (LRU): {evict_name}')
+                    logger.info('YOLO model evicted model=%s policy=lru', evict_name)
                     # Perform CUDA cache cleanup only for PyTorch (.pt) mode
                     if not USE_TENSORRT and EXPLICIT_CUDA_CLEANUP:
                         try:
@@ -231,7 +233,7 @@ class DetectionModelManager:
                             import torch
 
                             torch.cuda.empty_cache()
-                            print('💡 torch.cuda.empty_cache() called')
+                            logger.debug('YOLO CUDA cache cleared')
                         except Exception:
                             pass
                 except Exception:
@@ -305,10 +307,10 @@ class DetectionModelManager:
             self.models[safe_name] = self.load_single_model(safe_name)
             self._touch_lru(safe_name)
             self._enforce_lru_limit()
-            print(f'🔄  Model {safe_name} manually reloaded.')
+            logger.info('YOLO model reloaded model=%s source=manual', safe_name)
             return True
-        except Exception as e:
-            print(f'❌  Failed to reload model {safe_name}: {e}')
+        except Exception:
+            logger.exception('YOLO model reload failed model=%s', safe_name)
             return False
 
     # =============== Cleanup ==================

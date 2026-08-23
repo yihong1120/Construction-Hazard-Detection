@@ -458,12 +458,27 @@ class Tensor:
         self,
         value: Sequence[Sequence[float]] | Sequence[float],
     ) -> None:
+        """Perform init.
+
+        Args:
+            value: Value used by this callable.
+        """
         self.value = np.asarray(value)
 
     def cpu(self) -> Tensor:
+        """Perform cpu.
+
+        Returns:
+            The callable result.
+        """
         return self
 
     def numpy(self) -> np.ndarray:
+        """Perform numpy.
+
+        Returns:
+            The callable result.
+        """
         return self.value
 
 

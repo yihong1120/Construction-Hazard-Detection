@@ -45,13 +45,13 @@ class TestDataAugmentation(unittest.TestCase):
         mock_print: MagicMock,
         mock_imread: MagicMock,
     ) -> None:
-        """Test augment_image when an exception occurs during image reading.
+        # Mock image reading exception
+        """Test augment image exception.
 
         Args:
-            mock_print (MagicMock): Mocked print function.
-            mock_imread (MagicMock): Mocked cv2.imread function.
+            mock_print: Value used by this callable.
+            mock_imread: Value used by this callable.
         """
-        # Mock image reading exception
         mock_imread.side_effect = Exception('Mocked exception')
 
         # Test augment_image
@@ -67,12 +67,12 @@ class TestDataAugmentation(unittest.TestCase):
 
     @patch('builtins.print')
     def test_augment_image_none(self, mock_print: MagicMock) -> None:
-        """Test augment_image method when the image is None.
+        # Test when image is None
+        """Test augment image none.
 
         Args:
-            mock_print (MagicMock): Mocked print function.
+            mock_print: Value used by this callable.
         """
-        # Test when image is None
         self.augmenter.augment_image(None)
         mock_print.assert_any_call('Error processing image: None')
 
@@ -89,13 +89,13 @@ class TestDataAugmentation(unittest.TestCase):
         mock_cvtColor: MagicMock,
         mock_imread: MagicMock,
     ) -> None:
-        """Test augment_image method with valid image data.
+        # Mock image and label data
+        """Test augment image.
 
         Args:
-            mock_cvtColor (MagicMock): Mocked cv2.cvtColor function.
-            mock_imread (MagicMock): Mocked cv2.imread function.
+            mock_cvtColor: Value used by this callable.
+            mock_imread: Value used by this callable.
         """
-        # Mock image and label data
         mock_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
         mock_bboxes = [[0.5, 0.5, 0.2, 0.2]]
         mock_class_labels = [1]
@@ -150,14 +150,14 @@ class TestDataAugmentation(unittest.TestCase):
         mock_cvtColor: MagicMock,
         mock_imread: MagicMock,
     ) -> None:
-        """Test augment_image method with an image that has an alpha channel.
+        # Mock image with alpha channel
+        """Test augment image with alpha channel.
 
         Args:
-            mock_imwrite (MagicMock): Mocked cv2.imwrite function.
-            mock_cvtColor (MagicMock): Mocked cv2.cvtColor function.
-            mock_imread (MagicMock): Mocked cv2.imread function.
+            mock_imwrite: Value used by this callable.
+            mock_cvtColor: Value used by this callable.
+            mock_imread: Value used by this callable.
         """
-        # Mock image with alpha channel
         mock_image = np.random.randint(0, 255, (100, 100, 4), dtype=np.uint8)
         mock_imread.return_value = mock_image
 
@@ -491,7 +491,7 @@ class TestDataAugmentation(unittest.TestCase):
 
         self.assertEqual(transform, 'safe_rotate')
         _, kwargs = mock_rotate.call_args
-        self.assertEqual(kwargs['limit'], (-45, 45))
+        self.assertEqual(kwargs['angle_range'], (-45, 45))
         self.assertEqual(kwargs['border_mode'], 4)
         self.assertEqual(kwargs['p'], 1)
 
@@ -512,7 +512,7 @@ class TestDataAugmentation(unittest.TestCase):
 
         self.assertEqual(transform, 'random_scale')
         _, kwargs = mock_scale.call_args
-        self.assertEqual(kwargs['scale_limit'], (-0.25, 0.35))
+        self.assertEqual(kwargs['scale_range'], (-0.25, 0.35))
         self.assertEqual(kwargs['p'], 1)
 
     def test_pad_if_needed_transform_uses_fixed_transform(self) -> None:
@@ -554,6 +554,16 @@ class TestDataAugmentation(unittest.TestCase):
             scale: tuple[float, float],
             p: int,
         ) -> tuple:
+            """Perform fake crop.
+
+            Args:
+                size: Value used by this callable.
+                scale: Value used by this callable.
+                p: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             return size, scale, p
 
         with patch.object(A, 'RandomResizedCrop', fake_crop, create=True):
@@ -701,10 +711,10 @@ class TestDataAugmentation(unittest.TestCase):
         'ProcessPoolExecutor',
     )
     def test_augment_data(self, mock_executor: MagicMock) -> None:
-        """Test augment_data method.
+        """Test augment data.
 
         Args:
-            mock_executor (MagicMock): Mocked ProcessPoolExecutor.
+            mock_executor: Value used by this callable.
         """
         mock_executor.return_value.__enter__.return_value.map = MagicMock()
         self.augmenter.augment_data(batch_size=2)
@@ -820,10 +830,10 @@ class TestDataAugmentation(unittest.TestCase):
         'random.shuffle',
     )
     def test_shuffle_data(self, mock_shuffle: MagicMock) -> None:
-        """Test shuffle_data method.
+        """Test shuffle data.
 
         Args:
-            mock_shuffle (MagicMock): Mocked random.shuffle function.
+            mock_shuffle: Value used by this callable.
         """
         image_dir = Path(self.train_path) / 'images'
         label_dir = Path(self.train_path) / 'labels'
@@ -850,14 +860,13 @@ class TestDataAugmentation(unittest.TestCase):
         mock_parse_args: MagicMock,
         MockDataAugmentation: MagicMock,
     ) -> None:
-        """Test main function.
+        # Mock command line arguments
+        """Test main.
 
         Args:
-            mock_parse_args (MagicMock):
-                Mocked argparse.ArgumentParser.parse_args function.
-            MockDataAugmentation (MagicMock): Mocked DataAugmentation class.
+            mock_parse_args: Value used by this callable.
+            MockDataAugmentation: Value used by this callable.
         """
-        # Mock command line arguments
         mock_parse_args.return_value = argparse.Namespace(
             train_path='./dataset_aug/train',
             num_augmentations=10,
@@ -889,14 +898,13 @@ class TestDataAugmentation(unittest.TestCase):
         mock_parse_args: MagicMock,
         MockDataAugmentation: MagicMock,
     ) -> None:
-        """Test main function when an exception occurs.
+        # Mock command line arguments
+        """Test main exception.
 
         Args:
-            mock_parse_args (MagicMock):
-                Mocked argparse.ArgumentParser.parse_args function.
-            MockDataAugmentation (MagicMock): Mocked DataAugmentation class.
+            mock_parse_args: Value used by this callable.
+            MockDataAugmentation: Value used by this callable.
         """
-        # Mock command line arguments
         mock_parse_args.return_value = argparse.Namespace(
             train_path='./dataset_aug/train',
             num_augmentations=10,

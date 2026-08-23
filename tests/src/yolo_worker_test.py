@@ -107,7 +107,7 @@ class _RunQueue:
 class _FullQueue:
     """Tests for _FullQueue."""
 
-    def put(self, *_args, **_kwargs) -> None:
+    def put(self, *_args: Any, **_kwargs: Any) -> None:
         """Support put."""
         raise queue.Full
 
@@ -187,7 +187,7 @@ class _Model:
         device: str,
         imgsz: int,
         batch: int,
-        **kwargs: yolo_worker.PrecisionValue,
+        **kwargs: object,
     ) -> Iterable[_Result]:
         """Support predict."""
         self.calls.append({
@@ -872,11 +872,19 @@ def test_read_frame_closes_mapping_when_array_construction_fails(
 ) -> None:
     """A malformed shared-memory request releases its mapped handle."""
     class BrokenSharedMemory:
+
+        """Provide BrokenSharedMemory.
+        """
+
         def __init__(self) -> None:
+            """Perform init.
+            """
             self.buf = object()
             self.closed = False
 
         def close(self) -> None:
+            """Perform close.
+            """
             self.closed = True
 
     shared = BrokenSharedMemory()
@@ -1014,6 +1022,8 @@ def test_worker_configuration_and_queue_guard_paths(
 def test_timed_out_slot_is_released_after_cleanup_delay() -> None:
     """Late worker cleanup returns a timed-out ring slot to its owner."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         ring = MagicMock()
         client = yolo_worker.YoloWorkerClient(
             _QueueSpy(),

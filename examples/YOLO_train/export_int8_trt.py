@@ -12,6 +12,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from importlib import import_module
 from pathlib import Path
+from typing import Any
 from typing import cast
 from typing import Protocol
 
@@ -73,7 +74,17 @@ class ProgressReporter(Protocol):
 
 
 class AllImagesCalibrationReader(CalibrationDataReader):
-    def __init__(self, input_name: str, dataloader) -> None:
+
+    """Provide AllImagesCalibrationReader.
+    """
+
+    def __init__(self, input_name: str, dataloader: Any) -> None:
+        """Perform init.
+
+        Args:
+            input_name: Value used by this callable.
+            dataloader: Value used by this callable.
+        """
         self.input_name = input_name
         self.dataloader = dataloader
         self.max_batches = len(dataloader)
@@ -83,9 +94,16 @@ class AllImagesCalibrationReader(CalibrationDataReader):
         self.rewind()
 
     def __len__(self) -> int:
+        """Perform len.
+
+        Returns:
+            The callable result.
+        """
         return self.max_batches
 
     def rewind(self) -> None:
+        """Perform rewind.
+        """
         self._close_progress()
         if hasattr(self.dataloader, 'reset'):
             self.dataloader.reset()
@@ -94,16 +112,32 @@ class AllImagesCalibrationReader(CalibrationDataReader):
         self.seen_images = 0
 
     def _close_progress(self) -> None:
+        """Perform close progress.
+        """
         if self.progress is not None:
             self.progress.close()
             self.progress = None
 
     def set_range(self, start_index: int, end_index: int) -> None:
+        """Perform set range.
+
+        Args:
+            start_index: Value used by this callable.
+            end_index: Value used by this callable.
+        """
         raise NotImplementedError(
             'Range slicing is not needed for this calibration reader.',
         )
 
-    def _to_input(self, batch) -> dict[str, npt.NDArray[np.float32]]:
+    def _to_input(self, batch: Any) -> dict[str, npt.NDArray[np.float32]]:
+        """Perform to input.
+
+        Args:
+            batch: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         images = batch['img'].to(torch.float32) / 255.0
         return {
             self.input_name: cast(
@@ -113,12 +147,22 @@ class AllImagesCalibrationReader(CalibrationDataReader):
         }
 
     def get_first(self) -> dict[str, npt.NDArray[np.float32]]:
+        """Perform get first.
+
+        Returns:
+            The callable result.
+        """
         self.rewind()
         first = self._to_input(next(self.iterator))
         self.rewind()
         return first
 
     def get_next(self) -> dict[str, npt.NDArray[np.float32]] | None:
+        """Perform get next.
+
+        Returns:
+            The callable result.
+        """
         if self.seen_batches >= self.max_batches:
             self._close_progress()
             return None
@@ -308,18 +352,31 @@ def _require_modelopt_export_support() -> None:
             f'Mixed INT8 TensorRT export requires Ultralytics '
             f'{required_ultralytics_version} with ModelOpt support; found '
             f'{ultralytics_version}. Reinstall the pinned dependencies with '
-            '`python -m pip install -r requirements.txt`.',
+            '`uv sync --locked`.',
         )
 
 
 def modelopt_quantize_onnx_all_images(
     onnx_file: str,
     quantize: int | str | None = None,
-    dataset=None,
+    dataset: Any = None,
     shape: tuple[int, int, int, int] = (1, 3, 640, 640),
     dynamic: bool = False,
     prefix: str = '',
 ) -> str:
+    """Perform modelopt quantize onnx all images.
+
+    Args:
+        onnx_file: Value used by this callable.
+        quantize: Value used by this callable.
+        dataset: Value used by this callable.
+        shape: Value used by this callable.
+        dynamic: Value used by this callable.
+        prefix: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     if quantize != 8:
         if original_modelopt_quantize_onnx is None:
             raise RuntimeError(
@@ -536,7 +593,21 @@ def patch_tensorrt_engine_exporter() -> None:
 
 
 def set_calibration_batch_size(calib_batch: int) -> None:
-    def get_int8_calibration_dataloader(self, prefix: str = ''):
+    """Perform set calibration batch size.
+
+    Args:
+        calib_batch: Value used by this callable.
+    """
+
+    def get_int8_calibration_dataloader(self, prefix: str = '') -> Any:
+        """Perform get int8 calibration dataloader.
+
+        Args:
+            prefix: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         export_batch = int(self.args.batch)
         self.args.batch = calib_batch
         try:
@@ -564,6 +635,11 @@ def set_node_exclusions(patterns: list[str]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """Perform parse args.
+
+    Returns:
+        The callable result.
+    """
     parser = argparse.ArgumentParser(
         description=(
             'Export an INT8 TensorRT engine with all calibration images.'
@@ -654,6 +730,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Perform main.
+    """
     args = parse_args()
     pt_file = args.model.resolve()
     trt_file = args.output.resolve()

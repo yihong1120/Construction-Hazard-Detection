@@ -17,11 +17,11 @@ from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
 from examples.YOLO_server_api import routers as routers_mod
-from examples.YOLO_server_api.routers import custom_rate_limiter
 from examples.YOLO_server_api.routers import detection_router
 from examples.YOLO_server_api.routers import jwt_access
 from examples.YOLO_server_api.routers import model_loader
 from examples.YOLO_server_api.routers import model_management_router
+from examples.YOLO_server_api.routers import rate_limiter_service
 from examples.YOLO_server_api.routers import websocket_detect
 """Tests for FastAPI routers layer.
 
@@ -54,7 +54,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         cls.app.include_router(detection_router, prefix='/api')
         cls.app.include_router(model_management_router, prefix='/api')
         # Default dependency overrides
-        cls.app.dependency_overrides[custom_rate_limiter] = lambda: 999
+        cls.app.dependency_overrides[rate_limiter_service] = lambda: 999
         # Default role = admin unless a test overrides it
         cls.app.dependency_overrides[jwt_access] = (
             cls._override_jwt_role_factory('admin')
@@ -204,7 +204,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn('Invalid model', resp.text)
-        mock_logger.error.assert_called()
+        mock_logger.warning.assert_called()
 
     @patch(
         'examples.YOLO_server_api.routers.update_model_file',
@@ -234,39 +234,39 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         mock_logger.error.assert_called()
 
     @patch(
-        'examples.YOLO_server_api.routers.get_new_model_file',
+        'examples.YOLO_server_api.routers.get_new_model_path',
         new_callable=AsyncMock,
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_get_new_model_updated(
         self, mock_logger: MagicMock, mock_get_file: AsyncMock,
     ) -> None:
-        """Verify updated model returns base64 content and logs info."""
+        """Verify an updated model is returned as a binary stream."""
         # Ensure privileged role
         self.app.dependency_overrides[jwt_access] = (
             self._override_jwt_role_factory('admin')
         )
-        mock_get_file.return_value = b'data'
+        mock_get_file.return_value = Path(__file__)
         payload = {
             'model': 'yolo26n',
             'last_update_time': '2023-10-01T12:30:00',
         }
         resp = self.client.post('/api/get_new_model', json=payload)
         self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertEqual(body['message'], 'Model yolo26n is updated.')
-        self.assertEqual(body['model_file'], 'ZGF0YQ==')  # base64 of b'data'
+        self.assertEqual(resp.headers['content-type'], 'application/octet-stream')
+        self.assertIn('x-model-sha256', resp.headers)
+        self.assertTrue(resp.content)
         mock_logger.info.assert_called()
 
     @patch(
-        'examples.YOLO_server_api.routers.get_new_model_file',
+        'examples.YOLO_server_api.routers.get_new_model_path',
         new_callable=AsyncMock,
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_get_new_model_up_to_date(
         self, _mock_logger: MagicMock, mock_get_file: AsyncMock,
     ) -> None:
-        """Verify up-to-date model returns a simple message.
+        """Verify up-to-date model returns no response body.
 
         Args:
             _mock_logger: Mocked logger instance.
@@ -278,10 +278,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             'last_update_time': '2023-10-01T12:30:00',
         }
         resp = self.client.post('/api/get_new_model', json=payload)
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(
-            resp.json(), {'message': 'Model yolo26n is up to date.'},
-        )
+        self.assertEqual(resp.status_code, 204)
+        self.assertEqual(resp.content, b'')
 
     def test_get_new_model_invalid_datetime(self) -> None:
         """Verify invalid datetime yields 400 Bad Request."""
@@ -290,7 +288,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 400)
 
     @patch(
-        'examples.YOLO_server_api.routers.get_new_model_file',
+        'examples.YOLO_server_api.routers.get_new_model_path',
         side_effect=Exception('Some error'),
     )
     @patch('examples.YOLO_server_api.routers.logger')
@@ -310,7 +308,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         resp = self.client.post('/api/get_new_model', json=payload)
         self.assertEqual(resp.status_code, 500)
         self.assertIn('Failed to retrieve model.', resp.text)
-        mock_logger.error.assert_called()
+        mock_logger.exception.assert_called()
 
     def test_get_new_model_forbidden_guest(self) -> None:
         """Verify guest role is forbidden to retrieve model artefacts.

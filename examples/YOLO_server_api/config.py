@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 import os
 import warnings
 
 # Configuration parameters for YOLO Server API
+logger = logging.getLogger(__name__)
 
 # Whether to use TensorRT for inference
 USE_TENSORRT: bool = os.getenv('USE_TENSORRT', 'false').lower() == 'true'
@@ -95,7 +97,10 @@ _CONFIG_INFO: str = f"""
    • Model variants: {', '.join(MODEL_VARIANTS)}
 """
 
-print(_CONFIG_INFO)
+
+def log_configuration() -> None:
+    """Emit the active non-sensitive YOLO configuration at app startup."""
+    logger.info('%s', _CONFIG_INFO)
 
 # Type hints and docstrings added for clarity and maintainability
 

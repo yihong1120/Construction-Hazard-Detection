@@ -16,6 +16,8 @@ class TestYoloDetectorResilience(unittest.TestCase):
     """Exercise the lightweight shared-worker detector helpers."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.detector = detector_module.YoloDetector()
 
     def test_linear_assignment_import_stays_deferred(self) -> None:

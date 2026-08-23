@@ -65,6 +65,10 @@ class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
 
 
 class TestWebsocketEnvironmentHelpers(unittest.TestCase):
+
+    """Provide TestWebsocketEnvironmentHelpers.
+    """
+
     def test_local_auth_bypass_handles_unset_and_non_ip_clients(self) -> None:
         """Local-only bypass handles absent flags and host names safely."""
         with patch.dict('os.environ', {}, clear=False):

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import base64
+import asyncio
 import datetime
+import logging
+import os
 import time
-from asyncio.log import logger
 from pathlib import Path
 from typing import Final
 
@@ -13,12 +14,15 @@ from fastapi import APIRouter
 from fastapi import Body
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Request
 from fastapi import Security
 from fastapi import UploadFile
 from fastapi import WebSocket
+from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 
-from examples.auth.cache import custom_rate_limiter
+from examples.auth.cache import rate_limiter_service
 from examples.auth.config import Settings
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
@@ -26,7 +30,8 @@ from examples.auth.redis_pool import get_redis_pool_ws
 from examples.shared.filename_utils import sanitize_filename
 from examples.YOLO_server_api.detection import INFERENCE_SEMAPHORE
 from examples.YOLO_server_api.detection import run_detection_from_bytes
-from examples.YOLO_server_api.model_files import get_new_model_file
+from examples.YOLO_server_api.model_files import get_new_model_path
+from examples.YOLO_server_api.model_files import model_file_checksum
 from examples.YOLO_server_api.model_files import update_model_file
 from examples.YOLO_server_api.models import DetectionModelManager
 from examples.YOLO_server_api.schemas import DetectionRequest
@@ -45,22 +50,66 @@ model_loader: DetectionModelManager = DetectionModelManager()
 
 # Application settings configuration
 settings: Settings = Settings()
+logger = logging.getLogger(__name__)
 
 _upload_chunk_size: Final[int] = 1024 * 1024
+_detect_max_upload_bytes: Final[int] = int(
+    os.getenv('DETECT_MAX_UPLOAD_BYTES', str(20 * 1024 * 1024)),
+)
+_model_upload_max_bytes: Final[int] = int(
+    os.getenv('MODEL_UPLOAD_MAX_BYTES', str(6 * 1024**3)),
+)
+_detection_ingress_semaphore = asyncio.Semaphore(
+    max(1, int(os.getenv('DETECT_INGRESS_CONCURRENCY', '8'))),
+)
+
+
+async def _read_limited_upload(
+    upload_file: UploadFile,
+    *,
+    max_bytes: int,
+    chunk_size: int = _upload_chunk_size,
+) -> bytes:
+    """Read an upload with a strict allocation limit."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload_file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f'Upload exceeds the {max_bytes}-byte limit',
+            )
+        chunks.append(chunk)
+    if not chunks:
+        raise HTTPException(status_code=400, detail='Empty upload file')
+    return b''.join(chunks)
 
 
 async def _stream_upload_to_path(
     upload_file: UploadFile,
     destination: Path,
+    *,
+    max_bytes: int = _model_upload_max_bytes,
     chunk_size: int = _upload_chunk_size,
 ) -> None:
     """Stream an uploaded file to disk without buffering it in memory."""
     wrote_any = False
+    total = 0
     async with aiofiles.open(destination, 'wb') as f:
         while True:
             chunk = await upload_file.read(chunk_size)
             if not chunk:
                 break
+            total += len(chunk)
+            if total > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f'Upload exceeds the {max_bytes}-byte limit',
+                )
             wrote_any = True
             await f.write(chunk)
     if not wrote_any:
@@ -71,7 +120,7 @@ async def _stream_upload_to_path(
 async def detect(
     detection_request: DetectionRequest = Depends(DetectionRequest.as_form),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
-    remaining_requests: int = Depends(custom_rate_limiter),
+    remaining_requests: int = Depends(rate_limiter_service),
 ) -> list[list[float | int]]:
     """Process object detection on uploaded images using YOLO models.
 
@@ -98,13 +147,20 @@ async def detect(
     # Record the start time for performance monitoring
     start_time: float = time.time()
 
-    # Log authentication and rate limiting information
-    print(f"Authenticated user: {credentials.subject}")
-    print(f"Remaining requests: {remaining_requests}")
-
-    # Read image data from the uploaded file
-    img_bytes: bytes = await detection_request.image.read()
+    # Limit both the memory allocated per image and concurrent upload readers.
+    # Do not log credentials: a JWT subject may contain customer identifiers.
+    async with _detection_ingress_semaphore:
+        img_bytes = await _read_limited_upload(
+            detection_request.image,
+            max_bytes=_detect_max_upload_bytes,
+        )
     io_time: float = time.time() - start_time
+    logger.debug(
+        'Detection upload accepted model=%s remaining_requests=%s bytes=%s',
+        detection_request.model,
+        remaining_requests,
+        len(img_bytes),
+    )
 
     # Retrieve the requested model instance
     model_instance = model_loader.get_model(detection_request.model)
@@ -120,11 +176,14 @@ async def detect(
 
     # Log comprehensive timing information for performance analysis
     total_time: float = time.time() - start_time
-    print(
-        f"Detection timing - IO: {io_time:.3f}s, "
-        f"Inference: {inference_time:.3f}s, "
-        f"Post: {post_time:.3f}s, "
-        f"Total: {total_time:.3f}s",
+    logger.info(
+        'Detection completed model=%s io_seconds=%.3f inference_seconds=%.3f '
+        'post_seconds=%.3f total_seconds=%.3f',
+        detection_request.model,
+        io_time,
+        inference_time,
+        post_time,
+        total_time,
     )
 
     return datas
@@ -193,16 +252,16 @@ async def model_file_update(
 
         # Process the model file update
         await update_model_file(data.model, tmp_path)
-        logger.info(f"Model {data.model} updated successfully.")
+        logger.info('Model updated model=%s', data.model)
         return {'message': f"Model {data.model} updated successfully."}
 
     except ValueError as e:
         # Handle validation errors (e.g., invalid model format)
-        logger.error(f"Model update validation error: {e}")
+        logger.warning('Model update validation error: %s', e)
         raise HTTPException(status_code=400, detail=str(e))
     except OSError as e:
         # Handle I/O errors (e.g., disk space, permissions)
-        logger.error(f"Model update I/O error: {e}")
+        logger.error('Model update I/O error: %s', e)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Ensure temporary file is cleaned up regardless of outcome
@@ -212,10 +271,11 @@ async def model_file_update(
 
 @model_management_router.post('/get_new_model')
 async def get_new_model(
+    request: Request,
     update_request: UpdateModelRequest = Body(...),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
-) -> dict[str, str]:
-    """Retrieve updated model files based on timestamp comparison.
+) -> Response:
+    """Stream a newer authenticated model artefact when one is available.
 
     This endpoint checks if a newer version of the requested model is
     available on the server compared to the client's last update time.
@@ -229,8 +289,8 @@ async def get_new_model(
 
     Returns:
         A dictionary containing either:
-        - Update message with base64-encoded model file if newer version exists
-        - Up-to-date message if no update is needed
+        - Binary model response with ETag if a newer version exists
+        - ``204 No Content`` if the local copy is already current
 
     Raises:
         HTTPException:
@@ -257,31 +317,38 @@ async def get_new_model(
         )
 
         # Check for newer model file on the server
-        content: bytes | None = await get_new_model_file(
+        model_path = await get_new_model_path(
             update_request.model,
             user_last_update,
         )
 
-        if content:
-            # Model update is available - encode and return
-            logger.info(
-                f"Newer model file for {update_request.model} retrieved.",
-            )
-            return {
-                'message': f"Model {update_request.model} is updated.",
-                'model_file': base64.b64encode(content).decode(),
-            }
+        if model_path is None:
+            return Response(status_code=204)
 
-        # Model is already up to date
-        return {'message': f"Model {update_request.model} is up to date."}
+        checksum = await asyncio.to_thread(model_file_checksum, model_path)
+        etag = f'"{checksum}"'
+        if request.headers.get('if-none-match') == etag:
+            return Response(status_code=304, headers={'ETag': etag})
+
+        logger.info('Streaming updated model model=%s', update_request.model)
+        return FileResponse(
+            model_path,
+            media_type='application/octet-stream',
+            filename=model_path.name,
+            headers={
+                'Cache-Control': 'private, no-store',
+                'ETag': etag,
+                'X-Model-SHA256': checksum,
+            },
+        )
 
     except ValueError as e:
         # Handle invalid timestamp format or validation errors
-        logger.error(f"Validation error: {e}")
+        logger.warning('Model fetch validation error: %s', e)
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except Exception:
         # Handle unexpected server errors
-        logger.error(f"Error retrieving model: {e}")
+        logger.exception('Error retrieving model')
         raise HTTPException(
             status_code=500,
             detail='Failed to retrieve model.',

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 from pathlib import Path
 from typing import Final
 
@@ -62,11 +63,10 @@ async def update_model_file(model: str, model_file: Path) -> None:
         raise OSError(f"Failed to update model file: {e}")
 
 
-async def get_new_model_file(
+async def get_new_model_path(
     model: str, last_update_time: datetime.datetime,
-) -> bytes | None:
-    """
-    Retrieve the new model file if updated since the provided time.
+) -> Path | None:
+    """Return the updated model path without loading its bytes into memory.
 
     Args:
         model (str): The model key (e.g., 'yolo26n', 'yolo26s').
@@ -74,7 +74,7 @@ async def get_new_model_file(
             provided by the user.
 
     Returns:
-        bytes | None: Model file content if updated, else None.
+        Path | None: Updated model path if available, else None.
     """
     destination_path = _model_destination_path(model)
 
@@ -85,9 +85,19 @@ async def get_new_model_file(
         destination_path.stat().st_mtime,
     )
     if file_mod_time > last_update_time:
-        try:
-            with destination_path.open('rb') as f:
-                return f.read()
-        except Exception as e:
-            raise OSError(f"Failed to read model file: {e}")
+        return destination_path
     return None
+
+
+def model_file_etag(model_path: Path) -> str:
+    """Return the strong ETag derived from the model file's SHA-256 digest."""
+    return f'"{model_file_checksum(model_path)}"'
+
+
+def model_file_checksum(model_path: Path) -> str:
+    """Calculate a streaming SHA-256 checksum without loading the model."""
+    digest = hashlib.sha256()
+    with model_path.open('rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
