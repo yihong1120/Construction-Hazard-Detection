@@ -92,6 +92,42 @@ class WebRtcServiceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             get_public_ice_servers('alice')
 
+    def test_get_public_ice_servers_validates_empty_stun_and_turn_values(
+        self,
+    ) -> None:
+        """Every configured ICE component rejects empty or anonymous values."""
+        with patch.dict(
+            'os.environ',
+            {'STREAMING_WEBRTC_STUN_URLS': ' , '},
+            clear=True,
+        ):
+            with self.assertRaises(ValueError):
+                get_public_ice_servers('alice')
+
+        base = {'STREAMING_WEBRTC_STUN_URLS': 'stun:relay'}
+        with patch.dict(
+            'os.environ',
+            {**base, 'STREAMING_WEBRTC_TURN_URLS': ' , '},
+            clear=True,
+        ):
+            with self.assertRaises(ValueError):
+                get_public_ice_servers('alice')
+
+        with patch.dict(
+            'os.environ',
+            {
+                **base,
+                'STREAMING_WEBRTC_TURN_URLS': 'turn:relay',
+                'STREAMING_WEBRTC_TURN_SHARED_SECRET': '',
+                'STREAMING_WEBRTC_TURN_TTL_SECONDS': '60',
+            },
+            clear=True,
+        ):
+            with self.assertRaises(ValueError):
+                get_public_ice_servers('')
+            with self.assertRaises(ValueError):
+                get_public_ice_servers('alice')
+
 
 if __name__ == '__main__':
     unittest.main()

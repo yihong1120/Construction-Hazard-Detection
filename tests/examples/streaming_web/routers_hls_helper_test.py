@@ -492,6 +492,26 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertEqual(raised.exception.detail, 'media_playlist_not_ready')
 
+    async def test_internal_hls_playlist_uses_lifespan_client(self) -> None:
+        """A supplied shared client avoids creating a per-request transport."""
+        client = AsyncMock()
+        client.get.return_value = SimpleNamespace(
+            status_code=200,
+            text='#EXTM3U',
+            cookies={},
+        )
+
+        playlist_result = await playback_hls.fetch_internal_hls_playlist(
+            'hazard_site_cam',
+            media_query='quality=low',
+            http_client=client,
+        )
+        playlist, session_cookie = playlist_result
+
+        self.assertEqual(playlist, '#EXTM3U')
+        self.assertIsNone(session_cookie)
+        client.get.assert_awaited_once()
+
     async def test_session_scan_startup_and_playlist_input_guards(
         self,
     ) -> None:

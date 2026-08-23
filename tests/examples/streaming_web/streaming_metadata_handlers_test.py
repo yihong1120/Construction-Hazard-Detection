@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from examples.streaming_web.metadata_fanout import _StreamSubscribers
 from examples.streaming_web.metadata_fanout import MetadataFanout
 from examples.streaming_web.schemas import FrameOutData
 from examples.streaming_web.streaming_metadata_handlers import (
@@ -80,6 +81,112 @@ class MetadataFanoutTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(calls, 1)
         await first.close()
         await second.close()
+
+    async def test_subscription_close_and_publish_keep_only_latest_item(
+        self,
+    ) -> None:
+        """Subscriptions close idempotently and queues discard stale data.
+
+        Only the newest metadata item remains for a slow client.
+        """
+        fanout = MetadataFanout()
+        subscription = await fanout.subscribe(
+            MagicMock(),
+            'metadata-key',
+            fetcher=AsyncMock(return_value=None),
+        )
+        await subscription.close()
+        await subscription.close()
+
+        queue: asyncio.Queue[FrameOutData | Exception] = asyncio.Queue(
+            maxsize=1,
+        )
+        queue.put_nowait({
+            'id': 'old',
+            'has_warning': False,
+            'key': 'camera',
+            'stream_id': 'camera',
+            'redis_key': 'metadata-key',
+        })
+        state = _StreamSubscribers(
+            rds=MagicMock(),
+            queues={queue},
+            fetcher=AsyncMock(return_value=None),
+        )
+        failure = RuntimeError('offline')
+        await fanout._publish(state, failure)
+        self.assertIs(await queue.get(), failure)
+
+    async def test_reader_retries_empty_and_failed_redis_reads(self) -> None:
+        """The reader yields on idle/error paths until subscribers disappear.
+
+        Retry delays prevent an unavailable Redis server from spinning CPU.
+        """
+        fanout = MetadataFanout()
+        queue: asyncio.Queue[FrameOutData | Exception] = asyncio.Queue()
+        state = _StreamSubscribers(
+            rds=MagicMock(),
+            queues={queue},
+            fetcher=AsyncMock(side_effect=[RuntimeError('offline'), None]),
+        )
+        fanout._streams['metadata-key'] = state
+        sleep_calls = 0
+
+        async def remove_subscribers(_delay: float) -> None:
+            """Clear the subscriber set after both retry paths execute."""
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls == 2:
+                state.queues.clear()
+
+        with patch(
+            'examples.streaming_web.metadata_fanout._sleep',
+            new=remove_subscribers,
+        ):
+            await fanout._run('metadata-key', state)
+
+        self.assertIsInstance(await queue.get(), RuntimeError)
+
+    async def test_reader_removes_empty_state_when_cancelled_during_fetch(
+        self,
+    ) -> None:
+        """Cancelling a reader removes its empty fan-out stream state.
+
+        No unused Redis reader remains after the final subscriber exits.
+        """
+        fanout = MetadataFanout()
+        queue: asyncio.Queue[FrameOutData | Exception] = asyncio.Queue()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_fetcher(
+            _redis: object,
+            _key: str,
+            _last_id: str,
+        ) -> FrameOutData | None:
+            """Wait until cancellation after signalling that the fetch began.
+
+            Returns:
+                No frame because the task is cancelled before Redis responds.
+            """
+            started.set()
+            await release.wait()
+            return None
+
+        state = _StreamSubscribers(
+            rds=MagicMock(),
+            queues={queue},
+            fetcher=blocked_fetcher,
+        )
+        fanout._streams['metadata-key'] = state
+        reader = asyncio.create_task(fanout._run('metadata-key', state))
+        await started.wait()
+        state.queues.clear()
+        reader.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await reader
+
+        self.assertNotIn('metadata-key', fanout._streams)
 
 
 class MetadataHandlerTests(unittest.IsolatedAsyncioTestCase):

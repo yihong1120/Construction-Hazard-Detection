@@ -521,6 +521,17 @@ class OverlayRendererTest(unittest.TestCase):
             np.array([[1, 2], [3, 4], [4, 5]], dtype=np.int32),
         )
 
+    def test_polygon_drawing_skips_empty_normalised_payloads(self) -> None:
+        """An empty polygon payload leaves the frame unchanged."""
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+
+        renderer._draw_polygons(
+            frame,
+            ((json.dumps([]), (255, 0, 0), (255, 0, 0), 0.4),),
+        )
+
+        self.assertFalse(frame.any())
+
     def test_roi_blend_helpers_cover_noop_edges(self) -> None:
         """Exercise this test."""
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
