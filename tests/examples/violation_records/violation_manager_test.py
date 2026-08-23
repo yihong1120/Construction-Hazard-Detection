@@ -7,9 +7,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import patch
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from examples.auth.models import Violation
-from examples.violation_records.violation_manager import ViolationManager
+from examples.violation_records import violation_manager
+
+ViolationManager = violation_manager.ViolationManager
 
 
 class TestViolationManager(unittest.IsolatedAsyncioTestCase):
@@ -73,3 +78,47 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
                 )
 
             db.add.assert_not_called()
+
+    async def test_save_validates_metadata_and_cleans_up_failed_inserts(
+        self,
+    ) -> None:
+        """Validated detector data is persisted and failures remove media."""
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ViolationManager(directory)
+            upload = AsyncMock()
+            upload.read = AsyncMock(side_effect=[b'image', b''])
+            db = SimpleNamespace(rollback=AsyncMock())
+
+            with patch.object(
+                manager,
+                '_insert_violation_record',
+                AsyncMock(side_effect=SQLAlchemyError('offline')),
+            ):
+                with self.assertRaises(SQLAlchemyError):
+                    await manager.save_violation(
+                        db=db,
+                        site='Site A',
+                        stream_name='Camera A',
+                        detection_time=datetime(2026, 8, 23),
+                        image_file=upload,
+                        warnings_json='{"warning_no_hardhat":{"count":1}}',
+                        detections_json='[[0,0,0,0,0,0,0]]',
+                    )
+
+            self.assertEqual(list(Path(directory).rglob('*.png')), [])
+            db.rollback.assert_awaited_once()
+
+    async def test_write_upload_translates_storage_read_errors(
+        self,
+    ) -> None:
+        """Storage read failures leave no partial evidence file behind."""
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ViolationManager(directory)
+            upload = AsyncMock()
+            upload.read = AsyncMock(side_effect=OSError('storage offline'))
+            image_path = Path(directory) / 'evidence.png'
+
+            with self.assertRaises(violation_manager.ViolationImageReadError):
+                await manager._write_upload_file(upload, image_path, 32)
+
+            self.assertFalse(image_path.exists())

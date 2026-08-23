@@ -33,8 +33,6 @@ def normalise_safe_relative_path(image_path: str) -> Path:
 
     safe_parts: list[str] = []
     for part in raw_path.parts:
-        if part in {'', '.', '..'}:
-            raise HTTPException(status_code=400, detail='Invalid path')
         cleaned = sanitize_filename(part)
         if not cleaned:
             raise HTTPException(status_code=400, detail='Invalid path segment')

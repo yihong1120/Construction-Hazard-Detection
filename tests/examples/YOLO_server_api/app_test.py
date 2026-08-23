@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import asynccontextmanager
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from examples.YOLO_server_api.app import app
-from examples.YOLO_server_api.app import main
+from examples.YOLO_server_api import app as yolo_app
+
+app = yolo_app.app
+main = yolo_app.main
 
 
 class TestApp(unittest.IsolatedAsyncioTestCase):
@@ -31,6 +34,21 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
             port=8000,
             workers=2,
         )
+
+    async def test_lifespan_logs_then_uses_the_shared_lifecycle(self) -> None:
+        """YOLO workers initialise through the shared application lifecycle."""
+
+        @asynccontextmanager
+        async def shared_lifespan(_app: object):
+            """Provide an isolated shared lifespan context for the test."""
+            yield
+
+        with (
+            patch.object(yolo_app, 'log_configuration') as log_configuration,
+            patch.object(yolo_app, 'global_lifespan', shared_lifespan),
+        ):
+            async with yolo_app._lifespan(MagicMock()):
+                log_configuration.assert_called_once()
 
 
 if __name__ == '__main__':

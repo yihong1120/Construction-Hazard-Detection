@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from examples.YOLO_server_api import model_files
 from examples.YOLO_server_api.model_files import get_new_model_path
 from examples.YOLO_server_api.model_files import model_file_checksum
 from examples.YOLO_server_api.model_files import model_file_etag
@@ -62,6 +63,57 @@ class ModelFileTests(unittest.IsolatedAsyncioTestCase):
         """
         await update_model_file('yolo26n', Path('candidate.pt'))
         self.assertTrue(rename.called)
+
+    async def test_model_file_rejects_invalid_paths_and_model_contents(
+        self,
+    ) -> None:
+        """Model replacement rejects bad files, models, and destinations."""
+        with self.assertRaisesRegex(ValueError, 'Invalid file'):
+            await update_model_file('yolo26n', Path('candidate.txt'))
+
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory) / 'candidate.pt'
+            candidate.write_bytes(b'model')
+            with patch.object(
+                model_files.torch.jit,
+                'load',
+                side_effect=RuntimeError('bad'),
+            ):
+                with self.assertRaisesRegex(ValueError, 'Invalid PyTorch'):
+                    await update_model_file('yolo26n', candidate)
+
+        with patch.dict(
+            model_files.VALID_MODEL_FILES,
+            {'yolo26n': '../../escape.pt'},
+        ):
+            with self.assertRaisesRegex(ValueError, 'path traversal'):
+                model_files._model_destination_path('yolo26n')
+
+    async def test_model_file_rename_failure_and_current_path_return_none(
+        self,
+    ) -> None:
+        """Filesystem write failures and unchanged model paths are explicit."""
+        timestamp = datetime.datetime(2023, 1, 1)
+        with (
+            patch.object(Path, 'is_file', return_value=True),
+            patch.object(Path, 'stat') as stat,
+        ):
+            stat.return_value.st_mtime = timestamp.timestamp()
+            self.assertIsNone(await get_new_model_path('yolo26n', timestamp))
+
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory) / 'candidate.pt'
+            candidate.write_bytes(b'model')
+            with (
+                patch.object(
+                    model_files.torch.jit,
+                    'load',
+                    return_value=object(),
+                ),
+                patch.object(Path, 'rename', side_effect=OSError('read-only')),
+            ):
+                with self.assertRaisesRegex(OSError, 'Failed to update'):
+                    await update_model_file('yolo26n', candidate)
 
 
 class ModelChecksumTests(unittest.TestCase):

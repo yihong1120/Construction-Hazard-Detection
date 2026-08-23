@@ -267,3 +267,10 @@ class TestYoloServerConfigCoverage(unittest.TestCase):
                 else:
                     os.environ[name] = value
             importlib.reload(config)
+
+    def test_log_configuration_uses_the_module_logger(self) -> None:
+        """Configuration output is emitted through structured logging."""
+        with patch.object(config.logger, 'info') as info:
+            config.log_configuration()
+
+        info.assert_called_once_with('%s', config._CONFIG_INFO)
