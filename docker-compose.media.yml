@@ -1,0 +1,27 @@
+name: ${COMPOSE_PROJECT_NAME:-construction-hazard-detection}
+
+networks:
+  app_network:
+    driver: bridge
+
+services:
+  media-server:
+    image: bluenviron/mediamtx:1.18.2
+    restart: unless-stopped
+    environment:
+      MTX_RTSPTRANSPORTS: tcp
+      MTX_HLS: 'yes'
+      MTX_WEBRTC: 'yes'
+      MTX_HLSALWAYSREMUX: ${MTX_HLSALWAYSREMUX:-no}
+      MTX_HLSVARIANT: ${MTX_HLSVARIANT:-lowLatency}
+      MTX_HLSSEGMENTDURATION: ${MTX_HLSSEGMENTDURATION:-2s}
+      MTX_HLSSEGMENTCOUNT: ${MTX_HLSSEGMENTCOUNT:-14}
+      MTX_HLSPARTDURATION: ${MTX_HLSPARTDURATION:-200ms}
+      MTX_HLSMUXERCLOSEAFTER: ${MTX_HLSMUXERCLOSEAFTER:-60s}
+      MTX_READTIMEOUT: 60s
+    ports:
+      - '127.0.0.1:8554:8554'
+      - '127.0.0.1:8890:8888'
+      - '127.0.0.1:8889:8889'
+    networks:
+      - app_network

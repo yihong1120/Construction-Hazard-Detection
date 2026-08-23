@@ -142,17 +142,25 @@ mode in `src/yolo_worker.py`.
 The project currently targets Python `>=3.14,<3.15`.
 
 ```bash
-uv sync
+uv sync --locked --all-extras --no-extra yolo-gpu
 ```
 
-If you use pip instead:
-
-```bash
-uv export --format=requirements-txt --no-dev -o requirements.lock
-pip install -r requirements.lock
-```
+The default dependency set contains only shared API runtime packages.  Docker
+images install their own `streaming`, `violation`, `notification`, or `yolo`
+extra; use `--extra yolo-gpu` only on CUDA/TensorRT hosts.
+For the optional HTTP broadcast, Messenger, and WeChat Work channels without
+the MCP server, install `uv sync --extra social-notifications`.
 
 ### 2. Download Models
+
+To preview cleanup of ignored logs, editor history, generated training runs,
+and transient media without touching active model files:
+
+```bash
+python scripts/cleanup_local_artifacts.py --days 14
+```
+
+Add `--apply` only after reviewing the printed paths.
 
 ```bash
 hf download yihong1120/Construction-Hazard-Detection \
@@ -175,7 +183,7 @@ DATABASE_URL='postgresql+asyncpg://username:password@127.0.0.1/construction_haza
 
 REDIS_HOST='127.0.0.1'
 REDIS_PORT=6379
-REDIS_PASSWORD='password'
+REDIS_PASSWORD='set-a-strong-password'
 
 JWT_SECRET_KEY='replace-with-a-long-random-secret'
 
@@ -206,10 +214,12 @@ MEDIA_PUBLIC_HLS_BASE_URL='/hazard/media'
 MEDIA_PUBLIC_WEBRTC_BASE_URL='/hazard/media/webrtc'
 MEDIA_PUBLISH_CLEAN_STREAM=true
 MEDIA_PUBLISH_ANNOTATED_STREAM=true
-# Detail clean video is copied directly from the camera. Only the requested
-# preview and annotated streams are encoded, using the Intel iGPU.
-MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM=true
-MEDIA_PUBLISH_CLEAN_ENCODER=copy
+# Detail clean video uses the shared latest-frame capture and Intel iGPU. This
+# drops stale frames, avoids a second RTSP connection to each camera, and keeps
+# HLS keyframes regular. Enable direct source restreaming only when the
+# untouched camera bitstream is explicitly required.
+MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM=false
+MEDIA_PUBLISH_CLEAN_ENCODER=h264_vaapi
 MEDIA_PUBLISH_ENCODER=h264_vaapi
 MEDIA_PUBLISH_VAAPI_DEVICE=/dev/dri/renderD128
 # Share viewer-demand reads between a camera's clean/detail/preview publishers.
@@ -235,6 +245,20 @@ docker compose ps redis postgres media-server
 docker compose logs -f redis postgres media-server
 ```
 
+If PostgreSQL and Redis are managed on the host and only MediaMTX is needed,
+use the standalone Compose file. It does not interpolate database or Redis
+credentials:
+
+```bash
+docker compose -f docker-compose.media.yml up -d
+docker compose -f docker-compose.media.yml ps
+docker compose -f docker-compose.media.yml logs -f media-server
+```
+
+The full `docker-compose.yml` starts its own PostgreSQL container, so it
+requires `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` separately.
+Those fields cannot be safely or reliably reconstructed from `DATABASE_URL`.
+
 When the Python services run on the host, use local addresses in `.env`:
 
 ```dotenv
@@ -251,6 +275,10 @@ names instead:
 ```dotenv
 DATABASE_URL='postgresql+asyncpg://username:password@postgres/construction_hazard_detection'
 REDIS_HOST='redis'
+POSTGRES_DB='construction_hazard_detection'
+POSTGRES_USER='construction_app'
+POSTGRES_PASSWORD='set-a-strong-password'
+REDIS_PASSWORD='set-a-strong-password'
 MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://media-server:8554'
 ```
 
@@ -264,12 +292,22 @@ Infrastructure roles:
 
 Redis and MediaMTX do not store violation images or database records.
 
-For a fresh PostgreSQL container, import the schema if it was not mounted at
-container creation time:
+For a new, empty PostgreSQL database, import the bootstrap schema if it was
+not mounted at container creation time. This script drops application tables,
+so never run it against a database that contains data:
 
 ```bash
 cat ./scripts/init.postgres.sql | docker exec -i postgres-container \
   psql -U username -d construction_hazard_detection
+```
+
+For an existing database, use the migration ledger instead. After confirming
+the schema is current through the stated baseline, record it once and apply
+only later migrations:
+
+```bash
+uv run python scripts/apply_postgres_migrations.py --baseline 20260827
+uv run python scripts/apply_postgres_migrations.py
 ```
 
 ### 5. Configure MediaMTX

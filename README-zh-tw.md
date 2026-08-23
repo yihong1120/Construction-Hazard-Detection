@@ -135,17 +135,24 @@ FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready 
 目前專案鎖定 Python `>=3.14,<3.15`。
 
 ```bash
-uv sync
+uv sync --locked --all-extras --no-extra yolo-gpu
 ```
 
-若使用 pip：
-
-```bash
-uv export --format=requirements-txt --no-dev -o requirements.lock
-pip install -r requirements.lock
-```
+預設只安裝共用 API runtime 相依。Docker image 會各自安裝 `streaming`、
+`violation`、`notification` 或 `yolo` extra；只有 CUDA/TensorRT 主機才需要
+額外加入 `--extra yolo-gpu`。
+若只要使用 HTTP broadcast、Messenger 或 WeChat Work 等可選通知渠道，可執行
+`uv sync --extra social-notifications`。
 
 ### 2. 下載模型
+
+若要預覽清理被忽略的 log、編輯器歷史、訓練輸出與暫存媒體（不會碰模型檔）：
+
+```bash
+python scripts/cleanup_local_artifacts.py --days 14
+```
+
+確認輸出路徑後才加上 `--apply` 永久刪除。
 
 ```bash
 hf download yihong1120/Construction-Hazard-Detection \
@@ -166,7 +173,7 @@ DATABASE_URL='postgresql+asyncpg://username:password@127.0.0.1/construction_haza
 
 REDIS_HOST='127.0.0.1'
 REDIS_PORT=6379
-REDIS_PASSWORD='password'
+REDIS_PASSWORD='set-a-strong-password'
 
 JWT_SECRET_KEY='replace-with-a-long-random-secret'
 
@@ -216,6 +223,20 @@ docker compose ps redis postgres media-server
 docker compose logs -f redis postgres media-server
 ```
 
+若 PostgreSQL 與 Redis 是由 host 管理，而你只需要 MediaMTX，請使用不會解析
+database 或 Redis 環境變數的獨立 Compose 設定：
+
+```bash
+docker compose -f docker-compose.media.yml up -d
+docker compose -f docker-compose.media.yml ps
+docker compose -f docker-compose.media.yml logs -f media-server
+```
+
+這個設定刻意不讀取 `DATABASE_URL`、`POSTGRES_*` 或 `REDIS_PASSWORD`。原本的
+`docker-compose.yml` 會啟動內建 PostgreSQL container，因此必須分別提供
+`POSTGRES_DB`、`POSTGRES_USER` 和 `POSTGRES_PASSWORD`；它無法從 URL 安全且可靠地
+反解析這些值。
+
 如果 Python services 在 host 上執行，`.env` 使用本機位址：
 
 ```dotenv
@@ -231,6 +252,10 @@ MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://127.0.0.1:8554'
 ```dotenv
 DATABASE_URL='postgresql+asyncpg://username:password@postgres/construction_hazard_detection'
 REDIS_HOST='redis'
+POSTGRES_DB='construction_hazard_detection'
+POSTGRES_USER='construction_app'
+POSTGRES_PASSWORD='set-a-strong-password'
+REDIS_PASSWORD='set-a-strong-password'
 MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://media-server:8554'
 ```
 
@@ -243,11 +268,20 @@ MEDIA_PUBLISH_RTSP_BASE_URL='rtsp://media-server:8554'
 
 Redis 與 MediaMTX 都不負責保存違規圖片或資料庫紀錄。
 
-若 PostgreSQL container 第一次啟動時沒有掛載初始化 schema，可手動匯入：
+若是全新且沒有資料的 PostgreSQL database，第一次啟動時沒有掛載初始化 schema，
+可手動匯入。此腳本會刪除 application tables，絕不可對已有資料的 database 執行：
 
 ```bash
 cat ./scripts/init.postgres.sql | docker exec -i postgres-container \
   psql -U username -d construction_hazard_detection
+```
+
+既有 database 應使用 migration ledger。確認 schema 已到達指定 baseline 後，先記錄
+歷史 migration，再只執行後續 migration：
+
+```bash
+uv run python scripts/apply_postgres_migrations.py --baseline 20260827
+uv run python scripts/apply_postgres_migrations.py
 ```
 
 ### 5. 設定 MediaMTX

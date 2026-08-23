@@ -57,33 +57,26 @@ To set up the development environment:
    cd Construction-Hazard-Detection
    ```
 
-2. **Set up a virtual environment**:
+2. **Install the locked development environment**:
 
    ```bash
-   python3 -m venv env
-   source env/bin/activate  # On Windows use `env\Scripts\activate`
+   uv sync --locked --all-extras --extra dev --no-extra yolo-gpu
    ```
 
-3. **Install the dependencies**:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Install pre-commit hooks**:
+3. **Install pre-commit hooks**:
 
    ```bash
    pre-commit install
    ```
 
-5. **Set up environment variables**:
+4. **Set up environment variables**:
 
    Create a `.env` file in the root directory with the necessary environment variables (refer to `.env.example` for guidance).
 
-6. **Run the tests**:
+5. **Run the tests**:
 
    ```bash
-   pytest
+   uv run pytest
    ```
 
 ## Submitting Changes

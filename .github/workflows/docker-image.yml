@@ -19,5 +19,7 @@ jobs:
     - uses: actions/checkout@v7
     - name: Build the shared base image
       run: docker build . --file scripts/base.Dockerfile --tag base:latest
+    - name: Build the GPU base image
+      run: docker build . --file scripts/base-gpu.Dockerfile --tag base-gpu:latest
     - name: Build the Docker image
       run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)

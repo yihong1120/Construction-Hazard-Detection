@@ -12,18 +12,29 @@ services:
       - app_network
     image: base:latest
 
+  base-gpu:
+    build:
+      context: .
+      dockerfile: scripts/base-gpu.Dockerfile
+    image: base-gpu:latest
+    depends_on:
+      base:
+        condition: service_completed_successfully
+    networks:
+      - app_network
+
   # Redis service configuration
   redis:
-    # Use the latest Redis image
-    image: redis:latest
-    # Command to start Redis with a password for security
-    command: redis-server --requirepass 'password'
+    image: redis:7.4.10-alpine3.21
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+    command: redis-server --requirepass "$$REDIS_PASSWORD"
     # Expose Redis on port 6379
     ports:
       - '127.0.0.1:6379:6379'
     # Configure a health check to ensure Redis is running
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -32,11 +43,11 @@ services:
       - app_network
 
   media-server:
-    image: bluenviron/mediamtx:latest
+    image: bluenviron/mediamtx:1.18.2
     # Keep the playback upstream available after a Docker daemon restart.
     restart: unless-stopped
     environment:
-      MTX_PROTOCOLS: tcp
+      MTX_RTSPTRANSPORTS: tcp
       MTX_HLS: 'yes'
       MTX_WEBRTC: 'yes'
       # Create HLS only for active viewers. This avoids unnecessary muxers
@@ -57,15 +68,14 @@ services:
 
   # PostgreSQL database service configuration
   postgres:
-    # Use the latest PostgreSQL image
-    image: postgres:latest
+    image: postgres:17.11-bookworm
     # Set the container name for easier reference
     container_name: postgres-container
     # Environment variables for configuring the PostgreSQL database
     environment:
-      POSTGRES_DB: construction_hazard_detection
-      POSTGRES_USER: username
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: "${POSTGRES_DB:?POSTGRES_DB must be set}"
+      POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER must be set}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
     # Expose PostgreSQL on port 5432
     ports:
       - '127.0.0.1:5432:5432'
@@ -74,7 +84,7 @@ services:
       - ./scripts/init.postgres.sql:/docker-entrypoint-initdb.d/init.sql
     # Configure a health check to ensure PostgreSQL is running
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U username -d construction_hazard_detection"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -90,10 +100,10 @@ services:
       dockerfile: examples/db_management/Dockerfile
     # Environment variables for database connection
     environment:
-      DATABASE_URL: postgresql+asyncpg://username:password@postgres/construction_hazard_detection
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres/${POSTGRES_DB:?POSTGRES_DB must be set}"
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: password
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
       BFF_CHAT_API_URL: http://host.docker.internal:8001
       BFF_FILES_API_URL: http://host.docker.internal:8004
       BFF_MANAGEMENT_API_URL: http://127.0.0.1:8005
@@ -134,12 +144,14 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: password
-      DATABASE_URL: postgresql+asyncpg://username:password@postgres/construction_hazard_detection
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres/${POSTGRES_DB:?POSTGRES_DB must be set}"
     # Ensure the service starts only after Redis and PostgreSQL are healthy
     depends_on:
       base:
         condition: service_started
+      base-gpu:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       postgres:
@@ -158,13 +170,13 @@ services:
   streaming-web-backend:
     # Build the image from the specified Dockerfile
     build:
-      context: ./examples/streaming_web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: examples/streaming_web/Dockerfile
     # Environment variables for connecting to Redis
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: password
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
       MEDIA_PUBLIC_HLS_BASE_URL: ${MEDIA_PUBLIC_HLS_BASE_URL:-/hazard/media}
       MEDIA_PUBLIC_WEBRTC_BASE_URL: ${MEDIA_PUBLIC_WEBRTC_BASE_URL:-/hazard/media/webrtc}
       MEDIA_INTERNAL_HLS_BASE_URL: ${MEDIA_INTERNAL_HLS_BASE_URL:-http://media-server:8888}
@@ -181,7 +193,7 @@ services:
       MEDIA_SESSION_TTL_SECONDS: ${MEDIA_SESSION_TTL_SECONDS:-600}
       HAZARD_LEGACY_MEDIA_AUTH_ENABLED: ${HAZARD_LEGACY_MEDIA_AUTH_ENABLED:-false}
       PYTHONPATH: /app
-      DATABASE_URL: postgresql+asyncpg://username:password@postgres/construction_hazard_detection
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres/${POSTGRES_DB:?POSTGRES_DB must be set}"
     env_file:
       - .env
     # Mount the examples directory for application access
@@ -193,10 +205,10 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
-      media-server:
-        condition: service_started
       postgres:
         condition: service_healthy
+      media-server:
+        condition: service_started
     # Command to run the backend using Uvicorn
     command: ["uvicorn", "examples.streaming_web.app:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "10"]
     # Expose the backend on port 8000
@@ -209,21 +221,24 @@ services:
   local-notification-server:
     # Build the image from the specified Dockerfile
     build:
-      context: ./examples/local_notification_server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: examples/local_notification_server/Dockerfile
     # Environment variables for connecting to Redis
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: password
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres/${POSTGRES_DB:?POSTGRES_DB must be set}"
     # Mount the examples directory for application access
     volumes:
       - ./examples:/app/examples
-    # Ensure the service starts only after Redis is healthy
+    # The delivery worker reads both Redis and PostgreSQL.
     depends_on:
       base:
         condition: service_started
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     # Command to run the local notification server using Uvicorn
     command: ["uvicorn", "examples.local_notification_server.app:app", "--host", "0.0.0.0", "--port", "8003"]
@@ -231,14 +246,14 @@ services:
   violation-records:
     # Build the image from the specified Dockerfile
     build:
-      context: ./examples/violation_records
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: examples/violation_records/Dockerfile
     # Environment variables for connecting to Redis and PostgreSQL
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: password
-      DATABASE_URL: postgresql+asyncpg://username:password@postgres/construction_hazard_detection
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres/${POSTGRES_DB:?POSTGRES_DB must be set}"
     # Mount the examples directory for application access
     volumes:
       - ./examples:/app/examples
@@ -264,16 +279,17 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: password
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
       DETECT_API_URL: ${DETECT_API_URL:-http://yolo-server-api:6000}
       STREAMING_OUTPUT_MODE: ${STREAMING_OUTPUT_MODE:-media_server}
       MEDIA_PUBLISH_RTSP_BASE_URL: ${MEDIA_PUBLISH_RTSP_BASE_URL:-rtsp://media-server:8554}
       MEDIA_PUBLISH_CLEAN_STREAM: ${MEDIA_PUBLISH_CLEAN_STREAM:-true}
-      MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM: ${MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM:-true}
-      MEDIA_PUBLISH_CLEAN_ENCODER: ${MEDIA_PUBLISH_CLEAN_ENCODER:-copy}
+      MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM: ${MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM:-false}
+      MEDIA_PUBLISH_CLEAN_ENCODER: ${MEDIA_PUBLISH_CLEAN_ENCODER:-h264_vaapi}
       MEDIA_PUBLISH_CLEAN_FPS: ${MEDIA_PUBLISH_CLEAN_FPS:-15}
       MEDIA_PUBLISH_ANNOTATED_STREAM: ${MEDIA_PUBLISH_ANNOTATED_STREAM:-true}
       MEDIA_PUBLISH_SOURCE_FPS: ${MEDIA_PUBLISH_SOURCE_FPS:-15}
+      MEDIA_PUBLISH_RTP_PACKET_SIZE: ${MEDIA_PUBLISH_RTP_PACKET_SIZE:-1200}
       MEDIA_DEFAULT_OVERLAY_LANGUAGE: ${MEDIA_DEFAULT_OVERLAY_LANGUAGE:-zh-TW}
       MEDIA_OVERLAY_ALLOWED_LANGUAGES: ${MEDIA_OVERLAY_ALLOWED_LANGUAGES:-zh-TW,en,zh-CN,ja,vi,id,fr,th}
       MEDIA_OVERLAY_MAX_ACTIVE_LANGUAGES_PER_STREAM: ${MEDIA_OVERLAY_MAX_ACTIVE_LANGUAGES_PER_STREAM:-5}
@@ -321,6 +337,8 @@ services:
     depends_on:
       base:
         condition: service_started
+      base-gpu:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       media-server:

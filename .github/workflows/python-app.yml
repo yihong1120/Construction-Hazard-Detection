@@ -1,7 +1,7 @@
 # This workflow will install Python dependencies, run tests and lint with a single version of Python
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 
-name: Python application
+name: Python checks
 
 on:
   push:
@@ -26,41 +26,24 @@ jobs:
       uses: actions/setup-python@v7
       with:
         python-version: "3.14"
-    - name: Free disk space
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo apt-get clean
-        df -h
-    - name: Update and upgrade apt-get
-      run: |
-        sudo apt-get update
-        sudo apt-get upgrade -y
-        sudo apt-get autoremove -y
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Download model weights (Hugging Face)
-      run: |
-        hf download \
-          yihong1120/Construction-Hazard-Detection-YOLO11 \
-          --repo-type model \
-          --include "models/pt/*.pt" \
-          --local-dir .
+        python -m pip install --upgrade pip "uv==0.9.9"
+        # Exercise every source module, but exclude the CUDA/TensorRT-only
+        # deployment extra.  Tests use CPU-compatible ONNX Runtime.
+        uv sync --frozen --all-extras --no-extra yolo-gpu
+    - name: Verify lockfile
+      run: uv lock --check
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        uv run flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
         # Measure application code only (main, src, examples). Do not include tests in coverage sources
-        pytest \
+        uv run pytest \
           --cov=main \
           --cov=src \
           --cov=examples \

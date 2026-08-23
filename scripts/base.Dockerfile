@@ -4,18 +4,6 @@ FROM python:3.14-slim-bookworm
 # Set the working directory
 WORKDIR /app
 
-# Install minimal system dependencies and NVIDIA CUDA runtime
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget curl libgl1 libglib2.0-0 libffi-dev libssl-dev libpq-dev \
-    build-essential gcc python3-dev fonts-noto-core fonts-noto-cjk \
-    fonts-noto-extra && \
-    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb && \
-    dpkg -i cuda-keyring_1.0-1_all.deb && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    cuda-nvrtc-12-1 cuda-cudart-12-1 && \
-    apt-get autoremove -y && apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
 # Copy project metadata and the lockfile for deterministic dependency installs
 COPY pyproject.toml uv.lock /app/
 
@@ -23,18 +11,14 @@ COPY pyproject.toml uv.lock /app/
 RUN python -m pip install --no-cache-dir "uv==0.9.9" && \
     uv --version && \
     uv export \
+        --quiet \
         --format=requirements-txt \
         --no-dev \
         --no-emit-project \
         --frozen \
         -o /tmp/requirements.txt && \
     uv pip install --system -r /tmp/requirements.txt && \
-    rm -rf /root/.cache/pip /tmp/requirements.txt
-
-# Remove development tools to reduce image size
-RUN apt-get purge -y build-essential gcc python3-dev && \
-    apt-get autoremove -y && apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    rm -rf /root/.cache/pip /root/.cache/uv /tmp/requirements.txt
 
 # Create a non-root user for security
 RUN useradd -ms /bin/bash appuser && \

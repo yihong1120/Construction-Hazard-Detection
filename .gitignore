@@ -54,13 +54,22 @@ examples/YOLO_train/test.py
 examples/YOLO_data_augmentation/dataset_aug/
 examples/YOLO_data_augmentation/visualised_image.jpg
 predictions.json
+/dummy.json
 
-# Local database migration history
-scripts/migrations/
+# Local database migration history. Explicit deployment migrations are kept.
+scripts/migrations/*
+!scripts/migrations/20260823_optimize_notification_cursor.sql
+!scripts/migrations/20260823_optimize_notification_cursor_postgres.sql
+!scripts/migrations/20260824_add_site_media_cleanup_jobs_postgres.sql
+!scripts/migrations/20260824_normalize_user_profile_email_postgres.sql
+!scripts/migrations/20260825_optimize_site_media_cleanup_outbox_postgres.sql
+!scripts/migrations/20260826_add_violation_keyset_indexes_postgres.sql
 
 # Build artifacts
 build/
 frontend/web/
+frontend/web_bak/
+*.egg-info/
 examples/streaming_web/frontend/node_modules/
 examples/streaming_web/frontend/dist/
 

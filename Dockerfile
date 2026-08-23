@@ -1,5 +1,5 @@
-# Use the previously built base image
-FROM base:latest
+# The stream processor uses TensorRT/YOLO, so only this image inherits CUDA.
+FROM base-gpu:latest
 
 # The shared base image ends as appuser; package installation needs root.
 USER root
@@ -7,8 +7,22 @@ USER root
 # Set the working directory in the container
 WORKDIR /app
 
+RUN uv export \
+    --quiet \
+    --format=requirements-txt \
+    --no-dev \
+    --no-emit-project \
+    --frozen \
+    --extra streaming \
+    --extra yolo \
+    --extra yolo-gpu \
+    -o /tmp/requirements.txt \
+    && uv pip install --system -r /tmp/requirements.txt \
+    && rm -rf /root/.cache/pip /root/.cache/uv /tmp/requirements.txt
+
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg fonts-noto-core fonts-noto-cjk libglib2.0-0 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only necessary files into the container
