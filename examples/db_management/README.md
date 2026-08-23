@@ -127,14 +127,20 @@ client/redirect pairs are
 accepted. Access tokens last 15 minutes; refresh tokens rotate and retain
 family reuse-detection state.
 
-Flutter Web/iOS/Android live playback uses the playback facade under the
-existing `/hazard/api/db_management/` base path:
+Native clients use the playback facade under the existing
+`/hazard/api/db_management/` base path. Flutter Web uses the authenticated
+BFF proxy instead:
 
 ```text
-POST   /hazard/api/db_management/api/playback/sessions
-POST   /hazard/api/db_management/api/playback/walls
-POST   /hazard/api/db_management/api/playback/sessions/renew
-DELETE /hazard/api/db_management/api/playback/sessions/{id}
+Web:    POST   /bff/db_management/api/playback/sessions
+Web:    POST   /bff/db_management/api/playback/walls
+Web:    POST   /bff/db_management/api/playback/sessions/renew
+Web:    DELETE /bff/db_management/api/playback/sessions/{id}
+
+Native: POST   /hazard/api/db_management/api/playback/sessions
+Native: POST   /hazard/api/db_management/api/playback/walls
+Native: POST   /hazard/api/db_management/api/playback/sessions/renew
+Native: DELETE /hazard/api/db_management/api/playback/sessions/{id}
 ```
 
 Single-camera playback returns `mode: "single"` and `hls_url`.

@@ -42,15 +42,22 @@ X-CSRF-Token: <csrf-token>
 BFF 會在伺服器端注入 bearer token；瀏覽器程式不得讀取或自行傳送 access token。
 JSON body 只能包含 `device_token`、`device_lang` 與 `platform`（`web`）。
 
-直播播放不再由 BFF 提供 media-session endpoint。Flutter Web 與 Native 共用
-db_management 的 playback facade：
+直播播放不使用獨立的 BFF playback service。Flutter Web 經由既有 allow-listed
+`db_management` proxy；Native 則以 public API root 呼叫同一個 facade：
 
 ```text
-POST   /hazard/api/db_management/api/playback/sessions
-POST   /hazard/api/db_management/api/playback/walls
-POST   /hazard/api/db_management/api/playback/sessions/renew
-DELETE /hazard/api/db_management/api/playback/sessions/{id}
+Web:    POST   /bff/db_management/api/playback/sessions
+Web:    POST   /bff/db_management/api/playback/walls
+Web:    POST   /bff/db_management/api/playback/sessions/renew
+Web:    DELETE /bff/db_management/api/playback/sessions/{id}
+
+Native: POST   /hazard/api/db_management/api/playback/sessions
+Native: POST   /hazard/api/db_management/api/playback/walls
+Native: POST   /hazard/api/db_management/api/playback/sessions/renew
+Native: DELETE /hazard/api/db_management/api/playback/sessions/{id}
 ```
+
+即使 response 含 Native 格式的 `renew_endpoint`，Web 仍必須維持 BFF path 續租。
 
 保留獨立 package 可維持清楚的安全邊界，同時不增加另一個 process、DB pool 與
 部署單元。

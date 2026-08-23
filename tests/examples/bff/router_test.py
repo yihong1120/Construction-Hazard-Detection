@@ -425,6 +425,52 @@ class BffRouterTest(unittest.TestCase):
             'db_management/deployment-enrollment-codes',
         )
 
+    def test_web_playback_proxy_uses_db_management_and_csrf(self) -> None:
+        """The browser sends playback controls through the BFF allowlist."""
+        access = jwt_access.create_access_token(
+            _access_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
+        )
+        refresh = jwt_refresh.create_access_token(
+            _refresh_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
+        )
+        session_id, session = asyncio.run(
+            create_auth_session(
+                self.redis,  # type: ignore[arg-type]
+                {
+                    'access_token': access,
+                    'refresh_token': refresh,
+                    'feature_names': [],
+                    'deployment': _DEPLOYMENT.as_response(),
+                },
+                {'id': 1, 'username': 'alice'},
+            ),
+        )
+        with patch(
+            'examples.bff.session_services.proxy_request',
+            new_callable=AsyncMock,
+            return_value=Response(status_code=200, content=b'{}'),
+        ) as proxy_request:
+            response = self.client.post(
+                '/bff/db_management/api/playback/sessions',
+                cookies={session_services.SESSION_COOKIE: session_id},
+                headers={
+                    'Origin': self.origin,
+                    'X-CSRF-Token': str(session['csrf_secret']),
+                },
+                json={'site': 'Site A', 'camera': 'Camera 1'},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        assert proxy_request.await_args is not None
+        self.assertEqual(
+            proxy_request.await_args.args[3],
+            'db_management/api/playback/sessions',
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

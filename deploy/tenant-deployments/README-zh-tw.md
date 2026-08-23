@@ -55,9 +55,10 @@ origin 查詢 `deployments`，不信任 client 提供的 tenant/deployment heade
 POST /hazard/api/deployment-registry/v1/enrollments/exchange
 ```
 
-Request 必須是 `Content-Type: application/json`、`Accept: application/json`
-與 `Cache-Control: no-store`，body 僅能有 `enrollment_code`。此 endpoint 不接受
-Bearer token、Cookie、CSRF 或 refresh token；它以 Redis 限制 IP 與 code verifier
+Request body 必須為 `Content-Type: application/json`，且僅能有
+`enrollment_code`。`Accept` 與 `Cache-Control` 可由 client 或 edge 加入，但不是
+Registry 驗證 response 的必要條件。此 endpoint 不接受 Bearer token、Cookie、CSRF
+或 refresh token；它以 Redis 限制 IP 與 code verifier
 的嘗試次數，並在 PostgreSQL transaction／row lock 中將 code 標記為已使用。資料庫
 只保存由 `DEPLOYMENT_ENROLLMENT_CODE_PEPPER` HMAC 的 verifier，絕不保存或記錄原始
 啟用碼。成功回應固定為：
@@ -152,7 +153,9 @@ signature。簽署 bytes 必須是以下七個欄位依 key 字典序、UTF-8、
 `nginx.deployment-registry.conf.example` 的 HTTP/HTTPS location 放入對應的
 server block（HTTPS location 必須在通用 `/hazard/api/` fallback 前）。本機正式
 設定可套用相同內容至 `deploy/bff/nginx.changdar-server.complete.conf`。此路由只
-允許 HTTPS（HTTP 請求直接失敗、不轉址），且所有回應均為 `Cache-Control: no-store`。
+允許 HTTPS（HTTP 請求直接失敗、不轉址），並示範由 edge 加上
+`Cache-Control: no-store`。client 不可將該 header 視為 Registry response 有效性的
+必要條件。
 
 ## 本機開發直連
 

@@ -160,14 +160,19 @@ POST body 僅接受 `{"expires_in_minutes":30}`（1–1440）。新 code 只在 
 `/bff/db_management/deployment-enrollment-codes` 呼叫，BFF 會以 HttpOnly session
 保存 server-side token，並為 POST／DELETE 驗證 Origin 與 CSRF token。
 
-Flutter Web/iOS/Android 直播統一呼叫既有
-`/hazard/api/db_management/` base path 下的 playback facade：
+Native 直播使用既有 `/hazard/api/db_management/` base path 下的 playback facade；
+Flutter Web 則使用 authenticated BFF proxy：
 
 ```text
-POST   /hazard/api/db_management/api/playback/sessions
-POST   /hazard/api/db_management/api/playback/walls
-POST   /hazard/api/db_management/api/playback/sessions/renew
-DELETE /hazard/api/db_management/api/playback/sessions/{id}
+Web:    POST   /bff/db_management/api/playback/sessions
+Web:    POST   /bff/db_management/api/playback/walls
+Web:    POST   /bff/db_management/api/playback/sessions/renew
+Web:    DELETE /bff/db_management/api/playback/sessions/{id}
+
+Native: POST   /hazard/api/db_management/api/playback/sessions
+Native: POST   /hazard/api/db_management/api/playback/walls
+Native: POST   /hazard/api/db_management/api/playback/sessions/renew
+Native: DELETE /hazard/api/db_management/api/playback/sessions/{id}
 ```
 
 單鏡頭回傳 `mode: "single"` 與 `hls_url`；多鏡頭牆回傳

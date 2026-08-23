@@ -43,15 +43,24 @@ The BFF injects the server-side bearer token. Browser code must not access or
 send an access token itself. The JSON body must contain only `device_token`,
 `device_lang`, and `platform` (`web`).
 
-Live playback is no longer exposed through BFF media-session endpoints.
-Flutter Web and Native clients use the db_management playback facade:
+Live playback does not use a dedicated BFF playback service. Flutter Web uses
+the generic, allow-listed `db_management` proxy, while Native clients call the
+same facade through the public API root:
 
 ```text
-POST   /hazard/api/db_management/api/playback/sessions
-POST   /hazard/api/db_management/api/playback/walls
-POST   /hazard/api/db_management/api/playback/sessions/renew
-DELETE /hazard/api/db_management/api/playback/sessions/{id}
+Web:    POST   /bff/db_management/api/playback/sessions
+Web:    POST   /bff/db_management/api/playback/walls
+Web:    POST   /bff/db_management/api/playback/sessions/renew
+Web:    DELETE /bff/db_management/api/playback/sessions/{id}
+
+Native: POST   /hazard/api/db_management/api/playback/sessions
+Native: POST   /hazard/api/db_management/api/playback/walls
+Native: POST   /hazard/api/db_management/api/playback/sessions/renew
+Native: DELETE /hazard/api/db_management/api/playback/sessions/{id}
 ```
+
+Web clients keep renewal requests on the BFF path even if a Native-form
+`renew_endpoint` appears in a response.
 
 Keeping BFF code in this package preserves a clear security boundary without
 adding another process, database pool or deployment unit.

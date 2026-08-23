@@ -22,10 +22,12 @@ uvicorn examples.db_management.app:app \
 include /home/changdar/Documents/Construction-Hazard-Detection/deploy/bff/nginx.bff.conf;
 ```
 
-Web 登入/session 仍使用 `/bff/*`，Nginx 直接轉到 port `8005`。Flutter
-Web/iOS/Android 直播統一使用既有 `/hazard/api/db_management/` base path 下的
-`/api/playback/*` facade；HLS URL 由後端加上短效 `mt` media token。Native
-OAuth、`/me` 與 playback facade 都走同一條既有 db_management Nginx route。
+Web 登入/session 仍使用 `/bff/*`，Nginx 直接轉到 port `8005`。Flutter Web 的
+playback control 走 `/bff/db_management/api/playback/*`，讓 BFF 保留 HttpOnly
+session 與 CSRF 邊界；Native 則使用既有
+`/hazard/api/db_management/api/playback/*` facade。HLS URL 由後端加上短效 `mt`
+media token。Native OAuth、`/me` 與 Native playback facade 都走既有的
+db_management Nginx route。
 
 ## 2. 取代舊 HLS media auth
 
