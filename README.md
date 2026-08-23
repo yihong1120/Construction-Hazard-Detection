@@ -10,6 +10,7 @@
    <a href="examples/local_notification_server">FCM Notification Server</a> |
    <a href="examples/violation_records">Violation Records Server</a> |
    <a href="examples/bff">Web BFF</a> |
+   <a href="https://github.com/yihong1120/visionnaire-flutter">Flutter App</a> |
    <a href="examples/db_management">Data Management Server</a> |
    <a href="examples/streaming_web">Streaming Web</a> |
    <a href="examples/YOLO_data_augmentation">Data Augmentation</a> |
@@ -118,6 +119,14 @@ warning metadata, overlay demand keys, and overlay ready keys.
 - `examples/YOLO_train/`, `examples/YOLO_evaluation/`,
   `examples/YOLO_data_augmentation/`: model development utilities.
 - `scripts/`: database initialisation and TensorRT rebuild helpers.
+
+## Flutter Frontend
+
+The Flutter source is maintained separately in
+[visionnaire-flutter](https://github.com/yihong1120/visionnaire-flutter).
+`frontend/web/` in this repository is an ignored, generated deployment
+artifact, not editable frontend source. See [frontend/README.md](frontend/README.md)
+for the release and backend-contract boundary.
 
 ## Recommended Runtime
 

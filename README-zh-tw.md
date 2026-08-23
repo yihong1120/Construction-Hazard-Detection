@@ -10,6 +10,7 @@
    <a href="examples/local_notification_server">FCM Notification Server</a> |
    <a href="examples/violation_records">Violation Records Server</a> |
    <a href="examples/bff">Web BFF</a> |
+   <a href="https://github.com/yihong1120/visionnaire-flutter">Flutter App</a> |
    <a href="examples/db_management">Data Management Server</a> |
    <a href="examples/streaming_web">Streaming Web</a> |
    <a href="examples/YOLO_data_augmentation">Data Augmentation</a> |
@@ -114,6 +115,14 @@ FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready 
 - `examples/YOLO_train/`、`examples/YOLO_evaluation/`、
   `examples/YOLO_data_augmentation/`：模型開發工具。
 - `scripts/`：資料庫初始化與 TensorRT 重建工具。
+
+## Flutter 前端
+
+Flutter 前端原始碼維護於獨立的
+[visionnaire-flutter](https://github.com/yihong1120/visionnaire-flutter)。
+本 repository 的 `frontend/web/` 是忽略的建置部署產物，並非可直接編輯的前端
+原始碼。版本發布與前後端契約邊界請參閱
+[frontend/README.md](frontend/README.md)。
 
 ## 建議執行方式
 
