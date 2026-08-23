@@ -313,6 +313,32 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
         self.assertIn('SELECT DISTINCT sites.name', sql)
         self.assertIn('ORDER BY sites.name', sql)
 
+    async def test_site_name_projection_handles_super_and_ungrouped_users(
+        self,
+    ) -> None:
+        """Super administrators list all sites; ungrouped users list none."""
+        super_admin = SimpleNamespace(id=1, role='super_admin', group_id=None)
+        self.db.execute.return_value = self.scalars_all_result(
+            [SimpleNamespace(name='Alpha')],
+        )
+
+        names = await list_effective_site_names_for_user(
+            cast(Any, super_admin),
+            self.db,
+        )
+        self.assertEqual(names, ['Alpha'])
+
+        ungrouped = SimpleNamespace(id=2, role='admin', group_id=None)
+        self.db.execute.reset_mock()
+        self.assertEqual(
+            await list_effective_site_names_for_user(
+                cast(Any, ungrouped),
+                self.db,
+            ),
+            [],
+        )
+        self.db.execute.assert_not_awaited()
+
     async def test_load_user_with_effective_sites_success(self) -> None:
         """The loader should return the correct effective site payload."""
         user = SimpleNamespace(id=8, username='wrap', role='user', group_id=4)

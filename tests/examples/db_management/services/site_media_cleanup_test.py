@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -97,3 +99,37 @@ class TestSiteMediaCleanup(unittest.IsolatedAsyncioTestCase):
         statement = str(db.execute.await_args.args[0])
         self.assertIn('INSERT INTO site_media_cleanup_jobs', statement)
         self.assertIn('SELECT DISTINCT violations.image_path', statement)
+
+    async def test_enqueue_deduplicates_paths_and_empty_drains_do_no_io(
+        self,
+    ) -> None:
+        """Enqueue is deduplicated and an empty queue commits no lease."""
+        db = self._db_with_jobs([])
+
+        await site_media_cleanup.enqueue_site_media_cleanup_jobs(
+            ['first.png', '', 'first.png', 'second.png'],
+            db,
+        )
+        statement = db.execute.await_args.args[0]
+        parameters = statement.compile().params.values()
+        self.assertIn('first.png', parameters)
+        self.assertIn('second.png', parameters)
+
+        completed = await site_media_cleanup.drain_site_media_cleanup_jobs(db)
+        self.assertEqual(completed, 0)
+        db.commit.assert_not_awaited()
+
+    def test_delete_file_ignores_non_file_paths(self) -> None:
+        """Deletion only accepts concrete regular files."""
+        with patch.object(
+            site_media_cleanup.Path,
+            'is_file',
+            return_value=False,
+        ):
+            site_media_cleanup._delete_file('/tmp/missing.png')
+
+        with TemporaryDirectory() as directory:
+            evidence = Path(directory) / 'evidence.png'
+            evidence.write_bytes(b'image')
+            site_media_cleanup._delete_file(str(evidence))
+            self.assertFalse(evidence.exists())

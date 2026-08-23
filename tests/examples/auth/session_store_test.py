@@ -637,6 +637,7 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await store.get_auth_session(self.redis, None))
         session_id = 'session'
         key = store.auth_session_key(session_id)
+        self.assertIsNone(await store.get_auth_session(self.redis, session_id))
         self.redis.data[key] = b'{"revoked":true}'
         self.assertIsNone(await store.get_auth_session(self.redis, session_id))
 
@@ -741,8 +742,15 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(
             await store.get_media_session_by_id(self.redis, None),
         )
+        self.assertIsNone(
+            await store.get_media_session_by_id(self.redis, 'public'),
+        )
         public_key = f"{store.MEDIA_PUBLIC_PREFIX}:public"
         self.redis.data[public_key] = token_key.encode('utf-8')
+        self.redis.data.pop(token_key)
+        self.assertIsNone(
+            await store.get_media_session_by_id(self.redis, 'public'),
+        )
         self.redis.data[token_key] = b'{"expires_at":0}'
         self.assertIsNone(
             await store.get_media_session_by_id(self.redis, 'public'),

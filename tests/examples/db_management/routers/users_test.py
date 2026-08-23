@@ -472,6 +472,17 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.items[0].terms_version, '2026-06-27')
         self.assertEqual(result.items[0].provider, 'google')
 
+    async def test_list_pending_users_accepts_a_keyset_cursor(self) -> None:
+        """Pending-user queries constrain subsequent pages by user ID."""
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        self.db.execute.return_value = result
+
+        page = await users.list_pending_users(self.db, cursor=7)
+
+        self.assertEqual(page.items, [])
+        self.db.execute.assert_awaited_once()
+
     @patch(
         'examples.db_management.services.user_management_services.'
         'load_user_read',

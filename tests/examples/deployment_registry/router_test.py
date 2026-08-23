@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import unittest
+from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -24,10 +26,15 @@ from examples.auth.models import Deployment
 from examples.auth.models import utc_now
 from examples.auth.redis_pool import get_redis_pool
 from examples.deployment_registry import service as registry_service
+from examples.deployment_registry import signing
+from examples.deployment_registry.enrollments import (
+    enforce_enrollment_exchange_rate_limit,
+)
 from examples.deployment_registry.enrollments import (
     enrollment_code_verifier_hash,
 )
 from examples.deployment_registry.enrollments import EnrollmentExchangeResult
+from examples.deployment_registry.enrollments import provision_enrollment_code
 from examples.deployment_registry.enrollments import redeem_enrollment_code
 from examples.deployment_registry.router import router
 from examples.deployment_registry.signing import build_registry_document
@@ -255,6 +262,190 @@ class TestEnrollmentService(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(first, second)
         self.assertEqual(len(first), 64)
 
+    async def test_rate_limit_batches_counters_and_returns_retry_delay(
+        self,
+    ) -> None:
+        """Rate limiting batches anonymised counters in one pipeline call.
+
+        The result retains the retry duration of the exceeded counter.
+        """
+        pipeline = MagicMock()
+        pipeline.eval = MagicMock()
+        pipeline.execute = AsyncMock(return_value=[(2, 300), (6, 0)])
+        pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+        pipeline.__aexit__ = AsyncMock(return_value=False)
+        redis = MagicMock()
+        redis.pipeline.return_value = pipeline
+
+        retry_after = await enforce_enrollment_exchange_rate_limit(
+            redis,
+            '192.0.2.10',
+            'a' * 64,
+            maximum=5,
+            window_seconds=300,
+        )
+
+        self.assertEqual(retry_after, 1)
+        self.assertEqual(pipeline.eval.call_count, 2)
+        pipeline.execute.assert_awaited_once()
+        with self.assertRaises(ValueError):
+            await enforce_enrollment_exchange_rate_limit(
+                redis,
+                None,
+                'a' * 64,
+                maximum=0,
+                window_seconds=300,
+            )
+
+    async def test_provision_validates_inputs_and_stages_verifier_only(
+        self,
+    ) -> None:
+        """Provisioning checks active deployments and stages no raw secret.
+
+        Only the HMAC verifier is written to the database row.
+        """
+        now = datetime(2026, 8, 23, tzinfo=timezone.utc)
+        db = MagicMock()
+        db.scalar = AsyncMock(return_value=SimpleNamespace(id=_DEPLOYMENT_ID))
+
+        with (
+            patch(
+                'examples.deployment_registry.enrollments.utc_now',
+                return_value=now,
+            ),
+            patch(
+                (
+                    'examples.deployment_registry.enrollments.secrets.'
+                    'token_urlsafe'
+                ),
+                return_value='raw-enrollment-code',
+            ),
+            patch(
+                'examples.deployment_registry.enrollments.secrets.token_bytes',
+                return_value=b'\x00' * 16,
+            ),
+        ):
+            provisioned = await provision_enrollment_code(
+                db,
+                _DEPLOYMENT_ID,
+                now + timedelta(minutes=5),
+                'operator',
+                'p' * 32,
+                _TENANT_ID,
+            )
+
+        self.assertEqual(provisioned.raw_code, 'raw-enrollment-code')
+        self.assertNotEqual(
+            provisioned.enrollment.code_verifier_hash,
+            provisioned.raw_code,
+        )
+        db.add.assert_called_once_with(provisioned.enrollment)
+
+        with self.assertRaises(ValueError):
+            await provision_enrollment_code(
+                db,
+                _DEPLOYMENT_ID,
+                now + timedelta(minutes=5),
+                '',
+                'p' * 32,
+            )
+
+        with (
+            patch(
+                'examples.deployment_registry.enrollments.utc_now',
+                return_value=now,
+            ),
+            patch(
+                (
+                    'examples.deployment_registry.enrollments.secrets.'
+                    'token_urlsafe'
+                ),
+                return_value='raw-enrollment-code',
+            ),
+            patch(
+                'examples.deployment_registry.enrollments.secrets.token_bytes',
+                return_value=b'\x00' * 16,
+            ),
+        ):
+            db.scalar = AsyncMock(return_value=None)
+            with self.assertRaises(ValueError):
+                await provision_enrollment_code(
+                    db,
+                    _DEPLOYMENT_ID,
+                    now + timedelta(minutes=5),
+                    'operator',
+                    'p' * 32,
+                )
+
+    async def test_enrollment_service_rejects_terminal_and_invalid_states(
+        self,
+    ) -> None:
+        """Enrollment service handles bad peppers, quotas, and terminal rows.
+
+        Invalid, expired, and unsafe states never redeem a deployment.
+        """
+        with self.assertRaises(ValueError):
+            enrollment_code_verifier_hash('raw-code', 'short-pepper')
+
+        pipeline = MagicMock()
+        pipeline.eval = MagicMock()
+        pipeline.execute = AsyncMock(return_value=[(1, 300), (2, 300)])
+        pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+        pipeline.__aexit__ = AsyncMock(return_value=False)
+        redis = MagicMock()
+        redis.pipeline.return_value = pipeline
+        self.assertIsNone(
+            await enforce_enrollment_exchange_rate_limit(
+                redis,
+                None,
+                'a' * 64,
+                maximum=5,
+                window_seconds=300,
+            ),
+        )
+
+        transaction = MagicMock()
+        transaction.__aenter__ = AsyncMock(return_value=transaction)
+        transaction.__aexit__ = AsyncMock(return_value=False)
+        db = MagicMock()
+        db.begin.return_value = transaction
+        db.scalar = AsyncMock(return_value=None)
+        invalid = await redeem_enrollment_code(db, verifier_hash='a' * 64)
+        self.assertEqual(invalid.status, 'invalid')
+
+        expired = SimpleNamespace(
+            redeemed_at=None,
+            revoked_at=None,
+            expires_at=utc_now() - timedelta(seconds=1),
+            deployment_id=_DEPLOYMENT_ID,
+        )
+        db.scalar = AsyncMock(return_value=expired)
+        terminal = await redeem_enrollment_code(db, verifier_hash='a' * 64)
+        self.assertEqual(terminal.status, 'terminal')
+
+        active = SimpleNamespace(
+            redeemed_at=None,
+            revoked_at=None,
+            expires_at=utc_now() + timedelta(minutes=1),
+            deployment_id=_DEPLOYMENT_ID,
+        )
+        db.scalar = AsyncMock(side_effect=[active, None])
+        inactive_deployment = await redeem_enrollment_code(
+            db,
+            verifier_hash='a' * 64,
+        )
+        self.assertEqual(inactive_deployment.status, 'terminal')
+
+        current = utc_now()
+        with self.assertRaises(ValueError):
+            await provision_enrollment_code(
+                db,
+                _DEPLOYMENT_ID,
+                current,
+                'operator',
+                'p' * 32,
+            )
+
 
 class TestRegistrySigningContract(unittest.TestCase):
     """Ensure the signature bytes exactly match the mobile contract."""
@@ -306,3 +497,78 @@ class TestRegistrySigningContract(unittest.TestCase):
             _base64url_decode(str(document['signature'])),
             signed,
         )
+
+    def test_signing_rejects_invalid_lifetime_revision_and_key_material(
+        self,
+    ) -> None:
+        """Registry signing refuses invalid public configuration or key input.
+
+        Invalid lifetimes, timestamps, and key material never reach signing.
+        """
+        deployment = cast(
+            Deployment,
+            SimpleNamespace(
+                id=_DEPLOYMENT_ID,
+                tenant_id=_TENANT_ID,
+                api_base_url='https://api.example.com/hazard/api',
+                config_revision=1,
+            ),
+        )
+        for private_key_pem, ttl_seconds, issued_at in (
+            ('key', 0, 1),
+            ('key', 60, -1),
+            ('', 60, 1),
+        ):
+            with self.subTest(
+                private_key_pem=private_key_pem,
+                ttl_seconds=ttl_seconds,
+                issued_at=issued_at,
+            ):
+                with self.assertRaises(ValueError):
+                    build_registry_document(
+                        deployment,
+                        private_key_pem=private_key_pem,
+                        key_id='key-1',
+                        ttl_seconds=ttl_seconds,
+                        issued_at=issued_at,
+                    )
+
+        deployment.config_revision = 0
+        with self.assertRaises(ValueError):
+            build_registry_document(
+                deployment,
+                private_key_pem='key',
+                key_id='key-1',
+                ttl_seconds=60,
+                issued_at=1,
+            )
+
+    def test_signing_rejects_non_ed25519_signature_lengths(self) -> None:
+        """The Registry accepts only private keys with Ed25519 signatures.
+
+        Other signature sizes cannot be exposed to native clients.
+        """
+        deployment = cast(
+            Deployment,
+            SimpleNamespace(
+                id=_DEPLOYMENT_ID,
+                tenant_id=_TENANT_ID,
+                api_base_url='https://api.example.com/hazard/api',
+                config_revision=1,
+            ),
+        )
+        private_key = MagicMock()
+        private_key.sign.return_value = b'not-ed25519'
+        with patch.object(
+            signing,
+            'load_pem_private_key',
+            return_value=private_key,
+        ):
+            with self.assertRaises(ValueError):
+                build_registry_document(
+                    deployment,
+                    private_key_pem='private-key',
+                    key_id='key-1',
+                    ttl_seconds=60,
+                    issued_at=1,
+                )

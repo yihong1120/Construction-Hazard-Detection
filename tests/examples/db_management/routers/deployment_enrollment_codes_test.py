@@ -13,6 +13,7 @@ from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
 from examples.auth.database import get_db
 from examples.auth.models import DeploymentEnrollmentCode
@@ -204,6 +205,50 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
         )
         self.assertEqual(invalid.status_code, 422)
 
+    def test_router_maps_management_conflicts_and_outages(self) -> None:
+        """Management storage states expose stable public error codes."""
+        conflict = services.EnrollmentManagementConflict('changed')
+        unavailable = services.EnrollmentManagementUnavailable('offline')
+        with patch.object(
+            services,
+            'create_managed_enrollment_code',
+            AsyncMock(side_effect=conflict),
+        ):
+            response = self.client.post(
+                '/deployment-enrollment-codes',
+                json={'expires_in_minutes': 30},
+            )
+        self.assertEqual(response.status_code, 409)
+
+        with patch.object(
+            services,
+            'create_managed_enrollment_code',
+            AsyncMock(side_effect=unavailable),
+        ):
+            response = self.client.post(
+                '/deployment-enrollment-codes',
+                json={'expires_in_minutes': 30},
+            )
+        self.assertEqual(response.status_code, 503)
+
+        with patch.object(
+            services,
+            'list_managed_enrollment_codes',
+            AsyncMock(side_effect=unavailable),
+        ):
+            response = self.client.get('/deployment-enrollment-codes')
+        self.assertEqual(response.status_code, 503)
+
+        with patch.object(
+            services,
+            'revoke_managed_enrollment_code',
+            AsyncMock(side_effect=unavailable),
+        ):
+            response = self.client.delete(
+                f'/deployment-enrollment-codes/{_CODE_ID_TEXT}',
+            )
+        self.assertEqual(response.status_code, 503)
+
 
 class TestDeploymentEnrollmentCodeServices(unittest.TestCase):
     """Exercise lifecycle status, tenant scope, and non-secret audit writes."""
@@ -343,3 +388,82 @@ class TestDeploymentEnrollmentCodeServices(unittest.TestCase):
             with self.subTest(value=invalid):
                 with self.assertRaises(ValueError):
                     services.parse_canonical_enrollment_code_id(invalid)
+
+    def test_management_services_handle_storage_and_lifecycle_edges(
+        self,
+    ) -> None:
+        """Code management maps database failures and preserves idempotency."""
+        administrator = _administrator()
+        db = MagicMock()
+        db.rollback = AsyncMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+        with patch.object(
+            services,
+            'provision_enrollment_code',
+            AsyncMock(side_effect=ValueError('inactive deployment')),
+        ):
+            with self.assertRaises(services.EnrollmentManagementConflict):
+                asyncio.run(
+                    services.create_managed_enrollment_code(
+                        db,
+                        administrator=administrator,
+                        expires_in_minutes=30,
+                        pepper='p' * 32,
+                    ),
+                )
+        db.rollback.assert_awaited_once()
+
+        db.execute = AsyncMock(
+            return_value=SimpleNamespace(
+                scalars=lambda: [
+                    SimpleNamespace(
+                        public_id=_CODE_ID,
+                        expires_at=utc_now() + timedelta(minutes=5),
+                        redeemed_at=None,
+                        revoked_at=None,
+                    ),
+                ],
+            ),
+        )
+        items = asyncio.run(
+            services.list_managed_enrollment_codes(
+                db,
+                administrator=administrator,
+            ),
+        )
+        self.assertEqual(items[0].status, 'active')
+
+        db.execute = AsyncMock(side_effect=SQLAlchemyError('offline'))
+        with self.assertRaises(services.EnrollmentManagementUnavailable):
+            asyncio.run(
+                services.list_managed_enrollment_codes(
+                    db,
+                    administrator=administrator,
+                ),
+            )
+
+        transaction = MagicMock()
+        transaction.__aenter__ = AsyncMock(return_value=transaction)
+        transaction.__aexit__ = AsyncMock(return_value=False)
+        db.begin.return_value = transaction
+        db.scalar = AsyncMock(return_value=None)
+        asyncio.run(
+            services.revoke_managed_enrollment_code(
+                db,
+                administrator=administrator,
+                public_id=_CODE_ID,
+            ),
+        )
+        db.scalar.assert_awaited_once()
+
+        db.begin.return_value = transaction
+        db.scalar = AsyncMock(side_effect=SQLAlchemyError('offline'))
+        with self.assertRaises(services.EnrollmentManagementUnavailable):
+            asyncio.run(
+                services.revoke_managed_enrollment_code(
+                    db,
+                    administrator=administrator,
+                    public_id=_CODE_ID,
+                ),
+            )

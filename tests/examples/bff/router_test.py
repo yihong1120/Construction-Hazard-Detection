@@ -341,6 +341,42 @@ class BffRouterTest(unittest.TestCase):
 
         self.assertEqual(summary.display_name, 'service-account')
 
+    def test_session_deployment_rejects_invalid_or_changed_bindings(
+        self,
+    ) -> None:
+        """Browser sessions cannot outlive invalid or replaced deployments."""
+        request = SimpleNamespace()
+        with self.assertRaises(HTTPException) as invalid:
+            asyncio.run(
+                session_services._require_session_deployment(
+                    request,
+                    self.db,
+                    {},
+                ),
+            )
+        self.assertEqual(invalid.exception.status_code, 409)
+
+        changed = DeploymentBinding(
+            tenant_id=_DEPLOYMENT.tenant_id,
+            deployment_id=_DEPLOYMENT.deployment_id,
+            api_base_url='https://replacement.example.com',
+            config_revision=2,
+        )
+        with patch.object(
+            session_services,
+            'resolve_request_deployment',
+            AsyncMock(return_value=changed),
+        ):
+            with self.assertRaises(HTTPException) as mismatch:
+                asyncio.run(
+                    session_services._require_session_deployment(
+                        request,
+                        self.db,
+                        {'deployment': _DEPLOYMENT.as_response()},
+                    ),
+                )
+        self.assertEqual(mismatch.exception.status_code, 409)
+
     def test_proxy_post_requires_csrf_token(self) -> None:
         """Mutating BFF proxy requests always pass through CSRF enforcement."""
         access = jwt_access.create_access_token(
