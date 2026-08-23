@@ -88,17 +88,23 @@ def _decode_notification_cursor(cursor: str) -> tuple[datetime, int]:
         payload = json.loads(
             base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'),
         )
-        return datetime.fromisoformat(payload['created_at']), int(payload['id'])
+        return datetime.fromisoformat(payload['created_at']), int(
+            payload['id'],
+        )
     except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
         raise HTTPException(
-            status_code=422, detail='invalid_notification_cursor',
+            status_code=422,
+            detail='invalid_notification_cursor',
         ) from exc
 
 
 def _encode_notification_cursor(notification: Notification) -> str:
     """Encode the last returned row as the next exclusive keyset position."""
     payload = json.dumps(
-        {'created_at': notification.created_at.isoformat(), 'id': notification.id},
+        {
+            'created_at': notification.created_at.isoformat(),
+            'id': notification.id,
+        },
         separators=(',', ':'),
     ).encode('utf-8')
     return base64.urlsafe_b64encode(payload).decode('ascii').rstrip('=')
@@ -248,9 +254,12 @@ async def mark_all_notifications_read(
     """
     # A set-based update avoids loading every unread notification into memory.
     result = cast(
-        CursorResult[Any], await db.execute(
+        CursorResult[Any],
+        await db.execute(
             update(Notification)
-            .where(Notification.user_id == me.id, Notification.is_read.is_(False))
+            .where(
+                Notification.user_id == me.id, Notification.is_read.is_(False),
+            )
             .values(is_read=True),
         ),
     )

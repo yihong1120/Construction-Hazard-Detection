@@ -69,7 +69,7 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_close_method(self) -> None:
-        """close is a no-op when no worker client is attached."""
+        """Close is a no-op when no worker client is attached."""
         await self.detector.close()
 
     def test_remove_overlapping_labels(self) -> None:
@@ -186,7 +186,8 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         d = self.detector_server
         cost = np.array([[0.9, 0.8], [0.7, 0.6]])
         matches, ur, uc = d._hungarian_assign(
-            cost, cost_threshold=0.0,
+            cost,
+            cost_threshold=0.0,
         )
         self.assertEqual(matches, [])
         self.assertEqual(set(ur), {0, 1})
@@ -249,12 +250,14 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Distant objects use independent small Hungarian assignments."""
         d = self.detector_server
-        cost = np.array([
-            [0.1, 0.9, 0.9, 0.9],
-            [0.9, 0.2, 0.9, 0.9],
-            [0.9, 0.9, 0.1, 0.9],
-            [0.9, 0.9, 0.9, 0.2],
-        ])
+        cost = np.array(
+            [
+                [0.1, 0.9, 0.9, 0.9],
+                [0.9, 0.2, 0.9, 0.9],
+                [0.9, 0.9, 0.1, 0.9],
+                [0.9, 0.9, 0.9, 0.2],
+            ],
+        )
 
         def assign(
             component_cost: np.ndarray,
@@ -318,7 +321,7 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         d = self.detector_server
         d.remote_tracker = 'hungarian'
         d.frame_count = 10  # trigger prune
-        d.max_id_keep = 5   # ensure pruning threshold excludes old
+        d.max_id_keep = 5  # ensure pruning threshold excludes old
         # existing valid track near (15,15) with class 0
         d.remote_tracks = {
             1: {
@@ -336,7 +339,8 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         }
         # two detections: one matches tid=1, one unmatched (different class)
         dets = [
-            [11.0, 11.0, 19.0, 19.0, 0.95, 0],  # Near centre, class 0 => match.
+            # Near centre, class 0 => match.
+            [11.0, 11.0, 19.0, 19.0, 0.95, 0],
             [30.0, 30.0, 40.0, 40.0, 0.80, 1],  # different class => new track
         ]
         out = d._track_remote_hungarian(dets)
@@ -416,7 +420,8 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         d.movement_thr_sq = 4.0
         # detection at distance^2 exactly equal to movement_thr_sq*4 (boundary)
         # movement_thr_sq*4 = 16. Require dist_sq < 16 to match -> won't match
-        dets = [[4.0, 0.0, 6.0, 2.0, 0.9, 0]]  # Centre at (5, 1), distance squared 26.
+        # Centre at (5, 1), distance squared 26.
+        dets = [[4.0, 0.0, 6.0, 2.0, 0.9, 0]]
         out = d._track_remote_centroid(dets)
         # since no match, new track created
         self.assertEqual(len(out), 1)
@@ -474,10 +479,3 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-
-"""
-pytest \
-    --cov=src.yolo_detector \
-    --cov-report=term-missing tests/src/yolo_detector_test.py
-"""

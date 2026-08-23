@@ -18,15 +18,21 @@ class TestCOCOConverter(unittest.TestCase):
     def setUp(self) -> None:
         """Prepare test fixtures."""
         self.categories = [
-            'Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest',
-            'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle',
+            'Hardhat',
+            'Mask',
+            'NO-Hardhat',
+            'NO-Mask',
+            'NO-Safety Vest',
+            'Person',
+            'Safety Cone',
+            'Safety Vest',
+            'machinery',
+            'vehicle',
         ]
         self.converter = COCOConverter(self.categories)
 
     def tearDown(self) -> None:
-        """
-        Clean up after each test.
-        """
+        """Clean up after each test."""
         # Clear the COCO format data to avoid state leakage between tests
         self.converter.coco_format.clear()
 
@@ -47,10 +53,8 @@ class TestCOCOConverter(unittest.TestCase):
         mock_exists: Any,
         mock_listdir: Any,
     ) -> None:
-        """
-        Test the conversion of YOLO annotations to COCO format,
-        including the handling of non-existing images.
-        """
+        """Test the conversion of YOLO annotations to COCO format, including
+        the handling of non-existing images."""
         # Setup the mocks
         mock_listdir.return_value = ['image1.txt', 'image2.txt']
         # Simulate image1 exists, image2 does not exist
@@ -66,7 +70,8 @@ class TestCOCOConverter(unittest.TestCase):
         # correctly added only for the existing image
         self.assertEqual(len(self.converter.coco_format['images']), 1)
         self.assertEqual(
-            self.converter.coco_format['images'][0]['file_name'], 'image1.jpg',
+            self.converter.coco_format['images'][0]['file_name'],
+            'image1.jpg',
         )
 
         # Check that the annotation is
@@ -84,25 +89,27 @@ class TestCOCOConverter(unittest.TestCase):
 
     @patch('builtins.open', new_callable=mock_open)
     def test_save_to_json(self, mock_file: Any) -> None:
-        """
-        Test saving the COCO format data to a JSON file.
-        """
+        """Test saving the COCO format data to a JSON file."""
         # Add some dummy data to the COCO format
-        self.converter.coco_format['images'].append({
-            'id': 1,
-            'width': 800,
-            'height': 600,
-            'file_name': 'image1.jpg',
-        })
-        self.converter.coco_format['annotations'].append({
-            'id': 1,
-            'image_id': 1,
-            'category_id': 1,
-            'bbox': [200.0, 150.0, 400.0, 300.0],
-            'area': 120000.0,
-            'segmentation': [],
-            'iscrowd': 0,
-        })
+        self.converter.coco_format['images'].append(
+            {
+                'id': 1,
+                'width': 800,
+                'height': 600,
+                'file_name': 'image1.jpg',
+            },
+        )
+        self.converter.coco_format['annotations'].append(
+            {
+                'id': 1,
+                'image_id': 1,
+                'category_id': 1,
+                'bbox': [200.0, 150.0, 400.0, 300.0],
+                'area': 120000.0,
+                'segmentation': [],
+                'iscrowd': 0,
+            },
+        )
 
         # Run the save to JSON method
         self.converter.save_to_json('output.json')
@@ -123,9 +130,7 @@ class TestCOCOConverter(unittest.TestCase):
         read_data='0 0.5 0.5 0.5 0.5\n',
     )
     def test_initialise_categories(self, mock_file: Any) -> None:
-        """
-        Test the initialisation of categories in COCO format.
-        """
+        """Test the initialisation of categories in COCO format."""
         # Reset categories to avoid duplication
         self.converter.coco_format['categories'] = []
         self.converter.initialise_categories(self.categories)
@@ -145,14 +150,12 @@ class TestCOCOConverter(unittest.TestCase):
     )
     @patch('argparse.ArgumentParser.parse_args')
     def test_main(
-            self,
-            mock_parse_args: Any,
-            mock_save_to_json: Any,
-            mock_convert_annotations: Any,
+        self,
+        mock_parse_args: Any,
+        mock_save_to_json: Any,
+        mock_convert_annotations: Any,
     ) -> None:
-        """
-        Test the main function.
-        """
+        """Test the main function."""
         # Setup the mock arguments
         mock_parse_args.return_value = argparse.Namespace(
             labels_dir='dataset/valid/labels',
@@ -167,7 +170,8 @@ class TestCOCOConverter(unittest.TestCase):
 
             # Check that convert_annotations and save_to_json were called
             mock_convert_annotations.assert_called_once_with(
-                'dataset/valid/labels', 'dataset/valid/images',
+                'dataset/valid/labels',
+                'dataset/valid/images',
             )
             mock_save_to_json.assert_called_once_with(
                 'dataset/coco_annotations.json',

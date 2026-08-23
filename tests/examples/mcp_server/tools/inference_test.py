@@ -60,7 +60,8 @@ class DetectFrameTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                InferenceTools, '_load_image',
+                InferenceTools,
+                '_load_image',
                 AsyncMock(return_value=fake_frame),
             ),
             patch.object(InferenceTools, '_init_detector', AsyncMock()),
@@ -68,7 +69,8 @@ class DetectFrameTests(unittest.IsolatedAsyncioTestCase):
             tool = InferenceTools()
             detector_mock = AsyncMock()
             detector_mock.generate_detections.return_value = (
-                fake_dets, fake_trk,
+                fake_dets,
+                fake_trk,
             )
             tool._detector = detector_mock
 
@@ -104,15 +106,18 @@ class DetectFrameTests(unittest.IsolatedAsyncioTestCase):
             detector.generate_detections.return_value = (fake_dets, fake_trk)
             tool._detector = detector
 
-        with patch.object(
-            InferenceTools,
-            '_load_image',
-            AsyncMock(return_value=fake_frame),
-        ), patch.object(
-            InferenceTools,
-            '_init_detector',
-            AsyncMock(side_effect=init_side_effect),
-        ) as mock_init:
+        with (
+            patch.object(
+                InferenceTools,
+                '_load_image',
+                AsyncMock(return_value=fake_frame),
+            ),
+            patch.object(
+                InferenceTools,
+                '_init_detector',
+                AsyncMock(side_effect=init_side_effect),
+            ) as mock_init,
+        ):
             tool = InferenceTools()
             res = await tool.detect_frame(
                 image_base64='abc==',
@@ -127,8 +132,7 @@ class DetectFrameTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """If image fails to load, detect_frame should log and raise
-        ValueError.
-        """
+        ValueError."""
         with patch.object(
             InferenceTools,
             '_load_image',
@@ -175,7 +179,8 @@ class LoadImageTests(unittest.IsolatedAsyncioTestCase):
             res = await tool._load_image(None, 'http://example.com/img.jpg')
         self.assertTrue(isinstance(res, np.ndarray))
         mock_client.stream.assert_called_once_with(
-            'GET', 'http://example.com/img.jpg',
+            'GET',
+            'http://example.com/img.jpg',
         )
 
     async def test_load_image_returns_none_when_inputs_missing(self) -> None:
@@ -255,11 +260,14 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_init_detector_creates_local_yolo_detector(self) -> None:
         """Should create LocalYoloDetector with expected parameters."""
-        with patch(
-            'examples.mcp_server.tools.inference.LocalYoloDetector',
-        ) as mock_lsd, patch(
-            'examples.mcp_server.tools.inference.get_env_int',
-            side_effect=[1, 10],
+        with (
+            patch(
+                'examples.mcp_server.tools.inference.LocalYoloDetector',
+            ) as mock_lsd,
+            patch(
+                'examples.mcp_server.tools.inference.get_env_int',
+                side_effect=[1, 10],
+            ),
         ):
             tool = InferenceTools()
             await tool._init_detector(
@@ -297,9 +305,3 @@ class CloseTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.mcp_server.tools.inference \
-       --cov-report=term-missing \
-       tests/examples/mcp_server/tools/inference_test.py
-'''

@@ -75,7 +75,7 @@ def test_train_on_all_data_writes_filtered_temporary_config(
         optimizer='SGD',
     )
     assert observed == [
-        f'path: {tmp_path}\ntrain: images\nval: images\n'
+        f"path: {tmp_path}\ntrain: images\nval: images\n"
         'names: [worker, cone]\nnc: 2',
     ]
     assert not (tmp_path / 'all_data_train.yaml').exists()

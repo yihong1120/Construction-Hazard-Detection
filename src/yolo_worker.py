@@ -33,6 +33,7 @@ from src.yolo_worker_protocol import WorkerResultSender
 from src.yolo_worker_protocol import YOLO_WORKER_STOP_MESSAGE
 from src.yolo_worker_protocol import YoloModelLike
 from src.yolo_worker_protocol import YoloResultLike
+
 # Compatibility exports for callers that historically imported all IPC types
 # from this runtime module.
 
@@ -183,8 +184,7 @@ class YoloWorkerClient:
         if ring is self._ring:
             return
         if any(
-            candidate is ring
-            for candidate, _ in self._inflight_slots.values()
+            candidate is ring for candidate, _ in self._inflight_slots.values()
         ):
             return
         with suppress(ValueError):
@@ -197,9 +197,9 @@ class YoloWorkerClient:
         Args:
             request_id: Timed-out request whose frame may still be in use.
         """
+
         async def release_when_safe() -> None:
-            """Perform release when safe.
-            """
+            """Perform release when safe."""
             await asyncio.sleep(self.ring_cleanup_delay_seconds)
             self._release_slot(request_id)
 
@@ -415,7 +415,8 @@ class YoloWorker:
             # A superseded request must return quickly so its client can keep
             # the stream alive without waiting for stale inference work.
             self._send_result(
-                old_request, {
+                old_request,
+                {
                     'id': old_request.id,
                     'ok': True,
                     'detections': [],
@@ -493,14 +494,19 @@ class YoloWorker:
                     )
                     score_index = -2 if box_data.shape[1] > 6 else 4
                     label_index = -1 if box_data.shape[1] > 6 else 5
-                    detections = box_data[
-                        :,
-                        [0, 1, 2, 3, score_index, label_index],
-                    ].astype(float, copy=False).tolist()
+                    detections = (
+                        box_data[
+                            :,
+                            [0, 1, 2, 3, score_index, label_index],
+                        ]
+                        .astype(float, copy=False)
+                        .tolist()
+                    )
                     for detection in detections:
                         detection[5] = int(detection[5])
                 self._send_result(
-                    request, {
+                    request,
+                    {
                         'id': request.id,
                         'ok': True,
                         'detections': detections,
@@ -510,7 +516,8 @@ class YoloWorker:
             self.logger.exception('[YOLO-Worker] batch request failed')
             for request in valid_requests:
                 self._send_result(
-                    request, {
+                    request,
+                    {
                         'id': request.id,
                         'ok': False,
                         'error': str(exc),
@@ -576,7 +583,8 @@ class YoloWorker:
                     request.shm_name,
                 )
                 self._send_result(
-                    request, {
+                    request,
+                    {
                         'id': request.id,
                         'ok': False,
                         'error': str(exc),
@@ -587,7 +595,8 @@ class YoloWorker:
                     '[YOLO-Worker] failed to read shared frame',
                 )
                 self._send_result(
-                    request, {
+                    request,
+                    {
                         'id': request.id,
                         'ok': False,
                         'error': str(exc),
@@ -637,9 +646,11 @@ class YoloWorker:
                 request.shape,
                 dtype=np.dtype(request.dtype),
                 buffer=shm.buf,
-                offset=request.slot * int(
+                offset=request.slot
+                * int(
                     np.prod(request.shape, dtype=np.int64),
-                ) * np.dtype(request.dtype).itemsize,
+                )
+                * np.dtype(request.dtype).itemsize,
             ).view(_SharedFrameArray)
             frame.shared_memory_handle = shm
             return cast(FrameArray, frame)
@@ -674,10 +685,10 @@ class YoloWorker:
         model = self.model_cache.get(model_key)
         if model is not None:
             return model
-        model_path = self.model_dir / f'best_{model_key}{self.model_suffix}'
+        model_path = self.model_dir / f"best_{model_key}{self.model_suffix}"
         if not model_path.exists():
             raise FileNotFoundError(
-                f'YOLO worker model not found: {model_path}',
+                f"YOLO worker model not found: {model_path}",
             )
         from ultralytics import YOLO
 

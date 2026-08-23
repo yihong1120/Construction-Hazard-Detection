@@ -20,14 +20,10 @@ from src.notifiers.line_notifier_message_api import main
 
 
 class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
-    """
-    Test cases for the LineMessenger class.
-    """
+    """Test cases for the LineMessenger class."""
 
     def setUp(self) -> None:
-        """
-        Set up test fixtures for each test method.
-        """
+        """Set up test fixtures for each test method."""
         logging.basicConfig(level=logging.ERROR)
         self.channel_access_token: str = 'test_channel_access_token'
         self.messenger: LineMessenger = LineMessenger(
@@ -43,9 +39,8 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'LINE_CHANNEL_ACCESS_TOKEN': ''})
     def test_init_without_channel_access_token(self) -> None:
-        """
-        Test initialisation without a channel access token raises ValueError.
-        """
+        """Test initialisation without a channel access token raises
+        ValueError."""
         with self.assertRaises(ValueError) as ctx:
             LineMessenger()
         self.assertEqual(
@@ -57,7 +52,8 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch.dict(
-        os.environ, {'LINE_CHANNEL_ACCESS_TOKEN': 'test_channel_access_token'},
+        os.environ,
+        {'LINE_CHANNEL_ACCESS_TOKEN': 'test_channel_access_token'},
     )
     @patch('aiohttp.ClientSession.post')
     @patch(
@@ -69,9 +65,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         mock_upload: MagicMock,
         mock_post: MagicMock,
     ) -> None:
-        """
-        Test push_message with an image attached.
-        """
+        """Test push_message with an image attached."""
         self.messenger.channel_access_token = 'test_channel_access_token'
         mock_upload.return_value = ('http://mock_image_url', 'mock_public_id')
         mock_response = unittest.mock.AsyncMock()
@@ -118,9 +112,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         mock_save: MagicMock,
         mock_delete: MagicMock,
     ) -> None:
-        """
-        Test delete_old_images_with_interval when last_checked is None.
-        """
+        """Test delete_old_images_with_interval when last_checked is None."""
         # Use empty string instead of None
         self.messenger.image_records['last_checked'] = ''
         self.messenger.delete_old_images_with_interval()
@@ -141,9 +133,8 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         mock_save: MagicMock,
         mock_delete: MagicMock,
     ) -> None:
-        """
-        Test delete_old_images_with_interval with invalid last_checked value.
-        """
+        """Test delete_old_images_with_interval with invalid last_checked
+        value."""
         self.messenger.image_records['last_checked'] = 'invalid_datetime'
         self.messenger.delete_old_images_with_interval()
         mock_delete.assert_called_once()
@@ -151,16 +142,15 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         self.assertIn('last_checked', self.messenger.image_records)
 
     @patch.dict(
-        os.environ, {'LINE_CHANNEL_ACCESS_TOKEN': 'test_channel_access_token'},
+        os.environ,
+        {'LINE_CHANNEL_ACCESS_TOKEN': 'test_channel_access_token'},
     )
     @patch('aiohttp.ClientSession.post')
     async def test_push_message_without_image(
         self,
         mock_post: MagicMock,
     ) -> None:
-        """
-        Test push_message without an image.
-        """
+        """Test push_message without an image."""
         self.messenger.channel_access_token = 'test_channel_access_token'
         mock_response = unittest.mock.AsyncMock()
         mock_response.status = 200
@@ -183,9 +173,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
     @patch('cloudinary.uploader.upload')
     async def test_upload_image_success(self, mock_upload: MagicMock) -> None:
-        """
-        Test successful image upload to Cloudinary.
-        """
+        """Test successful image upload to Cloudinary."""
         mock_upload.return_value = {
             'secure_url': 'http://mock_image_url',
             'public_id': 'mock_public_id',
@@ -198,9 +186,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
     @patch('cloudinary.uploader.upload')
     async def test_upload_image_failure(self, mock_upload: MagicMock) -> None:
-        """
-        Test image upload failure to Cloudinary.
-        """
+        """Test image upload failure to Cloudinary."""
         mock_upload.side_effect = Exception('upload error')
         url, pid = await self.messenger.upload_image_to_cloudinary(
             self.image_bytes,
@@ -210,18 +196,14 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
     @patch('cloudinary.uploader.destroy')
     def test_delete_cloudinary_success(self, mock_destroy: MagicMock) -> None:
-        """
-        Test successful deletion of image from Cloudinary.
-        """
+        """Test successful deletion of image from Cloudinary."""
         mock_destroy.return_value = {'result': 'ok'}
         self.messenger.delete_image_from_cloudinary('pid')
         mock_destroy.assert_called_once_with('pid')
 
     @patch('cloudinary.uploader.destroy')
     def test_delete_cloudinary_failure(self, mock_destroy: MagicMock) -> None:
-        """
-        Test failed deletion of image from Cloudinary.
-        """
+        """Test failed deletion of image from Cloudinary."""
         mock_destroy.return_value = {'result': 'error'}
         self.messenger.delete_image_from_cloudinary('pid')
         mock_destroy.assert_called_once_with('pid')
@@ -231,9 +213,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         self,
         mock_destroy: MagicMock,
     ) -> None:
-        """
-        Test exception during deletion of image from Cloudinary.
-        """
+        """Test exception during deletion of image from Cloudinary."""
         mock_destroy.side_effect = Exception('boom')
         with patch.object(self.messenger.logger, 'error') as mock_error:
             self.messenger.delete_image_from_cloudinary('pid')
@@ -252,9 +232,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         mock_save: MagicMock,
         mock_del: MagicMock,
     ) -> None:
-        """
-        Test deletion of old images from records.
-        """
+        """Test deletion of old images from records."""
         now = datetime.now()
         self.messenger.image_records = {
             'old_id': (now - timedelta(days=8)).isoformat(),
@@ -285,9 +263,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         mock_save: MagicMock,
         mock_delete: MagicMock,
     ) -> None:
-        """
-        Test delete_old_images_with_interval with timing logic.
-        """
+        """Test delete_old_images_with_interval with timing logic."""
         now = datetime(2023, 10, 1)
         mock_datetime.now.return_value = now
         self.messenger.image_records['last_checked'] = (
@@ -302,8 +278,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         mock_save.assert_called_once()
 
     @patch(
-        'src.notifiers.line_notifier_message_api.LineMessenger.'
-        'push_message',
+        'src.notifiers.line_notifier_message_api.LineMessenger.push_message',
         new_callable=AsyncMock,
     )
     @patch(
@@ -321,9 +296,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         mock_upload: AsyncMock,
         mock_push: AsyncMock,
     ) -> None:
-        """
-        Smoke test for main() function.
-        """
+        """Smoke test for main() function."""
         mock_push.return_value = 200
         mock_upload.return_value = ('http://mock_image_url', 'mock_public_id')
 
@@ -350,9 +323,8 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
     @patch('aiohttp.ClientSession.post')
     async def test_push_message_api_error(self, mock_post: MagicMock) -> None:
-        """
-        Test push_message API error path logs an error and returns its code.
-        """
+        """Test push_message API error path logs an error and returns its
+        code."""
         mock_response = unittest.mock.AsyncMock()
         mock_response.status = 401
         mock_response.text = unittest.mock.AsyncMock(
@@ -384,9 +356,8 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         self,
         mock_upload: AsyncMock,
     ) -> None:
-        """
-        Test push_message when image upload fails (should raise ValueError).
-        """
+        """Test push_message when image upload fails (should raise
+        ValueError)."""
         mock_upload.return_value = ('', '')
         with self.assertRaises(ValueError):
             await self.messenger.push_message(
@@ -396,9 +367,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
             )
 
     def test_load_image_records_exception(self) -> None:
-        """
-        Test load_image_records exception handling.
-        """
+        """Test load_image_records exception handling."""
         open_orig = open
 
         def open_side_effect(path: Any, *args: Any, **kwargs: Any) -> Any:
@@ -410,21 +379,24 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
             if path == 'dummy.json':
                 raise Exception('load error')
             return open_orig(path, *args, **kwargs)
-        with patch('os.path.exists', return_value=True), \
-                patch('builtins.open', side_effect=open_side_effect):
+
+        with (
+            patch('os.path.exists', return_value=True),
+            patch('builtins.open', side_effect=open_side_effect),
+        ):
             messenger = LineMessenger(
-                channel_access_token='x', image_record_file='dummy.json',
+                channel_access_token='x',
+                image_record_file='dummy.json',
             )
             records = messenger.load_image_records()
             self.assertEqual(records, {})
 
     def test_save_image_records_exception(self) -> None:
-        """
-        Test save_image_records exception handling (should log an error).
-        """
+        """Test save_image_records exception handling (should log an error)."""
         with patch.object(Path, 'open', side_effect=OSError('save error')):
             messenger = LineMessenger(
-                channel_access_token='x', image_record_file='dummy.json',
+                channel_access_token='x',
+                image_record_file='dummy.json',
             )
             with patch.object(messenger.logger, 'error') as mock_error:
                 messenger.save_image_records()
@@ -438,9 +410,7 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         self,
         mock_destroy: MagicMock,
     ) -> None:
-        """
-        Test delete_image_from_cloudinary exception handling.
-        """
+        """Test delete_image_from_cloudinary exception handling."""
         messenger = LineMessenger(channel_access_token='x')
         with patch.object(messenger.logger, 'error') as mock_error:
             messenger.delete_image_from_cloudinary('pid')
@@ -449,9 +419,3 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=src.notifiers.line_notifier_message_api\
-    --cov-report=term-missing\
-        tests/src/notifiers/line_notifier_message_api_test.py
-'''

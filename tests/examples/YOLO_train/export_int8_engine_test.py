@@ -20,9 +20,13 @@ def test_checkpoint_accepts_model_key(tmp_path: Path) -> None:
     ckpt.parent.mkdir(parents=True)
     ckpt.write_text('model')
 
-    assert export_int8_engine.checkpoint(
-        'yolo26n', model_dir,
-    ) == ckpt.resolve()
+    assert (
+        export_int8_engine.checkpoint(
+            'yolo26n',
+            model_dir,
+        )
+        == ckpt.resolve()
+    )
 
 
 def test_checkpoint_and_data_yaml_report_missing_files(tmp_path: Path) -> None:
@@ -55,9 +59,13 @@ def test_checkpoint_prefers_model_dir_for_bare_key(
     monkeypatch.setattr(export_int8_engine, 'ROOT', root)
     monkeypatch.chdir(cwd)
 
-    assert export_int8_engine.checkpoint(
-        'yolo26n', model_dir,
-    ) == preferred.resolve()
+    assert (
+        export_int8_engine.checkpoint(
+            'yolo26n',
+            model_dir,
+        )
+        == preferred.resolve()
+    )
 
 
 def test_data_yaml_accepts_dataset_dir(
@@ -77,9 +85,12 @@ def test_data_yaml_accepts_dataset_dir(
     data_yaml.write_text('path: .')
     monkeypatch.setattr(export_int8_engine, 'ROOT', root)
 
-    assert export_int8_engine.data_yaml(
-        'examples/YOLO_train/cv_dataset',
-    ) == data_yaml.resolve()
+    assert (
+        export_int8_engine.data_yaml(
+            'examples/YOLO_train/cv_dataset',
+        )
+        == data_yaml.resolve()
+    )
 
 
 def test_calibration_yaml_keeps_valid_split_yaml(tmp_path: Path) -> None:
@@ -93,12 +104,16 @@ def test_calibration_yaml_keeps_valid_split_yaml(tmp_path: Path) -> None:
     (dataset / 'val' / 'images').mkdir(parents=True)
     data_yaml = dataset / 'data.yaml'
     data_yaml.write_text(
-        f'path: {dataset}\ntrain: train/images\nval: val/images\n',
+        f"path: {dataset}\ntrain: train/images\nval: val/images\n",
     )
 
-    assert export_int8_engine.calibration_yaml(
-        data_yaml, tmp_path / 'tmp',
-    ) == data_yaml
+    assert (
+        export_int8_engine.calibration_yaml(
+            data_yaml,
+            tmp_path / 'tmp',
+        )
+        == data_yaml
+    )
 
 
 def test_calibration_yaml_maps_flat_images_to_train_and_val(
@@ -117,7 +132,8 @@ def test_calibration_yaml_maps_flat_images_to_train_and_val(
     data_yaml.write_text('train: train/images\nval: val/images\nnc: 1\n')
 
     generated = export_int8_engine.calibration_yaml(
-        data_yaml, tmp_path / 'tmp',
+        data_yaml,
+        tmp_path / 'tmp',
     )
 
     assert generated == tmp_path / 'tmp' / 'data_int8_calibration.yaml'
@@ -177,9 +193,10 @@ def test_output_path_resolves_bare_and_project_relative_paths(
     output_dir = root / 'models' / 'int8_engine'
     monkeypatch.setattr(export_int8_engine, 'ROOT', root)
 
-    assert export_int8_engine.output_path(Path('custom'), output_dir) == (
-        output_dir / 'custom.engine'
-    ).resolve()
+    assert (
+        export_int8_engine.output_path(Path('custom'), output_dir)
+        == (output_dir / 'custom.engine').resolve()
+    )
     assert (
         export_int8_engine.output_path(
             Path('exports/custom.engine'),
@@ -209,9 +226,7 @@ def test_export_engine_passes_ultralytics_args(
     calls: list[dict[str, Any]] = []
 
     class FakeYOLO:
-
-        """Provide FakeYOLO.
-        """
+        """Provide FakeYOLO."""
 
         def __init__(self, model_path: str) -> None:
             """Perform init.
@@ -248,21 +263,26 @@ def test_export_engine_passes_ultralytics_args(
     )
 
     exported = export_int8_engine.export_engine(
-        checkpoint, data_yaml, None, args,
+        checkpoint,
+        data_yaml,
+        None,
+        args,
     )
 
     assert exported == output_dir / 'best_yolo26n.engine'
-    assert calls == [{
-        'format': 'engine',
-        'quantize': 8,
-        'data': str(data_yaml),
-        'fraction': 1.0,
-        'device': '0',
-        'imgsz': 640,
-        'batch': 1,
-        'workspace': None,
-        'dynamic': False,
-    }]
+    assert calls == [
+        {
+            'format': 'engine',
+            'quantize': 8,
+            'data': str(data_yaml),
+            'fraction': 1.0,
+            'device': '0',
+            'imgsz': 640,
+            'batch': 1,
+            'workspace': None,
+            'dynamic': False,
+        },
+    ]
 
 
 def test_export_engine_respects_existing_output_policy(
@@ -280,9 +300,7 @@ def test_export_engine_respects_existing_output_policy(
     target.write_text('old engine')
 
     class FakeYOLO:
-
-        """Provide FakeYOLO.
-        """
+        """Provide FakeYOLO."""
 
         def __init__(self, _model_path: str) -> None:
             """Perform init.
@@ -320,12 +338,15 @@ def test_export_engine_respects_existing_output_policy(
         export_int8_engine.export_engine(checkpoint, data_yaml, target, args)
 
     args.overwrite = True
-    assert export_int8_engine.export_engine(
-        checkpoint,
-        data_yaml,
-        target,
-        args,
-    ) == target.resolve()
+    assert (
+        export_int8_engine.export_engine(
+            checkpoint,
+            data_yaml,
+            target,
+            args,
+        )
+        == target.resolve()
+    )
     assert target.read_text() == 'new engine'
 
 
@@ -375,17 +396,25 @@ def test_main_exports_every_requested_model(
         exports.append((model, exported_data, target))
         assert args.model_dir == model_dir.resolve()
         assert args.output_dir == output_dir.resolve()
-        return output_dir / f'{model.stem}.engine'
+        return output_dir / f"{model.stem}.engine"
 
     monkeypatch.setattr(export_int8_engine, 'export_engine', export)
 
-    assert export_int8_engine.main([
-        '--model-dir', str(model_dir),
-        '--output-dir', str(output_dir),
-        '--data', 'provided.yaml',
-        'first',
-        'second',
-    ]) == 0
+    assert (
+        export_int8_engine.main(
+            [
+                '--model-dir',
+                str(model_dir),
+                '--output-dir',
+                str(output_dir),
+                '--data',
+                'provided.yaml',
+                'first',
+                'second',
+            ],
+        )
+        == 0
+    )
     assert exports == [
         (model_dir / 'first.pt', calibration, None),
         (model_dir / 'second.pt', calibration, None),
@@ -393,23 +422,25 @@ def test_main_exports_every_requested_model(
 
 
 def test_main_rejects_output_with_multiple_models() -> None:
-    """Test main rejects output with multiple models.
-    """
+    """Test main rejects output with multiple models."""
     with pytest.raises(SystemExit):
         export_int8_engine.main(['yolo26n', 'yolo26s', '--output', 'one'])
 
 
 def test_path_helpers_cover_absolute_and_fallback_roots(
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Absolute paths and a missing configured dataset root stay usable."""
     checkpoint = tmp_path / 'absolute.pt'
     checkpoint.write_text('model')
-    assert export_int8_engine.checkpoint(
-        str(checkpoint),
-        tmp_path / 'models',
-    ) == checkpoint.resolve()
+    assert (
+        export_int8_engine.checkpoint(
+            str(checkpoint),
+            tmp_path / 'models',
+        )
+        == checkpoint.resolve()
+    )
 
     dataset = tmp_path / 'dataset'
     images = dataset / 'images'
@@ -425,15 +456,18 @@ def test_path_helpers_cover_absolute_and_fallback_roots(
     assert calibration != data_yaml
 
     output = tmp_path / 'absolute.engine'
-    assert export_int8_engine.output_path(
-        output,
-        tmp_path / 'outputs',
-    ) == output.resolve()
+    assert (
+        export_int8_engine.output_path(
+            output,
+            tmp_path / 'outputs',
+        )
+        == output.resolve()
+    )
 
 
 def test_checkpoint_accepts_project_relative_model_path(
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A relative path with a parent directory uses the project root."""
     root = tmp_path / 'repo'
@@ -442,7 +476,10 @@ def test_checkpoint_accepts_project_relative_model_path(
     checkpoint.write_text('model')
     monkeypatch.setattr(export_int8_engine, 'ROOT', root)
 
-    assert export_int8_engine.checkpoint(
-        'models/nested.pt',
-        root / 'unused',
-    ) == checkpoint.resolve()
+    assert (
+        export_int8_engine.checkpoint(
+            'models/nested.pt',
+            root / 'unused',
+        )
+        == checkpoint.resolve()
+    )

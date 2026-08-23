@@ -51,8 +51,8 @@ def checkpoint(name: str, model_dir: Path) -> Path:
     raw = Path(name).expanduser()
     raw_pt = raw if raw.suffix else raw.with_suffix('.pt')
     stem = raw.stem if raw.suffix else raw.name
-    filename = stem if stem.startswith('best_') else f'best_{stem}'
-    best = model_dir / f'{filename}.pt'
+    filename = stem if stem.startswith('best_') else f"best_{stem}"
+    best = model_dir / f"{filename}.pt"
     if raw.is_absolute():
         candidates = [raw]
     elif raw.parent == Path('.') and not name.startswith(('.', '~')):

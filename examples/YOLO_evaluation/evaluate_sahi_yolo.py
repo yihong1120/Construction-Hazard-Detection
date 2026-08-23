@@ -14,9 +14,7 @@ from sahi.utils.coco import Coco
 
 
 class COCOEvaluator:
-    """
-    Evaluates object detection models using COCO metrics.
-    """
+    """Evaluates object detection models using COCO metrics."""
 
     def __init__(
         self,
@@ -29,8 +27,7 @@ class COCOEvaluator:
         overlap_height_ratio: float = 0.3,
         overlap_width_ratio: float = 0.3,
     ) -> None:
-        """
-        Initialises the evaluator with model and dataset parameters.
+        """Initialises the evaluator with model and dataset parameters.
 
         Args:
             model_path (str): Path to the trained model file.
@@ -58,8 +55,7 @@ class COCOEvaluator:
         self.overlap_width_ratio = overlap_width_ratio
 
     def evaluate(self) -> dict[str, float]:
-        """
-        Evaluates the model on the dataset and computes COCO metrics.
+        """Evaluates the model on the dataset and computes COCO metrics.
 
         Returns:
             Dict[str, float]: A dictionary containing computed metrics.
@@ -75,7 +71,8 @@ class COCOEvaluator:
         pycoco = COCO(self.coco_json)
         predictions = []
         category_to_id = {
-            category.name: category.id for category in coco.categories
+            category.name: category.id
+            for category in coco.categories
         }
 
         for image_info in coco.images:
@@ -92,17 +89,19 @@ class COCOEvaluator:
             for pred in prediction_result.object_prediction_list:
                 predictions.append(
                     {
-                        'image_id': image_info.id,
-                        'category_id': category_to_id[pred.category.name],
+                        'image_id':
+                        image_info.id,
+                        'category_id':
+                        category_to_id[pred.category.name],
                         'bbox': [
                             pred.bbox.minx,
                             pred.bbox.miny,
                             pred.bbox.maxx - pred.bbox.minx,
                             pred.bbox.maxy - pred.bbox.miny,
                         ],
-                        'score': pred.score.value,
-                    },
-                )
+                        'score':
+                        pred.score.value,
+                    }, )
 
         # Save the predictions to a JSON file
         predictions_path = 'predictions.json'
@@ -117,18 +116,14 @@ class COCOEvaluator:
         coco_eval.summarize()
 
         metrics = {
-            'Average Precision': np.mean(
-                coco_eval.eval['precision'][:, :, :, 0, -1],
-            ),
-            'Average Recall': np.mean(
-                coco_eval.eval['recall'][:, :, 0, -1],
-            ),
-            'mAP at IoU=50': np.mean(
-                coco_eval.eval['precision'][0, :, :, 0, 2],
-            ),
-            'mAP at IoU=50-95': np.mean(
-                coco_eval.eval['precision'][0, :, :, 0, :],
-            ),
+            'Average Precision':
+            np.mean(coco_eval.eval['precision'][:, :, :, 0, -1]),
+            'Average Recall':
+            np.mean(coco_eval.eval['recall'][:, :, 0, -1]),
+            'mAP at IoU=50':
+            np.mean(coco_eval.eval['precision'][0, :, :, 0, 2]),
+            'mAP at IoU=50-95':
+            np.mean(coco_eval.eval['precision'][0, :, :, 0, :]),
         }
         return metrics
 
@@ -136,8 +131,7 @@ class COCOEvaluator:
 def main() -> None:
     """Evaluate a SAHI-backed YOLO model with COCO metrics."""
     parser = argparse.ArgumentParser(
-        description='Evaluates a YOLO model using COCO metrics.',
-    )
+        description='Evaluates a YOLO model using COCO metrics.', )
     parser.add_argument(
         '--model_path',
         type=str,
@@ -168,10 +162,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
-"""example usage
-python evaluate_sahi_yolo.py \
-    --model_path "../../models/pt/best_yolov8x.pt" \
-    --coco_json "dataset/coco_annotations.json" \
-    --image_dir "dataset/valid/images"
-"""

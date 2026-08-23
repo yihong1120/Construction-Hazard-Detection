@@ -21,6 +21,7 @@ from examples.YOLO_server_api.config import MODEL_VARIANTS
 from examples.YOLO_server_api.config import PRELOAD_SMALLEST
 from examples.YOLO_server_api.config import USE_SAHI
 from examples.YOLO_server_api.config import USE_TENSORRT
+
 # YOLO is required in all modes (standard .pt and TensorRT .engine),
 # import unconditionally to simplify control flow.
 
@@ -36,8 +37,8 @@ logger = logging.getLogger(__name__)
 class ModelFileChangeHandler(FileSystemEventHandler):
     """File change watcher used to support hot-reloading of models.
 
-    Monitors the model directory for modified files matching the expected
-    model file extension and triggers a reload of the corresponding model.
+    Monitors the model directory for modified files matching the expected model
+    file extension and triggers a reload of the corresponding model.
     """
 
     def __init__(self, model_manager: DetectionModelManager) -> None:
@@ -68,13 +69,15 @@ class ModelFileChangeHandler(FileSystemEventHandler):
         name = sanitize_filename(raw_name)
         if name in self.model_manager.model_names:
             self.model_manager._safe_load(name)
-            logger.info('YOLO model hot-reloaded model=%s source=watcher', name)
+            logger.info(
+                'YOLO model hot-reloaded model=%s source=watcher',
+                name,
+            )
 
 
 class DetectionModelManager:
-    """
-    YOLO detection model manager with lazy load, LRU eviction, and hot reload.
-    """
+    """YOLO detection model manager with lazy load, LRU eviction, and hot
+    reload."""
 
     def __init__(self) -> None:
         """Initialise the model manager, paths, caches, and file watcher."""
@@ -146,9 +149,9 @@ class DetectionModelManager:
                     'SAHI mode is enabled but the sahi package is not '
                     'installed.',
                 ) from exc
-            model_path = self.base_model_path / f'best_{safe_name}.pt'
+            model_path = self.base_model_path / f"best_{safe_name}.pt"
             if not model_path.exists():
-                raise FileNotFoundError(f'Model file not found: {model_path}')
+                raise FileNotFoundError(f"Model file not found: {model_path}")
             return AutoDetectionModel.from_pretrained(
                 'yolo26',
                 model_path=str(model_path),
@@ -157,15 +160,15 @@ class DetectionModelManager:
 
         if USE_TENSORRT:
             # TensorRT mode: Use .engine files with YOLO
-            model_path = self.base_model_path / f'best_{safe_name}.engine'
+            model_path = self.base_model_path / f"best_{safe_name}.engine"
             if not model_path.exists():
-                raise FileNotFoundError(f'Model file not found: {model_path}')
+                raise FileNotFoundError(f"Model file not found: {model_path}")
             return YOLO(str(model_path))
 
         # Standard mode: Use .pt files with YOLO
-        model_path = self.base_model_path / f'best_{safe_name}.pt'
+        model_path = self.base_model_path / f"best_{safe_name}.pt"
         if not model_path.exists():
-            raise FileNotFoundError(f'Model file not found: {model_path}')
+            raise FileNotFoundError(f"Model file not found: {model_path}")
         return YOLO(str(model_path))
 
     def _safe_load(self, name: str) -> None:
@@ -204,8 +207,7 @@ class DetectionModelManager:
         self._lru_order.append(name)
 
     def _enforce_lru_limit(self) -> None:
-        """
-        Ensure loaded models do not exceed the configured limit.
+        """Ensure loaded models do not exceed the configured limit.
 
         When lazy loading is enabled and the cache grows beyond
         ``MAX_LOADED_MODELS``, evict the least recently used model. Optionally
@@ -225,7 +227,10 @@ class DetectionModelManager:
                     # Release reference explicitly
                     self.models[evict_name] = None
                     loaded_count -= 1
-                    logger.info('YOLO model evicted model=%s policy=lru', evict_name)
+                    logger.info(
+                        'YOLO model evicted model=%s policy=lru',
+                        evict_name,
+                    )
                     # Perform CUDA cache cleanup only for PyTorch (.pt) mode
                     if not USE_TENSORRT and EXPLICIT_CUDA_CLEANUP:
                         try:
@@ -307,7 +312,10 @@ class DetectionModelManager:
             self.models[safe_name] = self.load_single_model(safe_name)
             self._touch_lru(safe_name)
             self._enforce_lru_limit()
-            logger.info('YOLO model reloaded model=%s source=manual', safe_name)
+            logger.info(
+                'YOLO model reloaded model=%s source=manual',
+                safe_name,
+            )
             return True
         except Exception:
             logger.exception('YOLO model reload failed model=%s', safe_name)

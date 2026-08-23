@@ -15,15 +15,12 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-
 _FDA_REFERENCE_CACHE_SIZE = 8
 
 
 class DataAugmentation:
-    """
-    A class to perform data augmentation for image datasets, especially useful
-    for training machine learning models.
-    """
+    """A class to perform data augmentation for image datasets, especially
+    useful for training machine learning models."""
 
     min_bbox_visibility = 0.0
     crop_transform_probability = 0.35
@@ -37,8 +34,7 @@ class DataAugmentation:
     )
 
     def __init__(self, train_path: str, num_augmentations: int = 1) -> None:
-        """
-        Initialise the DataAugmentation class.
+        """Initialise the DataAugmentation class.
 
         Args:
             train_path (str): The path to the training data.
@@ -48,7 +44,8 @@ class DataAugmentation:
         self.num_augmentations = num_augmentations
         self._source_image_paths: tuple[Path, ...] | None = None
         self._fda_reference_cache: OrderedDict[
-            tuple[Path, tuple[int, int] | None], np.ndarray,
+            tuple[Path, tuple[int, int] | None],
+            np.ndarray,
         ] = OrderedDict()
 
     def resize_image_and_bboxes(
@@ -58,8 +55,7 @@ class DataAugmentation:
         class_labels: list[int],
         image_path: Path,
     ) -> tuple[np.ndarray, list]:
-        """
-        Resize images and bounding boxes if they are too small or too large.
+        """Resize images and bounding boxes if they are too small or too large.
 
         Args:
             image (np.ndarray): The input image.
@@ -76,16 +72,20 @@ class DataAugmentation:
             transform = A.Compose(
                 [
                     A.SmallestMaxSize(
-                        max_size=64, interpolation=cv2.INTER_LINEAR,
+                        max_size=64,
+                        interpolation=cv2.INTER_LINEAR,
                     ),
                     A.LongestMaxSize(
-                        max_size=64, interpolation=cv2.INTER_LINEAR,
+                        max_size=64,
+                        interpolation=cv2.INTER_LINEAR,
                     ),
                 ],
                 bbox_params=self._create_bbox_params(),
             )
             transformed = transform(
-                image=image, bboxes=bboxes, class_labels=class_labels,
+                image=image,
+                bboxes=bboxes,
+                class_labels=class_labels,
             )
             image, bboxes = transformed['image'], transformed['bboxes']
 
@@ -95,16 +95,20 @@ class DataAugmentation:
             transform = A.Compose(
                 [
                     A.LongestMaxSize(
-                        max_size=1920, interpolation=cv2.INTER_LINEAR,
+                        max_size=1920,
+                        interpolation=cv2.INTER_LINEAR,
                     ),
                     A.SmallestMaxSize(
-                        max_size=1920, interpolation=cv2.INTER_LINEAR,
+                        max_size=1920,
+                        interpolation=cv2.INTER_LINEAR,
                     ),
                 ],
                 bbox_params=self._create_bbox_params(),
             )
             transformed = transform(
-                image=image, bboxes=bboxes, class_labels=class_labels,
+                image=image,
+                bboxes=bboxes,
+                class_labels=class_labels,
             )
             image, bboxes = transformed['image'], transformed['bboxes']
 
@@ -129,9 +133,8 @@ class DataAugmentation:
     def random_bbox_safe_crop_transform(
         image_shape: tuple[int, int],
     ) -> A.BasicTransform:
-        """
-        Create a random crop transform that lets Albumentations update bboxes.
-        """
+        """Create a random crop transform that lets Albumentations update
+        bboxes."""
         crop_height, crop_width = DataAugmentation._random_crop_size(
             image_shape,
         )
@@ -158,9 +161,7 @@ class DataAugmentation:
 
     @staticmethod
     def random_resized_crop_transform() -> A.BasicTransform:
-        """
-        Create a 640px RandomResizedCrop.
-        """
+        """Create a 640px RandomResizedCrop."""
         return A.RandomResizedCrop(
             size=(640, 640),
             scale=(0.3, 1.0),
@@ -266,7 +267,8 @@ class DataAugmentation:
             return []
 
         num_bbox_transforms = random.randint(
-            1, min(2, len(bbox_augmentations)),
+            1,
+            min(2, len(bbox_augmentations)),
         )
         return random.sample(bbox_augmentations, k=num_bbox_transforms)
 
@@ -318,8 +320,7 @@ class DataAugmentation:
             The callable result.
         """
         return all(
-            cls._bbox_stays_in_single_grid_cell(bbox, grid)
-            for bbox in bboxes
+            cls._bbox_stays_in_single_grid_cell(bbox, grid) for bbox in bboxes
         )
 
     @classmethod
@@ -349,8 +350,7 @@ class DataAugmentation:
         min_objects: int = 1,
         max_objects: int = 6,
     ) -> np.ndarray:
-        """
-        Generate a random binary mask with multiple random blobs for
+        """Generate a random binary mask with multiple random blobs for
         MaskDropout.
 
         Args:
@@ -369,7 +369,8 @@ class DataAugmentation:
             shape_type = random.choice(['circle', 'rect', 'ellipse'])
             if shape_type == 'circle':
                 radius = random.randint(
-                    max(5, min(h, w) // 40), max(10, min(h, w) // 10),
+                    max(5, min(h, w) // 40),
+                    max(10, min(h, w) // 10),
                 )
                 center = (
                     random.randint(radius, max(radius, w - radius)),
@@ -401,8 +402,7 @@ class DataAugmentation:
         count: int = 3,
         target_shape: tuple[int, int] | None = None,
     ) -> list[np.ndarray]:
-        """
-        Sample a list of reference images for FDA.
+        """Sample a list of reference images for FDA.
 
         Args:
             count (int): Number of reference images to sample.
@@ -417,9 +417,14 @@ class DataAugmentation:
             return []
 
         # If fewer images than requested, sample with replacement
-        chosen = random.choices(image_paths, k=count) if len(
-            image_paths,
-        ) < count else random.sample(image_paths, k=count)
+        chosen = (
+            random.choices(image_paths, k=count)
+            if len(
+                image_paths,
+            )
+            < count
+            else random.sample(image_paths, k=count)
+        )
 
         refs: list[np.ndarray] = []
         for p in chosen:
@@ -437,7 +442,7 @@ class DataAugmentation:
         if not self._source_image_paths:
             paths: list[Path] = []
             for pattern in ('*.jpg', '*.jpeg', '*.png'):
-                paths.extend(self.train_path.glob(f'images/{pattern}'))
+                paths.extend(self.train_path.glob(f"images/{pattern}"))
             self._source_image_paths = tuple(
                 path for path in paths if '_aug_' not in path.stem
             )
@@ -472,8 +477,8 @@ class DataAugmentation:
         return image
 
     def get_random_target_image(self) -> np.ndarray:
-        """
-        Get a random target image for the Fisher Discriminant Analysis (FDA).
+        """Get a random target image for the Fisher Discriminant Analysis
+        (FDA).
 
         Returns:
             np.ndarray: The target image.
@@ -484,7 +489,7 @@ class DataAugmentation:
         random_image_path = random.choice(image_paths)
         image = cv2.imread(str(random_image_path))
         if image is None:
-            raise ValueError(f'Image could not be loaded: {random_image_path}')
+            raise ValueError(f"Image could not be loaded: {random_image_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         return image
 
@@ -494,8 +499,7 @@ class DataAugmentation:
         image_shape: tuple[int, int] = (640, 640),
         bboxes: Sequence[Sequence[float]] | None = None,
     ) -> A.Compose:
-        """
-        Generate a random augmentation pipeline.
+        """Generate a random augmentation pipeline.
 
         Args:
             has_bboxes: Whether the image has object labels.
@@ -521,12 +525,14 @@ class DataAugmentation:
         ]
         safe_grid_shuffle_grids = (
             list(self.random_grid_shuffle_grids)
-            if not has_bboxes else (
+            if not has_bboxes
+            else (
                 self._safe_random_grid_shuffle_grids(
                     bboxes,
                     self.random_grid_shuffle_grids,
                 )
-                if bboxes is not None else []
+                if bboxes is not None
+                else []
             )
         )
         if has_bboxes:
@@ -534,41 +540,44 @@ class DataAugmentation:
                 self.at_least_one_bbox_crop_transform(image_shape),
             )
 
-        bbox_augmentations.extend([
-            A.RandomRotate90(p=1),
-            A.Rotate(
-                angle_range=(-45, 45),
-                border_mode=cv2.BORDER_REFLECT_101,
-                rotate_method='ellipse',
-                crop_border=True,
-                p=1,
-            ),
-            A.Affine(
-                scale=(0.9, 1.1),  # Scaling range
-                # Increased translation for human-induced jitter
-                translate_percent=(0.05, 0.12),
-                shear=(-8, 8),  # Shear angle range
-                rotate=(-45, 45),  # Rotation angle range
-                rotate_method='ellipse',
-                border_mode=cv2.BORDER_REFLECT_101,
-                fill=0,
-                p=1,
-            ),
-            A.Transpose(p=1),
-            A.Perspective(
-                scale=(0.02, 0.06),
-                keep_size=True,
-                fit_output=False,
-                border_mode=cv2.BORDER_REFLECT_101,
-                fill=0,
-                p=1,
-            ),
-            A.ElasticTransform(alpha=1, sigma=50, p=1),
-            A.GridDistortion(p=1),
-            A.OpticalDistortion(
-                distort_range=(0.05, 0.1), p=1.0,
-            ),
-        ])
+        bbox_augmentations.extend(
+            [
+                A.RandomRotate90(p=1),
+                A.Rotate(
+                    angle_range=(-45, 45),
+                    border_mode=cv2.BORDER_REFLECT_101,
+                    rotate_method='ellipse',
+                    crop_border=True,
+                    p=1,
+                ),
+                A.Affine(
+                    scale=(0.9, 1.1),  # Scaling range
+                    # Increased translation for human-induced jitter
+                    translate_percent=(0.05, 0.12),
+                    shear=(-8, 8),  # Shear angle range
+                    rotate=(-45, 45),  # Rotation angle range
+                    rotate_method='ellipse',
+                    border_mode=cv2.BORDER_REFLECT_101,
+                    fill=0,
+                    p=1,
+                ),
+                A.Transpose(p=1),
+                A.Perspective(
+                    scale=(0.02, 0.06),
+                    keep_size=True,
+                    fit_output=False,
+                    border_mode=cv2.BORDER_REFLECT_101,
+                    fill=0,
+                    p=1,
+                ),
+                A.ElasticTransform(alpha=1, sigma=50, p=1),
+                A.GridDistortion(p=1),
+                A.OpticalDistortion(
+                    distort_range=(0.05, 0.1),
+                    p=1.0,
+                ),
+            ],
+        )
         if safe_grid_shuffle_grids:
             bbox_augmentations.append(
                 A.RandomGridShuffle(
@@ -624,7 +633,8 @@ class DataAugmentation:
             A.CoarseDropout(
                 num_holes_range=(3, 12),
                 hole_height_range=(5, 20),
-                hole_width_range=(5, 20), p=1.0,
+                hole_width_range=(5, 20),
+                p=1.0,
             ),
             A.ToGray(p=1),
             A.Equalize(p=1),
@@ -633,22 +643,29 @@ class DataAugmentation:
             # Special effects
             A.RandomShadow(
                 shadow_roi=(0, 0.5, 1, 1),
-                num_shadows_range=(1, 1), shadow_dimension=5, p=1.0,
+                num_shadows_range=(1, 1),
+                shadow_dimension=5,
+                p=1.0,
             ),
             # Stronger night/low-light style fog/haze
             A.RandomFog(alpha_coef=0.08, fog_coef_range=(0.3, 0.6), p=1.0),
             A.RandomSnow(
                 snow_point_range=(0.05, 0.15),
-                brightness_coeff=1.2, p=1.0,
+                brightness_coeff=1.2,
+                p=1.0,
             ),
             A.RandomRain(
-                slant_range=(-5, 5), drop_length=5,
-                drop_width=1, blur_value=1, p=1.0,
+                slant_range=(-5, 5),
+                drop_length=5,
+                drop_width=1,
+                blur_value=1,
+                p=1.0,
             ),
             A.ChannelShuffle(p=1),
             A.RandomSunFlare(
                 flare_roi=(0.02, 0.04, 0.08, 0.08),
-                angle_range=(0, 1), p=1,
+                angle_range=(0, 1),
+                p=1,
             ),
             A.Defocus(radius_range=(3, 5), p=1),
             # Other augmentations
@@ -656,7 +673,8 @@ class DataAugmentation:
             A.RandomGamma(gamma_range=(90, 110), p=1.0),
             A.Superpixels(
                 p_replace_range=(0.1, 0.1),
-                n_segments_range=(100, 100), p=1,
+                n_segments_range=(100, 100),
+                p=1,
             ),
             # Stronger compression artifacts
             A.ImageCompression(quality_range=(30, 70), p=1.0),
@@ -670,7 +688,8 @@ class DataAugmentation:
             A.GridDropout(ratio=0.5, random_offset=True, p=1.0),
             A.MultiplicativeNoise(
                 multiplier=(0.9, 1.1),
-                per_channel=True, p=1.0,
+                per_channel=True,
+                p=1.0,
             ),
             A.ZoomBlur(max_factor_range=(1.01, 1.08), p=1.0),
             A.Solarize(p=1.0),
@@ -691,7 +710,8 @@ class DataAugmentation:
         # that do not affect bounding boxes (CCTV-like degradations included)
         num_non_bbox_transforms = random.randint(3, 5)
         chosen_non_bbox_transforms = random.sample(
-            non_bbox_augmentations, k=num_non_bbox_transforms,
+            non_bbox_augmentations,
+            k=num_non_bbox_transforms,
         )
 
         chosen_transforms = chosen_bbox_transforms + chosen_non_bbox_transforms
@@ -708,8 +728,7 @@ class DataAugmentation:
         bboxes: list[list[float]],
         class_labels: list[int],
     ) -> dict:
-        """
-        Apply augmentations to the image and bounding boxes.
+        """Apply augmentations to the image and bounding boxes.
 
         Args:
             image (np.ndarray): The input image.
@@ -765,8 +784,7 @@ class DataAugmentation:
         return transformed
 
     def augment_image(self, image_path: Path | None) -> None:
-        """
-        Processes and augments a single image.
+        """Processes and augments a single image.
 
         Args:
             image_path (Path | None): The path to the image file.
@@ -794,12 +812,17 @@ class DataAugmentation:
             image = np.clip(image, 0, 255).astype(np.uint8)
 
             # Read the label file
-            label_path = self.train_path / 'labels' / \
-                image_path.with_suffix('.txt').name
+            label_path = (
+                self.train_path
+                / 'labels'
+                / image_path.with_suffix('.txt').name
+            )
             class_labels, bboxes = self.read_label_file(label_path)
             had_labels = len(class_labels) > 0
             bboxes, class_labels = self.normalize_bboxes_with_albumentations(
-                image, bboxes, class_labels,
+                image,
+                bboxes,
+                class_labels,
             )
             if had_labels and len(bboxes) == 0:
                 print(
@@ -810,12 +833,18 @@ class DataAugmentation:
 
             # Resize the image and bounding boxes
             image, bboxes = self.resize_image_and_bboxes(
-                image, bboxes, class_labels, image_path,
+                image,
+                bboxes,
+                class_labels,
+                image_path,
             )
 
-            # Keep coordinates within 0 and 1 and filter invalid bounding boxes.
+            # Keep coordinates within 0 and 1 and filter invalid bounding
+            # boxes.
             bboxes, class_labels = self.normalize_bboxes_with_albumentations(
-                image, bboxes, class_labels,
+                image,
+                bboxes,
+                class_labels,
             )
 
             if had_labels and len(bboxes) == 0:
@@ -873,11 +902,13 @@ class DataAugmentation:
         class_labels: list[int],
     ) -> None:
         """Write one RGB image and its matching YOLO label file."""
-        image_path_out = self.train_path / 'images' / (
-            f"{image_path.stem}_aug_{index}{image_path.suffix}"
+        image_path_out = (
+            self.train_path
+            / 'images'
+            / (f"{image_path.stem}_aug_{index}{image_path.suffix}")
         )
-        label_path_out = self.train_path / 'labels' / (
-            f"{image_path.stem}_aug_{index}.txt"
+        label_path_out = (
+            self.train_path / 'labels' / (f"{image_path.stem}_aug_{index}.txt")
         )
         image_uint8 = (
             image
@@ -891,8 +922,7 @@ class DataAugmentation:
         self.write_label_file(bboxes, class_labels, label_path_out)
 
     def augment_data(self, batch_size: int = 10) -> None:
-        """
-        Processes images in parallel to save time.
+        """Processes images in parallel to save time.
 
         Args:
             batch_size (int): The number of images to process in each batch.
@@ -918,9 +948,8 @@ class DataAugmentation:
     def read_label_file(
         label_path: Path,
     ) -> tuple[list[int], list[list[float]]]:
-        """
-        Reads a label file and converts it into a list of bounding boxes
-        and class labels.
+        """Reads a label file and converts it into a list of bounding boxes and
+        class labels.
 
         Args:
             label_path (Path): The path to the label file.
@@ -939,7 +968,8 @@ class DataAugmentation:
                 if not stripped_line:
                     continue
                 class_id, x_center, y_center, width, height = map(
-                    float, stripped_line.split(),
+                    float,
+                    stripped_line.split(),
                 )
                 annotations.append(
                     [class_id, x_center, y_center, width, height],
@@ -957,8 +987,7 @@ class DataAugmentation:
         class_labels_aug: Sequence[int],
         label_path: Path,
     ) -> None:
-        """
-        Writes bounding boxes and class labels to a label file.
+        """Writes bounding boxes and class labels to a label file.
 
         Args:
             bboxes (Sequence[Sequence[float]]):
@@ -967,20 +996,21 @@ class DataAugmentation:
             label_path (Path): The path to the label file.
         """
         # Combine class labels with the transformed bounding boxes
-        annotations = [[class_labels_aug[i]] +
-                       list(bboxes_aug[i]) for i in range(len(bboxes_aug))]
+        annotations = [
+            [class_labels_aug[i]] + list(bboxes_aug[i])
+            for i in range(len(bboxes_aug))
+        ]
 
         with open(label_path, 'w') as f:
             for ann in annotations:
                 class_id, x_center, y_center, width, height = ann
                 f.write(
-                    f'{int(class_id)} {x_center:.6} {y_center:.6} '
-                    f'{width:.6} {height:.6}\n',
+                    f"{int(class_id)} {x_center:.6} {y_center:.6} "
+                    f"{width:.6} {height:.6}\n",
                 )
 
     def shuffle_data(self) -> None:
-        """
-        Shuffles the augmented dataset to ensure randomness.
+        """Shuffles the augmented dataset to ensure randomness.
 
         This method pairs each image file with its corresponding label file,
         assigns a unique UUID to each pair, and then saves them with the new
@@ -1036,9 +1066,7 @@ def _augment_image_in_worker(image_path: Path) -> None:
 
 
 def main() -> None:
-    """
-    Main function to perform data augmentation on image datasets.
-    """
+    """Main function to perform data augmentation on image datasets."""
     try:
         parser = argparse.ArgumentParser(
             description='Perform data augmentation on image datasets.',

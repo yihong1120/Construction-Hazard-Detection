@@ -42,17 +42,20 @@ class WeChatNotifier:
     async def get_access_token(self, *, force: bool = False) -> str:
         """Return a cached WeChat Work access token, refreshing when needed."""
         if not self.corp_id or not self.corp_secret:
-            raise ValueError('WECHAT_CORP_ID and WECHAT_CORP_SECRET are required.')
+            raise ValueError(
+                'WECHAT_CORP_ID and WECHAT_CORP_SECRET are required.',
+            )
         if (
             not force
             and self._access_token is not None
-            and self._access_token_expires_at > asyncio.get_running_loop().time()
+            and self._access_token_expires_at
+            > asyncio.get_running_loop().time()
         ):
             return self._access_token
 
         client = self._http_client()
         response = await client.get(
-            f'{_WECHAT_API_ROOT}/gettoken',
+            f"{_WECHAT_API_ROOT}/gettoken",
             params={
                 'corpid': self.corp_id,
                 'corpsecret': self.corp_secret,
@@ -66,9 +69,12 @@ class WeChatNotifier:
         expires_in = payload.get('expires_in', 7200)
         seconds = expires_in if isinstance(expires_in, int) else 7200
         self._access_token = token
-        self._access_token_expires_at = asyncio.get_running_loop().time() + max(
-            0,
-            seconds - _TOKEN_REFRESH_MARGIN_SECONDS,
+        self._access_token_expires_at = (
+            asyncio.get_running_loop().time()
+            + max(
+                0,
+                seconds - _TOKEN_REFRESH_MARGIN_SECONDS,
+            )
         )
         return token
 
@@ -78,7 +84,8 @@ class WeChatNotifier:
         message: str,
         image: np.ndarray | None = None,
     ) -> dict[str, object]:
-        """Send one text or image notification and return the WeChat payload."""
+        """Send one text or image notification and return the WeChat
+        payload."""
         token = await self.get_access_token()
         if image is None:
             payload: dict[str, object] = {
@@ -93,12 +100,14 @@ class WeChatNotifier:
                 'touser': user_id,
                 'msgtype': 'image',
                 'agentid': self.agent_id,
-                'image': {'media_id': await self.upload_media(image, token=token)},
+                'image': {
+                    'media_id': await self.upload_media(image, token=token),
+                },
                 'safe': 0,
             }
         client = self._http_client()
         response = await client.post(
-            f'{_WECHAT_API_ROOT}/message/send',
+            f"{_WECHAT_API_ROOT}/message/send",
             params={'access_token': token},
             json=payload,
         )
@@ -115,7 +124,7 @@ class WeChatNotifier:
         access_token = token or await self.get_access_token()
         client = self._http_client()
         response = await client.post(
-            f'{_WECHAT_API_ROOT}/media/upload',
+            f"{_WECHAT_API_ROOT}/media/upload",
             params={'access_token': access_token, 'type': 'image'},
             files={'media': ('image.png', _png_bytes(image), 'image/png')},
         )

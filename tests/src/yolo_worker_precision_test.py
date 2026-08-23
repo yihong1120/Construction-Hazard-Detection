@@ -7,13 +7,10 @@ from src import yolo_worker
 
 
 class TestYoloWorkerPrecisionCoverage(unittest.TestCase):
-
-    """Provide TestYoloWorkerPrecisionCoverage.
-    """
+    """Provide TestYoloWorkerPrecisionCoverage."""
 
     def test_precision_parser_handles_legacy_and_invalid_values(self) -> None:
-        """Test precision parser handles legacy and invalid values.
-        """
+        """Test precision parser handles legacy and invalid values."""
         self.assertIsNone(yolo_worker._parse_worker_precision(None))
         for value in ['', ' none ', 'null', 'default', 'auto', 'legacy']:
             self.assertIsNone(yolo_worker._parse_worker_precision(value))
@@ -26,8 +23,7 @@ class TestYoloWorkerPrecisionCoverage(unittest.TestCase):
     def test_precision_config_selects_models_and_rejects_unknown_modes(
         self,
     ) -> None:
-        """Test precision config selects models and rejects unknown modes.
-        """
+        """Test precision config selects models and rejects unknown modes."""
         with patch.object(
             yolo_worker,
             'precision_kwargs',
@@ -53,8 +49,7 @@ class TestYoloWorkerPrecisionCoverage(unittest.TestCase):
             yolo_worker._worker_precision_config('bf16')
 
     def test_worker_uses_selected_precision_configuration(self) -> None:
-        """Test worker uses selected precision configuration.
-        """
+        """Test worker uses selected precision configuration."""
         with patch.dict(
             'os.environ',
             {'YOLO_WORKER_PRECISION': 'int8'},
@@ -72,8 +67,7 @@ class TestYoloWorkerPrecisionCoverage(unittest.TestCase):
         self.assertEqual(worker.precision_args, {'rect': False})
 
     def test_worker_uses_legacy_precision_configuration(self) -> None:
-        """Test worker uses legacy precision configuration.
-        """
+        """Test worker uses legacy precision configuration."""
         environment = {
             'YOLO_WORKER_PRECISION': '',
             'YOLO_WORKER_MODEL_DIR': 'custom-models',

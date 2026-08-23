@@ -25,7 +25,9 @@ class DetectViolationsListInputTests(unittest.IsolatedAsyncioTestCase):
         ) as mock_dd:
             inst = mock_dd.return_value
             inst.detect_danger.return_value = (
-                fake_warnings, fake_cones, fake_poles,
+                fake_warnings,
+                fake_cones,
+                fake_poles,
             )
 
             tool = HazardTools()
@@ -46,8 +48,7 @@ class DetectViolationsListInputTests(unittest.IsolatedAsyncioTestCase):
 
 class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
     """Tests for detect_violations with dict-based detections that require
-    normalisation.
-    """
+    normalisation."""
 
     async def test_detect_violations_normalises_bbox_conf_class_(self) -> None:
         """Normalise keys: bbox + confidence + class_."""
@@ -213,9 +214,3 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.mcp_server.tools.hazard\
-    --cov-report=term-missing\
-    tests/examples/mcp_server/tools/hazard_test.py
-'''

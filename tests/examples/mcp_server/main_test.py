@@ -104,7 +104,9 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         self.notify_tools.messenger_send.return_value = {'messenger': True}
         self.notify_tools.wechat_send.return_value = {'wechat': True}
         self.assertTrue(
-            (await main.notify_messenger_send('recipient', 'message'))['messenger'],
+            (await main.notify_messenger_send('recipient', 'message'))[
+                'messenger'
+            ],
         )
         self.assertTrue(
             (await main.notify_wechat_send('user', 'message'))['wechat'],
@@ -181,7 +183,8 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
     async def test_utils_all(self) -> None:
         """Exercise this test."""
         self.assertEqual(
-            main.utils_calculate_polygon_area([])['area'], 0.0,
+            main.utils_calculate_polygon_area([])['area'],
+            0.0,
         )
         self.assertTrue(
             not main.utils_point_in_polygon([0, 0], [])['is_inside'],
@@ -265,6 +268,7 @@ class TestMainEntrypoint(unittest.TestCase):
     def test_module_main_guard_executes(self) -> Any:
         # Ensure __main__ guard runs without starting the server
         """Exercise this test."""
+
         def _consume(coro: Any) -> Any:
             # Close the coroutine to avoid 'never awaited' warnings
             """Support _consume.
@@ -293,9 +297,3 @@ class TestMainEntrypoint(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.mcp_server.main \
-       --cov-report=term-missing \
-       tests/examples/mcp_server/main_test.py
-'''

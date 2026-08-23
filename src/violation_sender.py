@@ -17,8 +17,9 @@ load_dotenv()
 
 
 class ViolationSender(AsyncHttpClientOwner):
-    """
-    Responsible for sending violation images and metadata to the backend API.
+    """Responsible for sending violation images and metadata to the backend
+    API.
+
     Handles authentication, token refresh, and retry logic for robust delivery.
     """
 
@@ -28,8 +29,7 @@ class ViolationSender(AsyncHttpClientOwner):
         max_retries: int = 3,
         timeout: int = 10,
     ) -> None:
-        """
-        Initialise the ViolationSender.
+        """Initialise the ViolationSender.
 
         Args:
             api_url (str | None): The base URL for the violation API endpoint.
@@ -70,8 +70,7 @@ class ViolationSender(AsyncHttpClientOwner):
         cone_polygon: object | None = None,
         pole_polygon: object | None = None,
     ) -> str | None:
-        """
-        Send a violation image and associated metadata to the backend API.
+        """Send a violation image and associated metadata to the backend API.
 
         Args:
             site (str): The site label.
@@ -125,7 +124,7 @@ class ViolationSender(AsyncHttpClientOwner):
 
             except httpx.ConnectTimeout as exc:
                 logging.warning(
-                    f"[send_violation] Attempt {attempt+1}: "
+                    f"[send_violation] Attempt {attempt + 1}: "
                     'Connection timeout, retry...',
                 )
                 backoff_delay = await self._retry_or_raise(
@@ -171,8 +170,7 @@ class ViolationSender(AsyncHttpClientOwner):
         dict[str, str],
         str,
     ]:
-        """
-        Build headers, files, form data, and URL for upload request.
+        """Build headers, files, form data, and URL for upload request.
 
         Args:
             access_token (str): The access token for authentication.
@@ -236,8 +234,7 @@ class ViolationSender(AsyncHttpClientOwner):
         attempt: int,
         headers: dict[str, str],
     ) -> bool:
-        """
-        Attempt token refresh on 401; update headers and signal retry.
+        """Attempt token refresh on 401; update headers and signal retry.
 
         Args:
             exc (httpx.HTTPStatusError): The HTTP error that occurred.

@@ -190,14 +190,16 @@ class _Model:
         **kwargs: object,
     ) -> Iterable[_Result]:
         """Support predict."""
-        self.calls.append({
-            'source': source,
-            'verbose': verbose,
-            'device': device,
-            'imgsz': imgsz,
-            'batch': batch,
-            **kwargs,
-        })
+        self.calls.append(
+            {
+                'source': source,
+                'verbose': verbose,
+                'device': device,
+                'imgsz': imgsz,
+                'batch': batch,
+                **kwargs,
+            },
+        )
         return [_Result(self.data)]
 
 
@@ -320,6 +322,7 @@ def test_timeout_request_keeps_ring_slot_until_worker_reads_request(
 
 def test_client_detect_returns_worker_result(monkeypatch: Any) -> None:
     """Exercise this test."""
+
     async def fake_submit(
         request: yolo_worker.WorkerRequestPayload,
     ) -> None:
@@ -328,11 +331,13 @@ def test_client_detect_returns_worker_result(monkeypatch: Any) -> None:
         Args:
             request: Test helper value.
         """
-        result_queue.put({
-            'id': request['id'],
-            'ok': True,
-            'detections': [[1, 2, 3, 4, 0.9, 1]],
-        })
+        result_queue.put(
+            {
+                'id': request['id'],
+                'ok': True,
+                'detections': [[1, 2, 3, 4, 0.9, 1]],
+            },
+        )
 
     result_queue = _ResultQueue()
     client = yolo_worker.YoloWorkerClient(
@@ -365,11 +370,13 @@ def test_shared_frame_ring_reuses_one_allocation() -> None:
     ) -> None:
         """Echo a completed worker result without creating a new ring."""
         request_queue.put(request)
-        result_queue.put({
-            'id': request['id'],
-            'ok': True,
-            'detections': [],
-        })
+        result_queue.put(
+            {
+                'id': request['id'],
+                'ok': True,
+                'detections': [],
+            },
+        )
 
     async def run() -> None:
         """Submit two equal-sized frames through the same client."""
@@ -473,15 +480,17 @@ def test_submit_request_raises_when_queue_full() -> None:
 
     with pytest.raises(TimeoutError, match='queue is full'):
         asyncio.run(
-            client._submit_request({
-                'id': '1',
-                'camera_id': 'cam1',
-                'model_key': 'yolo26n',
-                'shm_name': 'frame-shm',
-                'slot': 0,
-                'shape': (2, 2, 3),
-                'dtype': 'uint8',
-            }),
+            client._submit_request(
+                {
+                    'id': '1',
+                    'camera_id': 'cam1',
+                    'model_key': 'yolo26n',
+                    'shm_name': 'frame-shm',
+                    'slot': 0,
+                    'shape': (2, 2, 3),
+                    'dtype': 'uint8',
+                },
+            ),
         )
 
 
@@ -493,11 +502,13 @@ def test_wait_for_result_returns_detections() -> None:
         result_queue,
         camera_id='cam1',
     )
-    result_queue.put({
-        'id': 'request',
-        'ok': True,
-        'detections': [[1, 2, 3, 4, 0.9, 1]],
-    })
+    result_queue.put(
+        {
+            'id': 'request',
+            'ok': True,
+            'detections': [[1, 2, 3, 4, 0.9, 1]],
+        },
+    )
 
     detections = asyncio.run(client._wait_for_result('request'))
 
@@ -508,11 +519,13 @@ def test_wait_for_result_discards_stale_camera_response() -> None:
     """One camera queue can harmlessly contain an older timed-out response."""
     result_queue = _ResultQueue()
     result_queue.put({'id': 'old', 'ok': True, 'detections': []})
-    result_queue.put({
-        'id': 'request',
-        'ok': True,
-        'detections': [[1, 2, 3, 4, 0.9, 1]],
-    })
+    result_queue.put(
+        {
+            'id': 'request',
+            'ok': True,
+            'detections': [[1, 2, 3, 4, 0.9, 1]],
+        },
+    )
     client = yolo_worker.YoloWorkerClient(
         _QueueSpy(),
         result_queue,
@@ -532,11 +545,13 @@ def test_wait_for_result_raises_worker_error() -> None:
         result_queue,
         camera_id='cam1',
     )
-    result_queue.put({
-        'id': 'request',
-        'ok': False,
-        'error': 'broken',
-    })
+    result_queue.put(
+        {
+            'id': 'request',
+            'ok': False,
+            'error': 'broken',
+        },
+    )
 
     with pytest.raises(RuntimeError, match='broken'):
         asyncio.run(client._wait_for_result('request'))
@@ -791,7 +806,8 @@ def test_get_model_raises_when_model_missing(tmp_path: Any) -> None:
 
 
 def test_get_model_loads_and_caches_model(
-    monkeypatch: Any, tmp_path: Any,
+    monkeypatch: Any,
+    tmp_path: Any,
 ) -> None:
     """Exercise this test."""
     loaded_paths: list[str] = []
@@ -809,7 +825,7 @@ def test_get_model_loads_and_caches_model(
     monkeypatch.setitem(sys.modules, 'ultralytics', module)
     worker = yolo_worker.YoloWorker(None)
     worker.model_dir = tmp_path
-    model_path = tmp_path / f'best_yolo26n{worker.model_suffix}'
+    model_path = tmp_path / f"best_yolo26n{worker.model_suffix}"
     model_path.write_text('model')
 
     model = worker._get_model('yolo26n')
@@ -820,8 +836,8 @@ def test_get_model_loads_and_caches_model(
 
 
 def test_record_batch_metrics_logs_and_resets_counters(
-        monkeypatch: Any,
-        caplog: pytest.LogCaptureFixture,
+    monkeypatch: Any,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """An enabled throughput interval emits one compact worker summary."""
     worker = yolo_worker.YoloWorker(None)
@@ -868,23 +884,20 @@ def test_send_result_drops_when_camera_queue_is_full() -> None:
 
 
 def test_read_frame_closes_mapping_when_array_construction_fails(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """A malformed shared-memory request releases its mapped handle."""
-    class BrokenSharedMemory:
 
-        """Provide BrokenSharedMemory.
-        """
+    class BrokenSharedMemory:
+        """Provide BrokenSharedMemory."""
 
         def __init__(self) -> None:
-            """Perform init.
-            """
+            """Perform init."""
             self.buf = object()
             self.closed = False
 
         def close(self) -> None:
-            """Perform close.
-            """
+            """Perform close."""
             self.closed = True
 
     shared = BrokenSharedMemory()
@@ -907,10 +920,12 @@ def test_close_shared_frames_ignores_unmapped_and_plain_arrays() -> None:
     )
     unmapped.shared_memory_handle = None
 
-    yolo_worker.YoloWorker._close_shared_frames([
-        np.zeros((2, 2, 3), dtype=np.uint8),
-        unmapped,
-    ])
+    yolo_worker.YoloWorker._close_shared_frames(
+        [
+            np.zeros((2, 2, 3), dtype=np.uint8),
+            unmapped,
+        ],
+    )
 
 
 def test_shared_frame_ring_handles_full_slots_and_duplicate_release() -> None:
@@ -932,7 +947,7 @@ def test_shared_frame_ring_handles_full_slots_and_duplicate_release() -> None:
 
 
 def test_client_handles_close_write_and_retired_ring_paths(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """Closed clients reject frames while retired rings retain requests."""
     client = yolo_worker.YoloWorkerClient(
@@ -956,7 +971,8 @@ def test_client_handles_close_write_and_retired_ring_paths(
     client._ring = old_ring
     monkeypatch.setattr(
         yolo_worker._SharedFrameRing,
-        'create', lambda *_args: new_ring,
+        'create',
+        lambda *_args: new_ring,
     )
     asyncio.run(
         client._write_frame(
@@ -1002,7 +1018,7 @@ def test_client_close_and_wait_error_paths(monkeypatch: Any) -> None:
 
 
 def test_worker_configuration_and_queue_guard_paths(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """Invalid metrics and unavailable queues leave workers in safe states."""
     monkeypatch.setenv('YOLO_WORKER_METRICS_INTERVAL_SECONDS', 'invalid')
@@ -1021,9 +1037,9 @@ def test_worker_configuration_and_queue_guard_paths(
 
 def test_timed_out_slot_is_released_after_cleanup_delay() -> None:
     """Late worker cleanup returns a timed-out ring slot to its owner."""
+
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         ring = MagicMock()
         client = yolo_worker.YoloWorkerClient(
             _QueueSpy(),

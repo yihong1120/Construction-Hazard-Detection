@@ -15,7 +15,8 @@ USE_SAHI: bool = os.getenv('USE_SAHI', 'false').lower() == 'true'
 
 # Base model variants
 MODEL_VARIANTS_ENV: str = os.getenv(
-    'MODEL_VARIANTS', 'yolo26x,yolo26l,yolo26m,yolo26s,yolo26n',
+    'MODEL_VARIANTS',
+    'yolo26x,yolo26l,yolo26m,yolo26s,yolo26n',
 )
 MODEL_VARIANTS: list[str] = [
     v.strip() for v in MODEL_VARIANTS_ENV.split(',') if v.strip()
@@ -45,10 +46,14 @@ EXPLICIT_CUDA_CLEANUP: bool = (
 # Inference device. Use "auto" to prefer CUDA only when PyTorch can initialise
 # it successfully; this avoids reconnect loops on hosts where CUDA reports
 # availability errors such as error 804.
-YOLO_INFERENCE_DEVICE: str = os.getenv(
-    'YOLO_INFERENCE_DEVICE',
-    os.getenv('YOLO_DEVICE', 'auto'),
-).strip().lower()
+YOLO_INFERENCE_DEVICE: str = (
+    os.getenv(
+        'YOLO_INFERENCE_DEVICE',
+        os.getenv('YOLO_DEVICE', 'auto'),
+    )
+    .strip()
+    .lower()
+)
 
 
 def _is_cuda_available() -> bool:
@@ -66,7 +71,7 @@ def get_inference_device() -> str:
         return 'cuda:0' if _is_cuda_available() else 'cpu'
     except Exception as exc:
         warnings.warn(
-            f'CUDA availability check failed, falling back to CPU: {exc}',
+            f"CUDA availability check failed, falling back to CPU: {exc}",
             UserWarning,
             stacklevel=2,
         )
@@ -87,20 +92,23 @@ _CONFIG_INFO: str = f"""
 🔧 YOLO Server API Configuration:
    • USE_TENSORRT: {USE_TENSORRT}
    • USE_SAHI: {USE_SAHI}
-   • Model file format: {'.pt' if USE_SAHI or not USE_TENSORRT else '.engine'}
+   • Model file format: {".pt" if USE_SAHI or not USE_TENSORRT else ".engine"}
    • Inference method: {
-    'SAHI slicing' if USE_SAHI else
-    'TensorRT' if USE_TENSORRT else
-    'Standard YOLO'
+    "SAHI slicing"
+    if USE_SAHI
+    else "TensorRT"
+    if USE_TENSORRT
+    else "Standard YOLO"
 }
    • Inference device: {YOLO_INFERENCE_DEVICE}
-   • Model variants: {', '.join(MODEL_VARIANTS)}
+   • Model variants: {", ".join(MODEL_VARIANTS)}
 """
 
 
 def log_configuration() -> None:
     """Emit the active non-sensitive YOLO configuration at app startup."""
     logger.info('%s', _CONFIG_INFO)
+
 
 # Type hints and docstrings added for clarity and maintainability
 

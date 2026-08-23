@@ -7,13 +7,11 @@ from ultralytics import YOLO  # Import the YOLO class
 
 
 class ModelEvaluator:
-    """
-    A class to evaluate YOLO models using Ultralytics framework.
-    """
+    """A class to evaluate YOLO models using Ultralytics framework."""
 
     def __init__(self, model_path: str, data_path: str) -> None:
-        """
-        Initialises the model evaluator with the path to the model and dataset.
+        """Initialises the model evaluator with the path to the model and
+        dataset.
 
         Args:
             model_path (str): The path to the trained model file.
@@ -24,8 +22,7 @@ class ModelEvaluator:
         self.model = YOLO(self.model_path)
 
     def evaluate(self) -> dict[str, Any]:
-        """
-        Evaluates the model using the provided dataset.
+        """Evaluates the model using the provided dataset.
 
         Returns:
             Dict[str, Any]: The results from the model evaluation.
@@ -63,9 +60,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
-"""example usage
-python evaluate_yolo.py \
-    --model_path "../../models/pt/best_yolov8x.pt" \
-    --data_path "dataset/data.yaml"
-"""

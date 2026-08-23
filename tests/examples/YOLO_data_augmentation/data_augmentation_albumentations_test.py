@@ -740,7 +740,8 @@ class TestDataAugmentation(unittest.TestCase):
         label_path = Path('empty_label.txt')
         with patch('pathlib.Path.exists', return_value=True):
             with patch(
-                'builtins.open', unittest.mock.mock_open(read_data='\n'),
+                'builtins.open',
+                unittest.mock.mock_open(read_data='\n'),
             ):
                 class_labels, bboxes = self.augmenter.read_label_file(
                     label_path,

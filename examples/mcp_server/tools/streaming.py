@@ -71,6 +71,7 @@ class StreamingTools:
             # Generate stream ID if not provided
             if stream_id is None:
                 import time
+
                 stream_id = f"stream_{int(time.time())}"
 
             stream_store = self._get_stream_store()
@@ -109,9 +110,9 @@ class StreamingTools:
             stream_store = self._get_stream_store()
             if stream_id in stream_store:
                 stream_store[stream_id]['status'] = 'unsupported'
-                stream_store[stream_id]['stop_time'] = (
-                    asyncio.get_event_loop().time()
-                )
+                stream_store[stream_id][
+                    'stop_time'
+                ] = asyncio.get_event_loop().time()
 
             return {
                 'success': False,
@@ -161,9 +162,9 @@ class StreamingTools:
                 # Get all streams status
                 return {
                     'success': True,
-                    'active_streams': len([
-                        s for s in store.values() if s['status'] == 'active'
-                    ]),
+                    'active_streams': len(
+                        [s for s in store.values() if s['status'] == 'active'],
+                    ),
                     'total_streams': len(store),
                     'streams': store,
                 }
@@ -199,9 +200,7 @@ class StreamingTools:
                 if frame_format == 'base64':
                     success, buf = cv2.imencode('.jpg', frame)
                     if success:
-                        raw = (
-                            buf.tobytes() if hasattr(buf, 'tobytes') else buf
-                        )
+                        raw = buf.tobytes() if hasattr(buf, 'tobytes') else buf
                         frame_data = base64.b64encode(raw).decode('utf-8')
                 elif frame_format == 'bytes':
                     success, buf = cv2.imencode('.jpg', frame)
@@ -265,7 +264,7 @@ class StreamingTools:
                     asyncio.to_thread(viewer.display_stream),
                 )
                 success = True
-                viewer_url = f'http://localhost:{viewer_port}'
+                viewer_url = f"http://localhost:{viewer_port}"
             else:
                 success, viewer_url = cast(tuple[bool, str], viewer_result)
 

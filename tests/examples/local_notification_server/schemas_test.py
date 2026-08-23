@@ -16,14 +16,10 @@ from examples.local_notification_server.schemas import SiteNotifyRequest
 
 
 class TestDeviceRegistrationRequest(unittest.TestCase):
-    """
-    Unit tests for the device-registration schema.
-    """
+    """Unit tests for the device-registration schema."""
 
     def test_valid_data(self) -> None:
-        """
-        Test the strict device-registration request schema.
-        """
+        """Test the strict device-registration request schema."""
         data = {
             'device_token': 'abc123',
             'device_lang': 'en-GB',
@@ -44,14 +40,10 @@ class TestDeviceRegistrationRequest(unittest.TestCase):
 
 
 class TestSiteNotifyRequest(unittest.TestCase):
-    """
-    Unit tests for the SiteNotifyRequest schema.
-    """
+    """Unit tests for the SiteNotifyRequest schema."""
 
     def test_valid_data_without_image(self) -> None:
-        """
-        Test valid input data without an image path.
-        """
+        """Test valid input data without an image path."""
         data = {
             'site': 'MySite',
             'stream_name': 'Hello',
@@ -67,16 +59,16 @@ class TestSiteNotifyRequest(unittest.TestCase):
         self.assertEqual(site_notify_request.site, 'MySite')
         self.assertEqual(site_notify_request.stream_name, 'Hello')
         self.assertEqual(
-            site_notify_request.body, {
+            site_notify_request.body,
+            {
                 'warning_no_safety_vest': {},
             },
         )
         self.assertIsNone(site_notify_request.image_path)
 
     def test_valid_data_with_image(self) -> None:
-        """
-        Test valid input data including an image path and integer-based body.
-        """
+        """Test valid input data including an image path and integer-based
+        body."""
         data = {
             'site': 'AnotherSite',
             'stream_name': 'Title',
@@ -102,9 +94,7 @@ class TestSiteNotifyRequest(unittest.TestCase):
         )
 
     def test_valid_data_with_warning_metadata_lists(self) -> None:
-        """
-        Warning payloads may include bbox and track-id metadata.
-        """
+        """Warning payloads may include bbox and track-id metadata."""
         data = {
             'site': 'AnotherSite',
             'stream_name': 'Title',
@@ -131,9 +121,7 @@ class TestSiteNotifyRequest(unittest.TestCase):
         )
 
     def test_missing_site(self) -> None:
-        """
-        Test validation error when the 'site' field is missing.
-        """
+        """Test validation error when the 'site' field is missing."""
         data = {
             'stream_name': 'TestStream',
             'body': {
@@ -145,9 +133,7 @@ class TestSiteNotifyRequest(unittest.TestCase):
         self.assertIn('site', str(context.exception))
 
     def test_missing_stream_name(self) -> None:
-        """
-        Test validation error when the 'stream_name' field is missing.
-        """
+        """Test validation error when the 'stream_name' field is missing."""
         data = {
             'site': 'MySite',
             'body': {
@@ -159,9 +145,7 @@ class TestSiteNotifyRequest(unittest.TestCase):
         self.assertIn('stream_name', str(context.exception))
 
     def test_missing_body(self) -> None:
-        """
-        Test validation error when the 'body' field is missing.
-        """
+        """Test validation error when the 'body' field is missing."""
         data = {
             'site': 'MySite',
             'stream_name': 'NoBody',
@@ -171,9 +155,7 @@ class TestSiteNotifyRequest(unittest.TestCase):
         self.assertIn('body', str(context.exception))
 
     def test_extra_fields(self) -> None:
-        """
-        Test that extra fields in the input data are ignored.
-        """
+        """Test that extra fields in the input data are ignored."""
         data = {
             'site': 'ExtraSite',
             'stream_name': 'Test',
@@ -190,7 +172,8 @@ class TestSiteNotifyRequest(unittest.TestCase):
         self.assertEqual(site_notify_request.site, 'ExtraSite')
         self.assertEqual(site_notify_request.stream_name, 'Test')
         self.assertEqual(
-            site_notify_request.body, {
+            site_notify_request.body,
+            {
                 'warning_no_hardhat': {'count': 123},
             },
         )
@@ -274,10 +257,3 @@ class TestNotificationSchemas(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-"""
-pytest \
-    --cov=examples.local_notification_server.schemas \
-    --cov-report=term-missing \
-    tests/examples/local_notification_server/schemas_test.py
-"""

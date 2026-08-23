@@ -38,8 +38,7 @@ class AlbumentationsStub:
     """Expose the flexible transform factory API used by the builder."""
 
     def __init__(self) -> None:
-        """Perform init.
-        """
+        """Perform init."""
         self.created: list[StubTransform] = []
 
     def __getattr__(self, name: str) -> Any:
@@ -51,6 +50,7 @@ class AlbumentationsStub:
         Returns:
             The callable result.
         """
+
         def factory(*args: object, **kwargs: object) -> StubTransform:
             """Perform factory.
 
@@ -101,8 +101,7 @@ def test_random_transform_builds_a_bbox_aware_pipeline(
         for item in albumentations.created
     )
     assert any(
-        item.name == 'RandomGridShuffle'
-        for item in albumentations.created
+        item.name == 'RandomGridShuffle' for item in albumentations.created
     )
     blur_ranges = {
         item.name: item.kwargs['blur_range']
@@ -140,9 +139,8 @@ def test_reference_image_helpers_handle_empty_and_unreadable_images(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """FDA source selection skips absent images and reports unreadable files.
-
-    """
+    """FDA source selection skips absent images and reports unreadable
+    files."""
     augmenter = subject.DataAugmentation(str(tmp_path))
     assert augmenter.get_fda_reference_images() == []
 
@@ -230,7 +228,8 @@ def test_mask_dropout_uses_the_post_transform_pipeline(
             return_value=[image],
         ),
         patch.object(
-            augmenter, 'generate_random_mask',
+            augmenter,
+            'generate_random_mask',
             return_value=image[:, :, 0],
         ),
         patch.object(
@@ -275,9 +274,7 @@ def test_generate_mask_and_flip_transforms_cover_all_shape_variants(
     assert any(
         item.name == 'HorizontalFlip' for item in albumentations.created
     )
-    assert any(
-        item.name == 'VerticalFlip' for item in albumentations.created
-    )
+    assert any(item.name == 'VerticalFlip' for item in albumentations.created)
 
 
 def test_augment_image_skips_unreadable_or_invalid_outputs(
@@ -301,7 +298,8 @@ def test_augment_image_skips_unreadable_or_invalid_outputs(
         patch.object(subject.cv2, 'imread', return_value=image),
         patch.object(subject.cv2, 'cvtColor', return_value=image),
         patch.object(
-            augmenter, 'read_label_file',
+            augmenter,
+            'read_label_file',
             return_value=(labels, bboxes),
         ),
         patch.object(
@@ -318,7 +316,8 @@ def test_augment_image_skips_unreadable_or_invalid_outputs(
         patch.object(subject.cv2, 'imread', return_value=image),
         patch.object(subject.cv2, 'cvtColor', return_value=image),
         patch.object(
-            augmenter, 'read_label_file',
+            augmenter,
+            'read_label_file',
             return_value=(labels, bboxes),
         ),
         patch.object(
@@ -335,8 +334,7 @@ def test_augment_image_skips_unreadable_or_invalid_outputs(
     ):
         augmenter.augment_image(image_path)
     assert any(
-        'Skipping augmentation' in str(call)
-        for call in output.call_args_list
+        'Skipping augmentation' in str(call) for call in output.call_args_list
     )
 
     transformed = {
@@ -348,7 +346,8 @@ def test_augment_image_skips_unreadable_or_invalid_outputs(
         patch.object(subject.cv2, 'imread', return_value=image),
         patch.object(subject.cv2, 'cvtColor', return_value=image),
         patch.object(
-            augmenter, 'read_label_file',
+            augmenter,
+            'read_label_file',
             return_value=(labels, bboxes),
         ),
         patch.object(

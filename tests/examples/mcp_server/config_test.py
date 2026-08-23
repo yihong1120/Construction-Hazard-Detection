@@ -97,8 +97,7 @@ class EnvVarHelpersTests(unittest.TestCase):
 
     def test_get_env_list_splits_and_trims_values(self) -> None:
         """get_env_list should split values by separator and trim
-        whitespace.
-        """
+        whitespace."""
         os.environ['TEST_LIST'] = ' a , b ,c '
         result = cfg.get_env_list('TEST_LIST')
         self.assertEqual(result, ['a', 'b', 'c'])
@@ -180,7 +179,8 @@ class TransportConfigTests(unittest.TestCase):
                 os.environ['MCP_DEBUG'] = val
                 result = cfg.get_transport_config()
                 self.assertFalse(
-                    result['debug'], f"{val} should yield debug=False",
+                    result['debug'],
+                    f"{val} should yield debug=False",
                 )
 
 

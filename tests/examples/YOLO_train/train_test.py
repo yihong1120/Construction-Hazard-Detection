@@ -13,9 +13,7 @@ class TestYOLOModelHandler(unittest.TestCase):
     """Test suite."""
 
     def setUp(self) -> None:
-        """
-        Set up the test environment before each test.
-        """
+        """Set up the test environment before each test."""
         self.model_name: str = 'models/pt/best_yolo11x.pt'
 
     @patch('examples.YOLO_train.train.YOLO')
@@ -23,9 +21,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         self,
         mock_yolo: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test loading a model from a YAML file.
-        """
+        """Test loading a model from a YAML file."""
         mock_yolo.return_value = MagicMock()
         handler = YOLOModelHandler('models/config.yaml')
         mock_yolo.assert_called_with('models/config.yaml')
@@ -40,9 +36,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_cuda_available: unittest.mock.MagicMock,
         mock_yolo: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test loading a model from a .pt file and selecting the device.
-        """
+        """Test loading a model from a .pt file and selecting the device."""
         mock_yolo.return_value = MagicMock()
 
         # Case 1: MPS available
@@ -68,18 +62,15 @@ class TestYOLOModelHandler(unittest.TestCase):
 
     @patch('examples.YOLO_train.train.YOLO')
     def test_load_model(self, mock_yolo: unittest.mock.MagicMock) -> None:
-        """
-        Test loading a model.
-        """
+        """Test loading a model."""
         mock_yolo.return_value = MagicMock()
         handler = YOLOModelHandler(self.model_name)
         mock_yolo.assert_called_with(self.model_name)
         self.assertIsNotNone(handler.model)
 
     def test_load_model_with_unsupported_format(self) -> None:
-        """
-        Test that loading a model with an unsupported format raises ValueError.
-        """
+        """Test that loading a model with an unsupported format raises
+        ValueError."""
         with self.assertRaises(ValueError) as context:
             _ = YOLOModelHandler('unsupported_format.txt')
         self.assertEqual(
@@ -89,9 +80,7 @@ class TestYOLOModelHandler(unittest.TestCase):
 
     @patch('examples.YOLO_train.train.YOLO')
     def test_train_model(self, mock_yolo: unittest.mock.MagicMock) -> None:
-        """
-        Test training the model.
-        """
+        """Test training the model."""
         mock_model = MagicMock()
         mock_yolo.return_value = mock_model
         handler = YOLOModelHandler(self.model_name)
@@ -112,9 +101,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         self,
         mock_yolo: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test that training without loading a model raises RuntimeError.
-        """
+        """Test that training without loading a model raises RuntimeError."""
         handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
@@ -129,9 +116,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         self,
         mock_yolo: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test that validating without loading a model raises RuntimeError.
-        """
+        """Test that validating without loading a model raises RuntimeError."""
         handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
@@ -146,9 +131,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         self,
         mock_yolo: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test that predicting without loading a model raises RuntimeError.
-        """
+        """Test that predicting without loading a model raises RuntimeError."""
         handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
@@ -163,9 +146,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         self,
         mock_yolo: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test that exporting without loading a model raises RuntimeError.
-        """
+        """Test that exporting without loading a model raises RuntimeError."""
         handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
@@ -180,9 +161,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         self,
         mock_yolo: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test that saving without loading a model raises RuntimeError.
-        """
+        """Test that saving without loading a model raises RuntimeError."""
         handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
@@ -194,11 +173,11 @@ class TestYOLOModelHandler(unittest.TestCase):
 
     @patch('examples.YOLO_train.train.YOLO')
     def test_cross_validate_model_without_loading(
-        self, mock_yolo: unittest.mock.MagicMock,
+        self,
+        mock_yolo: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test that cross-validation without loading a model raises RuntimeError.
-        """
+        """Test that cross-validation without loading a model raises
+        RuntimeError."""
         handler = YOLOModelHandler('models/pt/best_yolo11x.pt')
         handler.model = None  # Simulate that model is not loaded properly
         with self.assertRaises(RuntimeError) as context:
@@ -210,9 +189,7 @@ class TestYOLOModelHandler(unittest.TestCase):
 
     @patch('examples.YOLO_train.train.YOLO')
     def test_validate_model(self, mock_yolo: unittest.mock.MagicMock) -> None:
-        """
-        Test validating the model.
-        """
+        """Test validating the model."""
         mock_model = MagicMock()
         mock_yolo.return_value = mock_model
         handler = YOLOModelHandler(self.model_name)
@@ -221,9 +198,7 @@ class TestYOLOModelHandler(unittest.TestCase):
 
     @patch('examples.YOLO_train.train.YOLO')
     def test_predict_image(self, mock_yolo: unittest.mock.MagicMock) -> None:
-        """
-        Test predicting an image.
-        """
+        """Test predicting an image."""
         mock_model = MagicMock()
         mock_yolo.return_value = mock_model
         handler = YOLOModelHandler(self.model_name)
@@ -232,9 +207,7 @@ class TestYOLOModelHandler(unittest.TestCase):
 
     @patch('examples.YOLO_train.train.YOLO')
     def test_export_model(self, mock_yolo: unittest.mock.MagicMock) -> None:
-        """
-        Test exporting the model.
-        """
+        """Test exporting the model."""
         mock_model = MagicMock()
         mock_yolo.return_value = mock_model
         handler = YOLOModelHandler(self.model_name)
@@ -248,15 +221,14 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_yolo: unittest.mock.MagicMock,
         mock_save: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test saving the model.
-        """
+        """Test saving the model."""
         mock_model = MagicMock()
         mock_yolo.return_value = mock_model
         handler = YOLOModelHandler(self.model_name)
         handler.save_model('path/to/save/model.pt')
         mock_save.assert_called_with(
-            mock_model.state_dict(), 'path/to/save/model.pt',
+            mock_model.state_dict(),
+            'path/to/save/model.pt',
         )
 
     @patch('examples.YOLO_train.train.KFold.split')
@@ -266,16 +238,15 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_yolo: unittest.mock.MagicMock,
         mock_kfold_split: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test cross-validation of the model.
-        """
+        """Test cross-validation of the model."""
         mock_model = MagicMock()
         mock_yolo.return_value = mock_model
         mock_kfold_split.return_value = [([0, 1], [2]), ([2], [0, 1])]
         handler = YOLOModelHandler(self.model_name)
         handler.cross_validate_model(
             data_config='tests/cv_dataset/data.yaml',
-            epochs=10, optimizer='auto',
+            epochs=10,
+            optimizer='auto',
             n_splits=2,
         )
 
@@ -289,9 +260,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_sahi_predict: unittest.mock.MagicMock,
         mock_auto_detection_model: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test predicting an image using SAHI.
-        """
+        """Test predicting an image using SAHI."""
         mock_model = MagicMock()
         mock_auto_detection_model.return_value = mock_model
         mock_sahi_predict.return_value = MagicMock(
@@ -299,7 +268,8 @@ class TestYOLOModelHandler(unittest.TestCase):
         )
 
         result = YOLOModelHandler.predict_image_sahi(
-            'models/pt/best_yolo11x.pt', 'path/to/image.jpg',
+            'models/pt/best_yolo11x.pt',
+            'path/to/image.jpg',
         )
         mock_auto_detection_model.assert_called_with(
             model_type='yolov8',
@@ -310,10 +280,8 @@ class TestYOLOModelHandler(unittest.TestCase):
         self.assertIsNotNone(result)
 
     def test_predict_image_sahi_without_model_path(self) -> None:
-        """
-        Test that calling predict_image_sahi
-        without a valid model path raises RuntimeError.
-        """
+        """Test that calling predict_image_sahi without a valid model path
+        raises RuntimeError."""
         with self.assertRaises(RuntimeError) as context:
             YOLOModelHandler.predict_image_sahi('', 'path/to/image.jpg')
 
@@ -329,9 +297,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_handler_class: unittest.mock.MagicMock,
         mock_parse_args: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test the main function.
-        """
+        """Test the main function."""
         mock_handler = MagicMock()
         mock_handler_class.return_value = mock_handler
         mock_parse_args.return_value = argparse.Namespace(
@@ -363,9 +329,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_handler_class: unittest.mock.MagicMock,
         mock_parse_args: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test the main function when cross-validation is enabled.
-        """
+        """Test the main function when cross-validation is enabled."""
         mock_handler = MagicMock()
         mock_handler_class.return_value = mock_handler
         mock_parse_args.return_value = argparse.Namespace(
@@ -409,9 +373,7 @@ class TestYOLOModelHandler(unittest.TestCase):
         mock_parse_args: unittest.mock.MagicMock,
         mock_handler_class: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Test the main function's exception handling.
-        """
+        """Test the main function's exception handling."""
         mock_parse_args.return_value = argparse.Namespace(
             data_config='dataset/data.yaml',
             epochs=100,

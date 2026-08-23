@@ -10,8 +10,8 @@ from examples.mcp_server import schemas as S
 class TypeAliasTests(unittest.TestCase):
     """Tests for TypeAlias shapes declared in schemas.py.
 
-    We validate that the public aliases keep their intended nesting and
-    atomic element types. Structural checks rely on typing.get_origin/args.
+    We validate that the public aliases keep their intended nesting and atomic
+    element types. Structural checks rely on typing.get_origin/args.
     """
 
     def test_floatbbox_alias_structure(self) -> None:
@@ -48,8 +48,8 @@ class TypedDictShapeTests(unittest.TestCase):
         """Return fully resolved annotations for a TypedDict class.
 
         Uses typing.get_type_hints with the module's globals/locals so that
-        ForwardRef strings (due to `from __future__ import annotations`)
-        are evaluated into real typing objects.
+        ForwardRef strings (due to `from __future__ import annotations`) are
+        evaluated into real typing objects.
         """
         return typing.get_type_hints(cls, globalns=vars(S), localns=vars(S))
 
@@ -68,10 +68,7 @@ class TypedDictShapeTests(unittest.TestCase):
         self.assertSetEqual(set(anns.keys()), set(expected.keys()))
         for key, want in expected.items():
             got = anns[key]
-            msg = (
-                f"Mismatch on key '{key}': "
-                f"{got!r} != {want!r}"
-            )
+            msg = f"Mismatch on key '{key}': {got!r} != {want!r}"
             self.assertEqual(got, want, msg)
 
     def test_detection_like_dict_annotations_and_total(self) -> None:
@@ -119,9 +116,8 @@ class TypedDictShapeTests(unittest.TestCase):
         self.assertTrue(getattr(S.InferenceResponse, '__total__', True))
 
     def test_hazard_response_annotations_and_total(self) -> None:
-        """HazardResponse contains warning counts and polygon
-        coordinate lists.
-        """
+        """HazardResponse contains warning counts and polygon coordinate
+        lists."""
         expected = {
             'warnings': dict[str, dict[str, object]],
             'cone_polygons': S.PolygonsCoords,
@@ -302,9 +298,3 @@ class StructuralValidatorsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.mcp_server.schemas\
-    --cov-report=term-missing\
-        tests/examples/mcp_server/schemas_test.py
-'''

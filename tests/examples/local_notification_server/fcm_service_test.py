@@ -195,10 +195,3 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-\
-"""Pytest \
-
---cov=examples.local_notification_server.fcm_service \
---cov-report=term-missing \
-tests/examples/local_notification_server/fcm_service_test.py
-"""

@@ -81,7 +81,7 @@ async def _read_limited_upload(
         if total > max_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f'Upload exceeds the {max_bytes}-byte limit',
+                detail=f"Upload exceeds the {max_bytes}-byte limit",
             )
         chunks.append(chunk)
     if not chunks:
@@ -108,7 +108,7 @@ async def _stream_upload_to_path(
             if total > max_bytes:
                 raise HTTPException(
                     status_code=413,
-                    detail=f'Upload exceeds the {max_bytes}-byte limit',
+                    detail=f"Upload exceeds the {max_bytes}-byte limit",
                 )
             wrote_any = True
             await f.write(chunk)
@@ -169,7 +169,9 @@ async def detect(
 
     # Unified pipeline with concurrency control
     datas, timing = await run_detection_from_bytes(
-        img_bytes, model_instance, semaphore=INFERENCE_SEMAPHORE,
+        img_bytes,
+        model_instance,
+        semaphore=INFERENCE_SEMAPHORE,
     )
     inference_time = timing['inference']
     post_time = timing['post']
@@ -194,9 +196,7 @@ async def websocket_detect(
     websocket: WebSocket,
     rds: redis.Redis = Depends(get_redis_pool_ws),
 ) -> None:
-    """
-
-    """
+    """"""
     await handle_websocket_detect(
         websocket=websocket,
         rds=rds,

@@ -90,10 +90,9 @@ async def list_site_notification_preferences(
             SiteNotificationPreference.site_id.in_(site_ids),
         ),
     )
-    explicit_preferences = {
-        row[0]: row[1] for row in preference_result.all()
-    }
-    # Effective site access provides the default until an explicit preference exists.
+    explicit_preferences = {row[0]: row[1] for row in preference_result.all()}
+    # Effective site access provides the default until an explicit preference
+    # exists.
     access_site_ids = {
         site.id
         for site in await list_effective_sites_for_user(me, db)
@@ -139,7 +138,8 @@ async def update_site_notification_preferences(
     )
     allowed_site_ids = {site.id for site in sites}
     requested_site_ids = {item.site_id for item in payload.preferences}
-    # Reject cross-scope updates before creating or modifying any preference rows.
+    # Reject cross-scope updates before creating or modifying any preference
+    # rows.
     invalid_site_ids = requested_site_ids - allowed_site_ids
     if invalid_site_ids:
         raise HTTPException(

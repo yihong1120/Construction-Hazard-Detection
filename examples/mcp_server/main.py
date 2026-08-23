@@ -25,14 +25,12 @@ from examples.mcp_server.tools.utils import point_in_polygon
 from examples.mcp_server.tools.utils import validate_detection_data
 from examples.mcp_server.tools.violations import ViolationsTools
 
-
 # Configure logging for predictable, structured output across tools
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
-
 
 # Initialise tool instances lazily used by MCP tool handlers
 inference_tools = InferenceTools()
@@ -60,8 +58,8 @@ async def _mcp_lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 
 mcp = FastMCP('construction-hazard-detection', lifespan=_mcp_lifespan)
 
-
 # === INFERENCE TOOLS ===
+
 
 @mcp.tool(
     name='inference_detect_frame',
@@ -84,6 +82,7 @@ async def inference_detect_frame(
 
 # === HAZARD DETECTION TOOLS ===
 
+
 @mcp.tool(
     name='hazard_detect_violations',
     description='Analyse detections for safety violations',
@@ -104,6 +103,7 @@ async def hazard_detect_violations(
 
 
 # === VIOLATIONS MANAGEMENT TOOLS ===
+
 
 @mcp.tool(name='violations_search', description='Violations Search')
 async def violations_search(
@@ -152,6 +152,7 @@ async def violations_my_sites() -> dict:
 
 # === NOTIFICATION TOOLS ===
 
+
 @mcp.tool(name='notify_line_push', description='Notify Line Push')
 async def notify_line_push(
     recipient_id: str,
@@ -178,7 +179,9 @@ async def notify_broadcast_send(
     )
 
 
-@mcp.tool(name='notify_messenger_send', description='Notify Facebook Messenger')
+@mcp.tool(
+    name='notify_messenger_send', description='Notify Facebook Messenger',
+)
 async def notify_messenger_send(
     recipient_id: str,
     message: str,
@@ -221,6 +224,7 @@ async def notify_telegram_send(
 
 
 # === RECORD MANAGEMENT TOOLS ===
+
 
 @mcp.tool(name='record_send_violation', description='Record Send Violation')
 async def record_send_violation(
@@ -266,6 +270,7 @@ async def record_get_statistics() -> dict:
 
 
 # === STREAMING TOOLS ===
+
 
 @mcp.tool(
     name='streaming_start_detection',
@@ -322,6 +327,7 @@ async def streaming_capture_frame(
 
 # === MODEL MANAGEMENT TOOLS ===
 
+
 @mcp.tool(
     name='model_sync',
     description='Download a newer model atomically',
@@ -350,6 +356,7 @@ async def model_get_local() -> dict:
 
 
 # === UTILITY TOOLS ===
+
 
 @mcp.tool(
     name='utils_calculate_polygon_area',

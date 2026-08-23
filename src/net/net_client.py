@@ -16,9 +16,7 @@ from src.auth_tokens import TokenManager
 
 
 class NetClient(AsyncHttpClientOwner):
-    """
-    High-level HTTP and WebSocket client.
-    """
+    """High-level HTTP and WebSocket client."""
 
     def __init__(
         self,
@@ -32,8 +30,7 @@ class NetClient(AsyncHttpClientOwner):
         ws_connect_attempts: int = 3,
         auth_required: bool = True,
     ) -> None:
-        """
-        Initialise the NetClient with the given parameters.
+        """Initialise the NetClient with the given parameters.
 
         Args:
             base_url (str): The base URL for the client.
@@ -71,8 +68,7 @@ class NetClient(AsyncHttpClientOwner):
         self._log: logging.Logger = logging.getLogger(__name__)
 
     def build_http_url(self, path: str) -> str:
-        """
-        Build a full HTTP URL from the base URL and a relative path.
+        """Build a full HTTP URL from the base URL and a relative path.
 
         Args:
             path (str): Relative path (with or without a leading slash).
@@ -85,8 +81,7 @@ class NetClient(AsyncHttpClientOwner):
         return f"{self.base_url}{path}"
 
     def build_ws_url(self, path: str) -> str:
-        """
-        Build a full WebSocket URL derived from the base URL and path.
+        """Build a full WebSocket URL derived from the base URL and path.
 
         Args:
             path (str): Relative path (with or without a leading slash).
@@ -102,8 +97,7 @@ class NetClient(AsyncHttpClientOwner):
         return urlunparse((scheme, u.netloc, full_path, '', '', ''))
 
     async def auth_headers(self) -> dict[str, str]:
-        """
-        Compute authorisation headers using the token manager.
+        """Compute authorisation headers using the token manager.
 
         Returns:
             dict[str, str]: A dictionary with standard headers including
@@ -120,7 +114,7 @@ class NetClient(AsyncHttpClientOwner):
             await self.token_manager.authenticate(force=True)
             access_token = await self.token_manager.get_valid_token()
         return {
-            'Authorization': f'Bearer {access_token}',
+            'Authorization': f"Bearer {access_token}",
             'User-Agent': 'ConstructionHazardDetection/1.0',
         }
 
@@ -131,8 +125,8 @@ class NetClient(AsyncHttpClientOwner):
         files: dict[str, tuple[str, bytes, str]] | None = None,
         max_retries: int = 3,
     ) -> dict[str, object]:
-        """
-        Perform an HTTP POST request with retries and token refresh handling.
+        """Perform an HTTP POST request with retries and token refresh
+        handling.
 
         Args:
             path (str): Relative HTTP path to post to.
@@ -170,7 +164,8 @@ class NetClient(AsyncHttpClientOwner):
                 await self._wait_for_http_retry(attempt)
             except httpx.HTTPStatusError as exc:
                 if self.auth_required and exc.response.status_code in (
-                    401, 403,
+                    401,
+                    403,
                 ):
                     await self.token_manager.refresh_token()
                     headers = await self.auth_headers()
@@ -188,10 +183,11 @@ class NetClient(AsyncHttpClientOwner):
         await asyncio.sleep(delay)
 
     async def ensure_ws(
-        self, ws_path: str, headers: dict[str, str] | None = None,
+        self,
+        ws_path: str,
+        headers: dict[str, str] | None = None,
     ) -> aiohttp.ClientWebSocketResponse:
-        """
-        Ensure a live WebSocket is connected for a specific path.
+        """Ensure a live WebSocket is connected for a specific path.
 
         Args:
             ws_path (str): WebSocket path to connect to.
@@ -233,9 +229,7 @@ class NetClient(AsyncHttpClientOwner):
                 self._session = None
 
     async def _open_new_session(self) -> None:
-        """
-        (Re)initialise the aiohttp session with configured timeouts.
-        """
+        """(Re)initialise the aiohttp session with configured timeouts."""
         if self._session and not self._session.closed:
             await self._session.close()
         self._session = aiohttp.ClientSession(
@@ -246,10 +240,11 @@ class NetClient(AsyncHttpClientOwner):
         )
 
     async def _connect_with_retries(
-        self, ws_path: str, headers: dict[str, str] | None,
+        self,
+        ws_path: str,
+        headers: dict[str, str] | None,
     ) -> aiohttp.ClientWebSocketResponse:
-        """
-        Connect to a WebSocket URL with retries and token refresh on 401.
+        """Connect to a WebSocket URL with retries and token refresh on 401.
 
         Args:
             ws_path (str): WebSocket path to connect.
@@ -308,10 +303,10 @@ class NetClient(AsyncHttpClientOwner):
         raise ConnectionError('WebSocket connection retries exhausted')
 
     async def _make_ws_headers(
-        self, extra: dict[str, str] | None,
+        self,
+        extra: dict[str, str] | None,
     ) -> dict[str, str]:
-        """
-        Merge base authorisation headers with any provided extras.
+        """Merge base authorisation headers with any provided extras.
 
         Args:
             extra (dict[str, str], optional): Additional headers to merge.
@@ -358,10 +353,11 @@ class NetClient(AsyncHttpClientOwner):
         return await self._receive_ws_json_until(ws, ignore_messages)
 
     async def _reconnect_ws(
-        self, ws_path: str, headers: dict[str, str] | None,
+        self,
+        ws_path: str,
+        headers: dict[str, str] | None,
     ) -> aiohttp.ClientWebSocketResponse | None:
-        """
-        Attempt to reconnect the WS by closing and ensuring again.
+        """Attempt to reconnect the WS by closing and ensuring again.
 
         Args:
             ws_path (str): The WebSocket path to reconnect to.
@@ -378,10 +374,11 @@ class NetClient(AsyncHttpClientOwner):
             return None
 
     async def _send_ws_bytes(
-        self, ws: aiohttp.ClientWebSocketResponse, payload: bytes,
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        payload: bytes,
     ) -> bool:
-        """
-        Send a bytes payload over WS with a timeout.
+        """Send a bytes payload over WS with a timeout.
 
         Args:
             ws (aiohttp.ClientWebSocketResponse):
@@ -418,16 +415,17 @@ class NetClient(AsyncHttpClientOwner):
                 return None
             if ignore_messages and ignore_messages(data):
                 self._log.debug(
-                    '[WS] skipping control message on %s', self._ws_path,
+                    '[WS] skipping control message on %s',
+                    self._ws_path,
                 )
                 continue
             return data
 
     async def _receive_ws_json(
-        self, ws: aiohttp.ClientWebSocketResponse,
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
     ) -> object | None:
-        """
-        Receive a WS message and parse JSON payloads.
+        """Receive a WS message and parse JSON payloads.
 
         Args:
           ws: The connected WS instance to receive from.
@@ -447,10 +445,12 @@ class NetClient(AsyncHttpClientOwner):
 
         if resp.type == aiohttp.WSMsgType.TEXT:
             import json as _json
+
             return _json.loads(resp.data)
 
         if resp.type == aiohttp.WSMsgType.BINARY:
             import json as _json
+
             return _json.loads(resp.data.decode('utf-8'))
 
         if resp.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):

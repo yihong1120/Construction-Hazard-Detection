@@ -10,9 +10,7 @@ from src.danger_detector import DangerDetector
 
 class HazardTools:
     """Tools for detecting safety violations and generating warning
-    polygons.
-
-    """
+    polygons."""
 
     def __init__(self) -> None:
         """Initialise lazy hazard detection resources."""
@@ -71,9 +69,8 @@ class HazardTools:
         return [
             normalized
             for detection in cast(list[DetectionLikeDict], detections)
-            if (
-                normalized := HazardTools._normalise_detection(detection)
-            ) is not None
+            if (normalized := HazardTools._normalise_detection(detection))
+            is not None
         ]
 
     @staticmethod

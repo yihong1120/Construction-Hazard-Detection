@@ -14,11 +14,11 @@ from examples.YOLO_server_api.model_files import update_model_file
 
 
 class ModelFileTests(unittest.IsolatedAsyncioTestCase):
-    """Model delivery exposes paths and streams files; it never buffers them."""
+    """Model delivery exposes paths and streams files; it never buffers
+    them."""
 
     async def test_returns_updated_path_without_opening_file(self) -> None:
-        """Test returns updated path without opening file.
-        """
+        """Test returns updated path without opening file."""
         timestamp = datetime.datetime(2023, 1, 1)
         with (
             patch('pathlib.Path.is_file', return_value=True),
@@ -31,15 +31,13 @@ class ModelFileTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(path, Path)
 
     async def test_returns_none_for_missing_or_current_file(self) -> None:
-        """Test returns none for missing or current file.
-        """
+        """Test returns none for missing or current file."""
         timestamp = datetime.datetime(2023, 1, 1)
         with patch('pathlib.Path.is_file', return_value=False):
             self.assertIsNone(await get_new_model_path('yolo26n', timestamp))
 
     async def test_invalid_model_is_rejected(self) -> None:
-        """Test invalid model is rejected.
-        """
+        """Test invalid model is rejected."""
         with self.assertRaises(ValueError):
             await get_new_model_path('invalid', datetime.datetime.now())
 
@@ -67,13 +65,10 @@ class ModelFileTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ModelChecksumTests(unittest.TestCase):
-
-    """Provide ModelChecksumTests.
-    """
+    """Provide ModelChecksumTests."""
 
     def test_checksum_and_etag_are_content_based(self) -> None:
-        """Test checksum and etag are content based.
-        """
+        """Test checksum and etag are content based."""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'model.pt'
             path.write_bytes(b'model-bytes')

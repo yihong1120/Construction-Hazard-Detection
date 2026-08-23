@@ -27,9 +27,7 @@ from examples.local_notification_server.schemas import (
 
 
 class TestSiteNotificationPreferences(unittest.IsolatedAsyncioTestCase):
-    """
-    Test suite for site notification preference endpoints.
-    """
+    """Test suite for site notification preference endpoints."""
 
     def setUp(self) -> None:
         """Prepare common test mocks for each test case."""
@@ -39,7 +37,8 @@ class TestSiteNotificationPreferences(unittest.IsolatedAsyncioTestCase):
         self.user.group_id = 1
 
     @patch(
-        'examples.local_notification_server.site_preference_service.list_sites',
+        'examples.local_notification_server.site_preference_service.'
+        'list_sites',
     )
     @patch(
         'examples.local_notification_server.site_preference_service.'
@@ -96,7 +95,8 @@ class TestSiteNotificationPreferences(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        'examples.local_notification_server.site_preference_service.list_sites',
+        'examples.local_notification_server.site_preference_service.'
+        'list_sites',
     )
     @patch(
         'examples.local_notification_server.site_preference_service.'
@@ -177,7 +177,8 @@ class TestSiteNotificationPreferences(unittest.IsolatedAsyncioTestCase):
         mock_refresh_site_cache.assert_any_await('Site2', self.db, mock_redis)
 
     @patch(
-        'examples.local_notification_server.site_preference_service.list_sites',
+        'examples.local_notification_server.site_preference_service.'
+        'list_sites',
     )
     @patch(
         'examples.local_notification_server.site_preference_service.'
@@ -212,7 +213,8 @@ class TestSiteNotificationPreferences(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 403)
 
     @patch(
-        'examples.local_notification_server.site_preference_service.list_sites',
+        'examples.local_notification_server.site_preference_service.'
+        'list_sites',
     )
     @patch(
         'examples.local_notification_server.site_preference_service.'

@@ -76,7 +76,8 @@ def _notification_dedupe_key(req: SiteNotifyRequest) -> str:
             'fcm_notification_dedupe:'
             f"{req.site}:{req.stream_name}:{req.violation_id}"
         )
-    # Events without a durable violation ID deduplicate on their semantic payload.
+    # Events without a durable violation ID deduplicate on their semantic
+    # payload.
     payload_hash = hashlib.sha256(
         json.dumps(
             {
@@ -89,7 +90,7 @@ def _notification_dedupe_key(req: SiteNotifyRequest) -> str:
             separators=(',', ':'),
         ).encode('utf-8'),
     ).hexdigest()
-    return f'fcm_notification_dedupe:{payload_hash}'
+    return f"fcm_notification_dedupe:{payload_hash}"
 
 
 async def _claim_notification_send(
@@ -111,7 +112,9 @@ async def _claim_notification_send(
         else _dedupe_ttl_without_violation_id
     )
     # NX makes the claim atomic across all Uvicorn workers.
-    return bool(await rds.set(_notification_dedupe_key(req), '1', ex=ttl, nx=True))
+    return bool(
+        await rds.set(_notification_dedupe_key(req), '1', ex=ttl, nx=True),
+    )
 
 
 async def register_fcm_device(
@@ -130,7 +133,6 @@ async def register_fcm_device(
 
     Returns:
         Non-sensitive registration metadata.
-
     """
     metadata = await record_fcm_token_registration(user_id, req, db, rds)
     return DeviceRegistrationResponse(
@@ -166,7 +168,7 @@ async def unregister_fcm_device(
         db,
         rds,
     )
-    token_key = f'fcm_tokens:{user_id}'
+    token_key = f"fcm_tokens:{user_id}"
     pipe = rds.pipeline()
     pipe.hdel(token_key, req.device_token)
     pipe.hlen(token_key)
@@ -204,7 +206,8 @@ async def send_site_notification(
             'message': f"Site '{req.site}' has no subscribed users.",
         }
 
-    # Persist the in-app record before FCM; push delivery is an external effect.
+    # Persist the in-app record before FCM; push delivery is an external
+    # effect.
     record_count = await create_notification_records_for_users(
         req,
         user_ids,
@@ -221,22 +224,28 @@ async def send_site_notification(
     )
     preparation_seconds = time.monotonic() - preparation_started_at
     delivery_started_at = time.monotonic()
-    ok, total_batches, successful_batches, error_message = (
-        await execute_push_tasks_bounded_streaming(
-            push_tasks,
-            timeout=30.0,
-            invalid_token_handler=(
-                lambda invalid_tokens: mark_invalid_fcm_tokens_for_users(
-                    user_ids,
-                    invalid_tokens,
-                    rds,
-                    db=db,
-                )
-            ),
-        )
+    (
+        ok,
+        total_batches,
+        successful_batches,
+        error_message,
+    ) = await execute_push_tasks_bounded_streaming(
+        push_tasks,
+        timeout=30.0,
+        invalid_token_handler=(
+            lambda invalid_tokens: mark_invalid_fcm_tokens_for_users(
+                user_ids,
+                invalid_tokens,
+                rds,
+                db=db,
+            )
+        ),
     )
     if not ok:
-        if error_message and error_message != 'FCM notification sending timed out.':
+        if (
+            error_message
+            and error_message != 'FCM notification sending timed out.'
+        ):
             logger.error('FCM sending failed: %s', error_message)
         message = (
             'FCM notification sending timed out.'
@@ -269,7 +278,7 @@ async def send_site_notification(
         'success': total_batches == successful_batches,
         'message': (
             'FCM notification processed. '
-            f'{successful_batches}/{total_batches} batches succeeded.'
+            f"{successful_batches}/{total_batches} batches succeeded."
         ),
         'stats': stats,
     }
@@ -318,11 +327,18 @@ async def send_test_notification(
         )
     if invalid_tokens:
         await mark_invalid_fcm_tokens_for_users(
-            [me.id], invalid_tokens, rds, db=db,
+            [me.id],
+            invalid_tokens,
+            rds,
+            db=db,
         )
     return TestNotificationResponse(
         success=success,
-        message='Test notification sent.' if success else 'Test notification failed.',
+        message=(
+            'Test notification sent.'
+            if success
+            else 'Test notification failed.'
+        ),
         attempted_tokens=len(device_tokens),
         success_count=result.success_count,
         failure_count=result.failure_count,

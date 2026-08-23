@@ -23,6 +23,7 @@ from examples.YOLO_server_api.routers import model_loader
 from examples.YOLO_server_api.routers import model_management_router
 from examples.YOLO_server_api.routers import rate_limiter_service
 from examples.YOLO_server_api.routers import websocket_detect
+
 """Tests for FastAPI routers layer.
 
 This module exercises the thin routing layer in
@@ -37,18 +38,14 @@ authorisation, and delegation behaviour.
 
 
 class TestRouters(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for ``routers.py`` focused on routing and delegation.
-    """
+    """Unit tests for ``routers.py`` focused on routing and delegation."""
 
     app: ClassVar[FastAPI]
     client: ClassVar[TestClient]
 
     @classmethod
     def setUpClass(cls) -> None:
-        """
-        Initialise shared FastAPI app and client for the test suite.
-        """
+        """Initialise shared FastAPI app and client for the test suite."""
         cls.app = FastAPI()
         # Mount routers under /api to match tests
         cls.app.include_router(detection_router, prefix='/api')
@@ -143,13 +140,17 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         # Prepare upload payload
         files = {
             'file': (
-                'model.pt', b'model content', 'application/octet-stream',
+                'model.pt',
+                b'model content',
+                'application/octet-stream',
             ),
         }
         data = {'model': 'yolo26n'}
         # Exercise endpoint
         resp = self.client.post(
-            '/api/model_file_update', data=data, files=files,
+            '/api/model_file_update',
+            data=data,
+            files=files,
         )
         # Verify outcome and side effects
         self.assertEqual(resp.status_code, 200)
@@ -165,12 +166,16 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         files = {
             'file': (
-                'model.pt', b'model content', 'application/octet-stream',
+                'model.pt',
+                b'model content',
+                'application/octet-stream',
             ),
         }
         data = {'model': 'yolo26n'}
         resp = self.client.post(
-            '/api/model_file_update', data=data, files=files,
+            '/api/model_file_update',
+            data=data,
+            files=files,
         )
         self.assertEqual(resp.status_code, 403)
         self.assertIn("Need 'admin' or 'model_manage' role", resp.text)
@@ -185,7 +190,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_model_file_update_value_error(
-        self, mock_logger: MagicMock, _patch_update: MagicMock,
+        self,
+        mock_logger: MagicMock,
+        _patch_update: MagicMock,
     ) -> None:
         """Verify ValueError becomes 400 with an error log entry.
 
@@ -195,12 +202,16 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         """
         files = {
             'file': (
-                'bad.pt', b'xxx', 'application/octet-stream',
+                'bad.pt',
+                b'xxx',
+                'application/octet-stream',
             ),
         }
         data = {'model': 'bad'}
         resp = self.client.post(
-            '/api/model_file_update', data=data, files=files,
+            '/api/model_file_update',
+            data=data,
+            files=files,
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn('Invalid model', resp.text)
@@ -212,7 +223,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_model_file_update_os_error(
-        self, mock_logger: MagicMock, _patch_update: MagicMock,
+        self,
+        mock_logger: MagicMock,
+        _patch_update: MagicMock,
     ) -> None:
         """Verify OSError becomes 500 with an error log entry.
 
@@ -222,12 +235,16 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         """
         files = {
             'file': (
-                'model.pt', b'xxx', 'application/octet-stream',
+                'model.pt',
+                b'xxx',
+                'application/octet-stream',
             ),
         }
         data = {'model': 'yolo26n'}
         resp = self.client.post(
-            '/api/model_file_update', data=data, files=files,
+            '/api/model_file_update',
+            data=data,
+            files=files,
         )
         self.assertEqual(resp.status_code, 500)
         self.assertIn('Disk error', resp.text)
@@ -239,7 +256,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_get_new_model_updated(
-        self, mock_logger: MagicMock, mock_get_file: AsyncMock,
+        self,
+        mock_logger: MagicMock,
+        mock_get_file: AsyncMock,
     ) -> None:
         """Verify an updated model is returned as a binary stream."""
         # Ensure privileged role
@@ -253,7 +272,10 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         }
         resp = self.client.post('/api/get_new_model', json=payload)
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.headers['content-type'], 'application/octet-stream')
+        self.assertEqual(
+            resp.headers['content-type'],
+            'application/octet-stream',
+        )
         self.assertIn('x-model-sha256', resp.headers)
         self.assertTrue(resp.content)
         mock_logger.info.assert_called()
@@ -264,7 +286,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_get_new_model_up_to_date(
-        self, _mock_logger: MagicMock, mock_get_file: AsyncMock,
+        self,
+        _mock_logger: MagicMock,
+        mock_get_file: AsyncMock,
     ) -> None:
         """Verify up-to-date model returns no response body.
 
@@ -293,7 +317,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_get_new_model_exception(
-        self, mock_logger: MagicMock, _patch_file: MagicMock,
+        self,
+        mock_logger: MagicMock,
+        _patch_file: MagicMock,
     ) -> None:
         """Verify unexpected exception yields 500 and is logged.
 
@@ -344,9 +370,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_websocket_route_delegates_to_handler(self) -> None:
-        """
-        Verify WebSocket route delegates to ``handle_websocket_detect``.
-        """
+        """Verify WebSocket route delegates to ``handle_websocket_detect``."""
         # Prepare fake websocket and settings object
         mock_ws: AsyncMock = AsyncMock()
         mock_rds: Mock = Mock()
@@ -372,10 +396,3 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.YOLO_server_api.routers \
-    --cov-report=term-missing \
-    tests/examples/YOLO_server_api/routers_test.py
-'''

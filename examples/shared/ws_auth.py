@@ -18,9 +18,7 @@ from examples.db_management.schemas.auth import AccessTokenSubject
 
 
 class WebSocketLike(Protocol):
-    """
-    A minimal protocol describing the WebSocket operations we use.
-    """
+    """A minimal protocol describing the WebSocket operations we use."""
 
     @property
     def headers(self) -> Mapping[str, str]:
@@ -50,15 +48,18 @@ class SettingsLike(Protocol):
 WS_MAX_SESSION_SECONDS: float = float(
     os.getenv('WS_MAX_SESSION_SECONDS', '1800'),
 )
-AUTO_REGISTER_JTI: bool = os.getenv(
-    'WS_AUTO_REGISTER_JTI', 'false',
-).lower() == 'true'
+AUTO_REGISTER_JTI: bool = (
+    os.getenv(
+        'WS_AUTO_REGISTER_JTI',
+        'false',
+    ).lower()
+    == 'true'
+)
 logger = logging.getLogger(__name__)
 
 
 def extract_token_from_ws(websocket: WebSocketLike) -> str | None:
-    """
-    Extract a JWT from a WebSocket request.
+    """Extract a JWT from a WebSocket request.
 
     Args:
         websocket: The WebSocket-like object containing headers and query
@@ -83,8 +84,7 @@ async def _fail_ws(
     log_msg: str,
     exit_reason: str,
 ) -> NoReturn:
-    """
-    Log, close the websocket, and raise SystemExit with a short code.
+    """Log, close the websocket, and raise SystemExit with a short code.
 
     Args:
         websocket: The WebSocket-like request, used to close the connection.
@@ -104,7 +104,11 @@ async def _fail_ws(
     Returns:
         None. This function does not return; it always raises SystemExit.
     """
-    logger.warning('WebSocket authentication failed tag=%s reason=%s', tag, log_msg)
+    logger.warning(
+        'WebSocket authentication failed tag=%s reason=%s',
+        tag,
+        log_msg,
+    )
     await websocket.close(code=code, reason=reason)
     raise SystemExit(exit_reason)
 
@@ -115,8 +119,7 @@ async def _decode_or_fail(
     websocket: WebSocketLike,
     tag: str,
 ) -> dict[str, object]:
-    """
-    Decode a JWT or close the WebSocket on failure.
+    """Decode a JWT or close the WebSocket on failure.
 
     Args:
         token: The raw JWT string.
@@ -187,8 +190,7 @@ async def _decode_or_fail(
 def _extract_identity(
     payload: dict[str, object],
 ) -> tuple[str, str, AccessTokenSubject]:
-    """
-    Return the canonical username, JTI, and subject from an access token.
+    """Return the canonical username, JTI, and subject from an access token.
 
     Args:
         payload: The decoded JWT payload.
@@ -207,8 +209,8 @@ def _build_autoreg_cache(
     payload: dict[str, object],
     subject_data: AccessTokenSubject,
 ) -> dict[str, object]:
-    """
-    Build a user cache dictionary that adds a missing JTI to the active list.
+    """Build a user cache dictionary that adds a missing JTI to the active
+    list.
 
     Args:
         user_data: Existing user cache data, if any.
@@ -221,27 +223,31 @@ def _build_autoreg_cache(
         A new user cache dictionary with the JTI added to the active list.
     """
     # Start from the canonical cache shape when the user has no prior session.
-    cache: dict[str, object] = dict(user_data) if user_data is not None else {
-        'db_user': {
-            'id': cast(
-                object,
-                subject_data['user_id'],
-            ),
-            'username': username,
-            'role': cast(
-                object,
-                subject_data['role'],
-            ),
-            'group_id': None,
-            'status': 'active',
-        },
-        'jti_list': [],
-        'jti_meta': {},
-        'refresh_tokens': [],
-        'refresh_token_hashes': [],
-        'refresh_token_families': {},
-        'feature_names': [],
-    }
+    cache: dict[str, object] = (
+        dict(user_data)
+        if user_data is not None
+        else {
+            'db_user': {
+                'id': cast(
+                    object,
+                    subject_data['user_id'],
+                ),
+                'username': username,
+                'role': cast(
+                    object,
+                    subject_data['role'],
+                ),
+                'group_id': None,
+                'status': 'active',
+            },
+            'jti_list': [],
+            'jti_meta': {},
+            'refresh_tokens': [],
+            'refresh_token_hashes': [],
+            'refresh_token_families': {},
+            'feature_names': [],
+        }
+    )
     jtis = list(cast(list[str], cache['jti_list']))
     if jti not in jtis:
         jtis.append(jti)
@@ -253,8 +259,7 @@ def _build_autoreg_cache(
 
 
 def get_model_key_from_ws(websocket: WebSocketLike) -> str | None:
-    """
-    Extract the model key for YOLO WebSocket endpoints.
+    """Extract the model key for YOLO WebSocket endpoints.
 
     Args:
         websocket: The WebSocket-like request.
@@ -275,8 +280,7 @@ async def authenticate_websocket(
     auto_register_jti: bool = AUTO_REGISTER_JTI,
     client_tag: str | None = None,
 ) -> tuple[str, str, dict[str, object]]:
-    """
-    Authenticate a WebSocket client using a JWT.
+    """Authenticate a WebSocket client using a JWT.
 
     Args:
         websocket: The WebSocket connection.
@@ -331,8 +335,11 @@ async def authenticate_websocket(
 
     # Prune and validate JTI in cache for the user
     await prune_user_cache(rds, username_str)
-    user_data: dict[str, object] | None = await rate_limiter_service.get_user_data(
-        rds, username_str,
+    user_data: dict[str, object] | None = (
+        await rate_limiter_service.get_user_data(
+            rds,
+            username_str,
+        )
     )
 
     # A WebSocket server may sit behind a dedicated WSS upstream, but the
@@ -361,9 +368,8 @@ async def authenticate_websocket(
         )
 
     # Validate JTI against cache list
-    jti_is_active = (
-        user_data is not None
-        and jti_str in cast(list[str], user_data['jti_list'])
+    jti_is_active = user_data is not None and jti_str in cast(
+        list[str], user_data['jti_list'],
     )
     if not jti_is_active:
         if auto_register_jti:
@@ -379,7 +385,9 @@ async def authenticate_websocket(
                 payload=payload,
                 subject_data=subject_data,
             )
-            await rate_limiter_service.set_user_data(rds, username_str, new_cache)
+            await rate_limiter_service.set_user_data(
+                rds, username_str, new_cache,
+            )
         else:
             await _fail_ws(
                 websocket,

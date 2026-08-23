@@ -5,7 +5,6 @@ from typing import TypedDict
 
 from src.warning_types import MutableWarnings
 
-
 # Note: Avoid providing a catch-all JSON alias here to encourage
 # using precise TypedDicts for request/response shapes where feasible.
 

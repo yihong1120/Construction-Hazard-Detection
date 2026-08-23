@@ -49,8 +49,7 @@ class ResettableDataLoader:
         return len(self.batches)
 
     def reset(self) -> None:
-        """Perform reset.
-        """
+        """Perform reset."""
         self.reset_count += 1
 
 
@@ -105,10 +104,12 @@ def test_calibration_reader_reads_all_batches_and_rewinds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The calibration reader normalizes every batch and resets correctly."""
-    dataloader = ResettableDataLoader([
-        {'img': torch.full((2, 3, 2, 2), 255, dtype=torch.uint8)},
-        {'img': torch.full((1, 3, 2, 2), 128, dtype=torch.uint8)},
-    ])
+    dataloader = ResettableDataLoader(
+        [
+            {'img': torch.full((2, 3, 2, 2), 255, dtype=torch.uint8)},
+            {'img': torch.full((1, 3, 2, 2), 128, dtype=torch.uint8)},
+        ],
+    )
     progress = MagicMock()
     monkeypatch.setattr(subject, 'tqdm', lambda **_kwargs: progress)
 
@@ -190,11 +191,14 @@ def test_modelopt_quantize_int8_uses_all_calibration_images(
         graph=SimpleNamespace(input=[SimpleNamespace(name='images')]),
     )
     monkeypatch.setattr(
-        subject, 'AllImagesCalibrationReader', lambda *_: reader,
+        subject,
+        'AllImagesCalibrationReader',
+        lambda *_: reader,
     )
     monkeypatch.setattr(subject, 'check_requirements', MagicMock())
     monkeypatch.setattr(
-        subject.onnx, 'load',
+        subject.onnx,
+        'load',
         MagicMock(return_value=onnx_model),
     )
 
@@ -229,11 +233,14 @@ def test_modelopt_quantize_int8_keeps_excluded_nodes_high_precision(
         graph=SimpleNamespace(input=[SimpleNamespace(name='images')]),
     )
     monkeypatch.setattr(
-        subject, 'AllImagesCalibrationReader', lambda *_: reader,
+        subject,
+        'AllImagesCalibrationReader',
+        lambda *_: reader,
     )
     monkeypatch.setattr(subject, 'check_requirements', MagicMock())
     monkeypatch.setattr(
-        subject.onnx, 'load',
+        subject.onnx,
+        'load',
         MagicMock(return_value=onnx_model),
     )
     monkeypatch.setattr(
@@ -297,16 +304,18 @@ def test_patched_onnx2engine_accepts_compatible_modelopt_gate() -> None:
         '        onnx_file = modelopt_quantize_onnx('
         'onnx_file, quantize, dataset, shape, dynamic, prefix)'
     )
-    multiline_call = '\n'.join([
-        '        onnx_file = modelopt_quantize_onnx(',
-        '            onnx_file,',
-        '            quantize,',
-        '            dataset,',
-        '            shape,',
-        '            dynamic,',
-        '            prefix,',
-        '        )',
-    ])
+    multiline_call = '\n'.join(
+        [
+            '        onnx_file = modelopt_quantize_onnx(',
+            '            onnx_file,',
+            '            quantize,',
+            '            dataset,',
+            '            shape,',
+            '            dynamic,',
+            '            prefix,',
+            '        )',
+        ],
+    )
     assert original_condition in source
     assert original_call in source
 
@@ -352,10 +361,13 @@ def test_set_calibration_batch_size_restores_export_batch(
     subject.set_calibration_batch_size(2)
     exporter = SimpleNamespace(args=SimpleNamespace(batch=8))
     try:
-        assert subject.Exporter.get_int8_calibration_dataloader(
-            exporter,
-            'INT8',
-        ) == 'dataloader'
+        assert (
+            subject.Exporter.get_int8_calibration_dataloader(
+                exporter,
+                'INT8',
+            )
+            == 'dataloader'
+        )
     finally:
         subject.Exporter.get_int8_calibration_dataloader = original
 
@@ -373,22 +385,36 @@ def test_parse_args_reads_script_options(
         'argv',
         [
             'export_int8_trt.py',
-            '--model', str(tmp_path / 'model.pt'),
-            '--output', str(tmp_path / 'result.engine'),
-            '--data', str(tmp_path / 'data.yaml'),
-            '--device', 'cuda:0',
-            '--imgsz', '320',
-            '--batch', '8',
-            '--calib-batch', '2',
-            '--calib-images', '1024',
-            '--calib-seed', '99',
-            '--calib-split', 'train',
-            '--calibration-method', 'max',
-            '--exclude-node', 'custom_node.*',
+            '--model',
+            str(tmp_path / 'model.pt'),
+            '--output',
+            str(tmp_path / 'result.engine'),
+            '--data',
+            str(tmp_path / 'data.yaml'),
+            '--device',
+            'cuda:0',
+            '--imgsz',
+            '320',
+            '--batch',
+            '8',
+            '--calib-batch',
+            '2',
+            '--calib-images',
+            '1024',
+            '--calib-seed',
+            '99',
+            '--calib-split',
+            'train',
+            '--calibration-method',
+            'max',
+            '--exclude-node',
+            'custom_node.*',
             '--exclude-detect-head',
-            '--workspace', '4',
+            '--workspace',
+            '4',
             '--static',
-            '--fraction', '0.5',
+            '--fraction',
+            '0.5',
         ],
     )
 
@@ -452,9 +478,7 @@ def test_main_exports_and_moves_engine(
     calls: list[dict[str, object]] = []
 
     class FakeYolo:
-
-        """Provide FakeYolo.
-        """
+        """Provide FakeYolo."""
 
         def __init__(self, model_path: str) -> None:
             """Perform init.
@@ -498,19 +522,22 @@ def test_main_exports_and_moves_engine(
 
     subject.main()
 
-    assert calls == [{
-        'format': 'engine',
-        'device': 0,
-        'dynamic': not static,
-        'batch': 4,
-        'imgsz': 640,
-        'workspace': expected_workspace,
-        'quantize': 8,
-        'data': str(args.data.resolve()),
-        'fraction': 1.0,
-    }]
+    assert calls == [
+        {
+            'format': 'engine',
+            'device': 0,
+            'dynamic': not static,
+            'batch': 4,
+            'imgsz': 640,
+            'workspace': expected_workspace,
+            'quantize': 8,
+            'data': str(args.data.resolve()),
+            'fraction': 1.0,
+        },
+    ]
     move.assert_called_once_with(
-        str(exported.resolve()), args.output.resolve(),
+        str(exported.resolve()),
+        args.output.resolve(),
     )
     set_node_exclusions.assert_called_once_with([])
 
@@ -524,18 +551,20 @@ def test_prepare_calibration_data_uses_requested_split(
         (root / split / 'images').mkdir(parents=True)
         (root / split / 'labels').mkdir()
     for name, class_id in [('first', 0), ('second', 1), ('third', 0)]:
-        (root / 'val' / 'images' / f'{name}.jpg').write_bytes(b'image')
-        (root / 'val' / 'labels' / f'{name}.txt').write_text(
-            f'{class_id} 0.5 0.5 0.2 0.2\n',
+        (root / 'val' / 'images' / f"{name}.jpg").write_bytes(b'image')
+        (root / 'val' / 'labels' / f"{name}.txt").write_text(
+            f"{class_id} 0.5 0.5 0.2 0.2\n",
         )
     data = tmp_path / 'data.yaml'
     data.write_text(
-        yaml.safe_dump({
-            'path': str(root),
-            'train': 'train/images',
-            'val': 'val/images',
-            'names': ['first', 'second'],
-        }),
+        yaml.safe_dump(
+            {
+                'path': str(root),
+                'train': 'train/images',
+                'val': 'val/images',
+                'names': ['first', 'second'],
+            },
+        ),
     )
 
     calibration, count = subject.prepare_calibration_data(
@@ -562,9 +591,9 @@ def test_class_balanced_images_excludes_calibration_images(
     images.mkdir()
     labels.mkdir()
     for index in range(4):
-        (images / f'{index}.jpg').write_bytes(b'image')
-        (labels / f'{index}.txt').write_text(
-            f'{index % 2} 0.5 0.5 0.2 0.2\n',
+        (images / f"{index}.jpg").write_bytes(b'image')
+        (labels / f"{index}.txt").write_text(
+            f"{index % 2} 0.5 0.5 0.2 0.2\n",
         )
 
     calibration = subject.class_balanced_images(images, labels, 2, seed=1)
@@ -592,8 +621,8 @@ def test_script_main_block_invokes_main_before_model_io(
 
 
 def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Malformed labels and calibration layouts fail with clear outcomes."""
     missing = tmp_path / 'missing.txt'
@@ -616,7 +645,8 @@ def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
     invalid_yaml = tmp_path / 'invalid.yaml'
     invalid_yaml.write_text('- images\n')
     monkeypatch.setattr(
-        subject, 'build_calibration_yaml',
+        subject,
+        'build_calibration_yaml',
         lambda *_args: invalid_yaml,
     )
     with pytest.raises(ValueError, match='must be a mapping'):
@@ -625,7 +655,8 @@ def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
     split_yaml = tmp_path / 'split.yaml'
     split_yaml.write_text('path: .\nval: [images]\n')
     monkeypatch.setattr(
-        subject, 'build_calibration_yaml',
+        subject,
+        'build_calibration_yaml',
         lambda *_args: split_yaml,
     )
     with pytest.raises(ValueError, match='must point to one images directory'):
@@ -649,9 +680,10 @@ def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
     (empty_root / 'val' / 'images').mkdir(parents=True)
     (empty_root / 'val' / 'labels').mkdir()
     empty_yaml = tmp_path / 'empty.yaml'
-    empty_yaml.write_text(f'path: {empty_root}\nval: val/images\n')
+    empty_yaml.write_text(f"path: {empty_root}\nval: val/images\n")
     monkeypatch.setattr(
-        subject, 'build_calibration_yaml',
+        subject,
+        'build_calibration_yaml',
         lambda *_args: empty_yaml,
     )
     with pytest.raises(FileNotFoundError, match='No calibration images'):
@@ -659,8 +691,8 @@ def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
 
 
 def test_export_configuration_setters_and_negative_image_limit(
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Export helpers retain unique exclusions and reject negative limits."""
     subject.set_calibration_method('max')
@@ -676,7 +708,7 @@ def test_export_configuration_setters_and_negative_image_limit(
 
 
 def test_exporter_patch_reports_unexpected_upstream_shapes(
-        monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unsupported Ultralytics exporter layouts fail before engine export."""
     with pytest.raises(RuntimeError, match='dynamic TensorRT profile'):
@@ -688,9 +720,7 @@ def test_exporter_patch_reports_unexpected_upstream_shapes(
     with pytest.raises(RuntimeError, match='ModelOpt INT8 gate'):
         subject._patched_onnx2engine_source(without_gate)
 
-    with (
-        monkeypatch.context() as context,
-    ):
+    with (monkeypatch.context() as context):
         context.setattr(subject.ast, 'get_source_segment', lambda *_args: None)
         with pytest.raises(RuntimeError, match='INT8 call'):
             subject._patched_onnx2engine_source(source)
@@ -728,15 +758,17 @@ def test_exporter_patch_reports_unexpected_upstream_shapes(
 
     monkeypatch.setattr(subject, 'original_onnx2engine_source', None)
     monkeypatch.setattr(
-        subject, '_require_modelopt_export_support', MagicMock(),
+        subject,
+        '_require_modelopt_export_support',
+        MagicMock(),
     )
     with pytest.raises(RuntimeError, match='source is unavailable'):
         subject.patch_tensorrt_engine_exporter()
 
 
 def test_main_adds_detect_head_exclusion_to_mixed_precision_export(
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """The convenience flag is forwarded to the ModelOpt exclusion setter."""
     args = _export_args(tmp_path)
@@ -755,9 +787,7 @@ def test_main_adds_detect_head_exclusion_to_mixed_precision_export(
     monkeypatch.setattr(subject, 'build_data_yaml', lambda value: Path(value))
 
     class FakeYolo:
-
-        """Provide FakeYolo.
-        """
+        """Provide FakeYolo."""
 
         def __init__(self, _path: str) -> None:
             """Perform init.

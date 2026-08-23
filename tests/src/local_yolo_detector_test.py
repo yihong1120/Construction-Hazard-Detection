@@ -18,8 +18,7 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
     """Verify optional local inference independently of the stream worker."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         patcher = patch.object(local_module, 'YOLO', MagicMock())
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -36,8 +35,8 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
         factory_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
         class DetectionFactory:
-            """Provide DetectionFactory.
-            """
+            """Provide DetectionFactory."""
+
             @staticmethod
             def from_pretrained(*args: object, **kwargs: object) -> str:
                 """Perform from pretrained.
@@ -59,19 +58,22 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
         ultralytics_module = ModuleType('ultralytics')
 
         class FakeYolo:
-            """Provide FakeYolo.
-            """
+            """Provide FakeYolo."""
+
             pass
 
         setattr(ultralytics_module, 'YOLO', FakeYolo)
-        with patch.dict(
-            sys.modules,
-            {
-                'sahi': sahi_module,
-                'sahi.predict': predict_module,
-                'ultralytics': ultralytics_module,
-            },
-        ), patch.object(local_module, 'YOLO', None):
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    'sahi': sahi_module,
+                    'sahi.predict': predict_module,
+                    'ultralytics': ultralytics_module,
+                },
+            ),
+            patch.object(local_module, 'YOLO', None),
+        ):
             self.assertEqual(
                 local_module._LazyAutoDetectionModel.from_pretrained(
                     'model-path',

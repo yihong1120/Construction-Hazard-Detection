@@ -36,8 +36,7 @@ handler: WebhookHandler = WebhookHandler('YOUR_LINE_CHANNEL_SECRET')
 
 @app.post('/webhook', response_class=PlainTextResponse)
 async def callback(request: Request) -> str:
-    """
-    Handle incoming webhook requests from LINE.
+    """Handle incoming webhook requests from LINE.
 
     Args:
         request (Request): The HTTP request object
@@ -79,8 +78,7 @@ async def callback(request: Request) -> str:
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_text_message(event: MessageEvent) -> None:
-    """
-    Handle incoming text messages from users.
+    """Handle incoming text messages from users.
 
     Args:
         event (MessageEvent): The LINE message event

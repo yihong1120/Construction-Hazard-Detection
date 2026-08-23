@@ -60,12 +60,18 @@ class BoundingBoxVisualiser:
             y_centre, bbox_height = y_centre * height, bbox_height * height
 
             # Calculate the top left corner
-            x1, y1 = int(
-                x_centre - bbox_width / 2,
-            ), int(y_centre - bbox_height / 2)
-            x2, y2 = int(
-                x_centre + bbox_width / 2,
-            ), int(y_centre + bbox_height / 2)
+            x1, y1 = (
+                int(
+                    x_centre - bbox_width / 2,
+                ),
+                int(y_centre - bbox_height / 2),
+            )
+            x2, y2 = (
+                int(
+                    x_centre + bbox_width / 2,
+                ),
+                int(y_centre + bbox_height / 2),
+            )
 
             # Draw the rectangle and label
             cv2.rectangle(self.image, (x1, y1), (x2, y2), (255, 0, 0), 2)

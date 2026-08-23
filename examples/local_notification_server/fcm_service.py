@@ -53,7 +53,6 @@ def init_firebase_app(cred_path: str, project_id: str) -> None:
     Args:
         cred_path: Path to the Firebase service account key JSON file.
         project_id: GCP/Firebase project ID.
-
     """
     # Firebase keeps a process-wide app registry, so workers initialise once.
     if not firebase_admin._apps:
@@ -85,7 +84,6 @@ APNS_CFG: messaging.APNSConfig = messaging.APNSConfig(
         ),
     ),
 )
-
 
 WEBPUSH_CFG: messaging.WebpushConfig = messaging.WebpushConfig(
     headers={

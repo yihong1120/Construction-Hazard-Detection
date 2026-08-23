@@ -15,16 +15,24 @@ def fcm_token_hash(device_token: str) -> str:
 
 def encrypt_token(device_token: str, encryption_key: str) -> str:
     """Encrypt an FCM token using the configured Fernet key."""
-    return Fernet(encryption_key.encode('utf-8')).encrypt(
-        device_token.encode('utf-8'),
-    ).decode('utf-8')
+    return (
+        Fernet(encryption_key.encode('utf-8'))
+        .encrypt(
+            device_token.encode('utf-8'),
+        )
+        .decode('utf-8')
+    )
 
 
 def decrypt_token(encrypted_token: str, encryption_key: str) -> str:
     """Decrypt an FCM token using the configured Fernet key."""
-    return Fernet(encryption_key.encode('utf-8')).decrypt(
-        encrypted_token.encode('utf-8'),
-    ).decode('utf-8')
+    return (
+        Fernet(encryption_key.encode('utf-8'))
+        .decrypt(
+            encrypted_token.encode('utf-8'),
+        )
+        .decode('utf-8')
+    )
 
 
 def disable_undecryptable_token(

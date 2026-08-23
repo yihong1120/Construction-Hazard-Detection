@@ -12,8 +12,7 @@ class WeChatNotifierTests(unittest.IsolatedAsyncioTestCase):
     """Verify WeChat token caching and async image delivery."""
 
     async def test_token_is_cached_and_image_is_uploaded(self) -> None:
-        """Test token is cached and image is uploaded.
-        """
+        """Test token is cached and image is uploaded."""
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -58,30 +57,39 @@ class WeChatNotifierTests(unittest.IsolatedAsyncioTestCase):
             )
 
         token_requests = [
-            request for request in requests if request.url.path.endswith('/gettoken')
+            request
+            for request in requests
+            if request.url.path.endswith('/gettoken')
         ]
         self.assertEqual(len(token_requests), 1)
-        self.assertTrue(any(b'media' in request.content for request in requests))
+        self.assertTrue(
+            any(b'media' in request.content for request in requests),
+        )
 
     async def test_requires_wechat_credentials(self) -> None:
-        """Test requires wechat credentials.
-        """
+        """Test requires wechat credentials."""
         notifier = WeChatNotifier(corp_id='', corp_secret='')
         with self.assertRaisesRegex(ValueError, 'WECHAT_CORP_ID'):
             await notifier.get_access_token()
 
     async def test_rejects_a_token_response_without_a_token(self) -> None:
-        """Malformed token responses fail explicitly instead of caching None."""
+        """Malformed token responses fail explicitly instead of caching
+        None."""
+
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(
                 lambda _request: httpx.Response(200, json={}),
             ),
         ) as client:
             notifier = WeChatNotifier('corp', 'secret', client=client)
-            with self.assertRaisesRegex(ValueError, 'did not return an access token'):
+            with self.assertRaisesRegex(
+                ValueError, 'did not return an access token',
+            ):
                 await notifier.get_access_token()
 
-    async def test_standalone_notifier_reuses_and_closes_its_client(self) -> None:
+    async def test_standalone_notifier_reuses_and_closes_its_client(
+        self,
+    ) -> None:
         """A standalone notifier owns a reusable client until closed."""
         notifier = WeChatNotifier('corp', 'secret')
         client = notifier._http_client()

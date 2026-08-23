@@ -94,7 +94,8 @@ class TestLocalNotificationServer(unittest.TestCase):
                                 'examples.auth.redis_pool.RedisClient.connect',
                                 new_callable=AsyncMock,
                             ):
-                                # Using TestClient triggers the lifespan context.
+                                # Using TestClient triggers the lifespan
+                                # context.
                                 with TestClient(app):
                                     pass
 
@@ -107,10 +108,3 @@ class TestLocalNotificationServer(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-\
-"""Pytest \
-
---cov=examples.local_notification_server.app \
---cov-report=term-missing \
-tests/examples/local_notification_server/app_test.py
-"""

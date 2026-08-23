@@ -10,19 +10,22 @@ from examples.local_notification_server.lang_config import Translator
 
 
 class TestLangConfig(unittest.TestCase):
-    """
-    Test suite for language configuration (LANGUAGES) and the Translator class.
-    """
+    """Test suite for language configuration (LANGUAGES) and the Translator
+    class."""
 
     def setUp(self) -> None:
-        """
-        Set up the test environment.
-        """
+        """Set up the test environment."""
         self.original_languages: dict[str, dict[str, str]] = LANGUAGES.copy()
 
         # Define the supported language codes (matching lang_config.py)
         self.supported_langs: set[str] = {
-            'en-GB', 'zh-TW', 'zh-CN', 'fr-FR', 'vi-VN', 'id-ID', 'th-TH',
+            'en-GB',
+            'zh-TW',
+            'zh-CN',
+            'fr-FR',
+            'vi-VN',
+            'id-ID',
+            'th-TH',
             'ja-JP',
         }
 
@@ -47,16 +50,12 @@ class TestLangConfig(unittest.TestCase):
         }
 
     def tearDown(self) -> None:
-        """
-        Restore the original LANGUAGES.
-        """
+        """Restore the original LANGUAGES."""
         LANGUAGES.clear()
         LANGUAGES.update(self.original_languages)
 
     def test_supported_languages_exist(self) -> None:
-        """
-        Check that all required language codes exist in LANGUAGES.
-        """
+        """Check that all required language codes exist in LANGUAGES."""
         for lang in self.supported_langs:
             self.assertIn(
                 lang,
@@ -65,9 +64,7 @@ class TestLangConfig(unittest.TestCase):
             )
 
     def test_all_keys_exist_in_each_language(self) -> None:
-        """
-        Verify each language has all the expected translation keys.
-        """
+        """Verify each language has all the expected translation keys."""
         for lang in self.supported_langs:
             self.assertIn(lang, LANGUAGES, f"{lang} not found in LANGUAGES.")
             translations: dict[str, str] = LANGUAGES[lang]
@@ -79,12 +76,11 @@ class TestLangConfig(unittest.TestCase):
                 )
 
     def test_translate_from_dict_basic(self) -> None:
-        """
-        Test basic behaviour of Translator.translate_from_dict.
+        """Test basic behaviour of Translator.translate_from_dict.
 
-        1) Correctly replaces placeholders.
-        2) Returns the string if no placeholder is present.
-        3) Fails for a warning key that has no translation.
+        1) Correctly replaces placeholders. 2) Returns the string if no
+        placeholder is present. 3) Fails for a warning key that has no
+        translation.
         """
         body_dict: dict[str, dict[str, Any]] = {
             'warning_close_to_vehicle': {'count': '3'},
@@ -95,7 +91,7 @@ class TestLangConfig(unittest.TestCase):
         result = Translator.translate_from_dict(body_dict, language)
         self.assertIsInstance(result, list)
 
-# Verify the expected Chinese placeholder is replaced: '有3人過於靠近車輛'.
+        # Verify the expected Chinese placeholder is replaced: '有3人過於靠近車輛'.
         self.assertIn('有3人過於靠近車輛', result[0])
 
         # 2) Check replaced placeholder for safety vest
@@ -121,9 +117,8 @@ class TestLangConfig(unittest.TestCase):
             )
 
     def test_translate_from_dict_placeholder_replacement(self) -> None:
-        """
-        Check that placeholders like {count} are replaced with actual values.
-        """
+        """Check that placeholders like {count} are replaced with actual
+        values."""
         body_dict: dict[str, dict[str, Any]] = {
             'warning_people_in_controlled_area': {'count': '5'},
         }
@@ -134,10 +129,8 @@ class TestLangConfig(unittest.TestCase):
         self.assertIn('5 people have entered the controlled area!', result[0])
 
     def test_missing_placeholder(self) -> None:
-        """
-        Test that missing placeholders in the dictionary are
-        handled gracefully.
-        """
+        """Test that missing placeholders in the dictionary are handled
+        gracefully."""
         body_dict: dict[str, dict[str, Any]] = {
             'warning_close_to_machinery': {'x': '1'},
         }
@@ -150,10 +143,3 @@ class TestLangConfig(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-"""
-pytest \
-    --cov=examples.local_notification_server.lang_config \
-    --cov-report=term-missing \
-    tests/examples/local_notification_server/lang_config_test.py
-"""

@@ -13,18 +13,16 @@ from src.notifiers.image_encoding import encode_png
 
 
 class InputData(TypedDict):
-    """
-    Structure of input data for sending a Telegram notification.
-    """
+    """Structure of input data for sending a Telegram notification."""
+
     chat_id: str
     message: str
     image: np.ndarray
 
 
 class TelegramResponse(TypedDict):
-    """
-    Structure of the response from Telegram API.
-    """
+    """Structure of the response from Telegram API."""
+
     message_id: int
     chat_id: int
     date: int
@@ -45,8 +43,7 @@ class TelegramNotifier:
         image: np.ndarray | None = None,
         bot_token: str | None = None,
     ) -> Message:
-        """
-        Sends a notification to a specified Telegram chat.
+        """Sends a notification to a specified Telegram chat.
 
         Args:
             chat_id (str): The chat ID where the notification will be sent.
@@ -90,7 +87,10 @@ async def main() -> None:
     image = np.zeros((100, 100, 3), dtype=np.uint8)  # Example image (black)
     bot_token = 'your_bot_token_here'
     response = await notifier.send_notification(
-        chat_id, message, image=image, bot_token=bot_token,
+        chat_id,
+        message,
+        image=image,
+        bot_token=bot_token,
     )
     print(response)
 

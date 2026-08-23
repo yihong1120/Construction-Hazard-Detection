@@ -86,10 +86,13 @@ class YoloDetector:
         return self._track_remote_centroid(dets)
 
     def _bbox_center(
-            self, x1: float, y1: float, x2: float, y2: float,
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
     ) -> tuple[float, float]:
-        """
-        Return the center point (cx, cy) of a bbox.
+        """Return the center point (cx, cy) of a bbox.
 
         Args:
             x1: The x1 coordinate of the bbox.
@@ -107,8 +110,7 @@ class YoloDetector:
         a: tuple[float, float, float, float],
         b: tuple[float, float, float, float],
     ) -> float:
-        """
-        Compute IoU for two boxes (x1,y1,x2,y2).
+        """Compute IoU for two boxes (x1,y1,x2,y2).
 
         Args:
             a: The first box (x1, y1, x2, y2).
@@ -137,8 +139,7 @@ class YoloDetector:
         p1: tuple[float, float],
         p2: tuple[float, float],
     ) -> float:
-        """
-        Return squared Euclidean distance between points p1 and p2.
+        """Return squared Euclidean distance between points p1 and p2.
 
         Args:
             p1: The first point (x, y).
@@ -158,8 +159,7 @@ class YoloDetector:
         cls_id: int,
         center: tuple[float, float],
     ) -> None:
-        """
-        Upsert a remote track's latest state.
+        """Upsert a remote track's latest state.
 
         Args:
             tid: The track ID.
@@ -178,8 +178,7 @@ class YoloDetector:
         }
 
     def _new_track_for_det(self, det: list[float]) -> list[float]:
-        """
-        Create a new track entry for a single detection.
+        """Create a new track entry for a single detection.
 
         Args:
             det: A single detection [x1, y1, x2, y2, conf, cls_id].
@@ -196,7 +195,8 @@ class YoloDetector:
 
     # Centroid tracker (original simple implementation)
     def _track_remote_centroid(
-        self, dets: list[list[float]],
+        self,
+        dets: list[list[float]],
     ) -> list[list[float]]:
         """Simple centroid-based tracker for remote detections.
 
@@ -243,8 +243,10 @@ class YoloDetector:
                 dist_sq_move = self._squared_distance((cx, cy), prev_center)
                 moving_flag = 1 if dist_sq_move > self.movement_thr_sq else 0
             self._set_remote_track(
-                tid, (x1, y1, x2, y2),
-                int(cls_id), (cx, cy),
+                tid,
+                (x1, y1, x2, y2),
+                int(cls_id),
+                (cx, cy),
             )
             assigned_tracks.append(
                 [x1, y1, x2, y2, conf, cls_id, tid, moving_flag],
@@ -255,10 +257,10 @@ class YoloDetector:
 
     # Hungarian (global) assignment tracker
     def _track_remote_hungarian(
-        self, dets: list[list[float]],
+        self,
+        dets: list[list[float]],
     ) -> list[list[float]]:
-        """
-        Global assignment tracker using Hungarian algorithm.
+        """Global assignment tracker using Hungarian algorithm.
 
         Args:
             dets: List of detections [x1, y1, x2, y2, conf, cls].
@@ -300,7 +302,8 @@ class YoloDetector:
                 class_tracks,
             )
             matches, unmatched_group_dets, _ = self._hungarian_assign(
-                cost_matrix, self.remote_cost_threshold,
+                cost_matrix,
+                self.remote_cost_threshold,
             )
             matched_pairs.extend(
                 (det_indices[det_pos], class_tracks[track_pos])
@@ -317,10 +320,10 @@ class YoloDetector:
         return assigned
 
     def _assign_new_tracks_for_all(
-        self, dets: list[list[float]],
+        self,
+        dets: list[list[float]],
     ) -> list[list[float]]:
-        """
-        Create brand-new tracks for each detection when no tracks exist.
+        """Create brand-new tracks for each detection when no tracks exist.
 
         Args:
             dets: List of detections [x1, y1, x2, y2, conf, cls].
@@ -340,8 +343,7 @@ class YoloDetector:
         det_indices: list[int],
         track_items: list[tuple[int, dict]],
     ) -> np.ndarray:
-        """
-        Compute the cost matrix for one class of detections and tracks.
+        """Compute the cost matrix for one class of detections and tracks.
 
         Args:
             dets: List of detections [x1, y1, x2, y2, conf, cls].
@@ -376,13 +378,11 @@ class YoloDetector:
         inter_h = np.maximum(0.0, inter_y2 - inter_y1)
         inter_area = inter_w * inter_h
 
-        det_area = (
-            (det_boxes[:, 2] - det_boxes[:, 0]) *
-            (det_boxes[:, 3] - det_boxes[:, 1])
+        det_area = (det_boxes[:, 2] - det_boxes[:, 0]) * (
+            det_boxes[:, 3] - det_boxes[:, 1]
         )
-        track_area = (
-            (track_boxes[:, 2] - track_boxes[:, 0]) *
-            (track_boxes[:, 3] - track_boxes[:, 1])
+        track_area = (track_boxes[:, 2] - track_boxes[:, 0]) * (
+            track_boxes[:, 3] - track_boxes[:, 1]
         )
         union = det_area[:, None] + track_area[None, :] - inter_area
         iou = np.divide(
@@ -409,8 +409,7 @@ class YoloDetector:
         dets: list[list[float]],
         matches: list[tuple[int, tuple[int, dict]]],
     ) -> list[list[float]]:
-        """
-        Update matched tracks and compute moving flags.
+        """Update matched tracks and compute moving flags.
 
         Args:
             dets:
@@ -431,17 +430,20 @@ class YoloDetector:
             dist_sq_move = self._squared_distance((cx, cy), prev_center)
             moving_flag = 1 if dist_sq_move > self.movement_thr_sq else 0
             self._set_remote_track(
-                tid, (x1, y1, x2, y2),
-                int(cls_id), (cx, cy),
+                tid,
+                (x1, y1, x2, y2),
+                int(cls_id),
+                (cx, cy),
             )
             assigned.append([x1, y1, x2, y2, conf, cls_id, tid, moving_flag])
         return assigned
 
     def _create_tracks_for_unmatched(
-        self, dets: list[list[float]], unmatched_dets: list[int],
+        self,
+        dets: list[list[float]],
+        unmatched_dets: list[int],
     ) -> list[list[float]]:
-        """
-        Create tracks for unmatched detections.
+        """Create tracks for unmatched detections.
 
         Args:
             dets: List of detections [x1, y1, x2, y2, conf, cls].
@@ -457,10 +459,11 @@ class YoloDetector:
 
     # Hungarian assignment helper
     def _hungarian_assign(
-        self, cost: np.ndarray, cost_threshold: float,
+        self,
+        cost: np.ndarray,
+        cost_threshold: float,
     ) -> tuple[list[tuple[int, int]], list[int], list[int]]:
-        """
-        Apply Hungarian algorithm on cost matrix and filter by threshold.
+        """Apply Hungarian algorithm on cost matrix and filter by threshold.
 
         Args:
             cost: Cost matrix as a 2D numpy array.
@@ -481,8 +484,7 @@ class YoloDetector:
         used_rows: set[int] = set()
         used_cols: set[int] = set()
         remaining_rows = {
-            int(row)
-            for row in np.flatnonzero(candidate_mask.any(axis=1))
+            int(row) for row in np.flatnonzero(candidate_mask.any(axis=1))
         }
         while remaining_rows:
             component_rows, component_cols = self._assignment_component(
@@ -546,13 +548,12 @@ class YoloDetector:
         return rows, cols
 
     def _prune_remote_tracks(self) -> None:
-        """
-        Remove remote tracks that have not been updated
-        within max_id_keep frames.
-        """
+        """Remove remote tracks that have not been updated within max_id_keep
+        frames."""
         threshold = self.frame_count - self.max_id_keep
         stale = [
-            tid for tid, info in self.remote_tracks.items()
+            tid
+            for tid, info in self.remote_tracks.items()
             if info['last_seen'] < threshold
         ]
         for tid in stale:
@@ -582,7 +583,8 @@ class YoloDetector:
         for hardhat_index in indices[0]:
             for no_hardhat_index in indices[2]:
                 overlap = self.overlap_percentage(
-                    datas[hardhat_index], datas[no_hardhat_index],
+                    datas[hardhat_index],
+                    datas[no_hardhat_index],
                 )
                 if overlap > 0.8:
                     to_remove.add(no_hardhat_index)

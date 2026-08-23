@@ -19,10 +19,13 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         """Should decode base64 and send successfully."""
         fake_line = AsyncMock()
         fake_line.push_message.return_value = 200
-        with patch(
-            'examples.mcp_server.tools.notify.LineMessenger',
-            return_value=fake_line,
-        ), patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'):
+        with (
+            patch(
+                'examples.mcp_server.tools.notify.LineMessenger',
+                return_value=fake_line,
+            ),
+            patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'),
+        ):
             tool = NotifyTools()
             img_b64 = base64.b64encode(b'abc').decode()
             res = await tool.line_push('uid', 'hello', img_b64)
@@ -36,22 +39,27 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         encoded = base64.b64encode(b'image').decode()
 
         assert _decode_optional_image(encoded) == b'image'
-        assert _decode_optional_image(f'data:image/png;base64,{encoded}') == b'image'
+        assert (
+            _decode_optional_image(
+                f"data:image/png;base64,{encoded}",
+            )
+            == b'image'
+        )
         assert _decode_optional_image(None) is None
 
     async def test_line_push_with_data_url_prefix(self) -> None:
         """Should handle data URL prefix correctly."""
         fake_line = AsyncMock()
         fake_line.push_message.return_value = 400
-        with patch(
-            'examples.mcp_server.tools.notify.LineMessenger',
-            return_value=fake_line,
-        ), patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'):
+        with (
+            patch(
+                'examples.mcp_server.tools.notify.LineMessenger',
+                return_value=fake_line,
+            ),
+            patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'),
+        ):
             tool = NotifyTools()
-            img = (
-                'data:image/png;base64,'
-                + base64.b64encode(b'abc').decode()
-            )
+            img = 'data:image/png;base64,' + base64.b64encode(b'abc').decode()
             res = await tool.line_push('id', 'msg', img)
         self.assertFalse(res['success'])
         self.assertIn('Failed', res['message'])
@@ -223,9 +231,8 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res['success'])
 
     async def test_telegram_send_with_data_url_prefix(self) -> None:
-        """Should strip data URL prefix before decoding
-        and send successfully.
-        """
+        """Should strip data URL prefix before decoding and send
+        successfully."""
         fake_telegram = AsyncMock()
         fake_telegram.send_notification = AsyncMock()
         with (
@@ -243,8 +250,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             img = (
-                'data:image/jpeg;base64,'
-                + base64.b64encode(b'fake').decode()
+                'data:image/jpeg;base64,' + base64.b64encode(b'fake').decode()
             )
             tool = NotifyTools()
             res = await tool.telegram_send('chat', 'msg', img)
@@ -257,11 +263,14 @@ class EnsureInitialisationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ensure_line_messenger_initialises_once(self) -> None:
         """Should create messenger only once."""
-        with patch(
-            'examples.mcp_server.tools.notify.LineMessenger',
-        ) as mock_line, patch(
-            'examples.mcp_server.tools.notify.aiohttp.ClientSession',
-        ) as mock_session:
+        with (
+            patch(
+                'examples.mcp_server.tools.notify.LineMessenger',
+            ) as mock_line,
+            patch(
+                'examples.mcp_server.tools.notify.aiohttp.ClientSession',
+            ) as mock_session,
+        ):
             tool = NotifyTools()
             await tool._ensure_line_messenger()
             await tool._ensure_line_messenger()
@@ -289,9 +298,3 @@ class EnsureInitialisationTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.mcp_server.tools.notify\
-    --cov-report=term-missing\
-    tests/examples/mcp_server/tools/notify_test.py
-'''

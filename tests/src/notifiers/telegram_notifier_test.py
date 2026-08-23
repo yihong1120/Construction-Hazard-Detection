@@ -16,9 +16,7 @@ from src.notifiers.telegram_notifier import TelegramNotifier
 
 
 class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the TelegramNotifier class methods.
-    """
+    """Unit tests for the TelegramNotifier class methods."""
 
     telegram_notifier: TelegramNotifier
 
@@ -28,15 +26,11 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         return_value='test_bot_token',
     )
     def setUpClass(cls, mock_getenv: Any) -> None:
-        """
-        Set up the TelegramNotifier instance for tests.
-        """
+        """Set up the TelegramNotifier instance for tests."""
         cls.telegram_notifier = TelegramNotifier()
 
     def test_init(self) -> None:
-        """
-        Test if the TelegramNotifier instance is initialised correctly.
-        """
+        """Test if the TelegramNotifier instance is initialised correctly."""
         self.assertIsInstance(self.telegram_notifier, TelegramNotifier)
 
     @patch('telegram.Bot.send_message', new_callable=AsyncMock)
@@ -49,12 +43,12 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         mock_getenv: Any,
         mock_send_message: AsyncMock,
     ) -> None:
-        """
-        Test sending a notification without an image.
-        """
+        """Test sending a notification without an image."""
         chat = Chat(id=1, type='private')
         mock_send_message.return_value = Message(
-            message_id=1, date=datetime.now(), chat=chat,
+            message_id=1,
+            date=datetime.now(),
+            chat=chat,
         )
         chat_id: str = 'test_chat_id'
         message: str = 'Hello, Telegram!'
@@ -64,7 +58,8 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsInstance(response, Message)
         mock_send_message.assert_called_once_with(
-            chat_id=chat_id, text=message,
+            chat_id=chat_id,
+            text=message,
         )
 
     @patch('telegram.Bot.send_photo', new_callable=AsyncMock)
@@ -77,18 +72,20 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         mock_getenv: Any,
         mock_send_photo: AsyncMock,
     ) -> None:
-        """
-        Test sending a notification with an image.
-        """
+        """Test sending a notification with an image."""
         chat = Chat(id=1, type='private')
         mock_send_photo.return_value = Message(
-            message_id=1, date=datetime.now(), chat=chat,
+            message_id=1,
+            date=datetime.now(),
+            chat=chat,
         )
         chat_id: str = 'test_chat_id'
         message: str = 'Hello, Telegram!'
         image: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
         response: Message = await self.telegram_notifier.send_notification(
-            chat_id, message, image=image,
+            chat_id,
+            message,
+            image=image,
         )
         self.assertIsInstance(response, Message)
         mock_send_photo.assert_called_once()
@@ -119,17 +116,15 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         mock_getenv: AsyncMock,
         mock_send_notification: AsyncMock,
     ) -> None:
-        """
-        Test the main function.
-        """
-        mock_getenv.side_effect = (
-            lambda key: 'test_bot_token'
-            if key == 'TELEGRAM_BOT_TOKEN'
-            else None
+        """Test the main function."""
+        mock_getenv.side_effect = lambda key: (
+            'test_bot_token' if key == 'TELEGRAM_BOT_TOKEN' else None
         )
         chat = Chat(id=1, type='private')
         mock_send_notification.return_value = Message(
-            message_id=1, date=datetime.now(), chat=chat,
+            message_id=1,
+            date=datetime.now(),
+            chat=chat,
         )
 
         with patch('builtins.print') as mock_print:

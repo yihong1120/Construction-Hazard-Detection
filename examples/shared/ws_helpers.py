@@ -14,13 +14,11 @@ from examples.shared.ws_auth import WS_MAX_SESSION_SECONDS
 from examples.shared.ws_utils import _safe_websocket_send_json
 from examples.shared.ws_utils import _safe_websocket_send_text
 
-
 logger = logging.getLogger(__name__)
 
 
 def get_auto_register_jti(env_var: str = 'WS_AUTO_REGISTER_JTI') -> bool:
-    """
-    Read the flag controlling automatic JTI registration from the env.
+    """Read the flag controlling automatic JTI registration from the env.
 
     Args:
         env_var: Name of the environment variable to read.
@@ -37,8 +35,7 @@ def start_session_timer() -> float:
 
 
 def session_timeout_payload() -> dict[str, str]:
-    """
-    Build a standard JSON payload used when a session times out.
+    """Build a standard JSON payload used when a session times out.
 
     Returns:
         A JSON-serialisable dictionary describing the session timeout.
@@ -56,8 +53,7 @@ async def check_and_maybe_close_on_timeout(
     client_label: str,
     use_text: bool = False,
 ) -> bool:
-    """
-    Check a session's elapsed time and close the connection if exceeded.
+    """Check a session's elapsed time and close the connection if exceeded.
 
     Args:
         websocket: Active WebSocket connection to check.
@@ -103,8 +99,7 @@ def log_every_n(
     unit: str = 'frames',
     n: int = 100,
 ) -> None:
-    """
-    Log a simple progress message every ``n`` items processed.
+    """Log a simple progress message every ``n`` items processed.
 
     Args:
         prefix: Text prefix to contextualise the message.
@@ -123,8 +118,7 @@ async def authenticate_ws_or_none(
     auto_register_jti: bool,
     client_tag: str,
 ) -> tuple[str, dict[str, object]] | tuple[None, None]:
-    """
-    Authenticate a WebSocket connection and return the user information.
+    """Authenticate a WebSocket connection and return the user information.
 
     Args:
         websocket: Active WebSocket connection to authenticate.

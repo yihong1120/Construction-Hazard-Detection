@@ -22,12 +22,13 @@ def calculate_polygon_area(polygon_points: Sequence[Sequence[float]]) -> dict:
         'success': True,
         'area': area,
         'points_count': len(polygon_points),
-        'message': f'Polygon area calculated: {area:.2f} square units',
+        'message': f"Polygon area calculated: {area:.2f} square units",
     }
 
 
 def point_in_polygon(
-    point: Sequence[float], polygon_points: Sequence[Sequence[float]],
+    point: Sequence[float],
+    polygon_points: Sequence[Sequence[float]],
 ) -> dict:
     """Return whether a point lies within a polygon using ray casting."""
     x, y = point
@@ -55,9 +56,11 @@ def point_in_polygon(
 
 
 def bbox_intersection(
-    bbox1: Sequence[float], bbox2: Sequence[float],
+    bbox1: Sequence[float],
+    bbox2: Sequence[float],
 ) -> dict:
     """Calculate intersection area and IoU for two xyxy boxes."""
+
     def normalise(box: Sequence[float]) -> tuple[float, float, float, float]:
         """Perform normalise.
 
@@ -85,7 +88,10 @@ def bbox_intersection(
         'bbox2': bbox2,
         'intersection_area': intersection_area,
         'iou': iou,
-        'message': f'Bboxes intersection: {intersection_area:.2f} area, {iou:.3f} IoU',
+        'message': (
+            f'Bboxes intersection: {intersection_area:.2f} area, '
+            f'{iou:.3f} IoU'
+        ),
     }
 
 
@@ -102,7 +108,10 @@ def _is_number(value: object) -> bool:
 
 
 def _validation_errors(
-    detection: object, index: int, image_width: int, image_height: int,
+    detection: object,
+    index: int,
+    image_width: int,
+    image_height: int,
 ) -> list[str]:
     """Perform validation errors.
 
@@ -116,7 +125,7 @@ def _validation_errors(
         The callable result.
     """
     if not isinstance(detection, dict):
-        return [f'[{index}] detection must be an object/dict']
+        return [f"[{index}] detection must be an object/dict"]
     bbox = detection.get('bbox', detection.get('box'))
     if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return [f"[{index}] 'bbox' must be a list of 4 numbers [x1,y1,x2,y2]"]
@@ -126,13 +135,15 @@ def _validation_errors(
     errors: list[str] = []
     if not all(0 <= value <= 1 for value in (x1, y1, x2, y2)):
         for name, value, maximum in (
-            ('x1', x1, image_width), ('x2', x2, image_width),
-            ('y1', y1, image_height), ('y2', y2, image_height),
+            ('x1', x1, image_width),
+            ('x2', x2, image_width),
+            ('y1', y1, image_height),
+            ('y2', y2, image_height),
         ):
             if not 0 <= value <= maximum:
-                errors.append(f'[{index}] {name} out of range [0,{maximum}]')
+                errors.append(f"[{index}] {name} out of range [0,{maximum}]")
     if x2 <= x1 or y2 <= y1:
-        errors.append(f'[{index}] bbox has non-positive size: {bbox}')
+        errors.append(f"[{index}] bbox has non-positive size: {bbox}")
     for field in ('confidence', 'conf'):
         if field in detection and not _is_number(detection[field]):
             errors.append(f"[{index}] '{field}' must be a number")
@@ -143,14 +154,19 @@ def _validation_errors(
 
 
 def validate_detection_data(
-    detections: Sequence[object], image_width: int, image_height: int,
+    detections: Sequence[object],
+    image_width: int,
+    image_height: int,
 ) -> dict:
     """Validate detection bounding boxes and optional metadata."""
     errors = [
         error
         for index, detection in enumerate(detections)
         for error in _validation_errors(
-            detection, index, image_width, image_height,
+            detection,
+            index,
+            image_width,
+            image_height,
         )
     ]
     return {
@@ -161,6 +177,6 @@ def validate_detection_data(
         'image_size': [image_width, image_height],
         'message': (
             f"Validation {'passed' if not errors else 'failed'}: "
-            f'{len(errors)} errors found'
+            f"{len(errors)} errors found"
         ),
     }

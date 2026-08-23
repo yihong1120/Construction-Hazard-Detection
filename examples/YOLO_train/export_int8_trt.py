@@ -34,9 +34,11 @@ base_dir = Path(__file__).resolve().parent
 if not __package__:
     sys.path.insert(0, str(base_dir))
 _export_int8_engine = import_module(
-    f'{__package__}.export_int8_engine'
-    if __package__
-    else 'export_int8_engine',
+    (
+        f"{__package__}.export_int8_engine"
+        if __package__
+        else 'export_int8_engine'
+    ),
 )
 build_calibration_yaml = cast(
     Callable[[Path, Path], Path],
@@ -74,9 +76,7 @@ class ProgressReporter(Protocol):
 
 
 class AllImagesCalibrationReader(CalibrationDataReader):
-
-    """Provide AllImagesCalibrationReader.
-    """
+    """Provide AllImagesCalibrationReader."""
 
     def __init__(self, input_name: str, dataloader: Any) -> None:
         """Perform init.
@@ -102,8 +102,7 @@ class AllImagesCalibrationReader(CalibrationDataReader):
         return self.max_batches
 
     def rewind(self) -> None:
-        """Perform rewind.
-        """
+        """Perform rewind."""
         self._close_progress()
         if hasattr(self.dataloader, 'reset'):
             self.dataloader.reset()
@@ -112,8 +111,7 @@ class AllImagesCalibrationReader(CalibrationDataReader):
         self.seen_images = 0
 
     def _close_progress(self) -> None:
-        """Perform close progress.
-        """
+        """Perform close progress."""
         if self.progress is not None:
             self.progress.close()
             self.progress = None
@@ -215,7 +213,8 @@ def class_balanced_images(
     """Choose a reproducible, roughly class-balanced calibration subset."""
     excluded_images = excluded_images or set()
     images = sorted(
-        path for path in images_dir.rglob('*')
+        path
+        for path in images_dir.rglob('*')
         if (
             path.is_file()
             and path.suffix.lower() in image_suffixes
@@ -243,14 +242,15 @@ def class_balanced_images(
                 continue
             selected.append(image)
             selected_set.add(image)
-            if sum(
-                image in selected_set for image in class_images[class_id]
-            ) >= target_per_class:
+            if (
+                sum(image in selected_set for image in class_images[class_id])
+                >= target_per_class
+            ):
                 break
 
     remaining = [image for image in images if image not in selected_set]
     rng.shuffle(remaining)
-    selected.extend(remaining[:max(0, limit - len(selected))])
+    selected.extend(remaining[: max(0, limit - len(selected))])
     rng.shuffle(selected)
     return selected[:limit]
 
@@ -266,7 +266,7 @@ def prepare_calibration_data(
     normalized = build_calibration_yaml(source, workdir)
     data = yaml.safe_load(normalized.read_text(encoding='utf-8')) or {}
     if not isinstance(data, dict):
-        raise ValueError(f'Calibration yaml must be a mapping: {normalized}')
+        raise ValueError(f"Calibration yaml must be a mapping: {normalized}")
 
     configured_root = Path(data.get('path') or '.').expanduser()
     root = (
@@ -277,39 +277,39 @@ def prepare_calibration_data(
     split_entry = data.get(split)
     if not isinstance(split_entry, str):
         raise ValueError(
-            f'Calibration split {split!r} must point to one images directory.',
+            f"Calibration split {split!r} must point to one images directory.",
         )
     images_dir = Path(split_entry).expanduser()
     images_dir = (
-        images_dir
-        if images_dir.is_absolute()
-        else root / images_dir
+        images_dir if images_dir.is_absolute() else root / images_dir
     ).resolve()
     labels_dir = images_dir.parent / 'labels'
     if not images_dir.is_dir() or not labels_dir.is_dir():
         LOGGER.warning(
-            f'Class-balanced sampling needs {split}/images and '
-            f'{split}/labels folders; using the calibration yaml unchanged.',
+            f"Class-balanced sampling needs {split}/images and "
+            f"{split}/labels folders; using the calibration yaml unchanged.",
         )
         return normalized, 0
 
     images = class_balanced_images(images_dir, labels_dir, image_limit, seed)
     if not images:
         raise FileNotFoundError(
-            f'No calibration images found under {images_dir}',
+            f"No calibration images found under {images_dir}",
         )
 
     workdir.mkdir(parents=True, exist_ok=True)
-    image_list = workdir / f'int8_{split}_calibration_images.txt'
+    image_list = workdir / f"int8_{split}_calibration_images.txt"
     image_list.write_text(
-        ''.join(f'{image}\n' for image in images),
+        ''.join(f"{image}\n" for image in images),
         encoding='utf-8',
     )
-    data.update({
-        'path': str(root),
-        'train': str(image_list),
-        'val': str(image_list),
-    })
+    data.update(
+        {
+            'path': str(root),
+            'train': str(image_list),
+            'val': str(image_list),
+        },
+    )
     data.pop('test', None)
     selected_yaml = workdir / 'int8_balanced_calibration.yaml'
     selected_yaml.write_text(
@@ -349,9 +349,9 @@ def _require_modelopt_export_support() -> None:
         or original_modelopt_quantize_onnx is None
     ):
         raise RuntimeError(
-            f'Mixed INT8 TensorRT export requires Ultralytics '
-            f'{required_ultralytics_version} with ModelOpt support; found '
-            f'{ultralytics_version}. Reinstall the pinned dependencies with '
+            f"Mixed INT8 TensorRT export requires Ultralytics "
+            f"{required_ultralytics_version} with ModelOpt support; found "
+            f"{ultralytics_version}. Reinstall the pinned dependencies with "
             '`uv sync --locked`.',
         )
 
@@ -425,8 +425,8 @@ def modelopt_quantize_onnx_all_images(
         kwargs['nodes_to_exclude'] = list(node_exclusion_patterns)
 
     LOGGER.info(
-        f'{prefix} quantizing ONNX to INT8 with ModelOpt '
-        f'({calibration_method}) '
+        f"{prefix} quantizing ONNX to INT8 with ModelOpt "
+        f"({calibration_method}) "
         f"using {reader.total_images} calibration images...",
     )
     modelopt_quantize(
@@ -448,13 +448,12 @@ if original_modelopt_quantize_onnx is not None:
 def _patched_onnx2engine_source(source: str) -> str:
     """Return Ultralytics onnx2engine source patched for this exporter.
 
-    Ultralytics' ``dynamic=True`` TensorRT profile makes both batch and
-    spatial dimensions dynamic. For live camera inference we want fixed
-    640x640 spatial dimensions and only batch 1..N dynamic. On TensorRT 10,
-    Ultralytics also defaults to implicit INT8 calibration, where ModelOpt
-    node exclusions do not apply. This exporter intentionally forces explicit
-    Q/DQ ModelOpt INT8 so
-    ``--exclude-detect-head`` remains meaningful.
+    Ultralytics' ``dynamic=True`` TensorRT profile makes both batch and spatial
+    dimensions dynamic. For live camera inference we want fixed 640x640 spatial
+    dimensions and only batch 1..N dynamic. On TensorRT 10, Ultralytics also
+    defaults to implicit INT8 calibration, where ModelOpt node exclusions do
+    not apply. This exporter intentionally forces explicit Q/DQ ModelOpt INT8
+    so ``--exclude-detect-head`` remains meaningful.
     """
     source = _replace_dynamic_profile(source)
     gate, modelopt_call = _find_modelopt_quantize_gate(source)
@@ -463,38 +462,42 @@ def _patched_onnx2engine_source(source: str) -> str:
 
 def _dynamic_profile_source() -> str:
     """Return the upstream dynamic TensorRT profile expected by the patch."""
-    return '\n'.join([
-        '    if dynamic:',
-        '        profile = builder.create_optimization_profile()',
-        '        min_shape = (1, shape[1], 32, 32)  # minimum input shape',
-        '        max_shape = (*shape[:2], *(int(max(2, workspace or 2) * '
-        'd) for d in shape[2:]))  # max input shape',
-        '        for inp in inputs:',
-        '            profile.set_shape(inp.name, min=min_shape, opt=shape, '
-        'max=max_shape)',
-        '        config.add_optimization_profile(profile)',
-        '',
-    ])
+    return '\n'.join(
+        [
+            '    if dynamic:',
+            '        profile = builder.create_optimization_profile()',
+            '        min_shape = (1, shape[1], 32, 32)  # minimum input shape',
+            '        max_shape = (*shape[:2], *(int(max(2, workspace or 2) * '
+            'd) for d in shape[2:]))  # max input shape',
+            '        for inp in inputs:',
+            '            profile.set_shape(inp.name, min=min_shape, '
+            'opt=shape, max=max_shape)',
+            '        config.add_optimization_profile(profile)',
+            '',
+        ],
+    )
 
 
 def _batch_only_dynamic_profile_source() -> str:
     """Return the fixed-spatial profile used for dynamic live batching."""
-    return '\n'.join([
-        '    if dynamic:',
-        '        profile = builder.create_optimization_profile()',
-        '        min_shape = (1, *shape[1:])',
-        '        opt_shape = shape',
-        '        max_shape = shape',
-        '        LOGGER.info(',
-        '            f"{prefix} batch-only dynamic profile "',
-        '            f"min={min_shape} opt={opt_shape} max={max_shape}"',
-        '        )',
-        '        for inp in inputs:',
-        '            profile.set_shape(inp.name, min=min_shape, '
-        'opt=opt_shape, max=max_shape)',
-        '        config.add_optimization_profile(profile)',
-        '',
-    ])
+    return '\n'.join(
+        [
+            '    if dynamic:',
+            '        profile = builder.create_optimization_profile()',
+            '        min_shape = (1, *shape[1:])',
+            '        opt_shape = shape',
+            '        max_shape = shape',
+            '        LOGGER.info(',
+            '            f"{prefix} batch-only dynamic profile "',
+            '            f"min={min_shape} opt={opt_shape} max={max_shape}"',
+            '        )',
+            '        for inp in inputs:',
+            '            profile.set_shape(inp.name, min=min_shape, '
+            'opt=opt_shape, max=max_shape)',
+            '        config.add_optimization_profile(profile)',
+            '',
+        ],
+    )
 
 
 def _replace_dynamic_profile(source: str) -> str:
@@ -516,10 +519,9 @@ def _find_modelopt_quantize_gate(source: str) -> tuple[ast.If, ast.Assign]:
         if not isinstance(node, ast.If):
             continue
         for statement in node.body:
-            if (
-                isinstance(statement, ast.Assign)
-                and _is_modelopt_quantize_assignment(statement)
-            ):
+            if isinstance(
+                statement, ast.Assign,
+            ) and _is_modelopt_quantize_assignment(statement):
                 return node, statement
     raise RuntimeError('Cannot patch Ultralytics ModelOpt INT8 gate.')
 
@@ -548,8 +550,8 @@ def _replace_modelopt_gate(
 ) -> str:
     """Force an explicit Q/DQ gate around one upstream ModelOpt call."""
     lines = source.splitlines(keepends=True)
-    gate_indent = lines[gate.lineno - 1][:gate.col_offset]
-    call_indent = lines[modelopt_call.lineno - 1][:modelopt_call.col_offset]
+    gate_indent = lines[gate.lineno - 1][: gate.col_offset]
+    call_indent = lines[modelopt_call.lineno - 1][: modelopt_call.col_offset]
     call_source = ast.get_source_segment(source, modelopt_call)
     if call_source is None:
         raise RuntimeError('Cannot read Ultralytics ModelOpt INT8 call.')
@@ -557,15 +559,18 @@ def _replace_modelopt_gate(
     call_end_column = modelopt_call.end_col_offset
     if call_end_line is None or call_end_column is None:
         raise RuntimeError('Cannot locate Ultralytics ModelOpt INT8 call end.')
-    explicit_qdq_gate = '\n'.join([
-        f'{gate_indent}force_explicit_int8 = use_int8 and FORCE_EXPLICIT_INT8',
-        f'{gate_indent}if ({ast.unparse(gate.test)}) or '
-        'force_explicit_int8:',
-        f'{call_indent}{call_source}',
-        f'{call_indent}if force_explicit_int8:',
-        f'{call_indent}    use_int8 = False',
-        f'{call_indent}    use_fp16 = True',
-    ])
+    explicit_qdq_gate = '\n'.join(
+        [
+            f"{gate_indent}force_explicit_int8 = use_int8 and "
+            'FORCE_EXPLICIT_INT8',
+            f"{gate_indent}if ({ast.unparse(gate.test)}) or "
+            'force_explicit_int8:',
+            f"{call_indent}{call_source}",
+            f"{call_indent}if force_explicit_int8:",
+            f"{call_indent}    use_int8 = False",
+            f"{call_indent}    use_fp16 = True",
+        ],
+    )
     line_offsets = _line_offsets(lines)
     gate_start = line_offsets[gate.lineno - 1] + gate.col_offset
     call_end = line_offsets[call_end_line - 1] + call_end_column
@@ -659,8 +664,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=16,
         help=(
-            'Max/optimization batch for dynamic TensorRT export. '
-            'Default: 16.'
+            'Max/optimization batch for dynamic TensorRT export. Default: 16.'
         ),
     )
     parser.add_argument(
@@ -716,8 +720,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help=(
-            'TensorRT workspace in GB. Default: 2 for dynamic, '
-            '16 for static.'
+            'TensorRT workspace in GB. Default: 2 for dynamic, 16 for static.'
         ),
     )
     parser.add_argument(
@@ -730,8 +733,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Perform main.
-    """
+    """Perform main."""
     args = parse_args()
     pt_file = args.model.resolve()
     trt_file = args.output.resolve()

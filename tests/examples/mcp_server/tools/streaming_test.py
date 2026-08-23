@@ -330,7 +330,8 @@ class ViewerTests(unittest.IsolatedAsyncioTestCase):
         fallback_viewer.display_stream.return_value = None
         tool._stream_viewer = fallback_viewer
         started = await tool.start_stream_viewer(
-            'rtsp://cam', viewer_port=8181,
+            'rtsp://cam',
+            viewer_port=8181,
         )
         self.assertTrue(started['success'])
         await tool._viewer_tasks[8181]

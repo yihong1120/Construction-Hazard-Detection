@@ -65,9 +65,7 @@ class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
 
 
 class TestWebsocketEnvironmentHelpers(unittest.TestCase):
-
-    """Provide TestWebsocketEnvironmentHelpers.
-    """
+    """Provide TestWebsocketEnvironmentHelpers."""
 
     def test_local_auth_bypass_handles_unset_and_non_ip_clients(self) -> None:
         """Local-only bypass handles absent flags and host names safely."""
@@ -92,7 +90,10 @@ class TestSendReadyConfig(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=True),
         ) as send_mock:
             ok = await ws_mod._send_ready_config(
-                ws, 'modelX', '1.2.3.4', 'alice',
+                ws,
+                'modelX',
+                '1.2.3.4',
+                'alice',
             )
             self.assertTrue(ok)
             send_mock.assert_awaited_once()
@@ -112,7 +113,10 @@ class TestSendReadyConfig(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=False),
         ):
             ok = await ws_mod._send_ready_config(
-                ws, 'modelY', '1.2.3.4', 'bob',
+                ws,
+                'modelY',
+                '1.2.3.4',
+                'bob',
             )
             self.assertFalse(ok)
 
@@ -126,19 +130,23 @@ class TestProcessFrameAndRespond(unittest.IsolatedAsyncioTestCase):
         img = b'bytes'
         datas = {'result': 1}
         with (
-                patch.object(
-                    ws_mod,
-                    'run_detection_from_bytes',
-                    new=AsyncMock(return_value=(datas, None)),
-                ) as detect_mock,
-                patch.object(
-                    ws_mod,
-                    '_safe_websocket_send_json',
-                    new=AsyncMock(return_value=True),
-                ) as send_mock,
+            patch.object(
+                ws_mod,
+                'run_detection_from_bytes',
+                new=AsyncMock(return_value=(datas, None)),
+            ) as detect_mock,
+            patch.object(
+                ws_mod,
+                '_safe_websocket_send_json',
+                new=AsyncMock(return_value=True),
+            ) as send_mock,
         ):
             ok = await ws_mod._process_frame_and_respond(
-                ws, img, object(), '1.2.3.4', 'eve',
+                ws,
+                img,
+                object(),
+                '1.2.3.4',
+                'eve',
             )
             self.assertTrue(ok)
             detect_mock.assert_awaited_once()
@@ -156,19 +164,23 @@ class TestProcessFrameAndRespond(unittest.IsolatedAsyncioTestCase):
         ws = MagicMock(spec=WebSocket)
         img = b'bytes'
         with (
-                patch.object(
-                    ws_mod,
-                    'run_detection_from_bytes',
-                    new=AsyncMock(return_value=({}, None)),
-                ),
-                patch.object(
-                    ws_mod,
-                    '_safe_websocket_send_json',
-                    new=AsyncMock(return_value=False),
-                ),
+            patch.object(
+                ws_mod,
+                'run_detection_from_bytes',
+                new=AsyncMock(return_value=({}, None)),
+            ),
+            patch.object(
+                ws_mod,
+                '_safe_websocket_send_json',
+                new=AsyncMock(return_value=False),
+            ),
         ):
             ok = await ws_mod._process_frame_and_respond(
-                ws, img, object(), '1.2.3.4', 'eve',
+                ws,
+                img,
+                object(),
+                '1.2.3.4',
+                'eve',
             )
             self.assertFalse(ok)
 
@@ -186,7 +198,10 @@ class TestPrepareModelAndNotify(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=None),
         ):
             res = await ws_mod._prepare_model_and_notify(
-                ws, '1.2.3.4', 'alice', loader,
+                ws,
+                '1.2.3.4',
+                'alice',
+                loader,
             )
             self.assertIsNone(res)
 
@@ -202,7 +217,10 @@ class TestPrepareModelAndNotify(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value='modelZ'),
         ):
             res = await ws_mod._prepare_model_and_notify(
-                ws, '1.2.3.4', 'bob', loader,
+                ws,
+                '1.2.3.4',
+                'bob',
+                loader,
             )
             self.assertIsNone(res)
             ws.close.assert_awaited_once()
@@ -216,17 +234,22 @@ class TestPrepareModelAndNotify(unittest.IsolatedAsyncioTestCase):
         model_obj: object = object()
         loader.get_model.return_value = model_obj
         with (
-                patch.object(
-                    ws_mod, '_get_model_key_from_ws',
-                    new=AsyncMock(return_value='modelZ'),
-                ),
-                patch.object(
-                    ws_mod, '_send_ready_config',
-                    new=AsyncMock(return_value=False),
-                ),
+            patch.object(
+                ws_mod,
+                '_get_model_key_from_ws',
+                new=AsyncMock(return_value='modelZ'),
+            ),
+            patch.object(
+                ws_mod,
+                '_send_ready_config',
+                new=AsyncMock(return_value=False),
+            ),
         ):
             res = await ws_mod._prepare_model_and_notify(
-                ws, '1.2.3.4', 'carol', loader,
+                ws,
+                '1.2.3.4',
+                'carol',
+                loader,
             )
             self.assertIsNone(res)
 
@@ -237,17 +260,22 @@ class TestPrepareModelAndNotify(unittest.IsolatedAsyncioTestCase):
         model_obj: object = object()
         loader.get_model.return_value = model_obj
         with (
-                patch.object(
-                    ws_mod, '_get_model_key_from_ws',
-                    new=AsyncMock(return_value='modelZ'),
-                ),
-                patch.object(
-                    ws_mod, '_send_ready_config',
-                    new=AsyncMock(return_value=True),
-                ),
+            patch.object(
+                ws_mod,
+                '_get_model_key_from_ws',
+                new=AsyncMock(return_value='modelZ'),
+            ),
+            patch.object(
+                ws_mod,
+                '_send_ready_config',
+                new=AsyncMock(return_value=True),
+            ),
         ):
             res = await ws_mod._prepare_model_and_notify(
-                ws, '1.2.3.4', 'dave', loader,
+                ws,
+                '1.2.3.4',
+                'dave',
+                loader,
             )
             self.assertIs(res, model_obj)
 
@@ -264,7 +292,11 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=True),
         ):
             count = await ws_mod._detect_loop(
-                ws, 0.0, object(), '1.2.3.4', 'alice',
+                ws,
+                0.0,
+                object(),
+                '1.2.3.4',
+                'alice',
             )
             self.assertEqual(count, 0)
 
@@ -272,17 +304,23 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
         """Loop stops when no more frames are received."""
         ws = MagicMock(spec=WebSocket)
         with (
-                patch.object(
-                    ws_mod, 'check_and_maybe_close_on_timeout',
-                    new=AsyncMock(side_effect=[False, True]),
-                ),
-                patch.object(
-                    ws_mod, '_safe_websocket_receive_bytes',
-                    new=AsyncMock(return_value=None),
-                ),
+            patch.object(
+                ws_mod,
+                'check_and_maybe_close_on_timeout',
+                new=AsyncMock(side_effect=[False, True]),
+            ),
+            patch.object(
+                ws_mod,
+                '_safe_websocket_receive_bytes',
+                new=AsyncMock(return_value=None),
+            ),
         ):
             count = await ws_mod._detect_loop(
-                ws, 0.0, object(), '1.2.3.4', 'bob',
+                ws,
+                0.0,
+                object(),
+                '1.2.3.4',
+                'bob',
             )
             self.assertEqual(count, 0)
 
@@ -291,21 +329,28 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
         ws = MagicMock(spec=WebSocket)
         timeouts = [False, False, False, True]
         with (
-                patch.object(
-                    ws_mod, 'check_and_maybe_close_on_timeout',
-                    new=AsyncMock(side_effect=timeouts),
-                ),
-                patch.object(
-                    ws_mod, '_safe_websocket_receive_bytes',
-                    new=AsyncMock(side_effect=[b'a', b'b', None]),
-                ),
-                patch.object(
-                    ws_mod, '_process_frame_and_respond',
-                    new=AsyncMock(return_value=True),
-                ),
+            patch.object(
+                ws_mod,
+                'check_and_maybe_close_on_timeout',
+                new=AsyncMock(side_effect=timeouts),
+            ),
+            patch.object(
+                ws_mod,
+                '_safe_websocket_receive_bytes',
+                new=AsyncMock(side_effect=[b'a', b'b', None]),
+            ),
+            patch.object(
+                ws_mod,
+                '_process_frame_and_respond',
+                new=AsyncMock(return_value=True),
+            ),
         ):
             count = await ws_mod._detect_loop(
-                ws, 0.0, object(), '1.2.3.4', 'carol',
+                ws,
+                0.0,
+                object(),
+                '1.2.3.4',
+                'carol',
             )
             self.assertEqual(count, 2)
 
@@ -313,21 +358,28 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
         """Stops the loop when processing a frame fails."""
         ws = MagicMock(spec=WebSocket)
         with (
-                patch.object(
-                    ws_mod, 'check_and_maybe_close_on_timeout',
-                    new=AsyncMock(side_effect=[False, True]),
-                ),
-                patch.object(
-                    ws_mod, '_safe_websocket_receive_bytes',
-                    new=AsyncMock(return_value=b'a'),
-                ),
-                patch.object(
-                    ws_mod, '_process_frame_and_respond',
-                    new=AsyncMock(return_value=False),
-                ),
+            patch.object(
+                ws_mod,
+                'check_and_maybe_close_on_timeout',
+                new=AsyncMock(side_effect=[False, True]),
+            ),
+            patch.object(
+                ws_mod,
+                '_safe_websocket_receive_bytes',
+                new=AsyncMock(return_value=b'a'),
+            ),
+            patch.object(
+                ws_mod,
+                '_process_frame_and_respond',
+                new=AsyncMock(return_value=False),
+            ),
         ):
             count = await ws_mod._detect_loop(
-                ws, 0.0, object(), '1.2.3.4', 'dave',
+                ws,
+                0.0,
+                object(),
+                '1.2.3.4',
+                'dave',
             )
             self.assertEqual(count, 1)
 
@@ -385,7 +437,8 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
                 {'YOLO_WS_ALLOW_LOCALHOST_BYPASS': 'true'},
             ),
             patch.object(
-                ws_mod, 'authenticate_ws_or_none',
+                ws_mod,
+                'authenticate_ws_or_none',
                 new=AsyncMock(return_value=('alice', 'jti')),
             ) as auth_mock,
             patch.object(
@@ -413,20 +466,21 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
         loader: MagicMock = MagicMock()
         model_obj: object = object()
         with (
-                patch.object(
-                    ws_mod, 'authenticate_ws_or_none',
-                    new=AsyncMock(return_value=('alice', 'jti')),
-                ),
-                patch.object(
-                    ws_mod,
-                    '_prepare_model_and_notify',
-                    new=AsyncMock(return_value=model_obj),
-                ) as prep_mock,
-                patch.object(
-                    ws_mod,
-                    '_detect_loop',
-                    new=AsyncMock(return_value=3),
-                ) as loop_mock,
+            patch.object(
+                ws_mod,
+                'authenticate_ws_or_none',
+                new=AsyncMock(return_value=('alice', 'jti')),
+            ),
+            patch.object(
+                ws_mod,
+                '_prepare_model_and_notify',
+                new=AsyncMock(return_value=model_obj),
+            ) as prep_mock,
+            patch.object(
+                ws_mod,
+                '_detect_loop',
+                new=AsyncMock(return_value=3),
+            ) as loop_mock,
         ):
             await ws_mod.handle_websocket_detect(ws, rds, settings, loader)
             prep_mock.assert_awaited_once()
@@ -440,19 +494,21 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
         loader: MagicMock = MagicMock()
         model_obj: object = object()
         with (
-                patch.object(
-                    ws_mod, 'authenticate_ws_or_none',
-                    new=AsyncMock(return_value=('bob', 'jti')),
-                ),
-                patch.object(
-                    ws_mod, '_prepare_model_and_notify',
-                    new=AsyncMock(return_value=model_obj),
-                ),
-                patch.object(
-                    ws_mod,
-                    '_detect_loop',
-                    new=AsyncMock(side_effect=WebSocketDisconnect),
-                ),
+            patch.object(
+                ws_mod,
+                'authenticate_ws_or_none',
+                new=AsyncMock(return_value=('bob', 'jti')),
+            ),
+            patch.object(
+                ws_mod,
+                '_prepare_model_and_notify',
+                new=AsyncMock(return_value=model_obj),
+            ),
+            patch.object(
+                ws_mod,
+                '_detect_loop',
+                new=AsyncMock(side_effect=WebSocketDisconnect),
+            ),
         ):
             await ws_mod.handle_websocket_detect(ws, rds, settings, loader)
 
@@ -464,19 +520,21 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
         loader: MagicMock = MagicMock()
         model_obj: object = object()
         with (
-                patch.object(
-                    ws_mod, 'authenticate_ws_or_none',
-                    new=AsyncMock(return_value=('carol', 'jti')),
-                ),
-                patch.object(
-                    ws_mod, '_prepare_model_and_notify',
-                    new=AsyncMock(return_value=model_obj),
-                ),
-                patch.object(
-                    ws_mod,
-                    '_detect_loop',
-                    new=AsyncMock(side_effect=RuntimeError('boom')),
-                ),
+            patch.object(
+                ws_mod,
+                'authenticate_ws_or_none',
+                new=AsyncMock(return_value=('carol', 'jti')),
+            ),
+            patch.object(
+                ws_mod,
+                '_prepare_model_and_notify',
+                new=AsyncMock(return_value=model_obj),
+            ),
+            patch.object(
+                ws_mod,
+                '_detect_loop',
+                new=AsyncMock(side_effect=RuntimeError('boom')),
+            ),
         ):
             await ws_mod.handle_websocket_detect(ws, rds, settings, loader)
             ws.close.assert_awaited()
@@ -488,17 +546,21 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
         settings: MagicMock = MagicMock()
         loader: MagicMock = MagicMock()
         with (
-                patch.object(
-                    ws_mod, 'authenticate_ws_or_none',
-                    new=AsyncMock(return_value=('dave', 'jti')),
-                ),
-                patch.object(
-                    ws_mod, '_prepare_model_and_notify',
-                    new=AsyncMock(return_value=None),
-                ),
-                patch.object(
-                    ws_mod, '_detect_loop', new=AsyncMock(),
-                ) as loop_mock,
+            patch.object(
+                ws_mod,
+                'authenticate_ws_or_none',
+                new=AsyncMock(return_value=('dave', 'jti')),
+            ),
+            patch.object(
+                ws_mod,
+                '_prepare_model_and_notify',
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                ws_mod,
+                '_detect_loop',
+                new=AsyncMock(),
+            ) as loop_mock,
         ):
             await ws_mod.handle_websocket_detect(ws, rds, settings, loader)
             loop_mock.assert_not_awaited()
@@ -513,19 +575,21 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
         loader: MagicMock = MagicMock()
         model_obj: object = object()
         with (
-                patch.object(
-                    ws_mod, 'authenticate_ws_or_none',
-                    new=AsyncMock(return_value=('erin', 'jti')),
-                ),
-                patch.object(
-                    ws_mod, '_prepare_model_and_notify',
-                    new=AsyncMock(return_value=model_obj),
-                ),
-                patch.object(
-                    ws_mod,
-                    '_detect_loop',
-                    new=AsyncMock(side_effect=RuntimeError('boom')),
-                ),
+            patch.object(
+                ws_mod,
+                'authenticate_ws_or_none',
+                new=AsyncMock(return_value=('erin', 'jti')),
+            ),
+            patch.object(
+                ws_mod,
+                '_prepare_model_and_notify',
+                new=AsyncMock(return_value=model_obj),
+            ),
+            patch.object(
+                ws_mod,
+                '_detect_loop',
+                new=AsyncMock(side_effect=RuntimeError('boom')),
+            ),
         ):
             # Should not raise despite close failing
             await ws_mod.handle_websocket_detect(ws, rds, settings, loader)
@@ -533,10 +597,3 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-"""
-pytest \
-    --cov=examples.YOLO_server_api.websocket_handlers \
-    --cov-report=term-missing \
-    tests/examples/YOLO_server_api/websocket_handlers_test.py
-"""

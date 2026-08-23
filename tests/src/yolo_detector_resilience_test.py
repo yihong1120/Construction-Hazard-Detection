@@ -16,8 +16,7 @@ class TestYoloDetectorResilience(unittest.TestCase):
     """Exercise the lightweight shared-worker detector helpers."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.detector = detector_module.YoloDetector()
 
     def test_linear_assignment_import_stays_deferred(self) -> None:
@@ -55,6 +54,7 @@ class TestYoloDetectorResilience(unittest.TestCase):
     def test_tracking_and_worker_close_paths(self) -> None:
         """Tracking state stays consistent and worker clients close."""
         import asyncio
+
         self.assertEqual(self.detector.frame_count, 0)
         self.detector.track_detections([])
         self.assertEqual(self.detector.frame_count, 1)

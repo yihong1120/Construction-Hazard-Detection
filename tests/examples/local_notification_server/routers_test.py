@@ -709,8 +709,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         import asyncio as real_asyncio
 
         with patch('asyncio.wait_for', side_effect=real_asyncio.TimeoutError):
-            with patch(
-                'examples.local_notification_server.notification_delivery_service.'
+            with patch.object(
+                routers,
                 'get_site_notification_user_ids_cached',
                 new=AsyncMock(return_value=[1]),
             ):
@@ -751,8 +751,8 @@ class TestLocalNotificationServer(unittest.TestCase):
         self.mock_redis.pipeline.return_value = pipe_mock
         # Patch asyncio.gather to raise Exception
         with patch('asyncio.wait_for', side_effect=Exception('fail!')):
-            with patch(
-                'examples.local_notification_server.notification_delivery_service.'
+            with patch.object(
+                routers,
                 'get_site_notification_user_ids_cached',
                 new=AsyncMock(return_value=[1]),
             ):
@@ -930,18 +930,18 @@ class TestNotificationCenterRoutes(unittest.IsolatedAsyncioTestCase):
         db = AsyncMock()
 
         with (
-            patch(
-                'examples.local_notification_server.notification_delivery_service.'
+            patch.object(
+                routers,
                 'ensure_fcm_token_cache_for_users',
                 new=AsyncMock(return_value=1),
             ),
-            patch(
-                'examples.local_notification_server.notification_delivery_service.'
+            patch.object(
+                routers,
                 'load_active_fcm_device_tokens',
                 new=AsyncMock(return_value=['token-a']),
             ),
-            patch(
-                'examples.local_notification_server.notification_delivery_service.'
+            patch.object(
+                routers,
                 'mark_fcm_tokens_success',
                 new=AsyncMock(),
             ) as mock_mark_success,
@@ -965,13 +965,13 @@ class TestNotificationCenterRoutes(unittest.IsolatedAsyncioTestCase):
         db = AsyncMock()
 
         with (
-            patch(
-                'examples.local_notification_server.notification_delivery_service.'
+            patch.object(
+                routers,
                 'ensure_fcm_token_cache_for_users',
                 new=AsyncMock(return_value=0),
             ),
-            patch(
-                'examples.local_notification_server.notification_delivery_service.'
+            patch.object(
+                routers,
                 'load_active_fcm_device_tokens',
                 new=AsyncMock(return_value=[]),
             ),
@@ -1034,22 +1034,12 @@ class TestNotificationCenterRoutes(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-"""Pytest \
-
---cov=examples.local_notification_server.routers \
---cov-report=term-missing \
-tests/examples/local_notification_server/routers_test.py
-"""
-
 
 class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
-
-    """Provide TestNotificationRouterBranches.
-    """
+    """Provide TestNotificationRouterBranches."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.db = MagicMock()
         self.db.execute = AsyncMock()
         self.db.commit = AsyncMock()
@@ -1274,9 +1264,11 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
             'list_sites',
             new=AsyncMock(return_value=sites),
         ) as list_sites:
-            result = await site_preference_service._list_notification_scope_sites(
-                self.db,
-                super_admin,
+            result = (
+                await site_preference_service._list_notification_scope_sites(
+                    self.db,
+                    super_admin,
+                )
             )
 
         self.assertEqual(result, sites)
@@ -1304,8 +1296,11 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
             'list_sites',
             new=AsyncMock(return_value=sites),
         ) as list_sites:
-            result = await site_preference_service._list_notification_scope_sites(
-                self.db, user,
+            result = (
+                await site_preference_service._list_notification_scope_sites(
+                    self.db,
+                    user,
+                )
             )
 
         self.assertEqual(result, sites)
@@ -1335,7 +1330,10 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=[site]),
             ),
         ):
-            result = await site_preference_service.list_site_notification_preferences(
+            list_preferences = (
+                site_preference_service.list_site_notification_preferences
+            )
+            result = await list_preferences(
                 self.db,
                 self.user,
             )
@@ -1353,7 +1351,10 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
             '_list_notification_scope_sites',
             new=AsyncMock(return_value=[]),
         ):
-            result = await site_preference_service.list_site_notification_preferences(
+            list_preferences = (
+                site_preference_service.list_site_notification_preferences
+            )
+            result = await list_preferences(
                 self.db,
                 self.user,
             )
@@ -1394,7 +1395,10 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=[]),
             ),
         ):
-            result = await site_preference_service.update_site_notification_preferences(
+            update_preferences = (
+                site_preference_service.update_site_notification_preferences
+            )
+            result = await update_preferences(
                 payload,
                 self.db,
                 self.user,
@@ -1423,7 +1427,11 @@ class TestNotificationRouterBranches(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             with self.assertRaises(HTTPException) as raised:
-                await site_preference_service.update_site_notification_preferences(
+                update_preferences = getattr(
+                    site_preference_service,
+                    'update_site_notification_preferences',
+                )
+                await update_preferences(
                     invalid,
                     self.db,
                     self.user,

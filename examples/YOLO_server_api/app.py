@@ -34,10 +34,11 @@ def main() -> None:
 if __name__ == '__main__':
     main()
 
+
 """
 uvicorn examples.YOLO_server_api.app:app \
     --host 127.0.0.1 --port 8000 --workers 2
 
-uv run uvicorn examples.YOLO_server_api.app:app\
+uv run uvicorn examples.YOLO_server_api.app:app \
     --host 127.0.0.1 --port 8000 --workers 2
 """

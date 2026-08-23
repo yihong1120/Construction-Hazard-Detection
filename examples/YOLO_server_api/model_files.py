@@ -7,7 +7,6 @@ from typing import Final
 
 import torch
 
-
 VALID_MODEL_FILES: Final[dict[str, str]] = {
     'yolo26n': 'best_yolo26n.pt',
     'yolo26s': 'best_yolo26s.pt',
@@ -35,8 +34,7 @@ def _model_destination_path(model: str) -> Path:
 
 
 async def update_model_file(model: str, model_file: Path) -> None:
-    """
-    Update the model file for a specified model.
+    """Update the model file for a specified model.
 
     Args:
         model (str): The model key (e.g., 'yolo26n', 'yolo26s').
@@ -64,7 +62,8 @@ async def update_model_file(model: str, model_file: Path) -> None:
 
 
 async def get_new_model_path(
-    model: str, last_update_time: datetime.datetime,
+    model: str,
+    last_update_time: datetime.datetime,
 ) -> Path | None:
     """Return the updated model path without loading its bytes into memory.
 

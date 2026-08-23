@@ -12,8 +12,7 @@ class BroadcastNotifierTests(unittest.IsolatedAsyncioTestCase):
     """Verify broadcast delivery uses async HTTP transport."""
 
     async def test_broadcast_message_success(self) -> None:
-        """Test broadcast message success.
-        """
+        """Test broadcast message success."""
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -32,24 +31,30 @@ class BroadcastNotifierTests(unittest.IsolatedAsyncioTestCase):
             transport=httpx.MockTransport(handler),
         ) as client:
             notifier = BroadcastNotifier(
-                'https://example.test/broadcast', client=client,
+                'https://example.test/broadcast',
+                client=client,
             )
             self.assertTrue(await notifier.broadcast_message('hello'))
 
         self.assertEqual(json.loads(requests[0].content), {'message': 'hello'})
 
     async def test_broadcast_message_failure_or_network_error(self) -> None:
-        """Test broadcast message failure or network error.
-        """
+        """Test broadcast message failure or network error."""
+
         async with httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda _request: httpx.Response(503)),
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(503),
+            ),
         ) as client:
             notifier = BroadcastNotifier(
-                'https://example.test/broadcast', client=client,
+                'https://example.test/broadcast',
+                client=client,
             )
             self.assertFalse(await notifier.broadcast_message('hello'))
 
-    async def test_standalone_notifier_reuses_and_closes_its_client(self) -> None:
+    async def test_standalone_notifier_reuses_and_closes_its_client(
+        self,
+    ) -> None:
         """A library consumer gets one reusable transport per notifier."""
         notifier = BroadcastNotifier('https://example.test/broadcast')
         client = notifier._http_client()

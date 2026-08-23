@@ -12,7 +12,6 @@ from examples.mcp_server.tools.violations import ViolationsTools
 
 
 class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
-
     """Test suite."""
 
     async def asyncSetUp(self) -> None:
@@ -50,9 +49,9 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         'examples.mcp_server.tools.violations.os.getenv',
-        side_effect=lambda k, d=None: 'STATIC_TOKEN'
-        if k == 'MCP_STATIC_BEARER'
-        else '',
+        side_effect=lambda k, d=None: (
+            'STATIC_TOKEN' if k == 'MCP_STATIC_BEARER' else ''
+        ),
     )
     async def test_get_auth_headers_static_bearer(self, _: Any) -> None:
         """Exercise this test."""
@@ -63,9 +62,9 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         'examples.mcp_server.tools.violations.os.getenv',
-        side_effect=lambda k, d=None: 'true'
-        if k == 'MCP_ALLOW_NO_AUTH'
-        else '',
+        side_effect=lambda k, d=None: (
+            'true' if k == 'MCP_ALLOW_NO_AUTH' else ''
+        ),
     )
     async def test_get_auth_headers_no_auth(self, _: Any) -> None:
         """Exercise this test."""
@@ -81,7 +80,7 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         tm.get_valid_token.return_value = fake_token
         self.tool._token_manager = tm
         headers = await self.tool._get_auth_headers()
-        self.assertEqual(headers['Authorization'], f'Bearer {fake_token}')
+        self.assertEqual(headers['Authorization'], f"Bearer {fake_token}")
 
     @patch('examples.mcp_server.tools.violations.os.getenv', return_value='')
     async def test_get_auth_headers_exception(self, _: Any) -> None:
@@ -308,9 +307,3 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.mcp_server.tools.violations\
-    --cov-report=term-missing\
-    tests/examples/mcp_server/tools/violations_test.py
-'''

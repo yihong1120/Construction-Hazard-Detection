@@ -213,7 +213,8 @@ class TestServices(unittest.TestCase):
         self.assertEqual(stats['unique_tokens'], 3)
         self.assertEqual(stats['sendable_tokens'], 3)
         self.assertEqual(
-            stats['tokens_by_language'], {'en-GB': 2, 'zh-TW': 1},
+            stats['tokens_by_language'],
+            {'en-GB': 2, 'zh-TW': 1},
         )
 
     def test_get_site_notification_user_ids_cached_hit(self) -> None:
@@ -385,7 +386,9 @@ class TestServices(unittest.TestCase):
     ) -> None:
         """It executes an async iterable of tasks with bounded concurrency."""
 
-        async def task_stream() -> AsyncIterator[Awaitable[dispatch.FcmSendResult]]:
+        async def task_stream() -> (
+            AsyncIterator[Awaitable[dispatch.FcmSendResult]]
+        ):
             """Support task_stream."""
             yield AsyncMock(return_value=dispatch.FcmSendResult(1, 0))()
             yield AsyncMock(return_value=dispatch.FcmSendResult(0, 1))()
@@ -410,8 +413,9 @@ class TestServices(unittest.TestCase):
     ) -> None:
         """It forwards invalid FCM tokens to the optional handler."""
 
-        async def task_stream(
-        ) -> AsyncIterator[Awaitable[dispatch.FcmSendResult]]:
+        async def task_stream() -> (
+            AsyncIterator[Awaitable[dispatch.FcmSendResult]]
+        ):
             """Support task_stream."""
             yield AsyncMock(
                 return_value=dispatch.FcmSendResult(
@@ -454,13 +458,6 @@ class TestServices(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-\
-"""Pytest \
-
---cov=examples.local_notification_server.services \
---cov-report=term-missing \
-tests/examples/local_notification_server/services_test.py
-"""
 
 
 def _row(token: str = 'device-token') -> svc.FcmDeviceToken:
@@ -487,13 +484,10 @@ def _row(token: str = 'device-token') -> svc.FcmDeviceToken:
 
 
 class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
-
-    """Provide TestNotificationServicesCoverage.
-    """
+    """Provide TestNotificationServicesCoverage."""
 
     def test_token_crypto_and_serialisation_helpers(self) -> None:
-        """Test token crypto and serialisation helpers.
-        """
+        """Test token crypto and serialisation helpers."""
         valid_key = Fernet.generate_key().decode('utf-8')
         with patch.object(
             svc,
@@ -526,8 +520,7 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_token_cache_write(self) -> None:
-        """Test token cache write.
-        """
+        """Test token cache write."""
         row = _row()
         row.last_success_at = datetime(2026, 7, 24, 8, 1, tzinfo=timezone.utc)
 
@@ -540,8 +533,7 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_registers_and_updates_device_tokens(self) -> None:
-        """Test registers and updates device tokens.
-        """
+        """Test registers and updates device tokens."""
         request = DeviceRegistrationRequest(
             device_token='device-token',
             device_lang='en-GB',
@@ -598,8 +590,7 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         second_db.add.assert_called_once()
 
     async def test_device_status_loading_and_cache_refresh(self) -> None:
-        """Test device status loading and cache refresh.
-        """
+        """Test device status loading and cache refresh."""
         row = _row()
         result = SimpleNamespace(
             scalars=lambda: SimpleNamespace(all=lambda: [row]),
@@ -610,7 +601,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         status = await svc.list_fcm_device_status(7, db)
         self.assertEqual(status[0]['token_hash'], row.device_token_hash)
         self.assertEqual(
-            await svc.load_active_fcm_device_tokens(7, db), ['device-token'],
+            await svc.load_active_fcm_device_tokens(7, db),
+            ['device-token'],
         )
 
         pipe = MagicMock()
@@ -628,8 +620,7 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_marks_token_delivery_success_failure_and_invalidity(
         self,
     ) -> None:
-        """Test marks token delivery success failure and invalidity.
-        """
+        """Test marks token delivery success failure and invalidity."""
         db = MagicMock()
         db.execute = AsyncMock()
         db.commit = AsyncMock()
@@ -641,7 +632,11 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
 
         await svc.mark_fcm_tokens_success(7, ['ok-token'], rds, db)
         await svc.mark_fcm_tokens_failure(
-            7, ['failed-token'], rds, 'offline', db,
+            7,
+            ['failed-token'],
+            rds,
+            'offline',
+            db,
         )
         await svc.mark_invalid_fcm_tokens_for_users(
             [7],
@@ -663,8 +658,7 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_token_deletion_and_recipient_cache_refresh(self) -> None:
-        """Test token deletion and recipient cache refresh.
-        """
+        """Test token deletion and recipient cache refresh."""
         db = MagicMock()
         db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
         db.commit = AsyncMock()
@@ -684,17 +678,21 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
             'refresh_site_notification_user_cache',
             AsyncMock(return_value=[7]),
         ) as refresh:
+            get_cached_user_ids = (
+                site_recipient_cache.get_site_notification_user_ids_cached
+            )
             self.assertEqual(
-                await site_recipient_cache.get_site_notification_user_ids_cached(
-                    'S1', db, rds,
+                await get_cached_user_ids(
+                    'S1',
+                    db,
+                    rds,
                 ),
                 [7],
             )
         refresh.assert_awaited_once_with('S1', db, rds)
 
     async def test_notification_content_and_push_task_contracts(self) -> None:
-        """Test notification content and push task contracts.
-        """
+        """Test notification content and push task contracts."""
         request = SiteNotifyRequest(
             site='S1',
             stream_name='Cam1',
@@ -708,7 +706,9 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
         db.execute = AsyncMock()
         db.commit = AsyncMock()
         self.assertEqual(
-            await dispatch.create_notification_records_for_users(request, [7], db),
+            await dispatch.create_notification_records_for_users(
+                request, [7], db,
+            ),
             1,
         )
         db.execute.assert_awaited_once()
@@ -730,8 +730,7 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_undecryptable_rows_are_disabled_during_cache_refresh(
         self,
     ) -> None:
-        """Test undecryptable rows are disabled during cache refresh.
-        """
+        """Test undecryptable rows are disabled during cache refresh."""
         row = _row()
         result = SimpleNamespace(
             scalars=lambda: SimpleNamespace(all=lambda: [row]),
@@ -760,8 +759,7 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_undecryptable_rows_are_disabled_when_loading_tokens(
         self,
     ) -> None:
-        """Test undecryptable rows are disabled when loading tokens.
-        """
+        """Test undecryptable rows are disabled when loading tokens."""
         row = _row()
         result = SimpleNamespace(
             scalars=lambda: SimpleNamespace(all=lambda: [row]),
@@ -783,8 +781,7 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_preflight_and_streaming_builder_use_canonical_tokens(
         self,
     ) -> None:
-        """Test preflight and streaming builder use canonical tokens.
-        """
+        """Test preflight and streaming builder use canonical tokens."""
         request = SiteNotifyRequest(
             site='S1',
             stream_name='Cam1',
@@ -826,8 +823,8 @@ class TestNotificationServicesCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_streaming_bounded_executor_handles_empty_timeout_and_error(
         self,
     ) -> None:
-        """Test streaming bounded executor handles empty timeout and error.
-        """
+        """Test streaming bounded executor handles empty timeout and error."""
+
         async def empty_stream() -> Any:
             """Perform empty stream.
 

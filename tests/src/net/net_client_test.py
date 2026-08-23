@@ -17,15 +17,13 @@ from src.net.net_client import NetClient
 
 
 class TestNetClient(unittest.IsolatedAsyncioTestCase):
-    """
-    Behavioural tests for NetClient covering core branches.
-    """
+    """Behavioural tests for NetClient covering core branches."""
 
     def setUp(self) -> None:
         """Set up a client with a fake token manager for reuse.
 
-        Creates a mock ``TokenManager`` and a ``NetClient`` instance with
-        short timeouts to keep tests fast.
+        Creates a mock ``TokenManager`` and a ``NetClient`` instance with short
+        timeouts to keep tests fast.
         """
         # Mock token manager methods used by NetClient
         self.tm: MagicMock = MagicMock()
@@ -168,7 +166,9 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         """401/403 triggers token refresh then retry."""
         response401 = MagicMock(status_code=401)
         http_err = httpx.HTTPStatusError(
-            'e', request=MagicMock(), response=response401,
+            'e',
+            request=MagicMock(),
+            response=response401,
         )
 
         fake_resp_ok = MagicMock()
@@ -206,7 +206,9 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         """403 bubbles up as an error (no refresh retry loop)."""
         response403 = MagicMock(status_code=403)
         http_err = httpx.HTTPStatusError(
-            'e', request=MagicMock(), response=response403,
+            'e',
+            request=MagicMock(),
+            response=response403,
         )
         fake_client = MagicMock()
         fake_client.post = AsyncMock(side_effect=http_err)
@@ -222,7 +224,9 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         """Non-401/403 HTTP errors should be raised without refresh loop."""
         response500 = MagicMock(status_code=500)
         http_err = httpx.HTTPStatusError(
-            'boom', request=MagicMock(), response=response500,
+            'boom',
+            request=MagicMock(),
+            response=response500,
         )
         fake_client = MagicMock()
         fake_client.post = AsyncMock(side_effect=http_err)
@@ -359,15 +363,18 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         type(fake_ws).closed = property(lambda _: False)
         with (
             patch.object(
-                self.client, 'ensure_ws',
+                self.client,
+                'ensure_ws',
                 new=AsyncMock(return_value=fake_ws),
             ),
             patch.object(
-                self.client, '_send_ws_bytes',
+                self.client,
+                '_send_ws_bytes',
                 new=AsyncMock(return_value=True),
             ),
             patch.object(
-                self.client, '_receive_ws_json',
+                self.client,
+                '_receive_ws_json',
                 new=AsyncMock(return_value=None),
             ),
         ):
@@ -461,8 +468,10 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         sess.ws_connect = AsyncMock(
             side_effect=[
                 aiohttp.ClientConnectorError(
-                    MagicMock(), OSError(),
-                ), MagicMock(),
+                    MagicMock(),
+                    OSError(),
+                ),
+                MagicMock(),
             ],
         )
         self.client._session = sess
@@ -538,10 +547,12 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         """TEXT and BINARY messages are decoded to JSON dicts."""
         ws = MagicMock()
         msg_text = SimpleNamespace(
-            type=aiohttp.WSMsgType.TEXT, data='{"a":1}',
+            type=aiohttp.WSMsgType.TEXT,
+            data='{"a":1}',
         )
         msg_bin = SimpleNamespace(
-            type=aiohttp.WSMsgType.BINARY, data=b'{"b":2}',
+            type=aiohttp.WSMsgType.BINARY,
+            data=b'{"b":2}',
         )
 
         ws.receive = AsyncMock(side_effect=[msg_text, msg_bin])
@@ -578,7 +589,9 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(httpx.ConnectTimeout):
                 await self.client.http_post(
-                    '/p', data={'x': 'y'}, max_retries=2,
+                    '/p',
+                    data={'x': 'y'},
+                    max_retries=2,
                 )
 
     async def test_http_post_zero_retries_raises_runtimeerror(self) -> None:
@@ -618,7 +631,8 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(),
             ) as close_ws,
             patch.object(
-                self.client, 'ensure_ws',
+                self.client,
+                'ensure_ws',
                 new=AsyncMock(side_effect=Exception('x')),
             ),
         ):
@@ -628,8 +642,7 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_ws_bytes_success_and_failure(self) -> None:
         """_send_ws_bytes returns True on success; False on exception and
-        closes.
-        """
+        closes."""
         # Success
         ws_ok = MagicMock()
         ws_ok.send_bytes = AsyncMock(return_value=None)
@@ -663,7 +676,8 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(),
             ) as close_ws,
             patch.object(
-                self.client, 'ensure_ws',
+                self.client,
+                'ensure_ws',
                 new=AsyncMock(return_value=ws_new),
             ),
         ):
@@ -696,8 +710,7 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """If prior session is already closed, do not attempt to close it
-        again.
-        """
+        again."""
         old = MagicMock()
         type(old).closed = property(lambda _: True)
         old.close = AsyncMock()
@@ -722,10 +735,3 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=src.net.net_client \
-    --cov-report=term-missing \
-    tests/src/net/net_client_test.py
-'''

@@ -25,8 +25,7 @@ class DetectionRequest(BaseModel):
 
 
 class ModelFileUpdate(BaseModel):
-    """
-    Represents the data required to update a model file.
+    """Represents the data required to update a model file.
 
     Attributes:
         model (str): The model identifier (e.g., 'yolo26n').
@@ -42,8 +41,7 @@ class ModelFileUpdate(BaseModel):
         model: str = Form(...),
         file: UploadFile = File(...),
     ) -> ModelFileUpdate:
-        """
-        Enables FastAPI to handle this model as FormData.
+        """Enables FastAPI to handle this model as FormData.
 
         Args:
             model (str): The model name.
@@ -57,8 +55,7 @@ class ModelFileUpdate(BaseModel):
 
 
 class UpdateModelRequest(BaseModel):
-    """
-    Represents the data required to retrieve a new model file.
+    """Represents the data required to retrieve a new model file.
 
     Attributes:
         model (str):
@@ -66,12 +63,12 @@ class UpdateModelRequest(BaseModel):
         last_update_time (str):
             ISO 8601 string representing the last known update time.
     """
+
     model: str
     last_update_time: str
 
     def last_update_as_datetime(self) -> datetime | None:
-        """
-        Converts `last_update_time` to a datetime object.
+        """Converts `last_update_time` to a datetime object.
 
         Returns:
             Optional[datetime]: A datetime object or None if parsing fails.

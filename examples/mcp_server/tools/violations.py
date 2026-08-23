@@ -11,8 +11,10 @@ from examples.mcp_server.config import get_env_int
 from examples.mcp_server.config import get_env_var
 from src.auth_tokens import TokenManager
 
-
-_UPSTREAM_TIMEOUT_SECONDS = max(1, get_env_int('MCP_UPSTREAM_TIMEOUT_SECONDS', 20))
+_UPSTREAM_TIMEOUT_SECONDS = max(
+    1,
+    get_env_int('MCP_UPSTREAM_TIMEOUT_SECONDS', 20),
+)
 
 
 class ViolationsTools:
@@ -237,22 +239,21 @@ class ViolationsTools:
         """Build authorisation headers for authenticated requests."""
         try:
             # Optional no-auth or static bearer overrides
-            allow_no_auth = (
-                str(os.getenv('MCP_ALLOW_NO_AUTH', '')).lower()
-                in {'1', 'true', 'yes'}
-            )
+            allow_no_auth = str(
+                os.getenv('MCP_ALLOW_NO_AUTH', ''),
+            ).lower() in {'1', 'true', 'yes'}
             static_bearer = os.getenv('MCP_STATIC_BEARER', '').strip()
             headers = {
                 'User-Agent': 'ConstructionHazardDetection-MCP/1.0',
             }
             if static_bearer:
-                headers['Authorization'] = f'Bearer {static_bearer}'
+                headers['Authorization'] = f"Bearer {static_bearer}"
                 return headers
             if allow_no_auth:
                 return headers
             assert self._token_manager is not None
             access_token = await self._token_manager.get_valid_token()
-            headers['Authorization'] = f'Bearer {access_token}'
+            headers['Authorization'] = f"Bearer {access_token}"
             return headers
         except Exception as e:
             self.logger.error(f"Failed to get auth headers: {e}")

@@ -37,7 +37,7 @@ class ImageRecordStore:
         try:
             destination = Path(self.path)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            temporary = destination.with_suffix(f'{destination.suffix}.tmp')
+            temporary = destination.with_suffix(f"{destination.suffix}.tmp")
             with temporary.open('w', encoding='utf-8') as file:
                 json.dump(records, file)
             temporary.replace(destination)

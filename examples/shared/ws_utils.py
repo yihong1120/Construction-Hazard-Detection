@@ -8,7 +8,6 @@ from typing import TypeVar
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 
-
 _WebSocketResult = TypeVar('_WebSocketResult')
 logger = logging.getLogger(__name__)
 

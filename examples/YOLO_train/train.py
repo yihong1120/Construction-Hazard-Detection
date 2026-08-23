@@ -21,8 +21,7 @@ class YOLOModelHandler:
     """
 
     def __init__(self, model_name: str, batch_size: int = -1) -> None:
-        """
-        Initialises the YOLOModelHandler with a specified model.
+        """Initialises the YOLOModelHandler with a specified model.
 
         Args:
             model_name (str): The name of the model file (either .yaml or .pt).
@@ -65,10 +64,13 @@ class YOLOModelHandler:
             raise ValueError("Unsupported model format. Use '.yaml' or '.pt'")
 
     def train_model(
-        self, data_config: str, epochs: int, optimizer: str,
+        self,
+        data_config: str,
+        epochs: int,
+        optimizer: str,
     ) -> None:
-        """
-        Trains the YOLO model with the given data config and number of epochs.
+        """Trains the YOLO model with the given data config and number of
+        epochs.
 
         Args:
             data_config (str): The path to the data configuration file.
@@ -90,8 +92,7 @@ class YOLOModelHandler:
         )
 
     def validate_model(self) -> Any:
-        """
-        Validates the YOLO model on the validation dataset.
+        """Validates the YOLO model on the validation dataset.
 
         Args:
             batch_size (int): The batch size for training and validation.
@@ -108,8 +109,7 @@ class YOLOModelHandler:
         return self.model.val(batch=self.batch_size)
 
     def predict_image(self, image_path: str) -> Any:
-        """
-        Makes a prediction using the YOLO model on the specified image.
+        """Makes a prediction using the YOLO model on the specified image.
 
         Args:
             image_path (str): The path to the image file for prediction.
@@ -127,9 +127,8 @@ class YOLOModelHandler:
 
     @staticmethod
     def predict_image_sahi(yolo_model_path: str, image_path: str) -> Any:
-        """
-        Makes a prediction using the YOLO model on the specified image
-        with SAHI post-processing.
+        """Makes a prediction using the YOLO model on the specified image with
+        SAHI post-processing.
 
         Args:
             yolo_model_path (str): The path to the YOLO model file.
@@ -172,8 +171,7 @@ class YOLOModelHandler:
         return object_prediction_list
 
     def export_model(self, export_format: str = 'onnx') -> str:
-        """
-        Exports the YOLO model to the specified format.
+        """Exports the YOLO model to the specified format.
 
         Args:
             export_format (str): The format to export the model to.
@@ -190,8 +188,7 @@ class YOLOModelHandler:
         return self.model.export(format=export_format)
 
     def save_model(self, save_path: str) -> None:
-        """
-        Saves the YOLO model to a .pt file.
+        """Saves the YOLO model to a .pt file.
 
         Args:
             save_path (str): The path to save the .pt model file.
@@ -208,8 +205,7 @@ class YOLOModelHandler:
         optimizer: str,
         n_splits: int = 5,
     ) -> None:
-        """
-        Performs k-fold cross-validation on the YOLO model.
+        """Performs k-fold cross-validation on the YOLO model.
 
         Args:
             data_config (str): The path to the data configuration file.
@@ -347,9 +343,9 @@ class YOLOModelHandler:
         epochs: int,
         optimizer: str,
     ) -> None:
-        """
-        Trains the model on the entire dataset (all images) without splitting.
-        This provides the strongest model that has seen all available data.
+        """Trains the model on the entire dataset (all images) without
+        splitting. This provides the strongest model that has seen all
+        available data.
 
         Args:
             data_config (str): The path to the data configuration file.
@@ -391,7 +387,8 @@ class YOLOModelHandler:
         # If 'names' is a dict in the file, it will be parsed.
 
         temp_all_data_config = os.path.join(
-            dataset_path, 'all_data_train.yaml',
+            dataset_path,
+            'all_data_train.yaml',
         )
 
         with open(temp_all_data_config, 'w') as f:

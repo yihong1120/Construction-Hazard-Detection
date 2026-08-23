@@ -20,16 +20,13 @@ class TestModelEvaluator(unittest.TestCase):
         self.evaluator: ModelEvaluator | None = None
 
     def tearDown(self) -> None:
-        """
-        Clean up after each test.
-        """
+        """Clean up after each test."""
         self.evaluator = None
 
     @patch('examples.YOLO_evaluation.evaluate_yolo.YOLO')
     def test_evaluate(self, mock_yolo: MagicMock) -> None:
-        """
-        Test the evaluate method to ensure it returns the expected results.
-        """
+        """Test the evaluate method to ensure it returns the expected
+        results."""
         # Create a mock model and mock return value for the val method
         mock_model: MagicMock = MagicMock()
         mock_yolo.return_value = mock_model
@@ -59,9 +56,7 @@ class TestModelEvaluator(unittest.TestCase):
         mock_parse_args: MagicMock,
         mock_model_evaluator: MagicMock,
     ) -> None:
-        """
-        Test the main function.
-        """
+        """Test the main function."""
         # Mock the command line arguments
         mock_parse_args.return_value = MagicMock(
             model_path=self.model_path,

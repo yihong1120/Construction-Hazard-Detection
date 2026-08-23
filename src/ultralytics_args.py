@@ -22,8 +22,8 @@ def parse_quantize_value(raw_value: str | None) -> QuantizeValue | None:
     if value not in _SUPPORTED_QUANTIZE_VALUES:
         supported = ', '.join(sorted(_SUPPORTED_QUANTIZE_VALUES))
         raise ValueError(
-            f'Unsupported quantize value: {raw_value!r}. '
-            f'Use one of: {supported}.',
+            f"Unsupported quantize value: {raw_value!r}. "
+            f"Use one of: {supported}.",
         )
     if value.isdigit():
         return int(value)
@@ -36,5 +36,7 @@ def precision_kwargs(
 ) -> dict[str, PrecisionValue]:
     """Return precision options for the pinned Ultralytics release."""
     return {
-        'quantize': quantize if quantize is not None else (16 if enabled else 32),
+        'quantize': (
+            quantize if quantize is not None else (16 if enabled else 32)
+        ),
     }

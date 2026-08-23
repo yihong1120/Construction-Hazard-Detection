@@ -16,8 +16,8 @@ load_dotenv()
 
 
 class FCMSender(AsyncHttpClientOwner):
-    """
-    Class for sending FCM push notifications via backend API.
+    """Class for sending FCM push notifications via backend API.
+
     Each instance maintains its own token state.
     """
 
@@ -34,8 +34,7 @@ class FCMSender(AsyncHttpClientOwner):
         max_retries: int = 3,
         timeout: int = 10,
     ) -> None:
-        """
-        Initialise FCMSender and set API URL and configuration.
+        """Initialise FCMSender and set API URL and configuration.
 
         Args:
             api_url (str | None): The unified API URL for FCM. If None, uses
@@ -70,9 +69,8 @@ class FCMSender(AsyncHttpClientOwner):
         image_path: str | None = None,
         violation_id: int | None = None,
     ) -> bool:
-        """
-        Send FCM push notification to a specific site and stream
-        with optimized retry logic.
+        """Send FCM push notification to a specific site and stream with
+        optimized retry logic.
 
         Args:
             site (str): Name of the construction site.
@@ -92,7 +90,7 @@ class FCMSender(AsyncHttpClientOwner):
             self.logger.error('Failed to obtain valid access token')
             return False
 
-        headers: dict[str, str] = {'Authorization': f'Bearer {access_token}'}
+        headers: dict[str, str] = {'Authorization': f"Bearer {access_token}"}
         payload: dict[str, object] = {
             'site': site,
             'stream_name': stream_name,
@@ -102,8 +100,9 @@ class FCMSender(AsyncHttpClientOwner):
             'type': 'violation',
             'title': 'Safety violation alert',
             'deep_link': (
-                f'/violations?violation_id={violation_id}'
-                if violation_id is not None else '/violations'
+                f"/violations?violation_id={violation_id}"
+                if violation_id is not None
+                else '/violations'
             ),
             'metadata': {
                 'site': site,
@@ -136,7 +135,7 @@ class FCMSender(AsyncHttpClientOwner):
                     # Refresh token and update headers
                     await self.token_manager.refresh_token()
                     new_token = await self.token_manager.get_valid_token()
-                    headers['Authorization'] = f'Bearer {new_token}'
+                    headers['Authorization'] = f"Bearer {new_token}"
 
                     next_delay = await self._next_retry_delay(
                         attempt,

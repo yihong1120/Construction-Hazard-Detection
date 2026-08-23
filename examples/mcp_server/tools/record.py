@@ -45,17 +45,21 @@ class RecordTools:
 
             # Convert base64 to bytes
             import base64
+
             if ',' in image_base64:
                 image_base64 = image_base64.split(',', 1)[1]
             image_bytes = base64.b64decode(image_base64)
 
             # Demo mode: save locally and return mock success
             if str(os.getenv('MCP_DEMO_MODE', '')).lower() in {
-                '1', 'true', 'yes',
+                '1',
+                'true',
+                'yes',
             }:
                 out_dir = Path('static') / datetime.now().strftime('%Y-%m-%d')
                 out_dir.mkdir(parents=True, exist_ok=True)
                 import uuid
+
                 fname = f"{uuid.uuid4()}.jpg"
                 fpath = out_dir / fname
                 fpath.write_bytes(image_bytes)
@@ -101,7 +105,8 @@ class RecordTools:
                 'record_id': violation_id,
                 'message': (
                     f"Violation record saved with ID: {violation_id}"
-                    if success else 'Failed to save violation record'
+                    if success
+                    else 'Failed to save violation record'
                 ),
             }
 
@@ -214,13 +219,11 @@ class RecordTools:
         Separated for testability and to avoid long multi-line coverage gaps.
         """
         import os
+
         return os.path.join(
             os.path.dirname(__file__),
             '../../../static',
-            (
-                f"violations_backup_"
-                f"{int(asyncio.get_event_loop().time())}.json"
-            ),
+            (f"violations_backup_{int(asyncio.get_event_loop().time())}.json"),
         )  # pragma: no cover
 
     async def sync_pending_records(self) -> dict:

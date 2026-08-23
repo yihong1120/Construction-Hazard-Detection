@@ -13,9 +13,7 @@ from src.violation_sender import ViolationSender
 
 
 class TestViolationSender(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for ViolationSender.send_violation.
-    """
+    """Unit tests for ViolationSender.send_violation."""
 
     site: str
     stream: str
@@ -28,9 +26,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
     sender: ViolationSender
 
     def setUp(self) -> None:
-        """
-        Set up shared test fixtures for each test case.
-        """
+        """Set up shared test fixtures for each test case."""
         self.site = 'Site-A'
         self.stream = 'Cam-01'
         self.img = b'fake_image_data'
@@ -50,8 +46,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         await self.sender.close()
 
     async def _call(self, inst: ViolationSender) -> str | None:
-        """
-        Helper to call send_violation with shared parameters.
+        """Helper to call send_violation with shared parameters.
 
         Args:
             inst (ViolationSender): The sender instance to use.
@@ -77,9 +72,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         mock_get_valid_token: AsyncMock,
         mock_get_client: AsyncMock,
     ) -> None:
-        """
-        Test successful violation upload returns correct violation ID.
-        """
+        """Test successful violation upload returns correct violation ID."""
         mock_get_valid_token.return_value = 'token-abc'
 
         mock_cli: MagicMock = MagicMock()
@@ -104,9 +97,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         mock_get_valid_token: AsyncMock,
         mock_get_client: AsyncMock,
     ) -> None:
-        """
-        Test that get_valid_token is called and works correctly.
-        """
+        """Test that get_valid_token is called and works correctly."""
         mock_get_valid_token.return_value = 'valid_token'
 
         mock_cli: MagicMock = MagicMock()
@@ -130,9 +121,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         mock_get_valid_token: AsyncMock,
         mock_get_client: AsyncMock,
     ) -> None:
-        """
-        Test that refresh_token is called on 401 and succeeds on retry.
-        """
+        """Test that refresh_token is called on 401 and succeeds on retry."""
         # First call returns expired token, second call returns new token
         mock_get_valid_token.side_effect = ['expired', 'new_token']
 
@@ -142,7 +131,9 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         )
         resp_401: httpx.Response = httpx.Response(status_code=401, request=req)
         err_401: httpx.HTTPStatusError = httpx.HTTPStatusError(
-            '401', request=req, response=resp_401,
+            '401',
+            request=req,
+            response=resp_401,
         )
 
         mock_cli: MagicMock = MagicMock()
@@ -164,10 +155,8 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         mock_get_valid_token: AsyncMock,
         mock_get_client: AsyncMock,
     ) -> None:
-        """
-        Test that retries are exhausted and RuntimeError is raised
-        on repeated timeout.
-        """
+        """Test that retries are exhausted and RuntimeError is raised on
+        repeated timeout."""
         mock_get_valid_token.return_value = 'valid_token'
 
         mock_cli: MagicMock = MagicMock()
@@ -186,9 +175,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         mock_get_valid_token: AsyncMock,
         mock_get_client: AsyncMock,
     ) -> None:
-        """
-        Test that unexpected exceptions are re-raised.
-        """
+        """Test that unexpected exceptions are re-raised."""
         mock_get_valid_token.return_value = 'valid_token'
 
         mock_cli: MagicMock = MagicMock()
@@ -205,9 +192,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         mock_get_valid_token: AsyncMock,
         mock_get_client: AsyncMock,
     ) -> None:
-        """
-        Test that non-401 HTTP errors bubble up as expected.
-        """
+        """Test that non-401 HTTP errors bubble up as expected."""
         mock_get_valid_token.return_value = 'valid_token'
 
         req: httpx.Request = httpx.Request(
@@ -216,7 +201,9 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         )
         resp_500: httpx.Response = httpx.Response(status_code=500, request=req)
         err_500: httpx.HTTPStatusError = httpx.HTTPStatusError(
-            '500', request=req, response=resp_500,
+            '500',
+            request=req,
+            response=resp_500,
         )
 
         mock_cli: MagicMock = MagicMock()
@@ -233,9 +220,8 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         mock_get_valid_token: AsyncMock,
         mock_get_client: AsyncMock,
     ) -> None:
-        """
-        Test that a successful response with no violation_id returns None.
-        """
+        """Test that a successful response with no violation_id returns
+        None."""
         mock_get_valid_token.return_value = 'valid_token'
 
         mock_cli: MagicMock = MagicMock()
@@ -254,9 +240,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that max_retries=0 skips the loop and returns None.
-        """
+        """Test that max_retries=0 skips the loop and returns None."""
         mock_get_valid_token.return_value = 'valid_token'
 
         no_retry: ViolationSender = ViolationSender(
@@ -329,8 +313,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that RuntimeError is raised when no access token is available.
+        """Test that RuntimeError is raised when no access token is available.
 
         Args:
             mock_get_valid_token (AsyncMock): Mocked token manager's method.
@@ -462,7 +445,9 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         )
         resp_401: httpx.Response = httpx.Response(status_code=401, request=req)
         err_401: httpx.HTTPStatusError = httpx.HTTPStatusError(
-            '401', request=req, response=resp_401,
+            '401',
+            request=req,
+            response=resp_401,
         )
 
         mock_cli: MagicMock = MagicMock()
@@ -507,10 +492,3 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-
-"""
-pytest \
-    --cov=src.violation_sender \
-    --cov-report=term-missing tests/src/violation_sender_test.py
-"""

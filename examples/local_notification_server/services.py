@@ -26,7 +26,10 @@ from examples.local_notification_server.fcm_token_crypto import (
 )
 from examples.local_notification_server.fcm_token_crypto import encrypt_token
 from examples.local_notification_server.fcm_token_crypto import fcm_token_hash
-from examples.local_notification_server.schemas import DeviceRegistrationRequest
+from examples.local_notification_server.schemas import (
+    DeviceRegistrationRequest,
+)
+
 settings = Settings()
 logger = logging.getLogger(__name__)
 _token_cache_ttl_seconds = 86400 * 30
@@ -51,7 +54,7 @@ def _token_index_key(user_id: int) -> str:
     Returns:
         Redis key indexing metadata hashes for the user's tokens.
     """
-    return f'fcm_token_index:{user_id}'
+    return f"fcm_token_index:{user_id}"
 
 
 def _token_meta_key(user_id: int, token_hash: str) -> str:
@@ -64,12 +67,13 @@ def _token_meta_key(user_id: int, token_hash: str) -> str:
     Returns:
         Redis key containing metadata for the token registration.
     """
-    return f'fcm_token_meta:{user_id}:{token_hash}'
+    return f"fcm_token_meta:{user_id}:{token_hash}"
 
 
 def _token_cache_ready_key(user_id: int) -> str:
-    """Build the marker that distinguishes a cold token cache from no tokens."""
-    return f'fcm_tokens_ready:{user_id}'
+    """Build the marker that distinguishes a cold token cache from no
+    tokens."""
+    return f"fcm_tokens_ready:{user_id}"
 
 
 def _decode_redis_string(value: bytes) -> str:
@@ -113,7 +117,7 @@ def _queue_token_cache_write(
         row: Persisted token entity supplying durable metadata.
         device_token: Decrypted FCM token used only as the send-cache key.
     """
-    user_key = f'fcm_tokens:{row.user_id}'
+    user_key = f"fcm_tokens:{row.user_id}"
     meta_key = _token_meta_key(row.user_id, row.device_token_hash)
     mapping: dict[str, str] = {
         'token_hash': row.device_token_hash,
@@ -141,7 +145,11 @@ def _queue_token_cache_write(
     )
     pipe.expire(meta_key, _token_cache_ttl_seconds)
     pipe.expire(_token_index_key(row.user_id), _token_cache_ttl_seconds)
-    pipe.set(_token_cache_ready_key(row.user_id), '1', ex=_token_cache_ttl_seconds)
+    pipe.set(
+        _token_cache_ready_key(row.user_id),
+        '1',
+        ex=_token_cache_ttl_seconds,
+    )
 
 
 async def record_fcm_token_registration(
@@ -164,7 +172,8 @@ async def record_fcm_token_registration(
     now = datetime.now(timezone.utc).replace(microsecond=0)
     token_hash = fcm_token_hash(req.device_token)
     row = cast(
-        FcmDeviceToken | None, await db.scalar(
+        FcmDeviceToken | None,
+        await db.scalar(
             select(FcmDeviceToken).where(
                 FcmDeviceToken.device_token_hash == token_hash,
             ),
@@ -232,7 +241,8 @@ async def delete_fcm_token_metadata(
     token_hash = fcm_token_hash(device_token)
     now = datetime.now(timezone.utc).replace(microsecond=0)
     result = cast(
-        CursorResult[Any], await db.execute(
+        CursorResult[Any],
+        await db.execute(
             update(FcmDeviceToken)
             .where(
                 FcmDeviceToken.user_id == user_id,
@@ -285,11 +295,13 @@ async def list_fcm_device_status(
             'last_seen_at': _datetime_to_api(row.last_seen_at),
             'last_success_at': (
                 _datetime_to_api(row.last_success_at)
-                if row.last_success_at is not None else None
+                if row.last_success_at is not None
+                else None
             ),
             'last_failure_at': (
                 _datetime_to_api(row.last_failure_at)
-                if row.last_failure_at is not None else None
+                if row.last_failure_at is not None
+                else None
             ),
             'failure_reason': row.failure_reason,
             'is_active': row.disabled_at is None,
@@ -345,7 +357,8 @@ async def refresh_fcm_token_cache_for_users(
     db: AsyncSession,
     rds: redis.Redis,
 ) -> int:
-    """Rebuild the Redis sendable-token cache from the database source of truth.
+    """Rebuild the Redis sendable-token cache from the database source of
+    truth.
 
     Args:
         user_ids: Token owner identifiers whose cache entries are rebuilt.
@@ -367,7 +380,7 @@ async def refresh_fcm_token_cache_for_users(
     pipe = rds.pipeline()
     for user_id in unique_user_ids:
         # Atomically replace the entire rebuildable cache for each recipient.
-        pipe.delete(f'fcm_tokens:{user_id}')
+        pipe.delete(f"fcm_tokens:{user_id}")
         pipe.delete(_token_index_key(user_id))
         # A ready marker also records a deliberate empty token set.  Without
         # it, every notification would query the database again for users who
@@ -559,10 +572,11 @@ async def mark_invalid_fcm_tokens_for_users(
     await db.commit()
 
     for user_id in user_ids:
-        # Ownership is resolved from each user's cached token map before removal.
+        # Ownership is resolved from each user's cached token map before
+        # removal.
         raw_map = cast(
             Mapping[bytes, bytes],
-            await rds.hgetall(f'fcm_tokens:{user_id}'),
+            await rds.hgetall(f"fcm_tokens:{user_id}"),
         )
         owned_invalid_tokens = [
             token
@@ -574,7 +588,7 @@ async def mark_invalid_fcm_tokens_for_users(
         pipe = rds.pipeline()
         for token in owned_invalid_tokens:
             token_hash = fcm_token_hash(token)
-            pipe.hdel(f'fcm_tokens:{user_id}', token)
+            pipe.hdel(f"fcm_tokens:{user_id}", token)
             pipe.sadd(_token_index_key(user_id), token_hash)
             pipe.hset(
                 _token_meta_key(user_id, token_hash),

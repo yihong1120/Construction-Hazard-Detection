@@ -14,7 +14,6 @@ from numpy.typing import NDArray
 from src.ultralytics_args import precision_kwargs
 from src.ultralytics_args import PrecisionValue
 
-
 YOLO_WORKER_STOP_MESSAGE = '__stop__'
 _WORKER_PRECISION_ALIASES = {
     '32': 'f32',
@@ -49,8 +48,8 @@ def _parse_worker_precision(
     except KeyError as exc:
         supported = ', '.join(sorted(set(_WORKER_PRECISION_ALIASES)))
         raise ValueError(
-            f'Unsupported YOLO_WORKER_PRECISION: {raw_value!r}. '
-            f'Use f32, f16, or int8. Supported aliases: {supported}.',
+            f"Unsupported YOLO_WORKER_PRECISION: {raw_value!r}. "
+            f"Use f32, f16, or int8. Supported aliases: {supported}.",
         ) from exc
 
 
@@ -66,7 +65,7 @@ def _worker_precision_config(
         # TensorRT engine precision is baked into the .engine file. These
         # engines are dynamic batch only and require fixed square 640 inputs.
         return Path('models/int8_engine'), '.engine', {'rect': False}
-    raise AssertionError(f'unhandled YOLO worker precision mode: {mode}')
+    raise AssertionError(f"unhandled YOLO worker precision mode: {mode}")
 
 
 class WorkerRequestPayload(TypedDict):

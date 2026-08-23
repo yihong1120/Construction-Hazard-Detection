@@ -28,7 +28,6 @@ WS_INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(8)
 # (inherited from shared settings)
 AUTO_REGISTER_JTI: bool = get_auto_register_jti()
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -51,11 +50,12 @@ def _should_bypass_local_auth(client_ip: str) -> bool:
 
 
 async def _get_model_key_from_ws(
-        websocket: WebSocket,
-        client_ip: str,
-        username: str,
+    websocket: WebSocket,
+    client_ip: str,
+    username: str,
 ) -> str | None:
-    """Resolve the model key from headers, query parameters or the first message."""
+    """Resolve the model key from headers, query parameters or the first
+    message."""
     model_key: str | None = websocket.headers.get('x-model-key')
     if model_key:
         logger.info(
@@ -110,10 +110,10 @@ async def _get_model_key_from_ws(
 
 
 async def _send_ready_config(
-        websocket: WebSocket,
-        model_key: str,
-        client_ip: str,
-        username: str,
+    websocket: WebSocket,
+    model_key: str,
+    client_ip: str,
+    username: str,
 ) -> bool:
     """Send the ready message after a model has been selected."""
     config_response: dict[str, str] = {
@@ -137,18 +137,22 @@ async def _send_ready_config(
 
 
 async def _process_frame_and_respond(
-        websocket: WebSocket,
-        img_bytes: bytes,
-        model_instance: object,
-        client_ip: str,
-        username: str,
+    websocket: WebSocket,
+    img_bytes: bytes,
+    model_instance: object,
+    client_ip: str,
+    username: str,
 ) -> bool:
     """Run detection for one frame and send the result."""
     datas, _ = await run_detection_from_bytes(
-        img_bytes, model_instance, semaphore=WS_INFERENCE_SEMAPHORE,
+        img_bytes,
+        model_instance,
+        semaphore=WS_INFERENCE_SEMAPHORE,
     )
     success = await _safe_websocket_send_json(
-        websocket, datas, f"{client_ip} ({username})",
+        websocket,
+        datas,
+        f"{client_ip} ({username})",
     )
     if not success:
         logger.info(
@@ -196,19 +200,19 @@ async def _prepare_model_and_notify(
 
 
 async def _detect_loop(
-        websocket: WebSocket,
-        session_start: float,
-        model_instance: object,
-        client_ip: str,
-        username: str,
+    websocket: WebSocket,
+    session_start: float,
+    model_instance: object,
+    client_ip: str,
+    username: str,
 ) -> int:
     """Receive websocket frames until timeout, close, or send failure."""
     frame_count: int = 0
     while True:
         if await check_and_maybe_close_on_timeout(
-                websocket,
-                session_start,
-                f"[YOLO-WebSocket] {client_ip} ({username})",
+            websocket,
+            session_start,
+            f"[YOLO-WebSocket] {client_ip} ({username})",
         ):
             break
         img_bytes: bytes | None = await _safe_websocket_receive_bytes(
@@ -237,10 +241,10 @@ async def _detect_loop(
 
 
 async def handle_websocket_detect(
-        websocket: WebSocket,
-        rds: redis.Redis,
-        settings: Settings,
-        model_loader: DetectionModelManager,
+    websocket: WebSocket,
+    rds: redis.Redis,
+    settings: Settings,
+    model_loader: DetectionModelManager,
 ) -> None:
     """Handle one YOLO websocket detection session."""
     client_ip: str = websocket.client.host if websocket.client else 'unknown'
@@ -251,10 +255,7 @@ async def handle_websocket_detect(
     if _should_bypass_local_auth(client_ip):
         username = os.getenv('YOLO_WS_LOCAL_USERNAME') or 'local-main'
         logger.info(
-            (
-                f"[YOLO-WebSocket] {client_ip}: "
-                'Localhost auth bypass enabled'
-            ),
+            (f"[YOLO-WebSocket] {client_ip}: Localhost auth bypass enabled"),
         )
     else:
         authenticated_username, _ = await authenticate_ws_or_none(
@@ -267,19 +268,28 @@ async def handle_websocket_detect(
         if not authenticated_username:
             return
         username = authenticated_username
-        logger.info(f"[YOLO-WebSocket] {client_ip}: Authenticated as {username}")
+        logger.info(
+            f"[YOLO-WebSocket] {client_ip}: Authenticated as {username}",
+        )
 
     session_start: float = start_session_timer()
 
     model_instance = await _prepare_model_and_notify(
-        websocket, client_ip, username, model_loader,
+        websocket,
+        client_ip,
+        username,
+        model_loader,
     )
     if model_instance is None:
         return
 
     try:
         await _detect_loop(
-            websocket, session_start, model_instance, client_ip, username,
+            websocket,
+            session_start,
+            model_instance,
+            client_ip,
+            username,
         )
     except WebSocketDisconnect:
         logger.info(
@@ -300,4 +310,6 @@ async def handle_websocket_detect(
         except Exception:
             pass
     finally:
-        logger.info(f"[YOLO-WebSocket] {client_ip} ({username}): Connection closed")
+        logger.info(
+            f"[YOLO-WebSocket] {client_ip} ({username}): Connection closed",
+        )

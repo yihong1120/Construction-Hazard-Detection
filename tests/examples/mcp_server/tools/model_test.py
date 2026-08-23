@@ -9,13 +9,10 @@ from examples.mcp_server.tools.model import ModelTools
 
 
 class ModelToolsTests(unittest.IsolatedAsyncioTestCase):
-
-    """Provide ModelToolsTests.
-    """
+    """Provide ModelToolsTests."""
 
     async def test_sync_reports_updated_local_model(self) -> None:
-        """Test sync reports updated local model.
-        """
+        """Test sync reports updated local model."""
         with tempfile.TemporaryDirectory() as directory:
             fetcher = MagicMock()
             fetcher.local_dir = Path(directory)
@@ -31,12 +28,13 @@ class ModelToolsTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(result['success'])
             self.assertTrue(result['updated'])
             fetcher.request_new_model.assert_called_once_with(
-                'yolo26n', '1970-01-01T00:00:00', force_download=True,
+                'yolo26n',
+                '1970-01-01T00:00:00',
+                force_download=True,
             )
 
     async def test_list_operations_do_not_keep_stale_cache(self) -> None:
-        """Test list operations do not keep stale cache.
-        """
+        """Test list operations do not keep stale cache."""
         with tempfile.TemporaryDirectory() as directory:
             fetcher = MagicMock()
             fetcher.local_dir = Path(directory)

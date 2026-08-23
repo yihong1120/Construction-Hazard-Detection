@@ -14,6 +14,7 @@ from examples.local_notification_server.fcm_service import init_firebase_app
 from examples.local_notification_server.routers import (
     router as notification_router,
 )
+
 load_dotenv()
 
 
@@ -28,7 +29,8 @@ async def notification_lifespan(app: FastAPI) -> AsyncIterator[None]:
         Control to FastAPI while shared database, Redis, and Firebase resources
         are available.
     """
-    # Validate mandatory secret material before accepting any notification work.
+    # Validate mandatory secret material before accepting any notification
+    # work.
     cred_path = os.environ['FIREBASE_CRED_PATH']
     project_id = os.environ['FIREBASE_PROJECT_ID']
     Fernet(os.environ['FCM_TOKEN_ENCRYPTION_KEY'].encode('utf-8'))
@@ -36,6 +38,7 @@ async def notification_lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with global_lifespan(app):
         init_firebase_app(cred_path=cred_path, project_id=project_id)
         yield
+
 
 app: FastAPI = FastAPI(lifespan=notification_lifespan)
 
@@ -51,14 +54,11 @@ def main() -> None:
 if __name__ == '__main__':
     main()
 
-"""
-uvicorn examples.local_notification_server.app:app\
-    --host 127.0.0.1 \
-    --port 8003 \
-    --workers 4
 
-uv run uvicorn examples.local_notification_server.app:app\
-    --host 127.0.0.1 \
-    --port 8003 \
-    --workers 4
+"""
+uvicorn examples.local_notification_server.app:app \
+    --host 127.0.0.1 --port 8003 --workers 4
+
+uv run uvicorn examples.local_notification_server.app:app \
+    --host 127.0.0.1 --port 8003 --workers 4
 """

@@ -12,7 +12,6 @@ from examples.mcp_server.schemas import InferenceResponse
 from src.async_http_client import AsyncHttpClientOwner
 from src.local_yolo_detector import LocalYoloDetector
 
-
 _REMOTE_IMAGE_TIMEOUT_SECONDS = max(
     1,
     get_env_int('MCP_REMOTE_IMAGE_TIMEOUT_SECONDS', 20),
@@ -115,10 +114,16 @@ class InferenceTools:
                 # Decode base64 image
                 if ',' in image_base64:
                     image_base64 = image_base64.split(
-                        ',', 1,
-                    )[1]  # Remove data URL prefix
+                        ',',
+                        1,
+                    )[
+                        1
+                    ]  # Remove data URL prefix
 
-                if len(image_base64) > ((_MAX_REMOTE_IMAGE_BYTES + 2) // 3) * 4:
+                if (
+                    len(image_base64)
+                    > ((_MAX_REMOTE_IMAGE_BYTES + 2) // 3) * 4
+                ):
                     raise ValueError('Base64 image exceeds size limit')
                 image_bytes = base64.b64decode(image_base64, validate=True)
                 nparr = np.frombuffer(image_bytes, np.uint8)
@@ -165,7 +170,9 @@ class InferenceTools:
             return None
 
     async def _init_detector(
-        self, model_key: str, use_ultralytics: bool,
+        self,
+        model_key: str,
+        use_ultralytics: bool,
         movement_thr: float,
     ) -> LocalYoloDetector:
         """Initialise the detection system.

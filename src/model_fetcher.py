@@ -12,9 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModelFetcher:
-    """
-    A class to fetch and update model files from a server.
-    """
+    """A class to fetch and update model files from a server."""
 
     def __init__(
         self,
@@ -37,21 +35,28 @@ class ModelFetcher:
             or 'http://your-server-address/get_new_model'
         )
         self.models = models or [
-            'yolo26n', 'yolo26s', 'yolo26m', 'yolo26l', 'yolo26x',
+            'yolo26n',
+            'yolo26s',
+            'yolo26m',
+            'yolo26l',
+            'yolo26x',
         ]
         self.local_dir = Path(local_dir)
-        self.bearer_token = bearer_token or os.getenv(
-            'MODEL_FETCH_BEARER_TOKEN',
-        ) or ''
+        self.bearer_token = (
+            bearer_token
+            or os.getenv(
+                'MODEL_FETCH_BEARER_TOKEN',
+            )
+            or ''
+        )
         self.max_download_bytes = max(
             1,
             int(os.getenv('MODEL_FETCH_MAX_BYTES', str(6 * 1024**3))),
         )
 
     def get_last_update_time(self, model: str) -> str:
-        """
-        Get the last update time of a local model file.
-        If the file does not exist, return Unix epoch timestamp.
+        """Get the last update time of a local model file. If the file does not
+        exist, return Unix epoch timestamp.
 
         Args:
             model (str): The name of the model.
@@ -59,7 +64,7 @@ class ModelFetcher:
         Returns:
             str: The last modification time in ISO format.
         """
-        local_file_path = self.local_dir / f'best_{model}.pt'
+        local_file_path = self.local_dir / f"best_{model}.pt"
         if local_file_path.exists():
             last_mod_time = datetime.datetime.fromtimestamp(
                 local_file_path.stat().st_mtime,
@@ -87,8 +92,7 @@ class ModelFetcher:
         if not self.bearer_token:
             raise ValueError('MODEL_FETCH_BEARER_TOKEN is required')
         requested_timestamp = (
-            '1970-01-01T00:00:00'
-            if force_download else last_update_time
+            '1970-01-01T00:00:00' if force_download else last_update_time
         )
         try:
             response = requests.post(
@@ -97,7 +101,7 @@ class ModelFetcher:
                     'model': model,
                     'last_update_time': requested_timestamp,
                 },
-                headers={'Authorization': f'Bearer {self.bearer_token}'},
+                headers={'Authorization': f"Bearer {self.bearer_token}"},
                 timeout=(5, 120),
                 stream=True,
             )
@@ -107,7 +111,8 @@ class ModelFetcher:
                 return False
             if response.status_code != 200:
                 logger.error(
-                    'Failed to fetch model %s. Server returned status code: %s',
+                    'Failed to fetch model %s. '
+                    'Server returned status code: %s',
                     model,
                     response.status_code,
                 )
@@ -116,7 +121,9 @@ class ModelFetcher:
             content_length = int(response.headers.get('content-length', '0'))
             if content_length > self.max_download_bytes:
                 response.close()
-                raise ValueError('Model download exceeds configured size limit')
+                raise ValueError(
+                    'Model download exceeds configured size limit',
+                )
             try:
                 self._stream_model_to_disk(model, response)
                 return True
@@ -132,8 +139,8 @@ class ModelFetcher:
         response: requests.Response,
     ) -> None:
         """Write a response to a temporary file and atomically install it."""
-        destination = self.local_dir / f'best_{model}.pt'
-        temporary = destination.with_suffix(f'{destination.suffix}.part')
+        destination = self.local_dir / f"best_{model}.pt"
+        temporary = destination.with_suffix(f"{destination.suffix}.part")
         self.local_dir.mkdir(parents=True, exist_ok=True)
         written = 0
         digest = hashlib.sha256()

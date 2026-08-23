@@ -9,14 +9,10 @@ from examples.shared import ws_helpers as wh
 
 
 class TestConfigFlags(unittest.TestCase):
-    """
-    Unit tests for configuration flags used by WebSocket helpers.
-    """
+    """Unit tests for configuration flags used by WebSocket helpers."""
 
     def test_get_auto_register_jti_true_false(self) -> None:
-        """
-        Test parsing WS_AUTO_REGISTER_JTI case-insensitively.
-        """
+        """Test parsing WS_AUTO_REGISTER_JTI case-insensitively."""
         with patch.dict('os.environ', {'WS_AUTO_REGISTER_JTI': 'true'}):
             self.assertTrue(wh.get_auto_register_jti())
         with patch.dict('os.environ', {'WS_AUTO_REGISTER_JTI': 'TRUE'}):
@@ -28,14 +24,10 @@ class TestConfigFlags(unittest.TestCase):
 
 
 class TestTimerAndPayload(unittest.TestCase):
-    """
-    Unit tests for timer utilities and timeout payload generation.
-    """
+    """Unit tests for timer utilities and timeout payload generation."""
 
     def test_start_session_timer_uses_monotonic(self) -> None:
-        """
-        Test that start_session_timer uses time.monotonic.
-        """
+        """Test that start_session_timer uses time.monotonic."""
         with patch(
             'examples.shared.ws_helpers.time.monotonic',
             return_value=123.45,
@@ -43,9 +35,7 @@ class TestTimerAndPayload(unittest.TestCase):
             self.assertEqual(wh.start_session_timer(), 123.45)
 
     def test_session_timeout_payload_shape(self) -> None:
-        """
-        Test the structure of session_timeout_payload.
-        """
+        """Test the structure of session_timeout_payload."""
         payload = wh.session_timeout_payload()
         self.assertEqual(
             payload,
@@ -58,9 +48,7 @@ class TestTimerAndPayload(unittest.TestCase):
 
 
 class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
-    """
-    Behavioural tests for time-based WebSocket session shutdown.
-    """
+    """Behavioural tests for time-based WebSocket session shutdown."""
 
     def __init__(self, methodName: str = 'runTest') -> None:
         """Support __init__."""
@@ -78,9 +66,7 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
         self.ws.close = _close
 
     async def test_timeout_closes_and_sends_json(self) -> None:
-        """
-        Test session timeout with JSON notice and closure.
-        """
+        """Test session timeout with JSON notice and closure."""
         ws = self.ws
         # Make session exceed limit: set small limit and large monotonic.
         with (
@@ -102,7 +88,8 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
             )
         self.assertTrue(closed)
         self.assertEqual(
-            ws.closed_calls, [
+            ws.closed_calls,
+            [
                 (1000, 'Session timeout (5 minutes)'),
             ],
         )
@@ -113,9 +100,7 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[2], 'clientA')
 
     async def test_timeout_closes_and_sends_text(self) -> None:
-        """
-        Test session timeout with text notice and closure.
-        """
+        """Test session timeout with text notice and closure."""
         ws = self.ws
         with (
             patch(
@@ -139,7 +124,8 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
             )
         self.assertTrue(closed)
         self.assertEqual(
-            ws.closed_calls, [
+            ws.closed_calls,
+            [
                 (1000, 'Session timeout (5 minutes)'),
             ],
         )
@@ -151,9 +137,7 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[2], 'clientB')
 
     async def test_not_timeout_returns_false(self) -> None:
-        """
-        Test behaviour when session has not timed out.
-        """
+        """Test behaviour when session has not timed out."""
         ws = self.ws
         with (
             patch('examples.shared.ws_helpers.WS_MAX_SESSION_SECONDS', 60.0),
@@ -182,30 +166,28 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
 
 
 class TestLogEveryN(unittest.TestCase):
-    """
-    Unit tests for the periodic logging helper.
-    """
+    """Unit tests for the periodic logging helper."""
 
     def test_logs_only_on_n_multiples(self) -> None:
-        """
-        Test logging only on exact multiples of n.
-        """
+        """Test logging only on exact multiples of n."""
         with patch.object(wh.logger, 'debug') as mock_log:
             for i in range(1, 11):
                 wh.log_every_n('prefix', i, unit='items', n=3)
         # Should log at 3, 6, 9.
         self.assertEqual(mock_log.call_count, 3)
         self.assertEqual(
-            mock_log.call_args_list[0].args, (
-                '%s: Processed %s %s', 'prefix', 3, 'items',
+            mock_log.call_args_list[0].args,
+            (
+                '%s: Processed %s %s',
+                'prefix',
+                3,
+                'items',
             ),
         )
 
 
 class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the authenticate_ws_or_none function.
-    """
+    """Unit tests for the authenticate_ws_or_none function."""
 
     def __init__(self, methodName: str = 'runTest') -> None:
         """Support __init__."""
@@ -222,9 +204,7 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
         self.ws.close = _close
 
     async def test_authenticate_success(self) -> None:
-        """
-        Test successful authentication.
-        """
+        """Test successful authentication."""
         ws = self.ws
         rds: object = object()
         settings = SimpleNamespace()
@@ -259,9 +239,7 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res, ('alice', {'role': 'user'}))
 
     async def test_authenticate_failure_returns_none_tuple(self) -> None:
-        """
-        Test behaviour on authentication failure.
-        """
+        """Test behaviour on authentication failure."""
         ws = self.ws
         rds: object = object()
         # Provide a minimal settings substitute that satisfies SettingsLike
@@ -290,11 +268,3 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-
-'''
-pytest \
-    --cov=examples.shared.ws_helpers \
-    --cov-report=term-missing \
-    tests/examples/shared/ws_helpers_test.py
-'''

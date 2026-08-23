@@ -32,7 +32,6 @@ from examples.local_notification_server.lang_config import Translator
 from examples.local_notification_server.schemas import SiteNotifyRequest
 from src.warning_types import Warnings
 
-
 _token_fetch_chunk_size: Final[int] = 500
 _fcm_batch_size: Final[int] = 100
 _fcm_max_concurrency: Final[int] = 8
@@ -82,8 +81,8 @@ def _decode_lang_token_map(
     Returns:
         Tokens grouped by canonical BCP 47 language code.
     """
-    lang_to_tokens: DefaultDict[NotificationLanguage, list[str]] = (
-        defaultdict(list)
+    lang_to_tokens: DefaultDict[NotificationLanguage, list[str]] = defaultdict(
+        list,
     )
     for raw_map in raw_maps:
         for token_b, lang_b in raw_map.items():
@@ -154,8 +153,8 @@ async def _collect_push_token_diagnostics(
     token_stats = PushTokenStats()
     for start in range(0, len(user_ids), _token_fetch_chunk_size):
         pipe = rds.pipeline()
-        for user_id in user_ids[start:start + _token_fetch_chunk_size]:
-            pipe.hgetall(f'fcm_tokens:{user_id}')
+        for user_id in user_ids[start: start + _token_fetch_chunk_size]:
+            pipe.hgetall(f"fcm_tokens:{user_id}")
         results: list[dict[bytes, bytes]] = await pipe.execute()
         token_stats.add(results)
     return token_stats
@@ -198,9 +197,10 @@ async def create_notification_records_for_users(
     Returns:
         Number of recipient records persisted.
     """
-    record_body = f'{req.site} - {req.stream_name}\n' + '\n'.join(
+    record_body = f"{req.site} - {req.stream_name}\n" + '\n'.join(
         Translator.translate_from_dict(
-            req.body, _notification_record_language,
+            req.body,
+            _notification_record_language,
         ),
     )
     for start in range(0, len(user_ids), _notification_insert_chunk_size):
@@ -213,7 +213,9 @@ async def create_notification_records_for_users(
                 'deep_link': req.deep_link,
                 'metadata_json': req.metadata,
             }
-            for user_id in user_ids[start:start + _notification_insert_chunk_size]
+            for user_id in user_ids[
+                start: start + _notification_insert_chunk_size
+            ]
         ]
         await db.execute(insert(Notification), values)
     await db.commit()
@@ -248,8 +250,9 @@ def build_push_task(
         'type': req.notification_type,
     }
 
-    body: str = f"{req.site} - {req.stream_name}\n" + \
-        '\n'.join(translated_lines)
+    body: str = f"{req.site} - {req.stream_name}\n" + '\n'.join(
+        translated_lines,
+    )
 
     logger.info(
         'FCM notification batch prepared lang=%s tokens=%d body_lines=%d '
@@ -278,10 +281,13 @@ async def iter_push_tasks_streaming(
     token_fetch_chunk_size: int | None = None,
     fcm_batch_size: int | None = None,
     token_stats: PushTokenStats | None = None,
-    build_push_task_fn: Callable[
-        [SiteNotifyRequest, NotificationLanguage, list[str]],
-        Awaitable[PushTaskResult],
-    ] | None = None,
+    build_push_task_fn: (
+        Callable[
+            [SiteNotifyRequest, NotificationLanguage, list[str]],
+            Awaitable[PushTaskResult],
+        ]
+        | None
+    ) = None,
 ) -> AsyncIterator[Awaitable[PushTaskResult]]:
     """Stream Redis token chunks into FCM batch tasks.
 
@@ -305,10 +311,11 @@ async def iter_push_tasks_streaming(
     )
 
     for start in range(0, len(user_ids), chunk_size):
-        # Read bounded Redis chunks before forming language-specific FCM batches.
+        # Read bounded Redis chunks before forming language-specific FCM
+        # batches.
         pipe = rds.pipeline()
-        for user_id in user_ids[start:start + chunk_size]:
-            pipe.hgetall(f'fcm_tokens:{user_id}')
+        for user_id in user_ids[start: start + chunk_size]:
+            pipe.hgetall(f"fcm_tokens:{user_id}")
 
         redis_results: list[dict[bytes, bytes]] = await pipe.execute()
         if token_stats is not None:

@@ -19,20 +19,20 @@ from src.notifiers.image_records import ImageRecordStore
 
 class InputData(TypedDict):
     """Type definition for input data."""
+
     message: str
     image: bytes | None
 
 
 class ResultData(TypedDict):
     """Type definition for result data."""
+
     response_code: int
 
 
 class LineMessenger:
-    """
-    A class for managing notifications sent via the LINE Messaging API
-    and Cloudinary image upload.
-    """
+    """A class for managing notifications sent via the LINE Messaging API and
+    Cloudinary image upload."""
 
     def __init__(
         self,
@@ -41,8 +41,7 @@ class LineMessenger:
         check_interval_days: int = 1,
         session: aiohttp.ClientSession | None = None,
     ) -> None:
-        """
-        Initialise the LineMessenger instance.
+        """Initialise the LineMessenger instance.
 
         Args:
             channel_access_token (str | None):
@@ -92,8 +91,7 @@ class LineMessenger:
     # --------------------------------------------------------------------- #
 
     def load_image_records(self) -> dict[str, str]:
-        """
-        Load image records from JSON file.
+        """Load image records from JSON file.
 
         Returns:
             dict[str, str]: The image records dictionary.
@@ -101,9 +99,7 @@ class LineMessenger:
         return self._image_records.load()
 
     def save_image_records(self) -> None:
-        """
-        Save image records to JSON file.
-        """
+        """Save image records to JSON file."""
         self._image_records.save(self.image_records)
 
     # --------------------------------------------------------------------- #
@@ -116,8 +112,7 @@ class LineMessenger:
         message: str,
         image_bytes: bytes | None = None,
     ) -> int:
-        """
-        Send a message via LINE Messaging API, optionally with an image.
+        """Send a message via LINE Messaging API, optionally with an image.
 
         Args:
             recipient_id (str): The recipient ID.
@@ -190,6 +185,7 @@ class LineMessenger:
         payload: dict[str, object],
     ) -> int:
         """Post one LINE payload through the supplied session."""
+
         async with session.post(
             'https://api.line.me/v2/bot/message/push',
             headers=headers,
@@ -210,8 +206,7 @@ class LineMessenger:
         self,
         image_data: bytes,
     ) -> tuple[str, str]:
-        """
-        Upload image bytes to Cloudinary and return (url, public_id).
+        """Upload image bytes to Cloudinary and return (url, public_id).
 
         Args:
             image_data (bytes): The image data to upload.
@@ -239,8 +234,7 @@ class LineMessenger:
     # --------------------------------------------------------------------- #
 
     def record_image_upload(self, public_id: str) -> None:
-        """
-        Record upload time for a Cloudinary image.
+        """Record upload time for a Cloudinary image.
 
         Args:
             public_id (str): The public ID of the image.
@@ -258,7 +252,8 @@ class LineMessenger:
             self.save_image_records()
 
     def _cleanup_is_due(self) -> bool:
-        """Return whether the configured Cloudinary cleanup interval elapsed."""
+        """Return whether the configured Cloudinary cleanup interval
+        elapsed."""
         last_checked = self.image_records.get('last_checked')
         if not last_checked:
             return True
@@ -266,16 +261,13 @@ class LineMessenger:
             last_checked_time = datetime.fromisoformat(last_checked)
         except ValueError:
             return True
-        return (
-            datetime.now() - last_checked_time
-            > timedelta(days=self.check_interval_days)
+        return datetime.now() - last_checked_time > timedelta(
+            days=self.check_interval_days,
         )
 
     def delete_old_images_with_interval(self) -> None:
-        """
-        Delete images older than 7 days, but perform the check only once
-        every `check_interval_days`.
-        """
+        """Delete images older than 7 days, but perform the check only once
+        every `check_interval_days`."""
         with self._records_lock:
             if self._cleanup_is_due():
                 self.image_records['last_checked'] = datetime.now().isoformat()
@@ -283,9 +275,7 @@ class LineMessenger:
                 self.save_image_records()
 
     def delete_old_images(self) -> None:
-        """
-        Delete Cloudinary images older than 7 days.
-        """
+        """Delete Cloudinary images older than 7 days."""
         with self._records_lock:
             self._delete_old_images()
             self.save_image_records()
@@ -294,7 +284,8 @@ class LineMessenger:
         """Remove expired records; the caller owns locking and persistence."""
         now: datetime = datetime.now()
         expired: list[str] = [
-            pid for pid, ts in self.image_records.items()
+            pid
+            for pid, ts in self.image_records.items()
             if pid != 'last_checked'
             and now - datetime.fromisoformat(ts) > timedelta(days=7)
         ]
@@ -304,8 +295,7 @@ class LineMessenger:
             self.image_records.pop(pid, None)
 
     def delete_image_from_cloudinary(self, public_id: str) -> None:
-        """
-        Delete an image from Cloudinary via public_id.
+        """Delete an image from Cloudinary via public_id.
 
         Args:
             public_id (str): The public ID of the image to delete.
@@ -327,15 +317,15 @@ class LineMessenger:
                 exc,
             )
 
+
 # ------------------------------------------------------------------------- #
 # Example usage
 # ------------------------------------------------------------------------- #
 
 
 async def main() -> None:
-    """
-    Example usage for sending a message with an image using LineMessenger.
-    """
+    """Example usage for sending a message with an image using
+    LineMessenger."""
     channel_access_token: str = 'YOUR_CHANNEL_ACCESS_TOKEN'
     recipient_id: str = 'RECIPIENT_USER_ID'
     messenger = LineMessenger(channel_access_token=channel_access_token)

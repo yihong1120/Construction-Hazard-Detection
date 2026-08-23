@@ -17,7 +17,10 @@ class ModelTools:
         self._fetcher = fetcher or ModelFetcher()
 
     async def sync_model(
-        self, model_name: str, *, force_download: bool = False,
+        self,
+        model_name: str,
+        *,
+        force_download: bool = False,
     ) -> dict:
         """Fetch a newer model and atomically install it when one exists."""
         last_update_time = self._fetcher.get_last_update_time(model_name)
@@ -27,7 +30,7 @@ class ModelTools:
             last_update_time,
             force_download=force_download,
         )
-        model_path = self._fetcher.local_dir / f'best_{model_name}.pt'
+        model_path = self._fetcher.local_dir / f"best_{model_name}.pt"
         return {
             'success': updated or model_path.is_file(),
             'updated': updated,
@@ -45,11 +48,12 @@ class ModelTools:
         }
 
     async def get_local_models(self) -> dict:
-        """List known local model artefacts without a recursive workspace scan."""
+        """List known local model artefacts without a recursive workspace
+        scan."""
         models = [
             str(path)
             for name in self._fetcher.models
-            if (path := self._fetcher.local_dir / f'best_{name}.pt').is_file()
+            if (path := self._fetcher.local_dir / f"best_{name}.pt").is_file()
         ]
         return {
             'success': True,

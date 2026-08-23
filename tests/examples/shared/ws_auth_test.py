@@ -41,9 +41,7 @@ def _access_payload(
 
 
 class TestExtractionHelpers(unittest.TestCase):
-    """
-    Unit tests for token and model-key extraction helper functions.
-    """
+    """Unit tests for token and model-key extraction helper functions."""
 
     def __init__(self, methodName: str = 'runTest') -> None:
         """Support __init__."""
@@ -124,9 +122,7 @@ class TestExtractionHelpers(unittest.TestCase):
 
 
 class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
-    """
-    End-to-end tests for the `authenticate_websocket` function.
-    """
+    """End-to-end tests for the `authenticate_websocket` function."""
 
     def __init__(self, methodName: str = 'runTest') -> None:
         """Support __init__."""
@@ -350,8 +346,7 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
     async def test_auto_register_with_no_cached_user_creates_default_cache(
         self,
     ) -> None:
-        """Test auto register with no cached user creates default cache.
-        """
+        """Test auto register with no cached user creates default cache."""
         payload = _access_payload(
             username='neo',
             jti='jN',
@@ -403,9 +398,8 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cache['jti_meta']['jN'], 1700000200)
 
     async def test_auto_register_with_existing_jti_meta_dict(self) -> None:
-        """
-        Test preservation of existing jti_meta entries and add current JTI.
-        """
+        """Test preservation of existing jti_meta entries and add current
+        JTI."""
         from examples.shared import ws_auth as wa
 
         payload = _access_payload(
@@ -468,11 +462,3 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-
-'''
-pytest \
-    --cov=examples.shared.ws_auth \
-    --cov-report=term-missing \
-    tests/examples/shared/ws_auth_test.py
-'''

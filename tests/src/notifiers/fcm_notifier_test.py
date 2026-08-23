@@ -14,17 +14,14 @@ from src.notifiers.fcm_notifier import FCMSender
 
 
 class TestFCMSender(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the FCMSender class.
+    """Unit tests for the FCMSender class.
 
     This class contains asynchronous unit tests for the FCMSender class,
     verifying its behaviour when sending FCM messages under various conditions.
     """
 
     def setUp(self) -> None:
-        """
-        Set up the test case with a mock shared token and example data.
-        """
+        """Set up the test case with a mock shared token and example data."""
         # Mock shared token dictionary for authentication simulation.
         self.mock_shared_token: MutableMapping[str, str | bool] = {
             'access_token': 'initial_token',
@@ -51,15 +48,13 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         self.violation_id: int = 123
 
     async def asyncTearDown(self) -> None:
-        """
-        Clean up resources after each test.
-        """
+        """Clean up resources after each test."""
         if hasattr(self.sender, '_client') and self.sender._client:
             await self.sender.close()
 
     def test_fcm_sender_init_with_none_api_url(self) -> None:
-        """
-        Test FCMSender initialization when api_url is None.
+        """Test FCMSender initialization when api_url is None.
+
         Should use environment variable or default.
         """
         # Test with environment variable not set
@@ -69,15 +64,15 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         # Test with environment variable set
         with patch.dict(
-            os.environ, {'FCM_API_URL': 'http://test.com'}, clear=True,
+            os.environ,
+            {'FCM_API_URL': 'http://test.com'},
+            clear=True,
         ):
             sender = FCMSender(api_url=None)
             self.assertEqual(sender.api_url, 'http://test.com')
 
     async def test_close_method(self) -> None:
-        """
-        Test the close method properly closes the HTTP client.
-        """
+        """Test the close method properly closes the HTTP client."""
         # Create a client first
         client = await self.sender._get_client()
         self.assertIsNotNone(client)
@@ -95,9 +90,8 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         self: TestFCMSender,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that if get_valid_token returns empty string,
-        the method returns False immediately.
+        """Test that if get_valid_token returns empty string, the method
+        returns False immediately.
 
         Args:
             mock_get_valid_token (AsyncMock):
@@ -151,9 +145,8 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post: AsyncMock,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that when all retries are exhausted with non-401 errors,
-        the method returns False.
+        """Test that when all retries are exhausted with non-401 errors, the
+        method returns False.
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
@@ -196,9 +189,8 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post: AsyncMock,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that if no token is present,
-        FCMSender calls get_valid_token before sending.
+        """Test that if no token is present, FCMSender calls get_valid_token
+        before sending.
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
@@ -246,9 +238,8 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post: AsyncMock,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that if the API returns 200 with {"success": True},
-        the method returns True.
+        """Test that if the API returns 200 with {"success": True}, the method
+        returns True.
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
@@ -334,9 +325,8 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post: AsyncMock,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that if the API returns 200 but {"success": False},
-        the method returns False.
+        """Test that if the API returns 200 but {"success": False}, the method
+        returns False.
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
@@ -375,9 +365,8 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_refresh_token: AsyncMock,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that if the API returns 401,
-        the method attempts to refresh the token and retries the request once.
+        """Test that if the API returns 401, the method attempts to refresh the
+        token and retries the request once.
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
@@ -430,9 +419,8 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_refresh_token: AsyncMock,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that if the API keeps returning 401 even after max_retries,
-        the method eventually returns False.
+        """Test that if the API keeps returning 401 even after max_retries, the
+        method eventually returns False.
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
@@ -484,9 +472,8 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post: AsyncMock,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that if an httpx.RequestError occurs (e.g. network issues),
-        the method returns False.
+        """Test that if an httpx.RequestError occurs (e.g. network issues), the
+        method returns False.
 
         Args:
             mock_post (AsyncMock): Mocked post method of httpx.AsyncClient.
@@ -520,8 +507,7 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post: AsyncMock,
         mock_get_valid_token: AsyncMock,
     ) -> None:
-        """
-        Test that if an httpx.HTTPStatusError occurs (e.g. 403 Forbidden),
+        """Test that if an httpx.HTTPStatusError occurs (e.g. 403 Forbidden),
         the method returns False.
 
         Args:
@@ -563,10 +549,3 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=src.notifiers.fcm_notifier \
-    --cov-report=term-missing \
-    tests/src/notifiers/fcm_notifier_test.py
-'''

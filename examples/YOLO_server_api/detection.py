@@ -36,8 +36,7 @@ def convert_to_image(data: bytes) -> np.ndarray:
 
 
 async def get_prediction_result(img: np.ndarray, model: Any) -> Any:
-    """
-    Generate prediction results using TensorRT, SAHI, or standard YOLO
+    """Generate prediction results using TensorRT, SAHI, or standard YOLO
     inference.
 
     Args:
@@ -78,9 +77,8 @@ async def get_prediction_result(img: np.ndarray, model: Any) -> Any:
 
 
 def compile_detection_data(result: Any) -> list[list[float | int]]:
-    """
-    Standardise detection results from SAHI and Ultralytics
-    into uniform format.
+    """Standardise detection results from SAHI and Ultralytics into uniform
+    format.
 
     Args:
         result:
@@ -145,8 +143,8 @@ def _compile_ultralytics_detection_data(
 async def process_labels(
     datas: list[list[float | int]],
 ) -> list[list[float | int]]:
-    """
-    Process detection labels by removing overlapping and contained detections.
+    """Process detection labels by removing overlapping and contained
+    detections.
 
     Applies a multi-stage filtering process to clean up detection results:
     1. Remove overlapping labels (e.g., hardhat vs no_hardhat conflicts)
@@ -176,8 +174,7 @@ async def run_detection_from_bytes(
     model_instance: Any,
     semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[list[list[float | int]], dict[str, float]]:
-    """
-    Run detection on image bytes with concurrency control.
+    """Run detection on image bytes with concurrency control.
 
     Args:
         img_bytes: The raw image bytes.
@@ -332,9 +329,8 @@ def _add_conflicting_pair_indices(
 async def remove_overlapping_labels(
     datas: list[list[float | int]],
 ) -> list[list[float | int]]:
-    """
-    Remove overlapping detections
-    between conflicting safety equipment categories.
+    """Remove overlapping detections between conflicting safety equipment
+    categories.
 
     Args:
         datas: List of detection data in format [x1, y1, x2, y2, conf, label].
@@ -351,7 +347,11 @@ async def remove_overlapping_labels(
 
     # Find overlaps between hardhat and no_hardhat detections
     _add_conflicting_pair_indices(
-        bad, ci['hardhat'], ci['no_hardhat'], datas, _add_overlaps,
+        bad,
+        ci['hardhat'],
+        ci['no_hardhat'],
+        datas,
+        _add_overlaps,
     )
     # Find overlaps between safety_vest and no_safety_vest detections
     _add_conflicting_pair_indices(
@@ -398,8 +398,8 @@ def overlap_ratio(
     b1: Sequence[float | int],
     b2: Sequence[float | int],
 ) -> float:
-    """
-    Calculate intersection over union (IoU) ratio between two bounding boxes.
+    """Calculate intersection over union (IoU) ratio between two bounding
+    boxes.
 
     Args:
         b1: First bounding box as [x1, y1, x2, y2].
@@ -446,19 +446,17 @@ def _overlap_ratio_with_area(
     inter = area(x1, y1, x2, y2)
 
     # Calculate union area (area of both boxes minus intersection)
-    union_area = (
-        area1
-        + area(b2[0], b2[1], b2[2], b2[3])
-        - inter
-    )
+    union_area = area1 + area(b2[0], b2[1], b2[2], b2[3]) - inter
 
     # Return IoU ratio (handle division by zero)
     return inter / float(union_area) if union_area > 0 else 0.0
 
 
 def area(
-    x1: float | int, y1: float | int,
-    x2: float | int, y2: float | int,
+    x1: float | int,
+    y1: float | int,
+    x2: float | int,
+    y2: float | int,
 ) -> int:
     """Calculate the area of a bounding box defined by corner coordinates.
 
@@ -488,8 +486,7 @@ def area(
 async def remove_completely_contained_labels(
     datas: list[list[float | int]],
 ) -> list[list[float | int]]:
-    """
-    Remove detections that are completely contained within other detections.
+    """Remove detections that are completely contained within other detections.
 
     Args:
         datas: List of detection data in format [x1, y1, x2, y2, conf, label].
@@ -507,7 +504,11 @@ async def remove_completely_contained_labels(
 
     # Find contained detections between hardhat and no_hardhat categories
     _add_conflicting_pair_indices(
-        bad, ci['hardhat'], ci['no_hardhat'], datas, _add_contained,
+        bad,
+        ci['hardhat'],
+        ci['no_hardhat'],
+        datas,
+        _add_contained,
     )
     # Find contained detections between safety_vest
     # and no_safety_vest categories
@@ -527,9 +528,8 @@ async def find_contained(
     idxs2: list[int],
     datas: list[list[float | int]],
 ) -> set[int]:
-    """
-    Find detections that have containment relationships
-    with a reference detection.
+    """Find detections that have containment relationships with a reference
+    detection.
 
     Args:
         i1: Index of the reference detection.
@@ -585,8 +585,4 @@ def _without_indices(
     """Return detections excluding bad indices without repeated list shifts."""
     if not bad:
         return datas
-    return [
-        detection
-        for i, detection in enumerate(datas)
-        if i not in bad
-    ]
+    return [detection for i, detection in enumerate(datas) if i not in bad]

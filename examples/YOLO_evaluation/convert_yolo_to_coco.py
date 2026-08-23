@@ -9,13 +9,10 @@ from PIL import Image
 
 
 class COCOConverter:
-    """
-    Converts YOLO format annotations to COCO format.
-    """
+    """Converts YOLO format annotations to COCO format."""
 
     def __init__(self, categories: list[str]) -> None:
-        """
-        Initialises COCO data structure and category mappings.
+        """Initialises COCO data structure and category mappings.
 
         Args:
             categories (List[str]): A list of category names.
@@ -41,8 +38,7 @@ class COCOConverter:
                     'id': i + 1,
                     'name': category,
                     'supercategory': 'none',
-                },
-            )
+                }, )
 
     def convert_annotations(self, labels_dir: str, images_dir: str) -> None:
         """Reads YOLO formatted annotations and converts them to COCO format.
@@ -69,18 +65,16 @@ class COCOConverter:
                         'width': width,
                         'height': height,
                         'file_name': image_name,
-                    },
-                )
+                    }, )
 
                 with open(os.path.join(labels_dir, filename)) as file:
                     for line in file:
                         cls_id, x_center, y_center, bbox_width, bbox_height = (
                             (
-                                float(x) if float(x) != int(
+                                float(x) if float(x) != int(float(x)) else int(
                                     float(x),
-                                ) else int(float(x))
-                            )
-                            for x in line.strip().split()
+                                )
+                            ) for x in line.strip().split()
                         )
 
                         x_min = (x_center - bbox_width / 2) * width
@@ -94,13 +88,15 @@ class COCOConverter:
                                 'image_id': self.image_id,
                                 'category_id': int(cls_id) + 1,
                                 'bbox': [
-                                    x_min, y_min, bbox_width, bbox_height,
+                                    x_min,
+                                    y_min,
+                                    bbox_width,
+                                    bbox_height,
                                 ],
                                 'area': bbox_width * bbox_height,
                                 'segmentation': [],
                                 'iscrowd': 0,
-                            },
-                        )
+                            }, )
                         self.annotation_id += 1
                 self.image_id += 1
 
@@ -117,8 +113,7 @@ class COCOConverter:
 def main() -> None:
     """Convert YOLO labels to a COCO annotation file."""
     parser = argparse.ArgumentParser(
-        description='Convert YOLO format annotations to COCO format.',
-    )
+        description='Convert YOLO format annotations to COCO format.', )
     parser.add_argument(
         '--labels_dir',
         type=str,
@@ -161,10 +156,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
-"""example usage
-python convert_yolo_to_coco.py \
-    --labels_dir tests/dataset/val/labels \
-    --images_dir tests/dataset/val/images \
-    --output tests/dataset/coco_annotations.json
-"""

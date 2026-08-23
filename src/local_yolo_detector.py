@@ -97,12 +97,12 @@ class LocalYoloDetector:
 
         if use_ultralytics:
             self.ultralytics_model = _yolo_class()(
-                f'models/pt/best_{model_key}.pt',
+                f"models/pt/best_{model_key}.pt",
             )
         else:
             self.model = _sahi_detection_model().from_pretrained(
                 'yolo26',
-                model_path=str(Path('models/pt') / f'best_{model_key}.pt'),
+                model_path=str(Path('models/pt') / f"best_{model_key}.pt"),
                 device=self.local_device,
             )
 
@@ -145,10 +145,7 @@ class LocalYoloDetector:
         self.frame_count += 1
         if not self.use_ultralytics:
             sahi_detections = await self._detect_local(frame)
-            return sahi_detections, [
-                row + [-1, 0]
-                for row in sahi_detections
-            ]
+            return sahi_detections, [row + [-1, 0] for row in sahi_detections]
 
         results = self._track_ultralytics(frame)
         if results is None:
@@ -237,10 +234,9 @@ class LocalYoloDetector:
         previous = self.prev_centers.get(track_id)
         is_moving = 0
         if previous:
-            distance_sq = (
-                (center[0] - previous[0]) ** 2
-                + (center[1] - previous[1]) ** 2
-            )
+            distance_sq = (center[0] - previous[0]) ** 2 + (
+                center[1] - previous[1]
+            ) ** 2
             is_moving = int(distance_sq > self.movement_thr_sq)
         self.prev_centers[track_id] = center
         self.prev_centers_last_seen[track_id] = self.frame_count
@@ -250,9 +246,8 @@ class LocalYoloDetector:
     def _is_cuda_oom(exc: Exception) -> bool:
         """Return whether an exception represents CUDA memory exhaustion."""
         message = str(exc).lower()
-        return (
-            'out of memory' in message
-            and ('cuda' in message or 'accelerator' in message)
+        return 'out of memory' in message and (
+            'cuda' in message or 'accelerator' in message
         )
 
     def _release_local_model(self) -> None:
@@ -302,7 +297,7 @@ class LocalYoloDetector:
                     )
                     cv2.putText(
                         display,
-                        f'ID{track_id} M{moving}',
+                        f"ID{track_id} M{moving}",
                         (int(x1), int(y1) - 5),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.5,

@@ -10,20 +10,16 @@ from examples.YOLO_server_api import config
 
 
 class TestConfig(unittest.TestCase):
-    """
-    Unit tests for the config module and USE_TENSORRT variable.
-    """
+    """Unit tests for the config module and USE_TENSORRT variable."""
 
     def test_use_tensorrt_exists(self) -> None:
         # Check existence of USE_TENSORRT
-        """Test use tensorrt exists.
-        """
+        """Test use tensorrt exists."""
         self.assertTrue(hasattr(config, 'USE_TENSORRT'))
 
     def test_use_tensorrt_type(self) -> None:
         # Check type of USE_TENSORRT
-        """Test use tensorrt type.
-        """
+        """Test use tensorrt type."""
         self.assertIsInstance(config.USE_TENSORRT, bool)
 
     def test_use_tensorrt_default(self) -> None:
@@ -35,15 +31,12 @@ class TestConfig(unittest.TestCase):
         # Check that USE_TENSORRT matches the expected environment default
         # Since the environment variable defaults to 'false', USE_TENSORRT
         # should be False
-        expected_value = (
-            os.getenv('USE_TENSORRT', 'false').lower() == 'true'
-        )
+        expected_value = os.getenv('USE_TENSORRT', 'false').lower() == 'true'
         self.assertEqual(config.USE_TENSORRT, expected_value)
 
     def test_use_tensorrt_can_be_false(self) -> None:
         # Save original value and restore after test
-        """Test use tensorrt can be false.
-        """
+        """Test use tensorrt can be false."""
         original_value: bool = config.USE_TENSORRT
         try:
             config.USE_TENSORRT = False
@@ -53,8 +46,7 @@ class TestConfig(unittest.TestCase):
 
     def test_use_tensorrt_docstring(self) -> None:
         # Check for comment and variable in source
-        """Test use tensorrt docstring.
-        """
+        """Test use tensorrt docstring."""
         source: str = inspect.getsource(config)
         self.assertIn('USE_TENSORRT', source)
         self.assertIn('Whether to use TensorRT for inference', source)
@@ -136,7 +128,8 @@ class TestConfig(unittest.TestCase):
 
         result = subprocess.run(
             [
-                sys.executable, '-c',
+                sys.executable,
+                '-c',
                 'import os; os.environ["MODEL_VARIANTS"] = ""; '
                 'from examples.YOLO_server_api import config; '
                 'print(config.MODEL_VARIANTS)',
@@ -161,7 +154,8 @@ class TestConfig(unittest.TestCase):
         # Run a subprocess with both flags enabled to test warning
         result = subprocess.run(
             [
-                sys.executable, '-c',
+                sys.executable,
+                '-c',
                 'import os; os.environ["USE_SAHI"] = "true"; '
                 'os.environ["USE_TENSORRT"] = "true"; '
                 'import warnings; warnings.simplefilter("always"); '
@@ -183,8 +177,8 @@ class TestConfig(unittest.TestCase):
         self.assertIn('USE_SAHI', config._CONFIG_INFO)
 
     def test_sahi_tensorrt_conflict_warning(self) -> None:
-        """Test that a warning would be issued when both SAHI and TensorRT
-        are enabled."""
+        """Test that a warning would be issued when both SAHI and TensorRT are
+        enabled."""
         # Test the warning logic without actually triggering it
         # Since both USE_SAHI and USE_TENSORRT would be True in that scenario
         use_sahi_true = True
@@ -207,18 +201,9 @@ class TestConfig(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
-"""
-pytest \
-    --cov=examples.YOLO_server_api.config \
-    --cov-report=term-missing \
-    tests/examples/YOLO_server_api/config_test.py
-"""
-
 
 class TestYoloServerConfigCoverage(unittest.TestCase):
-
-    """Provide TestYoloServerConfigCoverage.
-    """
+    """Provide TestYoloServerConfigCoverage."""
 
     def test_inference_device_honours_explicit_and_auto_detection(
         self,

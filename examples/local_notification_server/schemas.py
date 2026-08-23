@@ -189,7 +189,7 @@ class SiteNotifyRequest(BaseModel):
         unsupported_keys = set(body).difference(LANGUAGES['en-GB'])
         if unsupported_keys:
             keys = ', '.join(sorted(unsupported_keys))
-            raise ValueError(f'Unsupported notification warning keys: {keys}')
+            raise ValueError(f"Unsupported notification warning keys: {keys}")
         return body
 
 

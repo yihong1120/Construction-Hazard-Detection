@@ -13,8 +13,7 @@ class MessengerNotifierTests(unittest.IsolatedAsyncioTestCase):
     """Verify Messenger delivery uses the injected async transport."""
 
     async def test_sends_text_and_image(self) -> None:
-        """Test sends text and image.
-        """
+        """Test sends text and image."""
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -33,7 +32,9 @@ class MessengerNotifierTests(unittest.IsolatedAsyncioTestCase):
             transport=httpx.MockTransport(handler),
         ) as client:
             notifier = MessengerNotifier('token', client=client)
-            self.assertEqual(await notifier.send_notification('user', 'hello'), 200)
+            self.assertEqual(
+                await notifier.send_notification('user', 'hello'), 200,
+            )
             self.assertEqual(
                 await notifier.send_notification(
                     'user',
@@ -51,13 +52,14 @@ class MessengerNotifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'filedata', requests[1].content)
 
     async def test_requires_a_page_access_token(self) -> None:
-        """Test requires a page access token.
-        """
+        """Test requires a page access token."""
         notifier = MessengerNotifier(page_access_token='')
         with self.assertRaisesRegex(ValueError, 'FACEBOOK_PAGE_ACCESS_TOKEN'):
             await notifier.send_notification('user', 'hello')
 
-    async def test_standalone_notifier_reuses_and_closes_its_client(self) -> None:
+    async def test_standalone_notifier_reuses_and_closes_its_client(
+        self,
+    ) -> None:
         """A standalone notifier owns a reusable client until closed."""
         notifier = MessengerNotifier('token')
         client = notifier._http_client()

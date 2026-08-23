@@ -9,8 +9,8 @@ _windows_device_files = {
     'PRN',
     'AUX',
     'NUL',
-    *(f'COM{i}' for i in range(1, 10)),
-    *(f'LPT{i}' for i in range(1, 10)),
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
 }
 
 
@@ -22,5 +22,5 @@ def sanitize_filename(value: str) -> str:
     filename = '_'.join(filename.split())
     filename = _filename_strip_re.sub('', filename).strip('._')
     if filename.split('.', 1)[0].upper() in _windows_device_files:
-        filename = f'_{filename}'
+        filename = f"_{filename}"
     return filename

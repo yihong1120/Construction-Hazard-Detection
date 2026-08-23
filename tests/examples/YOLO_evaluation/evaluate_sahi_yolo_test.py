@@ -26,9 +26,7 @@ class TestCOCOEvaluator(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        """
-        Clean up after each test.
-        """
+        """Clean up after each test."""
         del self.evaluator
 
     @patch(
@@ -56,9 +54,7 @@ class TestCOCOEvaluator(unittest.TestCase):
         mock_coco: MagicMock,
         mock_cocoeval: MagicMock,
     ) -> None:
-        """
-        Test the evaluate method for computing COCO metrics.
-        """
+        """Test the evaluate method for computing COCO metrics."""
         # Mock the model
         mock_model: MagicMock = MagicMock()
         mock_auto_model.return_value = mock_model
@@ -149,7 +145,8 @@ class TestCOCOEvaluator(unittest.TestCase):
         'examples.YOLO_evaluation.evaluate_sahi_yolo.COCOEvaluator.evaluate',
     )
     @patch(
-        'argparse.ArgumentParser.parse_args', return_value=argparse.Namespace(
+        'argparse.ArgumentParser.parse_args',
+        return_value=argparse.Namespace(
             model_path='models/pt/best_yolo11n.pt',
             coco_json='tests/dataset/coco_annotations.json',
             image_dir='tests/dataset/val/images',
@@ -160,9 +157,7 @@ class TestCOCOEvaluator(unittest.TestCase):
         mock_parse_args: MagicMock,
         mock_evaluate: MagicMock,
     ) -> None:
-        """
-        Test the main function.
-        """
+        """Test the main function."""
         mock_evaluate.return_value = {
             'Average Precision': 0.5,
             'Average Recall': 0.6,
@@ -173,7 +168,8 @@ class TestCOCOEvaluator(unittest.TestCase):
         with patch('builtins.print') as mock_print:
             main()
             mock_print.assert_any_call(
-                'Evaluation metrics:', {
+                'Evaluation metrics:',
+                {
                     'Average Precision': 0.5,
                     'Average Recall': 0.6,
                     'mAP at IoU=50': 0.7,

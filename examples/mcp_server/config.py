@@ -11,7 +11,6 @@ from examples.mcp_server.schemas import TransportConfig
 # ---------------------------------------------------------------------------
 load_dotenv()
 
-
 # ---------------------------------------------------------------------------
 # Default configuration values
 # ---------------------------------------------------------------------------
@@ -24,10 +23,10 @@ DEFAULT_ENV: dict[str, str] = {
     'MCP_DEBUG': 'false',
 }
 
-
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
+
 
 def get_env_var(key: str, default: str | None = None) -> str:
     """Return the value of an environment variable or a safe default."""
@@ -74,11 +73,13 @@ def get_env_list(
 # Transport configuration builder
 # ---------------------------------------------------------------------------
 
+
 def get_transport_config() -> TransportConfig:
     """Construct and return the transport configuration."""
     valid_transports = ['stdio', 'streamable-http', 'sse']
     transport = get_env_var(
-        'MCP_TRANSPORT', DEFAULT_ENV['MCP_TRANSPORT'],
+        'MCP_TRANSPORT',
+        DEFAULT_ENV['MCP_TRANSPORT'],
     ).lower()
     if transport not in valid_transports:
         print(

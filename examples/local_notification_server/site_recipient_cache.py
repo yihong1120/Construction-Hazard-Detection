@@ -13,7 +13,6 @@ from examples.auth.models import SiteNotificationPreference
 from examples.auth.models import User
 from examples.auth.models import USER_STATUS_ACTIVE
 
-
 _recipient_index_ready_value: Final[str] = '1'
 
 
@@ -26,7 +25,7 @@ def _site_user_cache_key(site_name: str) -> str:
     Returns:
         Redis set key containing recipient user IDs.
     """
-    return f'site_notification_users:{site_name}'
+    return f"site_notification_users:{site_name}"
 
 
 def _site_user_cache_ready_key(site_name: str) -> str:
@@ -38,7 +37,7 @@ def _site_user_cache_ready_key(site_name: str) -> str:
     Returns:
         Redis key indicating that the recipient index is ready.
     """
-    return f'site_notification_users_ready:{site_name}'
+    return f"site_notification_users_ready:{site_name}"
 
 
 async def _fetch_site_notification_user_ids_from_db(
@@ -137,10 +136,12 @@ async def invalidate_site_notification_user_cache(
     """
     keys: list[str] = []
     for site_name in site_names:
-        keys.extend([
-            _site_user_cache_key(site_name),
-            _site_user_cache_ready_key(site_name),
-        ])
+        keys.extend(
+            [
+                _site_user_cache_key(site_name),
+                _site_user_cache_ready_key(site_name),
+            ],
+        )
     if keys:
         await rds.delete(*keys)
 

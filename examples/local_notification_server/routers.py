@@ -70,13 +70,14 @@ from examples.local_notification_server.schemas import (
 from examples.local_notification_server.schemas import SiteNotifyRequest
 from examples.local_notification_server.schemas import TestNotificationResponse
 from examples.local_notification_server.site_preference_service import (
-    list_site_notification_preferences as list_site_notification_preferences_service,
+    list_site_notification_preferences as list_site_preferences,
 )
 from examples.local_notification_server.site_preference_service import (
     update_site_notification_preferences as update_site_preferences_service,
 )
 
-# Route handlers remain thin adapters; workflow logic belongs to domain services.
+# Route handlers remain thin adapters; workflow logic belongs to domain
+# services.
 router = APIRouter()
 
 
@@ -336,7 +337,7 @@ async def list_site_notification_preferences(
     Returns:
         Notification preference state for each manageable site.
     """
-    return await list_site_notification_preferences_service(
+    return await list_site_preferences(
         db,
         me,
     )

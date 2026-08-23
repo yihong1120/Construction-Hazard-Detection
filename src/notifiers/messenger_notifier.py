@@ -25,8 +25,8 @@ class MessengerNotifier:
             page_access_token: Value used by this callable.
             client: Value used by this callable.
         """
-        self.page_access_token = (
-            page_access_token or os.getenv('FACEBOOK_PAGE_ACCESS_TOKEN')
+        self.page_access_token = page_access_token or os.getenv(
+            'FACEBOOK_PAGE_ACCESS_TOKEN',
         )
         self._client = client
         self._owns_client = client is None
@@ -43,7 +43,7 @@ class MessengerNotifier:
             raise ValueError('FACEBOOK_PAGE_ACCESS_TOKEN missing.')
 
         client = self._http_client()
-        headers = {'Authorization': f'Bearer {token}'}
+        headers = {'Authorization': f"Bearer {token}"}
         if image is None:
             response = await client.post(
                 _MESSENGER_MESSAGES_URL,
@@ -65,7 +65,13 @@ class MessengerNotifier:
                         '{"attachment":{"type":"image","payload":{}}}'
                     ),
                 },
-                files={'filedata': ('image.png', _png_bytes(image), 'image/png')},
+                files={
+                    'filedata': (
+                        'image.png',
+                        _png_bytes(image),
+                        'image/png',
+                    ),
+                },
             )
         return response.status_code
 

@@ -11,13 +11,10 @@ from src.model_fetcher import ModelFetcher
 
 
 class ModelFetcherTests(unittest.TestCase):
-
-    """Provide ModelFetcherTests.
-    """
+    """Provide ModelFetcherTests."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.directory = tempfile.TemporaryDirectory()
         self.fetcher = ModelFetcher(
             api_url='http://test-server/get_new_model',
@@ -27,13 +24,13 @@ class ModelFetcherTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        """Perform tearDown.
-        """
+        """Perform tearDown."""
         self.directory.cleanup()
 
     @patch('src.model_fetcher.requests.post')
     def test_posts_authenticated_stream_and_installs_atomically(
-        self, post: MagicMock,
+        self,
+        post: MagicMock,
     ) -> None:
         """Test posts authenticated stream and installs atomically.
 
@@ -49,16 +46,25 @@ class ModelFetcherTests(unittest.TestCase):
         response.iter_content.return_value = [content]
         post.return_value = response
 
-        updated = self.fetcher.request_new_model('yolo26n', '1970-01-01T00:00:00')
+        updated = self.fetcher.request_new_model(
+            'yolo26n',
+            '1970-01-01T00:00:00',
+        )
 
         self.assertTrue(updated)
         self.assertEqual(
-            (Path(self.directory.name) / 'best_yolo26n.pt').read_bytes(), content,
+            (Path(self.directory.name) / 'best_yolo26n.pt').read_bytes(),
+            content,
         )
-        self.assertFalse((Path(self.directory.name) / 'best_yolo26n.pt.part').exists())
+        self.assertFalse(
+            (Path(self.directory.name) / 'best_yolo26n.pt.part').exists(),
+        )
         post.assert_called_once_with(
             'http://test-server/get_new_model',
-            json={'model': 'yolo26n', 'last_update_time': '1970-01-01T00:00:00'},
+            json={
+                'model': 'yolo26n',
+                'last_update_time': '1970-01-01T00:00:00',
+            },
             headers={'Authorization': 'Bearer test-token'},
             timeout=(5, 120),
             stream=True,
@@ -77,7 +83,9 @@ class ModelFetcherTests(unittest.TestCase):
         )
 
     @patch('src.model_fetcher.requests.post')
-    def test_checksum_failure_keeps_existing_model(self, post: MagicMock) -> None:
+    def test_checksum_failure_keeps_existing_model(
+        self, post: MagicMock,
+    ) -> None:
         """Test checksum failure keeps existing model.
 
         Args:
@@ -94,8 +102,7 @@ class ModelFetcherTests(unittest.TestCase):
         self.assertEqual(destination.read_bytes(), b'old')
 
     def test_token_is_required(self) -> None:
-        """Test token is required.
-        """
+        """Test token is required."""
         fetcher = ModelFetcher(local_dir=self.directory.name, bearer_token='')
         with self.assertRaises(ValueError):
             fetcher.request_new_model('yolo26n', '1970-01-01T00:00:00')
