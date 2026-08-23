@@ -12,7 +12,6 @@ from pydantic import model_validator
 from pydantic import RootModel
 from pydantic import StrictInt
 
-
 FeedbackType = Literal[
     'false_positive',
     'false_negative',
@@ -42,14 +41,6 @@ class ViolationWarning(BaseModel):
     count: StrictInt
 
 
-class ViolationWarningPayload(RootModel[dict[str, ViolationWarning]]):
-    """Validate warning data stored with a violation record.
-
-    Attributes:
-        root: Mapping of detector warning key to structured warning count.
-    """
-
-
 class FeedbackDetectionItem(BaseModel):
     """Represent a detection normalised for feedback selection.
 
@@ -59,6 +50,7 @@ class FeedbackDetectionItem(BaseModel):
         confidence: Optional detector confidence.
         bbox: Optional ``[x1, y1, x2, y2]`` bounding box.
     """
+
     id: str
     label: str | None = None
     confidence: float | None = None
@@ -74,6 +66,7 @@ class NormalizedBBox(BaseModel):
         w: Width ratio.
         h: Height ratio.
     """
+
     x: float
     y: float
     w: float
@@ -110,6 +103,7 @@ class ViolationOverlayObject(BaseModel):
         flag_reason: Optional reason for the flag.
         flag_note: Optional reviewer or feedback note.
     """
+
     object_id: str
     label: str | None = None
     confidence: float | None = None
@@ -134,6 +128,7 @@ class ViolationFeedbackCreate(BaseModel):
         confidence: Optional detector confidence.
         note: Optional reviewer explanation.
     """
+
     type: FeedbackType
     anonymous_id: str | None = Field(default=None, max_length=80)
     target_detection_id: str | None = Field(default=None, max_length=120)
@@ -208,8 +203,7 @@ class ViolationFeedbackCreate(BaseModel):
             ValueError: If the selected feedback type lacks required fields.
         """
         has_original_target = (
-            bool(self.target_detection_id)
-            or self.original_bbox is not None
+            bool(self.target_detection_id) or self.original_bbox is not None
         )
         if self.type == 'false_negative':
             if not self.corrected_label or self.corrected_bbox is None:
@@ -248,6 +242,7 @@ class ViolationFeedbackResponse(BaseModel):
         status: Feedback review status.
         created_at: Time at which feedback was submitted.
     """
+
     id: int
     violation_id: int
     type: FeedbackType
@@ -281,6 +276,7 @@ class ViolationFeedbackItem(BaseModel):
         submitted_by: Optional user identifier of the submitter.
         submitted_at: Time at which feedback was submitted.
     """
+
     id: int
     type: FeedbackType
     note: str | None = None
@@ -303,6 +299,7 @@ class ViolationReviewUpdate(BaseModel):
         review_status: New flagged-record review status.
         review_note: Optional reviewer explanation.
     """
+
     review_status: ViolationReviewStatus
     review_note: str | None = Field(default=None, max_length=1000)
 
@@ -321,6 +318,7 @@ class ViolationReviewAuditItem(BaseModel):
         flagged_reason: Optional original flag reason.
         created_at: Time at which the event was recorded.
     """
+
     id: int
     violation_id: int
     actor_user_id: int | None = None
@@ -333,8 +331,7 @@ class ViolationReviewAuditItem(BaseModel):
 
 
 class SiteOut(BaseModel):
-    """
-    Schema for returning information about a single site.
+    """Schema for returning information about a single site.
 
     Args:
         id (int): Unique identifier for the site.
@@ -342,6 +339,7 @@ class SiteOut(BaseModel):
         created_at (datetime): Timestamp when the site was created.
         updated_at (datetime): Timestamp when the site was last updated.
     """
+
     id: int
     name: str
     created_at: datetime
@@ -384,10 +382,34 @@ class ViolationFilterOptions(BaseModel):
     violation_types: list[ViolationTypeOption]
 
 
-class ViolationItem(BaseModel):
+class ViolationListItem(BaseModel):
+    """Represent the compact data required by a violation-list row.
+
+    Attributes:
+        id: Violation database identifier.
+        site_name: Site where the violation was detected.
+        stream_name: Camera that produced the evidence.
+        detection_time: Timestamp of the detection.
+        thumbnail_url: Protected thumbnail resource URL.
+        warning_text: Bounded active-warning summary.
+        is_flagged: Whether feedback has flagged the record.
+        review_status: Optional status for a flagged record.
+        feedback_note: Latest non-empty feedback note.
     """
-    Schema for returning a single Violation record, with details such as
-    site_name, stream_name, detection_time, etc.
+
+    id: int
+    site_name: str
+    stream_name: str
+    detection_time: datetime
+    thumbnail_url: str
+    warning_text: str | None = None
+    is_flagged: bool = False
+    review_status: ViolationReviewStatus | None = None
+    feedback_note: str | None = None
+
+
+class ViolationItem(BaseModel):
+    """Represent full violation evidence, feedback, and review detail.
 
     Args:
         id (int): Unique identifier for the violation record.
@@ -401,11 +423,11 @@ class ViolationItem(BaseModel):
         cone_polygons (str | None): Polygons representing cones, if applicable.
         pole_polygons (str | None): Polygons representing poles, if applicable.
     """
+
     id: int
     site_name: str
     stream_name: str
     detection_time: datetime
-    detected_at: datetime | None = None
     image_path: str
     image_url: str | None = None
     thumbnail_url: str | None = None
@@ -416,7 +438,6 @@ class ViolationItem(BaseModel):
     cone_polygons: str | None = None
     pole_polygons: str | None = None
     detections: list[FeedbackDetectionItem] | None = None
-    feedback_detections: list[FeedbackDetectionItem] | None = None
     overlay_objects: list[ViolationOverlayObject] | None = None
     feedbacks: list[ViolationFeedbackItem] | None = None
     is_flagged: bool = False
@@ -432,21 +453,20 @@ class ViolationItem(BaseModel):
 
 
 class ViolationList(BaseModel):
-    """
-    Schema for returning a paginated list of violation records.
+    """Schema for returning a paginated list of violation records.
 
     Args:
-        items (list[ViolationItem]): List of violation records.
+        items: Compact violation rows.
         has_more (bool): Whether another cursor page is available.
     """
-    items: list[ViolationItem]
+
+    items: list[ViolationListItem]
     next_cursor: str | None = None
     has_more: bool = False
 
 
 class UploadViolationResponse(BaseModel):
-    """
-    Schema for the response after uploading a violation record.
+    """Schema for the response after uploading a violation record.
 
     Args:
         message (str):
@@ -454,6 +474,7 @@ class UploadViolationResponse(BaseModel):
         violation_id (int):
             Unique identifier for the uploaded violation record.
     """
+
     message: str
     violation_id: int
 
@@ -466,6 +487,7 @@ class ViolationAnalyticsTopSite(BaseModel):
         site_name: Human-readable site name.
         count: Number of matching violations.
     """
+
     site_id: int
     site_name: str
     count: int
@@ -479,6 +501,7 @@ class ViolationAnalyticsTopType(BaseModel):
         label: Localised display label.
         count: Number of matching violations.
     """
+
     type: str
     label: str
     count: int
@@ -493,6 +516,7 @@ class ViolationAnalyticsSummary(BaseModel):
         top_site: Optional most frequent matching site.
         top_type: Optional most frequent matching type.
     """
+
     total: int
     today: int
     top_site: ViolationAnalyticsTopSite | None = None
@@ -506,6 +530,7 @@ class ViolationAnalyticsTrendItem(BaseModel):
         bucket: ISO time bucket label.
         count: Number of matching violations in the bucket.
     """
+
     bucket: str
     count: int
 
@@ -518,6 +543,7 @@ class ViolationAnalyticsTypeItem(BaseModel):
         label: Localised display label.
         count: Number of matching violations.
     """
+
     type: str
     label: str
     count: int
@@ -531,6 +557,7 @@ class ViolationAnalyticsSiteItem(BaseModel):
         site_name: Human-readable site name.
         count: Number of matching violations.
     """
+
     site_id: int
     site_name: str
     count: int
@@ -543,6 +570,7 @@ class ViolationAnalyticsHourItem(BaseModel):
         hour: UTC hour from zero to twenty-three.
         count: Number of matching violations.
     """
+
     hour: int
     count: int
 
@@ -557,8 +585,9 @@ class ViolationAnalyticsResponse(BaseModel):
         by_site: Counts grouped by site.
         by_hour: Counts grouped by UTC hour.
     """
+
     summary: ViolationAnalyticsSummary
-    trend: list[ViolationAnalyticsTrendItem]
-    by_type: list[ViolationAnalyticsTypeItem]
-    by_site: list[ViolationAnalyticsSiteItem]
-    by_hour: list[ViolationAnalyticsHourItem]
+    trend: list[ViolationAnalyticsTrendItem] = Field(default_factory=list)
+    by_type: list[ViolationAnalyticsTypeItem] = Field(default_factory=list)
+    by_site: list[ViolationAnalyticsSiteItem] = Field(default_factory=list)
+    by_hour: list[ViolationAnalyticsHourItem] = Field(default_factory=list)

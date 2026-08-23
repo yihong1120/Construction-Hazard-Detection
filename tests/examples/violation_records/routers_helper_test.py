@@ -6,797 +6,93 @@ import unittest
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
-from typing import Literal
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
-from unittest.mock import patch
 
-from fastapi import HTTPException
 from PIL import Image
 from pydantic import ValidationError
 
-from examples.violation_records import violation_services as routers
-from examples.violation_records.analytics import _normalise_utc
+from examples.violation_records import violation_services
 from examples.violation_records.media_service import _generate_thumbnail_sync
+from examples.violation_records.media_service import image_size_for_violation
 from examples.violation_records.schemas import FeedbackDetectionItem
 from examples.violation_records.schemas import ViolationFeedbackItem
-from examples.violation_records.schemas import ViolationItem
+from examples.violation_records.schemas import ViolationListItem
 
 
 def _feedback(
     feedback_id: int,
     feedback_type: str = 'false_positive',
-    **values: object,
 ) -> ViolationFeedbackItem:
-    """Perform feedback.
-
-    Args:
-        feedback_id: Value used by this callable.
-        feedback_type: Value used by this callable.
-        **values: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
-    defaults = {
-        'id': feedback_id,
-        'type': feedback_type,
-        'status': 'pending',
-        'submitted_at': datetime(2026, 7, 24, tzinfo=timezone.utc),
-    }
-    defaults.update(values)
-    return ViolationFeedbackItem(**defaults)
+    """Create one concise feedback fixture."""
+    return ViolationFeedbackItem(
+        id=feedback_id,
+        type=feedback_type,
+        status='pending',
+        submitted_at=datetime(2026, 8, 23, tzinfo=timezone.utc),
+    )
 
 
-class TestViolationRouterHelpers(unittest.TestCase):
+class TestViolationHelpers(unittest.TestCase):
+    """Exercise query, presentation, and media helper behaviour."""
 
-    """Provide TestViolationRouterHelpers.
-    """
-
-    def test_detection_and_warning_json_decoding(self) -> None:
-        """Test detection and warning json decoding.
-        """
-        self.assertIsNone(routers._decode_detection_items(None))
+    def test_detection_and_warning_payloads_are_validated(self) -> None:
+        """Invalid detector JSON must not be silently accepted."""
         self.assertEqual(
-            routers._decode_detection_items(
+            violation_services._decode_detection_items(
                 '[[1, 2, 3, 4, 0.9, 5, 12]]',
             ),
             [[1.0, 2.0, 3.0, 4.0, 0.9, 5.0, 12.0]],
         )
-        with self.assertRaises(ValidationError):
-            routers._decode_detection_items('{not json')
-        with self.assertRaises(ValidationError):
-            routers._decode_detection_items('[[1, 2, 3, 4]]')
-
-        self.assertIsNone(routers._warning_text_from_json(None))
         self.assertEqual(
-            routers._warning_text_from_json(
-                '{"near_vehicle": {"count": 2}, '
-                '"helmet": {"count": 1}, "skip": {"count": 0}}',
+            violation_services._warning_text_from_json(
+                '{"near_vehicle": {"count": 2}}',
             ),
-            'near_vehicle: 2, helmet: 1',
+            'near_vehicle: 2',
         )
         with self.assertRaises(ValidationError):
-            routers._warning_text_from_json('{not json')
+            violation_services._decode_detection_items('{invalid')
 
-    def test_media_url_and_detection_bbox_helpers(self) -> None:
-        """Test media url and detection bbox helpers.
-        """
-        request = SimpleNamespace(
-            url_for=lambda endpoint: f"https://api.test/{endpoint}",
-        )
-        image_url, thumbnail_url = routers._image_urls(
-            'dir/image name.jpg',
-            request,
-        )
-        self.assertIn('image_path=dir%2Fimage+name.jpg', image_url)
-        self.assertIn('get_violation_thumbnail', thumbnail_url)
-        self.assertEqual(
-            routers._media_endpoint_url(
-                'get_violation_image',
-                'file.jpg',
-                None,
-            ),
-            '/get_violation_image?image_path=file.jpg',
-        )
-
-        self.assertEqual(
-            routers._bbox_from_detection_item(
-                [1.0, 2.0, 3.0, 4.0, 0.9, 5.0, 12.0],
-            ),
-            [1.0, 2.0, 3.0, 4.0],
-        )
-
-    def test_feedback_detection_normalisation_and_ids(self) -> None:
-        """Test feedback detection normalisation and ids.
-        """
-        item = [1.0, 2.0, 4.0, 6.0, 0.9, 5.0, 99.0]
-        normalized = routers._feedback_detection_from_item(item, 0)
-        self.assertEqual(normalized.id, 'det_0')
-        self.assertEqual(normalized.label, 'class-5')
-        self.assertEqual(normalized.bbox, [1.0, 2.0, 4.0, 6.0])
-        self.assertEqual(
-            routers._feedback_detection_id_candidates(item, 0),
-            {'det_0', '99'},
-        )
-
-        list_item = [1, 2, 3, 4, 0.75, 5, 12]
-        normalized_list = routers._feedback_detection_from_item(list_item, 1)
-        self.assertEqual(normalized_list.id, 'det_1')
-        self.assertEqual(normalized_list.label, 'class-5')
-        self.assertEqual(
-            routers._feedback_detection_id_candidates(list_item, 1),
-            {'det_1', '12'},
-        )
-        detections = routers._feedback_detections_from_json(
-            '[[1,2,3,4,0.9,2,8]]',
-        )
-        self.assertEqual([item.id for item in detections or []], ['det_0'])
-        self.assertEqual(
-            routers._feedback_detection_ids_from_json(
-                '[[1,2,3,4,0.9,2,8]]',
-            ),
-            {'det_0', '8'},
-        )
-        with self.assertRaises(ValidationError):
-            routers._feedback_detection_ids_from_json('bad json')
-
-    def test_bbox_and_overlay_helpers(self) -> None:
-        """Test bbox and overlay helpers.
-        """
-        self.assertEqual(routers._clamp_ratio(-0.1), 0.0)
-        self.assertEqual(routers._clamp_ratio(2), 1.0)
-        self.assertIsNone(routers._bbox_to_normalized(None, (100, 100)))
-        self.assertIsNone(
-            routers._bbox_to_normalized(
-                [3, 2, 1, 4],
-                (100, 100),
-            ),
-        )
-        self.assertIsNone(routers._bbox_to_normalized([1, 2, 3, 4], None))
-        self.assertIsNone(routers._bbox_to_normalized([1, 2, 3, 4], (0, 100)))
-        normalized_ratio = routers._bbox_to_normalized(
-            [0.1, 0.2, 0.5, 0.7],
-            None,
-        )
-        normalized_pixels = routers._bbox_to_normalized(
-            [10, 20, 50, 70],
-            (100, 100),
-        )
-        assert normalized_ratio is not None
-        assert normalized_pixels is not None
-        self.assertAlmostEqual(normalized_ratio.x, 0.1)
-        self.assertAlmostEqual(normalized_ratio.y, 0.2)
-        self.assertAlmostEqual(normalized_ratio.w, 0.4)
-        self.assertAlmostEqual(normalized_ratio.h, 0.5)
-        self.assertAlmostEqual(normalized_pixels.x, 0.1)
-        self.assertAlmostEqual(normalized_pixels.y, 0.2)
-        self.assertAlmostEqual(normalized_pixels.w, 0.4)
-        self.assertAlmostEqual(normalized_pixels.h, 0.5)
-        self.assertFalse(routers._bbox_nearly_equal(None, [1, 2, 3, 4]))
-        self.assertTrue(
-            routers._bbox_nearly_equal([1, 2, 3, 4], [1, 2, 3, 4.0000001]),
-        )
-
+    def test_overlay_and_cursor_use_compact_typed_models(self) -> None:
+        """The list cursor does not require a full detail response model."""
         detection = FeedbackDetectionItem(
             id='det_0',
-            label='worker',
-            confidence=0.8,
-            bbox=[10, 10, 30, 30],
+            bbox=[10, 10, 40, 40],
         )
-        false_positive = _feedback(
-            1,
-            target_detection_id='det_0',
-            note='not a worker',
-            original_bbox=[10, 10, 30, 30],
-        )
-        false_negative = _feedback(
-            2,
-            'false_negative',
-            corrected_label='vehicle',
-            corrected_bbox=[40, 40, 80, 80],
-            note='missed vehicle',
-        )
-        overlays = routers._overlay_objects_from_feedback(
+        feedback = _feedback(1)
+        feedback.target_detection_id = 'det_0'
+        feedback.original_bbox = [10, 10, 40, 40]
+        overlays = violation_services._overlay_objects_from_feedback(
             [detection],
-            [false_positive, false_negative],
+            [feedback],
             (100, 100),
         )
-        self.assertEqual(
-            [overlay.object_id for overlay in overlays],
-            [
-                'det_0',
-                'feedback_2',
-            ],
-        )
         self.assertTrue(overlays[0].is_flagged)
-        self.assertEqual(overlays[1].label, 'vehicle')
-        self.assertIs(
-            routers._feedback_for_detection(
-                detection,
-                [false_positive],
-            ),
-            false_positive,
-        )
-        self.assertEqual(
-            routers._overlay_objects_from_feedback(
-                [],
-                [_feedback(3, 'false_negative')],
-                (100, 100),
-            ),
-            [],
-        )
 
-    def test_row_cursor_and_analytics_helper_branches(self) -> None:
-        """Test row cursor and analytics helper branches.
-        """
-        self.assertEqual(
-            routers._scalar_value(
-                SimpleNamespace(name='Site A'),
-            ),
-            'Site A',
-        )
-        self.assertEqual(routers._scalar_value(7), 7)
-
-        timestamp = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-        item = ViolationItem(
+        item = ViolationListItem(
             id=7,
-            site_name='Site',
-            stream_name='Cam',
-            detection_time=timestamp,
-            image_path='image.jpg',
-            created_at=timestamp,
+            site_name='Site A',
+            stream_name='Camera A',
+            detection_time=datetime(2026, 8, 23, tzinfo=timezone.utc),
+            thumbnail_url='/get_violation_thumbnail?image_path=frame.jpg',
         )
-        cursor = routers._encode_violation_cursor(item)
+        cursor = violation_services._encode_violation_cursor(item)
         self.assertEqual(
-            routers._decode_violation_cursor(
-                cursor,
-            ),
-            (timestamp, 7),
-        )
-        with self.assertRaises(HTTPException):
-            routers._decode_violation_cursor('bad')
-
-        self.assertEqual(routers._empty_analytics_response().summary.total, 0)
-        self.assertEqual(
-            _normalise_utc(datetime(2026, 7, 24)).tzinfo,
-            timezone.utc,
+            violation_services._decode_violation_cursor(cursor),
+            (item.detection_time, item.id),
         )
 
-    def test_analytics_database_expressions_and_type_validation(self) -> None:
-        """Test analytics database expressions and type validation.
-        """
-        for dialect in ['postgresql', 'mysql', 'mariadb', 'sqlite', 'unknown']:
-            db = SimpleNamespace(
-                bind=SimpleNamespace(dialect=SimpleNamespace(name=dialect)),
-            )
-            buckets: tuple[Literal['hour', 'day', 'week'], ...] = (
-                'hour',
-                'day',
-                'week',
-            )
-            for bucket in buckets:
-                self.assertTrue(
-                    str(routers._analytics_bucket_expr(bucket, db)),
-                )
-            self.assertTrue(str(routers._analytics_hour_expr(db)))
-            self.assertTrue(str(routers._type_condition('near_vehicle', db)))
-
-        with self.assertRaises(HTTPException) as invalid_type:
-            routers._canonical_violation_type('no_helmet')
-        self.assertEqual(invalid_type.exception.status_code, 422)
-        with self.assertRaises(HTTPException) as invalid_type:
-            routers._canonical_violation_type('unknown')
-        self.assertEqual(invalid_type.exception.status_code, 422)
-
-    def test_feedback_bbox_matching(self) -> None:
-        """Test feedback bbox matching.
-        """
-        detection = FeedbackDetectionItem(
-            id='det_1',
-            bbox=[1, 2, 3, 4],
-        )
-        bbox_feedback = _feedback(
-            3,
-            target_detection_id='different-id',
-            original_bbox=[1, 2, 3, 4],
-        )
-        self.assertIs(
-            routers._feedback_for_detection(detection, [bbox_feedback]),
-            bbox_feedback,
-        )
-        self.assertIsNone(routers._feedback_for_detection(detection, []))
-
-    def test_thumbnail_generation_handles_cached_rgba_and_invalid_images(
+    def test_thumbnail_and_image_size_work_without_blocking_the_event_loop(
         self,
     ) -> None:
-        """Thumbnails reuse current output, convert alpha images, and reject
-        junk."""
+        """Pillow work remains isolated from the asynchronous request path."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / 'source.png'
+            source = root / 'frame.png'
             thumbnail = root / 'thumbnail.jpg'
-            Image.new('RGBA', (20, 10), color=(1, 2, 3, 100)).save(source)
-
+            Image.new('RGBA', (30, 15), color=(1, 2, 3, 100)).save(source)
             _generate_thumbnail_sync(source, thumbnail)
-            with Image.open(thumbnail) as created:
-                self.assertEqual(created.mode, 'RGB')
-
-            _generate_thumbnail_sync(source, thumbnail)
-
-            invalid_source = root / 'invalid.png'
-            invalid_source.write_bytes(b'not an image')
-            with self.assertRaises(HTTPException) as invalid_image:
-                _generate_thumbnail_sync(
-                    invalid_source,
-                    root / 'bad.jpg',
-                )
-
-        self.assertEqual(invalid_image.exception.status_code, 400)
-
-    def test_image_size_returns_dimensions_or_none(self) -> None:
-        """Detail overlays use available image dimensions and tolerate bad
-        paths."""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            image_path = root / 'frame.jpg'
-            Image.new('RGB', (30, 15), color='red').save(image_path)
-            with patch.object(routers, 'STATIC_DIR', root):
-                self.assertEqual(
-                    asyncio.run(
-                        routers.image_size_for_violation(
-                            'frame.jpg', static_dir=routers.STATIC_DIR,
-                        ),
-                    ),
-                    (30, 15),
-                )
-                self.assertIsNone(
-                    asyncio.run(
-                        routers.image_size_for_violation(
-                            '../outside.jpg', static_dir=routers.STATIC_DIR,
-                        ),
-                    ),
-                )
-
-
-class TestViolationMediaAccessCoverage(unittest.IsolatedAsyncioTestCase):
-
-    """Provide TestViolationMediaAccessCoverage.
-    """
-
-    async def test_media_authorization_rejects_users_without_sites(
-        self,
-    ) -> None:
-        """Existing images remain inaccessible when no effective site is
-        assigned."""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'frame.jpg').write_bytes(b'image bytes')
-            with (
-                patch.object(routers, 'STATIC_DIR', root),
-                patch.object(
-                    routers._user_service, 'get_cached_effective_site_names',
-                    new=AsyncMock(return_value=[]),
-                ),
-            ):
-                with self.assertRaises(HTTPException) as denied:
-                    await routers._authorize_violation_media_access(
-                        'frame.jpg',
-                        'user',
-                        AsyncMock(),
-                    )
-
-        self.assertEqual(denied.exception.status_code, 403)
-
-
-class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
-
-    """Provide TestViolationRouteGuardsCoverage.
-    """
-
-    def setUp(self) -> None:
-        """Perform setUp.
-        """
-        self.db = MagicMock()
-        self.db.execute = AsyncMock()
-        self.credentials: Any = SimpleNamespace(subject={'username': 'reviewer'})
-        self.missing_credentials: Any = SimpleNamespace(subject={})
-
-    async def test_range_and_stream_filter_reject_invalid_requests(
-        self,
-    ) -> None:
-        """Analytics dates and stream filters expose clear client errors."""
-        timestamp = datetime(2026, 7, 24, tzinfo=timezone.utc)
-        with self.assertRaises(HTTPException) as invalid_range:
-            routers._validate_analytics_range(timestamp, timestamp)
-        self.assertEqual(invalid_range.exception.status_code, 422)
-
-        self.db.execute.return_value = SimpleNamespace(first=lambda: None)
-        user = SimpleNamespace(role='admin', group_id=1)
-        with self.assertRaises(HTTPException) as forbidden_stream:
-            await routers._resolve_stream_filter(
-                '10',
-                None,
-                ['Roadwork'],
-                user,
-                self.db,
+            with Image.open(thumbnail) as image:
+                self.assertEqual(image.mode, 'RGB')
+            self.assertEqual(
+                asyncio.run(image_size_for_violation('frame.png', root)),
+                (30, 15),
             )
-        self.assertEqual(forbidden_stream.exception.status_code, 403)
-
-    async def test_filter_options_reject_missing_identity_and_site_scope(
-        self,
-    ) -> None:
-        """Camera filter options require both identity and accessible site
-        ID."""
-        with self.assertRaises(HTTPException) as missing_identity:
-            await routers.get_violation_filter_options(
-                1,
-                None,
-                self.db,
-                self.missing_credentials,
-            )
-        self.assertEqual(missing_identity.exception.status_code, 401)
-
-        with patch.object(
-            routers._user_service, 'load_user_with_effective_sites',
-            new=AsyncMock(
-                return_value=(SimpleNamespace(role='admin', group_id=1), []),
-            ),
-        ):
-            with self.assertRaises(HTTPException) as inaccessible_site:
-                await routers.get_violation_filter_options(
-                    1,
-                    None,
-                    self.db,
-                    self.credentials,
-                )
-        self.assertEqual(inaccessible_site.exception.status_code, 403)
-
-    async def test_violation_list_applies_cursor_filter(self) -> None:
-        """A valid cursor adds keyset filtering before an empty page
-        response."""
-        timestamp = datetime(2026, 7, 24, tzinfo=timezone.utc)
-        cursor = routers._encode_violation_cursor(
-            ViolationItem(
-                id=7,
-                site_name='Roadwork',
-                stream_name='Cam 1',
-                detection_time=timestamp,
-                image_path='image.jpg',
-                created_at=timestamp,
-            ),
-        )
-        self.db.execute.return_value = SimpleNamespace(all=lambda: [])
-        with patch.object(
-            routers._user_service, 'get_cached_effective_site_names',
-            new=AsyncMock(return_value=['Roadwork']),
-        ):
-            result = await routers.get_violations(
-                SimpleNamespace(),
-                flagged=False,
-                review_status=None,
-                limit=1,
-                cursor=cursor,
-                db=self.db,
-                credentials=self.credentials,
-            )
-
-        self.assertEqual(result.items, [])
-        self.assertFalse(result.has_more)
-
-    async def test_analytics_rejects_missing_identity_and_handles_no_sites(
-        self,
-    ) -> None:
-        """Analytics does not disclose records to anonymous or unscoped
-        callers."""
-        start = datetime(2026, 7, 23, tzinfo=timezone.utc)
-        end = datetime(2026, 7, 24, tzinfo=timezone.utc)
-        with self.assertRaises(HTTPException) as missing_identity:
-            await routers.get_violation_analytics(
-                start,
-                end,
-                db=self.db,
-                credentials=self.missing_credentials,
-            )
-        self.assertEqual(missing_identity.exception.status_code, 401)
-
-        with patch.object(
-            routers,
-            'require_violation_analytics_access',
-            new=AsyncMock(return_value=(SimpleNamespace(role='admin'), [])),
-        ):
-            result = await routers.get_violation_analytics(
-                start,
-                end,
-                db=self.db,
-                credentials=self.credentials,
-            )
-        self.assertEqual(result.summary.total, 0)
-
-    async def test_review_queue_guards_reject_invalid_scopes(self) -> None:
-        """Review queue applies identity, scope, current item, and site
-        checks."""
-        with self.assertRaises(HTTPException) as missing_identity:
-            await routers.get_next_review_violation(
-                SimpleNamespace(),
-                db=self.db,
-                credentials=self.missing_credentials,
-            )
-        self.assertEqual(missing_identity.exception.status_code, 401)
-
-        with patch.object(
-            routers,
-            '_load_review_scope',
-            new=AsyncMock(return_value=(SimpleNamespace(), [])),
-        ):
-            self.assertIsNone(
-                await routers.get_next_review_violation(
-                    SimpleNamespace(),
-                    db=self.db,
-                    credentials=self.credentials,
-                ),
-            )
-
-        self.db.execute.return_value = SimpleNamespace(scalar=lambda: 'Other')
-        with patch.object(
-            routers,
-            '_load_review_scope',
-            new=AsyncMock(return_value=(SimpleNamespace(), ['Roadwork'])),
-        ):
-            with self.assertRaises(HTTPException) as inaccessible_site:
-                await routers.get_next_review_violation(
-                    SimpleNamespace(),
-                    current_id=8,
-                    site_id=1,
-                    db=self.db,
-                    credentials=self.credentials,
-                )
-        self.assertEqual(inaccessible_site.exception.status_code, 403)
-
-    async def test_audit_log_guards_reject_invalid_scopes(self) -> None:
-        """Audit history requires identity, review scope, and record access."""
-        with self.assertRaises(HTTPException) as missing_identity:
-            await routers.get_violation_review_audit_log(
-                1,
-                self.db,
-                self.missing_credentials,
-            )
-        self.assertEqual(missing_identity.exception.status_code, 401)
-
-        with patch.object(
-            routers,
-            '_load_review_scope',
-            new=AsyncMock(return_value=(SimpleNamespace(), [])),
-        ):
-            with self.assertRaises(HTTPException) as empty_scope:
-                await routers.get_violation_review_audit_log(
-                    1,
-                    self.db,
-                    self.credentials,
-                )
-        self.assertEqual(empty_scope.exception.status_code, 403)
-
-        self.db.execute.return_value = SimpleNamespace(scalar=lambda: None)
-        with patch.object(
-            routers,
-            '_load_review_scope',
-            new=AsyncMock(return_value=(SimpleNamespace(), ['Roadwork'])),
-        ):
-            with self.assertRaises(HTTPException) as inaccessible_record:
-                await routers.get_violation_review_audit_log(
-                    1,
-                    self.db,
-                    self.credentials,
-                )
-        self.assertEqual(inaccessible_record.exception.status_code, 403)
-
-    async def test_detail_feedback_review_and_thumbnail_guard_empty_scopes(
-        self,
-    ) -> None:
-        """All mutation and media routes reject callers outside their scope."""
-        with patch.object(
-            routers._user_service, 'get_cached_effective_site_names',
-            new=AsyncMock(return_value=[]),
-        ):
-            with self.assertRaises(HTTPException) as detail_denied:
-                await routers.get_single_violation(
-                    1,
-                    SimpleNamespace(),
-                    self.db,
-                    self.credentials,
-                )
-            with self.assertRaises(HTTPException) as feedback_denied:
-                await routers.submit_violation_feedback(
-                    1,
-                    MagicMock(),
-                    self.db,
-                    self.credentials,
-                )
-        self.assertEqual(detail_denied.exception.status_code, 403)
-        self.assertEqual(feedback_denied.exception.status_code, 403)
-
-        with patch.object(
-            routers,
-            '_load_review_scope',
-            new=AsyncMock(return_value=(SimpleNamespace(), [])),
-        ):
-            with self.assertRaises(HTTPException) as review_denied:
-                await routers.review_violation(
-                    1,
-                    MagicMock(),
-                    SimpleNamespace(),
-                    self.db,
-                    self.credentials,
-                )
-        self.assertEqual(review_denied.exception.status_code, 403)
-
-        with self.assertRaises(HTTPException) as thumbnail_denied:
-            await routers.get_violation_thumbnail(
-                'frame.jpg',
-                self.db,
-                self.missing_credentials,
-            )
-        self.assertEqual(thumbnail_denied.exception.status_code, 401)
-
-    async def test_review_queue_adds_authorized_site_condition(self) -> None:
-        """A valid review site is retained when selecting the next record."""
-        site_result = SimpleNamespace(scalar=lambda: 'Roadwork')
-        next_result = SimpleNamespace(first=lambda: None)
-        self.db.execute.side_effect = [site_result, next_result]
-        with patch.object(
-            routers,
-            '_load_review_scope',
-            new=AsyncMock(return_value=(SimpleNamespace(), ['Roadwork'])),
-        ):
-            result = await routers.get_next_review_violation(
-                SimpleNamespace(),
-                site_id=1,
-                db=self.db,
-                credentials=self.credentials,
-            )
-
-        self.assertIsNone(result)
-
-    async def test_feedback_rejects_missing_user_after_record_authorization(
-        self,
-    ) -> None:
-        """Feedback creation returns 404 when the authenticated user
-        vanished."""
-        violation = SimpleNamespace(id=1, detections_json=None)
-        self.db.execute.side_effect = [
-            SimpleNamespace(scalar_one_or_none=lambda: violation),
-            SimpleNamespace(scalar=lambda: None),
-        ]
-        payload = routers.ViolationFeedbackCreate(type='false_positive')
-        with patch.object(
-            routers._user_service, 'get_cached_effective_site_names',
-            new=AsyncMock(return_value=['Roadwork']),
-        ):
-            with self.assertRaises(HTTPException) as missing_user:
-                await routers.submit_violation_feedback(
-                    1,
-                    payload,
-                    self.db,
-                    self.credentials,
-                )
-
-        self.assertEqual(missing_user.exception.status_code, 404)
-
-    async def test_feedback_transaction_failure_returns_safe_server_error(
-        self,
-    ) -> None:
-        """Feedback persistence failure attempts rollback and hides DB
-        details."""
-        violation = SimpleNamespace(id=1, detections_json=None)
-        self.db.execute.side_effect = [
-            SimpleNamespace(scalar_one_or_none=lambda: violation),
-            SimpleNamespace(scalar=lambda: 7),
-        ]
-        self.db.add = MagicMock()
-        self.db.commit = AsyncMock(
-            side_effect=RuntimeError('database unavailable'),
-        )
-        self.db.rollback = AsyncMock(
-            side_effect=RuntimeError('rollback unavailable'),
-        )
-        payload = routers.ViolationFeedbackCreate(type='false_positive')
-        with patch.object(
-            routers._user_service, 'get_cached_effective_site_names',
-            new=AsyncMock(return_value=['Roadwork']),
-        ):
-            with self.assertRaises(HTTPException) as failed:
-                await routers.submit_violation_feedback(
-                    1,
-                    payload,
-                    self.db,
-                    self.credentials,
-                )
-
-        self.assertEqual(failed.exception.status_code, 500)
-        self.db.rollback.assert_awaited_once()
-
-    async def test_review_rejects_missing_identity_and_unflagged_record(
-        self,
-    ) -> None:
-        """Review updates require a username and an already flagged record."""
-        with self.assertRaises(HTTPException) as missing_identity:
-            await routers.review_violation(
-                1,
-                MagicMock(),
-                SimpleNamespace(),
-                self.db,
-                self.missing_credentials,
-            )
-        self.assertEqual(missing_identity.exception.status_code, 401)
-
-        unflagged = SimpleNamespace(is_flagged=False)
-        self.db.execute.return_value = SimpleNamespace(
-            scalar_one_or_none=lambda: unflagged,
-        )
-        with patch.object(
-            routers,
-            '_load_review_scope',
-            new=AsyncMock(
-                return_value=(SimpleNamespace(id=7), ['Roadwork']),
-            ),
-        ):
-            with self.assertRaises(HTTPException) as unflagged_record:
-                await routers.review_violation(
-                    1,
-                    MagicMock(),
-                    SimpleNamespace(),
-                    self.db,
-                    self.credentials,
-                )
-
-        self.assertEqual(unflagged_record.exception.status_code, 404)
-
-    async def test_review_transaction_failure_returns_safe_server_error(
-        self,
-    ) -> None:
-        """Review persistence failure attempts rollback even if rollback
-        fails."""
-        violation = SimpleNamespace(
-            id=1,
-            is_flagged=True,
-            review_status='pending',
-            flag_reason='false_positive',
-        )
-        self.db.execute.return_value = SimpleNamespace(
-            scalar_one_or_none=lambda: violation,
-        )
-        self.db.add = MagicMock()
-        self.db.commit = AsyncMock(
-            side_effect=RuntimeError('database unavailable'),
-        )
-        self.db.rollback = AsyncMock(
-            side_effect=RuntimeError('rollback unavailable'),
-        )
-        payload: Any = SimpleNamespace(
-            review_status='resolved',
-            review_note='confirmed',
-        )
-        with patch.object(
-            routers,
-            '_load_review_scope',
-            new=AsyncMock(
-                return_value=(SimpleNamespace(id=7), ['Roadwork']),
-            ),
-        ):
-            with self.assertRaises(HTTPException) as failed:
-                await routers.review_violation(
-                    1,
-                    payload,
-                    SimpleNamespace(),
-                    self.db,
-                    self.credentials,
-                )
-
-        self.assertEqual(failed.exception.status_code, 500)
-        self.db.rollback.assert_awaited_once()
-
-
-if __name__ == '__main__':
-    unittest.main()

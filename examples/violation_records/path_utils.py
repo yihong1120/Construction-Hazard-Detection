@@ -8,16 +8,14 @@ from fastapi import HTTPException
 from examples.shared.filename_utils import sanitize_filename
 from examples.violation_records.settings import STATIC_DIR
 
-
 logger = logging.getLogger(__name__)
 
 
-def _normalize_safe_rel_path(image_path: str, path_cls: type = Path) -> Path:
+def normalise_safe_relative_path(image_path: str) -> Path:
     """Normalise and sanitise a user-provided relative image path.
 
     Args:
         image_path: Untrusted relative image path supplied by a client.
-        path_cls: Path implementation used to construct and inspect the path.
 
     Returns:
         Sanitised relative path rooted below the static media directory.
@@ -26,7 +24,7 @@ def _normalize_safe_rel_path(image_path: str, path_cls: type = Path) -> Path:
         HTTPException: If the path is absolute, traverses directories, or has
             an invalid component.
     """
-    raw_path = path_cls(image_path)
+    raw_path = Path(image_path)
     if raw_path.is_absolute() or '..' in raw_path.parts:
         raise HTTPException(status_code=400, detail='Invalid path')
 
@@ -41,14 +39,13 @@ def _normalize_safe_rel_path(image_path: str, path_cls: type = Path) -> Path:
         if not cleaned:
             raise HTTPException(status_code=400, detail='Invalid path segment')
         safe_parts.append(cleaned)
-    return path_cls(*safe_parts) if safe_parts else path_cls()
+    return Path(*safe_parts) if safe_parts else Path()
 
 
-def _resolve_and_authorize(
+def resolve_authorised_media_path(
     base_dir: Path,
     rel_path: Path,
     username: str,
-    path_cls: type = Path,
 ) -> Path:
     """Resolve a media path below its authorised base directory.
 
@@ -56,7 +53,6 @@ def _resolve_and_authorize(
         base_dir: Root directory authorised for violation media.
         rel_path: Sanitised relative media path.
         username: Requesting username for security logging.
-        path_cls: Path implementation used to resolve filesystem paths.
 
     Returns:
         Resolved absolute path contained by ``base_dir``.

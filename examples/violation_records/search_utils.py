@@ -23,7 +23,6 @@ SYNONYMS_MAP = {
     '缺安全帽': ['warning_no_hardhat'],
     'no hardhat': ['warning_no_hardhat'],
     'not wearing hardhat': ['warning_no_hardhat'],
-
     # Safety-vest-related search terms.
     '背': ['safety_vest', 'no_safety_vest', 'vest'],
     '背心': ['safety_vest', 'no_safety_vest', 'vest'],
@@ -37,38 +36,32 @@ SYNONYMS_MAP = {
     '缺安全背心': ['warning_no_safety_vest'],
     'no vest': ['warning_no_safety_vest'],
     'no safety vest': ['warning_no_safety_vest'],
-
     # Person-related search terms.
     '人': ['person'],
     '人員': ['person'],
     'person': ['person'],
     'personne': ['person'],
     'personnes': ['person'],
-
     # Machinery-related search terms.
     '機具': ['machinery'],
     'machine': ['machinery'],
     'machinery': ['machinery'],
     'machinerie': ['machinery'],
-
     # Vehicle-related search terms.
     '車': ['vehicle'],
     '車輛': ['vehicle'],
     'vehicle': ['vehicle'],
     'voiture': ['vehicle'],
-
     # Safety-cone-related search terms.
     '錐': ['cone'],
     '安全錐': ['cone'],
     'cone': ['cone'],
-
     # Face-mask-related search terms.
     '口罩': ['mask'],
     'mask': ['mask'],
     '無口罩': ['no_mask'],
     'no mask': ['no_mask'],
     'nomask': ['no_mask'],
-
     # === Warning: people entering controlled area ===
     '受控': ['warning_people_in_controlled_area'],
     '受控區': ['warning_people_in_controlled_area'],
@@ -81,21 +74,18 @@ SYNONYMS_MAP = {
     '進入受控': ['warning_people_in_controlled_area'],
     '進入控制區': ['warning_people_in_controlled_area'],
     '進入控制區域': ['warning_people_in_controlled_area'],
-
     # === Warning: close to machinery ===
     '靠近機具': ['warning_close_to_machinery'],
     '接近機具': ['warning_close_to_machinery'],
     '機具太近': ['warning_close_to_machinery'],
     'close machinery': ['warning_close_to_machinery'],
     'close to machinery': ['warning_close_to_machinery'],
-
     # === Warning: close to vehicle ===
     '靠近車輛': ['warning_close_to_vehicle'],
     '接近車輛': ['warning_close_to_vehicle'],
     '車輛太近': ['warning_close_to_vehicle'],
     'close vehicle': ['warning_close_to_vehicle'],
     'close to vehicle': ['warning_close_to_vehicle'],
-
     # === Warning: entering utility pole restricted area ===
     '電線桿控制區': ['detect_in_utility_pole_restricted_area'],
     '電桿控制區': ['detect_in_utility_pole_restricted_area'],
@@ -107,21 +97,27 @@ SYNONYMS_MAP = {
 
 # Stop words are kept separate because Chinese tokenisation needs exact tokens.
 ENGLISH_STOP_WORDS = {
-    'the', 'is', 'at', 'which',
-    'on', 'a', 'an', 'and', 'or', 'of', 'to', 'in',
+    'the',
+    'is',
+    'at',
+    'which',
+    'on',
+    'a',
+    'an',
+    'and',
+    'or',
+    'of',
+    'to',
+    'in',
 }
 CHINESE_STOP_WORDS = {'的', '了', '在', '是', '和'}
 
 
 class SearchUtils:
-    """
-    A utility class for processing user input, including tokenization,
-    synonym expansion, and building Elasticsearch queries.
-    """
+    """Expand multilingual violation-search terms into detector labels."""
 
     def __init__(self, device: int = -1) -> None:
-        """
-        Initialise the CKIP word segmenter.
+        """Initialise the CKIP word segmenter.
 
         Args:
             device (int): If using CPU, set device to -1.
@@ -163,21 +159,8 @@ class SearchUtils:
                 (normalized_key, tuple(values)),
             )
         return {
-            first_char: tuple(items)
-            for first_char, items in grouped.items()
+            first_char: tuple(items) for first_char, items in grouped.items()
         }
-
-    def tokenize(self, user_input: str) -> list[str]:
-        """
-        Tokenise the input text and remove stop words.
-
-        Args:
-            user_input (str): The raw text from the user.
-
-        Returns:
-            list[str]: A list of tokens after stop words are removed.
-        """
-        return list(self._tokenize_cached(user_input))
 
     @lru_cache(maxsize=512)
     def _tokenize_cached(self, user_input: str) -> tuple[str, ...]:
@@ -202,8 +185,7 @@ class SearchUtils:
         return tuple(filtered_tokens)
 
     def expand_synonyms(self, user_input: str) -> list[str]:
-        """
-        Expand the input text by replacing tokens with their synonyms.
+        """Expand the input text by replacing tokens with their synonyms.
 
         Args:
             user_input (str): The raw text from the user.
@@ -232,31 +214,7 @@ class SearchUtils:
                     # Substring matching supports compound CJK search terms.
                     if key in token:
                         results.update(vlist)
-            # Keep the literal token so exact detector labels remain searchable.
+            # Keep the literal token so exact detector labels remain
+            # searchable.
             results.add(token)
         return tuple(results)
-
-    def build_elasticsearch_query(self, user_input: str) -> dict:
-        """
-        Build an Elasticsearch query using the expanded synonyms.
-
-        Args:
-            user_input (str): The raw text from the user.
-
-        Returns:
-            dict: A dictionary representing the Elasticsearch query.
-        """
-        keywords = self.expand_synonyms(user_input)
-        fields = ('stream_name', 'warnings_json')
-        query = {
-            'query': {
-                'bool': {
-                    'should': [
-                        {'wildcard': {field: f"*{kw}*"}}
-                        for kw in keywords
-                        for field in fields
-                    ],
-                },
-            },
-        }
-        return query

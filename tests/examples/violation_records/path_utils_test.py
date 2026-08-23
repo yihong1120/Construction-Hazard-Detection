@@ -8,8 +8,8 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from examples.violation_records.path_utils import _determine_media_type
-from examples.violation_records.path_utils import _normalize_safe_rel_path
-from examples.violation_records.path_utils import _resolve_and_authorize
+from examples.violation_records.path_utils import normalise_safe_relative_path
+from examples.violation_records.path_utils import resolve_authorised_media_path
 
 
 class TestNormalizeSafeRelPath(unittest.TestCase):
@@ -18,58 +18,27 @@ class TestNormalizeSafeRelPath(unittest.TestCase):
     def test_reject_absolute_path(self) -> None:
         """Absolute paths must be rejected with HTTP 400.
 
-        Given an absolute file system path, when validated, the function
-        should raise an HTTPException with a 400 status code.
+        Given an absolute file system path, when validated, the function should
+        raise an HTTPException with a 400 status code.
         """
         abs_path: str = str(Path('/etc/passwd'))
         with self.assertRaises(HTTPException) as cm:
-            _normalize_safe_rel_path(abs_path)
+            normalise_safe_relative_path(abs_path)
         self.assertEqual(cm.exception.status_code, 400)
         self.assertIn('Invalid path', cm.exception.detail)
 
     def test_reject_traversal_component(self) -> None:
         """Traversal tokens ('..') must be rejected with HTTP 400."""
         with self.assertRaises(HTTPException) as cm:
-            _normalize_safe_rel_path('a/../b.png')
+            normalise_safe_relative_path('a/../b.png')
         self.assertEqual(cm.exception.status_code, 400)
         self.assertIn('Invalid path', cm.exception.detail)
 
     def test_reject_leading_static(self) -> None:
         """The API accepts only paths relative to the static directory."""
         with self.assertRaises(HTTPException) as cm:
-            _normalize_safe_rel_path('static/2025-01-01/img.png')
+            normalise_safe_relative_path('static/2025-01-01/img.png')
         self.assertEqual(cm.exception.status_code, 400)
-
-    def test_dot_segment_invalid(self) -> None:
-        """A '.' segment must trigger a 400 Invalid path error.
-
-        A simple FakePath is used to ensure the '.' segment survives any
-        implicit normalisation that might be performed by the real Path.
-        """
-
-        class FakePath:
-            """Minimal Path-like type to simulate dotted segments.
-
-            Attributes:
-                parts: The path segments.
-            """
-
-            def __init__(self, *parts: str) -> None:
-                # If initialised with a single string, split by '/'.
-                """Support __init__."""
-                if len(parts) == 1 and isinstance(parts[0], str):
-                    self.parts: tuple[str, ...] = tuple(parts[0].split('/'))
-                else:
-                    self.parts = tuple(parts)
-
-            def is_absolute(self) -> bool:
-                """Pretend the path is always relative."""
-                return False
-
-        with self.assertRaises(HTTPException) as cm:
-            _normalize_safe_rel_path('valid/./img.png', path_cls=FakePath)
-        self.assertEqual(cm.exception.status_code, 400)
-        self.assertIn('Invalid path', cm.exception.detail)
 
     def test_segment_sanitization_empty(self) -> None:
         """Empty result from sanitising must raise a 400 segment error.
@@ -82,20 +51,19 @@ class TestNormalizeSafeRelPath(unittest.TestCase):
             return_value='',
         ):
             with self.assertRaises(HTTPException) as cm:
-                _normalize_safe_rel_path('bad/segment.png')
+                normalise_safe_relative_path('bad/segment.png')
         self.assertEqual(cm.exception.status_code, 400)
         self.assertIn('Invalid path segment', cm.exception.detail)
 
     def test_valid_sanitization_preserves_structure(self) -> None:
         """Sanitisation should keep directory structure intact."""
         raw: str = 'valid My/img 1.PNG'
-        out: Path = _normalize_safe_rel_path(raw)
+        out: Path = normalise_safe_relative_path(raw)
         # Compute expected using the same sanitiser per segment.
         from examples.shared.filename_utils import sanitize_filename
 
-        exp: Path = (
-            Path(sanitize_filename('valid My')) /
-            sanitize_filename('img 1.PNG')
+        exp: Path = Path(sanitize_filename('valid My')) / sanitize_filename(
+            'img 1.PNG',
         )
         self.assertEqual(out, exp)
 
@@ -108,7 +76,7 @@ class TestResolveAndAuthorize(unittest.TestCase):
         with TemporaryDirectory() as td:
             base: Path = Path(td)
             rel: Path = Path('a') / 'b.png'
-            full: Path = _resolve_and_authorize(base, rel, username='u')
+            full: Path = resolve_authorised_media_path(base, rel, username='u')
             self.assertTrue(str(full).startswith(str(base.resolve())))
             self.assertEqual(full, (base / rel).resolve())
 
@@ -119,7 +87,7 @@ class TestResolveAndAuthorize(unittest.TestCase):
             # Intentionally attempt to go outside the base directory.
             rel: Path = Path('..') / 'x.png'
             with self.assertRaises(HTTPException) as cm:
-                _resolve_and_authorize(base, rel, username='u')
+                resolve_authorised_media_path(base, rel, username='u')
             self.assertEqual(cm.exception.status_code, 403)
             self.assertIn('Access denied', cm.exception.detail)
 
@@ -158,10 +126,3 @@ class TestDetermineMediaType(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-"""
-pytest \
-  --cov=examples.violation_records.path_utils \
-  --cov-report=term-missing \
-  tests/examples/violation_records/path_utils_test.py
-"""

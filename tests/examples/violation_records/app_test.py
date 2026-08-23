@@ -16,24 +16,20 @@ from examples.violation_records.app import main
 
 
 class TestViolationRecordsApp(unittest.IsolatedAsyncioTestCase):
-    """
-    Collection of test cases for the violation_records FastAPI application.
-    """
+    """Collection of test cases for the violation_records FastAPI
+    application."""
 
     # Class variable to hold the test client.
     client: ClassVar[TestClient]
 
     @classmethod
     def setUpClass(cls) -> None:
-        """
-        Set up the test client and override the JWT dependency for testing.
-        """
+        """Set up the test client and override the JWT dependency for
+        testing."""
         super().setUpClass()
 
         def override_jwt() -> JwtAuthorizationCredentials:
-            """
-            Mock implementation of the jwt_access dependency for testing.
-            """
+            """Mock implementation of the jwt_access dependency for testing."""
             return JwtAuthorizationCredentials(
                 subject=cast(
                     AccessTokenSubject,
@@ -49,9 +45,8 @@ class TestViolationRecordsApp(unittest.IsolatedAsyncioTestCase):
 
     @patch('uvicorn.run')
     def test_run_uvicorn(self, mock_uvicorn_run: MagicMock) -> None:
-        """
-        Test the main function to ensure it runs the FastAPI application with
-        Uvicorn.
+        """Test the main function to ensure it runs the FastAPI application
+        with Uvicorn.
 
         Args:
             mock_uvicorn_run (MagicMock): Mock object for the Uvicorn run
@@ -68,9 +63,3 @@ class TestViolationRecordsApp(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.violation_records.app \
-    --cov-report=term-missing tests/examples/violation_records/app_test.py
-'''

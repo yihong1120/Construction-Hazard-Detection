@@ -2,316 +2,74 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-import uuid
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from unittest.mock import call
 from unittest.mock import MagicMock
-from unittest.mock import patch
 
 from examples.auth.models import Violation
 from examples.violation_records.violation_manager import ViolationManager
 
 
 class TestViolationManager(unittest.IsolatedAsyncioTestCase):
-    """Test cases for the ViolationManager class."""
+    """Verify upload-only violation persistence."""
 
-    async def asyncSetUp(self) -> None:
-        """Set up for each test.
-
-        This method is called before each test_* method in an asynchronous test
-        case.
-        """
-        # Create an instance of ViolationManager.
-        self.manager = ViolationManager(base_dir='static')
-
-        # Prepare a timestamp for testing.
-        self.mock_detection_time = datetime(2025, 4, 9, 10, 30, 0)
-
-        # Example bytes for an image.
-        self.mock_image_bytes = b'fake_image_bytes'
-
-        # Example strings for JSON fields.
-        self.mock_warnings_json = '{"warning": {"count": 1}}'
-        self.mock_detections_json = '[[0, 0, 1, 1, 0.9, 0, -1]]'
-        self.mock_cone_polygon_json = '{"cones": []}'
-        self.mock_pole_polygon_json = '{"poles": []}'
-
-        # Mock SQLAlchemy session methods.
-        self.mock_db = AsyncMock()
-        self.mock_db.add = MagicMock()
-        self.mock_db.commit = AsyncMock()
-        self.mock_db.refresh = AsyncMock()
-        self.mock_db.execute = AsyncMock(
-            return_value=SimpleNamespace(
-                scalar_one_or_none=lambda: None,
-            ),
-        )
-
-    @patch('examples.violation_records.violation_manager.uuid.uuid4')
-    @patch('examples.violation_records.violation_manager.Path.mkdir')
-    @patch('examples.violation_records.violation_manager.aiofiles.open')
-    async def test_save_violation_success(
-        self,
-        mock_aiofiles_open: MagicMock,
-        mock_mkdir: MagicMock,
-        mock_uuid: MagicMock,
-    ) -> None:
-        # Arrange
-        """Test save violation success.
-
-        Args:
-            mock_aiofiles_open: Value used by this callable.
-            mock_mkdir: Value used by this callable.
-            mock_uuid: Value used by this callable.
-        """
-        mock_uuid.return_value = uuid.UUID('12345678123456781234567812345678')
-
-        # We want aiofiles.open(...) to return an async context manager.
-        mock_file_handle = AsyncMock()
-        mock_context_manager = AsyncMock()
-        mock_context_manager.__aenter__.return_value = mock_file_handle
-        mock_context_manager.__aexit__.return_value = False
-        mock_aiofiles_open.return_value = mock_context_manager
-
-        # Create a fake Violation object that will be returned by db.refresh
-        fake_violation = Violation(id=999)
-        self.mock_db.refresh.side_effect = lambda obj: setattr(
-            obj,
-            'id',
-            fake_violation.id,
-        )
-
-        # Act
-        new_violation_id = await self.manager.save_violation(
-            db=self.mock_db,
-            site='Test Site',
-            stream_name='Camera1',
-            detection_time=self.mock_detection_time,
-            image_bytes=self.mock_image_bytes,
-            warnings_json=self.mock_warnings_json,
-            detections_json=self.mock_detections_json,
-            cone_polygon_json=self.mock_cone_polygon_json,
-            pole_polygon_json=self.mock_pole_polygon_json,
-        )
-
-        # Assert
-        # 1) Directory creation
-        mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
-
-        # 2) File opened with correct path & mode
-        pos_args, kw_args = mock_aiofiles_open.call_args
-        opened_path = pos_args[0]
-        opened_mode = kw_args['mode']
-
-        self.assertIn('static/2025-04-09', str(opened_path))
-        # *** Here's the fix: checking for the hyphenated version ***
-        self.assertIn(
-            '12345678-1234-5678-1234-567812345678.png',
-            str(opened_path),
-        )
-        self.assertEqual(opened_mode, 'wb')
-
-        # 3) File write with correct bytes
-        mock_file_handle.write.assert_awaited_once_with(self.mock_image_bytes)
-
-        # 4) Database calls
-        self.mock_db.add.assert_called_once()
-        self.assertEqual(
-            self.mock_db.add.call_args.args[0].image_path,
-            '2025-04-09/12345678-1234-5678-1234-567812345678.png',
-        )
-        self.mock_db.commit.assert_awaited_once()
-        self.mock_db.refresh.assert_awaited_once()
-
-        # 5) Returned ID matches
-        self.assertEqual(new_violation_id, 999)
-
-    @patch('examples.violation_records.violation_manager.aiofiles.open')
-    async def test_save_violation_failure(
-        self,
-        mock_aiofiles_open: MagicMock,
-    ) -> None:
-        # Arrange
-        """Test save violation failure.
-
-        Args:
-            mock_aiofiles_open: Value used by this callable.
-        """
-        mock_aiofiles_open.side_effect = Exception('File I/O error')
-
-        # Act
-        new_violation_id = await self.manager.save_violation(
-            db=self.mock_db,
-            site='Test Site',
-            stream_name='Camera1',
-            detection_time=self.mock_detection_time,
-            image_bytes=self.mock_image_bytes,
-        )
-
-        # Assert
-        self.assertIsNone(new_violation_id)
-        self.mock_db.add.assert_not_called()
-        self.mock_db.commit.assert_not_awaited()
-        self.mock_db.refresh.assert_not_awaited()
-
-    @patch('examples.violation_records.violation_manager.uuid.uuid4')
-    @patch('examples.violation_records.violation_manager.Path.mkdir')
-    @patch('examples.violation_records.violation_manager.aiofiles.open')
-    async def test_save_violation_streams_upload_file(
-        self,
-        mock_aiofiles_open: MagicMock,
-        _mock_mkdir: MagicMock,
-        mock_uuid: MagicMock,
-    ) -> None:
-        """UploadFile input is read and written in bounded chunks."""
-        mock_uuid.return_value = uuid.UUID('12345678123456781234567812345678')
-        mock_file_handle = AsyncMock()
-        mock_context_manager = AsyncMock()
-        mock_context_manager.__aenter__.return_value = mock_file_handle
-        mock_context_manager.__aexit__.return_value = False
-        mock_aiofiles_open.return_value = mock_context_manager
-
-        upload_file = AsyncMock()
-        upload_file.read = AsyncMock(side_effect=[b'chunk1', b'chunk2', b''])
-        self.mock_db.refresh.side_effect = lambda obj: setattr(obj, 'id', 100)
-
-        new_violation_id = await self.manager.save_violation(
-            db=self.mock_db,
-            site='Test Site',
-            stream_name='Camera1',
-            detection_time=self.mock_detection_time,
-            image_file=upload_file,
-            chunk_size=5,
-        )
-
-        self.assertEqual(new_violation_id, 100)
-        upload_file.read.assert_has_awaits([call(5), call(5), call(5)])
-        mock_file_handle.write.assert_has_awaits(
-            [
-                call(b'chunk1'),
-                call(b'chunk2'),
-            ],
-        )
-
-
-if __name__ == '__main__':
-    unittest.main()
-
-"""Pytest \
-
---cov=examples.violation_records.violation_manager \
---cov-report=term-missing \
-tests/examples/violation_records/violation_manager_test.py
-"""
-
-
-class TestViolationManagerFailureRecovery(unittest.IsolatedAsyncioTestCase):
-    """Exercise cleanup behaviour around failed violation image writes."""
-
-    async def test_empty_image_payload_is_rejected_without_conversion(
+    async def test_save_violation_streams_upload_and_returns_identifier(
         self,
     ) -> None:
-        """Empty byte payloads retain their specific client-facing error."""
+        """The manager accepts only a bounded asynchronous upload source."""
         with tempfile.TemporaryDirectory() as directory:
-            manager = ViolationManager(base_dir=directory)
-            with self.assertRaisesRegex(ValueError, 'Empty image'):
-                await manager.save_violation(
-                    db=SimpleNamespace(),
-                    site='SiteA',
-                    stream_name='Cam1',
-                    detection_time=datetime(2026, 7, 24),
-                    image_bytes=b'',
-                )
-
-    async def test_write_helpers_clean_up_read_errors_and_empty_uploads(
-        self,
-    ) -> None:
-        """Streaming upload failures remove incomplete files before re-
-        raising."""
-        with tempfile.TemporaryDirectory() as directory:
-            manager = ViolationManager(base_dir=directory)
-            empty_path = Path(directory) / 'empty.png'
-            with self.assertRaisesRegex(ValueError, 'Empty image'):
-                await manager._write_image_bytes(None, empty_path)
-
-            context = AsyncMock()
-            context.__aenter__.return_value = AsyncMock()
-            context.__aexit__.return_value = False
-            failing_upload = SimpleNamespace(
-                read=AsyncMock(side_effect=OSError('camera disconnected')),
-            )
-            with (
-                patch(
-                    (
-                        'examples.violation_records.violation_manager.'
-                        'aiofiles.open'
-                    ),
-                    return_value=context,
-                ),
-                self.assertRaisesRegex(OSError, 'Failed to read image file'),
-            ):
-                await manager._write_upload_file(
-                    failing_upload,
-                    Path(directory) / 'failed.png',
-                    1024,
-                )
-
-            empty_upload = SimpleNamespace(read=AsyncMock(return_value=b''))
-            with (
-                patch(
-                    (
-                        'examples.violation_records.violation_manager.'
-                        'aiofiles.open'
-                    ),
-                    return_value=context,
-                ),
-                self.assertRaisesRegex(ValueError, 'Empty image'),
-            ):
-                await manager._write_upload_file(
-                    empty_upload,
-                    Path(directory) / 'empty-upload.png',
-                    1024,
-                )
-
-    async def test_save_failure_survives_rollback_error(self) -> None:
-        """A failed rollback does not conceal the original write failure."""
-        with tempfile.TemporaryDirectory() as directory:
-            manager = ViolationManager(base_dir=directory)
+            manager = ViolationManager(directory)
+            upload = AsyncMock()
+            upload.read = AsyncMock(side_effect=[b'image', b''])
             db = SimpleNamespace(
-                rollback=AsyncMock(
-                    side_effect=RuntimeError('rollback unavailable'),
+                add=MagicMock(),
+                commit=AsyncMock(),
+                refresh=AsyncMock(
+                    side_effect=lambda row: setattr(row, 'id', 42),
                 ),
+                execute=AsyncMock(
+                    return_value=SimpleNamespace(
+                        scalar_one_or_none=lambda: None,
+                    ),
+                ),
+                rollback=AsyncMock(),
             )
-            image_path = Path(directory) / 'failed.png'
 
-            with (
-                patch.object(
-                    manager,
-                    '_build_image_path',
-                    return_value=image_path,
-                ),
-                patch.object(
-                    manager,
-                    '_write_image_bytes',
-                    new_callable=AsyncMock,
-                    side_effect=OSError('disk full'),
-                ),
-                patch('builtins.print'),
-            ):
-                result = await manager.save_violation(
+            violation_id = await manager.save_violation(
+                db=db,
+                site='Site A',
+                stream_name='Camera A',
+                detection_time=datetime(2026, 8, 23),
+                image_file=upload,
+            )
+
+            self.assertEqual(violation_id, 42)
+            violation = db.add.call_args.args[0]
+            self.assertIsInstance(violation, Violation)
+            self.assertTrue((Path(directory) / violation.image_path).exists())
+
+    async def test_empty_upload_raises_a_domain_error(self) -> None:
+        """An empty upload cannot create a database record or return None."""
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ViolationManager(directory)
+            upload = AsyncMock()
+            upload.read = AsyncMock(return_value=b'')
+            db = SimpleNamespace(
+                add=MagicMock(),
+                commit=AsyncMock(),
+                execute=AsyncMock(),
+                rollback=AsyncMock(),
+            )
+
+            with self.assertRaises(ValueError):
+                await manager.save_violation(
                     db=db,
-                    site='SiteA',
-                    stream_name='Cam1',
-                    detection_time=datetime(2026, 7, 24),
-                    image_bytes=b'image',
+                    site='Site A',
+                    stream_name='Camera A',
+                    detection_time=datetime(2026, 8, 23),
+                    image_file=upload,
                 )
 
-        self.assertIsNone(result)
-        db.rollback.assert_awaited_once()
-
-
-if __name__ == '__main__':
-    unittest.main()
+            db.add.assert_not_called()

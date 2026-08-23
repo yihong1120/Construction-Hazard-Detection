@@ -15,6 +15,7 @@ from examples.violation_records.schemas import ViolationFeedbackResponse
 from examples.violation_records.schemas import ViolationFilterOptions
 from examples.violation_records.schemas import ViolationItem
 from examples.violation_records.schemas import ViolationList
+from examples.violation_records.schemas import ViolationListItem
 from examples.violation_records.schemas import ViolationReviewUpdate
 
 
@@ -69,10 +70,9 @@ class TestSchemas(unittest.TestCase):
             'site_name': 'Example Site',
             'stream_name': 'CamX',
             'detection_time': datetime(2023, 5, 1, 12, 0, 0),
-            'detected_at': datetime(2023, 5, 1, 12, 0, 0),
             'image_path': 'path/to/image.jpg',
             'image_url': (
-                '/get_violation_image?image_path=path%2Fto%2F' 'image.jpg'
+                '/get_violation_image?image_path=path%2Fto%2Fimage.jpg'
             ),
             'thumbnail_url': (
                 '/get_violation_thumbnail?image_path=path%2Fto%2Fimage.jpg'
@@ -119,7 +119,6 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(violation.site_name, 'Example Site')
         self.assertEqual(violation.stream_name, 'CamX')
         self.assertEqual(violation.detection_time, data['detection_time'])
-        self.assertEqual(violation.detected_at, data['detected_at'])
         self.assertEqual(violation.image_path, 'path/to/image.jpg')
         assert violation.image_url is not None
         assert violation.thumbnail_url is not None
@@ -160,8 +159,7 @@ class TestSchemas(unittest.TestCase):
             'site_name': 'Another Site',
             'stream_name': 'CamY',
             'detection_time': datetime(2023, 5, 2, 9, 0, 0),
-            'image_path': 'path/to/another.jpg',
-            'created_at': datetime(2023, 5, 2, 9, 15, 0),
+            'thumbnail_url': '/get_violation_thumbnail?image_path=another.jpg',
         }
         violations_list_data = {
             'items': [
@@ -174,6 +172,7 @@ class TestSchemas(unittest.TestCase):
         first_item = result.items[0]
         self.assertEqual(first_item.id, 2)
         self.assertEqual(first_item.stream_name, 'CamY')
+        self.assertIsInstance(first_item, ViolationListItem)
 
     def test_violation_list_empty_items(self) -> None:
         """If 'items' is an empty list, the schema should still work."""
@@ -290,13 +289,10 @@ if __name__ == '__main__':
 
 
 class TestViolationSchemaCoverage(unittest.TestCase):
-
-    """Provide TestViolationSchemaCoverage.
-    """
+    """Provide TestViolationSchemaCoverage."""
 
     def test_normalized_bbox_rejects_out_of_range_ratio(self) -> None:
-        """Test normalized bbox rejects out of range ratio.
-        """
+        """Test normalized bbox rejects out of range ratio."""
         with self.assertRaises(ValidationError):
             NormalizedBBox(x=-0.1, y=0, w=1, h=1)
         with self.assertRaises(ValidationError):
@@ -305,8 +301,8 @@ class TestViolationSchemaCoverage(unittest.TestCase):
     def test_feedback_bbox_validation_rejects_nonfinite_negative_and_reversed(
         self,
     ) -> None:
-        """Test feedback bbox validation rejects nonfinite negative and reversed.
-        """
+        """Test feedback bbox validation rejects nonfinite negative and
+        reversed."""
         self.assertIsNone(
             ViolationFeedbackCreate(
                 type='false_positive',
@@ -325,8 +321,7 @@ class TestViolationSchemaCoverage(unittest.TestCase):
                 )
 
     def test_feedback_confidence_and_type_requirements(self) -> None:
-        """Test feedback confidence and type requirements.
-        """
+        """Test feedback confidence and type requirements."""
         self.assertIsNone(
             ViolationFeedbackCreate(
                 type='false_positive',

@@ -43,6 +43,7 @@ class SettingsStaticDirTest(unittest.TestCase):
                     in sys.modules
                 ):
                     import examples.violation_records.violation_manager as vm
+
                     importlib.reload(vm)
                 else:
                     import examples.violation_records.violation_manager as vm
@@ -58,15 +59,9 @@ class SettingsStaticDirTest(unittest.TestCase):
             settings.STATIC_DIR = original_static
             if 'examples.violation_records.violation_manager' in sys.modules:
                 import examples.violation_records.violation_manager as vm
+
                 importlib.reload(vm)
 
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.violation_records.search_utils \
-    --cov-report=term-missing \
-        tests/examples/violation_records/search_utils_test.py
-'''

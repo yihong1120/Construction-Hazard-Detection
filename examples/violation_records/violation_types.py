@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic import TypeAdapter
+
 from examples.violation_records.schemas import ViolationWarning
-from examples.violation_records.schemas import ViolationWarningPayload
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,9 @@ VIOLATION_TYPE_DEFINITIONS: tuple[ViolationTypeDefinition, ...] = (
 VIOLATION_TYPE_BY_CODE: dict[str, ViolationTypeDefinition] = {
     definition.code: definition for definition in VIOLATION_TYPE_DEFINITIONS
 }
+WARNING_PAYLOAD_ADAPTER: TypeAdapter[dict[str, ViolationWarning]] = (
+    TypeAdapter(dict[str, ViolationWarning])
+)
 
 
 def normalise_violation_type(code: str) -> str | None:
@@ -80,54 +84,23 @@ def normalise_violation_type(code: str) -> str | None:
     return normalized if normalized in VIOLATION_TYPE_BY_CODE else None
 
 
-def parse_warning_payload(
-    warnings_json: str | None,
-) -> ViolationWarningPayload | None:
-    """Decode the canonical warning payload stored with a violation.
-
-    Args:
-        warnings_json: Optional persisted detector-warning JSON.
-
-    Returns:
-        Validated warning payload, or ``None`` when no warning data exists.
-    """
-    if warnings_json is None:
-        return None
-    return ViolationWarningPayload.model_validate_json(warnings_json)
-
-
-def violation_type_codes_from_warnings(
-    warnings_json: str | None,
+def violation_type_codes(
+    warnings: dict[str, ViolationWarning],
 ) -> list[str]:
-    """Derive canonical codes from structured detector-warning keys.
+    """Derive canonical codes from parsed detector warnings.
 
     Args:
-        warnings_json: Optional persisted detector-warning JSON.
+        warnings: Parsed detector warning mapping.
 
     Returns:
         Active canonical violation-type codes.
     """
-    payload = parse_warning_payload(warnings_json)
-    if payload is None:
-        return []
-
     return [
         definition.code
         for definition in VIOLATION_TYPE_DEFINITIONS
         if any(
-            _is_active_warning(payload.root.get(key))
+            warning is not None and warning.count > 0
             for key in definition.warning_keys
+            for warning in [warnings.get(key)]
         )
     ]
-
-
-def _is_active_warning(value: ViolationWarning | None) -> bool:
-    """Return whether a detector warning has a positive count.
-
-    Args:
-        value: Optional structured detector warning.
-
-    Returns:
-        ``True`` when the warning exists and records one or more instances.
-    """
-    return value is not None and value.count > 0

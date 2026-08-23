@@ -1,25 +1,27 @@
 from __future__ import annotations
 
-import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 from typing import Final
 
 import aiofiles  # type: ignore[import-untyped]
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from examples.auth.models import Site
 from examples.auth.models import StreamConfig
 from examples.auth.models import Violation
 from examples.shared.filename_utils import sanitize_filename
 from examples.violation_records.schemas import ViolationDetectionRows
-from examples.violation_records.schemas import ViolationWarningPayload
 from examples.violation_records.settings import STATIC_DIR
 from examples.violation_records.violation_types import (
-    violation_type_codes_from_warnings,
+    violation_type_codes,
+)
+from examples.violation_records.violation_types import (
+    WARNING_PAYLOAD_ADAPTER,
 )
 
 _upload_chunk_size: Final[int] = 1024 * 1024
@@ -63,16 +65,15 @@ class ViolationManager:
         site: str,
         stream_name: str,
         detection_time: datetime,
-        image_bytes: bytes | None = None,
+        image_file: UploadFile,
         warnings_json: str | None = None,
         detections_json: str | None = None,
         cone_polygon_json: str | None = None,
         pole_polygon_json: str | None = None,
-        image_file: Any | None = None,
         chunk_size: int = _upload_chunk_size,
-    ) -> int | None:
-        """
-        Save a violation record to the database and store the associated image.
+    ) -> int:
+        """Save a violation record to the database and store the associated
+        image.
 
         Args:
             db (AsyncSession): The SQLAlchemy session for database operations.
@@ -89,29 +90,31 @@ class ViolationManager:
                 safety pole polygons in the image. Defaults to None.
 
         Returns:
-            int | None: The ID of the newly created Violation record, or None
-                if an error occurred during the process.
+            The ID of the newly created violation record.
         """
-        image_path: Path | None = None
+        detection_time = detection_time.astimezone()
+        image_path = self._build_image_path(detection_time)
         try:
+            violation_type_codes_value: list[str] = []
             if warnings_json is not None:
-                warnings_json = ViolationWarningPayload.model_validate_json(
+                warning_payload = WARNING_PAYLOAD_ADAPTER.validate_json(
                     warnings_json,
-                ).model_dump_json()
+                )
+                warnings_json = WARNING_PAYLOAD_ADAPTER.dump_json(
+                    warning_payload,
+                ).decode('utf-8')
+                violation_type_codes_value = violation_type_codes(
+                    warning_payload,
+                )
             if detections_json is not None:
                 detections_json = ViolationDetectionRows.model_validate_json(
                     detections_json,
                 ).model_dump_json()
-            detection_time = detection_time.astimezone()
-            image_path = self._build_image_path(detection_time)
-            if image_file is not None:
-                await self._write_upload_file(
-                    image_file,
-                    image_path,
-                    chunk_size=chunk_size,
-                )
-            else:
-                await self._write_image_bytes(image_bytes, image_path)
+            await self._write_upload_file(
+                image_file,
+                image_path,
+                chunk_size=chunk_size,
+            )
 
             new_violation = await self._insert_violation_record(
                 db=db,
@@ -120,28 +123,22 @@ class ViolationManager:
                 detection_time=detection_time,
                 image_path=image_path,
                 warnings_json=warnings_json,
+                violation_type_codes=violation_type_codes_value,
                 detections_json=detections_json,
                 cone_polygon_json=cone_polygon_json,
                 pole_polygon_json=pole_polygon_json,
             )
 
-            logging.info(
-                f"Violation saved successfully: ID={new_violation.id}",
-            )
             return new_violation.id
-        except (EmptyViolationImageError, ViolationImageReadError):
-            raise
-
-        except Exception as exc:
-            if image_path is not None:
+        except (
+            EmptyViolationImageError,
+            ViolationImageReadError,
+            SQLAlchemyError,
+        ):
+            if image_path.exists():
                 image_path.unlink(missing_ok=True)
-            try:
-                await db.rollback()
-            except Exception:
-                pass
-            logging.error(f"[ViolationManager] save_violation failed: {exc}")
-            print(f"[ViolationManager] save_violation failed: {exc}")
-            return None
+            await db.rollback()
+            raise
 
     def _build_image_path(self, detection_time: datetime) -> Path:
         """Create a date directory and return a unique evidence image path.
@@ -159,28 +156,9 @@ class ViolationManager:
         filename: str = sanitize_filename(f"{uuid.uuid4()}.png")
         return day_dir / filename
 
-    async def _write_image_bytes(
-        self,
-        image_bytes: bytes | None,
-        image_path: Path,
-    ) -> None:
-        """Write an in-memory evidence image to disk.
-
-        Args:
-            image_bytes: Image bytes supplied by an internal caller.
-            image_path: Destination path for the evidence image.
-
-        Raises:
-            EmptyViolationImageError: If no image bytes were supplied.
-        """
-        if not image_bytes:
-            raise EmptyViolationImageError('Empty image file')
-        async with aiofiles.open(image_path, mode='wb') as f:
-            await f.write(image_bytes)
-
     async def _write_upload_file(
         self,
-        image_file: Any,
+        image_file: UploadFile,
         image_path: Path,
         chunk_size: int,
     ) -> None:
@@ -204,7 +182,7 @@ class ViolationManager:
                         break
                     wrote_any = True
                     await f.write(chunk)
-        except Exception as exc:
+        except OSError as exc:
             image_path.unlink(missing_ok=True)
             raise ViolationImageReadError(
                 'Failed to read image file',
@@ -222,6 +200,7 @@ class ViolationManager:
         detection_time: datetime,
         image_path: Path,
         warnings_json: str | None,
+        violation_type_codes: list[str],
         detections_json: str | None,
         cone_polygon_json: str | None,
         pole_polygon_json: str | None,
@@ -235,6 +214,7 @@ class ViolationManager:
             detection_time: Time at which the violation was detected.
             image_path: Persisted absolute evidence-image path.
             warnings_json: Optional validated warning JSON.
+            violation_type_codes: Canonical codes derived from warnings.
             detections_json: Optional validated detection JSON.
             cone_polygon_json: Optional safety-cone polygon JSON.
             pole_polygon_json: Optional utility-pole polygon JSON.
@@ -254,9 +234,7 @@ class ViolationManager:
             detection_time=detection_time,
             image_path=image_path.relative_to(self.base_dir).as_posix(),
             warnings_json=warnings_json,
-            violation_type_codes=violation_type_codes_from_warnings(
-                warnings_json,
-            ),
+            violation_type_codes=violation_type_codes,
             detections_json=detections_json,
             cone_polygon_json=cone_polygon_json,
             pole_polygon_json=pole_polygon_json,

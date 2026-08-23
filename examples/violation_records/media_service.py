@@ -8,18 +8,26 @@ from PIL import Image
 from PIL import ImageFile
 from PIL import UnidentifiedImageError
 
-from examples.violation_records.path_utils import _normalize_safe_rel_path
-from examples.violation_records.path_utils import _resolve_and_authorize
+from examples.violation_records.path_utils import normalise_safe_relative_path
+from examples.violation_records.path_utils import resolve_authorised_media_path
 from examples.violation_records.settings import STATIC_DIR
-
 
 THUMBNAIL_DIR_NAME = '_thumbnails'
 THUMBNAIL_MAX_EDGE = 360
 THUMBNAIL_QUALITY = 78
 THUMBNAIL_HEADER_SCAN_BYTES = 64 * 1024
-_ISOBMFF_IMAGE_BRANDS = frozenset({
-    b'avif', b'avis', b'heic', b'heix', b'hevc', b'hevx', b'mif1', b'msf1',
-})
+_ISOBMFF_IMAGE_BRANDS = frozenset(
+    {
+        b'avif',
+        b'avis',
+        b'heic',
+        b'heix',
+        b'hevc',
+        b'hevx',
+        b'mif1',
+        b'msf1',
+    },
+)
 
 
 def _thumbnail_cache_path(
@@ -96,17 +104,16 @@ def _image_size_sync(
 ) -> tuple[int, int] | None:
     """Read evidence dimensions after resolving the path safely."""
     try:
-        safe_rel_path = _normalize_safe_rel_path(image_path, path_cls=Path)
+        safe_rel_path = normalise_safe_relative_path(image_path)
         base_dir = Path(static_dir).resolve()
-        full_path = _resolve_and_authorize(
+        full_path = resolve_authorised_media_path(
             base_dir,
             safe_rel_path,
             '_internal',
-            path_cls=Path,
         )
         with Image.open(full_path) as image:
             return image.size
-    except Exception:
+    except (HTTPException, OSError, UnidentifiedImageError):
         return None
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -16,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.violation_records import violation_media_service
+from examples.violation_records import violation_query_service
+from examples.violation_records import violation_review_service
 from examples.violation_records import violation_services
+from examples.violation_records import violation_upload_service
 from examples.violation_records.schemas import SiteOut
 from examples.violation_records.schemas import UploadViolationResponse
 from examples.violation_records.schemas import ViolationAnalyticsResponse
@@ -28,7 +33,6 @@ from examples.violation_records.schemas import ViolationList
 from examples.violation_records.schemas import ViolationReviewAuditItem
 from examples.violation_records.schemas import ViolationReviewStatus
 from examples.violation_records.schemas import ViolationReviewUpdate
-
 
 router = APIRouter()
 
@@ -52,18 +56,13 @@ async def get_my_sites(
     Returns:
         Accessible site records.
     """
-    return await violation_services.get_my_sites(db, credentials)
+    return await violation_query_service.get_my_sites(db, credentials)
 
 
 @router.get(
     '/violations/filter-options',
     response_model=ViolationFilterOptions,
     summary='Get authorized camera and violation type filter options',
-)
-@router.get(
-    '/filter-options',
-    response_model=ViolationFilterOptions,
-    include_in_schema=False,
 )
 async def get_violation_filter_options(
     site_id: int = Query(..., gt=0),
@@ -82,7 +81,7 @@ async def get_violation_filter_options(
     Returns:
         Authorised camera and canonical type filter options.
     """
-    return await violation_services.get_violation_filter_options(
+    return await violation_query_service.get_violation_filter_options(
         site_id,
         group_id,
         db,
@@ -105,7 +104,10 @@ async def get_violations(
     start_time: datetime | None = Query(None),
     end_time: datetime | None = Query(None),
     limit: int = Query(
-        20, gt=0, le=100, description='Records per page (1-100)',
+        20,
+        gt=0,
+        le=100,
+        description='Records per page (1-100)',
     ),
     flagged: bool | None = Query(
         None,
@@ -142,7 +144,7 @@ async def get_violations(
     Returns:
         Authorised page of violation records and an optional next cursor.
     """
-    return await violation_services.get_violations(
+    return await violation_query_service.get_violations(
         request,
         db,
         credentials,
@@ -168,23 +170,13 @@ async def get_violations(
         'type, time-range, and bucket filters applied to every result.'
     ),
 )
-@router.get(
-    '/analytics',
-    response_model=ViolationAnalyticsResponse,
-    include_in_schema=False,
-)
-@router.get(
-    '/hazard/api/detection/violations/analytics',
-    response_model=ViolationAnalyticsResponse,
-    include_in_schema=False,
-)
 async def get_violation_analytics(
     start: datetime = Query(..., description='Inclusive UTC start datetime'),
     end: datetime = Query(..., description='Inclusive UTC end datetime'),
     site_id: int | None = None,
     stream_id: str | None = None,
     violation_type: str | None = None,
-    bucket: violation_services.AnalyticsBucket = Query('day'),
+    bucket: Literal['day', 'hour', 'week'] = Query('day'),
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> ViolationAnalyticsResponse:
@@ -245,7 +237,7 @@ async def get_next_review_violation(
     Returns:
         Next review item, or ``None`` when none matches.
     """
-    return await violation_services.get_next_review_violation(
+    return await violation_review_service.get_next_review_violation(
         request,
         db,
         credentials,
@@ -259,7 +251,9 @@ async def get_next_review_violation(
     '/violations/{violation_id}/audit-log',
     response_model=list[ViolationReviewAuditItem],
     summary='Get violation review audit log',
-    description='Return review history for a flagged record in reviewer scope.',
+    description=(
+        'Return review history for a flagged record in reviewer scope.'
+    ),
 )
 async def get_violation_review_audit_log(
     violation_id: int,
@@ -276,7 +270,7 @@ async def get_violation_review_audit_log(
     Returns:
         Newest-first review audit entries.
     """
-    return await violation_services.get_violation_review_audit_log(
+    return await violation_review_service.get_violation_review_audit_log(
         violation_id,
         db,
         credentials,
@@ -306,7 +300,7 @@ async def get_single_violation(
     Returns:
         Authorised detailed violation record.
     """
-    return await violation_services.get_single_violation(
+    return await violation_review_service.get_single_violation(
         violation_id,
         request,
         db,
@@ -338,7 +332,7 @@ async def submit_violation_feedback(
     Returns:
         Persisted feedback record in pending review status.
     """
-    return await violation_services.submit_violation_feedback(
+    return await violation_review_service.submit_violation_feedback(
         violation_id,
         payload,
         db,
@@ -371,7 +365,7 @@ async def review_violation(
     Returns:
         Updated detailed violation record.
     """
-    return await violation_services.review_violation(
+    return await violation_review_service.review_violation(
         violation_id,
         payload,
         request,
@@ -400,7 +394,7 @@ async def get_violation_image(
     Returns:
         Protected original image response.
     """
-    return await violation_services.get_violation_image(
+    return await violation_media_service.get_violation_image(
         image_path,
         db,
         credentials,
@@ -427,7 +421,7 @@ async def get_violation_thumbnail(
     Returns:
         Protected generated thumbnail response.
     """
-    return await violation_services.get_violation_thumbnail(
+    return await violation_media_service.get_violation_thumbnail(
         image_path,
         db,
         credentials,
@@ -469,7 +463,7 @@ async def upload_violation(
     Returns:
         Created violation identifier and upload result message.
     """
-    return await violation_services.upload_violation(
+    return await violation_upload_service.upload_violation(
         site,
         stream_name,
         detection_time,
