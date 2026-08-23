@@ -18,7 +18,9 @@ class TestStreamConfigCreate(unittest.TestCase):
     def test_valid(self) -> None:
         """Test creating a valid StreamConfigCreate instance with defaults."""
         data: StreamConfigCreate = StreamConfigCreate(
-            site_id=1, stream_name='stream1', video_url='http://video.url',
+            site_id=1,
+            stream_name='stream1',
+            video_url='http://video.url',
         )
         self.assertEqual(data.site_id, 1)
         self.assertEqual(data.stream_name, 'stream1')
@@ -72,9 +74,8 @@ class TestStreamConfigUpdate(unittest.TestCase):
     """Unit tests for StreamConfigUpdate schema."""
 
     def test_all_optional_fields(self) -> None:
-        """
-        Test creating StreamConfigUpdate instance with all fields optional.
-        """
+        """Test creating StreamConfigUpdate instance with all fields
+        optional."""
         data: StreamConfigUpdate = StreamConfigUpdate()
         self.assertIsNone(data.stream_name)
         self.assertIsNone(data.video_url)
@@ -85,7 +86,8 @@ class TestStreamConfigUpdate(unittest.TestCase):
     def test_partial_fields_provided(self) -> None:
         """Test creating StreamConfigUpdate with partial fields provided."""
         data: StreamConfigUpdate = StreamConfigUpdate(
-            stream_name='new_stream', work_end_hour=20,
+            stream_name='new_stream',
+            work_end_hour=20,
         )
         self.assertEqual(data.stream_name, 'new_stream')
         self.assertEqual(data.work_end_hour, 20)
@@ -161,9 +163,3 @@ class TestStreamConfigRead(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.schemas.stream_config \
-       --cov-report=term-missing \
-       tests/examples/db_management/schemas/stream_config_test.py
-'''

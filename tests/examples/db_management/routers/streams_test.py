@@ -147,8 +147,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created_payload.group_id, 1)
 
     async def test_endpoint_create_stream_config_limit_reached(self) -> None:
-        """Test endpoint create stream config limit reached.
-        """
+        """Test endpoint create stream config limit reached."""
         self.db.get.return_value = self.site_mock
 
         with patch(
@@ -565,8 +564,7 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
     """Exercise stream ownership and batch upsert guardrails."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.db = AsyncMock()
         self.db.add = MagicMock()
         self.admin = User(

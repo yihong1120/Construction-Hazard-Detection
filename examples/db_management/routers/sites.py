@@ -31,16 +31,18 @@ from examples.db_management.services.site_services import add_user_to_site
 from examples.db_management.services.site_services import create_site
 from examples.db_management.services.site_services import delete_site
 from examples.db_management.services.site_services import list_sites
-from examples.db_management.services.site_services import \
-    remove_group_from_site
+from examples.db_management.services.site_services import (
+    remove_group_from_site,
+)
 from examples.db_management.services.site_services import remove_user_from_site
 from examples.db_management.services.site_services import site_to_read
 from examples.db_management.services.site_services import update_site
 from examples.local_notification_server.site_recipient_cache import (
     invalidate_site_notification_user_cache,
 )
-from examples.local_notification_server.site_recipient_cache import \
-    refresh_site_notification_user_cache
+from examples.local_notification_server.site_recipient_cache import (
+    refresh_site_notification_user_cache,
+)
 from examples.streaming_web.metadata_keys import (
     increment_metadata_site_generation,
 )
@@ -78,8 +80,7 @@ async def endpoint_list_sites(
 
     # Convert Site objects to SiteRead schemas for response
     return [
-        site_to_read(site, visible_group_id=visible_group_id)
-        for site in sites
+        site_to_read(site, visible_group_id=visible_group_id) for site in sites
     ]
 
 
@@ -193,10 +194,14 @@ async def endpoint_delete_site(
     """
     # Retrieve the site to delete
     site: Site | None = (
-        await db.execute(
-            select(Site).where(Site.id == payload.site_id),
+        (
+            await db.execute(
+                select(Site).where(Site.id == payload.site_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')
@@ -238,10 +243,14 @@ async def endpoint_add_user_to_site(
     """
     # Retrieve the site to which the user will be added
     site: Site | None = (
-        await db.execute(
-            select(Site).where(Site.id == payload.site_id),
+        (
+            await db.execute(
+                select(Site).where(Site.id == payload.site_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')
@@ -251,10 +260,14 @@ async def endpoint_add_user_to_site(
 
     # Retrieve the user to add
     user: User | None = (
-        await db.execute(
-            select(User).where(User.id == payload.user_id),
+        (
+            await db.execute(
+                select(User).where(User.id == payload.user_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not user:
         raise HTTPException(status_code=404, detail='User not found.')
@@ -309,10 +322,14 @@ async def endpoint_remove_user_from_site(
     """
     # Retrieve the site from which the user will be removed
     site: Site | None = (
-        await db.execute(
-            select(Site).where(Site.id == payload.site_id),
+        (
+            await db.execute(
+                select(Site).where(Site.id == payload.site_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')
@@ -321,17 +338,22 @@ async def endpoint_remove_user_from_site(
 
     # Retrieve the user to remove
     user: User | None = (
-        await db.execute(
-            select(User).where(User.id == payload.user_id),
+        (
+            await db.execute(
+                select(User).where(User.id == payload.user_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not user:
         raise HTTPException(status_code=404, detail='User not found.')
 
     if user.username == SUPER_ADMIN_NAME:
         raise HTTPException(
-            status_code=403, detail='Cannot remove super admin from site.',
+            status_code=403,
+            detail='Cannot remove super admin from site.',
         )
 
     if not is_super_admin(me) and user.group_id is None:
@@ -370,10 +392,14 @@ async def endpoint_add_group_to_site(
         HTTPException: If site is not found or permission fails.
     """
     site: Site | None = (
-        await db.execute(
-            select(Site).where(Site.id == payload.site_id),
+        (
+            await db.execute(
+                select(Site).where(Site.id == payload.site_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')
@@ -409,10 +435,14 @@ async def endpoint_remove_group_from_site(
         HTTPException: If site is not found or permission fails.
     """
     site: Site | None = (
-        await db.execute(
-            select(Site).where(Site.id == payload.site_id),
+        (
+            await db.execute(
+                select(Site).where(Site.id == payload.site_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not site:
         raise HTTPException(status_code=404, detail='Site not found.')

@@ -13,7 +13,8 @@ class TestGroupCreate(unittest.TestCase):
     def test_valid(self) -> None:
         """Test creating a valid GroupCreate object."""
         data: group.GroupCreate = group.GroupCreate(
-            name='g', uniform_number='12345678',
+            name='g',
+            uniform_number='12345678',
         )
         self.assertEqual(data.name, 'g')
         self.assertEqual(data.uniform_number, '12345678')
@@ -32,16 +33,17 @@ class TestGroupUpdate(unittest.TestCase):
     def test_valid(self) -> None:
         """Test creating a valid GroupUpdate object with all fields."""
         data: group.GroupUpdate = group.GroupUpdate(
-            group_id=1, new_name='n', new_uniform_number='u',
+            group_id=1,
+            new_name='n',
+            new_uniform_number='u',
         )
         self.assertEqual(data.group_id, 1)
         self.assertEqual(data.new_name, 'n')
         self.assertEqual(data.new_uniform_number, 'u')
 
     def test_optional(self) -> None:
-        """
-        Test creating a valid GroupUpdate object with optional fields omitted.
-        """
+        """Test creating a valid GroupUpdate object with optional fields
+        omitted."""
         data: group.GroupUpdate = group.GroupUpdate(group_id=2)
         self.assertIsNone(data.new_name)
         self.assertIsNone(data.new_uniform_number)
@@ -72,7 +74,9 @@ class TestGroupRead(unittest.TestCase):
     def test_valid(self) -> None:
         """Test creating a valid GroupRead object."""
         data: group.GroupRead = group.GroupRead(
-            id=1, name='g', uniform_number='12345678',
+            id=1,
+            name='g',
+            uniform_number='12345678',
         )
         self.assertEqual(data.id, 1)
         self.assertEqual(data.name, 'g')
@@ -90,18 +94,21 @@ class TestGroupFeatureRead(unittest.TestCase):
     def test_valid(self) -> None:
         """Test creating a valid GroupFeatureRead object with feature IDs."""
         data: group.GroupFeatureRead = group.GroupFeatureRead(
-            group_id=1, group_name='g', feature_ids=[1, 2],
+            group_id=1,
+            group_name='g',
+            feature_ids=[1, 2],
         )
         self.assertEqual(data.group_id, 1)
         self.assertEqual(data.group_name, 'g')
         self.assertEqual(data.feature_ids, [1, 2])
 
     def test_empty_list(self) -> None:
-        """
-        Test creating a GroupFeatureRead object with an empty feature_ids list.
-        """
+        """Test creating a GroupFeatureRead object with an empty feature_ids
+        list."""
         data: group.GroupFeatureRead = group.GroupFeatureRead(
-            group_id=2, group_name='g2', feature_ids=[],
+            group_id=2,
+            group_name='g2',
+            feature_ids=[],
         )
         self.assertEqual(data.feature_ids, [])
 
@@ -113,10 +120,3 @@ class TestGroupFeatureRead(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-
-'''
-pytest --cov=examples.db_management.schemas.group\
-    --cov-report=term-missing\
-        tests/examples/db_management/schemas/group_test.py
-'''

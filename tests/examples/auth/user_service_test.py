@@ -82,10 +82,12 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
         user = SimpleNamespace(id=1, role='user', group_id=7)
         self.db.execute.side_effect = [
             self.scalar_result(user),
-            self.scalars_all_result([
-                SimpleNamespace(name='A'),
-                SimpleNamespace(name='B'),
-            ]),
+            self.scalars_all_result(
+                [
+                    SimpleNamespace(name='A'),
+                    SimpleNamespace(name='B'),
+                ],
+            ),
         ]
 
         base_time: float = 1_000_000.0
@@ -94,7 +96,8 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
             return_value=base_time,
         ):
             names: list[str] = await get_cached_effective_site_names(
-                'alice', self.db,
+                'alice',
+                self.db,
             )
 
         self.assertEqual(names, ['A', 'B'])
@@ -116,11 +119,12 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
 
         # time within TTL window
         with patch(
-                'examples.auth.user_service.time.time',
-                return_value=base_time + (_cache_ttl - 1),
+            'examples.auth.user_service.time.time',
+            return_value=base_time + (_cache_ttl - 1),
         ):
             names: list[str] = await get_cached_effective_site_names(
-                'bob', self.db,
+                'bob',
+                self.db,
             )
 
         self.assertEqual(names, ['X', 'Y'])
@@ -146,7 +150,8 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
             return_value=base_time,
         ):
             names: list[str] = await get_cached_effective_site_names(
-                'carol', self.db,
+                'carol',
+                self.db,
             )
 
         self.assertEqual(names, ['New'])
@@ -165,11 +170,12 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
 
         # Still valid at TTL-1
         with patch(
-                'examples.auth.user_service.time.time',
-                return_value=base_time + _cache_ttl - 1,
+            'examples.auth.user_service.time.time',
+            return_value=base_time + _cache_ttl - 1,
         ):
             names: list[str] = await get_cached_effective_site_names(
-                'dave', self.db,
+                'dave',
+                self.db,
             )
         self.assertEqual(names, ['C1'])
         self.db.execute.assert_not_called()
@@ -185,7 +191,8 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
             return_value=base_time + _cache_ttl + 1,
         ):
             names_after: list[str] = await get_cached_effective_site_names(
-                'dave', self.db,
+                'dave',
+                self.db,
             )
         self.assertEqual(names_after, ['C2'])
         self.assertEqual(self.db.execute.await_count, 2)
@@ -207,9 +214,7 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.detail, 'Invalid user')
 
     async def test_load_user_access_context_success(self) -> None:
-        """
-        On success, returns user, site names, and role as expected.
-        """
+        """On success, returns user, site names, and role as expected."""
         user = SimpleNamespace(
             id=5,
             username='eve',
@@ -218,10 +223,12 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
         )
         self.db.execute.side_effect = [
             self.scalar_result(user),
-            self.scalars_all_result([
-                SimpleNamespace(name='S1'),
-                SimpleNamespace(name='S2'),
-            ]),
+            self.scalars_all_result(
+                [
+                    SimpleNamespace(name='S1'),
+                    SimpleNamespace(name='S2'),
+                ],
+            ),
         ]
 
         u, site_names, role = await load_user_access_context(self.db, 'eve')
@@ -242,7 +249,8 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
         ]
 
         _, resolved_sites = await load_user_with_effective_sites(
-            'root', self.db,
+            'root',
+            self.db,
         )
 
         self.assertEqual(resolved_sites, sites)
@@ -252,13 +260,16 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Users without a group should have no effective site access."""
         user = SimpleNamespace(
-            id=11, username='nogroup',
-            role='user', group_id=None,
+            id=11,
+            username='nogroup',
+            role='user',
+            group_id=None,
         )
         self.db.execute.return_value = self.scalar_result(user)
 
         _, resolved_sites = await load_user_with_effective_sites(
-            'nogroup', self.db,
+            'nogroup',
+            self.db,
         )
 
         self.assertEqual(resolved_sites, [])
@@ -269,13 +280,16 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Direct site rows outside the user's group must not be effective."""
         user = SimpleNamespace(
-            id=21, username='alice',
-            role='admin', group_id=9,
+            id=21,
+            username='alice',
+            role='admin',
+            group_id=9,
         )
         self.db.execute.return_value = self.scalars_all_result([])
 
         sites = await list_effective_sites_for_user(
-            cast(Any, user), self.db,
+            cast(Any, user),
+            self.db,
         )
 
         self.assertEqual(sites, [])
@@ -319,8 +333,10 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
     async def test_get_cached_effective_site_names_success(self) -> None:
         """The cache helper should resolve and cache site names."""
         user = SimpleNamespace(
-            id=31, username='cache',
-            role='user', group_id=4,
+            id=31,
+            username='cache',
+            role='user',
+            group_id=4,
         )
         self.db.execute.side_effect = [
             self.scalar_result(user),
@@ -371,9 +387,3 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.auth.user_service \
-    --cov-report=term-missing tests/examples/auth/user_service_test.py
-'''

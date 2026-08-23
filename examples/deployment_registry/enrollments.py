@@ -18,7 +18,6 @@ from examples.auth.models import Tenant
 from examples.auth.models import TENANT_STATUS_ACTIVE
 from examples.auth.models import utc_now
 
-
 # Keep the counter increment and its expiry in one Redis operation.  A worker
 # failure between separate commands would otherwise leave a permanent counter.
 _RATE_LIMIT_LUA: str = """
@@ -37,7 +36,8 @@ class EnrollmentExchangeResult:
     """Represent the non-secret outcome of one enrollment-code redemption.
 
     Attributes:
-        status: Stable result state: ``invalid``, ``terminal``, or ``redeemed``.
+        status: Stable result state: ``invalid``, ``terminal``, or
+            ``redeemed``.
         deployment_id: Redeemed deployment identifier when the status is
             ``redeemed``.
     """
@@ -114,7 +114,7 @@ async def enforce_enrollment_exchange_rate_limit(
     # Redis keys retain only hashes, never raw client addresses or verifiers.
     keys: list[str] = [
         'construction-hazard-detection:deployment-enrollment:'
-        f'{scope}:{hashlib.sha256(identifier.encode("utf-8")).hexdigest()}'
+        f"{scope}:{hashlib.sha256(identifier.encode('utf-8')).hexdigest()}"
         for scope, identifier in (
             ('ip', client_identifier),
             ('code', verifier_hash),

@@ -26,7 +26,7 @@ def access_token_jti(payload: Mapping[str, object]) -> str:
 def _revocation_key(jti: str) -> str:
     """Return a Redis key without exposing a token identifier."""
     digest = hashlib.sha256(jti.encode('utf-8')).hexdigest()
-    return f'{_ACCESS_REVOCATION_PREFIX}:{digest}'
+    return f"{_ACCESS_REVOCATION_PREFIX}:{digest}"
 
 
 def _remaining_lifetime(payload: AccessTokenRevocationPayload) -> int:

@@ -61,23 +61,33 @@ class Tenant(Base):
     )
 
     id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), primary_key=True, default=uuid4,
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=TENANT_STATUS_ACTIVE,
+        String(20),
+        nullable=False,
+        default=TENANT_STATUS_ACTIVE,
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
         onupdate=utc_now,
     )
 
     deployments: Mapped[list[Deployment]] = relationship(
-        'Deployment', back_populates='tenant', cascade='all, delete-orphan',
+        'Deployment',
+        back_populates='tenant',
+        cascade='all, delete-orphan',
     )
     users: Mapped[list[User]] = relationship('User', back_populates='tenant')
 
@@ -100,7 +110,9 @@ class Deployment(Base):
     )
 
     id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), primary_key=True, default=uuid4,
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
     )
     tenant_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -109,21 +121,31 @@ class Deployment(Base):
     )
     api_base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     config_revision: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=1,
+        Integer,
+        nullable=False,
+        default=1,
     )
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=DEPLOYMENT_STATUS_ACTIVE,
+        String(20),
+        nullable=False,
+        default=DEPLOYMENT_STATUS_ACTIVE,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
         onupdate=utc_now,
     )
 
     tenant: Mapped[Tenant] = relationship(
-        'Tenant', back_populates='deployments', lazy='joined',
+        'Tenant',
+        back_populates='deployments',
+        lazy='joined',
     )
 
 
@@ -170,19 +192,25 @@ class DeploymentEnrollmentCode(Base):
         nullable=False,
     )
     code_verifier_hash: Mapped[str] = mapped_column(
-        String(64), nullable=False,
+        String(64),
+        nullable=False,
     )
     expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False,
+        DateTime(timezone=True),
+        nullable=False,
     )
     redeemed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     revoked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
     created_by: Mapped[str] = mapped_column(String(160), nullable=False)
 
@@ -230,7 +258,9 @@ class DeploymentEnrollmentCodeAuditLog(Base):
     )
     action: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
 
 
@@ -274,16 +304,17 @@ user_sites_table: Table = Table(
     Column('site_id', ForeignKey('sites.id'), primary_key=True),
 )
 
-
 site_groups_table: Table = Table(
     'site_groups',
     Base.metadata,
     Column(
-        'site_id', ForeignKey('sites.id', ondelete='CASCADE'),
+        'site_id',
+        ForeignKey('sites.id', ondelete='CASCADE'),
         primary_key=True,
     ),
     Column(
-        'group_id', ForeignKey('group_info.id', ondelete='CASCADE'),
+        'group_id',
+        ForeignKey('group_info.id', ondelete='CASCADE'),
         primary_key=True,
     ),
     Column(
@@ -293,12 +324,10 @@ site_groups_table: Table = Table(
     ),
 )
 
-
 # -------------------------------------------------------
 #  Site Model
 # -------------------------------------------------------
 password_hash = PasswordHash.recommended()
-
 
 # -------------------------------------------------------
 #  Feature Model
@@ -306,10 +335,9 @@ password_hash = PasswordHash.recommended()
 
 
 class Feature(Base):
-    """
-    Represents a feature in the system, such as safety detection
-    capabilities. This model is linked to the Group model
-    through a many-to-many relationship.
+    """Represents a feature in the system, such as safety detection
+    capabilities. This model is linked to the Group model through a many-to-
+    many relationship.
 
     Attributes:
         id (int): Primary key.
@@ -327,12 +355,15 @@ class Feature(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     feature_name: Mapped[str] = mapped_column(
-        String(50), unique=True, nullable=False,
+        String(50),
+        unique=True,
+        nullable=False,
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True),
+        server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -366,16 +397,20 @@ group_features_table: Table = Table(
     'group_features',
     Base.metadata,
     Column(
-        'group_id', ForeignKey(
+        'group_id',
+        ForeignKey(
             'group_info.id',
             ondelete='CASCADE',
-        ), primary_key=True,
+        ),
+        primary_key=True,
     ),
     Column(
-        'feature_id', ForeignKey(
+        'feature_id',
+        ForeignKey(
             'features.id',
             ondelete='CASCADE',
-        ), primary_key=True,
+        ),
+        primary_key=True,
     ),
     Column(
         'created_at',
@@ -390,9 +425,8 @@ group_features_table: Table = Table(
 
 
 class Group(Base):
-    """
-    Represents a group of users, including their access
-    permissions and associated construction sites.
+    """Represents a group of users, including their access permissions and
+    associated construction sites.
 
     Attributes:
         id (int): Primary key.
@@ -415,11 +449,16 @@ class Group(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
 
     uniform_number: Mapped[str] = mapped_column(
-        String(8), unique=True, nullable=False, comment='統一編號',
+        String(8),
+        unique=True,
+        nullable=False,
+        comment='統一編號',
     )
 
     max_allowed_streams: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=8,
+        Integer,
+        nullable=False,
+        default=8,
     )
 
     sites: Mapped[list[Site]] = relationship(
@@ -430,7 +469,8 @@ class Group(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True),
+        server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -454,7 +494,9 @@ class Group(Base):
     )
 
     stream_configs: Mapped[list[StreamConfig]] = relationship(
-        'StreamConfig', back_populates='group', cascade='all, delete-orphan',
+        'StreamConfig',
+        back_populates='group',
+        cascade='all, delete-orphan',
     )
 
     def __repr__(self) -> str:
@@ -469,7 +511,6 @@ class Group(Base):
 # -------------------------------------------------------
 #  Association Table: Many-to-Many Relationship between User and Site
 # -------------------------------------------------------
-
 
 # -------------------------------------------------------
 #  User Model
@@ -502,18 +543,22 @@ class UserProfile(Base):
     __tablename__ = 'user_profiles'
 
     user_id: Mapped[int] = mapped_column(
-        ForeignKey('users.id', ondelete='CASCADE'), primary_key=True,
+        ForeignKey('users.id', ondelete='CASCADE'),
+        primary_key=True,
     )
     family_name: Mapped[str] = mapped_column(String(50), nullable=False)
     middle_name: Mapped[str | None] = mapped_column(String(50))
     given_name: Mapped[str] = mapped_column(String(50), nullable=False)
     email: Mapped[str] = mapped_column(
-        String(255), unique=True, nullable=False,
+        String(255),
+        unique=True,
+        nullable=False,
     )
     mobile_number: Mapped[str | None] = mapped_column(String(20), unique=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True),
+        server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -524,7 +569,9 @@ class UserProfile(Base):
 
     # One-to-one relationship.
     user: Mapped[User] = relationship(
-        'User', back_populates='profile', uselist=False,
+        'User',
+        back_populates='profile',
+        uselist=False,
     )
 
 
@@ -540,9 +587,8 @@ def _normalise_profile_email(
 
 
 class User(Base):
-    """
-    Represents a user in the system, including login credentials,
-    role-based access, and relationships to assigned construction sites.
+    """Represents a user in the system, including login credentials, role-based
+    access, and relationships to assigned construction sites.
 
     Attributes:
         id (int): Primary key.
@@ -559,17 +605,24 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     username: Mapped[str] = mapped_column(
-        String(80), unique=True, nullable=False,
+        String(80),
+        unique=True,
+        nullable=False,
     )
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(
-        String(20), default='user', nullable=False,
+        String(20),
+        default='user',
+        nullable=False,
     )
     status: Mapped[str] = mapped_column(
-        String(20), default=USER_STATUS_ACTIVE, nullable=False,
+        String(20),
+        default=USER_STATUS_ACTIVE,
+        nullable=False,
     )
     email_verified_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     tenant_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -579,7 +632,9 @@ class User(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -607,7 +662,9 @@ class User(Base):
     # Many-to-many relationship to Site
     # This is an association table linking users to sites
     sites: Mapped[list[Site]] = relationship(
-        'Site', secondary=user_sites_table, back_populates='users',
+        'Site',
+        secondary=user_sites_table,
+        back_populates='users',
     )
 
     profile: Mapped[UserProfile] = relationship(
@@ -653,8 +710,7 @@ class User(Base):
     )
 
     def set_password(self, password: str) -> None:
-        """
-        Hash and store the user's password securely.
+        """Hash and store the user's password securely.
 
         Args:
             password (str): The plain-text password to be hashed.
@@ -662,8 +718,7 @@ class User(Base):
         self.password_hash = password_hash.hash(password)
 
     async def check_password(self, password: str) -> bool:
-        """
-        Verify whether a given password matches the stored hash.
+        """Verify whether a given password matches the stored hash.
 
         This is executed in a thread-safe, asynchronous manner.
 
@@ -683,8 +738,7 @@ class User(Base):
             return False
 
     def to_dict(self) -> dict:
-        """
-        Convert user attributes to a dictionary (e.g., for Redis caching).
+        """Convert user attributes to a dictionary (e.g., for Redis caching).
 
         Returns:
             dict: A serialisable dictionary of user information.
@@ -727,19 +781,26 @@ class UserIdentity(Base):
     provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email_verified: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False,
+        Boolean,
+        nullable=False,
+        default=False,
     )
     display_name: Mapped[str | None] = mapped_column(
-        String(255), nullable=True,
+        String(255),
+        nullable=True,
     )
     raw_profile: Mapped[dict[str, object] | None] = mapped_column(
-        JSON, nullable=True,
+        JSON,
+        nullable=True,
     )
     raw_email_is_private: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False,
+        Boolean,
+        nullable=False,
+        default=False,
     )
     linked_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True),
+        server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -775,18 +836,29 @@ class LegalDocument(Base):
     type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     version: Mapped[str] = mapped_column(String(40), nullable=False)
     locale: Mapped[str] = mapped_column(
-        String(20), nullable=False, default='zh-TW', index=True,
+        String(20),
+        nullable=False,
+        default='zh-TW',
+        index=True,
     )
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     effective_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now, index=True,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        index=True,
     )
     is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, index=True,
+        Boolean,
+        nullable=False,
+        default=True,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
 
 
@@ -805,28 +877,41 @@ class UserConsent(Base):
     privacy_version: Mapped[str] = mapped_column(String(40), nullable=False)
     ai_terms_version: Mapped[str] = mapped_column(String(40), nullable=False)
     accepted_terms: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False,
+        Boolean,
+        nullable=False,
+        default=False,
     )
     notification_consent: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False,
+        Boolean,
+        nullable=False,
+        default=False,
     )
     ai_terms_accepted: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False,
+        Boolean,
+        nullable=False,
+        default=False,
     )
     accepted_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now, index=True,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        index=True,
     )
     ai_terms_accepted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     notification_consent_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     ip_address: Mapped[str | None] = mapped_column(
-        String(45), nullable=True,
+        String(45),
+        nullable=True,
     )
     user_agent: Mapped[str | None] = mapped_column(
-        String(255), nullable=True,
+        String(255),
+        nullable=True,
     )
 
     user: Mapped[User] = relationship('User', back_populates='consents')
@@ -836,9 +921,8 @@ class UserConsent(Base):
 #  site_groups  (Many-to-Many: Site ↔ Group)
 # -------------------------------------------------------
 class Site(Base):
-    """
-    Represents a construction site, including its name and associated
-    users and safety violations.
+    """Represents a construction site, including its name and associated users
+    and safety violations.
 
     Attributes:
         id (int): Primary key.
@@ -853,11 +937,15 @@ class Site(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(
-        String(80), unique=True, nullable=False,
+        String(80),
+        unique=True,
+        nullable=False,
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -877,7 +965,9 @@ class Site(Base):
     # Many-to-many relationship to User
     # This is an association table linking users to sites
     users: Mapped[list[User]] = relationship(
-        'User', secondary=user_sites_table, back_populates='sites',
+        'User',
+        secondary=user_sites_table,
+        back_populates='sites',
     )
 
     notification_preferences: Mapped[list[SiteNotificationPreference]] = (
@@ -896,7 +986,9 @@ class Site(Base):
     )
 
     stream_configs: Mapped[list[StreamConfig]] = relationship(
-        'StreamConfig', back_populates='site', cascade='all, delete-orphan',
+        'StreamConfig',
+        back_populates='site',
+        cascade='all, delete-orphan',
     )
 
 
@@ -904,9 +996,8 @@ class Site(Base):
 #  StreamConfig
 # -------------------------------------------------------
 class StreamConfig(Base):
-    """
-    Represents the configuration for a video stream, including
-    detection capabilities and scheduling.
+    """Represents the configuration for a video stream, including detection
+    capabilities and scheduling.
 
     Attributes:
         id (int): Primary key.
@@ -927,38 +1018,48 @@ class StreamConfig(Base):
         created_at (datetime): Timestamp of creation.
         updated_at (datetime): Timestamp of last update.
     """
+
     __tablename__ = 'stream_configs'
 
-    id:          Mapped[int] = mapped_column(
-        Integer, primary_key=True, autoincrement=True,
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
     )
-    group_id:    Mapped[int] = mapped_column(
-        ForeignKey('group_info.id', ondelete='CASCADE'), nullable=False,
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey('group_info.id', ondelete='CASCADE'),
+        nullable=False,
     )
-    site_id:     Mapped[int] = mapped_column(
-        ForeignKey('sites.id', ondelete='CASCADE'), nullable=False,
+    site_id: Mapped[int] = mapped_column(
+        ForeignKey('sites.id', ondelete='CASCADE'),
+        nullable=False,
     )
 
     stream_name: Mapped[str] = mapped_column(String(80), nullable=False)
-    video_url:   Mapped[str] = mapped_column(String(255), nullable=False)
-    model_key:   Mapped[str] = mapped_column(String(80), nullable=False)
+    video_url: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_key: Mapped[str] = mapped_column(String(80), nullable=False)
 
     # Detection capabilities
     # These fields are used to determine the types of violations
-    detect_no_safety_vest_or_helmet:        Mapped[bool] = mapped_column(
-        Boolean, default=False,
+    detect_no_safety_vest_or_helmet: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
     )
-    detect_near_machinery_or_vehicle:       Mapped[bool] = mapped_column(
-        Boolean, default=False,
+    detect_near_machinery_or_vehicle: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
     )
-    detect_in_restricted_area:              Mapped[bool] = mapped_column(
-        Boolean, default=False,
+    detect_in_restricted_area: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
     )
     detect_in_utility_pole_restricted_area: Mapped[bool] = mapped_column(
-        Boolean, default=False,
+        Boolean,
+        default=False,
     )
-    detect_machinery_close_to_pole:         Mapped[bool] = mapped_column(
-        Boolean, default=False,
+    detect_machinery_close_to_pole: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
     )
 
     recognition_enabled: Mapped[bool] = mapped_column(
@@ -967,15 +1068,17 @@ class StreamConfig(Base):
         server_default=text('TRUE'),
         nullable=False,
     )
-    expire_date:        Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+    expire_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     work_start_hour: Mapped[int] = mapped_column(Integer)
-    work_end_hour:   Mapped[int] = mapped_column(Integer)
+    work_end_hour: Mapped[int] = mapped_column(Integer)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True),
+        server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -986,10 +1089,12 @@ class StreamConfig(Base):
 
     # Foreign key to the group_info table
     group: Mapped[Group] = relationship(
-        'Group', back_populates='stream_configs',
+        'Group',
+        back_populates='stream_configs',
     )
-    site:  Mapped[Site] = relationship(
-        'Site',  back_populates='stream_configs',
+    site: Mapped[Site] = relationship(
+        'Site',
+        back_populates='stream_configs',
     )
 
     __table_args__ = (
@@ -1016,11 +1121,14 @@ class SiteNotificationPreference(Base):
         primary_key=True,
     )
     is_enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True,
+        Boolean,
+        nullable=False,
+        default=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
+        DateTime(timezone=True),
+        server_default=text('CURRENT_TIMESTAMP'),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -1030,10 +1138,12 @@ class SiteNotificationPreference(Base):
     )
 
     user: Mapped[User] = relationship(
-        'User', back_populates='notification_preferences',
+        'User',
+        back_populates='notification_preferences',
     )
     site: Mapped[Site] = relationship(
-        'Site', back_populates='notification_preferences',
+        'Site',
+        back_populates='notification_preferences',
     )
 
 
@@ -1043,7 +1153,8 @@ class Notification(Base):
     __tablename__ = 'notifications'
     __table_args__ = (
         CheckConstraint(
-            "type IN ('signature', 'violation', 'document', 'site_alert', 'system')",
+            "type IN ('signature', 'violation', 'document', 'site_alert', "
+            "'system')",
             name='chk_notifications_type',
         ),
         Index(
@@ -1089,7 +1200,9 @@ class Notification(Base):
         default=dict,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
 
     user: Mapped[User] = relationship(
@@ -1196,8 +1309,7 @@ class FcmDeviceToken(Base):
 
 
 class Violation(Base):
-    """
-    Represents a safety violation detected at a specific site and time.
+    """Represents a safety violation detected at a specific site and time.
 
     Attributes:
         id (int): Primary key.
@@ -1220,7 +1332,9 @@ class Violation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     stream_name: Mapped[str] = mapped_column(String(80), nullable=False)
     detection_time: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
     image_path: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -1240,20 +1354,26 @@ class Violation(Base):
     )
 
     is_flagged: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False,
+        Boolean,
+        nullable=False,
+        default=False,
     )
     flag_reason: Mapped[str | None] = mapped_column(
-        String(120), nullable=True,
+        String(120),
+        nullable=True,
     )
     flagged_by: Mapped[int | None] = mapped_column(
         ForeignKey('users.id', ondelete='SET NULL'),
         nullable=True,
     )
     flagged_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     review_status: Mapped[str | None] = mapped_column(
-        String(20), nullable=True, default=None,
+        String(20),
+        nullable=True,
+        default=None,
     )
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_by: Mapped[int | None] = mapped_column(
@@ -1261,11 +1381,14 @@ class Violation(Base):
         nullable=True,
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=True, default=utc_now,
+        DateTime(timezone=True),
+        nullable=True,
+        default=utc_now,
     )
 
     # Foreign key: name of the associated site
@@ -1324,7 +1447,11 @@ class SiteMediaCleanupJob(Base):
         primary_key=True,
         autoincrement=True,
     )
-    path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
+    path: Mapped[str] = mapped_column(
+        String(1024),
+        nullable=False,
+        unique=True,
+    )
     attempt_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -1348,8 +1475,7 @@ class SiteMediaCleanupJob(Base):
 
 
 class ViolationFeedback(Base):
-    """
-    Structured user feedback for a stored violation record.
+    """Structured user feedback for a stored violation record.
 
     Feedback is collected in a pending state first so it can be reviewed before
     becoming training data.
@@ -1384,40 +1510,52 @@ class ViolationFeedback(Base):
     )
     anonymous_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     target_detection_id: Mapped[str | None] = mapped_column(
-        String(120), nullable=True,
+        String(120),
+        nullable=True,
     )
     feedback_type: Mapped[str] = mapped_column(
-        String(30), nullable=False,
+        String(30),
+        nullable=False,
     )
     original_label: Mapped[str | None] = mapped_column(
-        String(120), nullable=True,
+        String(120),
+        nullable=True,
     )
     corrected_label: Mapped[str | None] = mapped_column(
-        String(120), nullable=True,
+        String(120),
+        nullable=True,
     )
     original_bbox: Mapped[list[float] | None] = mapped_column(
-        JSON, nullable=True,
+        JSON,
+        nullable=True,
     )
     corrected_bbox: Mapped[list[float] | None] = mapped_column(
-        JSON, nullable=True,
+        JSON,
+        nullable=True,
     )
     model_version: Mapped[str | None] = mapped_column(
-        String(120), nullable=True,
+        String(120),
+        nullable=True,
     )
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default='pending',
+        String(20),
+        nullable=False,
+        default='pending',
     )
     reviewer_id: Mapped[int | None] = mapped_column(
         ForeignKey('users.id', ondelete='SET NULL'),
         nullable=True,
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )
 
 
@@ -1449,12 +1587,15 @@ class ViolationReviewAuditLog(Base):
     new_status: Mapped[str] = mapped_column(String(20), nullable=False)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     flagged_reason: Mapped[str | None] = mapped_column(
-        String(120), nullable=True,
+        String(120),
+        nullable=True,
     )
     reviewed_by: Mapped[int | None] = mapped_column(
         ForeignKey('users.id', ondelete='SET NULL'),
         nullable=True,
     )
     reviewed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
     )

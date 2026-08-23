@@ -23,9 +23,10 @@ from examples.auth.redis_pool import get_redis_pool
 from examples.auth.session_store import create_auth_session
 from examples.bff import security as bff
 from examples.db_management.routers import oauth
-from examples.db_management.services import oauth_protocol_services as oauth_service
+from examples.db_management.services import (
+    oauth_protocol_services as oauth_service,
+)
 from tests.examples.auth.session_store_test import FakeRedis
-
 
 _DEPLOYMENT = DeploymentBinding(
     tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
@@ -70,15 +71,14 @@ def _refresh_subject() -> dict[str, object]:
 
 
 class OAuthRouterTest(unittest.TestCase):
-    """Provide OAuthRouterTest.
-    """
+    """Provide OAuthRouterTest."""
+
     verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
     challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
     redirect_uri = 'com.changdar.visionnaire:/oauth2redirect'
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         app = FastAPI()
         app.include_router(oauth.router)
         self.redis = FakeRedis()
@@ -188,8 +188,7 @@ class OAuthRouterTest(unittest.TestCase):
         self.assertEqual(reused.json()['detail'], 'invalid_grant')
 
     def test_authorize_rejects_unregistered_redirect(self) -> None:
-        """Test authorize rejects unregistered redirect.
-        """
+        """Test authorize rejects unregistered redirect."""
         response = self.client.get(
             '/oauth/authorize',
             follow_redirects=False,
@@ -211,9 +210,7 @@ if __name__ == '__main__':
 
 
 class _Request:
-
-    """Provide Request.
-    """
+    """Provide Request."""
 
     def __init__(
         self,
@@ -255,8 +252,8 @@ class _Request:
 
 
 class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
-    """Provide TestOAuthRouterCoverage.
-    """
+    """Provide TestOAuthRouterCoverage."""
+
     client_id = 'visionnaire-ios'
     redirect_uri = 'com.changdar.visionnaire:/oauth2redirect'
     verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
@@ -265,8 +262,7 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_helpers_parse_json_and_reject_invalid_native_config(
         self,
     ) -> None:
-        """Test helpers parse json and reject invalid native config.
-        """
+        """Test helpers parse json and reject invalid native config."""
         self.assertEqual(
             await oauth_service.request_data(
                 _Request({'grant_type': 'refresh_token'}),
@@ -286,7 +282,8 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(invalid_form.exception.detail, 'invalid_request')
         with patch.dict(os.environ, {'OAUTH_NATIVE_CLIENTS_JSON': '{'}):
             with self.assertRaisesRegex(
-                RuntimeError, 'Invalid OAUTH_NATIVE_CLIENTS_JSON',
+                RuntimeError,
+                'Invalid OAUTH_NATIVE_CLIENTS_JSON',
             ):
                 oauth_service.native_clients()
         with patch.dict(
@@ -301,15 +298,15 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
             },
         ):
             with self.assertRaisesRegex(
-                RuntimeError, 'Invalid OAUTH_NATIVE_CLIENTS_JSON',
+                RuntimeError,
+                'Invalid OAUTH_NATIVE_CLIENTS_JSON',
             ):
                 oauth_service.native_clients()
 
     async def test_authorize_rejects_invalid_pkce_and_missing_login(
         self,
     ) -> None:
-        """Test authorize rejects invalid pkce and missing login.
-        """
+        """Test authorize rejects invalid pkce and missing login."""
         redis = AsyncMock()
         request = _Request(cookies={oauth_service.SESSION_COOKIE: 'session'})
         cases = [
@@ -351,7 +348,9 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raised.exception.detail, detail)
 
         with patch.object(
-            oauth_service, 'get_auth_session', AsyncMock(return_value=None),
+            oauth_service,
+            'get_auth_session',
+            AsyncMock(return_value=None),
         ):
             with self.assertRaises(HTTPException) as raised:
                 await oauth.authorize(
@@ -366,7 +365,9 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'login_required')
 
         with patch.object(
-            oauth_service, 'get_auth_session', AsyncMock(
+            oauth_service,
+            'get_auth_session',
+            AsyncMock(
                 return_value={'user': {}},
             ),
         ):
@@ -383,8 +384,7 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'login_required')
 
     async def test_token_rejects_invalid_authorization_codes(self) -> None:
-        """Test token rejects invalid authorization codes.
-        """
+        """Test token rejects invalid authorization codes."""
         db = AsyncMock()
         redis = AsyncMock()
         base = {
@@ -461,8 +461,7 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'invalid_grant')
 
     async def test_token_refresh_and_unsupported_grants(self) -> None:
-        """Test token refresh and unsupported grants.
-        """
+        """Test token refresh and unsupported grants."""
         redis = AsyncMock()
         with patch.object(
             oauth_service,
@@ -514,8 +513,7 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'unsupported_grant_type')
 
     async def test_me_handles_invalid_and_active_users(self) -> None:
-        """Test me handles invalid and active users.
-        """
+        """Test me handles invalid and active users."""
         db = AsyncMock()
         user = SimpleNamespace(id=7)
         db.scalar.return_value = None
@@ -533,7 +531,9 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         )
         db.scalar.return_value = loaded
         with patch.object(
-            oauth_service, '_load_feature_names', AsyncMock(
+            oauth_service,
+            '_load_feature_names',
+            AsyncMock(
                 return_value=['streaming'],
             ),
         ):
@@ -543,7 +543,9 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         loaded.profile = SimpleNamespace(given_name='', family_name='')
         with patch.object(
-            oauth_service, '_load_feature_names', AsyncMock(return_value=[]),
+            oauth_service,
+            '_load_feature_names',
+            AsyncMock(return_value=[]),
         ):
             response = await oauth.me(db=db, user=user)
         self.assertEqual(response.display_name, '')
@@ -551,12 +553,13 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_revoke_handles_refresh_access_and_authorization(
         self,
     ) -> None:
-        """Test revoke handles refresh access and authorization.
-        """
+        """Test revoke handles refresh access and authorization."""
         redis = AsyncMock()
         with patch.object(oauth_service, 'logout_user', AsyncMock()) as logout:
             with patch.object(
-                oauth_service, 'revoke_media_for_parent', AsyncMock(),
+                oauth_service,
+                'revoke_media_for_parent',
+                AsyncMock(),
             ) as revoke_media:
                 await oauth.revoke(
                     _Request(

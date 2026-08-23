@@ -31,10 +31,10 @@ class UserProfileBase(BaseModel):
         mobile_number: Optional mobile telephone number.
     """
 
-    family_name:   str
-    middle_name:   str | None = None
-    given_name:    str
-    email:         EmailStr
+    family_name: str
+    middle_name: str | None = None
+    given_name: str
+    email: EmailStr
     mobile_number: str | None = None
 
 
@@ -64,11 +64,11 @@ class UserProfileUpdate(BaseModel):
         mobile_number: Replacement optional mobile telephone number.
     """
 
-    user_id:       int
-    family_name:   str | None = None
-    middle_name:   str | None = None
-    given_name:    str | None = None
-    email:         EmailStr | None = None
+    user_id: int
+    family_name: str | None = None
+    middle_name: str | None = None
+    given_name: str | None = None
+    email: EmailStr | None = None
     mobile_number: str | None = None
 
 
@@ -83,12 +83,12 @@ class UserCreate(BaseModel):
         profile: Optional profile created with the user account.
     """
 
-    username:  str
-    password:  str
-    role:      str = 'user'
-    group_id:  int | None
+    username: str
+    password: str
+    role: str = 'user'
+    group_id: int | None
     # Administrators may create the optional profile with the account.
-    profile:   UserProfileBase | None = None
+    profile: UserProfileBase | None = None
 
 
 class UserDelete(BaseModel):
@@ -176,7 +176,7 @@ class UserRead(BaseModel):
     email_verified_at: datetime | None = None
     group_id: int | None
     group: GroupRead | None
-    profile:    UserProfileRead | None
+    profile: UserProfileRead | None
     created_at: datetime
     updated_at: datetime
 

@@ -15,7 +15,9 @@ from examples.deployment_registry.schemas import DeploymentRegistryDocument
 from examples.deployment_registry.schemas import EnrollmentExchangeRequest
 from examples.deployment_registry.schemas import EnrollmentExchangeResponse
 from examples.deployment_registry.service import exchange_enrollment_code
-from examples.deployment_registry.service import get_deployment_registry_document
+from examples.deployment_registry.service import (
+    get_deployment_registry_document,
+)
 
 # The application mounts this public router outside user-facing API routes.
 router: APIRouter = APIRouter(

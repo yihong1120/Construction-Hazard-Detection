@@ -33,7 +33,7 @@ class DeploymentBinding:
     @property
     def audience(self) -> str:
         """Return the audience unique to this deployment."""
-        return f'construction-hazard-detection:deployment:{self.deployment_id}'
+        return f"construction-hazard-detection:deployment:{self.deployment_id}"
 
     def as_response(self) -> dict[str, object]:
         """Return the public, non-secret deployment response object."""
@@ -87,9 +87,10 @@ def trusted_local_development_deployment_id(request: Request) -> UUID | None:
 def canonical_api_base_url(value: str) -> str:
     """Validate and canonicalise an HTTPS API root URL.
 
-    The URL must be an absolute HTTPS URL with the server-configured public
-    API path, without credentials, query, or fragment.  For this deployment
-    topology the public root is normally ``https://<host>/hazard/api``.
+    The URL must be an absolute HTTPS URL with the server-configured public API
+    path, without credentials, query, or fragment.  For this deployment
+    topology the public root is normally
+    ``https://<host>/hazard/api``.
     Service paths such as ``/db_management`` are appended by trusted client
     code and are never part of the deployment configuration.
     """
@@ -115,16 +116,20 @@ def canonical_api_base_url(value: str) -> str:
     # URL parsing removes IPv6 brackets from ``hostname``; restore them when
     # rebuilding the authority component.
     if ':' in normalised_host:
-        normalised_host = f'[{normalised_host}]'
+        normalised_host = f"[{normalised_host}]"
     normalised_netloc = normalised_host
     if port is not None and port != 443:
-        normalised_netloc = f'{normalised_netloc}:{port}'
+        normalised_netloc = f"{normalised_netloc}:{port}"
 
     path = parsed.path.rstrip('/')
-    configured_path = os.getenv(
-        'DEPLOYMENT_API_BASE_PATH',
-        '/hazard/api',
-    ).strip().rstrip('/')
+    configured_path = (
+        os.getenv(
+            'DEPLOYMENT_API_BASE_PATH',
+            '/hazard/api',
+        )
+        .strip()
+        .rstrip('/')
+    )
     path_segments = path.split('/')
     if (
         path in {'', '/'}
@@ -152,7 +157,7 @@ def request_api_base_url(request: Request) -> str:
     """
     api_path = os.getenv('DEPLOYMENT_API_BASE_PATH', '/hazard/api').strip()
     return canonical_api_base_url(
-        f'{request.url.scheme}://{request.url.netloc}{api_path}',
+        f"{request.url.scheme}://{request.url.netloc}{api_path}",
     )
 
 
@@ -172,8 +177,8 @@ async def resolve_request_deployment(
 ) -> DeploymentBinding:
     """Resolve one active deployment solely from the request's API origin.
 
-    A deployed API never falls back to a default tenant.  Such a fallback
-    would let a host/header mistake silently cross a tenant boundary.
+    A deployed API never falls back to a default tenant.  Such a fallback would
+    let a host/header mistake silently cross a tenant boundary.
     """
     local_development_id = trusted_local_development_deployment_id(request)
     if local_development_id is not None:
@@ -206,7 +211,9 @@ async def resolve_request_deployment(
             status_code=409,
             detail={
                 'code': 'unknown_deployment_origin',
-                'message': 'This API origin is not registered as a deployment.',
+                'message': (
+                    'This API origin is not registered as a deployment.'
+                ),
             },
         )
     if deployment.tenant.status != 'active':
@@ -222,7 +229,9 @@ async def resolve_request_deployment(
             status_code=409,
             detail={
                 'code': 'deployment_revoked',
-                'message': 'This deployment is revoked; sign in is unavailable.',
+                'message': (
+                    'This deployment is revoked; sign in is unavailable.'
+                ),
             },
         )
     return binding_from_deployment(deployment)
@@ -239,7 +248,8 @@ async def require_deployment_match(
     """Resolve and compare a token/session deployment contract.
 
     Any mismatch is deliberately a conflict rather than a generic server
-    error: the client must re-read the signed Registry profile and sign in again.
+    error: the client must re-read the signed Registry profile and sign in
+        again.
     """
     binding = await resolve_request_deployment(request, db)
     if (

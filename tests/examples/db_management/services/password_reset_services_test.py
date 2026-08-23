@@ -17,8 +17,7 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
     """Tests for password reset service behaviour."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.db: AsyncMock = AsyncMock()
         self.redis: AsyncMock = AsyncMock()
         self.redis.incr = AsyncMock(side_effect=[1, 1])
@@ -130,8 +129,7 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_request_password_reset_email_rate_limited(self) -> None:
-        """Test request password reset email rate limited.
-        """
+        """Test request password reset email rate limited."""
         self.redis.incr = AsyncMock(return_value=2)
 
         with self.assertRaises(HTTPException) as ctx:
@@ -144,8 +142,7 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 429)
 
     async def test_reset_password_invalid_or_expired_token(self) -> None:
-        """Test reset password invalid or expired token.
-        """
+        """Test reset password invalid or expired token."""
         self.redis.getdel.return_value = None
 
         with self.assertRaises(HTTPException) as ctx:
@@ -163,8 +160,7 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_reset_password_missing_token(self) -> None:
-        """Test reset password missing token.
-        """
+        """Test reset password missing token."""
         with self.assertRaises(HTTPException) as ctx:
             await svc.reset_password(
                 None,
@@ -181,8 +177,7 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         self.redis.getdel.assert_not_awaited()
 
     async def test_reset_password_missing_new_password(self) -> None:
-        """Test reset password missing new password.
-        """
+        """Test reset password missing new password."""
         with self.assertRaises(HTTPException) as ctx:
             await svc.reset_password(
                 'raw-token',
@@ -203,8 +198,7 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         self.redis.getdel.assert_not_awaited()
 
     async def test_reset_password_rejects_short_password(self) -> None:
-        """Test reset password rejects short password.
-        """
+        """Test reset password rejects short password."""
         with self.assertRaises(HTTPException) as ctx:
             await svc.reset_password(
                 'raw-token',
@@ -228,8 +222,7 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
     async def test_reset_password_success_updates_password_and_revokes_cache(
         self,
     ) -> None:
-        """Test reset password success updates password and revokes cache.
-        """
+        """Test reset password success updates password and revokes cache."""
         user = MagicMock(id=123, username='user')
         self.db.get = AsyncMock(return_value=user)
         self.db.commit = AsyncMock()
@@ -282,8 +275,7 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
     """Exercise password-reset operational failures and validation guards."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.db = AsyncMock()
         self.redis = AsyncMock()
         self.redis.getdel = AsyncMock()
@@ -343,7 +335,8 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
             patch.object(service.httpx, 'AsyncClient', return_value=context),
         ):
             with self.assertRaisesRegex(
-                HTTPException, 'Failed to send',
+                HTTPException,
+                'Failed to send',
             ) as error:
                 await service._send_password_reset_email(
                     'user@example.com',
@@ -359,7 +352,8 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
             patch.object(service.httpx, 'AsyncClient', return_value=context),
         ):
             with self.assertRaisesRegex(
-                HTTPException, 'Failed to send',
+                HTTPException,
+                'Failed to send',
             ) as error:
                 await service._send_password_reset_email(
                     'user@example.com',
@@ -374,7 +368,10 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
         passwords."""
         with self.assertRaisesRegex(HTTPException, 'invalid or expired'):
             await service.reset_password(
-                '   ', 'password', self.db, self.redis,
+                '   ',
+                'password',
+                self.db,
+                self.redis,
             )
         self.redis.getdel.assert_not_awaited()
 

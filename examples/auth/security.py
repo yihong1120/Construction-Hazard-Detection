@@ -6,8 +6,7 @@ from fastapi import FastAPI
 
 
 def update_secret_key(app: FastAPI) -> None:
-    """
-    Update the FastAPI application's JWT secret key.
+    """Update the FastAPI application's JWT secret key.
 
     Args:
         app (FastAPI): The FastAPI application instance where

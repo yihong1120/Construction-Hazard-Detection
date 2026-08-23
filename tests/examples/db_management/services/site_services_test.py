@@ -28,8 +28,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.user_id: int = 20
 
     async def test_list_sites_without_group(self) -> None:
-        """Test list sites without group.
-        """
+        """Test list sites without group."""
         mock_result: MagicMock = MagicMock()
         scalars_mock: MagicMock = (
             mock_result.unique.return_value.scalars.return_value
@@ -43,8 +42,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sites, ['site1', 'site2'])
 
     async def test_list_sites_with_group(self) -> None:
-        """Test list sites with group.
-        """
+        """Test list sites with group."""
         mock_result: MagicMock = MagicMock()
         scalars_mock: MagicMock = (
             mock_result.unique.return_value.scalars.return_value
@@ -90,8 +88,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(site_ids, [4, 9])
 
     async def test_create_site_success(self) -> None:
-        """Test create site success.
-        """
+        """Test create site success."""
         self.db.commit = AsyncMock()
         self.db.refresh = AsyncMock()
         self.db.add = MagicMock()
@@ -137,8 +134,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.refresh.assert_not_called()
 
     async def test_create_site_exception(self) -> None:
-        """Test create site exception.
-        """
+        """Test create site exception."""
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
         self.db.add = MagicMock()
@@ -166,8 +162,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_update_site_success(self) -> None:
-        """Test update site success.
-        """
+        """Test update site success."""
         self.db.commit = AsyncMock()
 
         await site_services.update_site(
@@ -180,8 +175,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.site.name, 'Updated Site')
 
     async def test_update_site_exception(self) -> None:
-        """Test update site exception.
-        """
+        """Test update site exception."""
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
 
@@ -215,14 +209,14 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         await site_services.delete_site(site=self.site, db=self.db)
 
         enqueue_cleanup.assert_awaited_once_with(
-            self.site.name, self.db,
+            self.site.name,
+            self.db,
         )
         self.db.commit.assert_awaited()
         self.db.delete.assert_awaited_with(self.site)
 
     async def test_delete_site_exception(self) -> None:
-        """Test delete site exception.
-        """
+        """Test delete site exception."""
         mock_execute_result: MagicMock = MagicMock()
         mock_execute_result.scalars.return_value.all.return_value = [
             'image1.png',
@@ -242,8 +236,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
             self.db.rollback.assert_awaited()
 
     async def test_add_user_to_site(self) -> None:
-        """Test add user to site.
-        """
+        """Test add user to site."""
         self.db.execute = AsyncMock()
         self.db.commit = AsyncMock()
 
@@ -259,8 +252,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
 
     async def test_remove_user_from_site(self) -> None:
         # Simulate a user with no group → pref is deleted directly
-        """Test remove user from site.
-        """
+        """Test remove user from site."""
         mock_user: MagicMock = MagicMock()
         mock_user.group_id = None
         self.db.get = AsyncMock(return_value=mock_user)
@@ -278,8 +270,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_create_site_without_group_id(self) -> None:
-        """Test create site without group id.
-        """
+        """Test create site without group id."""
         with self.assertRaises(HTTPException) as context:
             await site_services.create_site(
                 name='NoGroupSite',
@@ -309,7 +300,8 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         await site_services.delete_site(site=self.site, db=self.db)
 
         enqueue_cleanup.assert_awaited_once_with(
-            self.site.name, self.db,
+            self.site.name,
+            self.db,
         )
         self.db.commit.assert_awaited()
         self.db.delete.assert_awaited_with(self.site)

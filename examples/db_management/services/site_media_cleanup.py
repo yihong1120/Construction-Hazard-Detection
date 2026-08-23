@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from examples.auth.models import SiteMediaCleanupJob
 from examples.auth.models import Violation
 
-
 logger = logging.getLogger(__name__)
 _cleanup_enqueue_chunk_size: Final[int] = 250
 _cleanup_error_max_length: Final[int] = 500
@@ -30,7 +29,7 @@ _cleanup_retry_max_seconds: Final[int] = 3600
 def _chunks(values: list[str], size: int) -> Iterator[list[str]]:
     """Yield bounded chunks without allocating a second list of chunks."""
     for start in range(0, len(values), size):
-        yield values[start:start + size]
+        yield values[start: start + size]
 
 
 async def enqueue_site_media_cleanup_jobs(

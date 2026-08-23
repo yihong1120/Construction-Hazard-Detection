@@ -117,12 +117,12 @@ def _jwt_exp(token: str) -> int:
 
 def auth_session_key(session_id: str) -> str:
     """Build a Redis key without persisting the opaque cookie value."""
-    return f'{AUTH_PREFIX}:{_digest(session_id)}'
+    return f"{AUTH_PREFIX}:{_digest(session_id)}"
 
 
 def media_session_key(token: str) -> str:
     """Build a Redis key without persisting the opaque bearer/cookie value."""
-    return f'{MEDIA_PREFIX}:{_digest(token)}'
+    return f"{MEDIA_PREFIX}:{_digest(token)}"
 
 
 async def create_auth_session(
@@ -254,7 +254,7 @@ async def delete_auth_session(redis: Redis, session_id: str | None) -> None:
         return
     parent = auth_session_key(session_id)
     await revoke_media_for_parent(redis, parent)
-    await redis.delete(parent, f'{parent}:refresh-lock')
+    await redis.delete(parent, f"{parent}:refresh-lock")
 
 
 async def acquire_refresh_lock(
@@ -274,7 +274,7 @@ async def acquire_refresh_lock(
     """
     owner = secrets.token_urlsafe(18)
     acquired = await redis.set(
-        f'{auth_session_key(session_id)}:refresh-lock',
+        f"{auth_session_key(session_id)}:refresh-lock",
         owner.encode('utf-8'),
         ex=ttl_seconds,
         nx=True,
@@ -294,7 +294,7 @@ async def release_refresh_lock(
         session_id: Value used by this callable.
         owner: Value used by this callable.
     """
-    key = f'{auth_session_key(session_id)}:refresh-lock'
+    key = f"{auth_session_key(session_id)}:refresh-lock"
     if _text(await redis.get(key)) == owner:
         await redis.delete(key)
 
@@ -318,8 +318,8 @@ async def create_media_session(
 ) -> tuple[str, dict[str, Any]]:
     """Create a separately revocable, narrowly scoped media capability."""
     is_batch = cameras is not None
-    camera_scope = cameras if cameras is not None else (
-        (camera,) if camera else ()
+    camera_scope = (
+        cameras if cameras is not None else ((camera,) if camera else ())
     )
     scoped_cameras = list(dict.fromkeys(camera_scope))
     if not scoped_cameras:
@@ -354,11 +354,11 @@ async def create_media_session(
         for session_id, descriptor in (playback_sessions or {}).items()
     }
     token_key = media_session_key(token)
-    parent_key = f'{MEDIA_PARENT_PREFIX}:{_digest(parent)}'
+    parent_key = f"{MEDIA_PARENT_PREFIX}:{_digest(parent)}"
     payload = json.dumps(data, separators=(',', ':')).encode('utf-8')
     await redis.set(token_key, payload, ex=MEDIA_SESSION_TTL_SECONDS)
     await redis.set(
-        f'{MEDIA_PUBLIC_PREFIX}:{public_id}',
+        f"{MEDIA_PUBLIC_PREFIX}:{public_id}",
         token_key.encode('utf-8'),
         ex=MEDIA_SESSION_TTL_SECONDS,
     )
@@ -422,7 +422,7 @@ async def get_media_session_by_id(
         return None
     token_key = _text(
         await redis.get(
-            f'{MEDIA_PUBLIC_PREFIX}:{public_id}',
+            f"{MEDIA_PUBLIC_PREFIX}:{public_id}",
         ),
     )
     if token_key is None:
@@ -448,7 +448,7 @@ async def renew_media_session(
     stable lets HLS continue fetching segments while an authenticated client
     renews its lease, instead of forcing every player to load a new manifest.
     """
-    public_key = f'{MEDIA_PUBLIC_PREFIX}:{public_id}'
+    public_key = f"{MEDIA_PUBLIC_PREFIX}:{public_id}"
     token_key = _text(await redis.get(public_key))
     if token_key is None:
         return None
@@ -491,7 +491,7 @@ async def delete_media_session(
     Returns:
         The callable result.
     """
-    public_key = f'{MEDIA_PUBLIC_PREFIX}:{public_id}'
+    public_key = f"{MEDIA_PUBLIC_PREFIX}:{public_id}"
     token_key = _text(await redis.get(public_key))
     if token_key is None:
         return False
@@ -504,7 +504,7 @@ async def delete_media_session(
         return False
     parent = data['parent']
     await redis.delete(token_key, public_key)
-    await redis.srem(f'{MEDIA_PARENT_PREFIX}:{_digest(parent)}', token_key)
+    await redis.srem(f"{MEDIA_PARENT_PREFIX}:{_digest(parent)}", token_key)
     return True
 
 
@@ -515,13 +515,13 @@ async def revoke_media_for_parent(redis: Redis, parent: str) -> None:
         redis: Value used by this callable.
         parent: Value used by this callable.
     """
-    parent_key = f'{MEDIA_PARENT_PREFIX}:{_digest(parent)}'
+    parent_key = f"{MEDIA_PARENT_PREFIX}:{_digest(parent)}"
     members = await redis.smembers(parent_key)
     for member in members:
         token_key = _text(member)
         raw = await redis.get(token_key)
         if raw is not None:
             public_id = json.loads(raw)['id']
-            await redis.delete(f'{MEDIA_PUBLIC_PREFIX}:{public_id}')
+            await redis.delete(f"{MEDIA_PUBLIC_PREFIX}:{public_id}")
         await redis.delete(token_key)
     await redis.delete(parent_key)

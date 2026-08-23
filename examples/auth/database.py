@@ -46,18 +46,16 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 class Base(DeclarativeBase):
-    """
-    Base class for all ORM models in this application.
-    """
+    """Base class for all ORM models in this application."""
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
-    """
-    Provide a SQLAlchemy asynchronous session for database operations.
+    """Provide a SQLAlchemy asynchronous session for database operations.
 
     Yields:
         AsyncSession: A SQLAlchemy AsyncSession connected to the configured
             asynchronous engine.
     """
+
     async with AsyncSessionLocal() as session:
         yield session

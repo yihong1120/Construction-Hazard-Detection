@@ -50,7 +50,7 @@ async def create_feature(
         return feat
     except Exception as e:
         await db.rollback()
-        raise HTTPException(500, f'Database error: {e}')
+        raise HTTPException(500, f"Database error: {e}")
 
 
 async def update_feature(
@@ -84,7 +84,7 @@ async def update_feature(
         await db.commit()
     except Exception as e:
         await db.rollback()
-        raise HTTPException(500, f'Database error: {e}')
+        raise HTTPException(500, f"Database error: {e}")
 
 
 async def delete_feature(feat: Feature, db: AsyncSession) -> None:
@@ -103,7 +103,7 @@ async def delete_feature(feat: Feature, db: AsyncSession) -> None:
         await db.commit()
     except Exception as e:
         await db.rollback()
-        raise HTTPException(500, f'Database error: {e}')
+        raise HTTPException(500, f"Database error: {e}")
 
 
 async def update_group_features(
@@ -155,12 +155,16 @@ async def list_group_features(
             and a list of its associated feature IDs.
     """
     groups = (
-        await db.execute(
-            select(Group).options(selectinload(Group.features)),
+        (
+            await db.execute(
+                select(Group).options(selectinload(Group.features)),
+            )
         )
-    ).unique().scalars().all()
+        .unique()
+        .scalars()
+        .all()
+    )
 
     return [
-        (group, [feature.id for feature in group.features])
-        for group in groups
+        (group, [feature.id for feature in group.features]) for group in groups
     ]

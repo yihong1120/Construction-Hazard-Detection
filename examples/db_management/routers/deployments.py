@@ -32,7 +32,7 @@ def _invalid_status(resource: str, status: str) -> HTTPException:
     """Return a precise validation response for a management status value."""
     return HTTPException(
         status_code=422,
-        detail={'code': f'invalid_{resource}_status', 'status': status},
+        detail={'code': f"invalid_{resource}_status", 'status': status},
     )
 
 
@@ -42,7 +42,9 @@ async def list_tenants(
     db: AsyncSession = Depends(get_db),
 ) -> list[TenantRead]:
     """List tenant records for the privileged deployment administrator."""
-    tenants = list((await db.execute(select(Tenant).order_by(Tenant.name))).scalars())
+    tenants = list(
+        (await db.execute(select(Tenant).order_by(Tenant.name))).scalars(),
+    )
     return [TenantRead.model_validate(tenant) for tenant in tenants]
 
 
@@ -77,9 +79,17 @@ async def update_tenant(
     """Update a tenant and invalidate deployment sessions on status changes."""
     tenant = await db.get(Tenant, tenant_id)
     if tenant is None:
-        raise HTTPException(status_code=404, detail={'code': 'tenant_not_found'})
+        raise HTTPException(
+            status_code=404,
+            detail={
+                'code': 'tenant_not_found',
+            },
+        )
     if payload.status is not None:
-        if payload.status not in {TENANT_STATUS_ACTIVE, TENANT_STATUS_DISABLED}:
+        if payload.status not in {
+            TENANT_STATUS_ACTIVE,
+            TENANT_STATUS_DISABLED,
+        }:
             raise _invalid_status('tenant', payload.status)
         if tenant.status != payload.status:
             tenant.status = payload.status
@@ -88,7 +98,9 @@ async def update_tenant(
             deployments = list(
                 (
                     await db.execute(
-                        select(Deployment).where(Deployment.tenant_id == tenant.id),
+                        select(Deployment).where(
+                            Deployment.tenant_id == tenant.id,
+                        ),
                     )
                 ).scalars(),
             )
@@ -118,7 +130,9 @@ async def list_deployments(
     """List canonical deployment settings published by the Registry."""
     statement = select(Deployment).order_by(Deployment.created_at)
     deployments = list((await db.execute(statement)).scalars())
-    return [DeploymentRead.model_validate(deployment) for deployment in deployments]
+    return [
+        DeploymentRead.model_validate(deployment) for deployment in deployments
+    ]
 
 
 @router.post('/deployments', response_model=DeploymentRead, status_code=201)
@@ -130,7 +144,12 @@ async def create_deployment(
     """Create one active canonical API deployment at revision one."""
     tenant = await db.get(Tenant, payload.tenant_id)
     if tenant is None:
-        raise HTTPException(status_code=404, detail={'code': 'tenant_not_found'})
+        raise HTTPException(
+            status_code=404,
+            detail={
+                'code': 'tenant_not_found',
+            },
+        )
     try:
         api_base_url = canonical_api_base_url(payload.api_base_url)
     except ValueError as exc:
@@ -169,18 +188,28 @@ async def update_deployment(
     if payload.tenant_id is not None:
         tenant = await db.get(Tenant, payload.tenant_id)
         if tenant is None:
-            raise HTTPException(status_code=404, detail={'code': 'tenant_not_found'})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    'code': 'tenant_not_found',
+                },
+            )
         deployment.tenant_id = tenant.id
     if payload.api_base_url is not None:
         try:
-            deployment.api_base_url = canonical_api_base_url(payload.api_base_url)
+            deployment.api_base_url = canonical_api_base_url(
+                payload.api_base_url,
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=422,
                 detail={'code': 'invalid_api_base_url'},
             ) from exc
     if payload.status is not None:
-        if payload.status not in {DEPLOYMENT_STATUS_ACTIVE, DEPLOYMENT_STATUS_REVOKED}:
+        if payload.status not in {
+            DEPLOYMENT_STATUS_ACTIVE,
+            DEPLOYMENT_STATUS_REVOKED,
+        }:
             raise _invalid_status('deployment', payload.status)
         deployment.status = payload.status
     try:

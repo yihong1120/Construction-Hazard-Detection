@@ -11,10 +11,8 @@ from examples.auth.lifespan import global_lifespan
 
 
 class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
-    """
-    Test suite for the global_lifespan async context manager,
-    ensuring startup and shutdown logic is executed correctly.
-    """
+    """Test suite for the global_lifespan async context manager, ensuring
+    startup and shutdown logic is executed correctly."""
 
     @patch('examples.auth.lifespan.engine')
     @patch('examples.auth.lifespan.start_jwt_scheduler')
@@ -27,8 +25,7 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
         mock_start_scheduler: MagicMock,
         mock_engine_obj: MagicMock,
     ) -> None:
-        """
-        Test the global_lifespan async context manager.
+        """Test the global_lifespan async context manager.
 
         Args:
             mock_redis_client_cls (MagicMock): Patches the RedisClient class.
@@ -93,8 +90,7 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
         mock_start_scheduler: MagicMock,
         mock_engine_obj: MagicMock,
     ) -> None:
-        """
-        Ensure we cover the exception branch during preload_script.
+        """Ensure we cover the exception branch during preload_script.
 
         Args:
             mock_redis_client_cls (MagicMock): Patches the RedisClient class.
@@ -138,9 +134,3 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.auth.lifespan \
-    --cov-report=term-missing tests/examples/auth/lifespan_test.py
-'''

@@ -46,8 +46,10 @@ async def endpoint_list_groups(
     else:
         ensure_admin_with_group(me)
         group = (
-            await db.execute(select(Group).where(Group.id == me.group_id))
-        ).unique().scalar_one_or_none()
+            (await db.execute(select(Group).where(Group.id == me.group_id)))
+            .unique()
+            .scalar_one_or_none()
+        )
         groups = [group] if group is not None else []
 
     # Format and return the group details as a list of GroupRead
@@ -118,10 +120,14 @@ async def endpoint_update_group(
 
     # Retrieve the group by ID from the database
     group = (
-        await db.execute(
-            select(Group).where(Group.id == payload.group_id),
+        (
+            await db.execute(
+                select(Group).where(Group.id == payload.group_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     # Check if the group exists
     if not group:
@@ -161,10 +167,14 @@ async def endpoint_delete_group(
     """
     # Retrieve the group by ID from the database
     group = (
-        await db.execute(
-            select(Group).where(Group.id == payload.group_id),
+        (
+            await db.execute(
+                select(Group).where(Group.id == payload.group_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     # Ensure the group exists before deletion
     if not group:

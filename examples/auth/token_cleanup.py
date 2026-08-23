@@ -17,9 +17,7 @@ def _refresh_tokens(cache: UserCache) -> list[str]:
 
 
 def _prune_refresh_tokens(cache: UserCache) -> tuple[list[str], bool]:
-    """
-    Return valid refresh tokens and whether the list changed.
-
+    """Return valid refresh tokens and whether the list changed.
 
     Args:
         cache: The user cache dictionary.
@@ -57,8 +55,7 @@ def _prune_jti(
     cache: UserCache,
     now: int,
 ) -> tuple[list[str], dict[str, int], bool]:
-    """
-    Return filtered (jti_list, jti_meta, changed).
+    """Return filtered (jti_list, jti_meta, changed).
 
     Args:
         cache: The user cache dictionary.
@@ -94,8 +91,7 @@ async def prune_user_cache(
     redis_pool: Redis,
     username: str,
 ) -> UserCache | None:
-    """
-    Prune a user's cached authentication data in Redis.
+    """Prune a user's cached authentication data in Redis.
 
     Args:
         redis_pool: Asynchronous Redis client/connection.

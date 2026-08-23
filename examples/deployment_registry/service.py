@@ -14,10 +14,11 @@ from examples.auth.models import TENANT_STATUS_ACTIVE
 from examples.deployment_registry.enrollments import (
     enforce_enrollment_exchange_rate_limit,
 )
-from examples.deployment_registry.enrollments import enrollment_code_verifier_hash
+from examples.deployment_registry.enrollments import (
+    enrollment_code_verifier_hash,
+)
 from examples.deployment_registry.enrollments import redeem_enrollment_code
 from examples.deployment_registry.signing import build_registry_document
-
 
 # Construct settings once because the module serves a fixed application config.
 settings: Settings = Settings()
@@ -43,7 +44,8 @@ async def exchange_enrollment_code(
     Raises:
         HTTPException: If the code is rate-limited, invalid, or terminal.
     """
-    # Hash before rate limiting so Redis never receives the raw enrollment code.
+    # Hash before rate limiting so Redis never receives the raw enrollment
+    # code.
     verifier_hash = enrollment_code_verifier_hash(
         raw_code,
         settings.deployment_enrollment_code_pepper,
@@ -53,7 +55,9 @@ async def exchange_enrollment_code(
         client_ip=client_ip,
         verifier_hash=verifier_hash,
         maximum=settings.deployment_enrollment_rate_limit_max,
-        window_seconds=settings.deployment_enrollment_rate_limit_window_seconds,
+        window_seconds=(
+            settings.deployment_enrollment_rate_limit_window_seconds
+        ),
     )
     if retry_after is not None:
         # The client can wait for the Redis fixed window rather than retrying.

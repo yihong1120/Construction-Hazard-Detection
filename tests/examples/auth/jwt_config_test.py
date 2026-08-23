@@ -123,20 +123,13 @@ class TestJwtConfig(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-\
-"""Pytest \
-
---cov=examples.auth.jwt_config \
---cov-report=term-missing tests/examples/auth/jwt_config_test.py
-"""
 
 
 class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
     """Exercise JWT authorization subjects and invalid credential handling."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.bearer = PyJWTBearer('test-secret-key-with-at-least-32-bytes')
         self.request = MagicMock()
 

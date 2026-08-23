@@ -39,26 +39,36 @@ from examples.db_management.schemas.user import UserPage
 from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
 from examples.db_management.schemas.user import UserSignup
-from examples.db_management.services.site_services import \
-    list_site_ids_for_group
-from examples.db_management.services.site_services import \
-    seed_site_notification_preferences
-from examples.db_management.services.user_management_services import \
-    approve_signup_user
-from examples.db_management.services.user_management_services import \
-    ensure_user_management_scope
-from examples.db_management.services.user_management_services import \
-    get_group_or_404
-from examples.db_management.services.user_management_services import \
-    list_users_for_operator
-from examples.db_management.services.user_management_services import \
-    load_user_read
-from examples.db_management.services.user_management_services import \
-    pending_user_review_read
-from examples.db_management.services.user_management_services import \
-    register_signup_user
-from examples.db_management.services.user_management_services import \
-    resolve_target_group_id
+from examples.db_management.services.site_services import (
+    list_site_ids_for_group,
+)
+from examples.db_management.services.site_services import (
+    seed_site_notification_preferences,
+)
+from examples.db_management.services.user_management_services import (
+    approve_signup_user,
+)
+from examples.db_management.services.user_management_services import (
+    ensure_user_management_scope,
+)
+from examples.db_management.services.user_management_services import (
+    get_group_or_404,
+)
+from examples.db_management.services.user_management_services import (
+    list_users_for_operator,
+)
+from examples.db_management.services.user_management_services import (
+    load_user_read,
+)
+from examples.db_management.services.user_management_services import (
+    pending_user_review_read,
+)
+from examples.db_management.services.user_management_services import (
+    register_signup_user,
+)
+from examples.db_management.services.user_management_services import (
+    resolve_target_group_id,
+)
 from examples.db_management.services.user_services import (
     create_or_update_profile,
 )
@@ -139,7 +149,8 @@ async def signup_user(
         Newly created account in its email-unverified state.
 
     Raises:
-        HTTPException: If the username or email is unavailable, legal consent is
+        HTTPException: If the username or email is unavailable, legal consent
+            is
             invalid, or verification delivery cannot be initiated.
     """
     return await register_signup_user(payload, request, db, redis)
@@ -207,7 +218,8 @@ async def approve_user_signup(
         Activated user details.
 
     Raises:
-        HTTPException: If the account is not awaiting approval or is outside the
+        HTTPException: If the account is not awaiting approval or is outside
+            the
             administrator's scope.
     """
     user = await get_user_by_id(payload.user_id, db)
@@ -243,7 +255,8 @@ async def review_user_signup(
         Updated user details after the decision is recorded.
 
     Raises:
-        HTTPException: If the account is not awaiting approval or is outside the
+        HTTPException: If the account is not awaiting approval or is outside
+            the
             administrator's scope.
     """
     user = await get_user_by_id(user_id, db)
@@ -267,7 +280,8 @@ async def review_user_signup(
 
 
 @router.get(
-    '/list_users', response_model=UserPage,
+    '/list_users',
+    response_model=UserPage,
 )
 async def list_users(
     db: AsyncSession = Depends(get_db),
@@ -275,7 +289,8 @@ async def list_users(
     cursor: Annotated[int | None, Query(ge=0)] = None,
     page_size: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> UserPage:
-    """Delegate the paginated, scoped user listing to its application service."""
+    """Delegate the paginated, scoped user listing to its application
+    service."""
     return await list_users_for_operator(
         me,
         db,
@@ -383,11 +398,14 @@ async def update_my_pwd(
 
     # Clear existing tokens from Redis cache
     from examples.auth.cache import rate_limiter_service
+
     cache = await rate_limiter_service.get_user_data(redis_pool, me.username)
     if cache:
         cache['jti_list'] = []
         cache['refresh_tokens'] = []
-        await rate_limiter_service.set_user_data(redis_pool, me.username, cache)
+        await rate_limiter_service.set_user_data(
+            redis_pool, me.username, cache,
+        )
 
     return {'message': 'Password changed successfully, please log in again.'}
 

@@ -14,28 +14,21 @@ from examples.auth.redis_pool import RedisClient
 
 
 class TestRedisClient(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the RedisClient class.
-    """
+    """Unit tests for the RedisClient class."""
 
     def setUp(self) -> None:
-        """
-        Set up the test environment before each test.
-        """
+        """Set up the test environment before each test."""
         self.redis_url = 'redis://localhost:6379/0'
         self.redis_client = RedisClient(self.redis_url)
 
     async def test_initialisation(self) -> None:
-        """
-        Test that the RedisClient is initialised correctly.
-        """
+        """Test that the RedisClient is initialised correctly."""
         self.assertEqual(self.redis_client.url, self.redis_url)
         self.assertIsNone(self.redis_client.client)
 
     @patch('redis.asyncio.from_url', new_callable=AsyncMock)
     async def test_connect(self, mock_from_url: AsyncMock) -> None:
-        """
-        Test the connect method of RedisClient.
+        """Test the connect method of RedisClient.
 
         Args:
             mock_from_url (AsyncMock): Mocked redis.from_url function.
@@ -62,8 +55,7 @@ class TestRedisClient(unittest.IsolatedAsyncioTestCase):
         self,
         mock_from_url: AsyncMock,
     ) -> None:
-        """
-        Test that connect does not reinitialise an existing client.
+        """Test that connect does not reinitialise an existing client.
 
         Args:
             mock_from_url (AsyncMock): Mocked redis.from_url function.
@@ -81,9 +73,7 @@ class TestRedisClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client, mock_redis_instance)
 
     async def test_close(self) -> None:
-        """
-        Test the close method of RedisClient.
-        """
+        """Test the close method of RedisClient."""
         mock_redis_instance = AsyncMock()
         self.redis_client.client = mock_redis_instance
 
@@ -97,9 +87,7 @@ class TestRedisClient(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.redis_client.client)
 
     async def test_close_no_client(self) -> None:
-        """
-        Test the close method when no client is connected.
-        """
+        """Test the close method when no client is connected."""
         # Ensure no client is set
         self.redis_client.client = None
 
@@ -111,14 +99,11 @@ class TestRedisClient(unittest.IsolatedAsyncioTestCase):
 
 
 class TestGetRedisPool(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the get_redis_pool function.
-    """
+    """Unit tests for the get_redis_pool function."""
 
     @patch('redis.asyncio.from_url', new_callable=AsyncMock)
     async def test_get_redis_pool(self, mock_from_url: AsyncMock) -> None:
-        """
-        Test that get_redis_pool retrieves the Redis client correctly.
+        """Test that get_redis_pool retrieves the Redis client correctly.
 
         Args:
             mock_from_url (AsyncMock): Mocked redis.from_url function.
@@ -149,9 +134,7 @@ class TestGetRedisPool(unittest.IsolatedAsyncioTestCase):
         self.assertIs(mock_redis_client.client, mock_redis_instance)
 
     async def test_get_redis_pool_existing_client(self) -> None:
-        """
-        Test that get_redis_pool does not reconnect if a client exists.
-        """
+        """Test that get_redis_pool does not reconnect if a client exists."""
         # Mock the Redis client and request
         mock_redis_instance = AsyncMock()
 
@@ -175,9 +158,8 @@ class TestGetRedisPool(unittest.IsolatedAsyncioTestCase):
         self,
         mock_from_url: AsyncMock,
     ) -> None:
-        """
-        Test that get_redis_pool raises RuntimeError
-        when the client is not connected.
+        """Test that get_redis_pool raises RuntimeError when the client is not
+        connected.
 
         Args:
             mock_from_url (AsyncMock): Mocked redis.from_url function.
@@ -202,14 +184,11 @@ class TestGetRedisPool(unittest.IsolatedAsyncioTestCase):
 
 
 class TestGetRedisPoolWS(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the get_redis_pool_ws function.
-    """
+    """Unit tests for the get_redis_pool_ws function."""
 
     @patch('redis.asyncio.from_url', new_callable=AsyncMock)
     async def test_get_redis_pool_ws(self, mock_from_url: AsyncMock) -> None:
-        """
-        Test that get_redis_pool_ws retrieves the Redis client correctly.
+        """Test that get_redis_pool_ws retrieves the Redis client correctly.
 
         Args:
             mock_from_url (AsyncMock): Mocked redis.from_url function.
@@ -235,9 +214,8 @@ class TestGetRedisPoolWS(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_redis_client.client, mock_redis_instance)
 
     async def test_get_redis_pool_ws_existing_client(self) -> None:
-        """
-        Test that get_redis_pool_ws does not reconnect if a client exists.
-        """
+        """Test that get_redis_pool_ws does not reconnect if a client
+        exists."""
         # Build a mock Redis instance
         mock_redis_instance = AsyncMock()
         mock_redis_client = MagicMock(spec=RedisClient)
@@ -258,9 +236,8 @@ class TestGetRedisPoolWS(unittest.IsolatedAsyncioTestCase):
         self,
         mock_from_url: AsyncMock,
     ) -> None:
-        """
-        Test that get_redis_pool_ws raises RuntimeError
-        when the client is not connected.
+        """Test that get_redis_pool_ws raises RuntimeError when the client is
+        not connected.
 
         Args:
             mock_from_url (AsyncMock): Mocked redis.from_url function.
@@ -285,9 +262,3 @@ class TestGetRedisPoolWS(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.auth.redis_pool \
-    --cov-report=term-missing tests/examples/auth/redis_pool_test.py
-'''

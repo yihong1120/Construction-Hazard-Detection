@@ -63,7 +63,7 @@ async def create_group(
     except Exception as e:
         # General exception handling, rollback changes
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def update_group(
@@ -72,9 +72,8 @@ async def update_group(
     new_uniform_number: str | None,
     db: AsyncSession,
 ) -> None:
-    """
-    Update details of an existing group,
-    including its name and/or uniform number.
+    """Update details of an existing group, including its name and/or uniform
+    number.
 
     Args:
         grp (Group): The existing Group object to be updated.
@@ -111,7 +110,7 @@ async def update_group(
     except Exception as e:
         # Handle general exceptions, rolling back any changes
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def delete_group(grp: Group, db: AsyncSession) -> None:
@@ -133,4 +132,4 @@ async def delete_group(grp: Group, db: AsyncSession) -> None:
     except Exception as e:
         # Roll back if an error occurs during the deletion process
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")

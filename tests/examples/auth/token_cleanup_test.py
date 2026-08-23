@@ -111,9 +111,8 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_prune_jti_list_and_meta(self) -> None:
-        """JTI list pruned by expiry; stale meta entries removed and
-        preserved strictly.
-        """
+        """JTI list pruned by expiry; stale meta entries removed and preserved
+        strictly."""
         now = 2_000
         cache = _cache(
             jti_list=['a', 'b', 'c'],
@@ -197,8 +196,7 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
 
     async def test_combined_refresh_and_jti_changes(self) -> None:
         """Prune both refresh tokens and JTIs then persist the updated
-        cache.
-        """
+        cache."""
         now = 4_000
         cache = _cache(
             refresh_tokens=['ok', 'bad'],
@@ -259,9 +257,3 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.auth.token_cleanup \
-    --cov-report=term-missing tests/examples/auth/token_cleanup_test.py
-'''

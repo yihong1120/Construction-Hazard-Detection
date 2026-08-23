@@ -29,20 +29,19 @@ from examples.db_management.schemas.user import UserProfileBase
 from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
 from examples.db_management.schemas.user import UserSignup
-from examples.db_management.services import user_management_services as \
-    user_management
+from examples.db_management.services import (
+    user_management_services as user_management,
+)
 
 
 class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for user management router endpoints.
-    """
+    """Unit tests for user management router endpoints."""
 
     def setUp(self) -> None:
         """Set up common mock objects for tests.
 
-        This method initialises a mock database session and a mock
-        current user for use in each test case.
+        This method initialises a mock database session and a mock current user
+        for use in each test case.
         """
         self.db: AsyncMock = AsyncMock(spec=AsyncSession)
         self.current_user: MagicMock = MagicMock()
@@ -120,8 +119,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         'validate_signup_consents',
     )
     @patch(
-        'examples.db_management.services.user_management_services.'
-        'create_user',
+        'examples.db_management.services.user_management_services.create_user',
     )
     async def test_signup_user(
         self,
@@ -214,8 +212,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         'validate_signup_consents',
     )
     @patch(
-        'examples.db_management.services.user_management_services.'
-        'create_user',
+        'examples.db_management.services.user_management_services.create_user',
     )
     async def test_signup_user_rejects_missing_consents(
         self,
@@ -279,8 +276,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response['message'], 'User deleted successfully.')
 
     async def test_update_my_pwd_incorrect_old_password(self) -> None:
-        """Test update my pwd incorrect old password.
-        """
+        """Test update my pwd incorrect old password."""
         self.current_user.check_password.return_value = False
 
         payload: UpdateMyPassword = UpdateMyPassword(
@@ -419,7 +415,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self,
         list_users_for_operator: AsyncMock,
     ) -> None:
-        """The HTTP handler only delegates to the listing application service."""
+        """The HTTP handler only delegates to the listing application
+        service."""
         expected = users.UserPage(items=[], next_cursor=None)
         list_users_for_operator.return_value = expected
         result = await users.list_users(self.db, self.current_user)
@@ -633,9 +630,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_get_user_data: AsyncMock,
         mock_set_user_data: AsyncMock,
     ) -> None:
-        """
-        Test updating own password successfully and clearing redis tokens.
-        """
+        """Test updating own password successfully and clearing redis
+        tokens."""
         self.current_user.check_password = AsyncMock(return_value=True)
         redis_pool: MagicMock = MagicMock()
         mock_get_user_data.return_value = {
@@ -763,9 +759,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_ensure_not_super: AsyncMock,
         mock_get_user_by_id: AsyncMock,
     ) -> None:
-        """
-        Test changing role to admin by non-super admin (should raise 403).
-        """
+        """Test changing role to admin by non-super admin (should raise
+        403)."""
         mock_user: MagicMock = MagicMock()
         mock_user.group_id = 10
         mock_get_user_by_id.return_value = mock_user
@@ -819,9 +814,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_ensure_not_super: AsyncMock,
         mock_get_user_by_id: AsyncMock,
     ) -> None:
-        """
-        Test changing role when ensure_not_super raises (should raise 403).
-        """
+        """Test changing role when ensure_not_super raises (should raise
+        403)."""
         mock_user: MagicMock = MagicMock()
         mock_user.group_id = 10
         mock_get_user_by_id.return_value = mock_user
@@ -890,19 +884,12 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-"""
-pytest --cov=examples.db_management.routers.users\
-    --cov-report=term-missing\
-        tests/examples/db_management/routers/users_test.py
-"""
-
 
 class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
     """Cover the user-management authorization and alias edge cases."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.admin: Any = SimpleNamespace(
             username='admin',
             group_id=10,
@@ -1078,7 +1065,9 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """A resolved group is mandatory before activating or moving a user."""
         with patch.object(
-            user_management, 'resolve_target_group_id', return_value=None,
+            user_management,
+            'resolve_target_group_id',
+            return_value=None,
         ):
             with self.assertRaisesRegex(HTTPException, 'group_id is required'):
                 pending_user: Any = SimpleNamespace(

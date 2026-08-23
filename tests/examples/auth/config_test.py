@@ -92,9 +92,3 @@ class TestSettings(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-\
-"""Pytest \
-
---cov=examples.auth.config \
---cov-report=term-missing tests/examples/auth/config_test.py
-"""

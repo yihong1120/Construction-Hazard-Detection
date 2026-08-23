@@ -30,8 +30,7 @@ class TestSiteMediaCleanup(unittest.IsolatedAsyncioTestCase):
         return db
 
     async def test_drain_claims_then_completes_jobs(self) -> None:
-        """Test drain claims then completes jobs.
-        """
+        """Test drain claims then completes jobs."""
         job = MagicMock(
             id=3,
             path='/tmp/evidence.jpg',
@@ -44,7 +43,9 @@ class TestSiteMediaCleanup(unittest.IsolatedAsyncioTestCase):
         db = self._db_with_jobs([job])
 
         with patch.object(site_media_cleanup, '_delete_file') as delete_file:
-            completed = await site_media_cleanup.drain_site_media_cleanup_jobs(db)
+            completed = await site_media_cleanup.drain_site_media_cleanup_jobs(
+                db,
+            )
 
         self.assertEqual(completed, 1)
         delete_file.assert_called_once_with('/tmp/evidence.jpg')
@@ -55,8 +56,7 @@ class TestSiteMediaCleanup(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.commit.await_count, 2)
 
     async def test_drain_releases_failed_job_after_backoff(self) -> None:
-        """Test drain releases failed job after backoff.
-        """
+        """Test drain releases failed job after backoff."""
         job = MagicMock(
             id=4,
             path='/tmp/evidence.jpg',
@@ -73,7 +73,9 @@ class TestSiteMediaCleanup(unittest.IsolatedAsyncioTestCase):
             '_delete_file',
             side_effect=OSError('disk unavailable'),
         ):
-            completed = await site_media_cleanup.drain_site_media_cleanup_jobs(db)
+            completed = await site_media_cleanup.drain_site_media_cleanup_jobs(
+                db,
+            )
 
         self.assertEqual(completed, 0)
         self.assertEqual(job.attempt_count, 1)
@@ -84,12 +86,12 @@ class TestSiteMediaCleanup(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.commit.await_count, 2)
 
     async def test_enqueue_for_site_uses_insert_select(self) -> None:
-        """Test enqueue for site uses insert select.
-        """
+        """Test enqueue for site uses insert select."""
         db = self._db_with_jobs([])
 
         await site_media_cleanup.enqueue_site_media_cleanup_for_site(
-            'Roadwork', db,
+            'Roadwork',
+            db,
         )
 
         statement = str(db.execute.await_args.args[0])

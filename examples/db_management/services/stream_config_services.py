@@ -122,13 +122,18 @@ async def _stream_config_to_read(
     if cfg.group_id not in group_limit_cache:
         # Configurations commonly share a group, so fetch its limit once.
         group_limit_cache[cfg.group_id] = await get_group_stream_limit(
-            cfg.group_id, db,
+            cfg.group_id,
+            db,
         )
     current, max_streams = group_limit_cache[cfg.group_id]
     return StreamConfigRead(
-        id=cfg.id, stream_name=cfg.stream_name, video_url=cfg.video_url,
-        model_key=cfg.model_key, recognition_enabled=cfg.recognition_enabled,
-        work_start_hour=cfg.work_start_hour, work_end_hour=cfg.work_end_hour,
+        id=cfg.id,
+        stream_name=cfg.stream_name,
+        video_url=cfg.video_url,
+        model_key=cfg.model_key,
+        recognition_enabled=cfg.recognition_enabled,
+        work_start_hour=cfg.work_start_hour,
+        work_end_hour=cfg.work_end_hour,
         detect_no_safety_vest_or_helmet=cfg.detect_no_safety_vest_or_helmet,
         detect_near_machinery_or_vehicle=cfg.detect_near_machinery_or_vehicle,
         detect_in_restricted_area=cfg.detect_in_restricted_area,
@@ -136,8 +141,10 @@ async def _stream_config_to_read(
             cfg.detect_in_utility_pole_restricted_area
         ),
         detect_machinery_close_to_pole=cfg.detect_machinery_close_to_pole,
-        expire_date=cfg.expire_date, total_stream_in_group=current,
-        max_allowed_streams=max_streams, updated_at=cfg.updated_at,
+        expire_date=cfg.expire_date,
+        total_stream_in_group=current,
+        max_allowed_streams=max_streams,
+        updated_at=cfg.updated_at,
     )
 
 
@@ -248,7 +255,7 @@ async def create_stream_config(
         return cfg
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def update_stream_config(
@@ -277,7 +284,7 @@ async def update_stream_config(
         await db.commit()
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def delete_stream_config(
@@ -299,7 +306,7 @@ async def delete_stream_config(
         await db.commit()
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def get_group_stream_limit(

@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
-
 # These values define the stable public Registry document contract.
 REGISTRY_SCHEMA_VERSION: int = 1
 MAX_REGISTRY_TTL_SECONDS: int = 24 * 60 * 60

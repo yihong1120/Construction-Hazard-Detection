@@ -137,7 +137,7 @@ class PyJWTBearer:
             # and deployment audience.  The legacy defaults only preserve
             # programmatic token construction for maintenance tooling; HTTP
             # authentication rejects subjects without deployment claims.
-            'aud': audience or f'docformify:{self.token_use}',
+            'aud': audience or f"docformify:{self.token_use}",
             'iss': issuer or 'docformify',
             'iat': now,
             'exp': expire,
@@ -162,12 +162,18 @@ class PyJWTBearer:
             token,
             self.secret_key,
             algorithms=[self.algorithm],
-            audience=expected_audience or f'docformify:{self.token_use}',
+            audience=expected_audience or f"docformify:{self.token_use}",
             issuer=expected_issuer or 'docformify',
             options={
                 'verify_exp': verify_exp,
                 'require': [
-                    'exp', 'iat', 'sub', 'subject', 'token_use', 'aud', 'iss',
+                    'exp',
+                    'iat',
+                    'sub',
+                    'subject',
+                    'token_use',
+                    'aud',
+                    'iss',
                 ],
             },
         )

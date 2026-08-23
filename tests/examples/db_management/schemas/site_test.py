@@ -77,8 +77,11 @@ class TestSiteRead(unittest.TestCase):
     def test_valid(self) -> None:
         """Test creating a valid SiteRead instance with all fields."""
         data: site.SiteRead = site.SiteRead(
-            id=1, name='s', group_ids=[2],
-            group_names=['g'], user_ids=[1, 2],
+            id=1,
+            name='s',
+            group_ids=[2],
+            group_names=['g'],
+            user_ids=[1, 2],
         )
         self.assertEqual(data.id, 1)
         self.assertEqual(data.name, 's')
@@ -101,9 +104,3 @@ class TestSiteRead(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.schemas.site\
-    --cov-report=term-missing\
-        tests/examples/db_management/schemas/site_test.py
-'''

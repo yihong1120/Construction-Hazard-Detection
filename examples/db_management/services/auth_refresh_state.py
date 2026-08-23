@@ -34,7 +34,7 @@ def _refresh_state_key(refresh_token: str) -> str:
     Returns:
         Refresh-token state key.
     """
-    return f'oauth:refresh-state:{_hash_refresh_token(refresh_token)}'
+    return f"oauth:refresh-state:{_hash_refresh_token(refresh_token)}"
 
 
 def _refresh_family_revoked_key(family_id: str) -> str:
@@ -46,7 +46,7 @@ def _refresh_family_revoked_key(family_id: str) -> str:
     Returns:
         Family-revocation marker key.
     """
-    return f'oauth:refresh-family-revoked:{family_id}'
+    return f"oauth:refresh-family-revoked:{family_id}"
 
 
 async def register_refresh_token_state(
@@ -112,7 +112,9 @@ async def revoke_user_access_tokens(
     username: str,
     *,
     get_user_data_fn: Callable[[Redis, str], Awaitable[object]],
-    revoke_access_token_jtis_fn: Callable[[Redis, dict[str, int]], Awaitable[int]],
+    revoke_access_token_jtis_fn: Callable[
+        [Redis, dict[str, int]], Awaitable[int],
+    ],
 ) -> int:
     """Immediately revoke every unexpired access token for a user.
 
@@ -123,7 +125,9 @@ async def revoke_user_access_tokens(
     Returns:
         Number of access-token identifiers revoked.
     """
-    cache = cast(UserCache | None, await get_user_data_fn(redis_pool, username))
+    cache = cast(
+        UserCache | None, await get_user_data_fn(redis_pool, username),
+    )
     if not cache:
         return 0
     return await revoke_access_token_jtis_fn(redis_pool, cache['jti_meta'])
@@ -153,7 +157,7 @@ async def consume_refresh_token_state(
     if await redis_pool.get(_refresh_family_revoked_key(family_id)):
         await revoke_user_access_tokens_fn(redis_pool, username)
         raise HTTPException(status_code=401, detail='Refresh token reused')
-    lock_key = f'{_refresh_state_key(refresh_token)}:consume'
+    lock_key = f"{_refresh_state_key(refresh_token)}:consume"
     acquired = await redis_pool.set(lock_key, b'1', ex=30, nx=True)
     if not acquired:
         await revoke_refresh_family_fn(redis_pool, family_id)
@@ -165,10 +169,7 @@ async def consume_refresh_token_state(
         await revoke_user_access_tokens_fn(redis_pool, username)
         raise HTTPException(status_code=401, detail='Refresh token reused')
     state = json.loads(raw)
-    if (
-        state.get('status') != 'active'
-        or state.get('family_id') != family_id
-    ):
+    if state.get('status') != 'active' or state.get('family_id') != family_id:
         await revoke_refresh_family_fn(redis_pool, family_id)
         await revoke_user_access_tokens_fn(redis_pool, username)
         raise HTTPException(status_code=401, detail='Refresh token reused')
@@ -211,14 +212,10 @@ def _remove_refresh_token_from_cache(
     """
     token_hash = _hash_refresh_token(refresh_token)
     cache['refresh_tokens'] = [
-        token
-        for token in cache['refresh_tokens']
-        if token != refresh_token
+        token for token in cache['refresh_tokens'] if token != refresh_token
     ]
     cache['refresh_token_hashes'] = [
-        value
-        for value in cache['refresh_token_hashes']
-        if value != token_hash
+        value for value in cache['refresh_token_hashes'] if value != token_hash
     ]
 
 

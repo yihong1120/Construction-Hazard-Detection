@@ -45,7 +45,9 @@ from examples.db_management.services.auth_login_guard import clear_login_guard
 from examples.db_management.services.auth_login_guard import (
     clear_login_guard_for_identifier,
 )
-from examples.db_management.services.auth_login_guard import record_failed_login
+from examples.db_management.services.auth_login_guard import (
+    record_failed_login,
+)
 from examples.db_management.services.auth_refresh_state import (
     _cache_contains_refresh_token,
 )
@@ -64,12 +66,18 @@ from examples.db_management.services.auth_refresh_state import (
 from examples.db_management.services.auth_refresh_state import (
     register_refresh_token_state,
 )
-from examples.db_management.services.auth_refresh_state import revoke_refresh_family
+from examples.db_management.services.auth_refresh_state import (
+    revoke_refresh_family,
+)
 from examples.db_management.services.auth_refresh_state import (
     revoke_user_access_tokens,
 )
-from examples.db_management.services.auth_token_issuer import issue_access_token
-from examples.db_management.services.auth_token_issuer import issue_refresh_token
+from examples.db_management.services.auth_token_issuer import (
+    issue_access_token,
+)
+from examples.db_management.services.auth_token_issuer import (
+    issue_refresh_token,
+)
 from src.http_client_pool import get_application_http_client
 
 # Configuration settings for JWT authentication
@@ -82,7 +90,7 @@ HCAPTCHA_VERIFY_URL = 'https://api.hcaptcha.com/siteverify'
 ALGORITHM = 'HS256'
 SUPER_ADMIN = 'ChangDar'
 ACCESS_TTL = datetime.timedelta(minutes=15)  # Short-lived API capability
-REFRESH_TTL = datetime.timedelta(days=30)    # Refresh token expiry time
+REFRESH_TTL = datetime.timedelta(days=30)  # Refresh token expiry time
 
 
 async def clear_login_guard_for_identifiers(
@@ -159,7 +167,8 @@ async def _authenticate(
 
     if not user or not await user.check_password(password):
         raise HTTPException(
-            status_code=401, detail='Wrong username/e-mail or password',
+            status_code=401,
+            detail='Wrong username/e-mail or password',
         )
 
     if user.status == USER_STATUS_EMAIL_UNVERIFIED:
@@ -271,12 +280,14 @@ async def _verify_hcaptcha(
                 result = response.json()
     except (httpx.HTTPError, ValueError):
         raise HTTPException(
-            status_code=403, detail='hCaptcha verification failed',
+            status_code=403,
+            detail='hCaptcha verification failed',
         )
 
     if result.get('success') is not True:
         raise HTTPException(
-            status_code=403, detail='hCaptcha verification failed',
+            status_code=403,
+            detail='hCaptcha verification failed',
         )
 
 
@@ -307,7 +318,8 @@ async def verify_refresh_token(
         subject = refresh_token_subject_from_payload(payload)
     except jwt.ExpiredSignatureError:
         raise HTTPException(
-            status_code=401, detail='Refresh token has expired',
+            status_code=401,
+            detail='Refresh token has expired',
         )
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail='Invalid refresh token')
@@ -337,13 +349,14 @@ async def verify_refresh_token(
         UserCache | None,
         await rate_limiter_service.get_user_data(redis_pool, username),
     )
-    if (
-        not user_data
-        or not _cache_contains_refresh_token(user_data, refresh_token)
+    if not user_data or not _cache_contains_refresh_token(
+        user_data, refresh_token,
     ):
         if family_id:
             await revoke_refresh_family(
-                redis_pool, family_id, refresh_ttl=REFRESH_TTL,
+                redis_pool,
+                family_id,
+                refresh_ttl=REFRESH_TTL,
             )
             await revoke_user_access_tokens(
                 redis_pool,
@@ -353,7 +366,8 @@ async def verify_refresh_token(
             )
             raise HTTPException(status_code=401, detail='Refresh token reused')
         raise HTTPException(
-            status_code=401, detail='Refresh token not recognised',
+            status_code=401,
+            detail='Refresh token not recognised',
         )
 
     return cast(RefreshTokenPayload, payload)
@@ -393,7 +407,9 @@ async def login_user(
 
     try:
         user = await _authenticate(
-            db, payload.identifier, payload.password,
+            db,
+            payload.identifier,
+            payload.password,
         )
     except HTTPException as exc:
         if exc.status_code == 401:
@@ -522,7 +538,8 @@ async def issue_token_pair_for_user(
     )
 
     return cast(
-        TokenPairData, {
+        TokenPairData,
+        {
             'access_token': access_token,
             'refresh_token': refresh_token,
             'username': user.username,
@@ -624,10 +641,14 @@ def _access_logout_context(
         subject = access_token_subject_from_payload(payload)
     except jwt.PyJWTError:
         return None, None, None
-    return subject['username'], subject['jti'], {
-        'jti': subject['jti'],
-        'exp': cast(int, payload['exp']),
-    }
+    return (
+        subject['username'],
+        subject['jti'],
+        {
+            'jti': subject['jti'],
+            'exp': cast(int, payload['exp']),
+        },
+    )
 
 
 def _refresh_logout_context(
@@ -666,9 +687,7 @@ def _remove_logout_tokens_from_cache(
         jti: Optional access-token identifier to remove.
         refresh_token: Optional refresh token to remove.
     """
-    cache['jti_list'] = [
-        token for token in cache['jti_list'] if token != jti
-    ]
+    cache['jti_list'] = [token for token in cache['jti_list'] if token != jti]
     if jti:
         cache['jti_meta'].pop(jti, None)
     if refresh_token:
@@ -715,7 +734,9 @@ async def refresh_tokens(
     if not cache or not _cache_contains_refresh_token(cache, old_refresh):
         if family_id:
             await revoke_refresh_family(
-                redis_pool, family_id, refresh_ttl=REFRESH_TTL,
+                redis_pool,
+                family_id,
+                refresh_ttl=REFRESH_TTL,
             )
             await revoke_user_access_tokens(
                 redis_pool,
@@ -726,9 +747,8 @@ async def refresh_tokens(
             raise HTTPException(status_code=401, detail='Refresh token reused')
         raise HTTPException(status_code=401, detail='Refresh token invalid')
     db_user = cast(DbUserInfo, cache['db_user'])
-    if (
-        deployment is not None
-        and db_user.get('tenant_id') != str(deployment.tenant_id)
+    if deployment is not None and db_user.get('tenant_id') != str(
+        deployment.tenant_id,
     ):
         raise HTTPException(
             status_code=409,
@@ -810,7 +830,8 @@ async def refresh_tokens(
     )
 
     return cast(
-        TokenPairData, {
+        TokenPairData,
+        {
             'access_token': access_token,
             'refresh_token': new_refresh,
             'feature_names': cache['feature_names'],

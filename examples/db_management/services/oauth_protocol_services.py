@@ -101,7 +101,9 @@ def _code_key(code: str) -> str:
     Returns:
         Redis code-record key.
     """
-    return f'oauth:authorization-code:{hashlib.sha256(code.encode()).hexdigest()}'
+    return (
+        f"oauth:authorization-code:{hashlib.sha256(code.encode()).hexdigest()}"
+    )
 
 
 def _append_query(uri: str, **values: str) -> str:
@@ -146,8 +148,10 @@ async def request_data(request: Request) -> dict[str, str]:
     """
     payload = (
         await request.json()
-        if 'application/json' in request.headers.get(
-            'content-type', '',
+        if 'application/json'
+        in request.headers.get(
+            'content-type',
+            '',
         ).lower()
         else dict(await request.form())
     )
@@ -205,7 +209,9 @@ async def authorize_native_app(
         raise HTTPException(status_code=400, detail='pkce_s256_required')
     if not re.fullmatch(r'[A-Za-z0-9_-]{43,128}', code_challenge):
         raise HTTPException(status_code=400, detail='invalid_code_challenge')
-    session = await get_auth_session(redis, request.cookies.get(SESSION_COOKIE))
+    session = await get_auth_session(
+        redis, request.cookies.get(SESSION_COOKIE),
+    )
     if session is None:
         raise HTTPException(status_code=401, detail='login_required')
     try:
@@ -265,7 +271,8 @@ async def exchange_native_token(
     data = await request_data(request)
     deployment = (
         await resolve_request_deployment(request, db)
-        if isinstance(request, Request) else None
+        if isinstance(request, Request)
+        else None
     )
     try:
         grant_request = OAuthTokenRequest.model_validate(data)
@@ -275,7 +282,10 @@ async def exchange_native_token(
         try:
             exchange = OAuthAuthorizationCodeRequest.model_validate(data)
         except ValidationError as exc:
-            raise HTTPException(status_code=400, detail='invalid_grant') from exc
+            raise HTTPException(
+                status_code=400,
+                detail='invalid_grant',
+            ) from exc
         return await _exchange_authorization_code(
             exchange,
             db,
@@ -288,7 +298,10 @@ async def exchange_native_token(
         try:
             exchange = OAuthRefreshTokenRequest.model_validate(data)
         except ValidationError as exc:
-            raise HTTPException(status_code=400, detail='invalid_grant') from exc
+            raise HTTPException(
+                status_code=400,
+                detail='invalid_grant',
+            ) from exc
         return await _exchange_refresh_token(exchange, redis, deployment)
     raise HTTPException(status_code=400, detail='unsupported_grant_type')
 
@@ -406,7 +419,7 @@ async def current_user_profile(
     if loaded is None or loaded.status != 'active':
         raise HTTPException(status_code=401, detail='invalid_user')
     display_name = (
-        f'{loaded.profile.given_name} {loaded.profile.family_name}'.strip()
+        f"{loaded.profile.given_name} {loaded.profile.family_name}".strip()
     )
     return MeResponse(
         id=loaded.id,
@@ -427,18 +440,20 @@ async def revoke_native_token(request: Request, redis: Redis) -> None:
         redis: Redis connection holding token state.
     """
     try:
-        data = OAuthRevocationRequest.model_validate(await request_data(request))
+        data = OAuthRevocationRequest.model_validate(
+            await request_data(request),
+        )
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail='invalid_request') from exc
     token_value = data.token or ''
     if token_value:
         if data.token_type_hint == 'access_token':
-            await logout_user(None, f'Bearer {token_value}', redis)
+            await logout_user(None, f"Bearer {token_value}", redis)
         else:
             await logout_user(token_value, None, redis)
         await revoke_media_for_parent(
             redis,
-            f'native:{hashlib.sha256(token_value.encode()).hexdigest()}',
+            f"native:{hashlib.sha256(token_value.encode()).hexdigest()}",
         )
     authorization = request.headers.get('authorization')
     if authorization:
@@ -447,5 +462,5 @@ async def revoke_native_token(request: Request, redis: Redis) -> None:
             await logout_user(None, authorization, redis)
             await revoke_media_for_parent(
                 redis,
-                f'native:{hashlib.sha256(bearer.encode()).hexdigest()}',
+                f"native:{hashlib.sha256(bearer.encode()).hexdigest()}",
             )

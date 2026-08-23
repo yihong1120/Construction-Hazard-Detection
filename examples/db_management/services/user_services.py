@@ -28,8 +28,7 @@ async def create_user(
     profile: dict[str, Any] | None = None,
     status: str = USER_STATUS_ACTIVE,
 ) -> User:
-    """
-    Create a new user and optionally its profile.
+    """Create a new user and optionally its profile.
 
     Args:
         username: Username of the new user.
@@ -94,8 +93,7 @@ async def list_users(
     after_id: int | None = None,
     page_size: int = 50,
 ) -> tuple[list[User], int | None]:
-    """
-    Retrieve users, optionally scoped to a group.
+    """Retrieve users, optionally scoped to a group.
 
     Args:
         db: Async SQLAlchemy session.
@@ -126,8 +124,7 @@ async def list_users(
 
 
 async def get_user_by_id(user_id: int, db: AsyncSession) -> User:
-    """
-    Retrieve a user by its unique identifier.
+    """Retrieve a user by its unique identifier.
 
     Args:
         user_id: Numeric identifier of the user.
@@ -140,16 +137,20 @@ async def get_user_by_id(user_id: int, db: AsyncSession) -> User:
         HTTPException: If no user is found (404).
     """
     user = (
-        await db.execute(
-            select(User)
-            .options(
-                selectinload(User.group),
-                selectinload(User.profile),
-                selectinload(User.sites),
+        (
+            await db.execute(
+                select(User)
+                .options(
+                    selectinload(User.group),
+                    selectinload(User.profile),
+                    selectinload(User.sites),
+                )
+                .where(User.id == user_id),
             )
-            .where(User.id == user_id),
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not user:
         raise HTTPException(status_code=404, detail='User not found.')
@@ -158,8 +159,7 @@ async def get_user_by_id(user_id: int, db: AsyncSession) -> User:
 
 
 async def delete_user(user: User, db: AsyncSession) -> None:
-    """
-    Delete a user.
+    """Delete a user.
 
     Args:
         user: ``User`` instance to delete.
@@ -177,7 +177,7 @@ async def delete_user(user: User, db: AsyncSession) -> None:
     except Exception as e:
         # Roll back on failure.
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def update_username(
@@ -185,8 +185,7 @@ async def update_username(
     new_username: str,
     db: AsyncSession,
 ) -> None:
-    """
-    Update the username of an existing user.
+    """Update the username of an existing user.
 
     Args:
         user: ``User`` instance to update.
@@ -210,7 +209,7 @@ async def update_username(
     except Exception as e:
         # Roll back on unexpected errors.
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def update_password(
@@ -218,8 +217,7 @@ async def update_password(
     new_password: str,
     db: AsyncSession,
 ) -> None:
-    """
-    Update the password of an existing user.
+    """Update the password of an existing user.
 
     Args:
         user: ``User`` instance to update.
@@ -241,7 +239,7 @@ async def update_password(
     except Exception as e:
         # Roll back on error.
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def set_user_status(
@@ -249,8 +247,7 @@ async def set_user_status(
     status: str,
     db: AsyncSession,
 ) -> None:
-    """
-    Update a user's status.
+    """Update a user's status.
 
     Args:
         user: ``User`` instance to update.
@@ -271,7 +268,7 @@ async def set_user_status(
     except Exception as e:
         # Roll back if an error occurs.
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def create_or_update_profile(
@@ -280,8 +277,7 @@ async def create_or_update_profile(
     db: AsyncSession,
     create_if_missing: bool = False,
 ) -> None:
-    """
-    Create a new profile if absent, or update allowed fields.
+    """Create a new profile if absent, or update allowed fields.
 
     Args:
         user: ``User`` whose profile is to be created or updated.
@@ -304,8 +300,11 @@ async def create_or_update_profile(
 
     # Allow only known profile fields to be updated (safer than ``hasattr``).
     allowed_fields = {
-        'family_name', 'middle_name', 'given_name',
-        'email', 'mobile_number',
+        'family_name',
+        'middle_name',
+        'given_name',
+        'email',
+        'mobile_number',
     }
     for key, val in data.items():
         if val is not None and key in allowed_fields:
@@ -320,4 +319,4 @@ async def create_or_update_profile(
         raise HTTPException(400, 'Duplicate email or mobile number.')
     except Exception as e:
         await db.rollback()
-        raise HTTPException(500, f'Database error: {e}')
+        raise HTTPException(500, f"Database error: {e}")

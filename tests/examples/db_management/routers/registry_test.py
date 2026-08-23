@@ -36,12 +36,13 @@ from examples.deployment_registry.schemas import (
 from examples.deployment_registry.signing import (
     build_registry_document,
 )
+
 """Contract tests for the anonymous signed deployment registry."""
 
 
 _TENANT_ID = UUID('11111111-1111-1111-1111-111111111111')
 _DEPLOYMENT_ID = UUID('22222222-2222-2222-2222-222222222222')
-_PATH = f'/deployment-registry/v1/deployments/{_DEPLOYMENT_ID}'
+_PATH = f"/deployment-registry/v1/deployments/{_DEPLOYMENT_ID}"
 
 
 def _base64url_decode(value: str) -> bytes:
@@ -53,8 +54,7 @@ class TestDeploymentRegistryRouter(unittest.TestCase):
     """Verify the public route never becomes an authentication endpoint."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.app = FastAPI()
         self.app.include_router(registry.router)
         self.client = TestClient(self.app, base_url='https://api.example.com')
@@ -93,14 +93,12 @@ class TestDeploymentRegistryRouter(unittest.TestCase):
         self.settings_patch.start()
 
     def tearDown(self) -> None:
-        """Perform tearDown.
-        """
+        """Perform tearDown."""
         self.settings_patch.stop()
         self.client.close()
 
     def test_returns_exact_signed_nine_field_document(self) -> None:
-        """Test returns exact signed nine field document.
-        """
+        """Test returns exact signed nine field document."""
         response = self.client.get(_PATH)
 
         self.assertEqual(response.status_code, 200)
@@ -122,7 +120,10 @@ class TestDeploymentRegistryRouter(unittest.TestCase):
         )
         self.assertEqual(document['deployment_id'], str(_DEPLOYMENT_ID))
         self.assertEqual(document['tenant_id'], str(_TENANT_ID))
-        self.assertEqual(document['api_base_url'], 'https://api.example.com/hazard/api')
+        self.assertEqual(
+            document['api_base_url'],
+            'https://api.example.com/hazard/api',
+        )
         self.assertEqual(document['config_revision'], 7)
         self.assertEqual(document['expires_at'] - document['issued_at'], 600)
         public_key = self.private_key.public_key()
@@ -146,9 +147,10 @@ class TestDeploymentRegistryRouter(unittest.TestCase):
 
         self.assertEqual(unknown.status_code, 404)
 
-    def test_disabled_tenant_or_revoked_deployment_is_not_discoverable(self) -> None:
-        """Test disabled tenant or revoked deployment is not discoverable.
-        """
+    def test_disabled_tenant_or_revoked_deployment_is_not_discoverable(
+        self,
+    ) -> None:
+        """Test disabled tenant or revoked deployment is not discoverable."""
         for tenant_status, deployment_status in (
             (TENANT_STATUS_DISABLED, DEPLOYMENT_STATUS_ACTIVE),
             (TENANT_STATUS_ACTIVE, DEPLOYMENT_STATUS_REVOKED),
@@ -171,8 +173,7 @@ class TestDeploymentRegistryService(unittest.TestCase):
     """Test signing invariants independently from HTTP plumbing."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.private_key = Ed25519PrivateKey.generate()
         self.private_pem = self.private_key.private_bytes(
             Encoding.PEM,
@@ -190,8 +191,7 @@ class TestDeploymentRegistryService(unittest.TestCase):
         )
 
     def test_ttl_cannot_exceed_24_hours(self) -> None:
-        """Test ttl cannot exceed 24 hours.
-        """
+        """Test ttl cannot exceed 24 hours."""
         with self.assertRaises(ValueError):
             build_registry_document(
                 self.deployment,
@@ -214,9 +214,10 @@ class TestDeploymentRegistryService(unittest.TestCase):
         with self.assertRaises(ValueError):
             DeploymentRegistryDocument.model_validate(document)
 
-    def test_service_refuses_a_host_root_or_service_specific_api_url(self) -> None:
-        """Test service refuses a host root or service specific api url.
-        """
+    def test_service_refuses_a_host_root_or_service_specific_api_url(
+        self,
+    ) -> None:
+        """Test service refuses a host root or service specific api url."""
         for api_base_url in (
             'https://api.example.com',
             'https://api.example.com/hazard/api/db_management',
@@ -232,8 +233,11 @@ class TestDeploymentRegistryService(unittest.TestCase):
                         issued_at=100,
                     )
 
-    def test_public_key_pem_is_exportable_but_not_part_of_document(self) -> None:
-        """Pinning/export is an operator concern; the endpoint returns no key."""
+    def test_public_key_pem_is_exportable_but_not_part_of_document(
+        self,
+    ) -> None:
+        """Pinning/export is an operator concern; the endpoint returns no
+        key."""
         public_pem = self.private_key.public_key().public_bytes(
             Encoding.PEM,
             PublicFormat.SubjectPublicKeyInfo,

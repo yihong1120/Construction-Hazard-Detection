@@ -14,9 +14,7 @@ load_dotenv()
 def _join_env_values(*names: str) -> str:
     """Return comma-separated non-empty environment values."""
     return ','.join(
-        value
-        for name in names
-        if (value := os.getenv(name, '').strip())
+        value for name in names if (value := os.getenv(name, '').strip())
     )
 
 
@@ -39,8 +37,7 @@ DEFAULT_APPLE_SERVICE_ID = 'com.changdar.visionnaire.signin'
 
 
 class Settings(BaseSettings):
-    """
-    Configuration settings for the application.
+    """Configuration settings for the application.
 
     Attributes:
         authjwt_secret_key (str): The secret key for signing JWT tokens.
@@ -146,7 +143,7 @@ class Settings(BaseSettings):
     apple_client_ids: str = (
         os.getenv('APPLE_CLIENT_IDS')
         or _join_env_values('APPLE_BUNDLE_ID', 'APPLE_SERVICE_ID')
-        or f'{DEFAULT_APPLE_BUNDLE_ID},{DEFAULT_APPLE_SERVICE_ID}'
+        or f"{DEFAULT_APPLE_BUNDLE_ID},{DEFAULT_APPLE_SERVICE_ID}"
     )
     apple_team_id: str = os.getenv('APPLE_TEAM_ID', '5DU8R27949')
     apple_key_id: str = os.getenv('APPLE_KEY_ID', 'NGC4QBS7ZY')
@@ -237,9 +234,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = 'HS256'
 
     def __init__(self) -> None:
-        """
-        Construct the Settings object.
-        """
+        """Construct the Settings object."""
         super().__init__()
         if not self.authjwt_secret_key:
             raise RuntimeError('JWT_SECRET_KEY is required')

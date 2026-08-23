@@ -59,7 +59,9 @@ from examples.db_management.services.web_auth_services import (
 from examples.db_management.services.web_auth_services import (
     set_web_refresh_cookie,
 )
-from examples.db_management.services.web_auth_services import token_pair_response
+from examples.db_management.services.web_auth_services import (
+    token_pair_response,
+)
 
 router = APIRouter(tags=['auth'])
 
@@ -91,7 +93,8 @@ async def login(
         redis: Redis connection used for token state and rate limiting.
 
     Returns:
-        Issued access-token details; browser clients receive their refresh token
+        Issued access-token details; browser clients receive their refresh
+            token
         in a secure cookie.
 
     Raises:
@@ -186,7 +189,8 @@ async def google_login(
         redis: Redis connection used for token state and rate limiting.
 
     Returns:
-        Issued access-token details; browser clients receive their refresh token
+        Issued access-token details; browser clients receive their refresh
+            token
         in a secure cookie.
 
     Raises:
@@ -229,14 +233,16 @@ async def apple_login(
     """Authenticate or register a user with Sign in with Apple.
 
     Args:
-        payload: Apple credentials, optional profile claims, and legal consents.
+        payload: Apple credentials, optional profile claims, and legal
+            consents.
         request: HTTP request used to select browser-cookie behaviour.
         response: HTTP response that may receive a refresh-token cookie.
         db: Database session used to resolve or create the account.
         redis: Redis connection used for token state and rate limiting.
 
     Returns:
-        Issued access-token details; browser clients receive their refresh token
+        Issued access-token details; browser clients receive their refresh
+            token
         in a secure cookie.
 
     Raises:
@@ -339,7 +345,8 @@ async def link_apple(
         Persisted Apple identity details.
 
     Raises:
-        HTTPException: If the Apple credentials are invalid or belong to another
+        HTTPException: If the Apple credentials are invalid or belong to
+            another
             user.
     """
     return await link_apple_identity(
@@ -425,7 +432,8 @@ async def refresh(
         redis: Redis connection used to rotate token state.
 
     Returns:
-        Issued access-token details; browser clients receive their refresh token
+        Issued access-token details; browser clients receive their refresh
+            token
         in a secure cookie.
 
     Raises:

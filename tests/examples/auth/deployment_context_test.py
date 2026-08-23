@@ -21,8 +21,7 @@ class TestDeploymentContract(unittest.TestCase):
     """Exercise deployment-origin canonicalisation and token binding."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.binding = DeploymentBinding(
             tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
             deployment_id=UUID('00000000-0000-0000-0000-000000000002'),
@@ -30,9 +29,10 @@ class TestDeploymentContract(unittest.TestCase):
             config_revision=3,
         )
 
-    def test_canonical_api_root_requires_configured_path_without_query(self) -> None:
-        """Test canonical api root requires configured path without query.
-        """
+    def test_canonical_api_root_requires_configured_path_without_query(
+        self,
+    ) -> None:
+        """Test canonical api root requires configured path without query."""
         self.assertEqual(
             canonical_api_base_url('https://API.EXAMPLE.COM/hazard/api/'),
             'https://api.example.com/hazard/api',
@@ -52,9 +52,11 @@ class TestDeploymentContract(unittest.TestCase):
             with self.assertRaises(ValueError):
                 canonical_api_base_url(value)
 
-    def test_access_token_cannot_be_decoded_for_another_deployment_origin(self) -> None:
-        """Test access token cannot be decoded for another deployment origin.
-        """
+    def test_access_token_cannot_be_decoded_for_another_deployment_origin(
+        self,
+    ) -> None:
+        """Test access token cannot be decoded for another deployment
+        origin."""
         token = jwt_access.create_access_token(
             {
                 'username': 'alice',
@@ -85,8 +87,11 @@ class TestDeploymentContract(unittest.TestCase):
                 expected_audience=self.binding.audience,
             )
 
-    def test_lifecycle_decode_preserves_deployment_refresh_tokens(self) -> None:
-        """Cache cleanup can verify a bound refresh token without authorising it."""
+    def test_lifecycle_decode_preserves_deployment_refresh_tokens(
+        self,
+    ) -> None:
+        """Cache cleanup can verify a bound refresh token without authorising
+        it."""
         token = jwt_refresh.create_access_token(
             {
                 'username': 'alice',
@@ -108,23 +113,25 @@ class TestDeploymentContract(unittest.TestCase):
     @staticmethod
     def _request(host: str, client_host: str) -> Request:
         """Build a minimal direct-Uvicorn request for local-mode tests."""
-        return Request({
-            'type': 'http',
-            'asgi': {'version': '3.0'},
-            'http_version': '1.1',
-            'method': 'POST',
-            'scheme': 'http',
-            'path': '/login',
-            'raw_path': b'/login',
-            'query_string': b'',
-            'headers': [(b'host', host.encode('ascii'))],
-            'client': (client_host, 50000),
-            'server': ('127.0.0.1', 8005),
-        })
+        return Request(
+            {
+                'type': 'http',
+                'asgi': {'version': '3.0'},
+                'http_version': '1.1',
+                'method': 'POST',
+                'scheme': 'http',
+                'path': '/login',
+                'raw_path': b'/login',
+                'query_string': b'',
+                'headers': [(b'host', host.encode('ascii'))],
+                'client': (client_host, 50000),
+                'server': ('127.0.0.1', 8005),
+            },
+        )
 
     def test_local_development_uses_configured_deployment(self) -> None:
-        """Test local development mode uses only server configured deployment.
-        """
+        """Test local development mode uses only server configured
+        deployment."""
         with patch.dict(
             os.environ,
             {

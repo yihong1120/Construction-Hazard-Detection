@@ -35,7 +35,6 @@ from examples.db_management.schemas.playback import PlaybackWallRequest
 from examples.db_management.services import playback_services as playback
 from tests.examples.auth.session_store_test import FakeRedis
 
-
 _DEPLOYMENT = DeploymentBinding(
     tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
     deployment_id=UUID('00000000-0000-0000-0000-000000000002'),
@@ -89,13 +88,10 @@ def _refresh_subject(username: str = 'alice') -> dict[str, object]:
 
 
 class PlaybackRouterTest(unittest.TestCase):
-
-    """Provide PlaybackRouterTest.
-    """
+    """Provide PlaybackRouterTest."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         app = FastAPI()
         app.include_router(playback_router.router)
         self.redis = FakeRedis()
@@ -118,8 +114,7 @@ class PlaybackRouterTest(unittest.TestCase):
         self.headers = {'Authorization': f"Bearer {self.access_token}"}
 
     def test_native_single_playback_returns_signed_detail_url(self) -> None:
-        """Test native single playback returns signed detail url.
-        """
+        """Test native single playback returns signed detail url."""
         upstream = {
             'session_id': 'stream-session-1',
             'key': 'Cam1',
@@ -200,8 +195,7 @@ class PlaybackRouterTest(unittest.TestCase):
         )
 
     def test_native_wall_playback_returns_shared_preview_token(self) -> None:
-        """Test native wall playback returns shared preview token.
-        """
+        """Test native wall playback returns shared preview token."""
         upstream = {
             'items': [
                 {
@@ -297,8 +291,7 @@ class PlaybackRouterTest(unittest.TestCase):
         )
 
     def test_web_bff_session_uses_same_playback_endpoint(self) -> None:
-        """Test web bff session uses same playback endpoint.
-        """
+        """Test web bff session uses same playback endpoint."""
         access = jwt_access.create_access_token(
             _access_subject(user_id=2),
             timedelta(minutes=15),
@@ -467,13 +460,10 @@ def _http_context(response: object) -> tuple[MagicMock, MagicMock]:
 
 
 class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
-
-    """Provide TestPlaybackCoverage.
-    """
+    """Provide TestPlaybackCoverage."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.db = MagicMock()
         self.db.scalar = AsyncMock()
         self.redis = MagicMock()
@@ -494,8 +484,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_bearer_decode_and_subject_helpers(self) -> None:
-        """Test bearer decode and subject helpers.
-        """
+        """Test bearer decode and subject helpers."""
         self.assertEqual(
             playback._bearer_token(
                 _request('Bearer token'),
@@ -510,7 +499,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as invalid:
                 await playback._decode_access_token(
-                    'bad', self.redis, self.binding,
+                    'bad',
+                    self.redis,
+                    self.binding,
                 )
         self.assertEqual(invalid.exception.status_code, 401)
 
@@ -550,7 +541,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as empty_subject:
                 await playback._decode_access_token(
-                    'token', self.redis, self.binding,
+                    'token',
+                    self.redis,
+                    self.binding,
                 )
         self.assertEqual(empty_subject.exception.status_code, 401)
 
@@ -575,7 +568,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(HTTPException) as revoked,
         ):
-            await playback._decode_access_token('token', self.redis, self.binding)
+            await playback._decode_access_token(
+                'token', self.redis, self.binding,
+            )
         self.assertEqual(revoked.exception.status_code, 401)
 
         with (
@@ -591,20 +586,25 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(HTTPException) as unavailable,
         ):
-            await playback._decode_access_token('token', self.redis, self.binding)
+            await playback._decode_access_token(
+                'token', self.redis, self.binding,
+            )
         self.assertEqual(unavailable.exception.status_code, 503)
 
     async def test_principal_resolution_rejects_expired_app_sessions(
         self,
     ) -> None:
-        """Test principal resolution rejects expired app sessions.
-        """
+        """Test principal resolution rejects expired app sessions."""
         with patch.object(
-            playback, 'get_auth_session', new=AsyncMock(return_value=None),
+            playback,
+            'get_auth_session',
+            new=AsyncMock(return_value=None),
         ):
             with self.assertRaises(HTTPException) as expired_session:
                 await playback._resolve_playback_principal(
-                    _request(), self.redis, self.db,
+                    _request(),
+                    self.redis,
+                    self.db,
                 )
         self.assertEqual(
             expired_session.exception.detail,
@@ -614,22 +614,26 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_principal_resolution_uses_access_subject(
         self,
     ) -> None:
-        """Test principal resolution uses access subject.
-        """
+        """Test principal resolution uses access subject."""
         credentials = JwtAuthorizationCredentials(
             subject=cast(AccessTokenSubject, _access_subject(user_id=9)),
         )
         with patch.object(
-            playback, '_decode_access_token', return_value=credentials,
+            playback,
+            '_decode_access_token',
+            return_value=credentials,
         ):
             principal = await playback._resolve_playback_principal(
-                _request('Bearer token'), self.redis, self.db,
+                _request('Bearer token'),
+                self.redis,
+                self.db,
             )
         self.assertEqual(principal.parent, 'native:user:9')
 
         with patch.object(
             playback,
-            'get_auth_session', new=AsyncMock(return_value={}),
+            'get_auth_session',
+            new=AsyncMock(return_value={}),
         ):
             with patch.object(playback, 'check_csrf'):
                 with patch.object(
@@ -643,14 +647,17 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                         return_value=credentials,
                     ):
                         principal = await playback._resolve_playback_principal(
-                            _request(session_id='session'), self.redis, self.db,
+                            _request(
+                                session_id='session',
+                            ),
+                            self.redis,
+                            self.db,
                         )
         self.assertEqual(principal.platform, 'web')
         self.assertEqual(principal.user_id, 9)
 
     async def test_streaming_upstream_errors_and_detail_parsing(self) -> None:
-        """Test streaming upstream errors and detail parsing.
-        """
+        """Test streaming upstream errors and detail parsing."""
         response = MagicMock()
         response.json.side_effect = ValueError('not json')
         response.text = 'plain error'
@@ -666,7 +673,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             'timeout',
         )
         with patch.object(
-            playback.httpx, 'AsyncClient', return_value=timeout_context,
+            playback.httpx,
+            'AsyncClient',
+            return_value=timeout_context,
         ):
             with self.assertRaises(HTTPException) as unavailable:
                 await playback._post_streaming_playback(
@@ -680,7 +689,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         failure_response.json.return_value = {'detail': 'forbidden'}
         _, failure_context = _http_context(failure_response)
         with patch.object(
-            playback.httpx, 'AsyncClient', return_value=failure_context,
+            playback.httpx,
+            'AsyncClient',
+            return_value=failure_context,
         ):
             with self.assertRaises(HTTPException) as failed_upstream:
                 await playback._post_streaming_playback(
@@ -694,7 +705,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         invalid_response.json.side_effect = ValueError('bad json')
         _, invalid_context = _http_context(invalid_response)
         with patch.object(
-            playback.httpx, 'AsyncClient', return_value=invalid_context,
+            playback.httpx,
+            'AsyncClient',
+            return_value=invalid_context,
         ):
             with self.assertRaises(HTTPException) as bad_json:
                 await playback._post_streaming_playback(
@@ -711,7 +724,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         list_response.json.return_value = []
         _, list_context = _http_context(list_response)
         with patch.object(
-            playback.httpx, 'AsyncClient', return_value=list_context,
+            playback.httpx,
+            'AsyncClient',
+            return_value=list_context,
         ):
             with self.assertRaises(HTTPException) as bad_body:
                 await playback._post_streaming_playback(
@@ -725,7 +740,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         success_response.json.return_value = {'key': 'Cam1'}
         _, success_context = _http_context(success_response)
         with patch.object(
-            playback.httpx, 'AsyncClient', return_value=success_context,
+            playback.httpx,
+            'AsyncClient',
+            return_value=success_context,
         ):
             body, status_code = await playback._post_streaming_playback(
                 '/stream',
@@ -735,8 +752,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((body, status_code), ({'key': 'Cam1'}, 201))
 
     def test_signed_urls_profiles_and_wall_payload(self) -> None:
-        """Test signed urls profiles and wall payload.
-        """
+        """Test signed urls profiles and wall payload."""
         self.assertEqual(playback._normalise_profile(None), 'clean')
         with self.assertRaises(HTTPException):
             playback._normalise_profile('unknown')
@@ -813,8 +829,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             PlaybackWallRequest(site='Site', cameras=['Cam 1', 'Cam 1'])
 
     async def test_wall_validation_and_session_lifecycle_errors(self) -> None:
-        """Test wall validation and session lifecycle errors.
-        """
+        """Test wall validation and session lifecycle errors."""
         payload = PlaybackWallRequest(site='Site')
         with patch.object(
             playback,

@@ -33,7 +33,7 @@ def _hash_login_pair(identifier: str, client_ip: str | None) -> str:
     """
     normalized = identifier.strip().lower()
     source = client_ip or 'unknown'
-    return hashlib.sha256(f'{normalized}|{source}'.encode()).hexdigest()
+    return hashlib.sha256(f"{normalized}|{source}".encode()).hexdigest()
 
 
 def _login_fail_key(identifier: str, client_ip: str | None) -> str:
@@ -46,7 +46,7 @@ def _login_fail_key(identifier: str, client_ip: str | None) -> str:
     Returns:
         Login-pair failure-counter key.
     """
-    return f'login_fail:pair:{_hash_login_pair(identifier, client_ip)}'
+    return f"login_fail:pair:{_hash_login_pair(identifier, client_ip)}"
 
 
 def _login_cooldown_key(identifier: str, client_ip: str | None) -> str:
@@ -59,7 +59,7 @@ def _login_cooldown_key(identifier: str, client_ip: str | None) -> str:
     Returns:
         Login-pair cooldown key.
     """
-    return f'login_cooldown:pair:{_hash_login_pair(identifier, client_ip)}'
+    return f"login_cooldown:pair:{_hash_login_pair(identifier, client_ip)}"
 
 
 def _account_fail_key(identifier: str) -> str:
@@ -71,7 +71,7 @@ def _account_fail_key(identifier: str) -> str:
     Returns:
         Account failure-counter key.
     """
-    return f'login_fail:account:{_hash_account_identifier(identifier)}'
+    return f"login_fail:account:{_hash_account_identifier(identifier)}"
 
 
 def _login_lock_key(identifier: str) -> str:
@@ -83,7 +83,7 @@ def _login_lock_key(identifier: str) -> str:
     Returns:
         Account-lock key.
     """
-    return f'login_lock:account:{_hash_account_identifier(identifier)}'
+    return f"login_lock:account:{_hash_account_identifier(identifier)}"
 
 
 def _login_pair_index_key(identifier: str) -> str:
@@ -95,7 +95,7 @@ def _login_pair_index_key(identifier: str) -> str:
     Returns:
         Client-pair index key.
     """
-    return f'login_pairs:account:{_hash_account_identifier(identifier)}'
+    return f"login_pairs:account:{_hash_account_identifier(identifier)}"
 
 
 def _login_fail_pair_key(pair_hash: str) -> str:
@@ -107,7 +107,7 @@ def _login_fail_pair_key(pair_hash: str) -> str:
     Returns:
         Login-pair failure-counter key.
     """
-    return f'login_fail:pair:{pair_hash}'
+    return f"login_fail:pair:{pair_hash}"
 
 
 def _login_cooldown_pair_key(pair_hash: str) -> str:
@@ -119,7 +119,7 @@ def _login_cooldown_pair_key(pair_hash: str) -> str:
     Returns:
         Login-pair cooldown key.
     """
-    return f'login_cooldown:pair:{pair_hash}'
+    return f"login_cooldown:pair:{pair_hash}"
 
 
 def _utc_iso_after(seconds: int) -> str:
@@ -131,10 +131,9 @@ def _utc_iso_after(seconds: int) -> str:
     Returns:
         Timezone-aware ISO 8601 timestamp.
     """
-    expires_at = (
-        datetime.datetime.now(datetime.timezone.utc)
-        + datetime.timedelta(seconds=seconds)
-    )
+    expires_at = datetime.datetime.now(
+        datetime.timezone.utc,
+    ) + datetime.timedelta(seconds=seconds)
     return expires_at.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
@@ -353,10 +352,12 @@ async def clear_login_guard_for_identifier(
         pair_index_key,
     ]
     for pair_hash in pair_hashes:
-        keys.extend([
-            _login_fail_pair_key(pair_hash),
-            _login_cooldown_pair_key(pair_hash),
-        ])
+        keys.extend(
+            [
+                _login_fail_pair_key(pair_hash),
+                _login_cooldown_pair_key(pair_hash),
+            ],
+        )
     await redis_pool.delete(*keys)
 
 

@@ -34,7 +34,8 @@ def build_registry_document(
         Public Registry document containing a Base64url signature.
 
     Raises:
-        ValueError: If the configuration, deployment, or signing key is invalid.
+        ValueError: If the configuration, deployment, or signing key is
+            invalid.
     """
     # Restrict document lifetime to the public Registry contract.
     if not 0 < ttl_seconds <= MAX_REGISTRY_TTL_SECONDS:
@@ -95,7 +96,11 @@ def build_registry_document(
             'deployment registry signing key must be Ed25519',
         )
     # Base64url carries binary signature bytes safely in the JSON document.
-    document['signature'] = base64.urlsafe_b64encode(signature).decode(
-        'ascii',
-    ).rstrip('=')
+    document['signature'] = (
+        base64.urlsafe_b64encode(signature)
+        .decode(
+            'ascii',
+        )
+        .rstrip('=')
+    )
     return document

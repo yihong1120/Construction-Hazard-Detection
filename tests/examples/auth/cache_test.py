@@ -19,15 +19,11 @@ from examples.auth.cache import RateLimiterService
 
 
 class CacheTestCase(unittest.IsolatedAsyncioTestCase):
-    """
-    Test cases for cache functionalities (get_user_data, set_user_data)
-    and the custom_rate_limiter behavior.
-    """
+    """Test cases for cache functionalities (get_user_data, set_user_data) and
+    the custom_rate_limiter behavior."""
 
     async def test_get_user_data(self) -> None:
-        """
-        Test retrieving user data from the Redis cache.
-        """
+        """Test retrieving user data from the Redis cache."""
         # Make redis_pool a valid AsyncMock with .get as an async method
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.get = AsyncMock(
@@ -48,9 +44,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_get_user_data_not_found(self) -> None:
-        """
-        Test retrieving user data that does not exist in the Redis cache.
-        """
+        """Test retrieving user data that does not exist in the Redis cache."""
         redis_pool = AsyncMock(spec=Redis)
         # Return None so it looks like no data found
         redis_pool.get = AsyncMock(return_value=None)
@@ -66,9 +60,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_set_user_data(self) -> None:
-        """
-        Test storing user data in the Redis cache.
-        """
+        """Test storing user data in the Redis cache."""
         redis_pool = AsyncMock(spec=Redis)
         # Make sure set is also an async method
         redis_pool.set = AsyncMock(return_value=True)
@@ -89,9 +81,8 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_preload_and_cached_script(self) -> None:
-        """
-        Ensure preload_script loads Lua once and cached path is used after.
-        """
+        """Ensure preload_script loads Lua once and cached path is used
+        after."""
         service = RateLimiterService()
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(return_value='sha-1')
@@ -104,9 +95,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         redis_pool.script_load.assert_awaited_once()
 
     async def test_incr_get_ttl_evalsha_success(self) -> None:
-        """
-        Cover the fast path where evalsha succeeds.
-        """
+        """Cover the fast path where evalsha succeeds."""
         service = RateLimiterService()
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(return_value='sha-xyz')
@@ -130,9 +119,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             await service._incr_and_get_ttl(redis_pool, 'invalid', 60)
 
     async def test_incr_get_ttl_noscript_reload(self) -> None:
-        """
-        Cover the NoScriptError branch that reloads script and retries.
-        """
+        """Cover the NoScriptError branch that reloads script and retries."""
         service = RateLimiterService()
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(side_effect=['sha-a', 'sha-b'])
@@ -145,12 +132,10 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(redis_pool.evalsha.await_count, 2)
 
     async def test_incr_get_ttl_noscript_then_invalid_shape_raises(
-            self,
+        self,
     ) -> None:
-        """
-        After NoScriptError, the second evalsha returns an invalid shape
-        which should raise a ValueError.
-        """
+        """After NoScriptError, the second evalsha returns an invalid shape
+        which should raise a ValueError."""
         service = RateLimiterService()
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(
@@ -169,9 +154,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_data: Any,
     ) -> None:
-        """
-        When jti_list is not a list/tuple, it should be treated as empty.
-        """
+        """When jti_list is not a list/tuple, it should be treated as empty."""
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(return_value='sha-ok')
         redis_pool.evalsha = AsyncMock(return_value=[1, 10])
@@ -182,7 +165,9 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
 
         creds = MagicMock()
         creds.subject = {
-            'role': 'user', 'username': 'u2', 'jti': 'abc',
+            'role': 'user',
+            'username': 'u2',
+            'jti': 'abc',
         }
 
         with self.assertRaises(HTTPException) as exc:
@@ -195,11 +180,10 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         return_value={'jti_list': ['abc']},
     )
     async def test_custom_rate_limiter_with_response_and_negative_ttl(
-        self, mock_get_user_data: Any,
+        self,
+        mock_get_user_data: Any,
     ) -> None:
-        """
-        Call wrapper with explicit Response and negative TTL.
-        """
+        """Call wrapper with explicit Response and negative TTL."""
         service_response = Response()
         redis_pool = AsyncMock(spec=Redis)
         # Use fast path; negative TTL should fall back to window_seconds (60)
@@ -229,7 +213,8 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             service_response.headers.get(
                 'X-RateLimit-Reset',
-            ), '60',
+            ),
+            '60',
         )
 
     @patch(
@@ -237,11 +222,10 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         return_value={'jti_list': ['test_jti']},
     )
     async def test_rate_limiter_guest_role_exceeds(
-            self, mock_get_user_data: Any,
+        self,
+        mock_get_user_data: Any,
     ) -> None:
-        """
-        Test rate limiter for guest role that exceeds the limit (24/day).
-        """
+        """Test rate limiter for guest role that exceeds the limit (24/day)."""
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(return_value='sha')
         redis_pool.evalsha = AsyncMock(return_value=[25, 86400])
@@ -259,7 +243,8 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as exc:
             await rate_limiter_service(
-                mock_request, Response(),
+                mock_request,
+                Response(),
                 mock_credentials,
             )
         self.assertEqual(exc.exception.status_code, 429)
@@ -275,9 +260,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_data: Any,
     ) -> None:
-        """
-        Test rate limiter for a guest role within limit (24/day).
-        """
+        """Test rate limiter for a guest role within limit (24/day)."""
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(return_value='sha')
         redis_pool.evalsha = AsyncMock(return_value=[5, 100])
@@ -294,7 +277,9 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         remaining = await rate_limiter_service(
-            mock_request, Response(), mock_credentials,
+            mock_request,
+            Response(),
+            mock_credentials,
         )
         self.assertEqual(remaining, 24 - 5)
 
@@ -308,9 +293,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_data: Any,
     ) -> None:
-        """
-        Test rate limiter for user role within limit (3000/min).
-        """
+        """Test rate limiter for user role within limit (3000/min)."""
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(return_value='sha')
         redis_pool.evalsha = AsyncMock(return_value=[500, 45])
@@ -327,7 +310,9 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         remaining = await rate_limiter_service(
-            mock_request, Response(), mock_credentials,
+            mock_request,
+            Response(),
+            mock_credentials,
         )
         self.assertEqual(remaining, 3000 - 500)
 
@@ -341,9 +326,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         self,
         mock_get_user_data: Any,
     ) -> None:
-        """
-        Test rate limiter for user role exceeding limit (3000/min).
-        """
+        """Test rate limiter for user role exceeding limit (3000/min)."""
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(return_value='sha')
         redis_pool.evalsha = AsyncMock(return_value=[3001, 60])
@@ -361,7 +344,8 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as exc:
             await rate_limiter_service(
-                mock_request, Response(),
+                mock_request,
+                Response(),
                 mock_credentials,
             )
         self.assertEqual(exc.exception.status_code, 429)
@@ -372,11 +356,11 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         return_value={'jti_list': ['test_jti']},
     )
     async def test_rate_limiter_with_ttl_expiry(
-            self, mock_get_user_data: Any,
+        self,
+        mock_get_user_data: Any,
     ) -> None:
-        """
-        Test rate limiter TTL handling when ttl == -1 (no expiry set yet).
-        """
+        """Test rate limiter TTL handling when ttl == -1 (no expiry set
+        yet)."""
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.script_load = AsyncMock(return_value='sha')
         redis_pool.evalsha = AsyncMock(return_value=[10, 86400])
@@ -393,16 +377,16 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         remaining = await rate_limiter_service(
-            mock_request, Response(), mock_credentials,
+            mock_request,
+            Response(),
+            mock_credentials,
         )
         self.assertEqual(remaining, 24 - 10)
 
         redis_pool.evalsha.assert_awaited_once()
 
     async def test_rate_limiter_invalid_jti(self) -> None:
-        """
-        Test rate limiter with an invalid token jti.
-        """
+        """Test rate limiter with an invalid token jti."""
         redis_pool = AsyncMock(spec=Redis)
         mock_request = MagicMock(spec=Request)
         mock_request.app.state.redis_client.client = redis_pool
@@ -421,7 +405,8 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as exc:
                 await rate_limiter_service(
-                    mock_request, Response(),
+                    mock_request,
+                    Response(),
                     mock_credentials,
                 )
             self.assertEqual(exc.exception.status_code, 401)
@@ -431,9 +416,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_rate_limiter_no_user_in_redis(self) -> None:
-        """
-        Test rate limiter when no user data is found in Redis.
-        """
+        """Test rate limiter when no user data is found in Redis."""
         redis_pool = AsyncMock(spec=Redis)
         redis_pool.incr = AsyncMock()
         mock_request = MagicMock(spec=Request)
@@ -453,7 +436,9 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as exc:
                 await rate_limiter_service(
-                    mock_request, Response(), mock_credentials,
+                    mock_request,
+                    Response(),
+                    mock_credentials,
                 )
             self.assertEqual(exc.exception.status_code, 401)
             self.assertEqual(exc.exception.detail, 'No such user in Redis')
@@ -461,9 +446,3 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.auth.cache \
-    --cov-report=term-missing tests/examples/auth/cache_test.py
-'''

@@ -30,8 +30,7 @@ _bulk_insert_chunk_size: Final[int] = 250
 def _chunks(values_: list[int], size: int) -> list[list[int]]:
     """Split identifiers into bounded SQL VALUES inputs."""
     return [
-        values_[start:start + size]
-        for start in range(0, len(values_), size)
+        values_[start: start + size] for start in range(0, len(values_), size)
     ]
 
 
@@ -52,10 +51,7 @@ def site_to_read(
     users = list(site.users)
     if visible_group_id is not None:
         groups = [group for group in groups if group.id == visible_group_id]
-        users = [
-            user for user in users
-            if user.group_id == visible_group_id
-        ]
+        users = [user for user in users if user.group_id == visible_group_id]
     return SiteRead(
         id=site.id,
         name=site.name,
@@ -224,10 +220,12 @@ async def create_site(
         # Link the site to all specified groups
         await db.execute(
             pg_insert(site_groups_table)
-            .values([
-                {'site_id': site.id, 'group_id': group_id}
-                for group_id in group_ids
-            ])
+            .values(
+                [
+                    {'site_id': site.id, 'group_id': group_id}
+                    for group_id in group_ids
+                ],
+            )
             .on_conflict_do_nothing(
                 index_elements=[
                     site_groups_table.c.site_id,
@@ -246,10 +244,14 @@ async def create_site(
 
         # Automatically grant the super admin (ChangDar) access to the new site
         super_admin: User | None = (
-            await db.execute(
-                select(User).where(User.username == SUPER_ADMIN_NAME),
+            (
+                await db.execute(
+                    select(User).where(User.username == SUPER_ADMIN_NAME),
+                )
             )
-        ).unique().scalar_one_or_none()
+            .unique()
+            .scalar_one_or_none()
+        )
         if super_admin:
             await db.execute(
                 pg_insert(user_sites_table)
@@ -271,21 +273,25 @@ async def create_site(
 
         # Refresh the site object and load its users
         refreshed_site: Site = (
-            await db.execute(
-                select(Site)
-                .options(
-                    selectinload(Site.groups),
-                    selectinload(Site.users),
+            (
+                await db.execute(
+                    select(Site)
+                    .options(
+                        selectinload(Site.groups),
+                        selectinload(Site.users),
+                    )
+                    .where(Site.id == site.id),
                 )
-                .where(Site.id == site.id),
             )
-        ).unique().scalar_one()
+            .unique()
+            .scalar_one()
+        )
 
         return refreshed_site
 
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def update_site(
@@ -310,15 +316,15 @@ async def update_site(
         await db.commit()
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def delete_site(
     site: Site,
     db: AsyncSession,
 ) -> None:
-    """
-    Delete an existing site and queue its evidence files for post-commit cleanup.
+    """Delete an existing site and queue its evidence files for post-commit
+    cleanup.
 
     Args:
         site (Site): The Site object to delete.
@@ -333,14 +339,15 @@ async def delete_site(
     await enqueue_site_media_cleanup_for_site(site.name, db)
 
     # PostgreSQL foreign keys cascade stream, violation, group, and access
-    # rows.  Deleting only the site eliminates two redundant DELETE round trips.
+    # rows.  Deleting only the site eliminates two redundant DELETE round
+    # trips.
     await db.delete(site)
 
     try:
         await db.commit()
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f'Database error: {e}')
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 async def add_user_to_site(

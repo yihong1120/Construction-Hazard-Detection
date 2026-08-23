@@ -95,7 +95,10 @@ async def get_current_user(
     # ``jwt_access`` rejects a real HTTP token without this claim.  Keeping
     # the check conditional lets non-HTTP service tests inject a minimal
     # credential double without weakening the production authentication path.
-    if isinstance(token_tenant_id, str) and str(user.tenant_id) != token_tenant_id:
+    if (
+        isinstance(token_tenant_id, str)
+        and str(user.tenant_id) != token_tenant_id
+    ):
         raise HTTPException(
             status_code=409,
             detail={

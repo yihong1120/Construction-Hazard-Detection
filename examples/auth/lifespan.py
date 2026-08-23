@@ -20,7 +20,6 @@ from examples.db_management.services.site_media_cleanup import (
 from src.http_client_pool import HttpClientPool
 from src.http_client_pool import set_application_http_clients
 
-
 logger = logging.getLogger(__name__)
 _site_media_cleanup_interval_seconds = 30
 
@@ -49,8 +48,7 @@ async def _run_site_media_cleanup_worker(
 
 @asynccontextmanager
 async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """
-    Provide a global lifespan manager for the FastAPI application.
+    """Provide a global lifespan manager for the FastAPI application.
 
     Args:
         app (FastAPI): The FastAPI application instance to
@@ -85,7 +83,10 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # environments can opt into metadata creation explicitly; production
     # workers never issue startup DDL or race one another for schema locks.
     if os.getenv('AUTO_CREATE_SCHEMA', '').strip().lower() in {
-        '1', 'true', 'yes', 'on',
+        '1',
+        'true',
+        'yes',
+        'on',
     }:
         async with engine.begin() as conn:
             await conn.run_sync(models.Base.metadata.create_all)

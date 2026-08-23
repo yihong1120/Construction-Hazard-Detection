@@ -9,22 +9,19 @@ from examples.auth.security import update_secret_key
 
 
 class TestUpdateSecretKey(unittest.TestCase):
-    """
-    Unit tests for the `update_secret_key` function in FastAPI applications.
-    """
+    """Unit tests for the `update_secret_key` function in FastAPI
+    applications."""
 
     def setUp(self) -> None:
-        """
-        Initialises the FastAPI application instance before each test.
-        """
+        """Initialises the FastAPI application instance before each test."""
         self.app: FastAPI = FastAPI()
 
     @patch('examples.auth.security.secrets.token_urlsafe')
     def test_update_secret_key(
-        self, mock_token_urlsafe: unittest.mock.MagicMock,
+        self,
+        mock_token_urlsafe: unittest.mock.MagicMock,
     ) -> None:
-        """
-        Tests that `update_secret_key` updates the secret key correctly.
+        """Tests that `update_secret_key` updates the secret key correctly.
 
         Args:
             mock_token_urlsafe (unittest.mock.MagicMock): Mocked
@@ -44,10 +41,8 @@ class TestUpdateSecretKey(unittest.TestCase):
         mock_token_urlsafe.assert_called_once_with(16)
 
     def test_update_secret_key_different_keys(self) -> None:
-        """
-        Tests that `update_secret_key` generates different keys
-        on consecutive calls.
-        """
+        """Tests that `update_secret_key` generates different keys on
+        consecutive calls."""
         # Generate the first secret key
         update_secret_key(self.app)
         first_key: str = self.app.state.jwt_secret_key
@@ -65,9 +60,3 @@ class TestUpdateSecretKey(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.auth.security \
-    --cov-report=term-missing tests/examples/auth/security_test.py
-'''

@@ -20,17 +20,11 @@ from examples.auth.models import User
 from examples.auth.models import utc_now
 from examples.db_management.deps import require_tenant_deployment_administrator
 from examples.db_management.deps import TenantDeploymentAdministrator
-from examples.db_management.routers import deployment_enrollment_codes as router_module
 from examples.db_management.routers.deployment_enrollment_codes import router
 from examples.db_management.services import (
     deployment_enrollment_code_services as services,
 )
-from examples.db_management.services.deployment_enrollment_code_services import (
-    ManagedEnrollmentCode,
-)
-from examples.db_management.services.deployment_enrollment_code_services import (
-    ManagedEnrollmentCodeItem,
-)
+
 """Security contracts for authenticated device-invitation management."""
 
 
@@ -57,8 +51,7 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
     """The management API must expose raw code material exactly once."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.app = FastAPI()
         self.app.include_router(router)
         self.client = TestClient(self.app)
@@ -78,19 +71,19 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
         ] = _administrator
 
     def tearDown(self) -> None:
-        """Perform tearDown.
-        """
+        """Perform tearDown."""
         self.client.close()
 
-    def test_create_returns_the_raw_code_once_and_rejects_scope_fields(self) -> None:
-        """Test create returns the raw code once and rejects scope fields.
-        """
+    def test_create_returns_the_raw_code_once_and_rejects_scope_fields(
+        self,
+    ) -> None:
+        """Test create returns the raw code once and rejects scope fields."""
         expires_at = utc_now() + timedelta(minutes=30)
         with patch.object(
-            router_module,
+            services,
             'create_managed_enrollment_code',
             AsyncMock(
-                return_value=ManagedEnrollmentCode(
+                return_value=services.ManagedEnrollmentCode(
                     id=_CODE_ID,
                     enrollment_code='a' * 43,
                     expires_at=expires_at,
@@ -138,8 +131,7 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
                 self.assertEqual(denied.status_code, 422)
 
     def test_create_enforces_one_minute_to_24_hour_ttl(self) -> None:
-        """Test create enforces one minute to 24 hour ttl.
-        """
+        """Test create enforces one minute to 24 hour ttl."""
         for value in (0, 1441):
             with self.subTest(value=value):
                 response = self.client.post(
@@ -149,15 +141,14 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
                 self.assertEqual(response.status_code, 422)
 
     def test_list_never_exposes_code_or_verifier(self) -> None:
-        """Test list never exposes code or verifier.
-        """
+        """Test list never exposes code or verifier."""
         expires_at = utc_now() + timedelta(minutes=30)
         with patch.object(
-            router_module,
+            services,
             'list_managed_enrollment_codes',
             AsyncMock(
                 return_value=[
-                    ManagedEnrollmentCodeItem(
+                    services.ManagedEnrollmentCodeItem(
                         id=_CODE_ID,
                         expires_at=expires_at,
                         status='active',
@@ -172,27 +163,32 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
         self.assertEqual(
             response.json(),
             {
-                'items': [{
-                    'id': _CODE_ID_TEXT,
-                    'expires_at': expires_at.isoformat().replace('+00:00', 'Z'),
-                    'status': 'active',
-                }],
+                'items': [
+                    {
+                        'id': _CODE_ID_TEXT,
+                        'expires_at': expires_at.isoformat().replace(
+                            '+00:00', 'Z',
+                        ),
+                        'status': 'active',
+                    },
+                ],
             },
         )
         self.assertNotIn('enrollment_code', response.text)
         self.assertNotIn('verifier', response.text)
         self.assertNotIn('hash', response.text)
 
-    def test_delete_is_idempotent_and_requires_canonical_lowercase_uuid(self) -> None:
-        """Test delete is idempotent and requires canonical lowercase uuid.
-        """
+    def test_delete_is_idempotent_and_requires_canonical_lowercase_uuid(
+        self,
+    ) -> None:
+        """Test delete is idempotent and requires canonical lowercase uuid."""
         with patch.object(
-            router_module,
+            services,
             'revoke_managed_enrollment_code',
             AsyncMock(),
         ) as revoke:
             response = self.client.delete(
-                f'/deployment-enrollment-codes/{_CODE_ID_TEXT}',
+                f"/deployment-enrollment-codes/{_CODE_ID_TEXT}",
             )
 
         self.assertEqual(response.status_code, 204)
@@ -204,7 +200,7 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
         self.assertEqual(revoke_args.kwargs['public_id'], _CODE_ID)
 
         invalid = self.client.delete(
-            f'/deployment-enrollment-codes/{_CODE_ID_TEXT.upper()}',
+            f"/deployment-enrollment-codes/{_CODE_ID_TEXT.upper()}",
         )
         self.assertEqual(invalid.status_code, 422)
 
@@ -213,8 +209,7 @@ class TestDeploymentEnrollmentCodeServices(unittest.TestCase):
     """Exercise lifecycle status, tenant scope, and non-secret audit writes."""
 
     def test_status_precedence_is_safe_and_complete(self) -> None:
-        """Test status precedence is safe and complete.
-        """
+        """Test status precedence is safe and complete."""
         now = utc_now()
         base = {
             'expires_at': now + timedelta(minutes=1),
@@ -261,9 +256,11 @@ class TestDeploymentEnrollmentCodeServices(unittest.TestCase):
             'revoked',
         )
 
-    def test_create_scopes_provisioning_and_writes_audit_without_verifier(self) -> None:
-        """Test create scopes provisioning and writes audit without verifier.
-        """
+    def test_create_scopes_provisioning_and_writes_audit_without_verifier(
+        self,
+    ) -> None:
+        """Test create scopes provisioning and writes audit without
+        verifier."""
         enrollment = SimpleNamespace(
             id=10,
             public_id=_CODE_ID,
@@ -299,7 +296,10 @@ class TestDeploymentEnrollmentCodeServices(unittest.TestCase):
         provision_args = provision.await_args
         assert provision_args is not None
         self.assertEqual(provision_args.kwargs['tenant_id'], _TENANT_ID)
-        self.assertEqual(provision_args.kwargs['deployment_id'], _DEPLOYMENT_ID)
+        self.assertEqual(
+            provision_args.kwargs['deployment_id'],
+            _DEPLOYMENT_ID,
+        )
         db.flush.assert_awaited_once()
         db.commit.assert_awaited_once()
         audit = db.add.call_args.args[0]
@@ -309,8 +309,7 @@ class TestDeploymentEnrollmentCodeServices(unittest.TestCase):
         self.assertFalse(hasattr(audit, 'enrollment_code'))
 
     def test_revoke_locks_the_tenant_scoped_row_and_audits_once(self) -> None:
-        """Test revoke locks the tenant scoped row and audits once.
-        """
+        """Test revoke locks the tenant scoped row and audits once."""
         enrollment = SimpleNamespace(id=10, redeemed_at=None, revoked_at=None)
         transaction = MagicMock()
         transaction.__aenter__ = AsyncMock(return_value=transaction)
@@ -335,8 +334,7 @@ class TestDeploymentEnrollmentCodeServices(unittest.TestCase):
         self.assertFalse(hasattr(audit, 'code_verifier_hash'))
 
     def test_public_id_must_be_canonical_lowercase_uuid(self) -> None:
-        """Test public id must be canonical lowercase uuid.
-        """
+        """Test public id must be canonical lowercase uuid."""
         self.assertEqual(
             services.parse_canonical_enrollment_code_id(_CODE_ID_TEXT),
             _CODE_ID,

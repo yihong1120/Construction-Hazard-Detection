@@ -17,16 +17,14 @@ class TestFeatureCreate(unittest.TestCase):
         self.assertEqual(data.description, 'desc')
 
     def test_optional(self) -> None:
-        """
-        Test creating a FeatureCreate instance without optional description.
-        """
+        """Test creating a FeatureCreate instance without optional
+        description."""
         data = feature.FeatureCreate(feature_name='f')
         self.assertIsNone(data.description)
 
     def test_missing(self) -> None:
-        """
-        Test creating a FeatureCreate instance with missing required fields.
-        """
+        """Test creating a FeatureCreate instance with missing required
+        fields."""
         with self.assertRaises(ValidationError):
             feature.FeatureCreate()
 
@@ -37,7 +35,9 @@ class TestFeatureUpdate(unittest.TestCase):
     def test_valid(self) -> None:
         """Test creating a valid FeatureUpdate instance."""
         data = feature.FeatureUpdate(
-            feature_id=1, new_name='n', new_description='d',
+            feature_id=1,
+            new_name='n',
+            new_description='d',
         )
         self.assertEqual(data.feature_id, 1)
         self.assertEqual(data.new_name, 'n')
@@ -80,9 +80,8 @@ class TestFeatureRead(unittest.TestCase):
         self.assertEqual(data.description, 'd')
 
     def test_optional(self) -> None:
-        """
-        Test creating a FeatureRead instance without optional description.
-        """
+        """Test creating a FeatureRead instance without optional
+        description."""
         data = feature.FeatureRead(id=2, feature_name='f')
         self.assertIsNone(data.description)
 
@@ -102,25 +101,17 @@ class TestGroupFeatureUpdate(unittest.TestCase):
         self.assertEqual(data.feature_ids, [1, 2, 3])
 
     def test_empty_list(self) -> None:
-        """
-        Test creating GroupFeatureUpdate instance with empty feature_ids list.
-        """
+        """Test creating GroupFeatureUpdate instance with empty feature_ids
+        list."""
         data = feature.GroupFeatureUpdate(group_id=2, feature_ids=[])
         self.assertEqual(data.feature_ids, [])
 
     def test_missing(self) -> None:
-        """
-        Test GroupFeatureUpdate instance creation without required group_id.
-        """
+        """Test GroupFeatureUpdate instance creation without required
+        group_id."""
         with self.assertRaises(ValidationError):
             feature.GroupFeatureUpdate()
 
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.schemas.feature\
-    --cov-report=term-missing\
-        tests/examples/db_management/schemas/feature_test.py
-'''

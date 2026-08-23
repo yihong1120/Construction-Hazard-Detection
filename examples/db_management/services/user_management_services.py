@@ -29,10 +29,12 @@ from examples.db_management.services.legal_services import record_user_consent
 from examples.db_management.services.legal_services import (
     validate_signup_consents,
 )
-from examples.db_management.services.site_services import \
-    list_site_ids_for_group
-from examples.db_management.services.site_services import \
-    seed_site_notification_preferences
+from examples.db_management.services.site_services import (
+    list_site_ids_for_group,
+)
+from examples.db_management.services.site_services import (
+    seed_site_notification_preferences,
+)
 from examples.db_management.services.user_services import create_user
 from examples.db_management.services.user_services import list_users
 
@@ -94,7 +96,8 @@ def pending_user_review_read(user: User) -> PendingUserReviewRead:
     """Build an administrator-review row from a fully loaded user graph.
 
     Args:
-        user: Pending user with consent, identity, group, and profile relations.
+        user: Pending user with consent, identity, group, and profile
+            relations.
 
     Returns:
         Read model containing the latest consent and linked providers.
@@ -106,7 +109,9 @@ def pending_user_review_read(user: User) -> PendingUserReviewRead:
         key=lambda consent: (consent.accepted_at, consent.id),
         default=None,
     )
-    providers = sorted({str(identity.provider) for identity in user.identities})
+    providers = sorted(
+        {str(identity.provider) for identity in user.identities},
+    )
     return PendingUserReviewRead(
         **UserRead.model_validate(user).model_dump(),
         email=user.profile.email,
@@ -140,8 +145,10 @@ async def get_group_or_404(group_id: int, db: AsyncSession) -> Group:
         HTTPException: If no group has the supplied identifier.
     """
     group = (
-        await db.execute(select(Group).where(Group.id == group_id))
-    ).unique().scalar_one_or_none()
+        (await db.execute(select(Group).where(Group.id == group_id)))
+        .unique()
+        .scalar_one_or_none()
+    )
     if group is None:
         raise HTTPException(404, 'Group not found.')
     return group

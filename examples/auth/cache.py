@@ -15,9 +15,7 @@ from examples.auth.jwt_config import JwtAuthorizationCredentials
 
 
 class RateLimiterService:
-    """
-    Rate limiting and user cache service.
-    """
+    """Rate limiting and user cache service."""
 
     # Lua script used to atomically perform INCR and TTL in one round-trip,
     # applying an expiry only when the key is first created or has no TTL.
@@ -39,8 +37,7 @@ return { current, ttl }
         project_prefix: str = 'construction-hazard-detection',
         limits: dict[str, tuple[int, int]] | None = None,
     ) -> None:
-        """
-        Initialise the service.
+        """Initialise the service.
 
         Args:
             project_prefix: Project-specific prefix for Redis keys.
@@ -50,14 +47,13 @@ return { current, ttl }
         self.project_prefix = project_prefix
         self.limits = limits or {
             'guest': (24, 86400),  # 24 requests / 24 hours
-            'user': (3000, 60),    # 3000 requests / minute
+            'user': (3000, 60),  # 3000 requests / minute
         }
         # SHA of the rate-limit Lua script (loaded lazily and cached).
         self._rate_limit_sha: str | None = None
 
     def _user_key(self, username: str) -> str:
-        """
-        Compose the Redis key for user cache entries.
+        """Compose the Redis key for user cache entries.
 
         Args:
             username: The username used to compose the key.
@@ -74,8 +70,7 @@ return { current, ttl }
         method: str,
         path: str,
     ) -> str:
-        """
-        Compose the Redis key for rate limiting counters.
+        """Compose the Redis key for rate limiting counters.
 
         Args:
             role: The user's role (e.g., ``'user'`` or ``'guest'``).
@@ -96,8 +91,7 @@ return { current, ttl }
         redis_pool: Redis,
         username: str,
     ) -> dict[str, object] | None:
-        """
-        Retrieve cached user data by username.
+        """Retrieve cached user data by username.
 
         Args:
             redis_pool: Asynchronous Redis client/connection.
@@ -118,8 +112,7 @@ return { current, ttl }
         username: str,
         data: dict[str, object],
     ) -> None:
-        """
-        Store user data in Redis by username.
+        """Store user data in Redis by username.
 
         Args:
             redis_pool: Asynchronous Redis client/connection.
@@ -131,8 +124,7 @@ return { current, ttl }
         await redis_pool.set(key, json.dumps(data).encode('utf-8'))
 
     async def _ensure_rate_limit_script(self, redis_pool: Redis) -> str:
-        """
-        Ensure the rate-limit Lua script is loaded and return its SHA.
+        """Ensure the rate-limit Lua script is loaded and return its SHA.
 
         Args:
             redis_pool: Asynchronous Redis client/connection.
@@ -154,8 +146,7 @@ return { current, ttl }
         key: str,
         window_seconds: int,
     ) -> tuple[int, int]:
-        """
-        Increment the counter and obtain the TTL in an efficient manner.
+        """Increment the counter and obtain the TTL in an efficient manner.
 
         Args:
             redis_pool: Asynchronous Redis client/connection.
@@ -169,7 +160,8 @@ return { current, ttl }
         try:
             sha = await self._ensure_rate_limit_script(redis_pool)
             current, ttl = cast(
-                list[int], await redis_pool.evalsha(
+                list[int],
+                await redis_pool.evalsha(
                     sha,
                     1,
                     key,
@@ -184,7 +176,8 @@ return { current, ttl }
                 await redis_pool.script_load(self._RATE_LIMIT_LUA),
             )
             current, ttl = cast(
-                list[int], await redis_pool.evalsha(
+                list[int],
+                await redis_pool.evalsha(
                     self._rate_limit_sha,
                     1,
                     key,
@@ -210,8 +203,7 @@ return { current, ttl }
         response: Response,
         jwt_creds: JwtAuthorizationCredentials = Security(jwt_access),
     ) -> int:
-        """
-        Enforce per-role rate limiting.
+        """Enforce per-role rate limiting.
 
         Args:
             request: The incoming FastAPI request.
@@ -240,25 +232,31 @@ return { current, ttl }
         )
         if not user_data:
             raise HTTPException(
-                status_code=401, detail='No such user in Redis',
+                status_code=401,
+                detail='No such user in Redis',
             )
 
         jti_list = cast(list[str], user_data['jti_list'])
 
         if token_jti not in jti_list:
             raise HTTPException(
-                status_code=401, detail='Token jti is invalid or replaced',
+                status_code=401,
+                detail='Token jti is invalid or replaced',
             )
 
         # Determine role and quotas
         role = subject['role']
         max_requests, window_seconds = self.limits.get(
-            role, self.limits['user'],
+            role,
+            self.limits['user'],
         )
 
         # Compose rate-limit key
         key: str = self._rate_key(
-            role, username, request.method, request.url.path,
+            role,
+            username,
+            request.method,
+            request.url.path,
         )
 
         # Single RTT via Lua script to get current count and TTL
@@ -284,7 +282,6 @@ return { current, ttl }
 
 
 rate_limiter_service = RateLimiterService()
-
 
 PROJECT_PREFIX: str = rate_limiter_service.project_prefix
 

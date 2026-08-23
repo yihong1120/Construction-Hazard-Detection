@@ -19,15 +19,15 @@ from examples.db_management.services.stream_config_services import (
 class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
     """Unit tests for stream_config_services module.
 
-    Tests are designed using asynchronous mocks to simulate database
-    and ORM model behaviour.
+    Tests are designed using asynchronous mocks to simulate database and ORM
+    model behaviour.
     """
 
     def setUp(self) -> None:
         """Set up common mock objects for each test.
 
-        This method initialises mock database and configuration objects
-        for use in each test case.
+        This method initialises mock database and configuration objects for use
+        in each test case.
         """
         self.db: AsyncMock = AsyncMock()
         self.cfg: MagicMock = MagicMock()
@@ -49,8 +49,7 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_list_stream_configs(self) -> None:
-        """Test list stream configs.
-        """
+        """Test list stream configs."""
         mock_result: MagicMock = MagicMock()
         mock_result.scalars.return_value.all.return_value = ['cfg1', 'cfg2']
         self.db.execute = AsyncMock(return_value=mock_result)
@@ -79,8 +78,7 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.assertIn('stream_configs.group_id', str(query))
 
     async def test_create_stream_config_success(self) -> None:
-        """Test create stream config success.
-        """
+        """Test create stream config success."""
         self.db.commit = AsyncMock()
         self.db.refresh = AsyncMock()
         self.db.add = MagicMock()
@@ -105,8 +103,7 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
             self.db.refresh.assert_awaited_with(mock_cfg)
 
     async def test_create_stream_config_exception(self) -> None:
-        """Test create stream config exception.
-        """
+        """Test create stream config exception."""
         self.db.commit = AsyncMock(side_effect=Exception('Database failure'))
         self.db.rollback = AsyncMock()
         self.db.add = MagicMock()
@@ -128,8 +125,7 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
             self.db.rollback.assert_awaited()
 
     async def test_update_stream_config_success(self) -> None:
-        """Test update stream config success.
-        """
+        """Test update stream config success."""
         self.db.commit = AsyncMock()
 
         await stream_config_services.update_stream_config(
@@ -158,8 +154,7 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited_once()
 
     async def test_update_stream_config_exception(self) -> None:
-        """Test update stream config exception.
-        """
+        """Test update stream config exception."""
         self.db.commit = AsyncMock(side_effect=Exception('Database failure'))
         self.db.rollback = AsyncMock()
 
@@ -176,8 +171,7 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_delete_stream_config_success(self) -> None:
-        """Test delete stream config success.
-        """
+        """Test delete stream config success."""
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock()
 
@@ -190,8 +184,7 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_delete_stream_config_exception(self) -> None:
-        """Test delete stream config exception.
-        """
+        """Test delete stream config exception."""
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock(side_effect=Exception('Database failure'))
         self.db.rollback = AsyncMock()
@@ -206,8 +199,7 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_get_group_stream_limit_success(self) -> None:
-        """Test get group stream limit success.
-        """
+        """Test get group stream limit success."""
         mock_group: MagicMock = MagicMock()
         mock_group.max_allowed_streams = 5
         self.db.get = AsyncMock(return_value=mock_group)
@@ -215,19 +207,19 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
 
         current_streams: int
         max_streams: int
-        current_streams, max_streams = (
-            await stream_config_services.get_group_stream_limit(
-                group_id=self.group_id,
-                db=self.db,
-            )
+        (
+            current_streams,
+            max_streams,
+        ) = await stream_config_services.get_group_stream_limit(
+            group_id=self.group_id,
+            db=self.db,
         )
 
         self.assertEqual(current_streams, 3)
         self.assertEqual(max_streams, 5)
 
     async def test_get_group_stream_limit_group_not_found(self) -> None:
-        """Test get group stream limit group not found.
-        """
+        """Test get group stream limit group not found."""
         self.db.get = AsyncMock(return_value=None)
 
         with self.assertRaises(HTTPException) as context:
@@ -241,9 +233,3 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.services.stream_config_services\
-    --cov-report=term-missing\
-        tests/examples/db_management/services/stream_config_services_test.py
-'''

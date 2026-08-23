@@ -24,14 +24,14 @@ class TestUserLogin(unittest.TestCase):
     def test_hcaptcha_token_defaults_to_none(self) -> None:
         """Test UserLogin keeps hCaptcha validation in service layer."""
         data: auth.UserLogin = auth.UserLogin(
-            identifier='user', password='pw',
+            identifier='user',
+            password='pw',
         )
         self.assertIsNone(data.hcaptcha_token)
 
     def test_missing_field(self) -> None:
-        """
-        Test UserLogin raises ValidationError when required fields are missing.
-        """
+        """Test UserLogin raises ValidationError when required fields are
+        missing."""
         with self.assertRaises(ValidationError):
             auth.UserLogin(identifier='user')
 
@@ -90,9 +90,8 @@ class TestTokenPair(unittest.TestCase):
         self.assertEqual(data.feature_names, ['f1', 'f2'])
 
     def test_optional_and_default(self) -> None:
-        """
-        Test TokenPair with optional fields omitted, using default values.
-        """
+        """Test TokenPair with optional fields omitted, using default
+        values."""
         data: auth.TokenPair = auth.TokenPair(
             access_token='a',
         )
@@ -104,9 +103,8 @@ class TestTokenPair(unittest.TestCase):
         self.assertEqual(data.feature_names, [])
 
     def test_missing_required(self) -> None:
-        """
-        Test TokenPair raises ValidationError when required fields are missing.
-        """
+        """Test TokenPair raises ValidationError when required fields are
+        missing."""
         with self.assertRaises(ValidationError):
             auth.TokenPair(refresh_token='r')
 
@@ -116,10 +114,3 @@ class TestTokenPair(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-
-'''
-pytest --cov=examples.db_management.schemas.auth\
-    --cov-report=term-missing\
-        tests/examples/db_management/schemas/auth_test.py
-'''

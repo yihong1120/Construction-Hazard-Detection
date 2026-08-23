@@ -22,13 +22,18 @@ from examples.db_management.schemas.stream_config import SiteStreamConfigUpsert
 from examples.db_management.schemas.stream_config import StreamConfigCreate
 from examples.db_management.schemas.stream_config import StreamConfigRead
 from examples.db_management.schemas.stream_config import StreamConfigUpdate
-from examples.db_management.services.stream_config_services import \
-    _get_site_or_404
-from examples.db_management.services.stream_config_services import \
-    _list_site_stream_config_reads
-from examples.db_management.services.stream_config_services import \
-    _resolve_stream_group_id
-from examples.db_management.services.stream_config_services import create_stream_config
+from examples.db_management.services.stream_config_services import (
+    _get_site_or_404,
+)
+from examples.db_management.services.stream_config_services import (
+    _list_site_stream_config_reads,
+)
+from examples.db_management.services.stream_config_services import (
+    _resolve_stream_group_id,
+)
+from examples.db_management.services.stream_config_services import (
+    create_stream_config,
+)
 from examples.db_management.services.stream_config_services import (
     delete_stream_config,
 )
@@ -38,7 +43,9 @@ from examples.db_management.services.stream_config_services import (
 from examples.db_management.services.stream_config_services import (
     list_stream_configs,
 )
-from examples.db_management.services.stream_config_services import update_stream_config
+from examples.db_management.services.stream_config_services import (
+    update_stream_config,
+)
 
 router = APIRouter(tags=['stream-config'])
 
@@ -126,7 +133,8 @@ async def endpoint_create_stream_config(
     current, limit = await get_group_stream_limit(group_id, db)
     if current >= limit:
         raise HTTPException(
-            status_code=403, detail='Stream limit reached for group.',
+            status_code=403,
+            detail='Stream limit reached for group.',
         )
 
     payload_with_group = payload.model_copy(update={'group_id': group_id})
@@ -167,9 +175,7 @@ async def endpoint_put_site_stream_config(
     site = await _get_site_or_404(site_id, db)
     _site_permission(me, site=site)
     group_id = _resolve_stream_group_id(site, me)
-    visible_group_id = (
-        None if is_super_admin(cast(Any, me)) else group_id
-    )
+    visible_group_id = None if is_super_admin(cast(Any, me)) else group_id
 
     # Validate the complete replacement before creating or changing any row.
     stream_names = [item.stream_name for item in payload.streams]
@@ -184,7 +190,8 @@ async def endpoint_put_site_stream_config(
     # administrator can only update one of the site's groups.
     site_configs = await list_stream_configs(site_id, db)
     existing_configs = [
-        cfg for cfg in site_configs
+        cfg
+        for cfg in site_configs
         if visible_group_id is None or cfg.group_id == visible_group_id
     ]
     existing_by_id = {cfg.id: cfg for cfg in existing_configs}
@@ -284,7 +291,8 @@ async def endpoint_update_stream_config(
     cfg = await db.get(StreamConfig, cfg_id)
     if not cfg:
         raise HTTPException(
-            status_code=404, detail='Stream configuration not found.',
+            status_code=404,
+            detail='Stream configuration not found.',
         )
 
     _site_permission(me, site=cfg.site)
@@ -300,7 +308,8 @@ async def endpoint_update_stream_config(
         )
         if exists:
             raise HTTPException(
-                status_code=400, detail='Stream name already exists in site.',
+                status_code=400,
+                detail='Stream name already exists in site.',
             )
 
     await update_stream_config(cfg, payload, db)
@@ -333,7 +342,8 @@ async def endpoint_delete_stream_config(
     cfg = await db.get(StreamConfig, cfg_id)
     if not cfg:
         raise HTTPException(
-            status_code=404, detail='Stream configuration not found.',
+            status_code=404,
+            detail='Stream configuration not found.',
         )
 
     _site_permission(me, site=cfg.site)

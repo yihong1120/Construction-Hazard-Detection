@@ -13,15 +13,13 @@ from examples.db_management.services import feature_services
 
 
 class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for feature_services module using asynchronous mocks.
-    """
+    """Unit tests for feature_services module using asynchronous mocks."""
 
     def setUp(self) -> None:
         """Set up common mock objects for each test.
 
-        This method initialises mock database, feature, and group
-        objects for use in each test case.
+        This method initialises mock database, feature, and group objects for
+        use in each test case.
         """
         self.db: AsyncMock = AsyncMock()
         self.feat: MagicMock = MagicMock(spec=Feature)
@@ -33,8 +31,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.group.id = 100
 
     async def test_list_features(self) -> None:
-        """Test list features.
-        """
+        """Test list features."""
         mock_result: MagicMock = MagicMock()
         scalars_mock: MagicMock = (
             mock_result.unique.return_value.scalars.return_value
@@ -48,8 +45,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(features, ['feature1', 'feature2'])
 
     async def test_create_feature_success(self) -> None:
-        """Test create feature success.
-        """
+        """Test create feature success."""
         self.db.commit = AsyncMock()
         self.db.refresh = AsyncMock()
         self.db.add = MagicMock()
@@ -72,8 +68,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
             self.db.refresh.assert_awaited_with(mock_feature)
 
     async def test_create_feature_exception(self) -> None:
-        """Test create feature exception.
-        """
+        """Test create feature exception."""
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
         self.db.add = MagicMock()
@@ -89,8 +84,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_update_feature_success(self) -> None:
-        """Test update feature success.
-        """
+        """Test update feature success."""
         self.db.commit = AsyncMock()
 
         await feature_services.update_feature(
@@ -105,8 +99,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.feat.description, 'Updated description')
 
     async def test_update_feature_no_fields(self) -> None:
-        """Test update feature no fields.
-        """
+        """Test update feature no fields."""
         with self.assertRaises(HTTPException) as context:
             await feature_services.update_feature(
                 feat=self.feat,
@@ -118,8 +111,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.status_code, 400)
 
     async def test_update_feature_exception(self) -> None:
-        """Test update feature exception.
-        """
+        """Test update feature exception."""
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
 
@@ -135,8 +127,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_delete_feature_success(self) -> None:
-        """Test delete feature success.
-        """
+        """Test delete feature success."""
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock()
 
@@ -146,8 +137,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_delete_feature_exception(self) -> None:
-        """Test delete feature exception.
-        """
+        """Test delete feature exception."""
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
@@ -159,8 +149,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_update_group_features(self) -> None:
-        """Test update group features.
-        """
+        """Test update group features."""
         self.db.execute = AsyncMock()
         self.db.commit = AsyncMock()
 
@@ -176,8 +165,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.db.commit.call_count, 1)
 
     async def test_list_group_features(self) -> None:
-        """Test list group features.
-        """
+        """Test list group features."""
         mock_group: MagicMock = MagicMock()
         mock_group.features = [MagicMock(id=1), MagicMock(id=2)]
 
@@ -196,9 +184,3 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.services.feature_services\
-    --cov-report=term-missing\
-        tests/examples/db_management/services/feature_services_test.py
-'''

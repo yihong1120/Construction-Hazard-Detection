@@ -10,9 +10,7 @@ from examples.auth.jwt_scheduler import start_jwt_scheduler
 
 
 class TestJwtScheduler(unittest.TestCase):
-    """
-    Test suite for verifying the behaviour of `start_jwt_scheduler`.
-    """
+    """Test suite for verifying the behaviour of `start_jwt_scheduler`."""
 
     @patch('examples.auth.jwt_scheduler.update_secret_key')
     @patch('examples.auth.jwt_scheduler.BackgroundScheduler')
@@ -21,8 +19,7 @@ class TestJwtScheduler(unittest.TestCase):
         mock_scheduler_cls: MagicMock,
         mock_update_secret_key: MagicMock,
     ) -> None:
-        """
-        Ensure `start_jwt_scheduler` sets up the scheduler to call
+        """Ensure `start_jwt_scheduler` sets up the scheduler to call
         `update_secret_key(app)` every 30 days and starts it.
 
         Args:
@@ -83,9 +80,3 @@ class TestJwtScheduler(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.auth.jwt_scheduler \
-    --cov-report=term-missing tests/examples/auth/jwt_scheduler_test.py
-'''

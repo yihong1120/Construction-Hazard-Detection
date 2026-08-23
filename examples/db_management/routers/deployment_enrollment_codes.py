@@ -22,24 +22,10 @@ from examples.db_management.schemas.deployment_enrollment_code import (
 from examples.db_management.schemas.deployment_enrollment_code import (
     DeploymentEnrollmentCodeList,
 )
-from examples.db_management.services.deployment_enrollment_code_services import (
-    create_managed_enrollment_code,
+from examples.db_management.services import (
+    deployment_enrollment_code_services as code_services,
 )
-from examples.db_management.services.deployment_enrollment_code_services import (
-    EnrollmentManagementConflict,
-)
-from examples.db_management.services.deployment_enrollment_code_services import (
-    EnrollmentManagementUnavailable,
-)
-from examples.db_management.services.deployment_enrollment_code_services import (
-    list_managed_enrollment_codes,
-)
-from examples.db_management.services.deployment_enrollment_code_services import (
-    parse_canonical_enrollment_code_id,
-)
-from examples.db_management.services.deployment_enrollment_code_services import (
-    revoke_managed_enrollment_code,
-)
+
 router = APIRouter(tags=['deployment-enrollment-codes'])
 settings = Settings()
 
@@ -66,18 +52,18 @@ async def create_deployment_enrollment_code(
 ) -> DeploymentEnrollmentCodeCreated:
     """Issue one raw code once for the deployment bound to this login."""
     try:
-        created = await create_managed_enrollment_code(
+        created = await code_services.create_managed_enrollment_code(
             db,
             administrator=administrator,
             expires_in_minutes=payload.expires_in_minutes,
             pepper=settings.deployment_enrollment_code_pepper,
         )
-    except EnrollmentManagementConflict as exc:
+    except code_services.EnrollmentManagementConflict as exc:
         raise HTTPException(
             status_code=409,
             detail={'code': 'deployment_configuration_changed'},
         ) from exc
-    except (EnrollmentManagementUnavailable, ValueError) as exc:
+    except (code_services.EnrollmentManagementUnavailable, ValueError) as exc:
         raise _unavailable() from exc
     response.headers['Cache-Control'] = 'no-store'
     return DeploymentEnrollmentCodeCreated(
@@ -98,13 +84,14 @@ async def list_deployment_enrollment_codes(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> DeploymentEnrollmentCodeList:
-    """List current deployment invitations without raw code or verifier data."""
+    """List current deployment invitations without raw code or verifier
+    data."""
     try:
-        items = await list_managed_enrollment_codes(
+        items = await code_services.list_managed_enrollment_codes(
             db,
             administrator=administrator,
         )
-    except EnrollmentManagementUnavailable as exc:
+    except code_services.EnrollmentManagementUnavailable as exc:
         raise _unavailable() from exc
     response.headers['Cache-Control'] = 'no-store'
     return DeploymentEnrollmentCodeList(
@@ -130,18 +117,18 @@ async def delete_deployment_enrollment_code(
 ) -> None:
     """Idempotently revoke an invitation owned by this deployment."""
     try:
-        public_id = parse_canonical_enrollment_code_id(code_id)
+        public_id = code_services.parse_canonical_enrollment_code_id(code_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
             detail={'code': 'canonical_enrollment_code_id_required'},
         ) from exc
     try:
-        await revoke_managed_enrollment_code(
+        await code_services.revoke_managed_enrollment_code(
             db,
             administrator=administrator,
             public_id=public_id,
         )
-    except EnrollmentManagementUnavailable as exc:
+    except code_services.EnrollmentManagementUnavailable as exc:
         raise _unavailable() from exc
     response.headers['Cache-Control'] = 'no-store'

@@ -16,19 +16,19 @@ from examples.db_management.schemas.group import GroupUpdate
 
 
 class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for group management router endpoints.
-    """
+    """Unit tests for group management router endpoints."""
 
     async def asyncSetUp(self) -> None:
         """Set up common test variables.
 
-        This method initialises a mock database session and an example
-        group object for use in each test case.
+        This method initialises a mock database session and an example group
+        object for use in each test case.
         """
         self.db_session: AsyncMock = AsyncMock(spec=AsyncSession)
         self.example_group: Group = Group(
-            id=1, name='Test Group', uniform_number='12345678',
+            id=1,
+            name='Test Group',
+            uniform_number='12345678',
         )
         self.super_admin: MagicMock = MagicMock(
             role='admin',
@@ -93,7 +93,8 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.routers.groups.create_group')
     async def test_endpoint_create_group(
-        self, mock_create_group: AsyncMock,
+        self,
+        mock_create_group: AsyncMock,
     ) -> None:
         """Test endpoint create group.
 
@@ -101,12 +102,14 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
             mock_create_group: Value used by this callable.
         """
         payload: GroupCreate = GroupCreate(
-            name='New Group', uniform_number='87654321',
+            name='New Group',
+            uniform_number='87654321',
         )
         mock_create_group.return_value = self.example_group
 
         result: Group = await groups.endpoint_create_group(
-            payload, db=self.db_session,
+            payload,
+            db=self.db_session,
         )
 
         self.assertEqual(result.id, self.example_group.id)
@@ -119,7 +122,8 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.routers.groups.update_group')
     async def test_endpoint_update_group_success(
-        self, mock_update_group: AsyncMock,
+        self,
+        mock_update_group: AsyncMock,
     ) -> None:
         """Test endpoint update group success.
 
@@ -127,7 +131,9 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
             mock_update_group: Value used by this callable.
         """
         payload: GroupUpdate = GroupUpdate(
-            group_id=1, new_name='Updated Group', new_uniform_number=None,
+            group_id=1,
+            new_name='Updated Group',
+            new_uniform_number=None,
         )
         execute_result: MagicMock = MagicMock()
         unique_result: MagicMock = MagicMock()
@@ -136,7 +142,8 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         self.db_session.execute.return_value = execute_result
 
         result: dict[str, str] = await groups.endpoint_update_group(
-            payload, db=self.db_session,
+            payload,
+            db=self.db_session,
         )
 
         self.assertEqual(result, {'message': 'Group updated successfully.'})
@@ -148,8 +155,7 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_endpoint_update_group_nothing_to_update(self) -> None:
-        """Test endpoint update group nothing to update.
-        """
+        """Test endpoint update group nothing to update."""
         payload: GroupUpdate = GroupUpdate(group_id=1)
 
         with self.assertRaises(HTTPException) as ctx:
@@ -159,10 +165,10 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.detail, 'Nothing to update.')
 
     async def test_endpoint_update_group_not_found(self) -> None:
-        """Test endpoint update group not found.
-        """
+        """Test endpoint update group not found."""
         payload: GroupUpdate = GroupUpdate(
-            group_id=999, new_name='Updated Group',
+            group_id=999,
+            new_name='Updated Group',
         )
         execute_result: MagicMock = MagicMock()
         unique_result: MagicMock = MagicMock()
@@ -178,7 +184,8 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.db_management.routers.groups.delete_group')
     async def test_endpoint_delete_group_success(
-        self, mock_delete_group: AsyncMock,
+        self,
+        mock_delete_group: AsyncMock,
     ) -> None:
         """Test endpoint delete group success.
 
@@ -193,17 +200,18 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         self.db_session.execute.return_value = execute_result
 
         result: dict[str, str] = await groups.endpoint_delete_group(
-            payload, db=self.db_session,
+            payload,
+            db=self.db_session,
         )
 
         self.assertEqual(result, {'message': 'Group deleted successfully.'})
         mock_delete_group.assert_awaited_once_with(
-            grp=self.example_group, db=self.db_session,
+            grp=self.example_group,
+            db=self.db_session,
         )
 
     async def test_endpoint_delete_group_not_found(self) -> None:
-        """Test endpoint delete group not found.
-        """
+        """Test endpoint delete group not found."""
         payload: GroupDelete = GroupDelete(group_id=999)
         execute_result: MagicMock = MagicMock()
         unique_result: MagicMock = MagicMock()
@@ -220,9 +228,3 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.routers.groups\
-    --cov-report=term-missing\
-        tests/examples/db_management/routers/groups_test.py
-'''

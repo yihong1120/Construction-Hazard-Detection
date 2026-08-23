@@ -18,7 +18,6 @@ from examples.db_management.deps import TenantDeploymentAdministrator
 from examples.deployment_registry.enrollments import provision_enrollment_code
 from examples.deployment_registry.enrollments import ProvisionedEnrollmentCode
 
-
 _CANONICAL_UUID = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
 )
@@ -66,7 +65,8 @@ def enrollment_code_status(
     *,
     now: datetime | None = None,
 ) -> str:
-    """Return a stable public lifecycle status without exposing verifier data."""
+    """Return a stable public lifecycle status without exposing verifier
+    data."""
     current = now or utc_now()
     if enrollment.revoked_at is not None:
         return _STATUS_REVOKED
@@ -87,13 +87,15 @@ async def create_managed_enrollment_code(
     """Create and audit one tenant-scoped code in one database commit."""
     expires_at = utc_now() + timedelta(minutes=expires_in_minutes)
     try:
-        provisioned: ProvisionedEnrollmentCode = await provision_enrollment_code(
-            db,
-            deployment_id=administrator.deployment_id,
-            tenant_id=administrator.tenant_id,
-            expires_at=expires_at,
-            created_by=administrator.user.username,
-            pepper=pepper,
+        provisioned: ProvisionedEnrollmentCode = (
+            await provision_enrollment_code(
+                db,
+                deployment_id=administrator.deployment_id,
+                tenant_id=administrator.tenant_id,
+                expires_at=expires_at,
+                created_by=administrator.user.username,
+                pepper=pepper,
+            )
         )
         # Assign the database bigint before referencing it from the audit row.
         await db.flush()
@@ -138,7 +140,8 @@ async def list_managed_enrollment_codes(
                     select(DeploymentEnrollmentCode)
                     .join(
                         Deployment,
-                        Deployment.id == DeploymentEnrollmentCode.deployment_id,
+                        Deployment.id
+                        == DeploymentEnrollmentCode.deployment_id,
                     )
                     .where(
                         DeploymentEnrollmentCode.deployment_id
@@ -188,7 +191,10 @@ async def revoke_managed_enrollment_code(
             )
             if enrollment is None:
                 return
-            if enrollment.revoked_at is None and enrollment.redeemed_at is None:
+            if (
+                enrollment.revoked_at is None
+                and enrollment.redeemed_at is None
+            ):
                 enrollment.revoked_at = utc_now()
                 db.add(
                     DeploymentEnrollmentCodeAuditLog(

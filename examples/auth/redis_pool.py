@@ -6,13 +6,10 @@ from fastapi import WebSocket
 
 
 class RedisClient:
-    """
-    A class encapsulating an asynchronous Redis client.
-    """
+    """A class encapsulating an asynchronous Redis client."""
 
     def __init__(self, url: str) -> None:
-        """
-        Initialise the RedisClient with the provided server URL.
+        """Initialise the RedisClient with the provided server URL.
 
         Args:
             url (str): The URL of the Redis server,
@@ -22,8 +19,7 @@ class RedisClient:
         self.client: redis.Redis | None = None
 
     async def connect(self) -> redis.Redis:
-        """
-        Establish a connection to the Redis server.
+        """Establish a connection to the Redis server.
 
         Returns:
             redis.Redis: An asyncio-compatible Redis client instance.
@@ -38,17 +34,14 @@ class RedisClient:
         return self.client
 
     async def close(self) -> None:
-        """
-        Close the Redis connection if it is currently active.
-        """
+        """Close the Redis connection if it is currently active."""
         if self.client:
             await self.client.close()
             self.client = None
 
 
 async def get_redis_pool(request: Request) -> redis.Redis:
-    """
-    Retrieve or initialise the Redis client for HTTP routes.
+    """Retrieve or initialise the Redis client for HTTP routes.
 
     Args:
         request (Request): The incoming FastAPI request object.
@@ -67,8 +60,7 @@ async def get_redis_pool(request: Request) -> redis.Redis:
 
 
 async def get_redis_pool_ws(websocket: WebSocket) -> redis.Redis:
-    """
-    Retrieve or initialise the Redis client for WebSocket routes.
+    """Retrieve or initialise the Redis client for WebSocket routes.
 
     Args:
         websocket (WebSocket): The active WebSocket connection object.

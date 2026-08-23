@@ -7,9 +7,8 @@ from examples.auth.security import update_secret_key
 
 
 def start_jwt_scheduler(app: FastAPI) -> BackgroundScheduler:
-    """
-    Initialise a background scheduler to refresh the JWT secret key
-    every 30 days.
+    """Initialise a background scheduler to refresh the JWT secret key every 30
+    days.
 
     Args:
         app (FastAPI): The main FastAPI application instance

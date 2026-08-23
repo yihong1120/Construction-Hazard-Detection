@@ -52,7 +52,11 @@ class DeploymentUpdate(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 
     tenant_id: UUID | None = None
-    api_base_url: str | None = Field(default=None, min_length=8, max_length=2048)
+    api_base_url: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=2048,
+    )
     status: str | None = None
 
 

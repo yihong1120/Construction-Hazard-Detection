@@ -153,10 +153,10 @@ async def apple_callback_redirect(request: Request) -> RedirectResponse:
         form = await request.form()
         params.extend((key, str(value)) for key, value in form.multi_items())
     query = urlencode(params)
-    suffix = f'?{query}' if query else ''
+    suffix = f"?{query}" if query else ''
     return RedirectResponse(
         (
-            f'intent://callback{suffix}'
+            f"intent://callback{suffix}"
             '#Intent;package=com.changdar.visionnaire;'
             'scheme=signinwithapple;end'
         ),

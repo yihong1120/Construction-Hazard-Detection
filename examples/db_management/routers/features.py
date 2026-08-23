@@ -108,10 +108,14 @@ async def endpoint_update_feature(
         HTTPException: If the feature does not exist.
     """
     feature = (
-        await db.execute(
-            select(Feature).where(Feature.id == payload.feature_id),
+        (
+            await db.execute(
+                select(Feature).where(Feature.id == payload.feature_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not feature:
         raise HTTPException(404, 'Feature not found')
@@ -146,10 +150,14 @@ async def endpoint_delete_feature(
         HTTPException: If the feature does not exist.
     """
     feature = (
-        await db.execute(
-            select(Feature).where(Feature.id == payload.feature_id),
+        (
+            await db.execute(
+                select(Feature).where(Feature.id == payload.feature_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not feature:
         raise HTTPException(404, 'Feature not found')
@@ -179,10 +187,14 @@ async def endpoint_update_group_feature(
         HTTPException: If the group does not exist.
     """
     group = (
-        await db.execute(
-            select(Group).where(Group.id == payload.group_id),
+        (
+            await db.execute(
+                select(Group).where(Group.id == payload.group_id),
+            )
         )
-    ).unique().scalar_one_or_none()
+        .unique()
+        .scalar_one_or_none()
+    )
 
     if not group:
         raise HTTPException(404, 'Group not found')

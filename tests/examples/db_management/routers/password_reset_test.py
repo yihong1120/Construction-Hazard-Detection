@@ -19,8 +19,7 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
     """Tests for password reset router endpoints."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.app = FastAPI()
         self.app.include_router(password_reset.router)
         self.client = TestClient(self.app)
@@ -76,7 +75,8 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
             'user@example.com',
         )
         self.assertIn(
-            'client_ip', mock_request_password_reset.call_args.kwargs,
+            'client_ip',
+            mock_request_password_reset.call_args.kwargs,
         )
 
     @patch(
@@ -147,8 +147,7 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
     async def test_reset_password_missing_fields_returns_400_message(
         self,
     ) -> None:
-        """Test reset password missing fields returns 400 message.
-        """
+        """Test reset password missing fields returns 400 message."""
         response = self.client.post('/password/reset', json={})
 
         self.assertEqual(response.status_code, 400)

@@ -15,19 +15,16 @@ from examples.db_management import app as app_module
 
 
 class AppIntegrationTest(unittest.TestCase):
-    """
-    Integration tests for the FastAPI app in db_management.
-    """
+    """Integration tests for the FastAPI app in db_management."""
+
     app: FastAPI
     client: TestClient
     _patchers: list = []
 
     @classmethod
     def setUpClass(cls) -> None:
-        """
-        Set up the test class by patching global dependencies
-        and initialising the app and client.
-        """
+        """Set up the test class by patching global dependencies and
+        initialising the app and client."""
         # Store patchers so they can be stopped later
         cls._patchers = [
             patch('examples.auth.database.get_db', new=lambda *a, **kw: None),
@@ -63,10 +60,8 @@ class AppIntegrationTest(unittest.TestCase):
     # ---------- Tests ----------
 
     def test_openapi_available(self) -> None:
-        """
-        The OpenAPI schema endpoint should return 200
-        and contain title and paths.
-        """
+        """The OpenAPI schema endpoint should return 200 and contain title and
+        paths."""
         resp = self.client.get('/openapi.json')
         self.assertEqual(resp.status_code, 200)
         data: dict = resp.json()
@@ -92,8 +87,7 @@ class AppIntegrationTest(unittest.TestCase):
             self.assertIn(p, data['paths'])
 
     def test_docs_ui_accessible(self) -> None:
-        """
-        Swagger UI (/docs) should return 200 and HTML content.
+        """Swagger UI (/docs) should return 200 and HTML content.
 
         This test checks that the Swagger UI documentation endpoint is
         accessible and returns HTML content.
@@ -124,11 +118,10 @@ class AppIntegrationTest(unittest.TestCase):
         )
 
     def test_router_tags_registered(self) -> None:
-        """
-        Confirm all expected router tags are registered in the app.
+        """Confirm all expected router tags are registered in the app.
 
-        This test verifies that all expected router tags are present in
-        the application's route definitions.
+        This test verifies that all expected router tags are present in the
+        application's route definitions.
         """
         paths = self.app.openapi()['paths']
         tags = {
@@ -157,8 +150,7 @@ class AppIntegrationTest(unittest.TestCase):
         )
 
     def test_bff_module_and_playback_routes_are_registered(self) -> None:
-        """Test bff module and playback routes are registered.
-        """
+        """Test bff module and playback routes are registered."""
         paths = self.app.openapi()['paths']
         bff_paths = [route.path for route in bff_router.routes]
 
@@ -214,11 +206,10 @@ class AppIntegrationTest(unittest.TestCase):
         self.assertEqual(response.headers.get('cache-control'), 'no-store')
 
     def test_main_calls_uvicorn_run(self) -> None:
-        """
-        Test that the main() function calls uvicorn.run.
+        """Test that the main() function calls uvicorn.run.
 
-        This test patches uvicorn.run and checks that it is called when
-        the app's main() function is invoked.
+        This test patches uvicorn.run and checks that it is called when the
+        app's main() function is invoked.
         """
         with patch('examples.db_management.app.uvicorn.run') as mock_run:
             app_module.main()
@@ -227,9 +218,3 @@ class AppIntegrationTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.app\
-    --cov-report=term-missing\
-        tests/examples/db_management/app_test.py
-'''

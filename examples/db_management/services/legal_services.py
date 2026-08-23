@@ -29,7 +29,8 @@ class SignupConsentPayload(Protocol):
         privacy_version: Version of the privacy notice accepted by the user.
         notification_consent: Whether the user agreed to notifications.
         ai_terms_accepted: Whether the user accepted the AI-specific terms.
-        ai_terms_version: Version of the AI-specific terms accepted by the user.
+        ai_terms_version: Version of the AI-specific terms accepted by the
+            user.
     """
 
     accepted_terms: bool
@@ -80,9 +81,7 @@ async def get_active_legal_documents(
         docs = {**fallback_docs, **docs}
 
     missing = [
-        doc_type
-        for doc_type in LEGAL_DOCUMENT_TYPES
-        if doc_type not in docs
+        doc_type for doc_type in LEGAL_DOCUMENT_TYPES if doc_type not in docs
     ]
     if missing:
         raise HTTPException(
@@ -144,7 +143,8 @@ async def validate_signup_consents(
         locale: Preferred locale for the documents presented at signup.
 
     Returns:
-        Current legal documents keyed by document type, ready for audit storage.
+        Current legal documents keyed by document type, ready for audit
+            storage.
 
     Raises:
         HTTPException: If a mandatory consent is absent, a submitted version
@@ -199,7 +199,8 @@ async def record_user_consent(
 
     Args:
         user_id: Identifier of the user whose consents are being recorded.
-        payload: Validated signup payload containing accepted versions and flags.
+        payload: Validated signup payload containing accepted versions and
+            flags.
         db: Asynchronous database session used to persist the consent record.
         request: Optional HTTP request used to capture audit metadata.
 

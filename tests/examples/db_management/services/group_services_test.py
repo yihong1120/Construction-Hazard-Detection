@@ -13,15 +13,13 @@ from examples.db_management.services import group_services
 
 
 class TestGroupServices(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for group_services module using asynchronous mocks.
-    """
+    """Unit tests for group_services module using asynchronous mocks."""
 
     def setUp(self) -> None:
         """Set up common mock objects for each test.
 
-        This method initialises mock database and group objects for use
-        in each test case.
+        This method initialises mock database and group objects for use in each
+        test case.
         """
         self.db: AsyncMock = AsyncMock()
         self.grp = MagicMock(spec=Group)
@@ -30,8 +28,7 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
         self.grp.uniform_number = '12345678'
 
     async def test_list_groups(self) -> None:
-        """Test list groups.
-        """
+        """Test list groups."""
         mock_result: MagicMock = MagicMock()
         mock_unique: MagicMock = mock_result.unique.return_value
         mock_scalars: MagicMock = mock_unique.scalars.return_value
@@ -44,8 +41,7 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(groups, ['group1', 'group2'])
 
     async def test_create_group_success(self) -> None:
-        """Test create group success.
-        """
+        """Test create group success."""
         self.db.commit = AsyncMock()
         self.db.refresh = AsyncMock()
         self.db.add = MagicMock()
@@ -68,11 +64,11 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
             self.db.refresh.assert_awaited_with(mock_group)
 
     async def test_create_group_integrity_error(self) -> None:
-        """
-        Test group creation raises HTTPException for duplicate uniform number.
+        """Test group creation raises HTTPException for duplicate uniform
+        number.
 
-        Ensures that an HTTPException with status 400 is raised if a
-        duplicate uniform number is used during group creation.
+        Ensures that an HTTPException with status 400 is raised if a duplicate
+        uniform number is used during group creation.
         """
         self.db.commit = AsyncMock(
             side_effect=IntegrityError('Integrity error', {}, None),
@@ -91,8 +87,7 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_update_group_success(self) -> None:
-        """Test update group success.
-        """
+        """Test update group success."""
         self.db.commit = AsyncMock()
 
         await group_services.update_group(
@@ -107,11 +102,10 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.grp.uniform_number, '11112222')
 
     async def test_update_group_invalid_uniform_number(self) -> None:
-        """
-        Test updating group raises HTTPException for invalid uniform number.
+        """Test updating group raises HTTPException for invalid uniform number.
 
-        Ensures that an HTTPException with status 400 is raised if an
-        invalid uniform number is provided during update.
+        Ensures that an HTTPException with status 400 is raised if an invalid
+        uniform number is provided during update.
         """
         with self.assertRaises(HTTPException) as context:
             await group_services.update_group(
@@ -124,8 +118,7 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.status_code, 400)
 
     async def test_update_group_no_fields_provided(self) -> None:
-        """Test update group no fields provided.
-        """
+        """Test update group no fields provided."""
         with self.assertRaises(HTTPException) as context:
             await group_services.update_group(
                 grp=self.grp,
@@ -137,8 +130,7 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.status_code, 400)
 
     async def test_delete_group_success(self) -> None:
-        """Test delete group success.
-        """
+        """Test delete group success."""
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock()
 
@@ -148,8 +140,7 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_delete_group_exception(self) -> None:
-        """Test delete group exception.
-        """
+        """Test delete group exception."""
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
@@ -161,11 +152,11 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_create_group_general_exception(self) -> None:
-        """
-        Test creating a group raises HTTPException on general database error.
+        """Test creating a group raises HTTPException on general database
+        error.
 
-        Ensures that an HTTPException with status 500 is raised if a
-        general database error occurs during group creation.
+        Ensures that an HTTPException with status 500 is raised if a general
+        database error occurs during group creation.
         """
         self.db.commit = AsyncMock(side_effect=Exception('Unexpected error'))
         self.db.rollback = AsyncMock()
@@ -186,11 +177,11 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_update_group_general_exception(self) -> None:
-        """
-        Test updating a group raises HTTPException on general database error.
+        """Test updating a group raises HTTPException on general database
+        error.
 
-        Ensures that an HTTPException with status 500 is raised if a
-        general database error occurs during group update.
+        Ensures that an HTTPException with status 500 is raised if a general
+        database error occurs during group update.
         """
         self.db.commit = AsyncMock(side_effect=Exception('Unexpected error'))
         self.db.rollback = AsyncMock()
@@ -213,9 +204,3 @@ class TestGroupServices(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest --cov=examples.db_management.services.group_services\
-    --cov-report=term-missing\
-        tests/examples/db_management/services/group_services_test.py
-'''

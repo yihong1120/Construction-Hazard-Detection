@@ -71,7 +71,10 @@ async def list_effective_sites_for_user(
                 await db.execute(
                     select(Site).order_by(Site.id),
                 )
-            ).scalars().unique().all(),
+            )
+            .scalars()
+            .unique()
+            .all(),
         )
 
     if user.group_id is None:
@@ -103,7 +106,9 @@ async def list_effective_site_names_for_user(
     """
     if user.role == 'super_admin':
         result = await db.execute(select(Site.name).order_by(Site.id))
-        return [str(getattr(name, 'name', name)) for name in result.scalars().all()]
+        return [
+            str(getattr(name, 'name', name)) for name in result.scalars().all()
+        ]
     if user.group_id is None:
         return []
     result = await db.execute(
@@ -117,7 +122,9 @@ async def list_effective_site_names_for_user(
         .order_by(Site.name)
         .distinct(),
     )
-    return [str(getattr(name, 'name', name)) for name in result.scalars().all()]
+    return [
+        str(getattr(name, 'name', name)) for name in result.scalars().all()
+    ]
 
 
 async def load_user_with_effective_sites(
@@ -141,8 +148,7 @@ async def get_cached_effective_site_names(
     username: str,
     db: AsyncSession,
 ) -> list[str]:
-    """
-    Return site names the user may access, with simple in-memory caching.
+    """Return site names the user may access, with simple in-memory caching.
 
     Args:
         username: The unique username to resolve.
@@ -170,10 +176,10 @@ async def get_cached_effective_site_names(
 
 
 async def load_user_access_context(
-    db: AsyncSession, username: str,
+    db: AsyncSession,
+    username: str,
 ) -> tuple[User, list[str], str]:
-    """
-    Fetch the user, their site names, and role from the database.
+    """Fetch the user, their site names, and role from the database.
 
     Args:
         db: An asynchronous SQLAlchemy session.

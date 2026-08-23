@@ -31,12 +31,13 @@ from examples.deployment_registry.enrollments import EnrollmentExchangeResult
 from examples.deployment_registry.enrollments import redeem_enrollment_code
 from examples.deployment_registry.router import router
 from examples.deployment_registry.signing import build_registry_document
+
 """Contract tests for the independent signed Deployment Registry."""
 
 
 _TENANT_ID = UUID('11111111-1111-1111-1111-111111111111')
 _DEPLOYMENT_ID = UUID('22222222-2222-2222-2222-222222222222')
-_GET_PATH = f'/deployment-registry/v1/deployments/{_DEPLOYMENT_ID}'
+_GET_PATH = f"/deployment-registry/v1/deployments/{_DEPLOYMENT_ID}"
 _EXCHANGE_PATH = '/deployment-registry/v1/enrollments/exchange'
 _CODE = 'a' * 32
 _REQUEST_HEADERS = {
@@ -60,8 +61,7 @@ class TestDeploymentEnrollmentExchangeRouter(unittest.TestCase):
     """Ensure exchange never turns into an authentication or profile API."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         self.app = FastAPI()
         self.app.include_router(router)
         self.client = TestClient(self.app, base_url='https://api.example.com')
@@ -95,14 +95,12 @@ class TestDeploymentEnrollmentExchangeRouter(unittest.TestCase):
         self.settings_patch.start()
 
     def tearDown(self) -> None:
-        """Perform tearDown.
-        """
+        """Perform tearDown."""
         self.settings_patch.stop()
         self.client.close()
 
     def test_success_response_has_only_deployment_id(self) -> None:
-        """Test success response has only deployment id.
-        """
+        """Test success response has only deployment id."""
         with (
             patch.object(
                 registry_service,
@@ -128,7 +126,12 @@ class TestDeploymentEnrollmentExchangeRouter(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers['content-type'], 'application/json')
-        self.assertEqual(response.json(), {'deployment_id': str(_DEPLOYMENT_ID)})
+        self.assertEqual(
+            response.json(),
+            {
+                'deployment_id': str(_DEPLOYMENT_ID),
+            },
+        )
 
     def test_invalid_request_body_uses_standard_validation(self) -> None:
         """Invalid enrollment payloads use FastAPI's standard 422 response."""
@@ -144,17 +147,23 @@ class TestDeploymentEnrollmentExchangeRouter(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 422)
 
-    def test_invalid_terminal_and_rate_limited_codes_are_non_secret(self) -> None:
-        """Test invalid terminal and rate limited codes are non secret.
-        """
-        with patch.object(
-            registry_service,
-            'enforce_enrollment_exchange_rate_limit',
-            AsyncMock(return_value=None),
-        ), patch.object(
-            registry_service,
-            'redeem_enrollment_code',
-            AsyncMock(return_value=EnrollmentExchangeResult(status='invalid')),
+    def test_invalid_terminal_and_rate_limited_codes_are_non_secret(
+        self,
+    ) -> None:
+        """Test invalid terminal and rate limited codes are non secret."""
+        with (
+            patch.object(
+                registry_service,
+                'enforce_enrollment_exchange_rate_limit',
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                registry_service,
+                'redeem_enrollment_code',
+                AsyncMock(
+                    return_value=EnrollmentExchangeResult(status='invalid'),
+                ),
+            ),
         ):
             invalid = self.client.post(
                 _EXCHANGE_PATH,
@@ -163,14 +172,19 @@ class TestDeploymentEnrollmentExchangeRouter(unittest.TestCase):
             )
         self.assertEqual(invalid.status_code, 403)
 
-        with patch.object(
-            registry_service,
-            'enforce_enrollment_exchange_rate_limit',
-            AsyncMock(return_value=None),
-        ), patch.object(
-            registry_service,
-            'redeem_enrollment_code',
-            AsyncMock(return_value=EnrollmentExchangeResult(status='terminal')),
+        with (
+            patch.object(
+                registry_service,
+                'enforce_enrollment_exchange_rate_limit',
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                registry_service,
+                'redeem_enrollment_code',
+                AsyncMock(
+                    return_value=EnrollmentExchangeResult(status='terminal'),
+                ),
+            ),
         ):
             terminal = self.client.post(
                 _EXCHANGE_PATH,
@@ -197,8 +211,7 @@ class TestEnrollmentService(unittest.IsolatedAsyncioTestCase):
     """Verify verifier secrecy and the database-lock redemption contract."""
 
     async def test_redeem_marks_the_locked_row_once(self) -> None:
-        """Test redeem marks the locked row once.
-        """
+        """Test redeem marks the locked row once."""
         enrollment = SimpleNamespace(
             redeemed_at=None,
             revoked_at=None,
@@ -235,8 +248,7 @@ class TestEnrollmentService(unittest.IsolatedAsyncioTestCase):
     async def test_verifier_is_keyed_and_raw_code_is_not_the_database_value(
         self,
     ) -> None:
-        """Test verifier is keyed and raw code is not the database value.
-        """
+        """Test verifier is keyed and raw code is not the database value."""
         first = enrollment_code_verifier_hash(_CODE, 'p' * 32)
         second = enrollment_code_verifier_hash(_CODE, 'q' * 32)
         self.assertNotEqual(first, _CODE)
@@ -248,8 +260,7 @@ class TestRegistrySigningContract(unittest.TestCase):
     """Ensure the signature bytes exactly match the mobile contract."""
 
     def test_signs_fixed_seven_fields_not_key_id_or_http_body(self) -> None:
-        """Test signs fixed seven fields not key id or http body.
-        """
+        """Test signs fixed seven fields not key id or http body."""
         private_key = Ed25519PrivateKey.generate()
         pem = private_key.private_bytes(
             Encoding.PEM,

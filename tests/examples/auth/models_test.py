@@ -24,29 +24,21 @@ Base.metadata.create_all(bind=engine)
 
 
 class TestUserModel(unittest.TestCase):
-    """
-    Test cases for the User model.
-    """
+    """Test cases for the User model."""
 
     def setUp(self) -> None:
-        """
-        Set up a test database session.
-        """
+        """Set up a test database session."""
         self.session: Session = SessionLocal()
-        self.tenant = Tenant(name=f'test-tenant-{uuid4()}')
+        self.tenant = Tenant(name=f"test-tenant-{uuid4()}")
         self.session.add(self.tenant)
         self.session.commit()
 
     def tearDown(self) -> None:
-        """
-        Clean up the database after each test.
-        """
+        """Clean up the database after each test."""
         self.session.close()
 
     def test_set_password(self) -> None:
-        """
-        Test password hashing in the User model.
-        """
+        """Test password hashing in the User model."""
         user = User(username='testuser')
         user.set_password('secure_password')
         # Ensure password hash does not store the actual password
@@ -55,9 +47,7 @@ class TestUserModel(unittest.TestCase):
         self.assertTrue(asyncio.run(user.check_password('secure_password')))
 
     def test_check_password(self) -> None:
-        """
-        Test password verification in the User model.
-        """
+        """Test password verification in the User model."""
         user = User(username='testuser')
         user.set_password('secure_password')
         # Confirm correct and incorrect passwords
@@ -65,17 +55,13 @@ class TestUserModel(unittest.TestCase):
         self.assertFalse(asyncio.run(user.check_password('wrong_password')))
 
     def test_check_password_unknown_hash_returns_false(self) -> None:
-        """
-        Test unsupported hashes fail authentication without 500s.
-        """
+        """Test unsupported hashes fail authentication without 500s."""
         user = User(username='testuser')
         user.password_hash = 'scrypt:32768:8:1$salt$hash'
         self.assertFalse(asyncio.run(user.check_password('secure_password')))
 
     def test_to_dict(self) -> None:
-        """
-        Test the to_dict method of the User model.
-        """
+        """Test the to_dict method of the User model."""
         user = User(
             username='testuser',
             role='admin',
@@ -105,8 +91,10 @@ class TestUserModel(unittest.TestCase):
     def test_group_repr(self) -> None:
         """Exercise this test."""
         group = Group(
-            id=1, name='test_group',
-            uniform_number='12345678', max_allowed_streams=1,
+            id=1,
+            name='test_group',
+            uniform_number='12345678',
+            max_allowed_streams=1,
         )
         self.assertIn('Group', repr(group))
         self.assertIn('test_group', repr(group))
@@ -114,9 +102,3 @@ class TestUserModel(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.auth.models \
-    --cov-report=term-missing tests/examples/auth/models_test.py
-'''

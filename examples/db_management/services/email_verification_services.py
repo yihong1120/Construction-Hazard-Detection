@@ -76,7 +76,7 @@ def _resend_rate_key(email: str) -> str:
     Returns:
         Redis rate-limit key.
     """
-    return f'email_verification_rate:email:{_hash_identifier(email)}'
+    return f"email_verification_rate:email:{_hash_identifier(email)}"
 
 
 def _resend_daily_rate_key(email: str) -> str:
@@ -88,7 +88,7 @@ def _resend_daily_rate_key(email: str) -> str:
     Returns:
         Redis daily rate-limit key.
     """
-    return f'email_verification_daily_rate:email:{_hash_identifier(email)}'
+    return f"email_verification_daily_rate:email:{_hash_identifier(email)}"
 
 
 def _email_verification_key(token_hash: str) -> str:
@@ -100,7 +100,7 @@ def _email_verification_key(token_hash: str) -> str:
     Returns:
         Redis token-record key.
     """
-    return f'email_verification:{token_hash}'
+    return f"email_verification:{token_hash}"
 
 
 def _email_verification_used_key(token_hash: str) -> str:
@@ -112,7 +112,7 @@ def _email_verification_used_key(token_hash: str) -> str:
     Returns:
         Redis consumed-token marker key.
     """
-    return f'email_verification_used:{token_hash}'
+    return f"email_verification_used:{token_hash}"
 
 
 def _email_verification_user_key(user_id: int) -> str:
@@ -124,7 +124,7 @@ def _email_verification_user_key(user_id: int) -> str:
     Returns:
         Redis user-to-token mapping key.
     """
-    return f'email_verification_user:{user_id}'
+    return f"email_verification_user:{user_id}"
 
 
 def _build_verify_url(raw_token: str) -> str:
@@ -137,7 +137,7 @@ def _build_verify_url(raw_token: str) -> str:
         Public verification URL.
     """
     public_url = settings.app_public_url.rstrip('/')
-    return f'{public_url}/verify-email?token={raw_token}'
+    return f"{public_url}/verify-email?token={raw_token}"
 
 
 async def _enforce_resend_rate_limit(
@@ -342,19 +342,21 @@ async def _send_email_verification_email(
     if settings.brevo_email_verification_template_id > 0:
         payload['templateId'] = settings.brevo_email_verification_template_id
     else:
-        payload.update({
-            'subject': 'Verify your Visionnaire account',
-            'htmlContent': (
-                '<p>請點擊下方連結完成信箱驗證。</p>'
-                f'<p><a href="{verify_url}">驗證信箱</a></p>'
-                f'<p>此連結將於 {expires_hours} 小時後失效。</p>'
-            ),
-            'textContent': (
-                '請使用以下連結完成信箱驗證：\n'
-                f'{verify_url}\n\n'
-                f'此連結將於 {expires_hours} 小時後失效。'
-            ),
-        })
+        payload.update(
+            {
+                'subject': 'Verify your Visionnaire account',
+                'htmlContent': (
+                    '<p>請點擊下方連結完成信箱驗證。</p>'
+                    f'<p><a href="{verify_url}">驗證信箱</a></p>'
+                    f"<p>此連結將於 {expires_hours} 小時後失效。</p>"
+                ),
+                'textContent': (
+                    '請使用以下連結完成信箱驗證：\n'
+                    f"{verify_url}\n\n"
+                    f"此連結將於 {expires_hours} 小時後失效。"
+                ),
+            },
+        )
 
     headers = {
         'accept': 'application/json',

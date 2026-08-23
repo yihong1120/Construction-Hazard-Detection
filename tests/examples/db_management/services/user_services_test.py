@@ -205,7 +205,8 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.db.execute = AsyncMock(return_value=mock_result)
 
         users, next_cursor = await user_services.list_users(
-            self.db, group_id=9,
+            self.db,
+            group_id=9,
         )
 
         self.assertEqual(users, ['group-user'])
@@ -353,7 +354,9 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as cm:
             await user_services.set_user_status(
-                self.user, 'suspended', self.db,
+                self.user,
+                'suspended',
+                self.db,
             )
 
         self.assertEqual(cm.exception.status_code, 500)

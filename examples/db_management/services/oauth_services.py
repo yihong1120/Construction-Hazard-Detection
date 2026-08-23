@@ -474,7 +474,7 @@ def _username_from_claims(provider: Provider, claims: ProviderClaims) -> str:
         Bounded local username candidate.
     """
     email = _normalise_email(claims.email)
-    source = email.split('@', 1)[0] if email else f'{provider}_{claims.sub}'
+    source = email.split('@', 1)[0] if email else f"{provider}_{claims.sub}"
     username = re.sub(r'[^A-Za-z0-9_.-]+', '_', source).strip('._-')
     return username[:64] or f"{provider}_user"
 
@@ -497,14 +497,15 @@ def _identity_username(
     # a human-readable prefix while avoiding serial SELECT/retry loops for
     # common display names such as "john".
     digest = hashlib.blake2s(
-        f'{provider}:{claims.sub}'.encode(),
+        f"{provider}:{claims.sub}".encode(),
         digest_size=6,
     ).hexdigest()
-    return f'{base[:67]}_{digest}'
+    return f"{base[:67]}_{digest}"
 
 
 def _profile_names(
-    provider: Provider, claims: ProviderClaims,
+    provider: Provider,
+    claims: ProviderClaims,
 ) -> tuple[str, str]:
     """Derive bounded family and given names from provider claims.
 

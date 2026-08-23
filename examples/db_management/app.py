@@ -91,7 +91,8 @@ async def safe_http_exception(
     is_safe_registry_unavailable = (
         exc.status_code == 503
         and isinstance(exc.detail, dict)
-        and exc.detail.get('code') in {
+        and exc.detail.get('code')
+        in {
             'registry_signing_unavailable',
             'enrollment_unavailable',
         }
@@ -161,15 +162,18 @@ async def prevent_sensitive_response_caching(
     response = await call_next(request)
     # Authentication and signed-media data must not be stored by browsers or
     # intermediary caches after the response leaves the application.
-    if request.url.path.startswith((
-        '/bff/',
-        '/oauth/',
-        '/auth/',
-        '/me',
-        '/api/playback/',
-    )) or request.url.path in {'/login', '/refresh'}:
+    if request.url.path.startswith(
+        (
+            '/bff/',
+            '/oauth/',
+            '/auth/',
+            '/me',
+            '/api/playback/',
+        ),
+    ) or request.url.path in {'/login', '/refresh'}:
         response.headers['Cache-Control'] = 'no-store'
     return response
+
 
 allowed_origins = _allowed_cors_origins()
 if allowed_origins:
@@ -210,12 +214,11 @@ def main() -> None:
 if __name__ == '__main__':
     main()
 
-"""
-uvicorn examples.db_management.app:app\
-    --host 127.0.0.1\
-    --port 8005 --workers 4
 
-uv run uvicorn examples.db_management.app:app\
-    --host 127.0.0.1\
-    --port 8005 --workers 4
+"""
+uvicorn examples.db_management.app:app \
+    --host 127.0.0.1 --port 8005 --workers 4
+
+uv run uvicorn examples.db_management.app:app \
+    --host 127.0.0.1 --port 8005 --workers 4
 """
