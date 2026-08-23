@@ -106,14 +106,12 @@ class PlaybackSessionState(TypedDict):
 
     Attributes:
         status: Client-visible readiness state.
-        state: Backwards-compatible readiness state.
         overlay_ready: Whether an overlay publisher is available.
         media_path: Selected MediaMTX path.
         hls_url: Direct internal HLS playlist URL.
     """
 
     status: Literal['ready', 'starting']
-    state: Literal['ready', 'starting']
     overlay_ready: bool
     media_path: str
     hls_url: str
@@ -129,7 +127,6 @@ class PlaybackSessionResponse(TypedDict):
         label: Site label containing the stream.
         transport: Fixed HLS transport identifier.
         status: Client-visible playback readiness.
-        state: Backwards-compatible playback readiness.
         profile: Selected clean or overlay profile.
         rendition: Selected detail or preview rendition.
         playback_ready: Whether a stable playback endpoint is available.
@@ -150,7 +147,6 @@ class PlaybackSessionResponse(TypedDict):
     label: str
     transport: Literal['hls']
     status: Literal['ready', 'starting']
-    state: Literal['ready', 'starting']
     profile: PlaybackProfile
     rendition: PlaybackRendition
     playback_ready: bool
@@ -249,11 +245,9 @@ class OverlayLanguageListResponse(BaseModel):
     Attributes:
         default_language: Canonical default language code.
         allowed_language_codes: Canonical codes callers may request.
-        supported_languages: Alias of canonical supported codes.
         aliases: Mapping of recognised aliases to canonical codes.
         languages: Per-language display and translation contracts.
         stream_playback_endpoint: Relative endpoint for playback requests.
-        playback_endpoint: Backwards-compatible playback endpoint alias.
         max_active_languages_per_stream: Maximum concurrent overlay languages.
         demand_ttl_seconds: Overlay demand-lease duration.
         ready_ttl_seconds: Overlay readiness-marker duration.
@@ -261,11 +255,9 @@ class OverlayLanguageListResponse(BaseModel):
 
     default_language: str
     allowed_language_codes: list[str]
-    supported_languages: list[str]
     aliases: dict[str, str]
     languages: list[OverlayLanguageInfo]
     stream_playback_endpoint: str
-    playback_endpoint: str
     max_active_languages_per_stream: int
     demand_ttl_seconds: int
     ready_ttl_seconds: int

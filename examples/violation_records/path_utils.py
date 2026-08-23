@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import HTTPException
 
 from examples.shared.filename_utils import sanitize_filename
 from examples.violation_records.settings import STATIC_DIR
+
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_safe_rel_path(image_path: str, path_cls: type = Path) -> Path:
@@ -65,7 +69,7 @@ def _resolve_and_authorize(
     try:
         full_path.relative_to(base_dir)
     except ValueError:
-        print(
+        logger.info(
             f"[get_violation_image] User {username} tried to "
             'access outside of base_dir',
         )

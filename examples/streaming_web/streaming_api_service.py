@@ -18,13 +18,32 @@ from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_preview_media_path
 from examples.streaming_web.overlay_renderer import normalise_label_language
 from examples.streaming_web.overlay_renderer import normalise_overlay_mode
+from examples.streaming_web.playback_demand import active_overlay_languages
+from examples.streaming_web.playback_hls import authorise_label_access
+from examples.streaming_web.playback_hls import extract_media_path_from_uri
+from examples.streaming_web.playback_hls import extract_opaque_media_token
+from examples.streaming_web.playback_hls import fetch_internal_hls_playlist
+from examples.streaming_web.playback_hls import media_auth_401
+from examples.streaming_web.playback_hls import (
+    MEDIA_INTERNAL_HLS_TIMEOUT_SECONDS,
+)
+from examples.streaming_web.playback_hls import media_session_demand_ttl
+from examples.streaming_web.playback_hls import (
+    opaque_media_session_allows_path,
+)
+from examples.streaming_web.playback_hls import (
+    rewrite_hls_playlist_media_urls,
+)
+from examples.streaming_web.playback_hls import split_hls_playlist_query
 from examples.streaming_web.schemas import MAX_STREAM_PLAYBACK_BATCH_STREAMS
 from examples.streaming_web.schemas import OverlayLanguageListResponse
 from examples.streaming_web.schemas import PlaybackProfile
+from examples.streaming_web.schemas import PlaybackRendition
 from examples.streaming_web.schemas import PlaybackSessionResponse
 from examples.streaming_web.schemas import StreamPlaybackBatchRequest
 from examples.streaming_web.schemas import StreamPlaybackRequest
 from examples.streaming_web.webrtc_service import get_public_ice_servers
+from src.http_client_pool import HttpClientPool
 
 
 def _username(credentials: JwtAuthorizationCredentials) -> str:
@@ -81,19 +100,19 @@ async def authorise_media_request(
         or request.headers.get('x-forwarded-uri')
         or str(request.url.path)
     )
-    media_path = playback_service._extract_media_path_from_uri(original_uri)
+    media_path = extract_media_path_from_uri(original_uri)
     if not media_path.startswith('hazard_'):
         raise HTTPException(status_code=403, detail='Invalid media path')
 
-    opaque_token = playback_service._extract_opaque_media_token(request)
+    opaque_token = extract_opaque_media_token(request)
     if not opaque_token:
-        raise playback_service._media_auth_401('missing_media_token')
+        raise media_auth_401('missing_media_token')
     opaque_session = await get_media_session(rds, opaque_token)
     if opaque_session is None:
-        raise playback_service._media_auth_401('expired_media_session')
+        raise media_auth_401('expired_media_session')
     if opaque_session.get('user_active') is False:
-        raise playback_service._media_auth_401('inactive_user')
-    if not playback_service._opaque_media_session_allows_path(
+        raise media_auth_401('inactive_user')
+    if not opaque_media_session_allows_path(
         opaque_session,
         media_path,
     ):
@@ -103,9 +122,7 @@ async def authorise_media_request(
     await playback_service._touch_media_demand_from_media_path(
         rds,
         media_path,
-        ttl_seconds=playback_service._media_session_demand_ttl(
-            opaque_session,
-        ),
+        ttl_seconds=media_session_demand_ttl(opaque_session),
     )
     await playback_service._refresh_playback_sessions_for_media_path(
         rds,
@@ -142,29 +159,46 @@ async def stream_playback_session_playlist(
     if session is None:
         raise HTTPException(status_code=404, detail='session_not_found')
 
-    auth_query, media_query = playback_service._split_hls_playlist_query(
+    auth_query, media_query = split_hls_playlist_query(
         request.url.query,
     )
     if not auth_query:
-        raise playback_service._media_auth_401('missing_media_token')
+        raise media_auth_401('missing_media_token')
 
     await playback_service._refresh_playback_session_ttl(rds, session_id)
     state = await playback_service._select_session_playback(rds, session)
     await playback_service._wait_for_session_startup(session)
-    media_path = playback_service._extract_media_path_from_uri(
+    media_path = extract_media_path_from_uri(
         str(state['hls_url']),
     )
     if not media_path.startswith('hazard_'):
         raise HTTPException(status_code=502, detail='invalid_media_playlist')
-    playlist, hls_session_cookie = (
-        await playback_service._fetch_internal_hls_playlist(
-            media_path,
-            media_query=media_query,
+    http_clients = getattr(request.app.state, 'http_clients', None)
+    http_client = None
+    if isinstance(http_clients, HttpClientPool):
+        http_client = await http_clients.get(
+            'mediamtx-hls',
+            timeout=MEDIA_INTERNAL_HLS_TIMEOUT_SECONDS,
+            follow_redirects=True,
         )
-    )
+    if http_client is None:
+        playlist, hls_session_cookie = (
+            await fetch_internal_hls_playlist(
+                media_path,
+                media_query=media_query,
+            )
+        )
+    else:
+        playlist, hls_session_cookie = (
+            await fetch_internal_hls_playlist(
+                media_path,
+                media_query=media_query,
+                http_client=http_client,
+            )
+        )
     # MediaMTX checks each child playlist and segment independently.  Preserve
     # the opaque capability on every URI emitted from the parent playlist.
-    rewritten = playback_service._rewrite_hls_playlist_media_urls(
+    rewritten = rewrite_hls_playlist_media_urls(
         playlist,
         media_path=media_path,
         auth_query=auth_query,
@@ -218,7 +252,7 @@ async def negotiate_stream_playback(
     if not request_body.label:
         raise HTTPException(status_code=422, detail='label_required')
 
-    await playback_service._authorise_label_access(
+    await authorise_label_access(
         credentials=credentials,
         db=db,
         label=request_body.label,
@@ -229,6 +263,23 @@ async def negotiate_stream_playback(
         stream_id=request_body.stream_id,
         key=request_body.key,
     )
+    return await _negotiate_validated_stream_playback(
+        request_body,
+        username=username,
+        stream_name=stream_name,
+        rds=rds,
+    )
+
+
+async def _prepare_validated_playback_request(
+    request_body: StreamPlaybackRequest,
+    stream_name: str,
+    rds: redis.Redis,
+) -> tuple[PlaybackProfile, PlaybackRendition, str | None]:
+    """Normalise one already-authorised, configured playback request."""
+    label = request_body.label
+    if not label:
+        raise HTTPException(status_code=422, detail='label_required')
     profile = playback_service._normalise_playback_profile(
         request_body.profile,
     )
@@ -242,12 +293,13 @@ async def negotiate_stream_playback(
         if language not in allowed_languages:
             raise HTTPException(status_code=422, detail='unsupported_language')
 
-        media_path = build_media_path(request_body.label, stream_name)
+        media_path = build_media_path(label, stream_name)
         if rendition == 'preview':
             media_path = build_preview_media_path(media_path)
-        active_languages = await playback_service._active_overlay_languages(
+        active_languages = await active_overlay_languages(
             rds,
             media_path,
+            allowed_languages,
         )
         if (
             language not in active_languages
@@ -259,11 +311,30 @@ async def negotiate_stream_playback(
                 detail='overlay_language_limit_reached',
             )
 
+    return profile, rendition, language
+
+
+async def _negotiate_validated_stream_playback(
+    request_body: StreamPlaybackRequest,
+    *,
+    username: str,
+    stream_name: str,
+    rds: redis.Redis,
+) -> tuple[PlaybackSessionResponse, int]:
+    """Negotiate after the caller has already checked access and stream ID."""
+    label = request_body.label
+    if not label:
+        raise HTTPException(status_code=422, detail='label_required')
+    profile, rendition, language = await _prepare_validated_playback_request(
+        request_body,
+        stream_name,
+        rds,
+    )
     session = await playback_service._create_or_update_playback_session(
         rds,
         session_id=request_body.session_id,
         username=username,
-        label=request_body.label,
+        label=label,
         stream_name=stream_name,
         profile=profile,
         rendition=rendition,
@@ -278,7 +349,7 @@ async def negotiate_stream_playback(
     response_body['webrtc_url'] = build_media_webrtc_url(
         session['base_media_path'],
     )
-    return response_body, 202 if response_body['state'] == 'starting' else 200
+    return response_body, 202 if response_body['status'] == 'starting' else 200
 
 
 def _model_field_was_set(
@@ -470,23 +541,88 @@ async def request_stream_playback_batch(
         JSON response containing negotiated sessions.
     """
     username = _username(credentials)
+    authorised_labels: set[str] = set()
+    # A site-wall request is expanded from the database.  Authorise its label
+    # before enumerating streams, then reuse that check below.
+    if not request_body.streams and request_body.label:
+        await authorise_label_access(credentials, db, request_body.label)
+        authorised_labels.add(request_body.label)
     requests = await _build_batch_playback_requests(request_body, db)
     _enforce_stream_playback_batch_limit(requests)
-    items: list[PlaybackSessionResponse] = []
-    status_code = 200
-    for stream_request in requests:
-        body, item_status = await negotiate_stream_playback(
-            stream_request,
+    labels = {request.label for request in requests if request.label}
+    for label in sorted(labels.difference(authorised_labels)):
+        await authorise_label_access(credentials, db, label)
+
+    stream_names = await stream_catalog_service.resolve_configured_stream_names(
+        db,
+        [
+            (request.label or '', request.stream_id, request.key)
+            for request in requests
+        ],
+    )
+    prepared = [
+        await _prepare_validated_playback_request(request, stream_name, rds)
+        for request, stream_name in zip(requests, stream_names, strict=True)
+    ]
+
+    # Camera walls create fresh sessions.  Store every session and activate all
+    # demand leases with the existing pipeline/MGET batch helpers.  Explicit
+    # session refreshes retain their stricter ownership/update path below.
+    items: list[PlaybackSessionResponse | None] = [None] * len(requests)
+    new_indexes = [
+        index for index, request in enumerate(requests)
+        if request.session_id is None
+    ]
+    if new_indexes:
+        sessions = await playback_service.create_playback_sessions(
+            rds,
             username=username,
-            credentials=credentials,
-            db=db,
+            requests=[
+                (
+                    requests[index].label or '',
+                    stream_names[index],
+                    prepared[index][0],
+                    prepared[index][1],
+                    prepared[index][2],
+                )
+                for index in new_indexes
+            ],
+        )
+        response_bodies = (
+            await playback_service.build_playback_session_response_bodies(
+                rds,
+                sessions,
+            )
+        )
+        for index, session, body in zip(
+            new_indexes,
+            sessions,
+            response_bodies,
+            strict=True,
+        ):
+            body['webrtc_url'] = build_media_webrtc_url(
+                session['base_media_path'],
+            )
+            items[index] = body
+
+    for index, request in enumerate(requests):
+        if request.session_id is None:
+            continue
+        body, _item_status = await _negotiate_validated_stream_playback(
+            request,
+            username=username,
+            stream_name=stream_names[index],
             rds=rds,
         )
-        items.append(body)
-        if item_status == 202:
-            status_code = 202
+        items[index] = body
+
+    response_items = [item for item in items if item is not None]
+    status_code = (
+        202 if any(item['status'] == 'starting' for item in response_items)
+        else 200
+    )
     return _build_stream_playback_batch_response(
-        items=items,
+        items=response_items,
         status_code=status_code,
     )
 
@@ -527,7 +663,6 @@ async def release_stream_playback(
     if session['profile'] == 'overlay':
         has_other_session = await playback_service._has_other_playback_session(
             rds,
-            released_session_id=session_id,
             base_media_path=base_media_path,
             profile='overlay',
             language=session['language'],
@@ -539,7 +674,6 @@ async def release_stream_playback(
     else:
         has_other_session = await playback_service._has_other_playback_session(
             rds,
-            released_session_id=session_id,
             base_media_path=base_media_path,
             profile='clean',
         )
@@ -579,7 +713,7 @@ async def get_streams_for_label(
         HTTPException: If the caller lacks access or the language is invalid.
     """
     username = _username(credentials)
-    await playback_service._authorise_label_access(credentials, db, label)
+    await authorise_label_access(credentials, db, label)
     overlay_mode = normalise_overlay_mode(overlay)
     overlay_language = normalise_label_language(language)
     if (
@@ -598,26 +732,21 @@ async def get_streams_for_label(
     )
     stream_names = list(result.scalars().all())
 
-    streams: list[PlaybackSessionResponse] = []
-    for stream_name in stream_names:
-        session = await playback_service._create_or_update_playback_session(
-            rds,
-            session_id=None,
-            username=username,
-            label=label,
-            stream_name=stream_name,
-            profile=profile,
-            rendition='detail',
-            language=selected_language,
-        )
-        body = await playback_service._build_playback_session_response_body(
-            rds,
-            session,
-        )
-        body['webrtc_url'] = build_media_webrtc_url(
-            session['base_media_path'],
-        )
-        streams.append(body)
+    sessions = await playback_service.create_playback_sessions_for_streams(
+        rds,
+        username=username,
+        label=label,
+        stream_names=stream_names,
+        profile=profile,
+        rendition='detail',
+        language=selected_language,
+    )
+    streams = await playback_service.build_playback_session_response_bodies(
+        rds,
+        sessions,
+    )
+    for session, body in zip(sessions, streams, strict=True):
+        body['webrtc_url'] = build_media_webrtc_url(session['base_media_path'])
     return JSONResponse({'streams': streams})
 
 

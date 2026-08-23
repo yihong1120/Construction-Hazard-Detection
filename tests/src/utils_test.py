@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import os
 import time
 import unittest
@@ -13,15 +12,16 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import jwt
-import numpy as np
 from shapely.geometry import MultiPolygon
 from shapely.geometry import Polygon
 from sklearn.cluster import HDBSCAN
 
-from src.utils import FileEventHandler
-from src.utils import RedisManager
-from src.utils import TokenManager
-from src.utils import Utils
+import src.geometry as utils
+from src.auth_tokens import TokenManager
+from src.config_watcher import FileEventHandler
+from src.redis_client import RedisManager
+from src.runtime_utils import is_expired
+from src.runtime_utils import should_notify
 
 
 class MockSharedToken:
@@ -316,7 +316,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             'access_token': 'NEW', 'refresh_token': 'NEWREF',
         }
 
-        async def side_effect(*_, **__) -> Any:
+        async def side_effect(*_: Any, **__: Any) -> Any:
             """Support side_effect."""
             await asyncio.sleep(0.01)
             self.shared_token['refresh_token'] = 'Y'
@@ -682,7 +682,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         mock_sessinst.post.return_value = mock_resp
         m_sess.return_value.__aenter__.return_value = mock_sessinst
 
-        async def change_token_side_effect(*_, **__) -> Any:
+        async def change_token_side_effect(*_: Any, **__: Any) -> Any:
             """Support change_token_side_effect."""
             self.shared_token['refresh_token'] = 'CHANGED'
             return mock_resp
@@ -773,11 +773,11 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         # correctly.
         """
         bbox: list[float] = [1, 2, 3, 4, 5, 6]
-        result: list[float] = Utils.normalise_bbox(bbox)
+        result: list[float] = utils.normalise_bbox(bbox)
         self.assertEqual(result, [1, 2, 3, 4, 5, 6])
 
         bbox = [4, 3, 2, 1, 0.9, 5, 42, 1]
-        result = Utils.normalise_bbox(bbox)
+        result = utils.normalise_bbox(bbox)
         self.assertEqual(result, [2, 1, 4, 3, 0.9, 5, 42, 1])
 
     def test_detect_polygon_from_cones_no_cones(self) -> None:
@@ -794,7 +794,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [30, 30, 40, 40, 0.9, 2],  # Non-cone object
         ]
         clusterer: MagicMock = MagicMock()
-        result: list[Polygon] = Utils.detect_polygon_from_cones(
+        result: list[Polygon] = utils.detect_polygon_from_cones(
             datas, clusterer,
         )
         self.assertEqual(result, [])
@@ -813,7 +813,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [1, 1, 3, 3, 0.9, 5],  # Person detection
             [4, 4, 8, 8, 0.9, 5],  # Person detection
         ]
-        count: int = Utils.calculate_people_in_controlled_area(polygons, datas)
+        count: int = utils.calculate_people_in_controlled_area(polygons, datas)
         self.assertEqual(count, 0)
 
     def test_is_expired_with_valid_date(self) -> None:
@@ -826,11 +826,11 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         """
         # Test with a past date (should return True)
         past_date: str = (datetime.now() - timedelta(days=1)).isoformat()
-        self.assertTrue(Utils.is_expired(past_date))
+        self.assertTrue(is_expired(past_date))
 
         # Test with a future date (should return False)
         future_date: str = (datetime.now() + timedelta(days=1)).isoformat()
-        self.assertFalse(Utils.is_expired(future_date))
+        self.assertFalse(is_expired(future_date))
 
     def test_is_expired_with_invalid_date(self) -> None:
         """
@@ -841,7 +841,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         """
         # Test with an invalid ISO 8601 date (should return False)
         invalid_date: str = '2024-13-01T00:00:00'
-        self.assertFalse(Utils.is_expired(invalid_date))
+        self.assertFalse(is_expired(invalid_date))
 
     def test_is_expired_with_none(self) -> None:
         """
@@ -850,129 +850,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         Verifies that None input is handled appropriately by returning False.
         """
         # Test with None (should return False)
-        self.assertFalse(Utils.is_expired(None))
-
-    def test_encode(self) -> None:
-        """
-        Test the encode method for URL-safe Base64 encoding.
-
-        # Validates that the method correctly encodes strings using URL-safe
-        # Base64 encoding and returns the expected encoded output.
-        """
-        # Test encoding a string
-        value: str = 'test_value'
-        encoded_value: str = Utils.encode(value)
-        expected_value: str = base64.urlsafe_b64encode(
-            value.encode('utf-8'),
-        ).decode('utf-8')
-        self.assertEqual(encoded_value, expected_value)
-
-    def test_encode_frame_success(self) -> None:
-        """
-        Test encoding a valid frame using encode_frame method.
-
-        # Verifies that a valid NumPy array representing an image frame can be
-        # successfully encoded to PNG format as bytes.
-        """
-        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-        encoded_frame: bytes = Utils.encode_frame(frame)
-        self.assertIsNotNone(encoded_frame)
-
-    def test_encode_frame_failure(self) -> None:
-        """
-        Test encoding an invalid frame using encode_frame method.
-
-        # Ensures that invalid input (e.g., None) is handled gracefully by
-        # returning empty bytes rather than raising an exception.
-        """
-        invalid_frame: None = None
-        encoded_frame: bytes = Utils.encode_frame(invalid_frame)
-        self.assertEqual(
-            encoded_frame, b'',
-            'Expected empty bytes when encoding fails.',
-        )
-
-    def test_encode_frame_returns_empty_bytes_when_opencv_raises(self) -> None:
-        """Unexpected OpenCV errors are contained at the encoding boundary."""
-        frame: np.ndarray = np.zeros((1, 1, 3), dtype=np.uint8)
-        with unittest.mock.patch(
-            'src.utils.cv2.imencode',
-            side_effect=RuntimeError('codec unavailable'),
-        ):
-            self.assertEqual(Utils.encode_frame(frame), b'')
-
-    def test_filter_warnings_by_working_hour_working_hours(self) -> None:
-        """
-        Test filtering warnings during working hours.
-
-        # Verifies that during working hours, all warnings are returned
-        # without any filtering applied to the warnings dictionary.
-        """
-        # Arrange - prepare warnings data in expected format
-        warnings: dict[str, dict[str, int]] = {
-            'warning_people_in_controlled_area': {'count': 2},
-            'warning_no_safety_vest': {'count': 1},
-        }
-        is_working_hour: bool = True  # During working hours
-
-        # Act - filter warnings based on working hour status
-        message: dict[str, dict[str, object]] = (
-            Utils.filter_warnings_by_working_hour(warnings, is_working_hour)
-        )
-
-        # Assert - all warnings should be present during working hours
-        self.assertIn('warning_people_in_controlled_area', message)
-        self.assertIn('warning_no_safety_vest', message)
-
-        # Verify content integrity
-        self.assertEqual(
-            message['warning_people_in_controlled_area']['count'], 2,
-        )
-        self.assertEqual(message['warning_no_safety_vest']['count'], 1)
-
-    def test_filter_warnings_by_working_hour_non_working_hours(self) -> None:
-        """
-        Test filtering warnings outside working hours.
-
-        # Ensures that outside working hours, only controlled area warnings
-        # are retained whilst other warning types are filtered out.
-        """
-        # Arrange - prepare warnings with multiple types
-        warnings: dict[str, dict[str, int]] = {
-            'warning_people_in_controlled_area': {'count': 3},
-            'warning_no_safety_vest': {'count': 2},
-        }
-        is_working_hour: bool = False  # Outside working hours
-
-        # Act - filter warnings for non-working hours
-        message: dict[str, dict[str, object]] = (
-            Utils.filter_warnings_by_working_hour(warnings, is_working_hour)
-        )
-
-        # Assert - only controlled area warnings should remain
-        self.assertIn('warning_people_in_controlled_area', message)
-        self.assertNotIn('warning_no_safety_vest', message)
-        self.assertEqual(
-            message['warning_people_in_controlled_area']['count'], 3,
-        )
-
-    def test_filter_warnings_by_working_hour_no_message(self) -> None:
-        """
-        Test filtering warnings when no warnings are present.
-
-        # Verifies that an empty warnings dictionary returns an empty result
-        # regardless of working hour status.
-        """
-        warnings: dict[str, dict[str, int]] = {}
-        is_working_hour: bool = True
-
-        message: dict[str, dict[str, object]] = (
-            Utils.filter_warnings_by_working_hour(warnings, is_working_hour)
-        )
-        # When warnings are empty, function should return empty dictionary
-        self.assertEqual(
-            message, {}, 'Expected empty dict when no warnings.',
-        )
+        self.assertFalse(is_expired(None))
 
     def test_should_notify_true(self) -> None:
         """
@@ -986,7 +864,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         cooldown_period: int = 300  # 300 second cooldown
 
         self.assertTrue(
-            Utils.should_notify(
+            should_notify(
                 timestamp, last_notification_time, cooldown_period,
             ),
         )
@@ -1003,7 +881,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         cooldown_period: int = 300  # 300 second cooldown
 
         self.assertFalse(
-            Utils.should_notify(
+            should_notify(
                 timestamp, last_notification_time, cooldown_period,
             ),
         )
@@ -1017,10 +895,10 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [200, 200, 300, 300, 0.85, 5],  # Person
             [400, 400, 500, 500, 0.75, 9],  # Vehicle
         ]
-        normalised_datas = [Utils.normalise_bbox(data) for data in datas]
+        normalised_datas = [utils.normalise_bbox(data) for data in datas]
         clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
-        polygons = Utils.detect_polygon_from_cones(normalised_datas, clusterer)
-        people_count = Utils.calculate_people_in_controlled_area(
+        polygons = utils.detect_polygon_from_cones(normalised_datas, clusterer)
+        people_count = utils.calculate_people_in_controlled_area(
             polygons, normalised_datas,
         )
         self.assertEqual(people_count, 0)
@@ -1043,9 +921,9 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [850, 850, 870, 870, 0.74, 6],  # Safety cone
         ]
 
-        normalised_datas = [Utils.normalise_bbox(data) for data in datas]
-        polygons = Utils.detect_polygon_from_cones(normalised_datas, clusterer)
-        people_count = Utils.calculate_people_in_controlled_area(
+        normalised_datas = [utils.normalise_bbox(data) for data in datas]
+        polygons = utils.detect_polygon_from_cones(normalised_datas, clusterer)
+        people_count = utils.calculate_people_in_controlled_area(
             polygons, normalised_datas,
         )
         self.assertEqual(people_count, 1)
@@ -1059,9 +937,9 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             [200, 200, 300, 300, 0.85, 5],  # Person
             [400, 400, 500, 500, 0.75, 2],  # No-Safety Vest
         ]
-        normalised_data = [Utils.normalise_bbox(item) for item in data]
+        normalised_data = [utils.normalise_bbox(item) for item in data]
         clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
-        polygons = Utils.detect_polygon_from_cones(normalised_data, clusterer)
+        polygons = utils.detect_polygon_from_cones(normalised_data, clusterer)
         self.assertEqual(len(polygons), 0)
 
     def test_person_inside_polygon(self) -> None:
@@ -1074,8 +952,8 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         data: list[list[float]] = [
             [2, 2, 8, 8, 0.95, 5],  # Person inside the polygon
         ]
-        normalised_data = [Utils.normalise_bbox(item) for item in data]
-        people_count = Utils.calculate_people_in_controlled_area(
+        normalised_data = [utils.normalise_bbox(item) for item in data]
+        people_count = utils.calculate_people_in_controlled_area(
             polygons, normalised_data,
         )
         self.assertEqual(people_count, 1)
@@ -1090,7 +968,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         """
         datas: list[list[float]] = []  # No utility pole data
         cluster = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
-        poly = Utils.build_utility_pole_union(datas, cluster)
+        poly = utils.build_utility_pole_union(datas, cluster)
         self.assertTrue(isinstance(poly, Polygon))
         self.assertTrue(poly.is_empty)
 
@@ -1104,7 +982,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         """
         datas: list[list[float]] = [[10, 2, 20, 30, 0.9, 9]]
         cluster = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
-        poly = Utils.build_utility_pole_union(datas, cluster)
+        poly = utils.build_utility_pole_union(datas, cluster)
         self.assertTrue(isinstance(poly, Polygon))
         self.assertFalse(poly.is_empty)
 
@@ -1123,7 +1001,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         ]
         # Lower parameters for clustering
         cluster = HDBSCAN(min_samples=2, min_cluster_size=2, copy=True)
-        poly = Utils.build_utility_pole_union(datas, cluster)
+        poly = utils.build_utility_pole_union(datas, cluster)
         self.assertTrue(isinstance(poly, Polygon))
         self.assertGreater(poly.area, 0)
 
@@ -1139,7 +1017,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             None
         """
         clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
-        result = Utils.detect_polygon_from_cones([], clusterer)
+        result = utils.detect_polygon_from_cones([], clusterer)
         self.assertEqual(
             result, [], 'Expected an empty list when datas is empty.',
         )
@@ -1170,7 +1048,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         ]
         # Call function where all safety cones are marked as noise
         # (label = -1)
-        polygons = Utils.detect_polygon_from_cones(datas, dummy_clusterer)
+        polygons = utils.detect_polygon_from_cones(datas, dummy_clusterer)
         # Expected empty list as all points are skipped
         self.assertEqual(
             polygons, [], 'Expected no polygons when all points are noise.',
@@ -1192,7 +1070,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         ]
         datas: list[list[float]] = []  # Empty list
 
-        people_count = Utils.calculate_people_in_controlled_area(
+        people_count = utils.calculate_people_in_controlled_area(
             polygons, datas,
         )
         self.assertEqual(
@@ -1220,7 +1098,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         cluster = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
 
         # Act
-        poly = Utils.build_utility_pole_union(datas, cluster)
+        poly = utils.build_utility_pole_union(datas, cluster)
 
         # Assert
         self.assertTrue(isinstance(poly, Polygon))
@@ -1258,11 +1136,28 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             0,
         ] * len(datas)  # All in the same cluster
 
-        poly = Utils.build_utility_pole_union(datas, clusterer)
+        poly = utils.build_utility_pole_union(datas, clusterer)
         self.assertIsInstance(poly, Polygon)
         self.assertFalse(
             poly.is_empty,
             'Expected a non-empty polygon from MST + tangents union.',
+        )
+
+    def test_build_mst_pairs_deduplicates_coincident_centres(self) -> None:
+        """Coincident detections use zero-cost links without dense fallback."""
+        poles = [
+            (10.0, 10.0, 1.0),
+            (10.0, 10.0, 2.0),
+            (30.0, 10.0, 1.0),
+            (50.0, 10.0, 1.0),
+        ]
+
+        edges = utils.build_mst_pairs(poles)
+
+        self.assertEqual(len(edges), len(poles) - 1)
+        self.assertIn((1, 0), edges)
+        self.assertTrue(
+            any({left, right} == {1, 2} for left, right in edges),
         )
 
     def test_get_outer_tangents_distance_less_than_radius_diff(self) -> None:
@@ -1282,7 +1177,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         cx1, cy1, r1 = 0, 0, 10
         cx2, cy2, r2 = 0, 1, 1
 
-        lines = Utils.get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2)
+        lines = utils.get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2)
         self.assertEqual(
             lines, [], 'Expected empty list when d < abs(r1 - r2).',
         )
@@ -1304,7 +1199,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         cx1, cy1, r1 = 0, 0, 10
         cx2, cy2, r2 = 0, 3, 3  # Centre distance d=3
 
-        lines = Utils.get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2)
+        lines = utils.get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2)
         self.assertEqual(lines, [], 'Expected empty list when d < (r1 - r2).')
 
     def test_get_outer_tangents_second_check(self) -> None:
@@ -1326,7 +1221,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         # Second calculation: We use side_effect to make math.sqrt return 4,
         #   at this point rdiff = 10 - 5 = 5, 4 < 5, so empty list is returned.
         with patch('math.sqrt', side_effect=[20, 4]):
-            lines = Utils.get_outer_tangents(0, 0, 10, 20, 0, 5)
+            lines = utils.get_outer_tangents(0, 0, 10, 20, 0, 5)
         self.assertEqual(
             lines, [], 'Expected empty list when second sqrt result < rdiff.',
         )
@@ -1358,7 +1253,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         ]
 
         # Calculate number of people inside the polygon
-        count = Utils.count_people_in_polygon(poly, datas)
+        count = utils.count_people_in_polygon(poly, datas)
 
         # Expected three different centre points inside: (2,2), (6,6) and (3,3)
         self.assertEqual(
@@ -1386,7 +1281,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         multipoly = MultiPolygon([poly2, poly3])
 
         # Call function: includes poly1, empty_poly, multipoly
-        result = Utils.polygons_to_coords([poly1, empty_poly, multipoly])
+        result = utils.polygons_to_coords([poly1, empty_poly, multipoly])
 
         # Expected results
         expected_poly1 = [list(pt) for pt in poly1.exterior.coords]
@@ -1431,56 +1326,9 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         cx1, cy1, r1 = 0, 0, 10
         cx2, cy2, r2 = 0, 0, 10
 
-        lines = Utils.get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2)
+        lines = utils.get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2)
         self.assertEqual(
             lines, [], 'Expected empty list when d < abs(r1 - r2).',
-        )
-
-    def test_encode_frame_png_success(self) -> None:
-        """
-        Test encoding frame as PNG format.
-        """
-        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-        encoded_frame: bytes = Utils.encode_frame(
-            frame, format='png', quality=50,
-        )
-        self.assertIsNotNone(encoded_frame)
-        self.assertGreater(len(encoded_frame), 0)
-
-    @patch('cv2.imencode')
-    def test_encode_frame_encode_failure(
-        self, mock_imencode: MagicMock,
-    ) -> None:
-        """
-        Test encode_frame when cv2.imencode returns False.
-        """
-        mock_imencode.return_value = (False, None)
-        frame: np.ndarray = np.zeros((100, 100, 3), dtype=np.uint8)
-        encoded_frame: bytes = Utils.encode_frame(frame)
-        self.assertEqual(encoded_frame, b'')
-
-    def test_filter_warnings_non_working_hours_with_controlled_area(
-            self,
-    ) -> None:
-        """
-        Test filter_warnings_by_working_hour during non-working hours with
-        controlled area warning.
-        """
-        warnings: dict[str, dict[str, int]] = {
-            'warning_people_in_controlled_area': {'count': 2},
-            'warning_no_safety_vest': {'count': 1},
-        }
-        is_working_hour: bool = False
-
-        result = Utils.filter_warnings_by_working_hour(
-            warnings, is_working_hour,
-        )
-
-        # Should only contain controlled area warning
-        self.assertIn('warning_people_in_controlled_area', result)
-        self.assertNotIn('warning_no_safety_vest', result)
-        self.assertEqual(
-            result['warning_people_in_controlled_area']['count'], 2,
         )
 
     def test_is_expired_with_exception(self) -> None:
@@ -1489,7 +1337,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         """
         # Test with a string that can't be parsed
         invalid_date = 'not-a-date'
-        result = Utils.is_expired(invalid_date)
+        result = is_expired(invalid_date)
         self.assertFalse(result)  # Should return False on parsing error
 
 
@@ -1504,7 +1352,7 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
     mock_redis: MagicMock
     rmgr: RedisManager
 
-    @patch('src.utils.redis.Redis')
+    @patch('src.redis_client.redis.Redis')
     def setUp(self, mock_redis: MagicMock) -> None:
         """
         Set up a RedisManager instance with a mocked Redis connection.
@@ -1617,6 +1465,6 @@ if __name__ == '__main__':
 
 """
 pytest \
-    --cov=src.utils \
+    --cov=src.geometry --cov=src.runtime_utils \
     --cov-report=term-missing tests/src/utils_test.py
 """

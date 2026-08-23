@@ -59,14 +59,14 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
         mock_mkdir: MagicMock,
         mock_uuid: MagicMock,
     ) -> None:
-        """Test the save_violation method when all operations succeed.
+        # Arrange
+        """Test save violation success.
 
         Args:
-            mock_aiofiles_open (MagicMock): Mock for aiofiles.open.
-            mock_mkdir (MagicMock): Mock for Path.mkdir.
-            mock_uuid (MagicMock): Mock for uuid.uuid4.
+            mock_aiofiles_open: Value used by this callable.
+            mock_mkdir: Value used by this callable.
+            mock_uuid: Value used by this callable.
         """
-        # Arrange
         mock_uuid.return_value = uuid.UUID('12345678123456781234567812345678')
 
         # We want aiofiles.open(...) to return an async context manager.
@@ -134,12 +134,12 @@ class TestViolationManager(unittest.IsolatedAsyncioTestCase):
         self,
         mock_aiofiles_open: MagicMock,
     ) -> None:
-        """Test the save_violation method when file writing fails.
+        # Arrange
+        """Test save violation failure.
 
         Args:
-            mock_aiofiles_open (MagicMock): Mock for aiofiles.open.
+            mock_aiofiles_open: Value used by this callable.
         """
-        # Arrange
         mock_aiofiles_open.side_effect = Exception('File I/O error')
 
         # Act

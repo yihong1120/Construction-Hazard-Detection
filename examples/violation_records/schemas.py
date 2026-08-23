@@ -436,12 +436,12 @@ class ViolationList(BaseModel):
     Schema for returning a paginated list of violation records.
 
     Args:
-        total (int): Total number of violation records available.
         items (list[ViolationItem]): List of violation records.
+        has_more (bool): Whether another cursor page is available.
     """
-    total: int
     items: list[ViolationItem]
     next_cursor: str | None = None
+    has_more: bool = False
 
 
 class UploadViolationResponse(BaseModel):

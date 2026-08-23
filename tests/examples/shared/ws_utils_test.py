@@ -66,6 +66,14 @@ class TestWSUtils(unittest.IsolatedAsyncioTestCase):
             """Helper that raises on any attribute access."""
 
             def __getattribute__(self, name: str) -> object:
+                """Perform getattribute.
+
+                Args:
+                    name: Value used by this callable.
+
+                Returns:
+                    The callable result.
+                """
                 raise RuntimeError('boom')
 
         # hasattr raises a non-AttributeError; ws_utils catches it and

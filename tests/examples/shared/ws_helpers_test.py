@@ -190,13 +190,16 @@ class TestLogEveryN(unittest.TestCase):
         """
         Test logging only on exact multiples of n.
         """
-        with patch('builtins.print') as mock_print:
+        with patch.object(wh.logger, 'debug') as mock_log:
             for i in range(1, 11):
                 wh.log_every_n('prefix', i, unit='items', n=3)
-        # Should print at 3, 6, 9.
-        self.assertEqual(mock_print.call_count, 3)
-        calls = [c.args[0] for c in mock_print.call_args_list]
-        self.assertIn('prefix: Processed 3 items', calls[0])
+        # Should log at 3, 6, 9.
+        self.assertEqual(mock_log.call_count, 3)
+        self.assertEqual(
+            mock_log.call_args_list[0].args, (
+                '%s: Processed %s %s', 'prefix', 3, 'items',
+            ),
+        )
 
 
 class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):

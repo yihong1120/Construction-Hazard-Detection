@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from collections.abc import Mapping
@@ -10,7 +11,6 @@ from datetime import datetime
 from typing import cast
 from typing import Final
 from typing import TYPE_CHECKING
-from typing import TypedDict
 
 import cv2
 import numpy as np
@@ -21,10 +21,10 @@ from examples.streaming_web.media_paths import (
 )
 from examples.streaming_web.media_paths import build_clean_demand_key
 from examples.streaming_web.media_paths import build_media_path
-from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_overlay_ready_key
 from examples.streaming_web.media_paths import build_preview_media_path
 from examples.streaming_web.metadata_keys import build_metadata_key
+from examples.streaming_web.metadata_keys import get_metadata_site_generation
 from examples.streaming_web.overlay_renderer import (
     normalise_label_language,
 )
@@ -37,18 +37,32 @@ from examples.streaming_web.overlay_renderer import (
 )
 from examples.streaming_web.overlay_renderer import TrackingDetections
 from examples.streaming_web.overlay_renderer import WarningPayload
+from examples.streaming_web.playback_demand import active_overlay_languages
+from src.async_tasks import cancel_on_first_failure
 from src.danger_detector import DangerDetector
+from src.image_utils import encode_frame
+from src.media_publish_config import create_media_publisher
+from src.media_publish_config import env_enabled
+from src.media_publish_config import preview_publisher_options
 from src.media_restreamer import MediaSourceRestreamer
 from src.media_stream_publisher import MediaStreamPublisher
 from src.notifiers.fcm_notifier import FCMSender
+from src.redis_client import RedisManager
+from src.runtime_utils import should_notify
 from src.stream_capture import StreamCapture
-from src.utils import RedisManager
-from src.utils import Utils
+from src.stream_runtime_state import LatestDetectionState as _LatestDetectionState
+from src.stream_runtime_state import LatestFrameState as _LatestFrameState
+from src.stream_runtime_state import OverlayPublisherVariant as _OverlayPublisherVariant
+from src.stream_runtime_state import OverlaySnapshot as _OverlaySnapshot
+from src.stream_runtime_state import StreamConfig
 from src.violation_sender import ViolationSender
 from src.yolo_detector import YoloDetector
 from src.yolo_worker import WorkerQueue
 from src.yolo_worker import WorkerResultReceiver
 from src.yolo_worker import YoloWorkerClient
+
+logger = logging.getLogger(__name__)
+
 
 if TYPE_CHECKING:
     RedisPrimitive = bytes | bytearray | memoryview[int] | str | int | float
@@ -67,78 +81,6 @@ def _media_demand_cache_seconds() -> float:
         )
     except ValueError:
         return 0.5
-
-
-def _env_enabled(name: str, default: bool) -> bool:
-    """Read a boolean environment setting with a predictable default."""
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    return raw_value.strip().lower() in {'1', 'true', 'yes', 'on'}
-
-
-class StreamConfig(TypedDict, total=False):
-    """Configuration for one video stream from the database."""
-
-    video_url: str
-    updated_at: str
-    model_key: str
-    site: str
-    stream_name: str
-    recognition_enabled: bool
-    expire_date: str | None
-    detection_items: dict[str, bool]
-    work_start_hour: int
-    work_end_hour: int
-
-
-@dataclass
-class _LatestFrameState:
-    """Latest camera frame shared by capture, detection, and publishing."""
-
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    event: asyncio.Event = field(default_factory=asyncio.Event)
-    frame: np.ndarray | None = None
-    timestamp: float = 0.0
-    sequence: int = 0
-    generation: int = 0
-
-
-@dataclass
-class _LatestDetectionState:
-    """Latest detection metadata used to render shared overlay variants."""
-
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    event: asyncio.Event = field(default_factory=asyncio.Event)
-    frame: np.ndarray | None = None
-    timestamp: float = 0.0
-    sequence: int = 0
-    warnings: WarningPayload = field(default_factory=dict)
-    cone_polys: PolygonCollection = field(default_factory=list)
-    pole_polys: PolygonCollection = field(default_factory=list)
-    track_data: TrackingDetections | None = None
-
-
-@dataclass(frozen=True)
-class _OverlaySnapshot:
-    """Source frame and metadata used to render one overlay generation."""
-
-    sequence: tuple[int, int]
-    frame: np.ndarray
-    warnings: WarningPayload = field(default_factory=dict)
-    cone_polys: PolygonCollection = field(default_factory=list)
-    pole_polys: PolygonCollection = field(default_factory=list)
-    track_data: TrackingDetections | None = None
-
-
-@dataclass
-class _OverlayPublisherVariant:
-    """Publishers and demand state for one overlay media rendition."""
-
-    media_path: str
-    rendition: str
-    publishers: dict[str, MediaStreamPublisher] = field(default_factory=dict)
-    ready_started_at: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -194,58 +136,11 @@ class _MediaDemandCache:
             return set(self._overlay_languages.get(media_path, set()))
 
 
-class _PreviewPublisherKwargs(TypedDict):
-    """Media publisher settings for a lower-bandwidth preview rendition."""
-
-    fps: float
-    width: int
-    height: int
-    bitrate: str
-    maxrate: str
-    bufsize: str
-
-
-def _preview_publisher_kwargs() -> _PreviewPublisherKwargs:
-    """Return the bounded encoder budget used by multi-camera walls."""
-    return {
-        'fps': max(
-            1.0,
-            float(
-                os.getenv(
-                    'MEDIA_PREVIEW_FPS',
-                    os.getenv('MEDIA_PUBLISH_FPS', '15'),
-                ),
-            ),
-        ),
-        'width': max(2, int(os.getenv('MEDIA_PREVIEW_WIDTH', '640'))),
-        'height': max(2, int(os.getenv('MEDIA_PREVIEW_HEIGHT', '360'))),
-        'bitrate': os.getenv('MEDIA_PREVIEW_BITRATE', '500k'),
-        'maxrate': os.getenv('MEDIA_PREVIEW_MAXRATE', '700k'),
-        'bufsize': os.getenv('MEDIA_PREVIEW_BUFSIZE', '1400k'),
-    }
-
-
-def _media_publisher(
-    publish_url: str,
-    *,
-    rendition: str,
-) -> MediaStreamPublisher:
-    """Create a publisher for exactly one detail or preview rendition."""
-    if rendition == 'preview':
-        return MediaStreamPublisher(
-            publish_url=publish_url,
-            **_preview_publisher_kwargs(),
-        )
-    if rendition == 'detail':
-        return MediaStreamPublisher(publish_url=publish_url)
-    raise ValueError(f'unsupported media rendition: {rendition}')
-
-
 async def delete_stream_live_metadata(cfg: StreamConfig) -> None:
     """Delete compact live metadata for one configured camera."""
     redis_manager = RedisManager()
     await redis_manager.delete(
-        _stream_metadata_key(cfg['site'], cfg['stream_name']),
+        build_metadata_key(cfg['site'], cfg['stream_name']),
     )
 
 
@@ -272,10 +167,9 @@ async def _run_single_stream(
 ) -> None:
     """Run one camera through the shared-worker streaming pipeline."""
     if not cfg.get('recognition_enabled', True):
-        print(
+        logger.info(
             f"[{cfg['site']}:{cfg['stream_name']}] Recognition disabled; "
             'skipping stream processor startup',
-            flush=True,
         )
         return
     if yolo_request_queue is None or yolo_result_queue is None:
@@ -285,7 +179,6 @@ async def _run_single_stream(
     model_key = cfg['model_key']
     site = cfg['site']
     stream_name = cfg['stream_name']
-    metadata_key = _stream_metadata_key(site, stream_name)
     media_path = build_media_path(site, stream_name)
     streaming_capture = StreamCapture(stream_url=video_url)
     yolo_detector = YoloDetector(
@@ -301,41 +194,42 @@ async def _run_single_stream(
         ),
     )
     _validate_server_model_key(model_key)
-    print(
+    logger.info(
         f'[{site}:{stream_name}] Streaming output mode: media_server',
-        flush=True,
     )
-    print(
+    logger.info(
         f'[{site}:{stream_name}] YOLO detection worker enabled',
-        flush=True,
     )
 
     media_publish_base = (
         os.getenv('MEDIA_PUBLISH_RTSP_BASE_URL') or 'rtsp://media-server:8554'
     ).rstrip('/')
-    publish_clean_stream = _env_enabled('MEDIA_PUBLISH_CLEAN_STREAM', True)
-    publish_annotated_stream = _env_enabled(
+    publish_clean_stream = env_enabled('MEDIA_PUBLISH_CLEAN_STREAM', True)
+    publish_annotated_stream = env_enabled(
         'MEDIA_PUBLISH_ANNOTATED_STREAM',
         True,
     )
-    restream_clean_source = _env_enabled(
+    restream_clean_source = env_enabled(
         'MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM',
         True,
     )
     if publish_clean_stream:
-        print(
+        logger.info(
             f'[{site}:{stream_name}] Clean media stream is on-demand; '
             f'path {media_path}',
-            flush=True,
         )
     if publish_annotated_stream:
-        print(
+        logger.info(
             f'[{site}:{stream_name}] Overlay media streams are on-demand; '
             f'base path {media_path}',
-            flush=True,
         )
 
     redis_manager = RedisManager()
+    metadata_key = build_metadata_key(
+        site,
+        stream_name,
+        await get_metadata_site_generation(redis_manager.redis, site),
+    )
     try:
         await _run_decoupled_media_server_loop(
             streaming_capture=streaming_capture,
@@ -364,7 +258,7 @@ async def _run_single_stream(
         try:
             await redis_manager.delete(metadata_key)
         except Exception as exc:
-            print(
+            logger.info(
                 f'[WARN] Failed to delete redis key {metadata_key}: {exc}',
             )
 
@@ -486,18 +380,10 @@ async def _run_decoupled_media_server_loop(
                 ),
             ),
         )
-    done, pending = await asyncio.wait(
-        tasks,
-        return_when=asyncio.FIRST_EXCEPTION,
-    )
-    stop_event.set()
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
-    for task in done:
-        exception = task.exception()
-        if exception is not None:
-            raise exception
+    try:
+        await cancel_on_first_failure(cast(set[asyncio.Task[object]], tasks))
+    finally:
+        stop_event.set()
 
 
 async def _capture_latest_frames(
@@ -611,10 +497,9 @@ async def _detect_latest_frames(
                 frame,
             )
         except Exception as exc:
-            print(
+            logger.info(
                 f'[{site}:{stream_name}] Detection error, keeping stream '
                 f'alive: {exc}',
-                flush=True,
             )
             await asyncio.sleep(1.0)
             continue
@@ -648,10 +533,9 @@ async def _detect_latest_frames(
                 warning_event_throttle_seconds=warning_event_throttle_seconds,
             )
         except Exception as exc:
-            print(
+            logger.info(
                 f'[{site}:{stream_name}] Metadata/notification error, keeping '
                 f'stream alive: {exc}',
-                flush=True,
             )
             await asyncio.sleep(0.2)
 
@@ -701,7 +585,7 @@ async def _record_detection_result(
     should_send_violation = (
         is_working
         and bool(warnings)
-        and Utils.should_notify(
+        and should_notify(
             current_timestamp,
             last_notification_time,
         )
@@ -749,7 +633,7 @@ async def _send_violation_and_notification(
     current_timestamp: int,
 ) -> int:
     """Persist one violation and notify subscribed site users."""
-    frame_bytes = Utils.encode_frame(frame, 'jpeg', 85)
+    frame_bytes = encode_frame(frame, 'jpeg', 85)
     violation_id_str = await violation_sender.send_violation(
         site=site,
         stream_name=stream_name,
@@ -794,7 +678,7 @@ def _overlay_publisher_variants(
 def _overlay_variant_fps(variants: list[_OverlayPublisherVariant]) -> float:
     """Return one source update rate sufficient for every rendition."""
     rates = [
-        _preview_publisher_kwargs()['fps']
+        preview_publisher_options()['fps']
         if variant.rendition == 'preview'
         else max(1.0, float(os.getenv('MEDIA_PUBLISH_FPS', '15.0')))
         for variant in variants
@@ -886,10 +770,9 @@ async def _publish_requested_overlay_variants(
                                 rendition=variant.rendition,
                             )
             except Exception as exc:
-                print(
+                logger.info(
                     f'[{site}:{stream_name}] Overlay publish loop error: '
                     f'{exc}',
-                    flush=True,
                 )
                 await asyncio.sleep(0.5)
             await asyncio.sleep(frame_interval)
@@ -940,17 +823,11 @@ async def _requested_overlay_languages(
     media_path: str,
 ) -> set[str]:
     """Read demand with bounded ``MGET`` instead of scanning Redis keys."""
-    allowed_languages = _allowed_overlay_languages()
-    demand_keys = [
-        build_overlay_demand_key(media_path, language)
-        for language in allowed_languages
-    ]
-    values = await redis_manager.redis.mget(demand_keys)
-    return {
-        language
-        for language, value in zip(allowed_languages, values, strict=True)
-        if value is not None
-    }
+    return await active_overlay_languages(
+        redis_manager.redis,
+        media_path,
+        _allowed_overlay_languages(),
+    )
 
 
 async def _publish_overlay_language_snapshot(
@@ -969,15 +846,14 @@ async def _publish_overlay_language_snapshot(
     overlay_path = build_annotated_media_path(media_path, label_language)
     publisher = overlay_media_publishers.get(label_language)
     if publisher is None:
-        publisher = _media_publisher(
+        publisher = create_media_publisher(
             f'{media_publish_base}/{overlay_path}',
             rendition=rendition,
         )
         overlay_media_publishers[label_language] = publisher
-        print(
+        logger.info(
             f'[{site}:{stream_name}] Starting shared overlay stream '
             f'{label_language}: {media_publish_base}/{overlay_path}',
-            flush=True,
         )
 
     await publisher.publish(publish_frame)
@@ -1121,10 +997,17 @@ async def _publish_requested_clean_frames(
     demand_cache: _MediaDemandCache | None = None,
     rendition: str = 'detail',
 ) -> None:
-    """Publish one clean detail or preview rendition while requested."""
+    """Publish one clean detail or preview rendition while requested.
+
+    A capture reconnect intentionally invalidates ``latest_frame`` so stale
+    images are never analysed or annotated. An already-running clean encoder
+    is retained during that interval: its latest-frame writer repeats the last
+    valid image at a constant rate, preserving the RTSP and HLS session until
+    fresh source video arrives.
+    """
     demand_cache = demand_cache or _MediaDemandCache()
     fps = (
-        _preview_publisher_kwargs()['fps']
+        preview_publisher_options()['fps']
         if rendition == 'preview'
         else max(1.0, float(os.getenv('MEDIA_PUBLISH_FPS', '15.0')))
     )
@@ -1164,9 +1047,6 @@ async def _publish_requested_clean_frames(
                 async with latest_frame.lock:
                     frame = latest_frame.frame
                 if frame is None:
-                    if clean_publisher is not None:
-                        await clean_publisher.close()
-                        clean_publisher = None
                     await asyncio.sleep(frame_interval)
                     continue
                 clean_publisher = _ensure_clean_publisher(
@@ -1178,10 +1058,9 @@ async def _publish_requested_clean_frames(
                 )
                 await clean_publisher.publish(frame)
             except Exception as exc:
-                print(
+                logger.info(
                     f'[{site}:{stream_name}] Clean media publish error, '
                     f'keeping stream alive: {exc}',
-                    flush=True,
                 )
                 await asyncio.sleep(0.5)
             await asyncio.sleep(frame_interval)
@@ -1213,10 +1092,9 @@ async def _ensure_clean_restreamer(
     if source_reconnect_event is not None and source_reconnect_event.is_set():
         source_reconnect_event.clear()
         if clean_restreamer is not None:
-            print(
+            logger.info(
                 f'[{site}:{stream_name}] Restarting clean source restream '
                 'after capture-watchdog reconnect',
-                flush=True,
             )
             await clean_restreamer.restart()
     if clean_restreamer is not None:
@@ -1225,10 +1103,9 @@ async def _ensure_clean_restreamer(
         source_url=source_url,
         publish_url=publish_url,
     )
-    print(
+    logger.info(
         f'[{site}:{stream_name}] Starting clean source restream: '
         f'{publish_url}',
-        flush=True,
     )
     await restreamer.start()
     return restreamer
@@ -1244,11 +1121,10 @@ def _ensure_clean_publisher(
     """Create a requested clean-frame publisher once per media path."""
     if clean_publisher is not None:
         return clean_publisher
-    publisher = _media_publisher(publish_url, rendition=rendition)
-    print(
+    publisher = create_media_publisher(publish_url, rendition=rendition)
+    logger.info(
         f'[{site}:{stream_name}] Starting {rendition} clean stream: '
         f'{publish_url}',
-        flush=True,
     )
     return publisher
 
@@ -1261,11 +1137,6 @@ async def _clean_stream_requested(
     return bool(
         await redis_manager.redis.exists(build_clean_demand_key(media_path)),
     )
-
-
-def _stream_metadata_key(site: str, stream_name: str) -> str:
-    """Build the compact live metadata stream key."""
-    return build_metadata_key(site, stream_name)
 
 
 def _warning_event_throttle_seconds() -> int:
@@ -1316,12 +1187,11 @@ async def _store_media_server_viewer_data(
         if isinstance(warnings, Mapping)
         else type(warnings).__name__
     )
-    print(
+    logger.info(
         (
             f'[Warning-Metadata] XADD {metadata_key} id={event_id} '
             f'has_warning=1 warnings={warning_keys}'
         ),
-        flush=True,
     )
 
 

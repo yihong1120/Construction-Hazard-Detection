@@ -31,23 +31,19 @@ class TestSearchUtils(unittest.TestCase):
         )
 
     def test_expand_synonyms(self) -> None:
-        """Test the synonym expansion functionality.
-
-        The tokens extracted from "有人沒戴安全帽和未穿背心" should be expanded to include
-        synonyms such as "hardhat", "no_hardhat", "safety_vest",
-        "no_safety_vest", and "vest". Original tokens should also be preserved.
+        """Test expand synonyms.
         """
         user_input = '有人沒戴安全帽和未穿背心'
         expanded = self.su.expand_synonyms(user_input)
 
-        # Check if "人" expands to "person".
+# Verify that the Chinese label "人" expands to "person".
         self.assertIn(
             'person',
             expanded,
             "Synonym expansion for '人' is missing 'person'.",
         )
 
-        # Check if "安全帽" expands to "hardhat" and "no_hardhat".
+# Verify that the Chinese label "安全帽" expands to hardhat-related terms.
         self.assertIn(
             'hardhat',
             expanded,
@@ -64,7 +60,7 @@ class TestSearchUtils(unittest.TestCase):
             "Original token '安全帽' is missing in the expanded list.",
         )
 
-        # Check if "背心" expands to "safety_vest", "no_safety_vest", and "vest".
+# Verify that the Chinese label "背心" expands to vest-related terms.
         self.assertIn(
             'safety_vest',
             expanded,
@@ -95,10 +91,7 @@ class TestSearchUtils(unittest.TestCase):
             )
 
     def test_build_elasticsearch_query(self) -> None:
-        """Test the construction of Elasticsearch wildcard queries.
-
-        The expanded synonyms of "有人沒戴安全帽和未穿背心" should generate wildcard
-        conditions for both 'stream_name' and 'warnings_json' fields.
+        """Test build elasticsearch query.
         """
         user_input = '有人沒戴安全帽和未穿背心'
         expanded = self.su.expand_synonyms(user_input)

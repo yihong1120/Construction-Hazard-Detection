@@ -37,10 +37,20 @@ class AsyncFrameGenerator:
         """Support __init__."""
         self.yielded = False
 
-    def __aiter__(self):
+    def __aiter__(self) -> Any:
+        """Perform aiter.
+
+        Returns:
+            The callable result.
+        """
         return self
 
-    async def __anext__(self):
+    async def __anext__(self) -> Any:
+        """Perform anext.
+
+        Returns:
+            The callable result.
+        """
         if not self.yielded:
             self.yielded = True
             # Return a mock frame with shape attribute and timestamp
@@ -54,7 +64,7 @@ class AsyncFrameGenerator:
 class MockCursor:
     """Tests for MockCursor."""
 
-    async def execute(self, *args, **kwargs) -> None:
+    async def execute(self, *args: Any, **kwargs: Any) -> None:
         """Support execute."""
         pass
 
@@ -62,17 +72,32 @@ class MockCursor:
         """Support fetchall."""
         return []
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Any:
+        """Perform aenter.
+
+        Returns:
+            The callable result.
+        """
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> Any:
+        """Perform aexit.
+
+        Args:
+            exc_type: Value used by this callable.
+            exc: Value used by this callable.
+            tb: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         pass
 
 
 class MockConnection:
     """Tests for MockConnection."""
 
-    async def fetch(self, *args, **kwargs) -> Any:
+    async def fetch(self, *args: Any, **kwargs: Any) -> Any:
         """Support fetch."""
         return []
 
@@ -80,20 +105,50 @@ class MockConnection:
         """Support cursor."""
         return MockCursor()
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Any:
+        """Perform aenter.
+
+        Returns:
+            The callable result.
+        """
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> Any:
+        """Perform aexit.
+
+        Args:
+            exc_type: Value used by this callable.
+            exc: Value used by this callable.
+            tb: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         pass
 
 
 class MockAcquire:
     """Tests for MockAcquire."""
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Any:
+        """Perform aenter.
+
+        Returns:
+            The callable result.
+        """
         return MockConnection()
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> Any:
+        """Perform aexit.
+
+        Args:
+            exc_type: Value used by this callable.
+            exc: Value used by this callable.
+            tb: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         pass
 
 
@@ -468,7 +523,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             await processor.delete_stream_live_metadata(self.dummy_cfg)
 
         redis_manager.delete.assert_awaited_once_with(
-            processor._stream_metadata_key('SiteA', 'StreamOne'),
+            processor.build_metadata_key('SiteA', 'StreamOne'),
         )
 
     def test_process_single_stream_loads_env_and_runs_async_processor(
@@ -510,6 +565,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         streaming_capture = AsyncMock()
         yolo_detector = AsyncMock()
         redis_manager = MagicMock()
+        redis_manager.redis.get = AsyncMock(return_value=None)
         redis_manager.delete = AsyncMock(side_effect=RuntimeError('gone'))
 
         with (
@@ -613,7 +669,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'src.stream_processor.Utils.should_notify',
+                'src.stream_processor.should_notify',
                 return_value=True,
             ),
             patch(
@@ -660,7 +716,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'src.stream_processor.Utils.should_notify',
+                'src.stream_processor.should_notify',
                 return_value=False,
             ),
             patch(
@@ -763,19 +819,19 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
     async def test_decoupled_loop_starts_all_requested_tasks(self) -> Any:
         """Exercise this test."""
-        async def stop_capture(**_kwargs) -> Any:
+        async def stop_capture(**_kwargs: Any) -> Any:
             """Support stop_capture."""
             return None
 
-        async def stop_detection(**_kwargs) -> Any:
+        async def stop_detection(**_kwargs: Any) -> Any:
             """Support stop_detection."""
             return None
 
-        async def stop_overlay(**_kwargs) -> Any:
+        async def stop_overlay(**_kwargs: Any) -> Any:
             """Support stop_overlay."""
             return None
 
-        async def stop_clean(**_kwargs) -> Any:
+        async def stop_clean(**_kwargs: Any) -> Any:
             """Support stop_clean."""
             return None
 
@@ -825,11 +881,11 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
     async def test_decoupled_loop_raises_child_task_exception(self) -> None:
         """Exercise this test."""
 
-        async def fail_capture(**_kwargs) -> None:
+        async def fail_capture(**_kwargs: Any) -> None:
             """Support fail_capture."""
             raise RuntimeError('capture failed')
 
-        async def stop_detection(**_kwargs) -> None:
+        async def stop_detection(**_kwargs: Any) -> None:
             """Support stop_detection."""
             await asyncio.Event().wait()
 
@@ -1030,14 +1086,14 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         redis_manager.redis.xadd = AsyncMock()
         stop_event = asyncio.Event()
 
-        async def send_and_stop(**_kwargs) -> Any:
+        async def send_and_stop(**_kwargs: Any) -> Any:
             """Support send_and_stop."""
             stop_event.set()
             return 1_640_995_200
 
         with (
             patch(
-                'src.stream_processor.Utils.should_notify',
+                'src.stream_processor.should_notify',
                 return_value=True,
             ),
             patch(
@@ -1148,7 +1204,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         warnings = {'warning_no_hardhat': {'count': 1}}
 
         with patch(
-            'src.stream_processor.Utils.encode_frame',
+            'src.stream_processor.encode_frame',
             return_value=b'jpeg',
         ):
             result = await processor._send_violation_and_notification(
@@ -1183,7 +1239,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         violation_sender.send_violation.return_value = 'bad-id'
 
         with patch(
-            'src.stream_processor.Utils.encode_frame',
+            'src.stream_processor.encode_frame',
             return_value=b'jpeg',
         ):
             await processor._send_violation_and_notification(
@@ -1566,7 +1622,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 side_effect=sleep_once,
             ),
             patch(
-                'src.stream_processor.MediaStreamPublisher',
+                'src.stream_processor.create_media_publisher',
                 return_value=publisher,
             ) as publisher_factory,
         ):
@@ -1612,7 +1668,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 side_effect=sleep_once,
             ),
             patch(
-                'src.stream_processor.MediaStreamPublisher',
+                'src.stream_processor.create_media_publisher',
                 return_value=publisher,
             ),
         ):
@@ -1630,6 +1686,62 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         publisher.publish.assert_awaited_once()
 
+    async def test_clean_publisher_survives_capture_reconnect(self) -> None:
+        """A source outage keeps the current HLS publisher alive."""
+        latest_frame = processor._LatestFrameState()
+        first_frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        resumed_frame = np.ones((4, 4, 3), dtype=np.uint8)
+        async with latest_frame.lock:
+            latest_frame.frame = first_frame
+        stop_event = asyncio.Event()
+        publisher = AsyncMock()
+        redis_manager = MagicMock()
+        redis_manager.redis.exists = AsyncMock(return_value=1)
+        sleep_calls = 0
+
+        async def advance_capture_state(_delay: Any) -> None:
+            """Simulate a source outage followed by fresh video.
+
+            Args:
+                _delay: Requested loop delay.
+            """
+            nonlocal sleep_calls
+            sleep_calls += 1
+            async with latest_frame.lock:
+                if sleep_calls == 1:
+                    latest_frame.frame = None
+                elif sleep_calls == 2:
+                    latest_frame.frame = resumed_frame
+                elif sleep_calls == 3:
+                    stop_event.set()
+
+        with (
+            patch(
+                'src.stream_processor.asyncio.sleep',
+                side_effect=advance_capture_state,
+            ),
+            patch(
+                'src.stream_processor.create_media_publisher',
+                return_value=publisher,
+            ) as publisher_factory,
+        ):
+            await processor._publish_requested_clean_frames(
+                latest_frame=latest_frame,
+                redis_manager=redis_manager,
+                media_publish_base='rtsp://media-server:8554',
+                media_path='hazard_site_cam',
+                site='SiteA',
+                stream_name='Cam1',
+                source_url='rtsp://source',
+                use_source_restreamer=False,
+                stop_event=stop_event,
+                demand_cache=processor._MediaDemandCache(refresh_seconds=0),
+            )
+
+        publisher_factory.assert_called_once()
+        self.assertEqual(publisher.publish.await_count, 2)
+        publisher.close.assert_awaited_once()
+
     def test_media_publisher_presets_and_invalid_rendition(self) -> None:
         """Detail and preview renditions use their intended encoder budgets."""
         with patch.dict(
@@ -1644,7 +1756,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             },
         ):
             self.assertEqual(
-                processor._preview_publisher_kwargs(),
+                processor.preview_publisher_options(),
                 {
                     'fps': 12.0,
                     'width': 800,
@@ -1654,17 +1766,17 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                     'bufsize': '1600k',
                 },
             )
-            with patch(
-                'src.stream_processor.MediaStreamPublisher',
-            ) as publisher_factory:
-                detail = processor._media_publisher(
-                    'rtsp://media/detail',
-                    rendition='detail',
-                )
-                preview = processor._media_publisher(
-                    'rtsp://media/preview',
-                    rendition='preview',
-                )
+            publisher_factory = MagicMock()
+            detail = processor.create_media_publisher(
+                'rtsp://media/detail',
+                rendition='detail',
+                publisher_type=publisher_factory,
+            )
+            preview = processor.create_media_publisher(
+                'rtsp://media/preview',
+                rendition='preview',
+                publisher_type=publisher_factory,
+            )
 
         self.assertIs(detail, publisher_factory.return_value)
         self.assertIs(preview, publisher_factory.return_value)
@@ -1685,7 +1797,9 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
             },
         )
         with self.assertRaisesRegex(ValueError, 'unsupported media rendition'):
-            processor._media_publisher('rtsp://media/unknown', rendition='raw')
+            processor.create_media_publisher(
+                'rtsp://media/unknown', rendition='raw',
+            )
 
     def test_media_timing_configuration_falls_back_on_invalid_values(
         self,
@@ -1717,6 +1831,11 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         sleep_calls = 0
 
         async def stop_after_third_sleep(_delay: float) -> None:
+            """Perform stop after third sleep.
+
+            Args:
+                _delay: Value used by this callable.
+            """
             nonlocal sleep_calls
             sleep_calls += 1
             if sleep_calls == 3:
@@ -1765,6 +1884,11 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         sleep_calls = 0
 
         async def stop_after_third_sleep(_delay: float) -> None:
+            """Perform stop after third sleep.
+
+            Args:
+                _delay: Value used by this callable.
+            """
             nonlocal sleep_calls
             sleep_calls += 1
             if sleep_calls == 3:
@@ -1772,7 +1896,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'src.stream_processor.MediaStreamPublisher',
+                'src.stream_processor.create_media_publisher',
                 side_effect=[first_publisher, second_publisher],
             ),
             patch(
@@ -2605,10 +2729,12 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # Should be called twice (once with exception, once to stop)
         self.assertEqual(mock_reload.call_count, 2)
 
+    @patch('main.MainApp._ensure_config_listener', new_callable=AsyncMock)
     @patch('main.MainApp.reload_configurations')
     async def test_poll_and_reload_resets_pool_on_timeout(
         self,
         mock_reload: Any,
+        _mock_listener: Any,
     ) -> None:
         """Test that DB pool is reset after a reload timeout."""
         call_count = 0
@@ -2864,7 +2990,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         # simulate user interruption
         join_call_count = 0
 
-        def join_side_effect(*args, **kwargs) -> Any:
+        def join_side_effect(*args: Any, **kwargs: Any) -> Any:
             """Support join_side_effect."""
             nonlocal join_call_count
             join_call_count += 1
@@ -3082,6 +3208,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         from datetime import datetime
 
         mock_row = (
+            17,  # stream_id
             'rtsp://test.com/stream',  # video_url
             datetime(2024, 1, 1, 12, 0, 0),  # updated_at
             'model-123',  # model_key
@@ -3101,7 +3228,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         class MockConnection:
             """Tests for MockConnection."""
 
-            async def fetch(self, *args, **kwargs) -> Any:
+            async def fetch(self, *args: Any, **kwargs: Any) -> Any:
                 """Support fetch."""
                 return [mock_row]
 
@@ -3114,10 +3241,30 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 class MockAcquire:
                     """Tests for MockAcquire."""
 
-                    async def __aenter__(self):
+                    async def __aenter__(self) -> Any:
+                        """Perform aenter.
+
+                        Returns:
+                            The callable result.
+                        """
                         return MockConnection()
 
-                    async def __aexit__(self, exc_type, exc_val, exc_tb):
+                    async def __aexit__(
+                        self,
+                        exc_type: Any,
+                        exc_val: Any,
+                        exc_tb: Any,
+                    ) -> Any:
+                        """Perform aexit.
+
+                        Args:
+                            exc_type: Value used by this callable.
+                            exc_val: Value used by this callable.
+                            exc_tb: Value used by this callable.
+
+                        Returns:
+                            The callable result.
+                        """
                         return None
 
                 return MockAcquire()
@@ -3132,6 +3279,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(configs), 1)
         config = configs[0]
         self.assertEqual(config['video_url'], 'rtsp://test.com/stream')
+        self.assertEqual(config['stream_id'], 17)
         self.assertEqual(config['site'], 'TestSite')
         self.assertTrue(config['recognition_enabled'])
 
@@ -3162,7 +3310,7 @@ def test_stream_processor_media_environment_helpers() -> None:
         },
     ):
         assert processor._media_demand_cache_seconds() == 0.5
-        assert processor._env_enabled('UNSET_OVERLAY_SETTING', True) is True
+        assert processor.env_enabled('UNSET_OVERLAY_SETTING', True) is True
         variants = [
             processor._OverlayPublisherVariant('detail', 'detail'),
             processor._OverlayPublisherVariant('preview', 'preview'),
@@ -3189,6 +3337,8 @@ def test_overlay_frame_helpers_cover_fallback_and_ready_timing() -> None:
     assert ready_started_at == {'en': 1.0}
 
     async def run_case() -> None:
+        """Perform run case.
+        """
         loop = MagicMock()
         loop.time.side_effect = [10.0, 11.1]
         with (
@@ -3210,6 +3360,8 @@ def test_overlay_frame_helpers_cover_fallback_and_ready_timing() -> None:
 def test_overlay_snapshot_uses_detection_frame_when_capture_is_empty() -> None:
     """Detection output remains publishable during a brief capture handoff."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         latest_frame = processor._LatestFrameState()
         latest_detection = processor._LatestDetectionState()
         frame = np.ones((2, 2, 3), dtype=np.uint8)
@@ -3231,13 +3383,15 @@ def test_overlay_snapshot_uses_detection_frame_when_capture_is_empty() -> None:
 def test_overlay_language_snapshot_creates_publisher_and_marks_ready() -> None:
     """The first demand for a language creates and advertises its rendition."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         redis_manager = MagicMock()
         publisher = AsyncMock()
         publishers: dict[str, object] = {}
         with (
             patch.object(
                 processor,
-                '_media_publisher',
+                'create_media_publisher',
                 return_value=publisher,
             ),
             patch.object(
@@ -3267,20 +3421,40 @@ def test_overlay_publish_loop_processes_demand_then_closes_publishers(
 ) -> None:
     """Demanded overlays render once, publish, and clean up on shutdown."""
     class DemandCache:
+
+        """Provide DemandCache.
+        """
+
         async def overlay_languages(
             self,
             _redis: object,
             _path: str,
         ) -> set[str]:
+            """Perform overlay languages.
+
+            Args:
+                _redis: Value used by this callable.
+                _path: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             return {'en'}
 
     async def run_case() -> None:
+        """Perform run case.
+        """
         stop_event = asyncio.Event()
         variants = [
             processor._OverlayPublisherVariant('hazard_site_cam', 'detail'),
         ]
 
         async def stop_after_frame(_delay: float) -> None:
+            """Perform stop after frame.
+
+            Args:
+                _delay: Value used by this callable.
+            """
             stop_event.set()
 
         with (
@@ -3331,16 +3505,36 @@ def test_overlay_publish_loop_processes_demand_then_closes_publishers(
 def test_clean_restreamer_restarts_after_frozen_source_signal() -> None:
     """A freeze reconnect signal restarts the active source restreamer."""
     class DemandCache:
+
+        """Provide DemandCache.
+        """
+
         async def clean_requested(self, _redis: object, _path: str) -> bool:
+            """Perform clean requested.
+
+            Args:
+                _redis: Value used by this callable.
+                _path: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             return True
 
     async def run_case() -> None:
+        """Perform run case.
+        """
         stop_event = asyncio.Event()
         reconnect_event = asyncio.Event()
         restreamer = AsyncMock()
         sleeps = 0
 
         async def progress_loop(_delay: float) -> None:
+            """Perform progress loop.
+
+            Args:
+                _delay: Value used by this callable.
+            """
             nonlocal sleeps
             sleeps += 1
             if sleeps == 1:
@@ -3384,6 +3578,8 @@ def test_clean_restreamer_restarts_after_frozen_source_signal() -> None:
 def test_capture_reconnect_invalidates_shared_frames() -> None:
     """A source outage removes stale video and forwards a clean restart."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         reconnect_event = asyncio.Event()
         clean_reconnect_event = asyncio.Event()
         latest_frame = processor._LatestFrameState(
@@ -3427,6 +3623,8 @@ def test_capture_reconnect_invalidates_shared_frames() -> None:
 def test_detection_result_is_discarded_across_reconnect() -> None:
     """An in-flight result from the old decoder generation is never used."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         latest_frame = processor._LatestFrameState(
             frame=np.zeros((2, 2, 3), dtype=np.uint8),
             timestamp=10.0,
@@ -3439,6 +3637,14 @@ def test_detection_result_is_discarded_across_reconnect() -> None:
         async def reconnect_during_detection(
             _frame: np.ndarray,
         ) -> tuple[list[object], list[object]]:
+            """Perform reconnect during detection.
+
+            Args:
+                _frame: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             async with latest_frame.lock:
                 latest_frame.frame = None
                 latest_frame.generation += 1
@@ -3473,20 +3679,40 @@ def test_detection_result_is_discarded_across_reconnect() -> None:
 def test_overlay_publish_loop_retries_after_demand_failure() -> None:
     """A transient demand read failure is logged, delayed, and cleaned up."""
     class DemandCache:
+
+        """Provide DemandCache.
+        """
+
         async def overlay_languages(
             self,
             _redis: object,
             _path: str,
         ) -> set[str]:
+            """Perform overlay languages.
+
+            Args:
+                _redis: Value used by this callable.
+                _path: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             raise RuntimeError('redis offline')
 
     async def run_case() -> None:
+        """Perform run case.
+        """
         stop_event = asyncio.Event()
         variants = [
             processor._OverlayPublisherVariant('hazard_site_cam', 'detail'),
         ]
 
         async def stop_after_retry(_delay: float) -> None:
+            """Perform stop after retry.
+
+            Args:
+                _delay: Value used by this callable.
+            """
             stop_event.set()
 
         with (
@@ -3555,6 +3781,8 @@ def test_main_worker_and_environment_guard_paths() -> None:
 def test_main_config_mode_handles_no_runnable_streams() -> None:
     """A config file with no active stream still performs normal cleanup."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         app = MagicMock()
         app._can_run_stream.return_value = False
         app.cleanup_resources = AsyncMock()

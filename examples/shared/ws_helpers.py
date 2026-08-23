@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 
@@ -12,6 +13,9 @@ from examples.shared.ws_auth import SettingsLike
 from examples.shared.ws_auth import WS_MAX_SESSION_SECONDS
 from examples.shared.ws_utils import _safe_websocket_send_json
 from examples.shared.ws_utils import _safe_websocket_send_text
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_auto_register_jti(env_var: str = 'WS_AUTO_REGISTER_JTI') -> bool:
@@ -69,11 +73,10 @@ async def check_and_maybe_close_on_timeout(
     if time.monotonic() - session_start < WS_MAX_SESSION_SECONDS:
         return False
 
-    print(
-        (
-            f"[{client_label}] Session timeout reached "
-            f"(>{int(WS_MAX_SESSION_SECONDS)}s), closing"
-        ),
+    logger.info(
+        'WebSocket session timeout client=%s max_seconds=%s',
+        client_label,
+        int(WS_MAX_SESSION_SECONDS),
     )
 
     payload = session_timeout_payload()
@@ -90,10 +93,8 @@ async def check_and_maybe_close_on_timeout(
             client_label,
         )
 
-    try:
-        await websocket.close(code=1000, reason='Session timeout (5 minutes)')
-    finally:
-        return True
+    await websocket.close(code=1000, reason='Session timeout (5 minutes)')
+    return True
 
 
 def log_every_n(
@@ -112,7 +113,7 @@ def log_every_n(
         n: Print frequency; set to ``0`` or a negative number to disable.
     """
     if n > 0 and count % n == 0:
-        print(f"{prefix}: Processed {count} {unit}")
+        logger.debug('%s: Processed %s %s', prefix, count, unit)
 
 
 async def authenticate_ws_or_none(

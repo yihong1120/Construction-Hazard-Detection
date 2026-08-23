@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from collections.abc import Mapping
 from typing import Final
@@ -23,17 +24,21 @@ from examples.shared.ws_utils import _is_websocket_connected
 from examples.shared.ws_utils import _safe_websocket_receive_text
 from examples.shared.ws_utils import _safe_websocket_send_json
 from examples.shared.ws_utils import _safe_websocket_send_text
+from examples.streaming_web.metadata_fanout import metadata_fanout
 from examples.streaming_web.metadata_keys import build_metadata_key
 from examples.streaming_web.metadata_keys import build_metadata_key_from_stream_id
+from examples.streaming_web.metadata_keys import get_metadata_site_generation
 from examples.streaming_web.redis_service import fetch_latest_metadata_for_key
 from examples.streaming_web.schemas import FrameOutData
 
 AUTO_REGISTER_JTI: Final[bool] = get_auto_register_jti()
 _json_compact_separators: Final[tuple[str, str]] = (',', ':')
-_metadata_poll_interval: Final[float] = 0.01
-_metadata_read_block_ms: Final[int] = 2000
+_metadata_client_tick_seconds: Final[float] = 1.0
 _metadata_heartbeat_seconds: Final[float] = 15.0
 _metadata_redis_error_interval_seconds: Final[float] = 15.0
+
+
+logger = logging.getLogger(__name__)
 
 
 def _metadata_has_warning(frame_data: FrameOutData) -> bool:
@@ -155,7 +160,6 @@ async def metadata_stream_generator(
     Yields:
         Encoded SSE events, heartbeats, and rate-limited Redis-error events.
     """
-    last_id = '$'
     last_heartbeat = asyncio.get_running_loop().time()
     last_overlay_demand_refresh = 0.0
     last_redis_error_event = float('-inf')
@@ -163,73 +167,78 @@ async def metadata_stream_generator(
     overlay_ready_sent = False
     # Tell browsers to retry conservatively before the first Redis read blocks.
     yield b'retry: 15000\n: connected\n\n'
-    while not await request.is_disconnected():
-        now = asyncio.get_running_loop().time()
-        try:
-            last_overlay_demand_refresh = (
-                await _refresh_overlay_demand_if_due(
-                    rds,
-                    overlay_demand_key,
-                    overlay_demand_ttl_seconds,
-                    overlay_demand_refresh_seconds,
-                    last_overlay_demand_refresh,
-                    now,
+    subscription = await metadata_fanout.subscribe(
+        rds,
+        redis_key,
+        fetcher=fetch_latest_metadata_for_key,
+    )
+    try:
+        while not await request.is_disconnected():
+            now = asyncio.get_running_loop().time()
+            try:
+                last_overlay_demand_refresh = (
+                    await _refresh_overlay_demand_if_due(
+                        rds,
+                        overlay_demand_key,
+                        overlay_demand_ttl_seconds,
+                        overlay_demand_refresh_seconds,
+                        last_overlay_demand_refresh,
+                        now,
+                    )
                 )
-            )
-            overlay_ready_sent, overlay_event = (
-                await _next_overlay_ready_event(
-                    rds,
-                    overlay_ready_key,
-                    overlay_ready_payload,
-                    overlay_ready_sent,
+                overlay_ready_sent, overlay_event = (
+                    await _next_overlay_ready_event(
+                        rds,
+                        overlay_ready_key,
+                        overlay_ready_payload,
+                        overlay_ready_sent,
+                    )
                 )
-            )
-            if overlay_event is not None:
-                last_heartbeat = now
-                yield overlay_event
+                if overlay_event is not None:
+                    last_heartbeat = now
+                    yield overlay_event
+                    continue
+                frame_data = await asyncio.wait_for(
+                    subscription.get(),
+                    timeout=_metadata_client_tick_seconds,
+                )
+                if isinstance(frame_data, Exception):
+                    raise frame_data
+            except asyncio.TimeoutError:
+                last_heartbeat, heartbeat = _heartbeat_event(now, last_heartbeat)
+                if heartbeat is not None:
+                    yield heartbeat
                 continue
-            frame_data = await fetch_latest_metadata_for_key(
-                rds,
+            except Exception as exc:
+                (
+                    last_redis_error_event,
+                    last_redis_error_log,
+                    last_heartbeat,
+                    event,
+                ) = _metadata_read_error_event(
+                    redis_key,
+                    exc,
+                    now,
+                    last_redis_error_event,
+                    last_redis_error_log,
+                    last_heartbeat,
+                )
+                if event is not None:
+                    yield event
+                await asyncio.sleep(1.0)
+                continue
+
+            _last_id, last_heartbeat, event = _metadata_frame_event(
+                frame_data,
                 redis_key,
-                last_id,
-                block_ms=_metadata_read_block_ms,
-            )
-        except asyncio.TimeoutError:
-            last_heartbeat, heartbeat = _heartbeat_event(now, last_heartbeat)
-            if heartbeat is not None:
-                yield heartbeat
-            await asyncio.sleep(_metadata_poll_interval)
-            continue
-        except Exception as exc:
-            (
-                last_redis_error_event,
-                last_redis_error_log,
-                last_heartbeat,
-                event,
-            ) = _metadata_read_error_event(
-                redis_key,
-                exc,
+                '',
                 now,
-                last_redis_error_event,
-                last_redis_error_log,
                 last_heartbeat,
             )
             if event is not None:
                 yield event
-            await asyncio.sleep(1.0)
-            continue
-
-        last_id, last_heartbeat, event = _metadata_frame_event(
-            frame_data,
-            redis_key,
-            last_id,
-            now,
-            last_heartbeat,
-        )
-        if event is not None:
-            yield event
-        else:
-            await asyncio.sleep(_metadata_poll_interval)
+    finally:
+        await subscription.close()
 
 
 async def _refresh_overlay_demand_if_due(
@@ -333,8 +342,8 @@ def _metadata_read_error_event(
         Updated error, log, heartbeat timestamps and an optional SSE event.
     """
     if now - last_error_log >= _metadata_redis_error_interval_seconds:
-        print(
-            f"[metadata] Redis read failed for {redis_key}: {exc}", flush=True,
+        logger.info(
+            f"[metadata] Redis read failed for {redis_key}: {exc}",
         )
         last_error_log = now
     if now - last_error_event >= _metadata_redis_error_interval_seconds:
@@ -374,9 +383,11 @@ def _metadata_frame_event(
         last_id = str(frame_data['id'])
         payload = _build_metadata_payload(frame_data)
         payload['id'] = last_id
-        print(
-            f'[SSE-Metadata] send {redis_key} id={last_id} payload={payload}',
-            flush=True,
+        logger.debug(
+            '[SSE-Metadata] send key=%s id=%s has_warning=%s',
+            redis_key,
+            last_id,
+            payload['has_warning'],
         )
         return last_id, now, _encode_sse_event(payload)
     last_heartbeat, heartbeat = _heartbeat_event(now, last_heartbeat)
@@ -403,10 +414,14 @@ async def metadata_push_loop(
         Count of successfully delivered metadata updates.
     """
     update_count = 0
-    last_id = '$'
     session_start = start_session_timer()
     receive_task: asyncio.Task[str | None] | None = asyncio.create_task(
         _safe_websocket_receive_text(websocket, f"{client_ip} ({username})"),
+    )
+    subscription = await metadata_fanout.subscribe(
+        rds,
+        redis_key,
+        fetcher=fetch_latest_metadata_for_key,
     )
 
     try:
@@ -434,14 +449,19 @@ async def metadata_push_loop(
                 )
 
             try:
-                frame_data = await fetch_latest_metadata_for_key(
-                    rds,
-                    redis_key,
-                    last_id,
-                    block_ms=_metadata_read_block_ms,
+                frame_data = await asyncio.wait_for(
+                    subscription.get(),
+                    timeout=_metadata_client_tick_seconds,
                 )
             except asyncio.TimeoutError:
-                await asyncio.sleep(_metadata_poll_interval)
+                continue
+
+            if isinstance(frame_data, Exception):
+                logger.warning(
+                    '[WebSocket-Metadata] reader failed key=%s error_type=%s',
+                    redis_key,
+                    type(frame_data).__name__,
+                )
                 continue
 
             if frame_data:
@@ -460,9 +480,8 @@ async def metadata_push_loop(
                     update_count,
                     unit='metadata updates',
                 )
-            else:
-                await asyncio.sleep(_metadata_poll_interval)
     finally:
+        await subscription.close()
         if receive_task and not receive_task.done():
             receive_task.cancel()
             try:
@@ -558,12 +577,11 @@ async def _send_metadata_websocket_frame(
         client_tag.removeprefix('[WebSocket-Metadata] '),
     ):
         return False
-    print(
-        (
-            f'[WebSocket-Metadata] send {redis_key} id={last_id} '
-            f'payload={payload}'
-        ),
-        flush=True,
+    logger.debug(
+        '[WebSocket-Metadata] send key=%s id=%s has_warning=%s',
+        redis_key,
+        last_id,
+        payload['has_warning'],
     )
     return True
 
@@ -589,7 +607,7 @@ async def handle_metadata_ws(
         redis_key_override: Optional canonical key for encoded stream routes.
     """
     client_ip = websocket.client.host if websocket.client else 'unknown'
-    print(
+    logger.info(
         (
             f"[WebSocket-Metadata] New connection from {client_ip} for "
             f"{label}/{key}"
@@ -605,7 +623,7 @@ async def handle_metadata_ws(
     )
     if not username:
         return
-    print(f"[WebSocket-Metadata] {client_ip}: Authenticated as {username}")
+    logger.info(f"[WebSocket-Metadata] {client_ip}: Authenticated as {username}")
 
     if db is not None:
         try:
@@ -619,14 +637,18 @@ async def handle_metadata_ws(
             # Redis serves the long-lived data stream after SQL authorisation.
             await db.close()
         if user_role != 'super_admin' and label not in user_site_names:
-            print(
+            logger.info(
                 f"[WebSocket-Metadata] {client_ip} ({username}): "
                 f"Access denied to label '{label}'",
             )
             await websocket.close(code=4003, reason='Access denied')
             return
 
-    redis_key = redis_key_override or build_metadata_key(label, key)
+    if redis_key_override is None:
+        generation = await get_metadata_site_generation(rds, label)
+        redis_key = build_metadata_key(label, key, generation)
+    else:
+        redis_key = redis_key_override
 
     update_count = 0
     try:
@@ -638,14 +660,14 @@ async def handle_metadata_ws(
             username,
         )
     except WebSocketDisconnect:
-        print(
+        logger.info(
             (
                 f"[WebSocket-Metadata] {client_ip} ({username}): Client "
                 f"disconnected after {update_count} metadata updates"
             ),
         )
     finally:
-        print(
+        logger.info(
             (
                 f"[WebSocket-Metadata] {client_ip} ({username}): "
                 f'Connection closed, total updates: {update_count}'
@@ -671,7 +693,12 @@ async def handle_metadata_stream_id_ws(
         settings: Authentication and session settings.
         db: Optional database session used to enforce site access.
     """
-    redis_key = build_metadata_key_from_stream_id(label, stream_id)
+    generation = await get_metadata_site_generation(rds, label)
+    redis_key = build_metadata_key_from_stream_id(
+        label,
+        stream_id,
+        generation,
+    )
     await handle_metadata_ws(
         websocket=websocket,
         label=label,

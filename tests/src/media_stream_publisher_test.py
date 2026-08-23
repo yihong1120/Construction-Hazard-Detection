@@ -150,9 +150,19 @@ class _FakeStderr:
     """Minimal asynchronous stderr reader for publisher tests."""
 
     def __init__(self, lines: list[object]) -> None:
+        """Perform init.
+
+        Args:
+            lines: Value used by this callable.
+        """
         self.lines = iter(lines)
 
     async def readline(self) -> object:
+        """Perform readline.
+
+        Returns:
+            The callable result.
+        """
         item = next(self.lines)
         if isinstance(item, Exception):
             raise item
@@ -332,7 +342,20 @@ def test_build_ffmpeg_command_contains_rawvideo_and_rtsp(
     assert 'rawvideo' in command
     assert '640x480' in command
     assert 'libx264' in command
+    assert command[command.index('-pkt_size') + 1] == '1200'
     assert command[-1] == 'rtsp://127.0.0.1:8554/out'
+
+
+def test_rtp_packet_size_is_mtu_safe(monkeypatch: Any) -> None:
+    """Invalid and unsafe payload sizes use safe RTP limits."""
+    monkeypatch.setenv('MEDIA_PUBLISH_RTP_PACKET_SIZE', 'invalid')
+    assert publisher._rtp_packet_size() == 1200
+
+    monkeypatch.setenv('MEDIA_PUBLISH_RTP_PACKET_SIZE', '9000')
+    assert publisher._rtp_packet_size() == 1400
+
+    monkeypatch.setenv('MEDIA_PUBLISH_RTP_PACKET_SIZE', '1')
+    assert publisher._rtp_packet_size() == 576
 
 
 def test_build_ffmpeg_command_uses_nvenc_options(monkeypatch: Any) -> None:
@@ -440,6 +463,11 @@ def test_stop_process_ignores_stdin_close_pipe_errors() -> None:
 def test_stop_process_cancels_stderr_tasks() -> None:
     """The publisher releases pending stderr readers while stopping."""
     async def run_case() -> tuple[_FakeTask, bool]:
+        """Perform run case.
+
+        Returns:
+            The callable result.
+        """
         stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
         no_process_task = _FakeTask()
         stream._stderr_task = no_process_task  # type: ignore[assignment]
@@ -459,16 +487,17 @@ def test_stop_process_cancels_stderr_tasks() -> None:
 
 
 def test_drain_stderr_records_ffmpeg_errors(
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """FFmpeg stderr remains drained and retains its latest useful message."""
+    caplog.set_level('INFO', logger=publisher.__name__)
     stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     process = SimpleNamespace(stderr=_FakeStderr([b'warning\n', b'\n', b'']))
 
     asyncio.run(stream._drain_stderr(process))
 
     assert stream.last_error == 'warning'
-    assert 'ffmpeg: warning' in capsys.readouterr().out
+    assert 'ffmpeg: warning' in caplog.text
 
 
 def test_drain_stderr_handles_missing_or_failing_reader() -> None:
@@ -487,6 +516,8 @@ def test_drain_stderr_handles_missing_or_failing_reader() -> None:
 def test_drain_stderr_propagates_task_cancellation() -> None:
     """Stopping a publisher does not turn cancellation into a fake error."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
         wait_for_read = asyncio.Event()
         process = SimpleNamespace(
@@ -549,7 +580,7 @@ def test_reset_after_process_exit_cancels_writer_task() -> None:
 
 def test_start_uses_environment_ffmpeg(monkeypatch: Any) -> None:
     """Exercise this test."""
-    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
         """Support fake_create_subprocess_exec."""
         calls.append(args)
         return _FakeProcess()
@@ -656,6 +687,12 @@ def test_publish_does_not_start_writer_when_first_frame_fails(
 ) -> None:
     """A failed initial stdin write leaves no orphan writer task."""
     async def fake_start(_width: int, _height: int) -> None:
+        """Perform fake start.
+
+        Args:
+            _width: Value used by this callable.
+            _height: Value used by this callable.
+        """
         stream._started = True
 
     stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
@@ -674,7 +711,16 @@ def test_start_falls_back_after_nvenc_is_marked_unavailable(
         monkeypatch: Any,
 ) -> None:
     """A previous NVENC startup error forces the next process onto x264."""
-    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
+        """Perform fake create subprocess exec.
+
+        Args:
+            *args: Value used by this callable.
+            **_kwargs: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         commands.append(args)
         return _FakeProcess()
 
@@ -703,7 +749,16 @@ def test_start_releases_reserved_nvenc_when_process_creation_fails(
         monkeypatch: Any,
 ) -> None:
     """A failed ffmpeg launch cannot leak the local NVENC reservation."""
-    async def fail_create_subprocess_exec(*_args, **_kwargs) -> Any:
+    async def fail_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> Any:
+        """Perform fail create subprocess exec.
+
+        Args:
+            *_args: Value used by this callable.
+            **_kwargs: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         raise OSError('ffmpeg unavailable')
 
     releases: list[bool] = []
@@ -790,7 +845,16 @@ def test_stderr_and_first_frame_failures_mark_publisher_unavailable() -> None:
 
 def test_start_covers_hardware_encoder_edge_cases(monkeypatch: Any) -> None:
     """VAAPI and exhausted NVENC sessions select the intended startup path."""
-    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
+        """Perform fake create subprocess exec.
+
+        Args:
+            *args: Value used by this callable.
+            **_kwargs: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         commands.append(args)
         return _FakeProcess()
 

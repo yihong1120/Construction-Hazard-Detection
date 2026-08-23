@@ -107,7 +107,6 @@ async def get_violations(
     limit: int = Query(
         20, gt=0, le=100, description='Records per page (1-100)',
     ),
-    offset: int = Query(0, ge=0, description='Starting record offset'),
     flagged: bool | None = Query(
         None,
         description='When true, return only flagged records for reviewers.',
@@ -134,7 +133,6 @@ async def get_violations(
         start_time: Optional inclusive start time.
         end_time: Optional inclusive end time.
         limit: Maximum records returned in one page.
-        offset: Offset for legacy pagination.
         flagged: Optional flag-state filter.
         review_status: Optional flagged-record review-status filter.
         cursor: Optional keyset-pagination cursor.
@@ -155,7 +153,6 @@ async def get_violations(
         start_time=start_time,
         end_time=end_time,
         limit=limit,
-        offset=offset,
         flagged=flagged,
         review_status=review_status,
         cursor=cursor,

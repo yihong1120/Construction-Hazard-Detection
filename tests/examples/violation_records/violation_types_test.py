@@ -13,7 +13,13 @@ from examples.violation_records.violation_types import (
 
 
 class TestViolationTypes(unittest.TestCase):
+
+    """Provide TestViolationTypes.
+    """
+
     def test_derives_codes_from_active_structured_warning_keys(self) -> None:
+        """Test derives codes from active structured warning keys.
+        """
         codes = violation_type_codes_from_warnings(
             '{'
             '"warning_no_hardhat": {"count": 1}, '
@@ -25,6 +31,8 @@ class TestViolationTypes(unittest.TestCase):
         self.assertEqual(codes, ['no_safety_helmet', 'near_vehicle'])
 
     def test_requires_canonical_type_code(self) -> None:
+        """Test requires canonical type code.
+        """
         self.assertIsNone(normalise_violation_type('no_helmet'))
         self.assertEqual(
             normalise_violation_type(

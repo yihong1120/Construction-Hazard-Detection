@@ -12,8 +12,8 @@ from unittest.mock import patch
 import aiohttp
 import httpx
 
+from src.auth_tokens import TokenManager
 from src.net.net_client import NetClient
-from src.utils import TokenManager
 
 
 class TestNetClient(unittest.IsolatedAsyncioTestCase):
@@ -106,12 +106,35 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         fake_client = MagicMock()
         fake_client.post = AsyncMock(return_value=fake_resp)
 
-        cm = MagicMock()
-        cm.__aenter__.return_value = fake_client
-        cm.__aexit__.return_value = False
-        with patch('httpx.AsyncClient', return_value=cm):
+        with patch.object(
+            self.client,
+            '_get_client',
+            new=AsyncMock(return_value=fake_client),
+        ):
             out = await self.client.http_post('/upload', data={'a': 1})
         self.assertEqual(out, {'ok': True})
+
+    async def test_http_post_reuses_the_pooled_client(self) -> None:
+        """Separate posts reuse one HTTP client until the caller closes it."""
+        fake_response = MagicMock()
+        fake_response.json.return_value = {'ok': True}
+        fake_response.raise_for_status.return_value = None
+        fake_client = MagicMock()
+        fake_client.is_closed = False
+        fake_client.post = AsyncMock(return_value=fake_response)
+        fake_client.aclose = AsyncMock()
+
+        with patch(
+            'src.async_http_client.httpx.AsyncClient',
+            return_value=fake_client,
+        ) as client_factory:
+            await self.client.http_post('/first', data={})
+            await self.client.http_post('/second', data={})
+            await self.client.close()
+
+        client_factory.assert_called_once()
+        self.assertEqual(fake_client.post.await_count, 2)
+        fake_client.aclose.assert_awaited_once()
 
     async def test_http_post_connect_timeout_then_success(self) -> None:
         """On timeout, wait and retry before succeeding."""
@@ -119,7 +142,7 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         fake_resp.json.return_value = {'ok': 1}
         fake_resp.raise_for_status.return_value = None
 
-        async def post_side_effect(*_a, **_k) -> Any:
+        async def post_side_effect(*_a: Any, **_k: Any) -> Any:
             """Support post_side_effect."""
             if not hasattr(post_side_effect, 'called'):
                 setattr(post_side_effect, 'called', True)
@@ -128,12 +151,12 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
 
         fake_client = MagicMock()
         fake_client.post = AsyncMock(side_effect=post_side_effect)
-        cm = MagicMock()
-        cm.__aenter__.return_value = fake_client
-        cm.__aexit__.return_value = False
-
         with (
-            patch('httpx.AsyncClient', return_value=cm),
+            patch.object(
+                self.client,
+                '_get_client',
+                new=AsyncMock(return_value=fake_client),
+            ),
             patch('asyncio.sleep', new=AsyncMock()) as slp,
         ):
             out = await self.client.http_post('/p', data={'x': 'y'})
@@ -152,7 +175,7 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         fake_resp_ok.json.return_value = {'ok': 2}
         fake_resp_ok.raise_for_status.return_value = None
 
-        async def post_side_effect(*_a, **_k) -> Any:
+        async def post_side_effect(*_a: Any, **_k: Any) -> Any:
             """Support post_side_effect."""
             if not hasattr(post_side_effect, 'done'):
                 setattr(post_side_effect, 'done', True)
@@ -161,12 +184,12 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
 
         fake_client = MagicMock()
         fake_client.post = AsyncMock(side_effect=post_side_effect)
-        cm = MagicMock()
-        cm.__aenter__.return_value = fake_client
-        cm.__aexit__.return_value = False
-
         with (
-            patch('httpx.AsyncClient', return_value=cm),
+            patch.object(
+                self.client,
+                '_get_client',
+                new=AsyncMock(return_value=fake_client),
+            ),
             patch.object(
                 self.client,
                 'auth_headers',
@@ -187,11 +210,11 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         )
         fake_client = MagicMock()
         fake_client.post = AsyncMock(side_effect=http_err)
-        cm = MagicMock()
-        cm.__aenter__.return_value = fake_client
-        cm.__aexit__.return_value = False
-
-        with patch('httpx.AsyncClient', return_value=cm):
+        with patch.object(
+            self.client,
+            '_get_client',
+            new=AsyncMock(return_value=fake_client),
+        ):
             with self.assertRaises(httpx.HTTPStatusError):
                 await self.client.http_post('/p', data={'x': 'y'})
 
@@ -203,10 +226,11 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         )
         fake_client = MagicMock()
         fake_client.post = AsyncMock(side_effect=http_err)
-        cm = MagicMock()
-        cm.__aenter__.return_value = fake_client
-        cm.__aexit__.return_value = False
-        with patch('httpx.AsyncClient', return_value=cm):
+        with patch.object(
+            self.client,
+            '_get_client',
+            new=AsyncMock(return_value=fake_client),
+        ):
             with self.assertRaises(httpx.HTTPStatusError):
                 await self.client.http_post('/p', data={'x': 'y'})
 
@@ -370,21 +394,27 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out, {'detections': [[1, 1, 2, 2, 0.9, 0]]})
         self.assertEqual(receive_json.await_count, 2)
 
-    async def test_close_closes_ws_and_session(self) -> None:
-        """Close both ws and session when open, then clear refs."""
+    async def test_close_closes_all_client_resources(self) -> None:
+        """Close WebSocket, aiohttp session, and pooled HTTP client."""
         fake_ws = MagicMock()
         type(fake_ws).closed = property(lambda _: False)
         fake_ws.close = AsyncMock()
         fake_sess = MagicMock()
         type(fake_sess).closed = property(lambda _: False)
         fake_sess.close = AsyncMock()
+        fake_http_client = MagicMock()
+        fake_http_client.is_closed = False
+        fake_http_client.aclose = AsyncMock()
         self.client._ws = fake_ws
         self.client._session = fake_sess
+        self.client._client = fake_http_client
         await self.client.close()
         fake_ws.close.assert_awaited_once()
         fake_sess.close.assert_awaited_once()
+        fake_http_client.aclose.assert_awaited_once()
         self.assertIsNone(self.client._ws)
         self.assertIsNone(self.client._session)
+        self.assertIsNone(self.client._client)
 
     async def test_open_new_session_closes_existing_and_creates(self) -> None:
         """Existing session is closed; new one is created with timeouts."""
@@ -538,11 +568,12 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         """If all POST attempts timeout, last attempt raises ConnectTimeout."""
         fake_client = MagicMock()
         fake_client.post = AsyncMock(side_effect=httpx.ConnectTimeout('t'))
-        cm = MagicMock()
-        cm.__aenter__.return_value = fake_client
-        cm.__aexit__.return_value = False
         with (
-            patch('httpx.AsyncClient', return_value=cm),
+            patch.object(
+                self.client,
+                '_get_client',
+                new=AsyncMock(return_value=fake_client),
+            ),
             patch('asyncio.sleep', new=AsyncMock()),
         ):
             with self.assertRaises(httpx.ConnectTimeout):
@@ -581,14 +612,18 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
     async def test_reconnect_ws_failure_returns_none(self) -> None:
         """If ensure_ws raises, _reconnect_ws returns None."""
         with (
-            patch.object(self.client, 'close', new=AsyncMock()) as c,
+            patch.object(
+                self.client,
+                '_close_websocket_resources',
+                new=AsyncMock(),
+            ) as close_ws,
             patch.object(
                 self.client, 'ensure_ws',
                 new=AsyncMock(side_effect=Exception('x')),
             ),
         ):
             out = await self.client._reconnect_ws('/ws', headers=None)
-        c.assert_awaited_once()
+        close_ws.assert_awaited_once()
         self.assertIsNone(out)
 
     async def test_send_ws_bytes_success_and_failure(self) -> None:
@@ -619,10 +654,14 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         c.assert_not_awaited()
 
     async def test_reconnect_ws_success(self) -> None:
-        """_reconnect_ws closes then re-establishes the connection."""
+        """_reconnect_ws resets WebSocket state but retains the HTTP pool."""
         ws_new = MagicMock()
         with (
-            patch.object(self.client, 'close', new=AsyncMock()) as c,
+            patch.object(
+                self.client,
+                '_close_websocket_resources',
+                new=AsyncMock(),
+            ) as close_ws,
             patch.object(
                 self.client, 'ensure_ws',
                 new=AsyncMock(return_value=ws_new),
@@ -630,7 +669,7 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
         ):
             out = await self.client._reconnect_ws('/ws', headers={'X': '1'})
         self.assertIs(out, ws_new)
-        c.assert_awaited_once()
+        close_ws.assert_awaited_once()
 
     async def test_connect_with_retries_exhausted_raises(self) -> None:
         """Exhausted attempts should raise ConnectionError."""

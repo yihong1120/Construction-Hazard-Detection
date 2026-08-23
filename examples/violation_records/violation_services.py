@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import binascii
 import json
@@ -12,7 +11,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from typing import Final
-from typing import Literal
 from typing import Protocol
 from urllib.parse import urlencode
 
@@ -20,17 +18,16 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi import UploadFile
 from fastapi.responses import FileResponse
-from PIL import Image
-from PIL import ImageFile
-from PIL import UnidentifiedImageError
 from sqlalchemy import and_
+from sqlalchemy import case
 from sqlalchemy import cast
 from sqlalchemy import func
 from sqlalchemy import Integer
+from sqlalchemy import literal
 from sqlalchemy import or_
 from sqlalchemy import select
 from sqlalchemy import String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -43,6 +40,15 @@ from examples.auth.models import Violation
 from examples.auth.models import ViolationFeedback
 from examples.auth.models import ViolationReviewAuditLog
 from examples.shared.filename_utils import sanitize_filename
+from examples.violation_records.analytics import _analytics_bucket_expr
+from examples.violation_records.analytics import _analytics_hour_expr
+from examples.violation_records.analytics import _canonical_violation_type
+from examples.violation_records.analytics import _empty_analytics_response
+from examples.violation_records.analytics import _type_condition
+from examples.violation_records.analytics import _validate_analytics_range
+from examples.violation_records.analytics import AnalyticsBucket
+from examples.violation_records.media_service import ensure_thumbnail
+from examples.violation_records.media_service import image_size_for_violation
 from examples.violation_records.path_utils import _determine_media_type
 from examples.violation_records.path_utils import _normalize_safe_rel_path
 from examples.violation_records.path_utils import _resolve_and_authorize
@@ -80,7 +86,6 @@ from examples.violation_records.violation_manager import (
     ViolationImageReadError,
 )
 from examples.violation_records.violation_manager import ViolationManager
-from examples.violation_records.violation_types import normalise_violation_type
 from examples.violation_records.violation_types import parse_warning_payload
 from examples.violation_records.violation_types import (
     VIOLATION_TYPE_BY_CODE,
@@ -88,12 +93,6 @@ from examples.violation_records.violation_types import (
 from examples.violation_records.violation_types import (
     VIOLATION_TYPE_DEFINITIONS,
 )
-
-# Module-level aliases used by tests for patching
-get_cached_effective_site_names = _user_service.get_cached_effective_site_names
-load_user_with_effective_sites = _user_service.load_user_with_effective_sites
-get_user_effective_sites = _user_service.load_user_with_effective_sites
-get_user_sites_cached = _user_service.get_cached_effective_site_names
 
 # Instantiate a global ViolationManager for handling image saving
 # and record creation.
@@ -115,7 +114,7 @@ _latest_feedback_note = (
     .label('feedback_note')
 )
 
-_violation_columns = (
+_violation_detail_columns = (
     Violation.id,
     Violation.site,
     Violation.stream_name,
@@ -134,11 +133,11 @@ _violation_columns = (
     Violation.review_note,
     Violation.reviewed_by,
     Violation.reviewed_at,
-    _latest_feedback_note,
 )
-_violation_column_count = len(_violation_columns)
+_violation_list_columns = (*_violation_detail_columns, _latest_feedback_note)
 
-AnalyticsBucket = Literal['day', 'hour', 'week']
+
+logger = logging.getLogger(__name__)
 
 
 class _StreamScopeUser(Protocol):
@@ -153,27 +152,10 @@ class _StreamScopeUser(Protocol):
     group_id: int | None
 
 
-MAX_ANALYTICS_RANGE_YEARS = 5
 ALLOWED_VIOLATION_ANALYTICS_ROLES: Final[frozenset[str]] = frozenset(
     {
         'admin',
         'super_admin',
-    },
-)
-THUMBNAIL_DIR_NAME = '_thumbnails'
-THUMBNAIL_MAX_EDGE = 360
-THUMBNAIL_QUALITY = 78
-THUMBNAIL_HEADER_SCAN_BYTES = 64 * 1024
-_ISOBMFF_IMAGE_BRANDS: Final[frozenset[bytes]] = frozenset(
-    {
-        b'avif',
-        b'avis',
-        b'heic',
-        b'heix',
-        b'hevc',
-        b'hevx',
-        b'mif1',
-        b'msf1',
     },
 )
 
@@ -550,6 +532,9 @@ def _violation_to_item(
             feedback_note=getattr(row, 'feedback_note', None),
         )
 
+    values = tuple(row)
+    if len(values) == len(_violation_detail_columns):
+        values = (*values, None)
     (
         violation_id,
         site,
@@ -570,7 +555,7 @@ def _violation_to_item(
         reviewed_by,
         reviewed_at,
         feedback_note,
-    ) = row
+    ) = values
     detections = _feedback_detections_from_json(detections_json)
     flagged_value = bool(is_flagged)
     image_url, thumbnail_url = _image_urls(image_path, request)
@@ -761,35 +746,6 @@ async def _load_violation_feedbacks(
     return [_feedback_to_item(feedback) for feedback in result.scalars().all()]
 
 
-def _split_violation_row_total(row: Any) -> tuple[Any, int | None]:
-    """Split an optional window-count column from a selected row.
-
-    Args:
-        row: ORM or tuple-like selected violation row.
-
-    Returns:
-        Violation columns and optional total count.
-    """
-    mapping = getattr(row, '_mapping', None)
-    if mapping is not None and 'total_count' in mapping:
-        try:
-            row_length = len(row)
-        except TypeError:
-            return row, int(mapping['total_count'])
-        if row_length == _violation_column_count + 1:
-            return row[:_violation_column_count], int(mapping['total_count'])
-        return row, int(mapping['total_count'])
-
-    try:
-        row_length = len(row)
-    except TypeError:
-        return row, None
-
-    if row_length == _violation_column_count + 1:
-        return row[:_violation_column_count], int(row[-1])
-    return row, None
-
-
 def _scalar_value(value: Any) -> Any:
     """Return a scalar result value, unwrapping named SQL values.
 
@@ -835,7 +791,10 @@ async def _authorize_violation_media_access(
         raise HTTPException(status_code=404, detail='Image not found')
 
     media_type = _determine_media_type(full_path)
-    site_names = await get_user_sites_cached(username, db)
+    site_names = await _user_service.get_cached_effective_site_names(
+        username,
+        db,
+    )
     if not site_names:
         raise HTTPException(status_code=403, detail='Access denied')
 
@@ -851,123 +810,6 @@ async def _authorize_violation_media_access(
         raise HTTPException(status_code=403, detail='Access denied')
 
     return full_path, media_type
-
-
-def _thumbnail_cache_path(full_path: Path) -> Path:
-    """Return the deterministic cached thumbnail path for an image.
-
-    Args:
-        full_path: Authorised absolute original image path.
-
-    Returns:
-        JPEG thumbnail path below the dedicated cache directory.
-    """
-    base_dir = Path(STATIC_DIR).resolve()
-    rel_path = full_path.relative_to(base_dir)
-    return (base_dir / THUMBNAIL_DIR_NAME / rel_path).with_suffix('.jpg')
-
-
-def _has_recognized_image_header(source_path: Path) -> bool:
-    """Recognise image headers before using Pillow's lazy opener.
-
-    Args:
-        source_path: Original evidence image path.
-
-    Returns:
-        ``True`` when the header identifies a supported image container.
-    """
-    with source_path.open('rb') as source_file:
-        header = source_file.read(THUMBNAIL_HEADER_SCAN_BYTES)
-
-    parser = ImageFile.Parser()
-    parser.feed(header)
-    return parser.image is not None or (
-        len(header) >= 12
-        and header[4:8] == b'ftyp'
-        and header[8:12] in _ISOBMFF_IMAGE_BRANDS
-    )
-
-
-def _generate_thumbnail_sync(source_path: Path, thumbnail_path: Path) -> None:
-    """Generate or refresh a cached thumbnail on disk.
-
-    Args:
-        source_path: Original evidence image path.
-        thumbnail_path: JPEG cache path to create or refresh.
-
-    Raises:
-        HTTPException: If the source is not supported image content.
-    """
-    if (
-        thumbnail_path.exists()
-        and thumbnail_path.stat().st_mtime >= source_path.stat().st_mtime
-    ):
-        return
-
-    thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        if not _has_recognized_image_header(source_path):
-            raise UnidentifiedImageError(str(source_path))
-        with Image.open(source_path) as opened_image:
-            image: Image.Image = opened_image
-            image.thumbnail((THUMBNAIL_MAX_EDGE, THUMBNAIL_MAX_EDGE))
-            if image.mode not in {'RGB', 'L'}:
-                image = image.convert('RGB')
-            image.save(
-                thumbnail_path,
-                format='JPEG',
-                quality=THUMBNAIL_QUALITY,
-                optimize=True,
-            )
-    except (ModuleNotFoundError, OSError) as exc:
-        raise HTTPException(
-            status_code=400,
-            detail='Unsupported image content',
-        ) from exc
-
-
-async def _ensure_thumbnail(source_path: Path) -> Path:
-    """Generate a thumbnail in a worker thread and return its path.
-
-    Args:
-        source_path: Original evidence image path.
-
-    Returns:
-        Generated or current cached JPEG thumbnail path.
-    """
-    thumbnail_path = _thumbnail_cache_path(source_path)
-    await asyncio.to_thread(
-        _generate_thumbnail_sync,
-        source_path,
-        thumbnail_path,
-    )
-    return thumbnail_path
-
-
-def _image_size_for_violation(image_path: str) -> tuple[int, int] | None:
-    """Load image dimensions for a detailed violation response.
-
-    Args:
-        image_path: Stored relative evidence-image path.
-
-    Returns:
-        Image width and height, or ``None`` when unavailable.
-    """
-    try:
-        safe_rel_path = _normalize_safe_rel_path(image_path, path_cls=Path)
-        base_dir: Path = Path(STATIC_DIR).resolve()
-        full_path: Path = _resolve_and_authorize(
-            base_dir,
-            safe_rel_path,
-            '_internal',
-            path_cls=Path,
-        )
-        if not full_path.exists():
-            return None
-        with Image.open(full_path) as image:
-            return image.size
-    except Exception:
-        return None
 
 
 def _encode_violation_cursor(item: ViolationItem) -> str:
@@ -1019,214 +861,11 @@ def _decode_violation_cursor(cursor: str) -> tuple[datetime, int]:
     return detection_time, violation_id
 
 
-def _empty_analytics_response() -> ViolationAnalyticsResponse:
-    """Return the canonical empty analytics payload.
-
-    Returns:
-        Analytics response with zero summary and empty aggregate series.
-    """
-    return ViolationAnalyticsResponse(
-        summary=ViolationAnalyticsSummary(total=0, today=0),
-        trend=[],
-        by_type=[],
-        by_site=[],
-        by_hour=[],
-    )
-
-
-def _normalise_utc(value: datetime) -> datetime:
-    """Treat naive values as UTC and convert aware values to UTC.
-
-    Args:
-        value: Datetime supplied by an analytics client.
-
-    Returns:
-        Timezone-aware UTC datetime.
-    """
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _validate_analytics_range(start: datetime, end: datetime) -> tuple[
-    datetime,
-    datetime,
-]:
-    """Validate and normalise an analytics query range.
-
-    Args:
-        start: Requested inclusive range start.
-        end: Requested inclusive range end.
-
-    Returns:
-        Validated UTC start and end values.
-
-    Raises:
-        HTTPException: If the range is reversed or exceeds the maximum span.
-    """
-    start_utc = _normalise_utc(start)
-    end_utc = _normalise_utc(end)
-    if start_utc >= end_utc:
-        raise HTTPException(
-            status_code=422,
-            detail='start must be before end',
-        )
-    try:
-        latest_end = start_utc.replace(
-            year=start_utc.year + MAX_ANALYTICS_RANGE_YEARS,
-        )
-    except ValueError:
-        # February 29 has no matching date in a non-leap target year.
-        latest_end = start_utc.replace(
-            year=start_utc.year + MAX_ANALYTICS_RANGE_YEARS,
-            day=28,
-        )
-    if end_utc > latest_end:
-        raise HTTPException(
-            status_code=422,
-            detail='Query range must not exceed 5 years',
-        )
-    return start_utc, end_utc
-
-
-def _analytics_dialect_name(db: AsyncSession) -> str:
-    """Return the SQL dialect name for analytics expressions.
-
-    Args:
-        db: Database session whose bound dialect is inspected.
-
-    Returns:
-        Lower-case SQL dialect name, or an empty string when unbound.
-    """
-    bind = getattr(db, 'bind', None)
-    dialect = getattr(bind, 'dialect', None)
-    return str(getattr(dialect, 'name', '') or '')
-
-
-def _analytics_bucket_expr(
-    bucket: AnalyticsBucket,
-    db: AsyncSession,
-) -> ColumnElement[Any]:
-    """Build a dialect-aware UTC bucket expression for detection time.
-
-    Args:
-        bucket: Requested analytics time bucket.
-        db: Database session whose SQL dialect is inspected.
-
-    Returns:
-        SQL expression that labels each violation's time bucket.
-    """
-    dialect_name = _analytics_dialect_name(db)
-    if dialect_name == 'postgresql':
-        formats = {
-            'hour': 'YYYY-MM-DD"T"HH24:00:00"Z"',
-            'day': 'YYYY-MM-DD',
-            'week': 'IYYY-"W"IW',
-        }
-        return func.to_char(Violation.detection_time, formats[bucket])
-    if dialect_name in {'mysql', 'mariadb'}:
-        formats = {
-            'hour': '%Y-%m-%dT%H:00:00Z',
-            'day': '%Y-%m-%d',
-            'week': '%x-W%v',
-        }
-        return func.date_format(Violation.detection_time, formats[bucket])
-    if dialect_name == 'sqlite':
-        formats = {
-            'hour': '%Y-%m-%dT%H:00:00Z',
-            'day': '%Y-%m-%d',
-            'week': '%Y-W%W',
-        }
-        return func.strftime(formats[bucket], Violation.detection_time)
-
-    formats = {
-        'hour': 'YYYY-MM-DD"T"HH24:00:00"Z"',
-        'day': 'YYYY-MM-DD',
-        'week': 'IYYY-"W"IW',
-    }
-    return func.to_char(Violation.detection_time, formats[bucket])
-
-
-def _analytics_hour_expr(db: AsyncSession) -> ColumnElement[Any]:
-    """Build a dialect-aware UTC-hour expression for detection time.
-
-    Args:
-        db: Database session whose SQL dialect is inspected.
-
-    Returns:
-        SQL expression that extracts the UTC hour.
-    """
-    dialect_name = _analytics_dialect_name(db)
-    if dialect_name == 'postgresql':
-        return cast(func.extract('hour', Violation.detection_time), Integer)
-    if dialect_name in {'mysql', 'mariadb'}:
-        return func.hour(Violation.detection_time)
-    if dialect_name == 'sqlite':
-        return cast(func.strftime('%H', Violation.detection_time), Integer)
-    return cast(func.extract('hour', Violation.detection_time), Integer)
-
-
-def _canonical_violation_type(violation_type: str) -> str:
-    """Validate and normalise a supported violation-type code.
-
-    Args:
-        violation_type: Client-supplied type code.
-
-    Returns:
-        Canonical violation-type code.
-
-    Raises:
-        HTTPException: If the type code is unsupported.
-    """
-    canonical = normalise_violation_type(violation_type)
-    if canonical is not None:
-        return canonical
-    valid = ', '.join(
-        definition.code for definition in VIOLATION_TYPE_DEFINITIONS
-    )
-    raise HTTPException(
-        status_code=422,
-        detail=f"Unsupported violation_type. Expected one of: {valid}",
-    )
-
-
-def _type_condition(
-    violation_type: str,
-    db: AsyncSession,
-) -> ColumnElement[bool]:
-    """Build a dialect-aware filter for a canonical violation type.
-
-    Args:
-        violation_type: Client-supplied type code.
-        db: Database session whose SQL dialect is inspected.
-
-    Returns:
-        SQL predicate matching stored canonical type codes.
-    """
-    canonical = _canonical_violation_type(violation_type)
-    dialect_name = _analytics_dialect_name(db)
-    if dialect_name == 'postgresql':
-        return cast(Violation.violation_type_codes, JSONB).contains(
-            [canonical],
-        )
-    if dialect_name in {'mysql', 'mariadb'}:
-        return (
-            func.json_contains(
-                Violation.violation_type_codes,
-                json.dumps([canonical]),
-            )
-            == 1
-        )
-    return cast(Violation.violation_type_codes, String).like(
-        f'%"{canonical}"%',
-    )
-
-
 async def _resolve_stream_filter(
     stream_id: str,
     site_name: str | None,
     site_names: list[str],
-    user: _StreamScopeUser,
+    user: _StreamScopeUser | User,
     db: AsyncSession,
 ) -> tuple[int, str]:
     """Resolve and authorise a stable camera before querying violations.
@@ -1291,7 +930,10 @@ async def _load_review_scope(
     Raises:
         HTTPException: If the user is not an administrator.
     """
-    user, sites = await load_user_with_effective_sites(username, db)
+    user, sites = await _user_service.load_user_with_effective_sites(
+        username,
+        db,
+    )
     if user.role not in {'admin', 'super_admin'}:
         raise HTTPException(
             status_code=403,
@@ -1320,7 +962,7 @@ async def _violation_site_names(
     if flagged is True or review_status is not None:
         _, site_names = await _load_review_scope(username, db)
         return site_names
-    return await get_user_sites_cached(username, db)
+    return await _user_service.get_cached_effective_site_names(username, db)
 
 
 async def _build_violation_conditions(
@@ -1434,7 +1076,7 @@ async def _stream_violation_conditions(
     """
     if not stream_id:
         return []
-    user, _ = await load_user_with_effective_sites(
+    user, _ = await _user_service.load_user_with_effective_sites(
         username,
         db,
         status_code=401,
@@ -1538,37 +1180,31 @@ async def _query_violation_page(
     db: AsyncSession,
     where_clause: ColumnElement[bool],
     limit: int,
-    offset: int,
-    cursor: str | None,
 ) -> list[Any]:
-    """Fetch one offset- or keyset-paginated violation result window.
+    """Fetch one keyset-paginated violation result window.
 
     Args:
         db: Database session used to query violations.
         where_clause: Fully authorised SQL filter predicate.
         limit: Requested page size.
-        offset: Legacy offset-pagination position.
-        cursor: Optional keyset-pagination cursor.
 
     Returns:
         Result rows including one extra row for next-cursor detection.
     """
     statement = (
-        select(*_violation_columns, func.count().over().label('total_count'))
+        select(*_violation_list_columns)
         .where(where_clause)
         .order_by(Violation.detection_time.desc(), Violation.id.desc())
         .limit(limit + 1)
     )
-    if not cursor:
-        statement = statement.offset(offset)
-    return (await db.execute(statement)).all()
+    return list((await db.execute(statement)).all())
 
 
 def _violation_page_response(
     rows: list[Any],
     request: Request,
     limit: int,
-) -> tuple[int, list[ViolationItem], str | None]:
+) -> tuple[list[ViolationItem], str | None, bool]:
     """Convert a query window into items and an optional next cursor.
 
     Args:
@@ -1577,49 +1213,15 @@ def _violation_page_response(
         limit: Requested page size.
 
     Returns:
-        Total count, response items, and optional keyset cursor.
+        Response items, optional keyset cursor, and look-ahead state.
     """
     rows_to_return = rows[:limit]
-    total = 0
-    items: list[ViolationItem] = []
-    for row in rows_to_return:
-        item_row, row_total = _split_violation_row_total(row)
-        if row_total is not None:
-            total = row_total
-        items.append(_violation_to_item(item_row, request))
+    items = [_violation_to_item(row, request) for row in rows_to_return]
+    has_more = len(rows) > limit
     next_cursor = None
-    if len(rows) > limit and items:
+    if has_more and items:
         next_cursor = _encode_violation_cursor(items[-1])
-    return total, items, next_cursor
-
-
-async def _empty_offset_total(
-    db: AsyncSession,
-    rows: list[Any],
-    offset: int,
-    cursor: str | None,
-    where_clause: ColumnElement[bool],
-    current_total: int,
-) -> int:
-    """Query total only for an empty offset page.
-
-    Args:
-        db: Database session used for a fallback count.
-        rows: Current page query rows.
-        offset: Legacy offset-pagination position.
-        cursor: Optional keyset-pagination cursor.
-        where_clause: Fully authorised SQL filter predicate.
-        current_total: Total supplied by a window count, if available.
-
-    Returns:
-        Existing or fallback total count.
-    """
-    if rows or not offset or cursor:
-        return current_total
-    result = await db.execute(
-        select(func.count()).select_from(Violation).where(where_clause),
-    )
-    return int(result.scalar() or 0)
+    return items, next_cursor, has_more
 
 
 async def require_violation_analytics_access(
@@ -1638,7 +1240,7 @@ async def require_violation_analytics_access(
     Raises:
         HTTPException: If the user lacks the required analytics role.
     """
-    user, sites = await load_user_with_effective_sites(
+    user, sites = await _user_service.load_user_with_effective_sites(
         username,
         db,
         status_code=401,
@@ -1675,7 +1277,7 @@ async def get_my_sites(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    _, sites = await get_user_effective_sites(username, db)
+    _, sites = await _user_service.load_user_with_effective_sites(username, db)
 
     return [
         SiteOut(
@@ -1709,7 +1311,7 @@ async def get_violation_filter_options(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    user, sites = await load_user_with_effective_sites(
+    user, sites = await _user_service.load_user_with_effective_sites(
         username,
         db,
         status_code=401,
@@ -1768,7 +1370,6 @@ async def get_violations(
     start_time: datetime | None = None,
     end_time: datetime | None = None,
     limit: int = 20,
-    offset: int = 0,
     flagged: bool | None = None,
     review_status: ViolationReviewStatus | None = None,
     cursor: str | None = None,
@@ -1781,14 +1382,12 @@ async def get_violations(
         start_time (datetime | None): The start of the detection time range.
         end_time (datetime | None): The end of the detection time range.
         limit (int): The maximum number of records to return (default is 20).
-        offset (int): The starting record offset (default is 0).
         db (AsyncSession): The SQLAlchemy async session.
         credentials (JwtAuthorizationCredentials):
             The JWT credentials from the request.
 
     Returns:
         ViolationList: A dictionary with:
-            - 'total': the total count of matching violations,
             - 'items': a list of violation records (paginated).
 
     Raises:
@@ -1807,7 +1406,7 @@ async def get_violations(
         db,
     )
     if not site_names:
-        return ViolationList(total=0, items=[])
+        return ViolationList(items=[])
     conditions = await _build_violation_conditions(
         username,
         site_names,
@@ -1827,19 +1426,15 @@ async def get_violations(
         db,
         where_clause,
         limit,
-        offset,
-        cursor,
     )
-    total, items, next_cursor = _violation_page_response(rows, request, limit)
-    total = await _empty_offset_total(
-        db,
-        rows,
-        offset,
-        cursor,
-        where_clause,
-        total,
+    items, next_cursor, has_more = _violation_page_response(
+        rows, request, limit,
     )
-    return ViolationList(total=total, items=items, next_cursor=next_cursor)
+    return ViolationList(
+        items=items,
+        next_cursor=next_cursor,
+        has_more=has_more,
+    )
 
 
 async def get_violation_analytics(
@@ -1900,96 +1495,168 @@ async def get_violation_analytics(
         conditions.append(_type_condition(violation_type, db))
 
     where_clause = and_(*conditions)
-    total_result = await db.execute(
-        select(func.count()).select_from(Violation).where(where_clause),
-    )
-    total = int(total_result.scalar() or 0)
-    if total == 0:
-        return _empty_analytics_response()
-
     now_utc = datetime.now(timezone.utc)
     today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
-    today_result = await db.execute(
-        select(func.count())
-        .select_from(Violation)
-        .where(
-            where_clause,
-            Violation.detection_time >= today_start,
-            Violation.detection_time < today_end,
-        ),
-    )
-    today = int(today_result.scalar() or 0)
-
-    bucket_expr = _analytics_bucket_expr(bucket, db).label('bucket')
-    trend_result = await db.execute(
-        select(bucket_expr, func.count().label('count'))
-        .select_from(Violation)
-        .where(where_clause)
-        .group_by(bucket_expr)
-        .order_by(bucket_expr),
-    )
-    trend = [
-        ViolationAnalyticsTrendItem(
-            bucket=str(row[0]),
-            count=int(row[1] or 0),
-        )
-        for row in trend_result.all()
-    ]
-
-    site_result = await db.execute(
-        select(Site.id, Site.name, func.count().label('count'))
-        .select_from(Violation)
-        .join(Site, Violation.site == Site.name)
-        .where(where_clause)
-        .group_by(Site.id, Site.name)
-        .order_by(func.count().desc(), Site.id),
-    )
-    by_site = [
-        ViolationAnalyticsSiteItem(
-            site_id=int(row[0]),
-            site_name=str(row[1]),
-            count=int(row[2] or 0),
-        )
-        for row in site_result.all()
-    ]
-
-    hour_expr = _analytics_hour_expr(db).label('hour')
-    hour_result = await db.execute(
-        select(hour_expr, func.count().label('count'))
-        .select_from(Violation)
-        .where(where_clause)
-        .group_by(hour_expr)
-        .order_by(hour_expr),
-    )
-    by_hour = [
-        ViolationAnalyticsHourItem(hour=int(row[0]), count=int(row[1] or 0))
-        for row in hour_result.all()
-    ]
-
-    by_type: list[ViolationAnalyticsTypeItem] = []
     type_names = (
         [_canonical_violation_type(violation_type)]
         if violation_type
         else [definition.code for definition in VIOLATION_TYPE_DEFINITIONS]
     )
-    for type_name in type_names:
-        definition = VIOLATION_TYPE_BY_CODE[type_name]
-        type_result = await db.execute(
-            select(func.count())
-            .select_from(Violation)
-            .where(where_clause, _type_condition(type_name, db)),
+
+    # Materializing the authorized range once avoids five independent scans
+    # and keeps the dashboard request to one database round trip.  PostgreSQL
+    # honours MATERIALIZED; other supported dialects retain correct CTE
+    # semantics without the PostgreSQL-specific keyword.
+    filtered = (
+        select(
+            Violation.site.label('site'),
+            Violation.detection_time.label('detection_time'),
+            Violation.violation_type_codes.label('violation_type_codes'),
         )
-        type_count = int(type_result.scalar() or 0)
-        if type_count:
+        .where(where_clause)
+        .cte('filtered_violations')
+    )
+    if getattr(getattr(db, 'bind', None), 'dialect', None) and (
+        db.bind.dialect.name == 'postgresql'
+    ):
+        filtered = filtered.prefix_with('MATERIALIZED')
+
+    empty_text = cast(literal(None), String)
+    zero = literal(0)
+    bucket_expr = _analytics_bucket_expr(
+        bucket,
+        db,
+        filtered.c.detection_time,
+    )
+    hour_expr = _analytics_hour_expr(db, filtered.c.detection_time)
+    aggregate_queries = [
+        select(
+            literal('summary').label('kind'),
+            empty_text.label('value'),
+            empty_text.label('label'),
+            func.count().label('count'),
+            cast(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    filtered.c.detection_time >= today_start,
+                                    filtered.c.detection_time < today_end,
+                                ),
+                                1,
+                            ),
+                            else_=0,
+                        ),
+                    ),
+                    0,
+                ),
+                Integer,
+            ).label('today'),
+        ).select_from(filtered),
+        select(
+            literal('trend').label('kind'),
+            cast(bucket_expr, String).label('value'),
+            empty_text.label('label'),
+            func.count().label('count'),
+            zero.label('today'),
+        )
+        .select_from(filtered)
+        .group_by(bucket_expr),
+        select(
+            literal('site').label('kind'),
+            cast(Site.id, String).label('value'),
+            Site.name.label('label'),
+            func.count().label('count'),
+            zero.label('today'),
+        )
+        .select_from(filtered.join(Site, filtered.c.site == Site.name))
+        .group_by(Site.id, Site.name),
+        select(
+            literal('hour').label('kind'),
+            cast(hour_expr, String).label('value'),
+            empty_text.label('label'),
+            func.count().label('count'),
+            zero.label('today'),
+        )
+        .select_from(filtered)
+        .group_by(hour_expr),
+    ]
+    aggregate_queries.extend(
+        select(
+            literal('type').label('kind'),
+            literal(type_name).label('value'),
+            literal(VIOLATION_TYPE_BY_CODE[type_name].label).label('label'),
+            cast(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                _type_condition(
+                                    type_name,
+                                    db,
+                                    filtered.c.violation_type_codes,
+                                ),
+                                1,
+                            ),
+                            else_=0,
+                        ),
+                    ),
+                    0,
+                ),
+                Integer,
+            ).label('count'),
+            zero.label('today'),
+        ).select_from(filtered)
+        for type_name in type_names
+    )
+
+    aggregate_rows = (await db.execute(union_all(*aggregate_queries))).all()
+    total = 0
+    today = 0
+    trend: list[ViolationAnalyticsTrendItem] = []
+    by_site: list[ViolationAnalyticsSiteItem] = []
+    by_hour: list[ViolationAnalyticsHourItem] = []
+    by_type: list[ViolationAnalyticsTypeItem] = []
+    for kind, value, label, count, row_today in aggregate_rows:
+        count_value = int(count or 0)
+        if kind == 'summary':
+            total = count_value
+            today = int(row_today or 0)
+        elif kind == 'trend':
+            trend.append(
+                ViolationAnalyticsTrendItem(
+                    bucket=str(value), count=count_value,
+                ),
+            )
+        elif kind == 'site':
+            by_site.append(
+                ViolationAnalyticsSiteItem(
+                    site_id=int(value),
+                    site_name=str(label),
+                    count=count_value,
+                ),
+            )
+        elif kind == 'hour':
+            by_hour.append(
+                ViolationAnalyticsHourItem(
+                    hour=int(value), count=count_value,
+                ),
+            )
+        elif kind == 'type' and count_value:
             by_type.append(
                 ViolationAnalyticsTypeItem(
-                    type=type_name,
-                    label=definition.label,
-                    count=type_count,
+                    type=str(value), label=str(label), count=count_value,
                 ),
             )
 
+    if total == 0:
+        return _empty_analytics_response()
+
+    trend.sort(key=lambda item: item.bucket)
+    by_site.sort(key=lambda item: (-item.count, item.site_id))
+    by_hour.sort(key=lambda item: item.hour)
     by_type.sort(key=lambda item: (-item.count, item.type))
     top_site = (
         ViolationAnalyticsTopSite(**by_site[0].model_dump())
@@ -2062,7 +1729,7 @@ async def get_next_review_violation(
         conditions.append(Violation.site == site_name)
 
     result = await db.execute(
-        select(*_violation_columns)
+        select(*_violation_detail_columns)
         .where(and_(*conditions))
         .order_by(
             Violation.flagged_at.asc().nullslast(),
@@ -2081,7 +1748,7 @@ async def get_next_review_violation(
     item.overlay_objects = _overlay_objects_from_feedback(
         item.detections,
         item.feedbacks or [],
-        _image_size_for_violation(item.image_path),
+        await image_size_for_violation(item.image_path, static_dir=STATIC_DIR),
     )
     return item
 
@@ -2167,14 +1834,17 @@ async def get_single_violation(
         raise HTTPException(status_code=401, detail='Invalid token')
 
     # Retrieve user sites using the cache
-    site_names: list[str] = await get_user_sites_cached(username, db)
+    site_names: list[str] = await _user_service.get_cached_effective_site_names(
+        username,
+        db,
+    )
     if not site_names:
         raise HTTPException(
             status_code=403,
             detail='No access to this violation',
         )
 
-    stmt_violation = select(*_violation_columns).where(
+    stmt_violation = select(*_violation_detail_columns).where(
         Violation.id == violation_id,
         Violation.site.in_(site_names),
     )
@@ -2182,7 +1852,7 @@ async def get_single_violation(
     row = result.first() if hasattr(result, 'first') else result.scalar()
 
     if not row:
-        print(
+        logger.info(
             f"[get_single_violation] No access to violation_id {violation_id}",
         )
         raise HTTPException(
@@ -2190,7 +1860,7 @@ async def get_single_violation(
             detail='No access to this violation',
         )
     if hasattr(row, 'site') and row.site not in site_names:
-        print(
+        logger.info(
             f"[get_single_violation] No access to violation_id {violation_id}",
         )
         raise HTTPException(
@@ -2208,7 +1878,7 @@ async def get_single_violation(
     item.overlay_objects = _overlay_objects_from_feedback(
         item.detections,
         item.feedbacks or [],
-        _image_size_for_violation(item.image_path),
+        await image_size_for_violation(item.image_path, static_dir=STATIC_DIR),
     )
     if item.is_flagged:
         item.review_audit_logs = await _load_review_audit_logs(
@@ -2233,7 +1903,10 @@ async def submit_violation_feedback(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    site_names: list[str] = await get_user_sites_cached(username, db)
+    site_names: list[str] = await _user_service.get_cached_effective_site_names(
+        username,
+        db,
+    )
     if not site_names:
         raise HTTPException(
             status_code=403,
@@ -2471,7 +2144,7 @@ async def get_violation_thumbnail(
         username,
         db,
     )
-    thumbnail_path = await _ensure_thumbnail(full_path)
+    thumbnail_path = await ensure_thumbnail(full_path, static_dir=STATIC_DIR)
     return FileResponse(
         path=thumbnail_path,
         media_type='image/jpeg',
@@ -2533,9 +2206,12 @@ async def upload_violation(
     if not username:
         raise HTTPException(status_code=401, detail='Invalid token')
 
-    site_names: list[str] = await get_user_sites_cached(username, db)
+    site_names: list[str] = await _user_service.get_cached_effective_site_names(
+        username,
+        db,
+    )
     if site not in site_names:
-        print(f"[upload_violation] No access to site {site}")
+        logger.info(f"[upload_violation] No access to site {site}")
         raise HTTPException(status_code=403, detail='No access to this site')
 
     detection_time = (

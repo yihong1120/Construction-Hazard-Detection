@@ -17,8 +17,10 @@ from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_overlay_ready_key
 from examples.streaming_web.media_paths import decode_media_segment
 from examples.streaming_web.metadata_keys import build_metadata_key_from_stream_id
+from examples.streaming_web.metadata_keys import get_metadata_site_generation
 from examples.streaming_web.overlay_renderer import normalise_label_language
 from examples.streaming_web.overlay_renderer import normalise_overlay_mode
+from examples.streaming_web.playback_hls import authorise_label_access
 from examples.streaming_web.streaming_metadata_handlers import (
     handle_metadata_stream_id_ws,
 )
@@ -84,9 +86,14 @@ async def metadata_stream_response(
     Raises:
         HTTPException: If site access or the overlay language is invalid.
     """
-    await playback_service._authorise_label_access(credentials, db, label)
+    await authorise_label_access(credentials, db, label)
     await db.close()
-    redis_key = build_metadata_key_from_stream_id(label, stream_id)
+    generation = await get_metadata_site_generation(rds, label)
+    redis_key = build_metadata_key_from_stream_id(
+        label,
+        stream_id,
+        generation,
+    )
     overlay_ready_key: str | None = None
     overlay_ready_payload: dict[str, object] | None = None
     overlay_demand_key: str | None = None

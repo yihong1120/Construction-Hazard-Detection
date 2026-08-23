@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import subprocess
@@ -25,6 +26,10 @@ _default_vaapi_device: Final[str] = '/dev/dri/renderD128'
 _default_vaapi_bitrate: Final[str] = '4M'
 _default_vaapi_maxrate: Final[str] = '8M'
 _default_vaapi_bufsize: Final[str] = '16M'
+_default_rtp_packet_size: Final[int] = 1200
+
+
+logger = logging.getLogger(__name__)
 
 
 def _keyframe_interval_seconds() -> float:
@@ -36,6 +41,24 @@ def _keyframe_interval_seconds() -> float:
         )
     except ValueError:
         return 2.0
+
+
+def _rtp_packet_size() -> int:
+    """Return an MTU-safe RTP payload size for MediaMTX.
+
+    Returns:
+        Payload size in bytes, bounded below the Ethernet MTU.
+    """
+    try:
+        configured_size = int(
+            os.getenv(
+                'MEDIA_PUBLISH_RTP_PACKET_SIZE',
+                str(_default_rtp_packet_size),
+            ),
+        )
+    except ValueError:
+        return _default_rtp_packet_size
+    return min(1400, max(576, configured_size))
 
 
 class _FfmpegStdin(Protocol):
@@ -293,10 +316,9 @@ class MediaStreamPublisher:
             encoder = 'libx264'
         elif encoder == 'h264_nvenc' and not try_acquire_nvenc_session():
             encoder = 'libx264'
-            print(
+            logger.info(
                 f'[media:{self.publish_url}] NVENC session budget reached; '
                 'using libx264',
-                flush=True,
             )
         else:
             self._uses_nvenc = encoder == 'h264_nvenc'
@@ -344,9 +366,8 @@ class MediaStreamPublisher:
                 self.last_error = line[-1000:]
                 if self._uses_nvenc and _is_nvenc_unavailable_error(line):
                     self._nvenc_unavailable = True
-                print(
+                logger.info(
                     f'[media:{self.publish_url}] ffmpeg: {self.last_error}',
-                    flush=True,
                 )
         except asyncio.CancelledError:
             raise
@@ -530,6 +551,8 @@ class MediaStreamPublisher:
             'rtsp',
             '-rtsp_transport',
             'tcp',
+            '-pkt_size',
+            str(_rtp_packet_size()),
             self.publish_url,
         ])
         return command

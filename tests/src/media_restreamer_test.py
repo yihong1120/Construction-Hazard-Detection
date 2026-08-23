@@ -243,7 +243,7 @@ def test_start_creates_monitor_task() -> None:
 
 def test_monitor_loop_runs_one_process(monkeypatch: Any) -> None:
     """Exercise this test."""
-    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
         """Support fake_create_subprocess_exec."""
         calls.append(args)
         stream._closed = True
@@ -270,7 +270,7 @@ def test_monitor_loop_runs_one_process(monkeypatch: Any) -> None:
 
 def test_monitor_loop_sleeps_before_restart(monkeypatch: Any) -> None:
     """Exercise this test."""
-    async def fake_create_subprocess_exec(*_args, **_kwargs) -> Any:
+    async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> Any:
         """Support fake_create_subprocess_exec."""
         return _OneShotProcess()
 
@@ -302,7 +302,16 @@ def test_monitor_loop_releases_reserved_nvenc_session(
         monkeypatch: Any,
 ) -> None:
     """NVENC reservations are released after the ffmpeg process exits."""
-    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
+        """Perform fake create subprocess exec.
+
+        Args:
+            *args: Value used by this callable.
+            **_kwargs: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         commands.append(args)
         stream._closed = True
         return _OneShotProcess()
@@ -337,7 +346,16 @@ def test_monitor_loop_falls_back_when_nvenc_budget_is_full(
         monkeypatch: Any,
 ) -> None:
     """A full local NVENC budget uses the software encoder for this stream."""
-    async def fake_create_subprocess_exec(*args, **_kwargs) -> Any:
+    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
+        """Perform fake create subprocess exec.
+
+        Args:
+            *args: Value used by this callable.
+            **_kwargs: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         commands.append(args)
         stream._closed = True
         return _OneShotProcess()

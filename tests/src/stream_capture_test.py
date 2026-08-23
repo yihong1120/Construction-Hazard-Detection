@@ -147,6 +147,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
 
         # Set capture interval to 0 to avoid delays during the test.
         self.stream_capture.successfully_captured = False
+        self.stream_capture.reopen_delay = 0
 
         # Start the coroutine generator.
         async def mock_generic() -> AsyncIterator[tuple[MagicMock, float]]:
@@ -548,17 +549,17 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self.assertEqual(self.stream_capture.capture_interval, 20)
 
     @patch('argparse.ArgumentParser.parse_args')
-    @patch('builtins.print')
+    @patch('src.stream_capture.logger')
     @patch('gc.collect')
     async def test_main_function(
         self,
         mock_gc_collect: MagicMock,
-        mock_print: MagicMock,
+        mock_logger: MagicMock,
         mock_parse_args: MagicMock,
     ) -> None:
         """
-        Test that the main function correctly initialises
-        and executes StreamCapture.
+        Test that the main function correctly initialises and executes
+        StreamCapture.
 
         Args:
             mock_gc_collect (MagicMock): Mock for gc.collect function.
@@ -581,7 +582,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
             """Support mock_execute_capture."""
             yield mock_frame, mock_timestamp
 
-        # Execute main function and verify print and gc.collect calls
+        # Execute main function and verify logging and gc.collect calls.
         with patch.object(
             StreamCapture,
             'execute_capture',
@@ -594,8 +595,10 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
             ):
                 await stream_capture_main()
 
-            # Verify print and gc.collect calls
-            mock_print.assert_any_call(f"Frame at {mock_timestamp} displayed")
+            # Verify logger and gc.collect calls.
+            mock_logger.info.assert_any_call(
+                f"Frame at {mock_timestamp} displayed",
+            )
             mock_gc_collect.assert_called()
 
     @patch('cv2.VideoCapture')
@@ -618,6 +621,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
             (False, None),
         ] * 5 + [(True, np.zeros((4, 4, 3), dtype=np.uint8))]
         instance.isOpened.return_value = True
+        self.stream_capture.reopen_delay = 0
 
         # Mock capture_generic_frames method and execute
         async def mock_generic_frames() -> (
@@ -707,7 +711,12 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         # Use the generic frame capture method to
         # get the first frame and timestamp
         generator = self.stream_capture.capture_generic_frames()
-        frame, timestamp = await generator.__anext__()
+        with patch.object(
+            stream_capture.asyncio,
+            'sleep',
+            new=AsyncMock(),
+        ):
+            frame, timestamp = await generator.__anext__()
 
         self.assertIsNotNone(
             frame,
@@ -766,6 +775,8 @@ def test_generic_capture_retries_when_quality_refresh_returns_none() -> None:
     """A failed quality refresh leaves the generic reader retrying safely."""
 
     async def run_case() -> None:
+        """Perform run case.
+        """
         capture = stream_capture.StreamCapture('https://camera.example/live')
         capture.cap = SimpleNamespace(
             read=MagicMock(
@@ -850,6 +861,8 @@ def test_frozen_frame_watchdog_skips_invalid_fast_and_moving_frames() -> None:
 def test_execute_capture_reconnects_after_frozen_frame() -> None:
     """The capture generator signals and recovers from a frozen source."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         capture = StreamCapture('rtsp://camera.example/live', 0)
         capture.cap = SimpleNamespace(
             read=MagicMock(
@@ -882,6 +895,8 @@ def test_execute_capture_reconnects_after_frozen_frame() -> None:
 def test_execute_capture_signals_normal_read_failure() -> None:
     """A decoder read failure invalidates downstream media state."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         capture = StreamCapture('rtsp://camera.example/live', 0)
         good_frame = np.zeros((2, 2, 3), dtype=np.uint8)
         capture.cap = SimpleNamespace(

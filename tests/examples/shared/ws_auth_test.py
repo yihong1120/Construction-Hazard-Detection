@@ -15,6 +15,18 @@ def _access_payload(
     role: str = 'user',
     exp: int = 1_700_000_000,
 ) -> dict[str, object]:
+    """Perform access payload.
+
+    Args:
+        username: Value used by this callable.
+        jti: Value used by this callable.
+        user_id: Value used by this callable.
+        role: Value used by this callable.
+        exp: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     return {
         'subject': {
             'username': username,
@@ -167,11 +179,11 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(),
             ) as mock_prune,
             patch(
-                'examples.shared.ws_auth.get_user_data',
+                'examples.shared.ws_auth.rate_limiter_service.get_user_data',
                 new=AsyncMock(return_value={'jti_list': ['j1']}),
             ) as mock_get,
             patch(
-                'examples.shared.ws_auth.set_user_data',
+                'examples.shared.ws_auth.rate_limiter_service.set_user_data',
                 new=AsyncMock(),
             ) as mock_set,
         ):
@@ -210,7 +222,7 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
             patch('examples.shared.ws_auth.jwt.decode', return_value=payload),
             patch('examples.shared.ws_auth.prune_user_cache', new=AsyncMock()),
             patch(
-                'examples.shared.ws_auth.get_user_data',
+                'examples.shared.ws_auth.rate_limiter_service.get_user_data',
                 new=AsyncMock(
                     return_value={
                         'db_user': {
@@ -230,7 +242,7 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
                 ),
             ) as mock_get,
             patch(
-                'examples.shared.ws_auth.set_user_data',
+                'examples.shared.ws_auth.rate_limiter_service.set_user_data',
                 new=AsyncMock(),
             ) as mock_set,
         ):
@@ -319,7 +331,7 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
             patch('examples.shared.ws_auth.jwt.decode', return_value=payload),
             patch('examples.shared.ws_auth.prune_user_cache', new=AsyncMock()),
             patch(
-                'examples.shared.ws_auth.get_user_data',
+                'examples.shared.ws_auth.rate_limiter_service.get_user_data',
                 new=AsyncMock(return_value={'jti_list': []}),
             ),
         ):
@@ -338,11 +350,7 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
     async def test_auto_register_with_no_cached_user_creates_default_cache(
         self,
     ) -> None:
-        """Test default cache structure and JTI recording on auto-register.
-
-        If cache missing, create default structure and record JTI.
-
-        Ensures default keys exist and expiry is recorded as seconds.
+        """Test auto register with no cached user creates default cache.
         """
         payload = _access_payload(
             username='neo',
@@ -363,11 +371,11 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
             patch('examples.shared.ws_auth.jwt.decode', return_value=payload),
             patch('examples.shared.ws_auth.prune_user_cache', new=AsyncMock()),
             patch(
-                'examples.shared.ws_auth.get_user_data',
+                'examples.shared.ws_auth.rate_limiter_service.get_user_data',
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                'examples.shared.ws_auth.set_user_data',
+                'examples.shared.ws_auth.rate_limiter_service.set_user_data',
                 new=AsyncMock(),
             ) as mock_set,
         ):
@@ -433,11 +441,11 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
             patch('examples.shared.ws_auth.jwt.decode', return_value=payload),
             patch('examples.shared.ws_auth.prune_user_cache', new=AsyncMock()),
             patch(
-                'examples.shared.ws_auth.get_user_data',
+                'examples.shared.ws_auth.rate_limiter_service.get_user_data',
                 new=AsyncMock(return_value=cache_with_meta),
             ),
             patch(
-                'examples.shared.ws_auth.set_user_data',
+                'examples.shared.ws_auth.rate_limiter_service.set_user_data',
                 new=AsyncMock(),
             ) as mock_set,
         ):

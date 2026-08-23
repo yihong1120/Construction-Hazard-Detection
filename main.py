@@ -7,6 +7,8 @@ import multiprocessing
 import os
 import signal
 from contextlib import suppress
+from datetime import datetime
+from datetime import timezone
 from multiprocessing import Process
 from types import FrameType
 from typing import Any
@@ -17,10 +19,10 @@ from dotenv import load_dotenv
 from sqlalchemy.engine.url import make_url
 
 from src.monitor_logger import LoggerConfig
+from src.runtime_utils import is_expired
 from src.stream_processor import delete_stream_live_metadata
 from src.stream_processor import process_single_stream
 from src.stream_processor import StreamConfig
-from src.utils import Utils
 from src.yolo_worker import YOLO_WORKER_STOP_MESSAGE
 from src.yolo_worker import YoloWorker
 
@@ -30,27 +32,30 @@ load_dotenv(override=True)
 class MainApp:
     """
     Core application responsible for:
-        - Polling stream configuration from database periodically
+        - Reacting to PostgreSQL configuration notifications with a bounded
+          polling fallback
         - Dynamically spawning/stopping child processes for each video stream
         - Cleaning up expired or modified configurations
     """
 
-    def __init__(self, poll_interval: int = 10) -> None:
+    def __init__(self, poll_interval: int = 300) -> None:
         """
         Initialise the application.
 
         Args:
-            poll_interval (int): Interval in seconds to poll the database for
-                stream configuration updates.
+            poll_interval (int): Maximum seconds between fallback database
+                refreshes when PostgreSQL notifications are unavailable.
         """
-        self.poll_interval = poll_interval
+        self.poll_interval = max(1, poll_interval)
         self.logger = LoggerConfig().get_logger()
-        # video_url → process info dict
+        # Stable stream identity → process info.  RTSP URLs are sources, not
+        # identifiers: multiple configured cameras may deliberately share one.
         self.running_processes: dict[str, dict] = {}
         self.lock = asyncio.Lock()  # Prevent overlapping reloads
         self.db_pool: Pool | None = None  # PostgreSQL async connection pool
         self._config_listener_connection: Any | None = None
         self._config_reload_task: asyncio.Task[None] | None = None
+        self._config_reload_requested = False
         self._last_config_summary: tuple[int, int, int] | None = None
 
         self.yolo_request_queues: list[Any] = []
@@ -132,17 +137,24 @@ class MainApp:
         _payload: str,
     ) -> None:
         """Schedule a reload when PostgreSQL signals a config change."""
+        self._config_reload_requested = True
         if (
             self._config_reload_task is None
             or self._config_reload_task.done()
         ):
             reload_task = asyncio.create_task(
-                self.reload_configurations(),
+                self._reload_configurations_from_notification(),
             )
             reload_task.add_done_callback(
                 self._log_config_reload_failure,
             )
             self._config_reload_task = reload_task
+
+    async def _reload_configurations_from_notification(self) -> None:
+        """Coalesce notifications that arrive during one configuration read."""
+        while self._config_reload_requested:
+            self._config_reload_requested = False
+            await self.reload_configurations()
 
     def _log_config_reload_failure(self, task: asyncio.Task[None]) -> None:
         """Log callback reload failures instead of losing the task error."""
@@ -194,7 +206,8 @@ class MainApp:
                 'DB connectivity.',
             )
         sql = """
-        SELECT sc.video_url,
+        SELECT sc.id               AS stream_id,
+               sc.video_url,
                sc.updated_at,
                sc.model_key,
                s.name              AS site,
@@ -218,7 +231,7 @@ class MainApp:
 
         for row in rows:
             (
-                video_url, updated_at, model_key, site, stream_name,
+                stream_id, video_url, updated_at, model_key, site, stream_name,
                 recognition_enabled, expire_date,
                 work_start, work_end,
                 vest_helmet, near_vehicle, in_area,
@@ -236,6 +249,7 @@ class MainApp:
 
             configs.append(
                 StreamConfig(
+                    stream_id=int(stream_id),
                     video_url=video_url,
                     updated_at=updated_at.isoformat(),
                     model_key=model_key,
@@ -258,9 +272,11 @@ class MainApp:
         return configs
 
     async def poll_and_reload(self) -> None:
-        """
-        Periodically poll the database and trigger reload logic.
-        This function will run indefinitely unless interrupted.
+        """Run the low-frequency health fallback and stream-expiry timer.
+
+        PostgreSQL ``LISTEN`` drives ordinary changes.  The fallback recovers
+        from a lost listener and wakes at the nearest configured expiry even
+        when no database row changes.
         """
         while True:
             try:
@@ -268,9 +284,29 @@ class MainApp:
             except TimeoutError as e:
                 self.logger.exception(f"[poll] Reload timeout: {e}")
                 await self._reset_db_pool()
+                await self._ensure_config_listener()
             except Exception as e:
                 self.logger.exception(f"[poll] Reload error: {e}")
-            await asyncio.sleep(self.poll_interval)
+            await asyncio.sleep(self._next_configuration_reload_delay())
+
+    def _next_configuration_reload_delay(self) -> float:
+        """Return the earlier of the health interval and next stream expiry."""
+        delay = float(self.poll_interval)
+        now = datetime.now(timezone.utc)
+        for process_info in self.running_processes.values():
+            raw_expiry = process_info['cfg'].get('expire_date')
+            if not raw_expiry:
+                continue
+            try:
+                expiry = datetime.fromisoformat(str(raw_expiry))
+            except ValueError:
+                continue
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            seconds_until_expiry = (expiry - now).total_seconds()
+            if seconds_until_expiry > 0:
+                delay = min(delay, seconds_until_expiry)
+        return max(0.1, delay)
 
     async def reload_configurations(self) -> None:
         """
@@ -281,10 +317,13 @@ class MainApp:
         """
         async with self.lock:
             configs = await self.fetch_stream_configs()
-            cfg_map = {c['video_url']: c for c in configs}
+            cfg_map = {
+                self._stream_process_key(config): config
+                for config in configs
+            }
             active_configs = {
-                video_url: cfg
-                for video_url, cfg in cfg_map.items()
+                stream_key: cfg
+                for stream_key, cfg in cfg_map.items()
                 if self._can_run_stream(cfg)
             }
             if active_configs:
@@ -297,42 +336,66 @@ class MainApp:
                     self._stop_yolo_worker()
 
             # 1. Stop streams that are removed, disabled, or expired.
-            for video_url in list(self.running_processes.keys()):
-                proc_info = self.running_processes[video_url]
-                if video_url not in active_configs:
-                    self.logger.info(f"Stop stream {video_url}")
+            for stream_key in list(self.running_processes.keys()):
+                proc_info = self.running_processes[stream_key]
+                if stream_key not in active_configs:
+                    self.logger.info(
+                        'Stop stream %s',
+                        self._stream_log_label(proc_info['cfg']),
+                    )
                     self.stop_process(proc_info['process'])
 
                     await self._delete_stream_redis_keys(proc_info['cfg'])
 
-                    del self.running_processes[video_url]
+                    del self.running_processes[stream_key]
                     continue
 
-                cfg = cfg_map[video_url]
+                cfg = cfg_map[stream_key]
                 if self._stream_needs_restart(
                     proc_info,
                     cfg,
                     worker_broker_replaced,
                 ):
                     await self._restart_stream_process(
-                        video_url,
+                        stream_key,
                         proc_info,
                         cfg,
                     )
 
             # 2. Start every enabled, non-expired recognition stream.
-            for video_url, cfg in active_configs.items():
-                if video_url not in self.running_processes:
+            for stream_key, cfg in active_configs.items():
+                if stream_key not in self.running_processes:
                     self.logger.info(
-                        f"Launch new stream {video_url}",
+                        'Launch new stream %s',
+                        self._stream_log_label(cfg),
                     )
                     proc = self.start_process(cfg)
-                    self.running_processes[video_url] = {
+                    self.running_processes[stream_key] = {
                         'process': proc,
                         'updated_at': cfg['updated_at'],
                         'cfg': cfg,
                     }
             self._log_config_summary(len(configs), len(active_configs))
+
+    @staticmethod
+    def _stream_process_key(cfg: StreamConfig) -> str:
+        """Return the durable process key for a configured camera.
+
+        The fallback is only for programmatic callers predating ``stream_id``;
+        records loaded from PostgreSQL always use the immutable primary key.
+        """
+        stream_id = cfg.get('stream_id')
+        if stream_id is not None:
+            return f'id:{stream_id}'
+        return str(cfg['video_url'])
+
+    @staticmethod
+    def _stream_log_label(cfg: StreamConfig) -> str:
+        """Return a useful, non-secret stream label for lifecycle logs."""
+        return (
+            f"{cfg['site']}/{cfg['stream_name']}"
+            f" ({MainApp._stream_process_key(cfg)})"
+        )
 
     def _log_config_summary(
         self,
@@ -371,7 +434,7 @@ class MainApp:
         """
         if not cfg.get('recognition_enabled', True):
             return False
-        return not Utils.is_expired(cfg.get('expire_date'))
+        return not is_expired(cfg.get('expire_date'))
 
     def start_process(self, cfg: StreamConfig) -> Process:
         """
@@ -579,17 +642,21 @@ class MainApp:
 
     async def _restart_stream_process(
         self,
-        video_url: str,
+        stream_key: str,
         proc_info: dict[str, Any],
         cfg: StreamConfig,
     ) -> None:
         """Restart one stream process and refresh its process metadata."""
         reason = self._restart_reason(proc_info, cfg)
-        self.logger.info(f"Restart stream {video_url} ({reason})")
+        self.logger.info(
+            'Restart stream %s (%s)',
+            self._stream_log_label(cfg),
+            reason,
+        )
         self.stop_process(proc_info['process'])
         await self._delete_stream_redis_keys(proc_info['cfg'])
         new_proc = self.start_process(cfg)
-        self.running_processes[video_url] = {
+        self.running_processes[stream_key] = {
             'process': new_proc,
             'updated_at': cfg['updated_at'],
             'cfg': cfg,
@@ -756,8 +823,8 @@ class MainApp:
         """
         try:
             self.logger.info(
-                '[startup] Stream supervisor started; polling every %s '
-                'seconds',
+                '[startup] Stream supervisor started; PostgreSQL LISTEN '
+                'enabled with %s-second fallback',
                 self.poll_interval,
             )
             await self._ensure_config_listener()
@@ -778,8 +845,8 @@ async def main() -> None:
         description='Hazard detection from DB configs or JSON file',
     )
     parser.add_argument(
-        '--poll', type=int, default=10,
-        help='DB polling interval in seconds',
+        '--poll', type=int, default=300,
+        help='LISTEN health fallback interval in seconds',
     )
     parser.add_argument(
         '--config', type=str,

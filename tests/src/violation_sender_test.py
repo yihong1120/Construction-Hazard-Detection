@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import httpx
 
-from src.utils import TokenManager
+from src.auth_tokens import TokenManager
 from src.violation_sender import ViolationSender
 
 

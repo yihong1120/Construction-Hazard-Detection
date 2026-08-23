@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Awaitable
 from collections.abc import Mapping
@@ -10,8 +11,7 @@ from typing import Protocol
 import jwt
 from redis.asyncio import Redis
 
-from examples.auth.cache import get_user_data
-from examples.auth.cache import set_user_data
+from examples.auth.cache import rate_limiter_service
 from examples.auth.jwt_config import access_token_subject_from_payload
 from examples.auth.token_cleanup import prune_user_cache
 from examples.db_management.schemas.auth import AccessTokenSubject
@@ -53,6 +53,7 @@ WS_MAX_SESSION_SECONDS: float = float(
 AUTO_REGISTER_JTI: bool = os.getenv(
     'WS_AUTO_REGISTER_JTI', 'false',
 ).lower() == 'true'
+logger = logging.getLogger(__name__)
 
 
 def extract_token_from_ws(websocket: WebSocketLike) -> str | None:
@@ -103,7 +104,7 @@ async def _fail_ws(
     Returns:
         None. This function does not return; it always raises SystemExit.
     """
-    print(f"{tag}: {log_msg}")
+    logger.warning('WebSocket authentication failed tag=%s reason=%s', tag, log_msg)
     await websocket.close(code=code, reason=reason)
     raise SystemExit(exit_reason)
 
@@ -127,15 +128,50 @@ async def _decode_or_fail(
         The decoded JWT payload as a dictionary.
     """
     try:
+        # WebSocket services can be reached through a separate WSS upstream,
+        # so their transport origin is not necessarily the API issuer. Read
+        # the signed deployment issuer/audience first, then verify them with
+        # the same values. HTTP endpoints additionally compare them with the
+        # currently registered API origin before granting access.
+        unsigned = jwt.decode(
+            token,
+            options={
+                'verify_signature': False,
+                'verify_exp': False,
+                'verify_aud': False,
+                'verify_iss': False,
+            },
+        )
+        issuer = unsigned.get('iss')
+        audience = unsigned.get('aud')
+        decode_kwargs: dict[str, object] = {
+            'algorithms': [settings.ALGORITHM],
+        }
+        if isinstance(issuer, str) and isinstance(audience, str):
+            decode_kwargs['issuer'] = issuer
+            decode_kwargs['audience'] = audience
+        else:
+            decode_kwargs['options'] = {
+                'verify_aud': False,
+                'verify_iss': False,
+            }
         payload = cast(
             dict[str, object],
             jwt.decode(
                 token,
                 settings.authjwt_secret_key,
-                algorithms=[settings.ALGORITHM],
+                **decode_kwargs,
             ),
         )
         payload['subject'] = access_token_subject_from_payload(payload)
+        if isinstance(issuer, str) and issuer != 'docformify':
+            subject = cast(AccessTokenSubject, payload['subject'])
+            if payload.get('token_use') != 'access' or (
+                not isinstance(subject.get('tenant_id'), str)
+                or not isinstance(subject.get('deployment_id'), str)
+                or not isinstance(subject.get('config_revision'), int)
+            ):
+                raise jwt.InvalidTokenError('Missing deployment binding')
         return payload
     except Exception as e:  # noqa: BLE001 - deliberate broad catch to close WS
         await _fail_ws(
@@ -295,9 +331,34 @@ async def authenticate_websocket(
 
     # Prune and validate JTI in cache for the user
     await prune_user_cache(rds, username_str)
-    user_data: dict[str, object] | None = await get_user_data(
+    user_data: dict[str, object] | None = await rate_limiter_service.get_user_data(
         rds, username_str,
     )
+
+    # A WebSocket server may sit behind a dedicated WSS upstream, but the
+    # deployment-bound token must still agree with the cached account tenant.
+    # This prevents a valid token for one tenant from reusing another tenant's
+    # account cache entry.
+    cached_user = (
+        cast(dict[str, object], user_data.get('db_user'))
+        if user_data and isinstance(user_data.get('db_user'), dict)
+        else None
+    )
+    token_tenant_id = subject_data.get('tenant_id')
+    cached_tenant_id = cached_user.get('tenant_id') if cached_user else None
+    if (
+        isinstance(token_tenant_id, str)
+        and isinstance(cached_tenant_id, str)
+        and token_tenant_id != cached_tenant_id
+    ):
+        await _fail_ws(
+            websocket,
+            code=1008,
+            reason='Deployment configuration changed',
+            tag=tag,
+            log_msg='Token tenant does not match cached account tenant',
+            exit_reason='deployment_configuration_changed',
+        )
 
     # Validate JTI against cache list
     jti_is_active = (
@@ -306,8 +367,10 @@ async def authenticate_websocket(
     )
     if not jti_is_active:
         if auto_register_jti:
-            print(
-                f"{tag}: Auto-registering missing JTI for {username_str}",
+            logger.info(
+                'WebSocket auto-registering missing JTI tag=%s username=%s',
+                tag,
+                username_str,
             )
             new_cache = _build_autoreg_cache(
                 user_data,
@@ -316,7 +379,7 @@ async def authenticate_websocket(
                 payload=payload,
                 subject_data=subject_data,
             )
-            await set_user_data(rds, username_str, new_cache)
+            await rate_limiter_service.set_user_data(rds, username_str, new_cache)
         else:
             await _fail_ws(
                 websocket,

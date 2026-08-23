@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable
+from collections.abc import Callable
+from typing import TypeVar
+
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
+
+
+_WebSocketResult = TypeVar('_WebSocketResult')
+logger = logging.getLogger(__name__)
 
 
 def _is_expected_websocket_close_error(exc: Exception) -> bool:
@@ -56,21 +65,14 @@ async def _safe_websocket_send_json(
     Returns:
         ``True`` if the data was sent successfully; ``False`` otherwise.
     """
-    if not _is_websocket_connected(websocket):
-        if client_info:
-            msg = (
-                f"[WebSocket] {client_info}: Connection closed, "
-                'skipping JSON send'
-            )
-            print(msg)
-        return False
-    try:
-        await websocket.send_json(data)
-        return True
-    except Exception as e:
-        if client_info and not _is_expected_websocket_close_error(e):
-            print(f"[WebSocket] {client_info}: Failed to send JSON: {e}")
-        return False
+    sent, _ = await _safe_websocket_operation(
+        websocket,
+        lambda: websocket.send_json(data),
+        client_info=client_info,
+        disconnected_message='Connection closed, skipping JSON send',
+        operation_name='send JSON',
+    )
+    return sent
 
 
 async def _safe_websocket_send_text(
@@ -88,21 +90,14 @@ async def _safe_websocket_send_text(
     Returns:
         ``True`` if the data was sent successfully; ``False`` otherwise.
     """
-    if not _is_websocket_connected(websocket):
-        if client_info:
-            msg = (
-                f"[WebSocket] {client_info}: Connection closed, "
-                'skipping text send'
-            )
-            print(msg)
-        return False
-    try:
-        await websocket.send_text(text)
-        return True
-    except Exception as e:
-        if client_info and not _is_expected_websocket_close_error(e):
-            print(f"[WebSocket] {client_info}: Failed to send text: {e}")
-        return False
+    sent, _ = await _safe_websocket_operation(
+        websocket,
+        lambda: websocket.send_text(text),
+        client_info=client_info,
+        disconnected_message='Connection closed, skipping text send',
+        operation_name='send text',
+    )
+    return sent
 
 
 async def _safe_websocket_send_bytes(
@@ -120,21 +115,14 @@ async def _safe_websocket_send_bytes(
     Returns:
         ``True`` if the data was sent successfully; ``False`` otherwise.
     """
-    if not _is_websocket_connected(websocket):
-        if client_info:
-            msg = (
-                f"[WebSocket] {client_info}: Connection closed, "
-                'skipping bytes send'
-            )
-            print(msg)
-        return False
-    try:
-        await websocket.send_bytes(data)
-        return True
-    except Exception as e:
-        if client_info and not _is_expected_websocket_close_error(e):
-            print(f"[WebSocket] {client_info}: Failed to send bytes: {e}")
-        return False
+    sent, _ = await _safe_websocket_operation(
+        websocket,
+        lambda: websocket.send_bytes(data),
+        client_info=client_info,
+        disconnected_message='Connection closed, skipping bytes send',
+        operation_name='send bytes',
+    )
+    return sent
 
 
 async def _safe_websocket_receive_text(
@@ -150,20 +138,14 @@ async def _safe_websocket_receive_text(
     Returns:
         The received text data, or ``None`` if the operation failed.
     """
-    if not _is_websocket_connected(websocket):
-        if client_info:
-            msg = (
-                f"[WebSocket] {client_info}: Connection closed, "
-                'cannot receive text'
-            )
-            print(msg)
-        return None
-    try:
-        return await websocket.receive_text()
-    except Exception as e:
-        if client_info and not _is_expected_websocket_close_error(e):
-            print(f"[WebSocket] {client_info}: Failed to receive text: {e}")
-        return None
+    _, text = await _safe_websocket_operation(
+        websocket,
+        websocket.receive_text,
+        client_info=client_info,
+        disconnected_message='Connection closed, cannot receive text',
+        operation_name='receive text',
+    )
+    return text
 
 
 async def _safe_websocket_receive_bytes(
@@ -179,17 +161,42 @@ async def _safe_websocket_receive_bytes(
     Returns:
         The received binary data, or ``None`` if the operation failed.
     """
+    _, data = await _safe_websocket_operation(
+        websocket,
+        websocket.receive_bytes,
+        client_info=client_info,
+        disconnected_message='Connection closed, cannot receive bytes',
+        operation_name='receive bytes',
+    )
+    return data
+
+
+async def _safe_websocket_operation(
+    websocket: WebSocket,
+    operation: Callable[[], Awaitable[_WebSocketResult]],
+    *,
+    client_info: str,
+    disconnected_message: str,
+    operation_name: str,
+) -> tuple[bool, _WebSocketResult | None]:
+    """Run one WebSocket operation with consistent close-race handling."""
     if not _is_websocket_connected(websocket):
         if client_info:
-            msg = (
-                f"[WebSocket] {client_info}: Connection closed, "
-                'cannot receive bytes'
+            logger.debug(
+                'WebSocket disconnected client=%s reason=%s',
+                client_info,
+                disconnected_message,
             )
-            print(msg)
-        return None
+        return False, None
     try:
-        return await websocket.receive_bytes()
-    except Exception as e:
-        if client_info and not _is_expected_websocket_close_error(e):
-            print(f"[WebSocket] {client_info}: Failed to receive bytes: {e}")
-        return None
+        return True, await operation()
+    except Exception as exc:
+        if client_info and not _is_expected_websocket_close_error(exc):
+            logger.warning(
+                'WebSocket operation failed client=%s operation=%s '
+                'error_type=%s',
+                client_info,
+                operation_name,
+                type(exc).__name__,
+            )
+        return False, None

@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import redis.asyncio as redis
 
-from examples.streaming_web.metadata_keys import encode_stream_id
-from examples.streaming_web.metadata_keys import is_metadata_key
 from examples.streaming_web.metadata_keys import metadata_key_stream_id
 from examples.streaming_web.metadata_keys import metadata_key_stream_name
 from examples.streaming_web.schemas import FrameOutData
-
-_stream_scan_count = 500
 
 
 def _extract_stream_id(redis_key: str) -> str:
@@ -57,43 +53,6 @@ def _build_metadata_record(
         'redis_key': redis_key,
         'has_warning': data[b'has_warning'] == b'1',
     }
-
-
-async def get_metadata_keys_for_label(
-    rds: redis.Redis,
-    label: str,
-) -> list[str]:
-    """Retrieve canonical live metadata keys for a site label.
-
-    Args:
-        rds: Redis connection used for incremental scanning.
-        label: Unencoded site label to match.
-
-    Returns:
-        Sorted canonical metadata keys for the requested site.
-    """
-    encoded_label = encode_stream_id(label)
-    cursor: int = 0
-    matching_keys: list[str] = []
-
-    while True:
-        cursor, keys = await rds.scan(
-            cursor=cursor,
-            match=f'stream_metadata:{encoded_label}|*',
-            count=_stream_scan_count,
-        )
-
-        # Scan can return unrelated historical keys, so retain only the exact
-        # key contract consumed by the metadata delivery services.
-        for key in keys:
-            decoded_key = key.decode('utf-8')
-            if is_metadata_key(decoded_key):
-                matching_keys.append(decoded_key)
-
-        if cursor == 0:
-            break
-
-    return sorted(matching_keys)
 
 
 async def fetch_latest_metadata_for_key(

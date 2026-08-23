@@ -4,9 +4,12 @@ import argparse
 import asyncio
 import datetime
 import gc
+import logging
 import os
 import time
 from collections.abc import AsyncGenerator
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
 from typing import TypeGuard
 from urllib.parse import urlsplit
@@ -16,6 +19,9 @@ import cv2
 import numpy as np
 import speedtest  # type: ignore[import-untyped]
 import streamlink
+
+
+logger = logging.getLogger(__name__)
 
 
 def _is_rtsp_url(value: str) -> bool:
@@ -141,6 +147,36 @@ class StreamCapture:
         self._timestamp_last_sample_at: float | None = None
         self._timestamp_last_progress_at: float | None = None
         self._source_timestamp_available = False
+        # OpenCV's FFmpeg calls can block for several seconds despite the
+        # configured timeout.  One executor per capture preserves operation
+        # ordering while keeping this process's publisher and lease tasks on
+        # the event loop.
+        self._capture_executor: ThreadPoolExecutor | None = None
+
+    async def _run_capture_operation[T](
+        self,
+        operation: Callable[..., T],
+        *args: object,
+    ) -> T:
+        """Run one blocking capture operation off this stream's event loop."""
+        if self._capture_executor is None:
+            self._capture_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix='stream-capture',
+            )
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._capture_executor,
+            operation,
+            *args,
+        )
+
+    def _close_capture_executor(self) -> None:
+        """Release the dedicated worker after its capture is closed."""
+        executor = self._capture_executor
+        self._capture_executor = None
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     async def initialise_stream(self, stream_url: str) -> None:
         """
@@ -150,12 +186,19 @@ class StreamCapture:
             stream_url (str): The URL of the stream to initialise.
         """
         self._reset_frozen_frame_watchdog()
-        self.cap = self._create_capture(stream_url)
+        capture = await self._run_capture_operation(
+            self._create_capture,
+            stream_url,
+        )
+        self.cap = capture
 
-        if not self.cap.isOpened():
+        if not capture.isOpened():
             await asyncio.sleep(self.reopen_delay)
-            self.cap.release()
-            self.cap = self._create_capture(stream_url)
+            await self._run_capture_operation(capture.release)
+            self.cap = await self._run_capture_operation(
+                self._create_capture,
+                stream_url,
+            )
 
     @staticmethod
     def _create_capture(stream_url: str) -> cv2.VideoCapture:
@@ -322,9 +365,11 @@ class StreamCapture:
         """
         Releases resources like the capture object.
         """
-        if self.cap:
-            self.cap.release()
-            self.cap = None
+        cap = self.cap
+        self.cap = None
+        if cap is not None:
+            await self._run_capture_operation(cap.release)
+        self._close_capture_executor()
 
     async def execute_capture(
         self,
@@ -339,63 +384,60 @@ class StreamCapture:
         last_process_time = datetime.datetime.now() - datetime.timedelta(
             seconds=self.capture_interval,
         )
-        fail_count = 0  # Counter for consecutive failures
+        fail_count = 0
         backoff_seconds = self.reopen_delay
 
-        while True:
-            if self.cap is None:
-                await self.initialise_stream(self.stream_url)
+        try:
+            while True:
+                if self.cap is None:
+                    await self.initialise_stream(self.stream_url)
 
-            ret, frame = (
-                self.cap.read() if self.cap is not None else (False, None)
-            )
-
-            if not ret or not self._is_usable_frame(frame):
-                fail_count += 1
-                self._begin_reconnect()
-                print(
-                    'Failed to read frame, trying to reinitialise stream. '
-                    f"Fail count: {fail_count}, "
-                    f"source={_redact_stream_url(self.stream_url)}",
-                    flush=True,
+                cap = self.cap
+                ret, frame = (
+                    await self._run_capture_operation(cap.read)
+                    if cap is not None else (False, None)
                 )
-                await self.release_resources()
-                await asyncio.sleep(backoff_seconds)
-                backoff_seconds = min(
-                    self.max_reopen_delay,
-                    max(self.reopen_delay, backoff_seconds * 1.5),
-                )
-                await self.initialise_stream(self.stream_url)
-                # Switch to generic frame capture after 5 consecutive failures
-                if (
-                    fail_count >= 5
-                    and not self.successfully_captured
-                    and not _is_rtsp_url(self.stream_url)
-                ):
-                    print('Switching to generic frame capture method.')
-                    async for generic_frame, generic_timestamp in (
-                        self.capture_generic_frames()
+                if not ret or not self._is_usable_frame(frame):
+                    fail_count += 1
+                    self._begin_reconnect()
+                    logger.info(
+                        'Failed to read frame, trying to reinitialise stream. '
+                        f"Fail count: {fail_count}, "
+                        f"source={_redact_stream_url(self.stream_url)}",
+                    )
+                    await self.release_resources()
+                    await asyncio.sleep(backoff_seconds)
+                    backoff_seconds = min(
+                        self.max_reopen_delay,
+                        max(self.reopen_delay, backoff_seconds * 1.5),
+                    )
+                    # Switching before reopening avoids briefly creating a
+                    # second FFmpeg capture that the generic source replaces.
+                    if (
+                        fail_count >= 5
+                        and not self.successfully_captured
+                        and not _is_rtsp_url(self.stream_url)
                     ):
-                        yield generic_frame, generic_timestamp
-                    return
-                continue
-            else:
-                # Reset fail count on successful read
+                        logger.info('Switching to generic frame capture method.')
+                        async for generic_frame, generic_timestamp in (
+                            self.capture_generic_frames()
+                        ):
+                            yield generic_frame, generic_timestamp
+                        return
+                    await self.initialise_stream(self.stream_url)
+                    continue
+
                 fail_count = 0
                 backoff_seconds = self.reopen_delay
-
-                # Mark as successfully captured
                 self.successfully_captured = True
-
                 if (
                     self._should_reconnect_after_stalled_source_timestamp()
                     or self._should_reconnect_after_frozen_frame(frame)
                 ):
-                    print(
+                    logger.info(
                         'Capture watchdog detected a stalled source; '
                         'reconnecting stream. '
                         f'source={_redact_stream_url(self.stream_url)}',
-                        flush=True,
                     )
                     self._begin_reconnect()
                     await self.release_resources()
@@ -404,19 +446,14 @@ class StreamCapture:
                     continue
                 self._mark_connected()
 
-            # Process the frame if the capture interval has elapsed
-            current_time = datetime.datetime.now()
-            elapsed_time = (current_time - last_process_time).total_seconds()
-
-            # If the capture interval has elapsed, yield the frame
-            if elapsed_time >= self.capture_interval:
-                last_process_time = current_time
-                timestamp = current_time.timestamp()
-                yield frame, timestamp
-
-            await asyncio.sleep(0.01)  # Adjust the sleep time as needed
-
-        await self.release_resources()
+                current_time = datetime.datetime.now()
+                elapsed_time = (current_time - last_process_time).total_seconds()
+                if elapsed_time >= self.capture_interval:
+                    last_process_time = current_time
+                    yield frame, current_time.timestamp()
+                await asyncio.sleep(0.01)
+        finally:
+            await self.release_resources()
 
     def check_internet_speed(self) -> tuple[float, float]:
         """
@@ -445,7 +482,7 @@ class StreamCapture:
         try:
             streams = streamlink.streams(self.stream_url)
             available_qualities = list(streams.keys())
-            print(f"Available qualities: {available_qualities}")
+            logger.info(f"Available qualities: {available_qualities}")
 
             if download_speed > 10:
                 preferred_qualities = [
@@ -465,12 +502,12 @@ class StreamCapture:
             for quality in preferred_qualities:
                 if quality in available_qualities:
                     selected_stream = streams[quality]
-                    print(f"Selected quality based on speed: {quality}")
+                    logger.info(f"Selected quality based on speed: {quality}")
                     return selected_stream.url
 
             raise Exception('No compatible stream quality is available.')
         except Exception as e:
-            print(f"Error selecting quality based on speed: {e}")
+            logger.info(f"Error selecting quality based on speed: {e}")
             return None
 
     async def capture_generic_frames(
@@ -482,76 +519,70 @@ class StreamCapture:
         Yields:
             Tuple[np.ndarray, float]: The captured frame and the timestamp.
         """
-        # Select the stream quality based on internet speed
-        stream_url = self.select_quality_based_on_speed()
+        stream_url = await self._run_capture_operation(
+            self.select_quality_based_on_speed,
+        )
         if not stream_url:
-            print('Failed to get suitable stream quality.')
+            logger.info('Failed to get suitable stream quality.')
+            self._close_capture_executor()
             return
 
-        # Initialise the stream with the selected URL
         await self.initialise_stream(stream_url)
-
         last_process_time = datetime.datetime.now()
-        fail_count = 0  # Counter for consecutive failures
+        fail_count = 0
         backoff_seconds = self.reopen_delay
 
-        while True:
-            # Read the frame from the stream
-            ret, frame = (
-                self.cap.read() if self.cap is not None else (False, None)
-            )
-
-            # Handle failed frame reads
-            if not ret or not self._is_usable_frame(frame):
-                fail_count += 1
-                self._begin_reconnect()
-                print(
-                    'Failed to read frame from generic stream. '
-                    f"Fail count: {fail_count}, "
-                    'source='
-                    f'{_redact_stream_url(stream_url or self.stream_url)}',
-                    flush=True,
-                )
-                await asyncio.sleep(backoff_seconds)
-                backoff_seconds = min(
-                    self.max_reopen_delay,
-                    max(self.reopen_delay, backoff_seconds * 1.5),
+        try:
+            while True:
+                cap = self.cap
+                ret, frame = (
+                    await self._run_capture_operation(cap.read)
+                    if cap is not None else (False, None)
                 )
 
-                # Reinitialise the stream after 5 consecutive failures
-                if fail_count >= 5 and not self.successfully_captured:
-                    print('Reinitialising the generic stream.')
-                    await self.release_resources()
-                    await asyncio.sleep(5)
-                    stream_url = self.select_quality_based_on_speed()
+                if not ret or not self._is_usable_frame(frame):
+                    fail_count += 1
+                    self._begin_reconnect()
+                    logger.info(
+                        'Failed to read frame from generic stream. '
+                        f"Fail count: {fail_count}, "
+                        'source='
+                        f'{_redact_stream_url(stream_url or self.stream_url)}',
+                    )
+                    await asyncio.sleep(backoff_seconds)
+                    backoff_seconds = min(
+                        self.max_reopen_delay,
+                        max(self.reopen_delay, backoff_seconds * 1.5),
+                    )
 
-                    # Exit if no suitable stream quality is available
-                    if not stream_url:
-                        print('Failed to get suitable stream quality.')
-                        continue
+                    if fail_count >= 5 and not self.successfully_captured:
+                        logger.info('Reinitialising the generic stream.')
+                        await self.release_resources()
+                        await asyncio.sleep(5)
+                        stream_url = await self._run_capture_operation(
+                            self.select_quality_based_on_speed,
+                        )
 
-                    # Reinitialise the stream with the new URL
-                    await self.initialise_stream(stream_url)
-                    fail_count = 0
-                continue
-            else:
-                # Reset fail count on successful read
+                        if not stream_url:
+                            logger.info('Failed to get suitable stream quality.')
+                            continue
+
+                        await self.initialise_stream(stream_url)
+                        fail_count = 0
+                    continue
+
                 fail_count = 0
                 backoff_seconds = self.reopen_delay
-
-                # Mark as successfully captured
                 self.successfully_captured = True
                 self._mark_connected()
-
-            current_time = datetime.datetime.now()
-            elapsed_time = (current_time - last_process_time).total_seconds()
-
-            if elapsed_time >= self.capture_interval:
-                last_process_time = current_time
-                timestamp = current_time.timestamp()
-                yield frame, timestamp
-
-            await asyncio.sleep(0.01)  # Adjust the sleep time as needed
+                current_time = datetime.datetime.now()
+                elapsed_time = (current_time - last_process_time).total_seconds()
+                if elapsed_time >= self.capture_interval:
+                    last_process_time = current_time
+                    yield frame, current_time.timestamp()
+                await asyncio.sleep(0.01)
+        finally:
+            await self.release_resources()
 
     def update_capture_interval(self, new_interval: float) -> None:
         """
@@ -579,7 +610,7 @@ async def main() -> None:
     stream_capture = StreamCapture(args.url)
     async for frame, timestamp in stream_capture.execute_capture():
         # Process the frame here
-        print(f"Frame at {timestamp} displayed")
+        logger.info(f"Frame at {timestamp} displayed")
         # Release the frame resources
         del frame
         gc.collect()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 from collections.abc import Awaitable
@@ -13,6 +14,9 @@ from src.nvenc_session import try_acquire_nvenc_session
 
 _restart_delay_seconds: Final[float] = 2.0
 _default_fps: Final[float] = 15.0
+
+
+logger = logging.getLogger(__name__)
 
 
 class _FfmpegProcess(Protocol):
@@ -93,10 +97,9 @@ class MediaSourceRestreamer:
                     uses_nvenc = True
                 else:
                     encoder = 'libx264'
-                    print(
+                    logger.info(
                         f'[media:{self.publish_url}] NVENC session budget '
                         'reached; using libx264',
-                        flush=True,
                     )
             command = _build_command(
                 ffmpeg_binary,

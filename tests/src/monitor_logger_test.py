@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -22,17 +22,11 @@ class TestLoggerConfig(unittest.TestCase):
         """
         Initialise test variables and ensure the log directory exists.
         """
+        self.temp_dir = tempfile.TemporaryDirectory(prefix='monitor-logger-')
         self.log_file: str = 'test.log'
-        self.log_dir: str = 'test_logs'
+        self.log_dir: str = self.temp_dir.name
         self.level: int = logging.DEBUG
         self.formatter: logging.Formatter = logging.Formatter('%(message)s')
-
-        # Remove the log directory if it exists
-        if Path(self.log_dir).exists():
-            shutil.rmtree(self.log_dir)
-
-        # Create the log directory
-        Path(self.log_dir).mkdir(parents=True, exist_ok=True)
 
         self.logger_config: LoggerConfig = LoggerConfig(
             log_file=self.log_file,
@@ -129,7 +123,7 @@ class TestLoggerConfig(unittest.TestCase):
         # Initialise logger configuration
         from src.monitor_logger import LoggerConfig
         self.logger_config = LoggerConfig(
-            log_file='test.log', log_dir='logs_test',
+            log_file='test.log', log_dir=self.log_dir,
         )
 
         # Mock the mkdir function to avoid actual directory creation
@@ -188,16 +182,8 @@ class TestLoggerConfig(unittest.TestCase):
         self.assertIn('Logging setup complete.', result.stderr)
 
     def tearDown(self) -> None:
-        """
-        Clean up any files or directories created during tests.
-        """
-        if Path(self.log_dir).exists():
-            try:
-                # Remove the log directory
-                shutil.rmtree(self.log_dir)
-                print(f"Successfully removed directory: {self.log_dir}")
-            except Exception as e:
-                print(f"Failed to remove directory {self.log_dir}: {e}")
+        """Remove this test instance's isolated log directory."""
+        self.temp_dir.cleanup()
 
 
 if __name__ == '__main__':

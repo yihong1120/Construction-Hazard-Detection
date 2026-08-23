@@ -8,9 +8,6 @@ from examples.streaming_web.metadata_keys import build_metadata_key
 from examples.streaming_web.redis_service import (
     fetch_latest_metadata_for_key,
 )
-from examples.streaming_web.redis_service import (
-    get_metadata_keys_for_label,
-)
 
 
 class TestRedisService(unittest.IsolatedAsyncioTestCase):
@@ -34,28 +31,6 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
             service._extract_stream_id('invalid-key')
         with self.assertRaisesRegex(ValueError, 'invalid_metadata_key'):
             service._decode_stream_name('invalid-key')
-
-    async def test_get_metadata_keys_for_label_empty(self) -> None:
-        """Exercise this test."""
-        self.mock_rds.scan.side_effect = [(0, [])]
-
-        result = await get_metadata_keys_for_label(self.mock_rds, 'mylabel')
-
-        self.assertEqual(result, [])
-
-    async def test_get_metadata_keys_for_label_non_empty(self) -> None:
-        """Exercise this test."""
-        self.mock_rds.scan.side_effect = [
-            (123, [b'stream_metadata:abcd|key2']),
-            (0, [b'stream_metadata:abcd|key1', b'other:key']),
-        ]
-
-        result = await get_metadata_keys_for_label(self.mock_rds, 'ignored')
-
-        self.assertEqual(
-            result,
-            ['stream_metadata:abcd|key1', 'stream_metadata:abcd|key2'],
-        )
 
     async def test_fetch_latest_metadata_for_key_no_messages(self) -> None:
         """Exercise this test."""

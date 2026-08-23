@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from datetime import datetime
@@ -17,6 +18,8 @@ from PIL import Image
 from pydantic import ValidationError
 
 from examples.violation_records import violation_services as routers
+from examples.violation_records.analytics import _normalise_utc
+from examples.violation_records.media_service import _generate_thumbnail_sync
 from examples.violation_records.schemas import FeedbackDetectionItem
 from examples.violation_records.schemas import ViolationFeedbackItem
 from examples.violation_records.schemas import ViolationItem
@@ -27,6 +30,16 @@ def _feedback(
     feedback_type: str = 'false_positive',
     **values: object,
 ) -> ViolationFeedbackItem:
+    """Perform feedback.
+
+    Args:
+        feedback_id: Value used by this callable.
+        feedback_type: Value used by this callable.
+        **values: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     defaults = {
         'id': feedback_id,
         'type': feedback_type,
@@ -38,7 +51,13 @@ def _feedback(
 
 
 class TestViolationRouterHelpers(unittest.TestCase):
+
+    """Provide TestViolationRouterHelpers.
+    """
+
     def test_detection_and_warning_json_decoding(self) -> None:
+        """Test detection and warning json decoding.
+        """
         self.assertIsNone(routers._decode_detection_items(None))
         self.assertEqual(
             routers._decode_detection_items(
@@ -63,6 +82,8 @@ class TestViolationRouterHelpers(unittest.TestCase):
             routers._warning_text_from_json('{not json')
 
     def test_media_url_and_detection_bbox_helpers(self) -> None:
+        """Test media url and detection bbox helpers.
+        """
         request = SimpleNamespace(
             url_for=lambda endpoint: f"https://api.test/{endpoint}",
         )
@@ -89,6 +110,8 @@ class TestViolationRouterHelpers(unittest.TestCase):
         )
 
     def test_feedback_detection_normalisation_and_ids(self) -> None:
+        """Test feedback detection normalisation and ids.
+        """
         item = [1.0, 2.0, 4.0, 6.0, 0.9, 5.0, 99.0]
         normalized = routers._feedback_detection_from_item(item, 0)
         self.assertEqual(normalized.id, 'det_0')
@@ -121,6 +144,8 @@ class TestViolationRouterHelpers(unittest.TestCase):
             routers._feedback_detection_ids_from_json('bad json')
 
     def test_bbox_and_overlay_helpers(self) -> None:
+        """Test bbox and overlay helpers.
+        """
         self.assertEqual(routers._clamp_ratio(-0.1), 0.0)
         self.assertEqual(routers._clamp_ratio(2), 1.0)
         self.assertIsNone(routers._bbox_to_normalized(None, (100, 100)))
@@ -205,24 +230,8 @@ class TestViolationRouterHelpers(unittest.TestCase):
         )
 
     def test_row_cursor_and_analytics_helper_branches(self) -> None:
-        basic_row = tuple(range(routers._violation_column_count + 1))
-        row, total = routers._split_violation_row_total(basic_row)
-        self.assertEqual(len(row), routers._violation_column_count)
-        self.assertEqual(total, routers._violation_column_count)
-        self.assertEqual(
-            routers._split_violation_row_total(
-                (1, 2),
-            ),
-            ((1, 2), None),
-        )
-
-        mapping_row = SimpleNamespace(_mapping={'total_count': 9})
-        self.assertEqual(
-            routers._split_violation_row_total(
-                mapping_row,
-            ),
-            (mapping_row, 9),
-        )
+        """Test row cursor and analytics helper branches.
+        """
         self.assertEqual(
             routers._scalar_value(
                 SimpleNamespace(name='Site A'),
@@ -252,11 +261,13 @@ class TestViolationRouterHelpers(unittest.TestCase):
 
         self.assertEqual(routers._empty_analytics_response().summary.total, 0)
         self.assertEqual(
-            routers._normalise_utc(datetime(2026, 7, 24)).tzinfo,
+            _normalise_utc(datetime(2026, 7, 24)).tzinfo,
             timezone.utc,
         )
 
     def test_analytics_database_expressions_and_type_validation(self) -> None:
+        """Test analytics database expressions and type validation.
+        """
         for dialect in ['postgresql', 'mysql', 'mariadb', 'sqlite', 'unknown']:
             db = SimpleNamespace(
                 bind=SimpleNamespace(dialect=SimpleNamespace(name=dialect)),
@@ -281,6 +292,8 @@ class TestViolationRouterHelpers(unittest.TestCase):
         self.assertEqual(invalid_type.exception.status_code, 422)
 
     def test_feedback_bbox_matching(self) -> None:
+        """Test feedback bbox matching.
+        """
         detection = FeedbackDetectionItem(
             id='det_1',
             bbox=[1, 2, 3, 4],
@@ -296,32 +309,6 @@ class TestViolationRouterHelpers(unittest.TestCase):
         )
         self.assertIsNone(routers._feedback_for_detection(detection, []))
 
-    def test_row_total_helpers_cover_mapping_and_scalar_edge_cases(
-        self,
-    ) -> None:
-        """Window-count rows handle tuple and non-sized database result
-        shapes."""
-
-        class MappingRow(tuple):
-            @property
-            def _mapping(self) -> dict[str, int]:
-                return {'total_count': 11}
-
-        full_row = MappingRow(range(routers._violation_column_count + 1))
-        truncated, total = routers._split_violation_row_total(full_row)
-        self.assertEqual(len(truncated), routers._violation_column_count)
-        self.assertEqual(total, 11)
-
-        shorter_row = MappingRow((1, 2))
-        self.assertEqual(
-            routers._split_violation_row_total(shorter_row),
-            (shorter_row, 11),
-        )
-        self.assertEqual(
-            routers._split_violation_row_total(SimpleNamespace()),
-            (SimpleNamespace(), None),
-        )
-
     def test_thumbnail_generation_handles_cached_rgba_and_invalid_images(
         self,
     ) -> None:
@@ -333,16 +320,16 @@ class TestViolationRouterHelpers(unittest.TestCase):
             thumbnail = root / 'thumbnail.jpg'
             Image.new('RGBA', (20, 10), color=(1, 2, 3, 100)).save(source)
 
-            routers._generate_thumbnail_sync(source, thumbnail)
+            _generate_thumbnail_sync(source, thumbnail)
             with Image.open(thumbnail) as created:
                 self.assertEqual(created.mode, 'RGB')
 
-            routers._generate_thumbnail_sync(source, thumbnail)
+            _generate_thumbnail_sync(source, thumbnail)
 
             invalid_source = root / 'invalid.png'
             invalid_source.write_bytes(b'not an image')
             with self.assertRaises(HTTPException) as invalid_image:
-                routers._generate_thumbnail_sync(
+                _generate_thumbnail_sync(
                     invalid_source,
                     root / 'bad.jpg',
                 )
@@ -358,15 +345,27 @@ class TestViolationRouterHelpers(unittest.TestCase):
             Image.new('RGB', (30, 15), color='red').save(image_path)
             with patch.object(routers, 'STATIC_DIR', root):
                 self.assertEqual(
-                    routers._image_size_for_violation('frame.jpg'),
+                    asyncio.run(
+                        routers.image_size_for_violation(
+                            'frame.jpg', static_dir=routers.STATIC_DIR,
+                        ),
+                    ),
                     (30, 15),
                 )
                 self.assertIsNone(
-                    routers._image_size_for_violation('../outside.jpg'),
+                    asyncio.run(
+                        routers.image_size_for_violation(
+                            '../outside.jpg', static_dir=routers.STATIC_DIR,
+                        ),
+                    ),
                 )
 
 
 class TestViolationMediaAccessCoverage(unittest.IsolatedAsyncioTestCase):
+
+    """Provide TestViolationMediaAccessCoverage.
+    """
+
     async def test_media_authorization_rejects_users_without_sites(
         self,
     ) -> None:
@@ -378,8 +377,7 @@ class TestViolationMediaAccessCoverage(unittest.IsolatedAsyncioTestCase):
             with (
                 patch.object(routers, 'STATIC_DIR', root),
                 patch.object(
-                    routers,
-                    'get_user_sites_cached',
+                    routers._user_service, 'get_cached_effective_site_names',
                     new=AsyncMock(return_value=[]),
                 ),
             ):
@@ -394,7 +392,13 @@ class TestViolationMediaAccessCoverage(unittest.IsolatedAsyncioTestCase):
 
 
 class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
+
+    """Provide TestViolationRouteGuardsCoverage.
+    """
+
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db = MagicMock()
         self.db.execute = AsyncMock()
         self.credentials: Any = SimpleNamespace(subject={'username': 'reviewer'})
@@ -436,8 +440,7 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(missing_identity.exception.status_code, 401)
 
         with patch.object(
-            routers,
-            'load_user_with_effective_sites',
+            routers._user_service, 'load_user_with_effective_sites',
             new=AsyncMock(
                 return_value=(SimpleNamespace(role='admin', group_id=1), []),
             ),
@@ -467,8 +470,7 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         )
         self.db.execute.return_value = SimpleNamespace(all=lambda: [])
         with patch.object(
-            routers,
-            'get_user_sites_cached',
+            routers._user_service, 'get_cached_effective_site_names',
             new=AsyncMock(return_value=['Roadwork']),
         ):
             result = await routers.get_violations(
@@ -476,14 +478,13 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
                 flagged=False,
                 review_status=None,
                 limit=1,
-                offset=0,
                 cursor=cursor,
                 db=self.db,
                 credentials=self.credentials,
             )
 
-        self.assertEqual(result.total, 0)
         self.assertEqual(result.items, [])
+        self.assertFalse(result.has_more)
 
     async def test_analytics_rejects_missing_identity_and_handles_no_sites(
         self,
@@ -596,8 +597,7 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """All mutation and media routes reject callers outside their scope."""
         with patch.object(
-            routers,
-            'get_user_sites_cached',
+            routers._user_service, 'get_cached_effective_site_names',
             new=AsyncMock(return_value=[]),
         ):
             with self.assertRaises(HTTPException) as detail_denied:
@@ -671,8 +671,7 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         ]
         payload = routers.ViolationFeedbackCreate(type='false_positive')
         with patch.object(
-            routers,
-            'get_user_sites_cached',
+            routers._user_service, 'get_cached_effective_site_names',
             new=AsyncMock(return_value=['Roadwork']),
         ):
             with self.assertRaises(HTTPException) as missing_user:
@@ -704,8 +703,7 @@ class TestViolationRouteGuardsCoverage(unittest.IsolatedAsyncioTestCase):
         )
         payload = routers.ViolationFeedbackCreate(type='false_positive')
         with patch.object(
-            routers,
-            'get_user_sites_cached',
+            routers._user_service, 'get_cached_effective_site_names',
             new=AsyncMock(return_value=['Roadwork']),
         ):
             with self.assertRaises(HTTPException) as failed:

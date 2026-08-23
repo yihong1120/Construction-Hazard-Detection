@@ -154,8 +154,7 @@ class TestSchemas(unittest.TestCase):
             ViolationItem(**data)
 
     def test_violation_list_success(self) -> None:
-        """Ensure ViolationList can be instantiated with a 'total' count and a
-        list of ViolationItem objects."""
+        """Ensure ViolationList can be instantiated with response items."""
         violation_data = {
             'id': 2,
             'site_name': 'Another Site',
@@ -165,13 +164,12 @@ class TestSchemas(unittest.TestCase):
             'created_at': datetime(2023, 5, 2, 9, 15, 0),
         }
         violations_list_data = {
-            'total': 1,
             'items': [
                 violation_data,
             ],
         }
         result = ViolationList(**violations_list_data)
-        self.assertEqual(result.total, 1)
+        self.assertFalse(result.has_more)
         self.assertEqual(len(result.items), 1)
         first_item = result.items[0]
         self.assertEqual(first_item.id, 2)
@@ -179,12 +177,11 @@ class TestSchemas(unittest.TestCase):
 
     def test_violation_list_empty_items(self) -> None:
         """If 'items' is an empty list, the schema should still work."""
-        data = {
-            'total': 0,
+        data: dict[str, object] = {
             'items': [],
         }
         result = ViolationList(**data)
-        self.assertEqual(result.total, 0)
+        self.assertFalse(result.has_more)
         self.assertEqual(result.items, [])
 
     def test_upload_violation_response_success(self) -> None:
@@ -293,7 +290,13 @@ if __name__ == '__main__':
 
 
 class TestViolationSchemaCoverage(unittest.TestCase):
+
+    """Provide TestViolationSchemaCoverage.
+    """
+
     def test_normalized_bbox_rejects_out_of_range_ratio(self) -> None:
+        """Test normalized bbox rejects out of range ratio.
+        """
         with self.assertRaises(ValidationError):
             NormalizedBBox(x=-0.1, y=0, w=1, h=1)
         with self.assertRaises(ValidationError):
@@ -302,6 +305,8 @@ class TestViolationSchemaCoverage(unittest.TestCase):
     def test_feedback_bbox_validation_rejects_nonfinite_negative_and_reversed(
         self,
     ) -> None:
+        """Test feedback bbox validation rejects nonfinite negative and reversed.
+        """
         self.assertIsNone(
             ViolationFeedbackCreate(
                 type='false_positive',
@@ -320,6 +325,8 @@ class TestViolationSchemaCoverage(unittest.TestCase):
                 )
 
     def test_feedback_confidence_and_type_requirements(self) -> None:
+        """Test feedback confidence and type requirements.
+        """
         self.assertIsNone(
             ViolationFeedbackCreate(
                 type='false_positive',

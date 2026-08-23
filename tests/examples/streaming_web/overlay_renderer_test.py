@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from examples.streaming_web import overlay_renderer as renderer
+from examples.streaming_web import overlay_text
 from examples.streaming_web.overlay_renderer import (
     has_warning,
 )
@@ -21,20 +22,10 @@ from examples.streaming_web.overlay_renderer import (
 from examples.streaming_web.overlay_renderer import (
     render_overlay_array,
 )
-from examples.streaming_web.overlay_renderer import (
-    render_overlay_frame,
-)
 
 
 class OverlayRendererTest(unittest.TestCase):
     """Tests for OverlayRendererTest."""
-
-    def _jpeg_frame(self) -> bytes:
-        """Support _jpeg_frame."""
-        frame = np.full((240, 320, 3), 245, dtype=np.uint8)
-        ok, encoded = cv2.imencode('.jpg', frame)
-        self.assertTrue(ok)
-        return encoded.tobytes()
 
     def test_normalise_overlay_mode(self) -> None:
         """Exercise this test."""
@@ -74,30 +65,6 @@ class OverlayRendererTest(unittest.TestCase):
             }),
         )
 
-    def test_render_overlay_frame_bad_input_returns_original(self) -> None:
-        """Exercise this test."""
-        frame_bytes = b'not-a-jpeg'
-
-        rendered = render_overlay_frame(frame_bytes, overlay_mode='backend')
-
-        self.assertEqual(rendered, frame_bytes)
-
-    def test_render_overlay_frame_encode_failure_returns_original(
-        self,
-    ) -> None:
-        """Exercise this test."""
-        frame_bytes = self._jpeg_frame()
-        with mock.patch(
-            'examples.streaming_web.overlay_renderer.cv2.imencode',
-            return_value=(False, np.array([], dtype=np.uint8)),
-        ):
-            rendered = render_overlay_frame(
-                frame_bytes,
-                overlay_mode='backend',
-            )
-
-        self.assertEqual(rendered, frame_bytes)
-
     def test_render_overlay_array_none_mode_and_empty_frame_return_original(
         self,
     ) -> None:
@@ -126,41 +93,6 @@ class OverlayRendererTest(unittest.TestCase):
             ),
             frame,
         )
-
-    def test_render_overlay_frame_none_returns_original(self) -> None:
-        """Exercise this test."""
-        frame_bytes = self._jpeg_frame()
-        rendered = render_overlay_frame(
-            frame_bytes,
-            detection_items_json=json.dumps(
-                [[40, 40, 180, 210, 0.93, 5, -1, 0]],
-            ),
-            overlay_mode='none',
-        )
-        self.assertEqual(rendered, frame_bytes)
-
-    def test_render_overlay_frame_with_unicode_label(self) -> None:
-        """Exercise this test."""
-        frame_bytes = self._jpeg_frame()
-        rendered = render_overlay_frame(
-            frame_bytes,
-            detection_items_json=json.dumps(
-                [[40, 40, 180, 210, 0.93, 5, 12, 0]],
-            ),
-            warnings_json=json.dumps({
-                'warning_people_in_controlled_area': {'count': 1},
-            }),
-            overlay_mode='backend',
-            label_language='zh-TW',
-        )
-        decoded = cv2.imdecode(
-            np.frombuffer(rendered, dtype=np.uint8),
-            cv2.IMREAD_COLOR,
-        )
-        self.assertIsNotNone(decoded)
-        assert decoded is not None
-        self.assertEqual(decoded.shape[:2], (240, 320))
-        self.assertNotEqual(rendered, frame_bytes)
 
     def test_render_overlay_array_draws_without_json_roundtrip(self) -> None:
         """Exercise this test."""
@@ -369,43 +301,6 @@ class OverlayRendererTest(unittest.TestCase):
         )
 
         np.testing.assert_array_equal(rendered, reference)
-
-    def test_cached_detection_parser_handles_strict_tracker_rows(
-        self,
-    ) -> None:
-        detections = renderer._detections_for_overlay(
-            json.dumps([[0.1, 0.1, 0.3, 0.4, 0.9, 5, 12, 0]]),
-            200,
-            100,
-            0.4,
-            json.dumps({
-                'warning_people_in_controlled_area': {'count': 1},
-            }),
-        )
-
-        self.assertEqual(len(detections), 1)
-        self.assertEqual(detections[0].bbox, (20, 10, 60, 40))
-        self.assertTrue(detections[0].is_warning)
-
-    def test_detections_from_data_adds_explicit_warning_target_overlay(
-        self,
-    ) -> None:
-        """Exercise this test."""
-        detections = renderer._detections_from_data(
-            [],
-            200,
-            100,
-            0.4,
-            {
-                'warning_close_to_vehicle': {
-                    'count': 1,
-                    'person_bboxes': [[20, 10, 40, 30]],
-                },
-            },
-        )
-
-        self.assertEqual(len(detections), 1)
-        self.assertTrue(detections[0].is_warning)
 
     def test_detection_parser_skips_low_confidence_and_degenerate_boxes(
         self,
@@ -628,13 +523,13 @@ class OverlayRendererTest(unittest.TestCase):
             (0, 0, 255),
             0.5,
         )
-        renderer._blend_bgra_roi(
+        overlay_text._blend_bgra_roi(
             frame,
             np.zeros((2, 2, 4), dtype=np.uint8),
             20,
             20,
         )
-        renderer._blend_bgra_roi(
+        overlay_text._blend_bgra_roi(
             frame,
             np.zeros((2, 2, 4), dtype=np.uint8),
             1,
@@ -661,19 +556,19 @@ class OverlayRendererTest(unittest.TestCase):
         """Exercise this test."""
         frame = np.zeros((20, 20, 3), dtype=np.uint8)
         with mock.patch(
-            'examples.streaming_web.overlay_renderer.'
+            'examples.streaming_web.overlay_text.'
             '_load_overlay_font',
             return_value=None,
         ):
-            renderer._render_pillow_text_bitmap.cache_clear()
+            overlay_text._render_pillow_text_bitmap.cache_clear()
             self.assertIsNone(
-                renderer._render_pillow_text_bitmap(
+                overlay_text._render_pillow_text_bitmap(
                     '中文',
                     16,
                     (255, 255, 255),
                 ),
             )
-            renderer._draw_pillow_text(
+            overlay_text._draw_pillow_text(
                 frame,
                 '中文',
                 (5, 5),
@@ -681,29 +576,29 @@ class OverlayRendererTest(unittest.TestCase):
                 (0, 0, 10, 10),
             )
 
-        renderer._load_overlay_font.cache_clear()
+        overlay_text._load_overlay_font.cache_clear()
         with (
             mock.patch(
-                'examples.streaming_web.overlay_renderer.'
+                'examples.streaming_web.overlay_text.'
                 'ImageFont.truetype',
                 side_effect=RuntimeError,
             ),
             mock.patch(
-                'examples.streaming_web.overlay_renderer.'
+                'examples.streaming_web.overlay_text.'
                 'ImageFont.load_default',
                 side_effect=RuntimeError,
             ),
         ):
-            self.assertIsNone(renderer._load_overlay_font(13))
+            self.assertIsNone(overlay_text._load_overlay_font(13))
 
-        renderer._render_pillow_text_bitmap.cache_clear()
-        rendered = renderer._render_pillow_text_bitmap(
+        overlay_text._render_pillow_text_bitmap.cache_clear()
+        rendered = overlay_text._render_pillow_text_bitmap(
             '中文',
             16,
             (255, 255, 255),
         )
         self.assertIsNotNone(rendered)
-        renderer._draw_pillow_text(
+        overlay_text._draw_pillow_text(
             frame,
             '中文',
             (30, 30),

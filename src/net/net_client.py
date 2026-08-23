@@ -11,10 +11,11 @@ from urllib.parse import urlunparse
 import aiohttp
 import httpx
 
-from src.utils import TokenManager
+from src.async_http_client import AsyncHttpClientOwner
+from src.auth_tokens import TokenManager
 
 
-class NetClient:
+class NetClient(AsyncHttpClientOwner):
     """
     High-level HTTP and WebSocket client.
     """
@@ -55,7 +56,7 @@ class NetClient:
         """
         self.base_url: str = base_url.rstrip('/')
         self.token_manager: TokenManager = token_manager
-        self.timeout: int = timeout
+        super().__init__(timeout)
         self.reconnect_backoff: float = reconnect_backoff
         self.ws_heartbeat: int = ws_heartbeat
         self.ws_send_timeout: float = ws_send_timeout
@@ -66,8 +67,7 @@ class NetClient:
         self._session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_path: str | None = None
-    # Logger dedicated to this client (informational + debug on
-    # retries).
+        # Logger dedicated to this client (informational + debug on retries).
         self._log: logging.Logger = logging.getLogger(__name__)
 
     def build_http_url(self, path: str) -> str:
@@ -150,22 +150,24 @@ class NetClient:
             RuntimeError: If retry budget is exhausted without a response.
         """
         headers = await self.auth_headers()
+        if max_retries <= 0:
+            raise RuntimeError('HTTP POST retries exhausted')
+
+        client = await self._get_client()
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    resp = await client.post(
-                        self.build_http_url(path),
-                        data=data,
-                        files=files,
-                        headers=headers,
-                    )
-                    resp.raise_for_status()
-                    return resp.json()
+                resp = await client.post(
+                    self.build_http_url(path),
+                    data=data,
+                    files=files,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                return resp.json()
             except httpx.ConnectTimeout:
                 if attempt == max_retries - 1:
                     raise
-                delay = min(self.reconnect_backoff * (attempt + 1), 10.0)
-                await asyncio.sleep(delay)
+                await self._wait_for_http_retry(attempt)
             except httpx.HTTPStatusError as exc:
                 if self.auth_required and exc.response.status_code in (
                     401, 403,
@@ -174,12 +176,16 @@ class NetClient:
                     headers = await self.auth_headers()
                     if attempt == max_retries - 1:
                         raise
-                    delay = min(self.reconnect_backoff * (attempt + 1), 10.0)
-                    await asyncio.sleep(delay)
+                    await self._wait_for_http_retry(attempt)
                     continue
                 raise
 
         raise RuntimeError('HTTP POST retries exhausted')
+
+    async def _wait_for_http_retry(self, attempt: int) -> None:
+        """Apply the bounded HTTP retry backoff for a failed attempt."""
+        delay = min(self.reconnect_backoff * (attempt + 1), 10.0)
+        await asyncio.sleep(delay)
 
     async def ensure_ws(
         self, ws_path: str, headers: dict[str, str] | None = None,
@@ -207,19 +213,24 @@ class NetClient:
         return self._ws
 
     async def close(self) -> None:
-        """
-        Close the WebSocket and session if open.
-        """
+        """Close the HTTP pool and any WebSocket resources."""
+        try:
+            await self._close_websocket_resources()
+        finally:
+            await super().close()
+
+    async def _close_websocket_resources(self) -> None:
+        """Close the WebSocket transport without discarding the HTTP pool."""
         try:
             if self._ws is not None and not self._ws.closed:
                 await self._ws.close()
         finally:
             self._ws = None
-        try:
-            if self._session is not None and not self._session.closed:
-                await self._session.close()
-        finally:
-            self._session = None
+            try:
+                if self._session is not None and not self._session.closed:
+                    await self._session.close()
+            finally:
+                self._session = None
 
     async def _open_new_session(self) -> None:
         """
@@ -360,7 +371,7 @@ class NetClient:
             aiohttp.ClientWebSocketResponse | None:
                 The reconnected WebSocket or None on failure.
         """
-        await self.close()
+        await self._close_websocket_resources()
         try:
             return await self.ensure_ws(ws_path, headers=headers)
         except Exception:
