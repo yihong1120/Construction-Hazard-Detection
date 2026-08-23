@@ -20,7 +20,6 @@ from examples.streaming_web.overlay_models import WarningPayload
 from examples.streaming_web.overlay_text import _draw_label_text
 from examples.streaming_web.overlay_text import _measure_label_text
 
-
 CLASS_NAMES: dict[int, str] = {
     0: 'hardhat',
     1: 'mask',
@@ -314,19 +313,22 @@ _overlay_label_warnings_only = (
     os.getenv(
         'STREAMING_OVERLAY_LABEL_WARNINGS_ONLY',
         'false',
-    ).lower() == 'true'
+    ).lower()
+    == 'true'
 )
 _overlay_draw_warning_summary = (
     os.getenv(
         'STREAMING_OVERLAY_DRAW_WARNING_SUMMARY',
         'true',
-    ).lower() == 'true'
+    ).lower()
+    == 'true'
 )
 _overlay_draw_warning_status = (
     os.getenv(
         'STREAMING_OVERLAY_DRAW_WARNING_STATUS',
         'false',
-    ).lower() == 'true'
+    ).lower()
+    == 'true'
 )
 _overlay_max_warning_summary_items = max(
     1,
@@ -403,7 +405,8 @@ def render_overlay_array(
         return frame
 
     label_language = normalise_label_language(label_language)
-    # Geometry is rendered before detections so boxes and labels remain legible.
+    # Geometry is rendered before detections so boxes and labels remain
+    # legible.
     _draw_polygon_data(
         frame,
         (
@@ -614,7 +617,7 @@ def _parse_tracking_detection(
     x1, y1, x2, y2 = (float(item[i]) for i in range(4))
     confidence = float(item[4])
     class_id = int(float(item[5]))
-    class_name = CLASS_NAMES.get(class_id, f'class-{class_id}')
+    class_name = CLASS_NAMES.get(class_id, f"class-{class_id}")
     if _looks_normalized([x1, y1, x2, y2]):
         x1 *= frame_width
         x2 *= frame_width
@@ -972,7 +975,7 @@ def _draw_warning_summary(
     x2 = min(frame.shape[1] - 1, x1 + width)
     y2 = min(frame.shape[0] - 1, y1 + height)
 
-    roi = frame[y1:y2 + 1, x1:x2 + 1]
+    roi = frame[y1: y2 + 1, x1: x2 + 1]
     if not roi.size:
         return
     fill = np.empty_like(roi)
@@ -1055,8 +1058,8 @@ def _format_warning_summary_line(
         Localised label with a count suffix when greater than one.
     """
     label = labels.get(key) or key
-    suffix = f' x{count}' if count > 1 else ''
-    return f'{label}{suffix}'
+    suffix = f" x{count}" if count > 1 else ''
+    return f"{label}{suffix}"
 
 
 def _should_draw_label(detection: DetectionOverlay, label_count: int) -> bool:
@@ -1096,8 +1099,12 @@ def _draw_detection(
         return
 
     x1, y1, x2, y2 = detection.bbox
-    rgb = WARNING_RGB if detection.is_warning else _color_for_class(
-        detection.class_name,
+    rgb = (
+        WARNING_RGB
+        if detection.is_warning
+        else _color_for_class(
+            detection.class_name,
+        )
     )
     bgr = _rgb_to_bgr(rgb)
     thickness = max(1, int(box_thickness))
@@ -1136,7 +1143,11 @@ def _draw_label(
     padding_x = 6
     padding_y = 3
     text_width, text_height, baseline = _measure_label_text(
-        label, frame, font, scale, thickness,
+        label,
+        frame,
+        font,
+        scale,
+        thickness,
     )
     label_width = text_width + padding_x * 2
     label_height = text_height + baseline + padding_y * 2
@@ -1151,7 +1162,7 @@ def _draw_label(
         label_x2 = frame.shape[1] - 1
     label_y2 = min(frame.shape[0] - 1, label_y1 + label_height)
 
-    label_roi = frame[label_y1:label_y2 + 1, label_x1:label_x2 + 1]
+    label_roi = frame[label_y1: label_y2 + 1, label_x1: label_x2 + 1]
     if label_roi.size:
         cv2.rectangle(
             frame,
@@ -1189,7 +1200,8 @@ def _draw_polygons(
 
     Args:
         frame: Mutable BGR image array to annotate.
-        polygon_specs: JSON polygons with fill colour, border colour, and alpha.
+        polygon_specs: JSON polygons with fill colour, border colour, and
+            alpha.
     """
     for polygons_json, fill_rgb, stroke_rgb, fill_alpha in polygon_specs:
         polygons = _normalised_polygons_for_overlay(
@@ -1218,7 +1230,8 @@ def _draw_polygon_data(
 
     Args:
         frame: Mutable BGR image array to annotate.
-        polygon_specs: Decoded polygons with fill colour, border colour, and alpha.
+        polygon_specs: Decoded polygons with fill colour, border colour, and
+            alpha.
     """
     for polygon_data, fill_rgb, stroke_rgb, fill_alpha in polygon_specs:
         polygons = _normalised_polygons_from_data(
@@ -1367,10 +1380,7 @@ def _normalise_polygon(
     points = [(float(point[0]), float(point[1])) for point in polygon]
 
     if _points_look_normalized(points):
-        points = [
-            (x * frame_width, y * frame_height)
-            for x, y in points
-        ]
+        points = [(x * frame_width, y * frame_height) for x, y in points]
 
     clipped = [
         (
@@ -1391,10 +1401,7 @@ def _points_look_normalized(points: list[tuple[float, float]]) -> bool:
     Returns:
         ``True`` when every point lies in the inclusive unit square.
     """
-    return all(
-        0.0 <= x <= 1.0 and 0.0 <= y <= 1.0
-        for x, y in points
-    )
+    return all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in points)
 
 
 def _format_label(

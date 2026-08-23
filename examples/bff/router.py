@@ -40,7 +40,8 @@ async def login(
         payload: Browser login credentials.
         request: HTTP request used for origin and client-IP validation.
         response: HTTP response receiving the opaque session cookie.
-        x_hcaptcha_bypass_key: Optional trusted server-side hCaptcha bypass key.
+        x_hcaptcha_bypass_key: Optional trusted server-side hCaptcha bypass
+            key.
         db: Database session used by the authentication service.
         redis: Redis connection holding token and BFF session state.
 

@@ -46,7 +46,8 @@ async def _session(
         Session identifier and its server-side record.
 
     Raises:
-        HTTPException: If the session cookie is absent or its server-side record
+        HTTPException: If the session cookie is absent or its server-side
+            record
             has expired.
     """
     session_id = request.cookies.get(SESSION_COOKIE)
@@ -139,14 +140,17 @@ async def _user_summary(
     profile = user.profile
     display_name = user.username
     if profile is not None:
-        display_name = ' '.join(
-            part
-            for part in (
-                profile.given_name,
-                profile.family_name,
+        display_name = (
+            ' '.join(
+                part
+                for part in (
+                    profile.given_name,
+                    profile.family_name,
+                )
+                if part
             )
-            if part
-        ) or user.username
+            or user.username
+        )
     return UserSummary(
         id=user.id,
         username=user.username,
@@ -172,7 +176,8 @@ async def login_bff_session(
         request: HTTP request checked against trusted origins.
         response: HTTP response receiving the session cookie.
         hcaptcha_bypass_key: Optional trusted server-side hCaptcha bypass key.
-        db: Database session used for credential authentication and profile data.
+        db: Database session used for credential authentication and profile
+            data.
         redis: Redis connection holding token and BFF session state.
 
     Returns:
@@ -274,7 +279,7 @@ async def logout_bff_session(
     session_id, session = await _session(request, redis)
     check_csrf(request, session, csrf_token)
     access_token, refresh_token = auth_tokens(session)
-    await logout_user(refresh_token, f'Bearer {access_token}', redis)
+    await logout_user(refresh_token, f"Bearer {access_token}", redis)
     await delete_auth_session(redis, session_id)
     clear_session_cookie(response)
     response.headers['Cache-Control'] = 'no-store'
@@ -316,7 +321,7 @@ async def proxy_bff_request(
         request,
         redis,
         session_id,
-        f'{service}/{path}',
+        f"{service}/{path}",
         deployment=deployment,
     )
     await _roll_session(response, redis, session_id)

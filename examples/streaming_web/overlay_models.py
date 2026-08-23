@@ -7,7 +7,6 @@ from typing import TypedDict
 
 import numpy as np
 
-
 TrackingDetection: TypeAlias = list[float]
 TrackingDetections: TypeAlias = list[TrackingDetection]
 WarningBoundingBox: TypeAlias = list[float | int]

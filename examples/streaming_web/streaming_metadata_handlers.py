@@ -26,7 +26,9 @@ from examples.shared.ws_utils import _safe_websocket_send_json
 from examples.shared.ws_utils import _safe_websocket_send_text
 from examples.streaming_web.metadata_fanout import metadata_fanout
 from examples.streaming_web.metadata_keys import build_metadata_key
-from examples.streaming_web.metadata_keys import build_metadata_key_from_stream_id
+from examples.streaming_web.metadata_keys import (
+    build_metadata_key_from_stream_id,
+)
 from examples.streaming_web.metadata_keys import get_metadata_site_generation
 from examples.streaming_web.redis_service import fetch_latest_metadata_for_key
 from examples.streaming_web.schemas import FrameOutData
@@ -83,11 +85,10 @@ def _encode_sse_event(
     event_id = str(payload.get('id') or '')
     lines = []
     if event_id:
-        lines.append(f'id: {event_id}')
-    lines.append(f'event: {event_type}')
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event_type}")
     lines.append(
-        'data: '
-        + json.dumps(payload, separators=_json_compact_separators),
+        'data: ' + json.dumps(payload, separators=_json_compact_separators),
     )
     return ('\n'.join(lines) + '\n\n').encode('utf-8')
 
@@ -155,7 +156,8 @@ async def metadata_stream_generator(
         overlay_ready_payload: Optional payload for the first ready event.
         overlay_demand_key: Optional producer demand lease key.
         overlay_demand_ttl_seconds: Optional demand lease duration.
-        overlay_demand_refresh_seconds: Minimum interval between lease renewals.
+        overlay_demand_refresh_seconds: Minimum interval between lease
+            renewals.
 
     Yields:
         Encoded SSE events, heartbeats, and rate-limited Redis-error events.
@@ -186,13 +188,14 @@ async def metadata_stream_generator(
                         now,
                     )
                 )
-                overlay_ready_sent, overlay_event = (
-                    await _next_overlay_ready_event(
-                        rds,
-                        overlay_ready_key,
-                        overlay_ready_payload,
-                        overlay_ready_sent,
-                    )
+                (
+                    overlay_ready_sent,
+                    overlay_event,
+                ) = await _next_overlay_ready_event(
+                    rds,
+                    overlay_ready_key,
+                    overlay_ready_payload,
+                    overlay_ready_sent,
                 )
                 if overlay_event is not None:
                     last_heartbeat = now
@@ -205,7 +208,10 @@ async def metadata_stream_generator(
                 if isinstance(frame_data, Exception):
                     raise frame_data
             except asyncio.TimeoutError:
-                last_heartbeat, heartbeat = _heartbeat_event(now, last_heartbeat)
+                last_heartbeat, heartbeat = _heartbeat_event(
+                    now,
+                    last_heartbeat,
+                )
                 if heartbeat is not None:
                     yield heartbeat
                 continue
@@ -262,10 +268,7 @@ async def _refresh_overlay_demand_if_due(
     Returns:
         Timestamp of the renewal or the unchanged previous timestamp.
     """
-    if (
-        overlay_demand_key
-        and now - last_refresh >= refresh_seconds
-    ):
+    if overlay_demand_key and now - last_refresh >= refresh_seconds:
         await _refresh_overlay_demand(
             rds,
             overlay_demand_key,
@@ -377,7 +380,8 @@ def _metadata_frame_event(
         last_heartbeat: Timestamp of the prior heartbeat or event.
 
     Returns:
-        Updated message identifier, heartbeat timestamp, and optional SSE event.
+        Updated message identifier, heartbeat timestamp, and optional SSE
+            event.
     """
     if frame_data:
         last_id = str(frame_data['id'])
@@ -623,12 +627,15 @@ async def handle_metadata_ws(
     )
     if not username:
         return
-    logger.info(f"[WebSocket-Metadata] {client_ip}: Authenticated as {username}")
+    logger.info(
+        f"[WebSocket-Metadata] {client_ip}: Authenticated as {username}",
+    )
 
     if db is not None:
         try:
             _, user_site_names, user_role = await load_user_access_context(
-                db, username,
+                db,
+                username,
             )
         except Exception:
             await websocket.close(code=4001, reason='User not found')
@@ -670,7 +677,7 @@ async def handle_metadata_ws(
         logger.info(
             (
                 f"[WebSocket-Metadata] {client_ip} ({username}): "
-                f'Connection closed, total updates: {update_count}'
+                f"Connection closed, total updates: {update_count}"
             ),
         )
 

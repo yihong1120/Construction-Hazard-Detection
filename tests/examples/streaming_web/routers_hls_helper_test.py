@@ -34,15 +34,12 @@ def _credentials(
 
 
 class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
-
-    """Provide TestStreamingRouterHlsHelpers.
-    """
+    """Provide TestStreamingRouterHlsHelpers."""
 
     def test_overlay_and_media_session_helpers_cover_invalid_inputs(
         self,
     ) -> None:
-        """Test overlay and media session helpers cover invalid inputs.
-        """
+        """Test overlay and media session helpers cover invalid inputs."""
         options = playback_service._overlay_language_options(('en',))
         self.assertEqual(options[0].code, 'en')
         self.assertEqual(
@@ -73,8 +70,8 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     def test_hls_uri_and_playlist_rewriting_preserve_media_query_and_auth(
         self,
     ) -> None:
-        """Test hls uri and playlist rewriting preserve media query and auth.
-        """
+        """Test hls uri and playlist rewriting preserve media query and
+        auth."""
         media_path = 'hazard_site_camera'
         auth_query = 'mt=opaque-token'
         self.assertEqual(
@@ -84,7 +81,9 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             '/hazard/media/hazard_site_camera/segment.ts?mt=opaque-token',
             playback_hls.rewrite_hls_uri(
-                'segment.ts', media_path, auth_query,
+                'segment.ts',
+                media_path,
+                auth_query,
             ),
         )
         self.assertIn(
@@ -134,8 +133,7 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     def test_media_path_and_session_payload_helpers_handle_bad_values(
         self,
     ) -> None:
-        """Test media path and session payload helpers handle bad values.
-        """
+        """Test media path and session payload helpers handle bad values."""
         self.assertEqual(
             playback_hls.extract_media_path_from_uri('/not-media/path'),
             '',
@@ -169,12 +167,12 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             )
 
     def test_media_session_scope_and_selected_path_helpers(self) -> None:
-        """Test media session scope and selected path helpers.
-        """
+        """Test media session scope and selected path helpers."""
         base_path = playback_service.build_media_path('SiteA', 'Camera1')
         preview_path = playback_service.build_preview_media_path(base_path)
         overlay_path = playback_service.build_annotated_media_path(
-            base_path, 'en',
+            base_path,
+            'en',
         )
         self.assertTrue(
             playback_hls.opaque_media_session_allows_path(
@@ -259,11 +257,11 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     async def test_demand_and_media_session_indexes_propagate_failures(
         self,
     ) -> None:
-        """Test demand and media session indexes propagate failures.
-        """
+        """Test demand and media session indexes propagate failures."""
         base_path = playback_service.build_media_path('SiteA', 'Camera1')
         overlay_path = playback_service.build_annotated_media_path(
-            base_path, 'en',
+            base_path,
+            'en',
         )
         rds = AsyncMock()
         pipeline = MagicMock()
@@ -272,7 +270,9 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         pipeline.execute = AsyncMock()
         rds.pipeline = MagicMock(return_value=pipeline)
         with patch.object(
-            playback_service, 'touch_overlay_demand', AsyncMock(),
+            playback_service,
+            'touch_overlay_demand',
+            AsyncMock(),
         ) as touch_overlay:
             await playback_service._touch_media_demand_from_media_path(
                 rds,
@@ -319,8 +319,7 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     async def test_refreshes_and_prunes_invalid_media_session_indexes(
         self,
     ) -> None:
-        """Test refreshes and prunes invalid media session indexes.
-        """
+        """Test refreshes and prunes invalid media session indexes."""
         rds = MagicMock()
         pipeline = MagicMock()
         pipeline.__aenter__ = AsyncMock(return_value=pipeline)
@@ -356,11 +355,12 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     async def test_playback_session_errors_and_startup_input_validation(
         self,
     ) -> None:
-        """Test playback session errors and startup input validation.
-        """
+        """Test playback session errors and startup input validation."""
         rds = AsyncMock()
         with patch.object(
-            playback_service, '_load_playback_session', AsyncMock(
+            playback_service,
+            '_load_playback_session',
+            AsyncMock(
                 return_value=None,
             ),
         ):
@@ -396,13 +396,17 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'session_forbidden')
 
         with patch.object(
-            playback_service, 'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS', 0.0,
+            playback_service,
+            'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS',
+            0.0,
         ):
             await playback_service._wait_for_session_startup(
                 cast(playback_service.PlaybackSession, {}),
             )
         with patch.object(
-            playback_service, 'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS', 1.0,
+            playback_service,
+            'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS',
+            1.0,
         ):
             with self.assertRaises(ValueError):
                 await playback_service._wait_for_session_startup(
@@ -413,8 +417,7 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_label_access_rejects_inactive_users(self) -> None:
-        """Test label access rejects inactive users.
-        """
+        """Test label access rejects inactive users."""
         credentials = _credentials({'username': 'alice'})
         inactive_user = SimpleNamespace(status='suspended')
         with patch.object(
@@ -424,15 +427,16 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as raised:
                 await playback_hls.authorise_label_access(
-                    credentials, AsyncMock(), 'SiteA',
+                    credentials,
+                    AsyncMock(),
+                    'SiteA',
                 )
         self.assertEqual(raised.exception.detail, 'inactive_user')
 
     async def test_internal_hls_playlist_maps_network_status_and_empty_errors(
         self,
     ) -> None:
-        """Test internal hls playlist maps network status and empty errors.
-        """
+        """Test internal hls playlist maps network status and empty errors."""
         context = MagicMock()
         client = AsyncMock()
         context.__aenter__ = AsyncMock(return_value=client)
@@ -448,7 +452,8 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as raised:
                 await playback_hls.fetch_internal_hls_playlist(
-                    'hazard_site_cam', media_query='',
+                    'hazard_site_cam',
+                    media_query='',
                 )
         self.assertEqual(raised.exception.status_code, 502)
 
@@ -465,7 +470,8 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as raised:
                 await playback_hls.fetch_internal_hls_playlist(
-                    'hazard_site_cam', media_query='quality=low',
+                    'hazard_site_cam',
+                    media_query='quality=low',
                 )
         self.assertEqual(raised.exception.status_code, 503)
 
@@ -481,7 +487,8 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as raised:
                 await playback_hls.fetch_internal_hls_playlist(
-                    'hazard_site_cam', media_query='',
+                    'hazard_site_cam',
+                    media_query='',
                 )
         self.assertEqual(raised.exception.detail, 'media_playlist_not_ready')
 
@@ -490,7 +497,6 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Playback helpers fail closed when sessions or media auth are
         invalid."""
-
         rds = SimpleNamespace(
             zremrangebyscore=AsyncMock(),
             zcard=AsyncMock(return_value=1),
@@ -541,7 +547,9 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaisesRegex(HTTPException, 'session_not_found'):
                 await routers.stream_playback_session_playlist(
-                    'missing', request, rds,
+                    'missing',
+                    request,
+                    rds,
                 )
 
         with patch.object(
@@ -551,7 +559,9 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaisesRegex(HTTPException, 'missing_media_token'):
                 await routers.stream_playback_session_playlist(
-                    'present', request, rds,
+                    'present',
+                    request,
+                    rds,
                 )
 
     async def test_playback_batch_and_endpoint_auth_guards(self) -> None:
@@ -584,7 +594,8 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             )
         ]
         with self.assertRaisesRegex(
-            HTTPException, 'stream_batch_limit_exceeded',
+            HTTPException,
+            'stream_batch_limit_exceeded',
         ):
             streaming_api_service._enforce_stream_playback_batch_limit(
                 oversized,
@@ -608,7 +619,9 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             )
         with self.assertRaisesRegex(HTTPException, 'Invalid token'):
             await routers.release_stream_playback(
-                request, credentials, AsyncMock(),
+                request,
+                credentials,
+                AsyncMock(),
             )
         with self.assertRaisesRegex(HTTPException, 'Invalid token'):
             await routers.get_streams_for_label_route(
@@ -702,14 +715,18 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 playback_service,
-                '_wait_for_session_startup', AsyncMock(),
+                '_wait_for_session_startup',
+                AsyncMock(),
             ),
         ):
             with self.assertRaisesRegex(
-                HTTPException, 'invalid_media_playlist',
+                HTTPException,
+                'invalid_media_playlist',
             ):
                 await routers.stream_playback_session_playlist(
-                    'valid', request, rds,
+                    'valid',
+                    request,
+                    rds,
                 )
 
         with self.assertRaisesRegex(HTTPException, 'label_required'):
@@ -724,7 +741,8 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 streaming_api_service,
-                'authorise_label_access', AsyncMock(),
+                'authorise_label_access',
+                AsyncMock(),
             ),
             patch.object(
                 streaming_api_service,
@@ -789,7 +807,8 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 streaming_metadata_service,
-                'authorise_label_access', AsyncMock(),
+                'authorise_label_access',
+                AsyncMock(),
             ),
             patch.object(
                 streaming_metadata_service,
@@ -848,15 +867,17 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(),
             ) as delete_indexes,
         ):
-            session = await playback_service._create_or_update_playback_session(
-                rds,
-                session_id='existing',
-                username='alice',
-                label='SiteA',
-                stream_name='Camera1',
-                profile='clean',
-                rendition='detail',
-                language=None,
+            session = (
+                await playback_service._create_or_update_playback_session(
+                    rds,
+                    session_id='existing',
+                    username='alice',
+                    label='SiteA',
+                    stream_name='Camera1',
+                    profile='clean',
+                    rendition='detail',
+                    language=None,
+                )
             )
         self.assertEqual(session['session_id'], 'existing')
         delete_indexes.assert_awaited_once_with(rds, existing)
@@ -880,7 +901,8 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 streaming_metadata_service,
-                'authorise_label_access', AsyncMock(),
+                'authorise_label_access',
+                AsyncMock(),
             ),
             patch.object(
                 streaming_metadata_service,

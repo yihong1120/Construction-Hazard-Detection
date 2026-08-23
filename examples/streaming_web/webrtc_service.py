@@ -23,7 +23,7 @@ def _build_turn_rest_credential(
         Coturn username and HMAC-SHA1 credential pair.
     """
     expires_at = int(time.time()) + max(60, ttl_seconds)
-    username = f'{expires_at}:{user_id}'
+    username = f"{expires_at}:{user_id}"
     digest = hmac.new(
         shared_secret.encode('utf-8'),
         # coturn TURN REST credentials require this keyed HMAC-SHA1 format.

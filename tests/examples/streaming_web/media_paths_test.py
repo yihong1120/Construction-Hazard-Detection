@@ -6,9 +6,7 @@ from examples.streaming_web import media_paths
 
 
 class TestMediaPathParsingCoverage(unittest.TestCase):
-
-    """Provide TestMediaPathParsingCoverage.
-    """
+    """Provide TestMediaPathParsingCoverage."""
 
     def test_annotated_path_parser_rejects_invalid_path_shapes(self) -> None:
         """Only valid hazard overlay paths decode into a media path and

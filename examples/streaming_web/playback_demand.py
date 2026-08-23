@@ -24,10 +24,12 @@ async def active_overlay_languages(
     languages = tuple(allowed_languages)
     if not languages:
         return set()
-    values = await rds.mget([
-        build_overlay_demand_key(media_path, language)
-        for language in languages
-    ])
+    values = await rds.mget(
+        [
+            build_overlay_demand_key(media_path, language)
+            for language in languages
+        ],
+    )
     return {
         language
         for language, value in zip(languages, values)

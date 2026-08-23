@@ -16,7 +16,9 @@ from examples.streaming_web.media_paths import build_media_path
 from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_overlay_ready_key
 from examples.streaming_web.media_paths import decode_media_segment
-from examples.streaming_web.metadata_keys import build_metadata_key_from_stream_id
+from examples.streaming_web.metadata_keys import (
+    build_metadata_key_from_stream_id,
+)
 from examples.streaming_web.metadata_keys import get_metadata_site_generation
 from examples.streaming_web.overlay_renderer import normalise_label_language
 from examples.streaming_web.overlay_renderer import normalise_overlay_mode
@@ -27,7 +29,6 @@ from examples.streaming_web.streaming_metadata_handlers import (
 from examples.streaming_web.streaming_metadata_handlers import (
     metadata_stream_generator,
 )
-
 
 settings = Settings()
 

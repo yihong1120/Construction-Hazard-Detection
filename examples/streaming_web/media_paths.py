@@ -4,7 +4,6 @@ import base64
 import os
 from urllib.parse import quote
 
-
 CLEAN_DEMAND_PREFIX = 'media_clean_demand'
 OVERLAY_DEMAND_PREFIX = 'media_overlay_demand'
 OVERLAY_READY_PREFIX = 'media_overlay_ready'
@@ -51,8 +50,8 @@ def build_media_path(site: str, stream_name: str) -> str:
     """
     return (
         'hazard_'
-        f'{encode_media_segment(site)}_'
-        f'{encode_media_segment(stream_name)}'
+        f"{encode_media_segment(site)}_"
+        f"{encode_media_segment(stream_name)}"
     )
 
 
@@ -69,7 +68,7 @@ def build_annotated_media_path(
     Returns:
         Language-specific annotated media path.
     """
-    return f'{path}_annotated_{encode_media_segment(label_language)}'
+    return f"{path}_annotated_{encode_media_segment(label_language)}"
 
 
 def build_preview_media_path(path: str) -> str:
@@ -81,7 +80,7 @@ def build_preview_media_path(path: str) -> str:
     Returns:
         Media path for the low-bitrate preview rendition.
     """
-    return f'{path}{PREVIEW_MEDIA_PATH_SUFFIX}'
+    return f"{path}{PREVIEW_MEDIA_PATH_SUFFIX}"
 
 
 def parse_annotated_media_path(path: str) -> tuple[str, str] | None:
@@ -114,9 +113,9 @@ def build_overlay_demand_key(media_path: str, label_language: str) -> str:
         Redis demand key scoped to a stream and language.
     """
     return (
-        f'{OVERLAY_DEMAND_PREFIX}:'
-        f'{media_path}:'
-        f'{encode_media_segment(label_language)}'
+        f"{OVERLAY_DEMAND_PREFIX}:"
+        f"{media_path}:"
+        f"{encode_media_segment(label_language)}"
     )
 
 
@@ -129,7 +128,7 @@ def build_clean_demand_key(media_path: str) -> str:
     Returns:
         Redis demand key for the stream.
     """
-    return f'{CLEAN_DEMAND_PREFIX}:{media_path}'
+    return f"{CLEAN_DEMAND_PREFIX}:{media_path}"
 
 
 def build_overlay_ready_key(overlay_media_path: str) -> str:
@@ -141,7 +140,7 @@ def build_overlay_ready_key(overlay_media_path: str) -> str:
     Returns:
         Redis ready-state key for the overlay path.
     """
-    return f'{OVERLAY_READY_PREFIX}:{overlay_media_path}'
+    return f"{OVERLAY_READY_PREFIX}:{overlay_media_path}"
 
 
 def build_media_hls_url(path: str, base_url: str | None = None) -> str:
@@ -159,7 +158,7 @@ def build_media_hls_url(path: str, base_url: str | None = None) -> str:
         or os.getenv('MEDIA_PUBLIC_HLS_BASE_URL', '')
         or '/hazard/media'
     ).rstrip('/')
-    return f'{base}/{quote(path, safe="")}/index.m3u8'
+    return f"{base}/{quote(path, safe='')}/index.m3u8"
 
 
 def build_media_webrtc_url(path: str, base_url: str | None = None) -> str:
@@ -177,4 +176,4 @@ def build_media_webrtc_url(path: str, base_url: str | None = None) -> str:
         or os.getenv('MEDIA_PUBLIC_WEBRTC_BASE_URL', '')
         or '/hazard/media/webrtc'
     ).rstrip('/')
-    return f'{base}/{quote(path, safe="")}/whep'
+    return f"{base}/{quote(path, safe='')}/whep"

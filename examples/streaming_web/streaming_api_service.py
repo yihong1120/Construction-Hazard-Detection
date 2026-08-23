@@ -90,7 +90,8 @@ async def authorise_media_request(
         rds: Redis connection used to resolve the opaque capability.
 
     Returns:
-        Empty no-store response when the request is within the capability scope.
+        Empty no-store response when the request is within the capability
+            scope.
 
     Raises:
         HTTPException: If the path, capability, or its scope is invalid.
@@ -182,19 +183,15 @@ async def stream_playback_session_playlist(
             follow_redirects=True,
         )
     if http_client is None:
-        playlist, hls_session_cookie = (
-            await fetch_internal_hls_playlist(
-                media_path,
-                media_query=media_query,
-            )
+        playlist, hls_session_cookie = await fetch_internal_hls_playlist(
+            media_path,
+            media_query=media_query,
         )
     else:
-        playlist, hls_session_cookie = (
-            await fetch_internal_hls_playlist(
-                media_path,
-                media_query=media_query,
-                http_client=http_client,
-            )
+        playlist, hls_session_cookie = await fetch_internal_hls_playlist(
+            media_path,
+            media_query=media_query,
+            http_client=http_client,
         )
     # MediaMTX checks each child playlist and segment independently.  Preserve
     # the opaque capability on every URI emitted from the parent playlist.
@@ -203,10 +200,13 @@ async def stream_playback_session_playlist(
         media_path=media_path,
         auth_query=auth_query,
     )
-    has_media_uri = any(
-        line and not line.startswith('#')
-        for line in rewritten.splitlines()
-    ) or 'URI="/hazard/media/' in rewritten
+    has_media_uri = (
+        any(
+            line and not line.startswith('#')
+            for line in rewritten.splitlines()
+        )
+        or 'URI="/hazard/media/' in rewritten
+    )
     response = Response(
         content=rewritten,
         media_type='application/vnd.apple.mpegurl',
@@ -387,19 +387,23 @@ def _inherit_batch_playback_defaults(
         key=item.key,
         session_id=item.session_id,
         profile=(
-            item.profile if _model_field_was_set(item, 'profile')
+            item.profile
+            if _model_field_was_set(item, 'profile')
             else batch.profile
         ),
         rendition=(
-            item.rendition if _model_field_was_set(item, 'rendition')
+            item.rendition
+            if _model_field_was_set(item, 'rendition')
             else batch.rendition
         ),
         language=(
-            item.language if _model_field_was_set(item, 'language')
+            item.language
+            if _model_field_was_set(item, 'language')
             else batch.language
         ),
         transport=(
-            item.transport if _model_field_was_set(item, 'transport')
+            item.transport
+            if _model_field_was_set(item, 'transport')
             else batch.transport
         ),
     )
@@ -488,8 +492,8 @@ def _build_stream_playback_batch_response(
             'items': items,
             'count': len(items),
             'stream_playback_endpoint': base_path,
-            'batch_endpoint': f'{base_path}/batch',
-            'release_endpoint': f'{base_path}/release',
+            'batch_endpoint': f"{base_path}/batch",
+            'release_endpoint': f"{base_path}/release",
             'max_streams': MAX_STREAM_PLAYBACK_BATCH_STREAMS,
         },
         status_code=status_code,
@@ -553,12 +557,14 @@ async def request_stream_playback_batch(
     for label in sorted(labels.difference(authorised_labels)):
         await authorise_label_access(credentials, db, label)
 
-    stream_names = await stream_catalog_service.resolve_configured_stream_names(
-        db,
-        [
-            (request.label or '', request.stream_id, request.key)
-            for request in requests
-        ],
+    stream_names = (
+        await stream_catalog_service.resolve_configured_stream_names(
+            db,
+            [
+                (request.label or '', request.stream_id, request.key)
+                for request in requests
+            ],
+        )
     )
     prepared = [
         await _prepare_validated_playback_request(request, stream_name, rds)
@@ -570,7 +576,8 @@ async def request_stream_playback_batch(
     # session refreshes retain their stricter ownership/update path below.
     items: list[PlaybackSessionResponse | None] = [None] * len(requests)
     new_indexes = [
-        index for index, request in enumerate(requests)
+        index
+        for index, request in enumerate(requests)
         if request.session_id is None
     ]
     if new_indexes:
@@ -618,7 +625,8 @@ async def request_stream_playback_batch(
 
     response_items = [item for item in items if item is not None]
     status_code = (
-        202 if any(item['status'] == 'starting' for item in response_items)
+        202
+        if any(item['status'] == 'starting' for item in response_items)
         else 200
     )
     return _build_stream_playback_batch_response(

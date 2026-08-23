@@ -20,7 +20,6 @@ import numpy as np
 import speedtest  # type: ignore[import-untyped]
 import streamlink
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -46,14 +45,16 @@ def _redact_stream_url(value: str) -> str:
         return value
     host = parts.hostname or ''
     if parts.port:
-        host = f'{host}:{parts.port}'
-    return urlunsplit((
-        parts.scheme,
-        f'<credentials>@{host}',
-        parts.path,
-        parts.query,
-        parts.fragment,
-    ))
+        host = f"{host}:{parts.port}"
+    return urlunsplit(
+        (
+            parts.scheme,
+            f"<credentials>@{host}",
+            parts.path,
+            parts.query,
+            parts.fragment,
+        ),
+    )
 
 
 def _nonnegative_float_env(name: str, default: float) -> float:
@@ -179,8 +180,7 @@ class StreamCapture:
             executor.shutdown(wait=False, cancel_futures=True)
 
     async def initialise_stream(self, stream_url: str) -> None:
-        """
-        Initialises the video stream.
+        """Initialises the video stream.
 
         Args:
             stream_url (str): The URL of the stream to initialise.
@@ -204,8 +204,8 @@ class StreamCapture:
     def _create_capture(stream_url: str) -> cv2.VideoCapture:
         """Create a configured OpenCV capture object."""
         # OpenCV's FFmpeg open/read timeouts are open-only properties. Passing
-        # them after VideoCapture() has connected leaves the backend's 30-second
-        # defaults active during a source outage.
+        # them after VideoCapture() has connected leaves the backend's
+        # 30-second defaults active during a source outage.
         cap = cv2.VideoCapture(
             stream_url,
             cv2.CAP_FFMPEG,
@@ -271,8 +271,8 @@ class StreamCapture:
         """Reconnect only when a usable source timestamp stops advancing.
 
         A decoded frame can be visually static while the camera and RTSP
-        transport are healthy.  Source timestamps distinguish that case from
-        a decoder that repeatedly returns a stale frame.  Some OpenCV/RTSP
+        transport are healthy.  Source timestamps distinguish that case from a
+        decoder that repeatedly returns a stale frame.  Some OpenCV/RTSP
         backends do not expose timestamps; those sources intentionally skip
         this watchdog instead of guessing from scene motion.
         """
@@ -362,9 +362,7 @@ class StreamCapture:
         )
 
     async def release_resources(self) -> None:
-        """
-        Releases resources like the capture object.
-        """
+        """Releases resources like the capture object."""
         cap = self.cap
         self.cap = None
         if cap is not None:
@@ -374,8 +372,7 @@ class StreamCapture:
     async def execute_capture(
         self,
     ) -> AsyncGenerator[tuple[np.ndarray, float]]:
-        """
-        Captures frames from the stream and yields them with timestamps.
+        """Captures frames from the stream and yields them with timestamps.
 
         Yields:
             Tuple[np.ndarray, float]: The captured frame and the timestamp.
@@ -395,7 +392,8 @@ class StreamCapture:
                 cap = self.cap
                 ret, frame = (
                     await self._run_capture_operation(cap.read)
-                    if cap is not None else (False, None)
+                    if cap is not None
+                    else (False, None)
                 )
                 if not ret or not self._is_usable_frame(frame):
                     fail_count += 1
@@ -418,10 +416,13 @@ class StreamCapture:
                         and not self.successfully_captured
                         and not _is_rtsp_url(self.stream_url)
                     ):
-                        logger.info('Switching to generic frame capture method.')
-                        async for generic_frame, generic_timestamp in (
-                            self.capture_generic_frames()
-                        ):
+                        logger.info(
+                            'Switching to generic frame capture method.',
+                        )
+                        async for (
+                            generic_frame,
+                            generic_timestamp,
+                        ) in self.capture_generic_frames():
                             yield generic_frame, generic_timestamp
                         return
                     await self.initialise_stream(self.stream_url)
@@ -437,7 +438,7 @@ class StreamCapture:
                     logger.info(
                         'Capture watchdog detected a stalled source; '
                         'reconnecting stream. '
-                        f'source={_redact_stream_url(self.stream_url)}',
+                        f"source={_redact_stream_url(self.stream_url)}",
                     )
                     self._begin_reconnect()
                     await self.release_resources()
@@ -447,7 +448,9 @@ class StreamCapture:
                 self._mark_connected()
 
                 current_time = datetime.datetime.now()
-                elapsed_time = (current_time - last_process_time).total_seconds()
+                elapsed_time = (
+                    current_time - last_process_time
+                ).total_seconds()
                 if elapsed_time >= self.capture_interval:
                     last_process_time = current_time
                     yield frame, current_time.timestamp()
@@ -456,8 +459,7 @@ class StreamCapture:
             await self.release_resources()
 
     def check_internet_speed(self) -> tuple[float, float]:
-        """
-        Checks internet speed using the Speedtest library.
+        """Checks internet speed using the Speedtest library.
 
         Returns:
             Tuple[float, float]: Download and upload speeds (Mbps).
@@ -469,8 +471,7 @@ class StreamCapture:
         return download_speed, upload_speed
 
     def select_quality_based_on_speed(self) -> str | None:
-        """
-        Selects stream quality based on internet speed.
+        """Selects stream quality based on internet speed.
 
         Returns:
             str: The URL of the selected stream quality.
@@ -513,8 +514,7 @@ class StreamCapture:
     async def capture_generic_frames(
         self,
     ) -> AsyncGenerator[tuple[np.ndarray, float]]:
-        """
-        Captures frames from a generic stream.
+        """Captures frames from a generic stream.
 
         Yields:
             Tuple[np.ndarray, float]: The captured frame and the timestamp.
@@ -537,7 +537,8 @@ class StreamCapture:
                 cap = self.cap
                 ret, frame = (
                     await self._run_capture_operation(cap.read)
-                    if cap is not None else (False, None)
+                    if cap is not None
+                    else (False, None)
                 )
 
                 if not ret or not self._is_usable_frame(frame):
@@ -547,7 +548,7 @@ class StreamCapture:
                         'Failed to read frame from generic stream. '
                         f"Fail count: {fail_count}, "
                         'source='
-                        f'{_redact_stream_url(stream_url or self.stream_url)}',
+                        f"{_redact_stream_url(stream_url or self.stream_url)}",
                     )
                     await asyncio.sleep(backoff_seconds)
                     backoff_seconds = min(
@@ -564,7 +565,9 @@ class StreamCapture:
                         )
 
                         if not stream_url:
-                            logger.info('Failed to get suitable stream quality.')
+                            logger.info(
+                                'Failed to get suitable stream quality.',
+                            )
                             continue
 
                         await self.initialise_stream(stream_url)
@@ -576,7 +579,9 @@ class StreamCapture:
                 self.successfully_captured = True
                 self._mark_connected()
                 current_time = datetime.datetime.now()
-                elapsed_time = (current_time - last_process_time).total_seconds()
+                elapsed_time = (
+                    current_time - last_process_time
+                ).total_seconds()
                 if elapsed_time >= self.capture_interval:
                     last_process_time = current_time
                     yield frame, current_time.timestamp()
@@ -585,8 +590,7 @@ class StreamCapture:
             await self.release_resources()
 
     def update_capture_interval(self, new_interval: float) -> None:
-        """
-        Updates the capture interval.
+        """Updates the capture interval.
 
         Args:
             new_interval (int): Frame capture interval in seconds.

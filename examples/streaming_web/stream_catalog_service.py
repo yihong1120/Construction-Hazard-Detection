@@ -32,7 +32,10 @@ async def get_visible_labels(
     """
     username = credentials.subject.get('username')
     if not username:
-        raise HTTPException(status_code=401, detail='Invalid token: no subject')
+        raise HTTPException(
+            status_code=401,
+            detail='Invalid token: no subject',
+        )
 
     _, user_site_names, user_role = await load_user_access_context(
         db,
@@ -93,7 +96,8 @@ async def _resolve_configured_stream_name(
     )
     if not requested_name:
         raise HTTPException(
-            status_code=422, detail='stream_id_or_key_required',
+            status_code=422,
+            detail='stream_id_or_key_required',
         )
 
     result = await db.scalar(

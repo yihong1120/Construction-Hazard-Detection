@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from threading import Lock
 
-
 _default_max_sessions = 6
 _lock = Lock()
 _active_sessions = 0

@@ -111,7 +111,7 @@ def test_build_command_uses_rtsp_tcp_for_rtsp_source(monkeypatch: Any) -> None:
 
 
 def test_build_command_adds_timing_for_encoded_stream(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """Exercise this test."""
     monkeypatch.setenv('MEDIA_PUBLISH_CLEAN_FPS', '12')
@@ -223,6 +223,7 @@ def test_restart_ignores_closed_restreamer() -> None:
 
 def test_start_creates_monitor_task() -> None:
     """Exercise this test."""
+
     async def run_case() -> restreamer.MediaSourceRestreamer:
         """Support run_case."""
         stream = restreamer.MediaSourceRestreamer(
@@ -243,6 +244,7 @@ def test_start_creates_monitor_task() -> None:
 
 def test_monitor_loop_runs_one_process(monkeypatch: Any) -> None:
     """Exercise this test."""
+
     async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
         """Support fake_create_subprocess_exec."""
         calls.append(args)
@@ -270,6 +272,7 @@ def test_monitor_loop_runs_one_process(monkeypatch: Any) -> None:
 
 def test_monitor_loop_sleeps_before_restart(monkeypatch: Any) -> None:
     """Exercise this test."""
+
     async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> Any:
         """Support fake_create_subprocess_exec."""
         return _OneShotProcess()
@@ -299,9 +302,10 @@ def test_monitor_loop_sleeps_before_restart(monkeypatch: Any) -> None:
 
 
 def test_monitor_loop_releases_reserved_nvenc_session(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """NVENC reservations are released after the ffmpeg process exits."""
+
     async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
         """Perform fake create subprocess exec.
 
@@ -343,9 +347,10 @@ def test_monitor_loop_releases_reserved_nvenc_session(
 
 
 def test_monitor_loop_falls_back_when_nvenc_budget_is_full(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """A full local NVENC budget uses the software encoder for this stream."""
+
     async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
         """Perform fake create subprocess exec.
 
@@ -381,6 +386,7 @@ def test_monitor_loop_falls_back_when_nvenc_budget_is_full(
 
 def test_close_cancels_monitor_task() -> None:
     """Exercise this test."""
+
     async def run_case() -> restreamer.MediaSourceRestreamer:
         """Support run_case."""
         stream = restreamer.MediaSourceRestreamer(

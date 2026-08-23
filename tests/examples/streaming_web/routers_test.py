@@ -30,16 +30,17 @@ from examples.streaming_web import routers
 from examples.streaming_web import stream_catalog_service
 from examples.streaming_web import streaming_api_service
 from examples.streaming_web import streaming_metadata_service
-from examples.streaming_web.playback_languages import _notification_language_code
+from examples.streaming_web.playback_languages import (
+    _notification_language_code,
+)
 from examples.streaming_web.routers import router
 from examples.streaming_web.schemas import StreamPlaybackBatchRequest
 from examples.streaming_web.schemas import StreamPlaybackRequest
 
 
 class TestRouters(unittest.IsolatedAsyncioTestCase):
+    """Provide TestRouters."""
 
-    """Provide TestRouters.
-    """
     app: FastAPI
     fake_redis: AsyncMock
     mock_db_session: AsyncMock
@@ -82,8 +83,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.fake_redis.scan_iter = empty_scan_iter
         self.app.dependency_overrides[get_redis_pool] = lambda: self.fake_redis
-        self.app.dependency_overrides[get_redis_pool_ws] = (
-            lambda: self.fake_redis
+        self.app.dependency_overrides[get_redis_pool_ws] = lambda: (
+            self.fake_redis
         )
 
         # Bypass JWT authentication with a mock credentials object
@@ -120,16 +121,14 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         mock_user_result = MagicMock()
         mock_user_result.scalar_one_or_none.return_value = mock_user
-        (
-            mock_user_result.unique.return_value.scalars.return_value
-            .one_or_none.return_value
-        ) = mock_user
+        user_result = mock_user_result.unique.return_value
+        user_scalars = user_result.scalars.return_value
+        user_scalars.one_or_none.return_value = mock_user
         mock_sites_result = MagicMock()
         mock_sites_result.scalars.return_value.all.return_value = [mock_site]
-        (
-            mock_sites_result.scalars.return_value.unique.return_value
-            .all.return_value
-        ) = [mock_site]
+        site_result = mock_sites_result.scalars.return_value
+        site_scalars = site_result.unique.return_value
+        site_scalars.all.return_value = [mock_site]
 
         self.mock_db_session.execute.side_effect = [
             mock_user_result,
@@ -150,7 +149,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     # Test GET /api/labels
     # -----------------------------
     @patch(
-        'examples.streaming_web.stream_catalog_service.load_user_access_context',
+        'examples.streaming_web.stream_catalog_service.'
+        'load_user_access_context',
         new_callable=AsyncMock,
     )
     def test_get_labels_success(
@@ -160,7 +160,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         """Test successful retrieval of labels."""
         mock_user = MagicMock()
         mock_load_user_access_context.return_value = (
-            mock_user, [], 'super_admin',
+            mock_user,
+            [],
+            'super_admin',
         )
         labels_result = MagicMock()
         labels_result.scalars.return_value.all.return_value = [
@@ -175,11 +177,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
 
     @patch(
-        'examples.streaming_web.stream_catalog_service.load_user_access_context',
+        'examples.streaming_web.stream_catalog_service.'
+        'load_user_access_context',
         new_callable=AsyncMock,
     )
     def test_get_labels_with_non_admin_user(
-        self, mock_load_user_access_context: AsyncMock,
+        self,
+        mock_load_user_access_context: AsyncMock,
     ) -> None:
         """Test label filtering for non-admin users."""
         mock_user = MagicMock()
@@ -196,10 +200,14 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'labels': ['label1']})
-        self.assertIn('IN', str(self.mock_db_session.execute.await_args.args[0]))
+        self.assertIn(
+            'IN',
+            str(self.mock_db_session.execute.await_args.args[0]),
+        )
 
     @patch(
-        'examples.streaming_web.stream_catalog_service.load_user_access_context',
+        'examples.streaming_web.stream_catalog_service.'
+        'load_user_access_context',
         new_callable=AsyncMock,
     )
     def test_get_labels_database_error_propagates(
@@ -209,7 +217,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         """Database failures are not silently converted to a response."""
         mock_user = MagicMock()
         mock_load_user_access_context.return_value = (
-            mock_user, [], 'super_admin',
+            mock_user,
+            [],
+            'super_admin',
         )
         self.mock_db_session.execute = AsyncMock(
             side_effect=Exception('DB error'),
@@ -236,7 +246,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Return only DB-configured streams without scanning Redis keys."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = []
@@ -255,7 +267,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Stream listings return stable session URLs instead of direct HLS."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = ['Cam1']
@@ -304,10 +318,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertIn('zh-TW', body['allowed_language_codes'])
         self.assertEqual(body['aliases']['zh_TW'], 'zh-TW')
 
-        languages = {
-            item['code']: item
-            for item in body['languages']
-        }
+        languages = {item['code']: item for item in body['languages']}
         self.assertEqual(languages['en']['notification_code'], 'en-GB')
         self.assertEqual(languages['ja']['notification_code'], 'ja-JP')
         self.assertIn(
@@ -326,7 +337,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Overlay off returns the clean stream and creates clean demand."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = ['Cam1']
@@ -368,7 +381,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Overlay requests create one shared demand key per language."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = ['Cam1']
@@ -419,7 +434,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """A wall rendition never aliases the detail annotated path."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = ['Cam1']
@@ -471,7 +488,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Ready overlay paths return 200 so the player can load them."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = ['Cam1']
@@ -508,8 +527,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             body['media_hls_url'],
-            '/hazard/media/'
-            'hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/index.m3u8',
+            '/hazard/media/hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/index.m3u8',
         )
 
     def test_stream_playback_session_playlist_rewrites_fragment_auth(
@@ -639,7 +657,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             follow_redirects=True,
         )
         upstream_client.get.assert_awaited_once_with(
-            f'{playback_hls.MEDIA_INTERNAL_HLS_BASE_URL}/'
+            f"{playback_hls.MEDIA_INTERNAL_HLS_BASE_URL}/"
             'hazard_bGFiZWwx_Q2FtMQ/index.m3u8?_HLS_msn=3',
         )
 
@@ -658,10 +676,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         upstream_context.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            'examples.streaming_web.playback_hls.httpx.AsyncClient',
-            return_value=upstream_context,
-        ), self.assertRaises(HTTPException) as context:
+        with (
+            patch(
+                'examples.streaming_web.playback_hls.httpx.AsyncClient',
+                return_value=upstream_context,
+            ),
+            self.assertRaises(HTTPException) as context,
+        ):
             await playback_hls.fetch_internal_hls_playlist(
                 'hazard_bGFiZWwx_Q2FtMQ',
                 media_query='',
@@ -719,7 +740,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Batch endpoint returns stable playback URLs for a site overview."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = ['Cam1', 'Cam2']
@@ -782,11 +805,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Site overview rejects locations with more than 24 streams."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = [
-            f'Cam{index}' for index in range(25)
+            f"Cam{index}" for index in range(25)
         ]
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
@@ -818,7 +843,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             '/api/stream-playback/batch',
             json={
                 'streams': [
-                    {'label': 'label1', 'key': f'Cam{index}'}
+                    {'label': 'label1', 'key': f"Cam{index}"}
                     for index in range(25)
                 ],
                 'profile': 'overlay',
@@ -852,13 +877,15 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inherited.profile, 'overlay')
         self.assertEqual(inherited.language, 'zh-TW')
 
-        explicit_clean = streaming_api_service._inherit_batch_playback_defaults(
-            StreamPlaybackRequest(
-                key='Cam2',
-                profile='clean',
-                language=None,
-            ),
-            batch,
+        explicit_clean = (
+            streaming_api_service._inherit_batch_playback_defaults(
+                StreamPlaybackRequest(
+                    key='Cam2',
+                    profile='clean',
+                    language=None,
+                ),
+                batch,
+            )
         )
         self.assertEqual(explicit_clean.profile, 'clean')
         self.assertIsNone(explicit_clean.language)
@@ -870,7 +897,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Release a playback session without label or stream fields."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         session = {
             'session_id': 'session-1',
@@ -920,7 +949,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Release requires a concrete playback session."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = ['Cam1']
@@ -1060,7 +1091,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             '/api/media-auth',
             headers={
                 'X-Original-URI': (
-                    f'/hazard/media/{media_path}/video1_seg1956.mp4'
+                    f"/hazard/media/{media_path}/video1_seg1956.mp4"
                     '?mt=opaque-token'
                 ),
             },
@@ -1072,7 +1103,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             playback_service.STREAM_PLAYBACK_SESSION_TTL_SECONDS,
         )
         pipeline.zadd.assert_any_call(
-            f'stream_playback_media_session:{media_path}',
+            f"stream_playback_media_session:{media_path}",
             {'session-1': ANY},
         )
 
@@ -1206,7 +1237,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             },
         ):
             self.assertEqual(
-                playback_service._allowed_overlay_languages(), ('fr',),
+                playback_service._allowed_overlay_languages(),
+                ('fr',),
             )
             with self.assertRaisesRegex(ValueError, 'must be an allowed'):
                 playback_service._default_overlay_language()
@@ -1219,7 +1251,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             },
         ):
             self.assertEqual(
-                playback_service._default_overlay_language(), 'fr',
+                playback_service._default_overlay_language(),
+                'fr',
             )
 
         self.assertEqual(
@@ -1251,7 +1284,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(subject={'username': 'alice'}),
         )
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['other'], 'user',
+            SimpleNamespace(status='active'),
+            ['other'],
+            'user',
         )
         with self.assertRaises(HTTPException) as denied_ctx:
             await playback_hls.authorise_label_access(
@@ -1302,7 +1337,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             '',
         )
         self.assertEqual(
-            playback_hls.extract_media_path_from_uri('/no/media'), '',
+            playback_hls.extract_media_path_from_uri('/no/media'),
+            '',
         )
         self.assertEqual(
             playback_hls.extract_media_path_from_uri(
@@ -1330,7 +1366,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         """Exercise this test."""
         rds = AsyncMock()
 
-        await playback_service._touch_overlay_demand_from_media_path(rds, 'clean-path')
+        await playback_service._touch_overlay_demand_from_media_path(
+            rds, 'clean-path',
+        )
         rds.set.assert_not_called()
 
         with patch.dict(
@@ -1398,7 +1436,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Exercise this test."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
 
         response = self.client.get(
@@ -1488,7 +1528,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Exercise this test."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = ['Cam1']
@@ -1518,7 +1560,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Exercise this test."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['label1'], 'admin',
+            SimpleNamespace(status='active'),
+            ['label1'],
+            'admin',
         )
         stream_result = MagicMock()
         stream_result.scalars.return_value.all.return_value = ['Cam1']
@@ -1553,7 +1597,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 401)
 
     @patch(
-        'examples.streaming_web.streaming_metadata_service.authorise_label_access',
+        'examples.streaming_web.streaming_metadata_service.'
+        'authorise_label_access',
         new_callable=AsyncMock,
     )
     async def test_metadata_stream_id_returns_sse_response(
@@ -1607,7 +1652,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Reject SSE clients outside the requested site's access scope."""
         mock_load_user_access_context.return_value = (
-            SimpleNamespace(status='active'), ['other-label'], 'user',
+            SimpleNamespace(status='active'),
+            ['other-label'],
+            'user',
         )
 
         response = self.client.get('/api/metadata/stream-id/label1/Q2FtMQ')
@@ -1636,11 +1683,3 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-
-'''
-pytest \
-    --cov=examples.streaming_web.routers \
-    --cov-report=term-missing \
-    tests/examples/streaming_web/routers_test_new.py
-'''

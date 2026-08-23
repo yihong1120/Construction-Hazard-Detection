@@ -52,17 +52,21 @@ class OverlayRendererTest(unittest.TestCase):
             ),
         )
         self.assertTrue(
-            has_warning({
-                'warning_no_hardhat': {'count': True},
-            }),
+            has_warning(
+                {
+                    'warning_no_hardhat': {'count': True},
+                },
+            ),
         )
         self.assertFalse(
             has_warning({'warning_no_hardhat': {'count': 0}}),
         )
         self.assertFalse(
-            has_warning({
-                'warning_no_hardhat': {'count': False},
-            }),
+            has_warning(
+                {
+                    'warning_no_hardhat': {'count': False},
+                },
+            ),
         )
 
     def test_render_overlay_array_none_mode_and_empty_frame_return_original(
@@ -432,9 +436,11 @@ class OverlayRendererTest(unittest.TestCase):
 
         self.assertEqual(frame.shape, (1, 1, 3))
         renderer._draw_warning_summary(
-            np.zeros((0, 0, 3), dtype=np.uint8), {
+            np.zeros((0, 0, 3), dtype=np.uint8),
+            {
                 'warning_no_hardhat': {'count': 1},
-            }, 'en',
+            },
+            'en',
         )
 
     def test_label_and_colour_helpers_cover_branching(self) -> None:
@@ -475,11 +481,15 @@ class OverlayRendererTest(unittest.TestCase):
     def test_polygon_helpers_normalise_detector_coordinates(self) -> None:
         """Polygon payloads use the detector's list-of-coordinate format."""
         polygons = renderer._normalised_polygons_for_overlay(
-            json.dumps([[
-                [0.1, 0.1],
-                [0.3, 0.1],
-                [0.3, 0.3],
-            ]]),
+            json.dumps(
+                [
+                    [
+                        [0.1, 0.1],
+                        [0.3, 0.1],
+                        [0.3, 0.3],
+                    ],
+                ],
+            ),
             100,
             50,
         )
@@ -556,8 +566,7 @@ class OverlayRendererTest(unittest.TestCase):
         """Exercise this test."""
         frame = np.zeros((20, 20, 3), dtype=np.uint8)
         with mock.patch(
-            'examples.streaming_web.overlay_text.'
-            '_load_overlay_font',
+            'examples.streaming_web.overlay_text._load_overlay_font',
             return_value=None,
         ):
             overlay_text._render_pillow_text_bitmap.cache_clear()
@@ -579,13 +588,11 @@ class OverlayRendererTest(unittest.TestCase):
         overlay_text._load_overlay_font.cache_clear()
         with (
             mock.patch(
-                'examples.streaming_web.overlay_text.'
-                'ImageFont.truetype',
+                'examples.streaming_web.overlay_text.ImageFont.truetype',
                 side_effect=RuntimeError,
             ),
             mock.patch(
-                'examples.streaming_web.overlay_text.'
-                'ImageFont.load_default',
+                'examples.streaming_web.overlay_text.ImageFont.load_default',
                 side_effect=RuntimeError,
             ),
         ):

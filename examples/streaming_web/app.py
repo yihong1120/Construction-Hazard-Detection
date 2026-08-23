@@ -22,17 +22,19 @@ def main() -> None:
     leaving public deployment configuration to the process manager.
     """
     uvicorn.run(
-        app, host='127.0.0.1', port=8800,
+        app,
+        host='127.0.0.1',
+        port=8800,
     )
 
 
 if __name__ == '__main__':
     main()
 
-'''
+"""
 uvicorn examples.streaming_web.app:app \
     --host 127.0.0.1 --port 8800 --workers 2
 
-uv run uvicorn examples.streaming_web.app:app\
+uv run uvicorn examples.streaming_web.app:app \
     --host 127.0.0.1 --port 8800 --workers 2
-'''
+"""

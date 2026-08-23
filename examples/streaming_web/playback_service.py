@@ -26,7 +26,9 @@ from examples.streaming_web.overlay_renderer import normalise_label_language
 from examples.streaming_web.playback_demand import overlay_is_ready
 from examples.streaming_web.playback_demand import touch_clean_demand
 from examples.streaming_web.playback_demand import touch_overlay_demand
-from examples.streaming_web.playback_languages import _allowed_overlay_languages
+from examples.streaming_web.playback_languages import (
+    _allowed_overlay_languages,
+)
 from examples.streaming_web.playback_languages import _default_overlay_language
 from examples.streaming_web.playback_languages import _language_alias_map
 from examples.streaming_web.playback_languages import _overlay_language_options
@@ -38,7 +40,6 @@ from examples.streaming_web.schemas import PlaybackRendition
 from examples.streaming_web.schemas import PlaybackSession
 from examples.streaming_web.schemas import PlaybackSessionResponse
 from examples.streaming_web.schemas import PlaybackSessionState
-
 
 OVERLAY_DEMAND_TTL_SECONDS = int(
     os.getenv('MEDIA_OVERLAY_DEMAND_TTL_SECONDS', '90'),
@@ -179,7 +180,7 @@ def _playback_session_key(session_id: str) -> str:
     Returns:
         Canonical Redis key for the session payload.
     """
-    return f'{STREAM_PLAYBACK_SESSION_PREFIX}:{session_id}'
+    return f"{STREAM_PLAYBACK_SESSION_PREFIX}:{session_id}"
 
 
 def _playback_media_sessions_key(media_path: str) -> str:
@@ -191,7 +192,7 @@ def _playback_media_sessions_key(media_path: str) -> str:
     Returns:
         Redis ZSET key whose members are playback-session identifiers.
     """
-    return f'{STREAM_PLAYBACK_MEDIA_SESSION_PREFIX}:{media_path}'
+    return f"{STREAM_PLAYBACK_MEDIA_SESSION_PREFIX}:{media_path}"
 
 
 def _playback_session_refresh_key(media_path: str) -> str:
@@ -203,7 +204,7 @@ def _playback_session_refresh_key(media_path: str) -> str:
     Returns:
         Redis key used to ensure one renewal per bounded interval.
     """
-    return f'{STREAM_PLAYBACK_SESSION_REFRESH_PREFIX}:{media_path}'
+    return f"{STREAM_PLAYBACK_SESSION_REFRESH_PREFIX}:{media_path}"
 
 
 def _playback_demand_session_key(
@@ -216,10 +217,10 @@ def _playback_demand_session_key(
         if language is None:
             raise ValueError('overlay playback demand requires a language')
         return (
-            f'{STREAM_PLAYBACK_DEMAND_SESSION_PREFIX}:overlay:'
-            f'{base_media_path}:{encode_media_segment(language)}'
+            f"{STREAM_PLAYBACK_DEMAND_SESSION_PREFIX}:overlay:"
+            f"{base_media_path}:{encode_media_segment(language)}"
         )
-    return f'{STREAM_PLAYBACK_DEMAND_SESSION_PREFIX}:clean:{base_media_path}'
+    return f"{STREAM_PLAYBACK_DEMAND_SESSION_PREFIX}:clean:{base_media_path}"
 
 
 def _build_session_playback_url(session_id: str) -> str:
@@ -232,8 +233,7 @@ def _build_session_playback_url(session_id: str) -> str:
         Relative public HLS playlist URL.
     """
     return (
-        f'{STREAM_PLAYBACK_PUBLIC_BASE_PATH}/sessions/'
-        f'{session_id}/index.m3u8'
+        f"{STREAM_PLAYBACK_PUBLIC_BASE_PATH}/sessions/{session_id}/index.m3u8"
     )
 
 
@@ -412,9 +412,9 @@ async def _refresh_playback_sessions_for_media_path(
     ]
     raw_sessions = cast(
         list[bytes | None],
-        await rds.mget([
-            _playback_session_key(session_id) for session_id in session_ids
-        ]),
+        await rds.mget(
+            [_playback_session_key(session_id) for session_id in session_ids],
+        ),
     )
     active_session_ids: list[str] = []
     stale_session_ids: list[str] = []
@@ -424,7 +424,10 @@ async def _refresh_playback_sessions_for_media_path(
         strict=True,
     ):
         session = _decode_playback_session_payload(raw_session)
-        if session is None or _session_selected_media_path(session) != media_path:
+        if (
+            session is None
+            or _session_selected_media_path(session) != media_path
+        ):
             stale_session_ids.append(session_id)
         else:
             active_session_ids.append(session_id)
@@ -454,8 +457,7 @@ async def _refresh_playback_sessions_for_media_path(
             )
         if active_session_ids:
             scores: dict[str | bytes, str | bytes | float | int] = {
-                session_id: expires_at
-                for session_id in active_session_ids
+                session_id: expires_at for session_id in active_session_ids
             }
             pipeline.zadd(media_key, scores)
             pipeline.expire(
@@ -496,7 +498,8 @@ async def _create_or_update_playback_session(
         Newly created or updated typed playback session.
 
     Raises:
-        HTTPException: If an existing session is absent or owned by another user.
+        HTTPException: If an existing session is absent or owned by another
+            user.
     """
     if session_id:
         existing = await _load_playback_session(rds, session_id)
@@ -562,7 +565,10 @@ def _new_playback_session(
             expires_at=expires_at.isoformat(),
         )
     if language is None:
-        raise HTTPException(status_code=422, detail='overlay_language_required')
+        raise HTTPException(
+            status_code=422,
+            detail='overlay_language_required',
+        )
     return OverlayPlaybackSession(
         session_id=session_id,
         username=username,
@@ -688,7 +694,9 @@ async def _select_session_playback(
             CLEAN_DEMAND_TTL_SECONDS,
         )
         await _register_playback_session_media_path(
-            rds, session, base_media_path,
+            rds,
+            session,
+            base_media_path,
         )
         await _register_playback_session_demand(rds, session)
         return {
@@ -709,7 +717,9 @@ async def _select_session_playback(
         OVERLAY_DEMAND_TTL_SECONDS,
     )
     await _register_playback_session_media_path(
-        rds, session, overlay_media_path,
+        rds,
+        session,
+        overlay_media_path,
     )
     await _register_playback_session_demand(rds, session)
     ready = await overlay_is_ready(rds, overlay_media_path)
@@ -847,7 +857,9 @@ async def build_playback_session_response_bodies(
         if overlay_ready_keys
         else []
     )
-    readiness_by_path = dict(zip(overlay_ready_keys, readiness_values, strict=True))
+    readiness_by_path = dict(
+        zip(overlay_ready_keys, readiness_values, strict=True),
+    )
     bodies: list[PlaybackSessionResponse] = []
     for session in sessions:
         media_path = _session_selected_media_path(session)
@@ -859,9 +871,12 @@ async def build_playback_session_response_bodies(
                 'hls_url': build_media_hls_url(media_path),
             }
         else:
-            ready = readiness_by_path.get(
-                build_overlay_ready_key(media_path),
-            ) is not None
+            ready = (
+                readiness_by_path.get(
+                    build_overlay_ready_key(media_path),
+                )
+                is not None
+            )
             state = {
                 'status': 'ready' if ready else 'starting',
                 'overlay_ready': ready,

@@ -24,9 +24,7 @@ from examples.bff.proxy import resolve_upstream
 
 
 class BffServicesTest(unittest.TestCase):
-
-    """Provide BffServicesTest.
-    """
+    """Provide BffServicesTest."""
 
     def test_db_management_service_is_allowlisted(self) -> None:
         """The Web client can reach db_management routes through the BFF."""
@@ -51,16 +49,14 @@ class BffServicesTest(unittest.TestCase):
         self.assertEqual(suffix, 'labels')
 
     def test_fcm_service_is_allowlisted(self) -> None:
-        """Test fcm service is allowlisted.
-        """
+        """Test fcm service is allowlisted."""
         base, suffix = resolve_upstream('fcm/notifications/unread_count')
 
         self.assertTrue(base)
         self.assertEqual(suffix, 'notifications/unread_count')
 
     def test_metadata_path_uses_sse_streaming_proxy(self) -> None:
-        """Test metadata path uses sse streaming proxy.
-        """
+        """Test metadata path uses sse streaming proxy."""
         request = type(
             'Request',
             (),
@@ -77,8 +73,7 @@ class BffServicesTest(unittest.TestCase):
         )
 
     def test_accept_event_stream_uses_sse_streaming_proxy(self) -> None:
-        """Test accept event stream uses sse streaming proxy.
-        """
+        """Test accept event stream uses sse streaming proxy."""
         request = type(
             'Request',
             (),
@@ -95,8 +90,7 @@ class BffServicesTest(unittest.TestCase):
         )
 
     def test_redis_sse_error_is_logged_with_upstream_status(self) -> None:
-        """Test redis sse error is logged with upstream status.
-        """
+        """Test redis sse error is logged with upstream status."""
         buffer = bytearray()
 
         with self.assertLogs('uvicorn.error', level='WARNING') as logs:
@@ -122,8 +116,8 @@ class BffServicesTest(unittest.TestCase):
         self.assertIn('code=redis_unavailable', logs.output[0])
 
     def test_bff_redis_connection_failure_returns_503(self) -> None:
-        """Test bff redis connection failure returns 503.
-        """
+        """Test bff redis connection failure returns 503."""
+
         async def get_token() -> HTTPException:
             """Perform get token.
 
@@ -185,8 +179,7 @@ class FakeResponse:
         self.closed = False
 
     async def aclose(self) -> None:
-        """Perform aclose.
-        """
+        """Perform aclose."""
         self.closed = True
 
     async def aiter_bytes(self) -> AsyncIterator[bytes]:
@@ -237,8 +230,7 @@ class FakeAsyncClient:
         await self.aclose()
 
     async def aclose(self) -> None:
-        """Perform aclose.
-        """
+        """Perform aclose."""
         self.closed = True
 
     async def request(self, *args: object, **kwargs: object) -> FakeResponse:
@@ -377,7 +369,9 @@ def test_proxy_request_headers_drop_credentials_and_keep_safe_values() -> None:
     }
 
 
-def test_proxy_request_headers_use_server_verified_deployment_authority() -> None:
+def test_proxy_request_headers_use_server_verified_deployment_authority() -> (
+    None
+):
     """A loopback upstream must receive the canonical public authority."""
     deployment = DeploymentBinding(
         tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
@@ -754,7 +748,8 @@ def test_proxy_request_maps_network_error_to_bad_gateway(
     )
 
     with pytest.raises(
-        HTTPException, match='bff_upstream_unavailable',
+        HTTPException,
+        match='bff_upstream_unavailable',
     ) as raised:
         _run(
             proxy.proxy_request(
@@ -835,7 +830,8 @@ def test_streaming_proxy_forwards_chunks_logs_errors_and_closes(
 def test_streaming_proxy_reuses_lifespan_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SSE responses close independently while their app client stays pooled."""
+    """SSE responses close independently while their app client stays
+    pooled."""
     upstream = FakeResponse(chunks=(b'event: update\n\n',))
     client = FakeAsyncClient(upstream)
     pool = proxy.HttpClientPool()
@@ -908,7 +904,8 @@ def test_streaming_proxy_maps_open_and_iteration_errors(
         lambda **_kwargs: failed_client,
     )
     with pytest.raises(
-        HTTPException, match='bff_upstream_unavailable',
+        HTTPException,
+        match='bff_upstream_unavailable',
     ) as raised:
         _run(
             proxy._proxy_streaming_request(

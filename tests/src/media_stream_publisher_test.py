@@ -230,6 +230,7 @@ def test_is_process_alive_reflects_process_state() -> None:
 
 def test_publish_starts_writer_for_first_frame(monkeypatch: Any) -> None:
     """Exercise this test."""
+
     async def fake_start(width: int, height: int) -> None:
         """Support fake_start."""
         starts.append((width, height))
@@ -260,6 +261,7 @@ def test_publish_starts_writer_for_first_frame(monkeypatch: Any) -> None:
 
 def test_publish_resets_dead_process(monkeypatch: Any) -> None:
     """Exercise this test."""
+
     async def fake_reset() -> None:
         """Support fake_reset."""
         resets.append(True)
@@ -317,7 +319,7 @@ def test_select_encoder_uses_x264_when_nvenc_missing(monkeypatch: Any) -> None:
 
 
 def test_select_encoder_uses_auto_nvenc_when_available(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """Exercise this test."""
     monkeypatch.setenv('MEDIA_PUBLISH_ENCODER', 'auto')
@@ -327,7 +329,7 @@ def test_select_encoder_uses_auto_nvenc_when_available(
 
 
 def test_build_ffmpeg_command_contains_rawvideo_and_rtsp(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """Exercise this test."""
     monkeypatch.setenv('MEDIA_PUBLISH_ENCODER', 'libx264')
@@ -375,7 +377,7 @@ def test_build_ffmpeg_command_uses_nvenc_options(monkeypatch: Any) -> None:
 
 
 def test_build_ffmpeg_command_honours_preview_rate_budget(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """A preview publisher gets an independent capped bitrate."""
     monkeypatch.setenv('MEDIA_PUBLISH_ENCODER', 'libx264')
@@ -399,9 +401,10 @@ def test_build_ffmpeg_command_honours_preview_rate_budget(
 
 
 def test_ffmpeg_has_encoder_handles_subprocess_failure(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """Exercise this test."""
+
     def fail(*_args: object, **_kwargs: object) -> object:
         """Support fail."""
         raise OSError('missing')
@@ -409,8 +412,7 @@ def test_ffmpeg_has_encoder_handles_subprocess_failure(
     monkeypatch.setattr(publisher.subprocess, 'run', fail)
 
     assert (
-        publisher._ffmpeg_has_encoder('/missing/ffmpeg', 'h264_nvenc')
-        is False
+        publisher._ffmpeg_has_encoder('/missing/ffmpeg', 'h264_nvenc') is False
     )
 
 
@@ -462,6 +464,7 @@ def test_stop_process_ignores_stdin_close_pipe_errors() -> None:
 
 def test_stop_process_cancels_stderr_tasks() -> None:
     """The publisher releases pending stderr readers while stopping."""
+
     async def run_case() -> tuple[_FakeTask, bool]:
         """Perform run case.
 
@@ -515,9 +518,9 @@ def test_drain_stderr_handles_missing_or_failing_reader() -> None:
 
 def test_drain_stderr_propagates_task_cancellation() -> None:
     """Stopping a publisher does not turn cancellation into a fake error."""
+
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
         wait_for_read = asyncio.Event()
         process = SimpleNamespace(
@@ -548,6 +551,7 @@ def test_close_clears_state_without_process() -> None:
 
 def test_close_cancels_writer_task() -> None:
     """Exercise this test."""
+
     async def run_case() -> publisher.MediaStreamPublisher:
         """Support run_case."""
         stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
@@ -562,6 +566,7 @@ def test_close_cancels_writer_task() -> None:
 
 def test_reset_after_process_exit_cancels_writer_task() -> None:
     """Exercise this test."""
+
     async def run_case() -> publisher.MediaStreamPublisher:
         """Support run_case."""
         stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
@@ -580,6 +585,7 @@ def test_reset_after_process_exit_cancels_writer_task() -> None:
 
 def test_start_uses_environment_ffmpeg(monkeypatch: Any) -> None:
     """Exercise this test."""
+
     async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
         """Support fake_create_subprocess_exec."""
         calls.append(args)
@@ -614,6 +620,7 @@ def test_start_raises_when_ffmpeg_missing(monkeypatch: Any) -> None:
 
 def test_writer_loop_writes_latest_frame(monkeypatch: Any) -> None:
     """Exercise this test."""
+
     async def no_sleep(_delay: float) -> None:
         """Support no_sleep."""
         return None
@@ -660,6 +667,7 @@ def test_writer_loop_stops_when_stdin_fails() -> None:
 
 def test_writer_loop_reraises_cancelled_error() -> None:
     """Exercise this test."""
+
     async def run_case() -> None:
         """Support run_case."""
         stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
@@ -674,7 +682,7 @@ def test_writer_loop_reraises_cancelled_error() -> None:
 
 
 def test_keyframe_interval_uses_default_for_invalid_environment(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """An invalid GOP interval cannot prevent the publisher from starting."""
     monkeypatch.setenv('MEDIA_PUBLISH_KEYFRAME_INTERVAL_SECONDS', 'invalid')
@@ -683,9 +691,10 @@ def test_keyframe_interval_uses_default_for_invalid_environment(
 
 
 def test_publish_does_not_start_writer_when_first_frame_fails(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """A failed initial stdin write leaves no orphan writer task."""
+
     async def fake_start(_width: int, _height: int) -> None:
         """Perform fake start.
 
@@ -698,7 +707,8 @@ def test_publish_does_not_start_writer_when_first_frame_fails(
     stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     monkeypatch.setattr(stream, '_start', fake_start)
     monkeypatch.setattr(
-        stream, '_write_first_frame',
+        stream,
+        '_write_first_frame',
         AsyncMock(return_value=False),
     )
 
@@ -708,9 +718,10 @@ def test_publish_does_not_start_writer_when_first_frame_fails(
 
 
 def test_start_falls_back_after_nvenc_is_marked_unavailable(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """A previous NVENC startup error forces the next process onto x264."""
+
     async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
         """Perform fake create subprocess exec.
 
@@ -729,7 +740,8 @@ def test_start_falls_back_after_nvenc_is_marked_unavailable(
     stream._nvenc_unavailable = True
     monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
     monkeypatch.setattr(
-        publisher, '_select_encoder',
+        publisher,
+        '_select_encoder',
         lambda _path: 'h264_nvenc',
     )
     monkeypatch.setattr(
@@ -746,9 +758,10 @@ def test_start_falls_back_after_nvenc_is_marked_unavailable(
 
 
 def test_start_releases_reserved_nvenc_when_process_creation_fails(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """A failed ffmpeg launch cannot leak the local NVENC reservation."""
+
     async def fail_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> Any:
         """Perform fail create subprocess exec.
 
@@ -765,7 +778,8 @@ def test_start_releases_reserved_nvenc_when_process_creation_fails(
     stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
     monkeypatch.setattr(
-        publisher, '_select_encoder',
+        publisher,
+        '_select_encoder',
         lambda _path: 'h264_nvenc',
     )
     monkeypatch.setattr(publisher, 'try_acquire_nvenc_session', lambda: True)
@@ -788,7 +802,7 @@ def test_start_releases_reserved_nvenc_when_process_creation_fails(
 
 
 def test_vaapi_helpers_cover_device_options_and_errors(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """VAAPI commands use defaults and reject inaccessible devices."""
     monkeypatch.setenv('MEDIA_PUBLISH_VAAPI_BITRATE', '')
@@ -837,14 +851,18 @@ def test_stderr_and_first_frame_failures_mark_publisher_unavailable() -> None:
     stream._process = _FakeProcess()
     stream._process.stdin = _ErrorStdin()
     stream._started = True
-    assert asyncio.run(
-        stream._write_first_frame(np.zeros((2, 2, 3), dtype=np.uint8)),
-    ) is False
+    assert (
+        asyncio.run(
+            stream._write_first_frame(np.zeros((2, 2, 3), dtype=np.uint8)),
+        )
+        is False
+    )
     assert stream._started is False
 
 
 def test_start_covers_hardware_encoder_edge_cases(monkeypatch: Any) -> None:
     """VAAPI and exhausted NVENC sessions select the intended startup path."""
+
     async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
         """Perform fake create subprocess exec.
 
@@ -866,9 +884,7 @@ def test_start_covers_hardware_encoder_edge_cases(monkeypatch: Any) -> None:
         fake_create_subprocess_exec,
     )
     vaapi = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/vaapi')
-    with (
-        monkeypatch.context() as context,
-    ):
+    with (monkeypatch.context() as context):
         context.setattr(
             publisher,
             '_select_encoder',
@@ -880,9 +896,7 @@ def test_start_covers_hardware_encoder_edge_cases(monkeypatch: Any) -> None:
     assert '-vaapi_device' in commands[0]
 
     nvenc = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/nvenc')
-    with (
-        monkeypatch.context() as context,
-    ):
+    with (monkeypatch.context() as context):
         context.setattr(
             publisher,
             '_select_encoder',
@@ -896,9 +910,12 @@ def test_start_covers_hardware_encoder_edge_cases(monkeypatch: Any) -> None:
     no_stdin = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     no_stdin._process = SimpleNamespace(stdin=None)
     no_stdin._started = True
-    assert asyncio.run(
-        no_stdin._write_first_frame(np.zeros((2, 2, 3), dtype=np.uint8)),
-    ) is False
+    assert (
+        asyncio.run(
+            no_stdin._write_first_frame(np.zeros((2, 2, 3), dtype=np.uint8)),
+        )
+        is False
+    )
 
 
 def test_select_encoder_accepts_available_vaapi(monkeypatch: Any) -> None:

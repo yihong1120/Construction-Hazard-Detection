@@ -60,4 +60,4 @@ def create_media_publisher(
         )
     if rendition == 'detail':
         return publisher_type(publish_url=publish_url)
-    raise ValueError(f'unsupported media rendition: {rendition}')
+    raise ValueError(f"unsupported media rendition: {rendition}")

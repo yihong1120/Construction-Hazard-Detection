@@ -66,7 +66,7 @@ def decode_stream_id(value: str) -> str:
 
 def metadata_site_generation_key(site: str) -> str:
     """Build the Redis generation counter key for one site."""
-    return f'stream_metadata_generation:{encode_stream_id(site)}'
+    return f"stream_metadata_generation:{encode_stream_id(site)}"
 
 
 async def get_metadata_site_generation(
@@ -111,10 +111,10 @@ def build_metadata_key(
     Returns:
         Canonical encoded Redis metadata key.
     """
-    namespace = f'stream_metadata:{encode_stream_id(site)}'
+    namespace = f"stream_metadata:{encode_stream_id(site)}"
     if generation:
-        namespace = f'{namespace}:g{generation}'
-    return f'{namespace}|{encode_stream_id(stream_name)}'
+        namespace = f"{namespace}:g{generation}"
+    return f"{namespace}|{encode_stream_id(stream_name)}"
 
 
 def build_metadata_key_from_stream_id(
@@ -131,10 +131,10 @@ def build_metadata_key_from_stream_id(
     Returns:
         Canonical Redis metadata key.
     """
-    namespace = f'stream_metadata:{encode_stream_id(site)}'
+    namespace = f"stream_metadata:{encode_stream_id(site)}"
     if generation:
-        namespace = f'{namespace}:g{generation}'
-    return f'{namespace}|{stream_id}'
+        namespace = f"{namespace}:g{generation}"
+    return f"{namespace}|{stream_id}"
 
 
 def metadata_key_stream_id(redis_key: str) -> str:

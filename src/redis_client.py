@@ -8,9 +8,7 @@ import redis.asyncio as redis
 
 
 class RedisManager:
-    """
-    A class to manage Redis operations.
-    """
+    """A class to manage Redis operations."""
 
     def __init__(
         self,
@@ -18,8 +16,7 @@ class RedisManager:
         redis_port: int = 6379,
         redis_password: str = '',
     ) -> None:
-        """
-        Initialises RedisManager with Redis configuration details.
+        """Initialises RedisManager with Redis configuration details.
 
         Args:
             redis_host (str): The Redis server hostname.
@@ -28,9 +25,12 @@ class RedisManager:
         """
         self.redis_host: str = os.getenv('REDIS_HOST') or redis_host
         self.redis_port: int = int(os.getenv('REDIS_PORT') or redis_port)
-        self.redis_password: str = os.getenv(
-            'REDIS_PASSWORD',
-        ) or redis_password
+        self.redis_password: str = (
+            os.getenv(
+                'REDIS_PASSWORD',
+            )
+            or redis_password
+        )
 
         # Create Redis connection
         self.redis = redis.Redis(
@@ -41,8 +41,7 @@ class RedisManager:
         )
 
     async def set(self, key: str, value: bytes) -> None:
-        """
-        Set a key-value pair in Redis.
+        """Set a key-value pair in Redis.
 
         Args:
             key (str): The key under which to store the value.
@@ -54,8 +53,7 @@ class RedisManager:
             logging.error(f"Error setting Redis key {key}: {str(e)}")
 
     async def get(self, key: str) -> bytes | None:
-        """
-        Retrieve a value from Redis based on the key.
+        """Retrieve a value from Redis based on the key.
 
         Args:
             key (str): The key whose value needs to be retrieved.
@@ -70,8 +68,7 @@ class RedisManager:
             return None
 
     async def delete(self, key: str) -> None:
-        """
-        Delete a key from Redis.
+        """Delete a key from Redis.
 
         Args:
             key (str): The key to delete from Redis.
@@ -82,9 +79,7 @@ class RedisManager:
             logging.error(f"Error deleting Redis key {key}: {str(e)}")
 
     async def close_connection(self) -> None:
-        """
-        Close the Redis connection.
-        """
+        """Close the Redis connection."""
         try:
             await self.redis.close()
             logging.info('[INFO] Redis connection successfully closed.')

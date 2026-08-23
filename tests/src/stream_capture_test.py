@@ -22,9 +22,7 @@ from src.stream_capture import StreamCapture
 
 
 class TestStreamCapture(IsolatedAsyncioTestCase):
-    """
-    Tests for the StreamCapture class.
-    """
+    """Tests for the StreamCapture class."""
 
     def setUp(self) -> None:
         """Set up a StreamCapture instance for use in tests."""
@@ -38,8 +36,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self,
         mock_video_capture: MagicMock,
     ) -> None:
-        """
-        Test that the stream is successfully initialised.
+        """Test that the stream is successfully initialised.
 
         Args:
             mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
@@ -70,8 +67,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self,
         mock_video_capture: MagicMock,
     ) -> None:
-        """
-        Test that the generator reinitialises `self.cap` if it is `None`.
+        """Test that the generator reinitialises `self.cap` if it is `None`.
 
         Args:
             mock_video_capture (MagicMock): Mock object for `cv2.VideoCapture`.
@@ -128,9 +124,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_capture_generic: MagicMock,
         mock_video_capture: MagicMock,
     ) -> None:
-        """
-        Test that the generator switches to `capture_generic_frames`
-        after 5 consecutive failures.
+        """Test that the generator switches to `capture_generic_frames` after 5
+        consecutive failures.
 
         Args:
             mock_capture_generic (MagicMock): Mock for
@@ -190,8 +185,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_sleep: AsyncMock,
         mock_video_capture: MagicMock,
     ) -> None:
-        """
-        Test that the stream initialisation retries if it fails initially.
+        """Test that the stream initialisation retries if it fails initially.
 
         Args:
             mock_sleep (AsyncMock): Mock for asyncio.sleep.
@@ -214,9 +208,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_sleep.assert_called_once_with(5)
 
     async def test_release_resources(self) -> None:
-        """
-        Test that resources are released correctly.
-        """
+        """Test that resources are released correctly."""
         # Initialise StreamCapture instance and mock cap object
         stream_capture: StreamCapture = StreamCapture('test_stream_url')
         stream_capture.cap = MagicMock()
@@ -336,8 +328,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         _mock_mat: MagicMock,
         mock_video_capture: MagicMock,
     ) -> None:
-        """
-        Test that frames are captured and returned with a timestamp.
+        """Test that frames are captured and returned with a timestamp.
 
         Args:
             mock_sleep (MagicMock): Mock for time.sleep.
@@ -365,8 +356,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
 
     @patch('speedtest.Speedtest')
     def test_check_internet_speed(self, mock_speedtest: MagicMock) -> None:
-        """
-        Test that internet speed is correctly checked and returned.
+        """Test that internet speed is correctly checked and returned.
 
         Args:
             mock_speedtest (MagicMock): Mock for speedtest.Speedtest.
@@ -389,9 +379,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self,
         mock_streams: MagicMock,
     ) -> None:
-        """
-        Test that the highest quality stream is selected
-        for high internet speed.
+        """Test that the highest quality stream is selected for high internet
+        speed.
 
         Args:
             mock_streams (MagicMock): Mock for streamlink.streams.
@@ -421,9 +410,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self,
         mock_streams: MagicMock,
     ) -> None:
-        """
-        Test that an appropriate quality stream is selected
-        for medium internet speed.
+        """Test that an appropriate quality stream is selected for medium
+        internet speed.
 
         Args:
             mock_streams (MagicMock): Mock for streamlink.streams.
@@ -452,8 +440,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self,
         mock_streams: MagicMock,
     ) -> None:
-        """
-        Test that a lower quality stream is selected for low internet speed.
+        """Test that a lower quality stream is selected for low internet speed.
 
         Args:
             mock_streams (MagicMock): Mock for streamlink.streams.
@@ -484,8 +471,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_check_speed: MagicMock,
         mock_streams: MagicMock,
     ) -> None:
-        """
-        Test that None is returned if no suitable stream quality is available.
+        """Test that None is returned if no suitable stream quality is
+        available.
 
         Args:
             mock_check_speed (MagicMock): Mock for check_internet_speed method.
@@ -513,8 +500,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_check_speed: MagicMock,
         mock_streams: MagicMock,
     ) -> None:
-        """
-        Test that generic frames are captured and returned with a timestamp.
+        """Test that generic frames are captured and returned with a timestamp.
 
         Args:
             mock_sleep (MagicMock): Mock for time.sleep.
@@ -541,9 +527,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         await self.stream_capture.release_resources()
 
     def test_update_capture_interval(self) -> None:
-        """
-        Test that the capture interval is updated correctly.
-        """
+        """Test that the capture interval is updated correctly."""
         # Update capture interval and verify
         self.stream_capture.update_capture_interval(20)
         self.assertEqual(self.stream_capture.capture_interval, 20)
@@ -557,8 +541,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_logger: MagicMock,
         mock_parse_args: MagicMock,
     ) -> None:
-        """
-        Test that the main function correctly initialises and executes
+        """Test that the main function correctly initialises and executes
         StreamCapture.
 
         Args:
@@ -608,8 +591,7 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_sleep: MagicMock,
         mock_video_capture: MagicMock,
     ) -> None:
-        """
-        Test that execute_capture handles multiple failures before success.
+        """Test that execute_capture handles multiple failures before success.
 
         Args:
             mock_sleep (MagicMock): Mock for time.sleep.
@@ -652,13 +634,13 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         self,
         mock_quality: MagicMock,
     ) -> None:
-        """
-        Test that capture_generic_frames handles no suitable quality.
+        """Test that capture_generic_frames handles no suitable quality.
 
         Args:
             mock_quality (MagicMock): Mock for
                 select_quality_based_on_speed method.
         """
+
         async for _ in self.stream_capture.capture_generic_frames():
             self.fail('No frame should be yielded when quality is None.')
 
@@ -689,10 +671,8 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_quality: MagicMock,
         mock_video_capture: MagicMock,
     ) -> None:
-        """
-        Test that the generic frame capture handles reinitialisation correctly
-        after multiple consecutive failures.
-        """
+        """Test that the generic frame capture handles reinitialisation
+        correctly after multiple consecutive failures."""
         # Set up the StreamCapture instance with a capture interval of 0
         self.stream_capture = StreamCapture(
             'http://example.com/stream',
@@ -735,14 +715,14 @@ class TestStreamCapture(IsolatedAsyncioTestCase):
         mock_quality: MagicMock,
         mock_video_capture: MagicMock,
     ) -> None:
-        """
-        Test that capture_generic_frames skips iterations
-        when no quality is available.
+        """Test that capture_generic_frames skips iterations when no quality is
+        available.
 
         Args:
             mock_quality (MagicMock): Mock for select_quality_based_on_speed.
             mock_video_capture (MagicMock): Mock for cv2.VideoCapture.
         """
+
         # Iterate over the generator and ensure no frames are yielded
         async for _ in self.stream_capture.capture_generic_frames():
             self.fail('No frames should be yielded when quality is None')
@@ -775,8 +755,7 @@ def test_generic_capture_retries_when_quality_refresh_returns_none() -> None:
     """A failed quality refresh leaves the generic reader retrying safely."""
 
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         capture = stream_capture.StreamCapture('https://camera.example/live')
         capture.cap = SimpleNamespace(
             read=MagicMock(
@@ -807,15 +786,18 @@ def test_generic_capture_retries_when_quality_refresh_returns_none() -> None:
 
 
 def test_nonnegative_float_environment_uses_default_for_invalid_value(
-        monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Invalid watchdog settings leave stream capture at a safe default."""
     monkeypatch.setenv('STREAM_CAPTURE_FREEZE_SAMPLE_SECONDS', 'not-a-float')
 
-    assert stream_capture._nonnegative_float_env(
-        'STREAM_CAPTURE_FREEZE_SAMPLE_SECONDS',
-        1.5,
-    ) == 1.5
+    assert (
+        stream_capture._nonnegative_float_env(
+            'STREAM_CAPTURE_FREEZE_SAMPLE_SECONDS',
+            1.5,
+        )
+        == 1.5
+    )
 
 
 def test_visual_freeze_watchdog_is_disabled_by_default(
@@ -823,7 +805,8 @@ def test_visual_freeze_watchdog_is_disabled_by_default(
 ) -> None:
     """Quiet scenes never trigger the legacy pixel-difference watchdog."""
     monkeypatch.delenv(
-        'STREAM_CAPTURE_FREEZE_RECONNECT_SECONDS', raising=False,
+        'STREAM_CAPTURE_FREEZE_RECONNECT_SECONDS',
+        raising=False,
     )
 
     capture = StreamCapture('rtsp://camera.example/live')
@@ -838,31 +821,40 @@ def test_frozen_frame_watchdog_skips_invalid_fast_and_moving_frames() -> None:
     capture.freeze_sample_seconds = 1
     capture.freeze_frame_delta = 0
 
-    assert capture._should_reconnect_after_frozen_frame(
-        np.empty((0, 0, 3), dtype=np.uint8),
-    ) is False
+    assert (
+        capture._should_reconnect_after_frozen_frame(
+            np.empty((0, 0, 3), dtype=np.uint8),
+        )
+        is False
+    )
 
     capture._freeze_last_sample_at = 10
     with patch.object(stream_capture.time, 'monotonic', return_value=10.5):
-        assert capture._should_reconnect_after_frozen_frame(
-            np.zeros((2, 2, 3), dtype=np.uint8),
-        ) is False
+        assert (
+            capture._should_reconnect_after_frozen_frame(
+                np.zeros((2, 2, 3), dtype=np.uint8),
+            )
+            is False
+        )
 
     capture._freeze_last_sample = np.zeros((2, 2, 3), dtype=np.uint8)
     capture._freeze_last_sample_at = 0
     capture._freeze_last_motion_at = 0
     with patch.object(stream_capture.time, 'monotonic', return_value=2):
-        assert capture._should_reconnect_after_frozen_frame(
-            np.ones((2, 2, 3), dtype=np.uint8),
-        ) is False
+        assert (
+            capture._should_reconnect_after_frozen_frame(
+                np.ones((2, 2, 3), dtype=np.uint8),
+            )
+            is False
+        )
     assert capture._freeze_last_motion_at == 2
 
 
 def test_execute_capture_reconnects_after_frozen_frame() -> None:
     """The capture generator signals and recovers from a frozen source."""
+
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         capture = StreamCapture('rtsp://camera.example/live', 0)
         capture.cap = SimpleNamespace(
             read=MagicMock(
@@ -894,9 +886,9 @@ def test_execute_capture_reconnects_after_frozen_frame() -> None:
 
 def test_execute_capture_signals_normal_read_failure() -> None:
     """A decoder read failure invalidates downstream media state."""
+
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         capture = StreamCapture('rtsp://camera.example/live', 0)
         good_frame = np.zeros((2, 2, 3), dtype=np.uint8)
         capture.cap = SimpleNamespace(
@@ -936,10 +928,8 @@ def test_progressing_source_timestamp_disables_visual_fallback() -> None:
 
     with patch.object(stream_capture.time, 'monotonic', return_value=2):
         assert (
-            capture._should_reconnect_after_stalled_source_timestamp()
-            is False
+            capture._should_reconnect_after_stalled_source_timestamp() is False
         )
         assert (
-            capture._should_reconnect_after_frozen_frame(frozen_frame)
-            is False
+            capture._should_reconnect_after_frozen_frame(frozen_frame) is False
         )

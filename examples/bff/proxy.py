@@ -552,15 +552,21 @@ async def _proxy_http_client(
     state = getattr(app, 'state', None)
     pool = getattr(state, 'http_clients', None)
     if isinstance(pool, HttpClientPool):
-        return await pool.get(
-            'bff-upstream',
+        return (
+            await pool.get(
+                'bff-upstream',
+                timeout=UPSTREAM_TIMEOUT_SECONDS,
+                follow_redirects=False,
+            ),
+            False,
+        )
+    return (
+        httpx.AsyncClient(
             timeout=UPSTREAM_TIMEOUT_SECONDS,
             follow_redirects=False,
-        ), False
-    return httpx.AsyncClient(
-        timeout=UPSTREAM_TIMEOUT_SECONDS,
-        follow_redirects=False,
-    ), True
+        ),
+        True,
+    )
 
 
 def _proxy_response_headers(
@@ -608,7 +614,6 @@ async def _proxy_streaming_request(
     Returns:
         Non-buffering response that forwards upstream stream bytes.
     """
-
     client, upstream, close_client = await _open_proxy_stream(
         request,
         url,
@@ -616,7 +621,11 @@ async def _proxy_streaming_request(
         deployment,
     )
     if upstream.status_code == 401:
-        client, upstream, close_client = await _refresh_unauthorized_proxy_stream(
+        (
+            client,
+            upstream,
+            close_client,
+        ) = await _refresh_unauthorized_proxy_stream(
             request,
             redis,
             session_id,
@@ -700,15 +709,21 @@ async def _proxy_sse_http_client(
     pool = getattr(state, 'http_clients', None)
     timeout = httpx.Timeout(UPSTREAM_TIMEOUT_SECONDS, read=None)
     if isinstance(pool, HttpClientPool):
-        return await pool.get(
-            'bff-upstream-sse',
+        return (
+            await pool.get(
+                'bff-upstream-sse',
+                timeout=timeout,
+                follow_redirects=False,
+            ),
+            False,
+        )
+    return (
+        httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=False,
-        ), False
-    return httpx.AsyncClient(
-        timeout=timeout,
-        follow_redirects=False,
-    ), True
+        ),
+        True,
+    )
 
 
 async def _refresh_unauthorized_proxy_stream(

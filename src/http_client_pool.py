@@ -4,16 +4,15 @@ import asyncio
 
 import httpx
 
-
 _application_http_clients: HttpClientPool | None = None
 
 
 class HttpClientPool:
-    """Reuse outbound HTTP connections while keeping transport profiles separate."""
+    """Reuse outbound HTTP connections while keeping transport profiles
+    separate."""
 
     def __init__(self) -> None:
-        """Perform init.
-        """
+        """Perform init."""
         self._clients: dict[str, httpx.AsyncClient] = {}
         self._lock = asyncio.Lock()
 
@@ -25,6 +24,7 @@ class HttpClientPool:
         follow_redirects: bool = False,
     ) -> httpx.AsyncClient:
         """Return a live client for one named transport profile."""
+
         async with self._lock:
             client = self._clients.get(name)
             if client is None or client.is_closed:
@@ -43,6 +43,7 @@ class HttpClientPool:
 
     async def close(self) -> None:
         """Close every pooled client during application shutdown."""
+
         async with self._lock:
             clients, self._clients = self._clients, {}
         await asyncio.gather(
@@ -52,7 +53,8 @@ class HttpClientPool:
 
 
 def set_application_http_clients(pool: HttpClientPool | None) -> None:
-    """Register the lifespan-owned pool for service functions without a request."""
+    """Register the lifespan-owned pool for service functions without a
+    request."""
     global _application_http_clients
     _application_http_clients = pool
 

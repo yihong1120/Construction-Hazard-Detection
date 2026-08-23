@@ -15,7 +15,6 @@ import numpy as np
 from src.nvenc_session import release_nvenc_session
 from src.nvenc_session import try_acquire_nvenc_session
 
-
 _default_fps: Final[float] = 10.0
 _default_crf: Final[int] = 28
 _default_preset: Final[str] = 'veryfast'
@@ -317,7 +316,7 @@ class MediaStreamPublisher:
         elif encoder == 'h264_nvenc' and not try_acquire_nvenc_session():
             encoder = 'libx264'
             logger.info(
-                f'[media:{self.publish_url}] NVENC session budget reached; '
+                f"[media:{self.publish_url}] NVENC session budget reached; "
                 'using libx264',
             )
         else:
@@ -367,12 +366,12 @@ class MediaStreamPublisher:
                 if self._uses_nvenc and _is_nvenc_unavailable_error(line):
                     self._nvenc_unavailable = True
                 logger.info(
-                    f'[media:{self.publish_url}] ffmpeg: {self.last_error}',
+                    f"[media:{self.publish_url}] ffmpeg: {self.last_error}",
                 )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self.last_error = f'stderr reader failed: {exc}'
+            self.last_error = f"stderr reader failed: {exc}"
 
     async def _write_first_frame(self, frame: np.ndarray) -> bool:
         """Write one frame before a demand change can cancel the publisher."""
@@ -487,31 +486,35 @@ class MediaStreamPublisher:
             ffmpeg_binary,
         ]
         if encoder == 'h264_vaapi':
-            command.extend([
-                '-vaapi_device',
-                _vaapi_device(),
-            ])
-        command.extend([
-            '-hide_banner',
-            '-loglevel',
-            os.getenv('MEDIA_FFMPEG_LOGLEVEL', 'error'),
-            '-re',
-            '-fflags',
-            '+genpts+nobuffer',
-            '-use_wallclock_as_timestamps',
-            '1',
-            '-f',
-            'rawvideo',
-            '-pix_fmt',
-            'bgr24',
-            '-s:v',
-            f'{width}x{height}',
-            '-framerate',
-            f'{self.fps:g}',
-            '-i',
-            'pipe:0',
-            '-an',
-        ])
+            command.extend(
+                [
+                    '-vaapi_device',
+                    _vaapi_device(),
+                ],
+            )
+        command.extend(
+            [
+                '-hide_banner',
+                '-loglevel',
+                os.getenv('MEDIA_FFMPEG_LOGLEVEL', 'error'),
+                '-re',
+                '-fflags',
+                '+genpts+nobuffer',
+                '-use_wallclock_as_timestamps',
+                '1',
+                '-f',
+                'rawvideo',
+                '-pix_fmt',
+                'bgr24',
+                '-s:v',
+                f"{width}x{height}",
+                '-framerate',
+                f"{self.fps:g}",
+                '-i',
+                'pipe:0',
+                '-an',
+            ],
+        )
         if encoder == 'h264_nvenc':
             command.extend(
                 _build_nvenc_options(
@@ -536,25 +539,27 @@ class MediaStreamPublisher:
                     bufsize=self.bufsize,
                 ),
             )
-        command.extend([
-            '-g',
-            str(gop_size),
-            '-keyint_min',
-            str(gop_size),
-            '-sc_threshold',
-            '0',
-            '-r',
-            f'{self.fps:g}',
-            '-fps_mode',
-            'cfr',
-            '-f',
-            'rtsp',
-            '-rtsp_transport',
-            'tcp',
-            '-pkt_size',
-            str(_rtp_packet_size()),
-            self.publish_url,
-        ])
+        command.extend(
+            [
+                '-g',
+                str(gop_size),
+                '-keyint_min',
+                str(gop_size),
+                '-sc_threshold',
+                '0',
+                '-r',
+                f"{self.fps:g}",
+                '-fps_mode',
+                'cfr',
+                '-f',
+                'rtsp',
+                '-rtsp_transport',
+                'tcp',
+                '-pkt_size',
+                str(_rtp_packet_size()),
+                self.publish_url,
+            ],
+        )
         return command
 
     def _release_nvenc_session(self) -> None:
@@ -582,16 +587,23 @@ def _build_x264_options(
         'yuv420p',
     ]
     if bitrate:
-        options.extend([
-            '-b:v', bitrate,
-            '-maxrate', maxrate or bitrate,
-            '-bufsize', bufsize or maxrate or bitrate,
-        ])
+        options.extend(
+            [
+                '-b:v',
+                bitrate,
+                '-maxrate',
+                maxrate or bitrate,
+                '-bufsize',
+                bufsize or maxrate or bitrate,
+            ],
+        )
     else:
-        options.extend([
-            '-crf',
-            str(int(os.getenv('MEDIA_PUBLISH_CRF', str(_default_crf)))),
-        ])
+        options.extend(
+            [
+                '-crf',
+                str(int(os.getenv('MEDIA_PUBLISH_CRF', str(_default_crf)))),
+            ],
+        )
     return options
 
 
@@ -682,7 +694,7 @@ def _ensure_vaapi_device_access() -> None:
     if os.access(device, os.R_OK | os.W_OK):
         return
     raise RuntimeError(
-        f'VAAPI device is not accessible: {device}. Add the process user to '
+        f"VAAPI device is not accessible: {device}. Add the process user to "
         'the render group, then start a new login shell.',
     )
 
@@ -696,15 +708,23 @@ def _select_encoder(ffmpeg_binary: str) -> str:
     Returns:
         Encoder name accepted by ffmpeg.
     """
-    configured = os.getenv(
-        'MEDIA_PUBLISH_ENCODER',
-        _default_encoder,
-    ).strip().lower()
+    configured = (
+        os.getenv(
+            'MEDIA_PUBLISH_ENCODER',
+            _default_encoder,
+        )
+        .strip()
+        .lower()
+    )
     if configured in {'nvenc', 'h264_nvenc'}:
-        return 'h264_nvenc' if _ffmpeg_has_encoder(
-            ffmpeg_binary,
-            'h264_nvenc',
-        ) else 'libx264'
+        return (
+            'h264_nvenc'
+            if _ffmpeg_has_encoder(
+                ffmpeg_binary,
+                'h264_nvenc',
+            )
+            else 'libx264'
+        )
     if configured in {'vaapi', 'h264_vaapi'}:
         if _ffmpeg_has_encoder(ffmpeg_binary, 'h264_vaapi'):
             return 'h264_vaapi'

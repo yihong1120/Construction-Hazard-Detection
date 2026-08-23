@@ -11,7 +11,6 @@ from typing import Protocol
 from src.nvenc_session import release_nvenc_session
 from src.nvenc_session import try_acquire_nvenc_session
 
-
 _restart_delay_seconds: Final[float] = 2.0
 _default_fps: Final[float] = 15.0
 
@@ -98,7 +97,7 @@ class MediaSourceRestreamer:
                 else:
                     encoder = 'libx264'
                     logger.info(
-                        f'[media:{self.publish_url}] NVENC session budget '
+                        f"[media:{self.publish_url}] NVENC session budget "
                         'reached; using libx264',
                     )
             command = _build_command(
@@ -196,13 +195,15 @@ def _build_command(
         command.extend(_build_x264_options())
     if encoder != 'copy':
         command.extend(_build_timing_options())
-    command.extend([
-        '-f',
-        'rtsp',
-        '-rtsp_transport',
-        'tcp',
-        publish_url,
-    ])
+    command.extend(
+        [
+            '-f',
+            'rtsp',
+            '-rtsp_transport',
+            'tcp',
+            publish_url,
+        ],
+    )
     return command
 
 
@@ -255,7 +256,7 @@ def _build_timing_options() -> list[str]:
     gop_size = max(1, round(fps * 2))
     return [
         '-r',
-        f'{fps:g}',
+        f"{fps:g}",
         '-g',
         str(gop_size),
         '-keyint_min',
@@ -268,7 +269,11 @@ def _build_timing_options() -> list[str]:
 def _get_encoder() -> str:
     """Return the configured clean stream encoder."""
     return (
-        os.getenv('MEDIA_PUBLISH_CLEAN_ENCODER')
-        or os.getenv('MEDIA_RESTREAM_ENCODER')
-        or 'h264_nvenc'
-    ).strip().lower()
+        (
+            os.getenv('MEDIA_PUBLISH_CLEAN_ENCODER')
+            or os.getenv('MEDIA_RESTREAM_ENCODER')
+            or 'h264_nvenc'
+        )
+        .strip()
+        .lower()
+    )

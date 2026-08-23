@@ -10,15 +10,10 @@ import examples.streaming_web.app as app_module
 
 
 class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
-    """
-    Test suite for the FastAPI application in
-    examples.streaming_web.app.
-    """
+    """Test suite for the FastAPI application in examples.streaming_web.app."""
 
     def setUp(self) -> None:
-        """
-        Sets up the test environment before each test.
-        """
+        """Sets up the test environment before each test."""
         self.app = app_module.app
         self.client = TestClient(self.app)
 
@@ -27,8 +22,8 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         self,
         mock_uvicorn_run: MagicMock,
     ) -> None:
-        """
-        Tests whether uvicorn.run is invoked with the actual code's arguments.
+        """Tests whether uvicorn.run is invoked with the actual code's
+        arguments.
 
         Args:
             mock_uvicorn_run (MagicMock): Mock for the uvicorn.run function.
@@ -43,18 +38,9 @@ class TestStreamingWebApp(unittest.IsolatedAsyncioTestCase):
         )
 
     def tearDown(self) -> None:
-        """
-        Cleans up test resources after each test.
-        """
+        """Cleans up test resources after each test."""
         del self.client
 
 
 if __name__ == '__main__':
     unittest.main()
-
-'''
-pytest \
-    --cov=examples.streaming_web.app \
-    --cov-report=term-missing \
-    tests/examples/streaming_web/app_test.py
-'''

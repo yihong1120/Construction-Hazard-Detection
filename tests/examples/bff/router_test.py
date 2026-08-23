@@ -23,7 +23,6 @@ from examples.bff import router as bff
 from examples.bff import session_services
 from tests.examples.auth.session_store_test import FakeRedis
 
-
 _DEPLOYMENT = DeploymentBinding(
     tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
     deployment_id=UUID('00000000-0000-0000-0000-000000000002'),
@@ -67,13 +66,10 @@ def _refresh_subject() -> dict[str, object]:
 
 
 class BffRouterTest(unittest.TestCase):
-
-    """Provide BffRouterTest.
-    """
+    """Provide BffRouterTest."""
 
     def setUp(self) -> None:
-        """Perform setUp.
-        """
+        """Perform setUp."""
         app = FastAPI()
         app.include_router(bff.router)
         self.redis = FakeRedis()
@@ -203,7 +199,7 @@ class BffRouterTest(unittest.TestCase):
         )
         self.assertIn('HttpOnly', response.headers['set-cookie'])
         self.assertEqual(
-            self.redis.ttls[f'bff:session:{session["session_id_hash"]}'],
+            self.redis.ttls[f"bff:session:{session['session_id_hash']}"],
             AUTH_SESSION_TTL_SECONDS,
         )
 
@@ -262,8 +258,7 @@ class BffRouterTest(unittest.TestCase):
         self.assertEqual(logged_out.status_code, 204)
 
     def test_service_proxy_path_does_not_repeat_api(self) -> None:
-        """Test service proxy path does not repeat api.
-        """
+        """Test service proxy path does not repeat api."""
         access = jwt_access.create_access_token(
             _access_subject(),
             issuer=_DEPLOYMENT.issuer,

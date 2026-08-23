@@ -11,7 +11,6 @@ from PIL import ImageFont
 
 from examples.streaming_web.overlay_models import RenderedTextBitmap
 
-
 _text_bitmap_cache_size = max(
     128,
     int(os.getenv('STREAMING_OVERLAY_TEXT_BITMAP_CACHE_SIZE', '4096')),
@@ -47,7 +46,10 @@ def _measure_label_text(
             return rendered.width, rendered.height, max(2, thickness)
 
     (width, height), baseline = cv2.getTextSize(
-        label, font, scale, thickness,
+        label,
+        font,
+        scale,
+        thickness,
     )
     return width, height, baseline
 

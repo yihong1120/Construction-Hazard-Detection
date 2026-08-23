@@ -24,7 +24,6 @@ from examples.streaming_web.schemas import OverlayLanguageListResponse
 from examples.streaming_web.schemas import StreamPlaybackBatchRequest
 from examples.streaming_web.schemas import StreamPlaybackRequest
 
-
 router: APIRouter = APIRouter()
 
 
@@ -94,7 +93,9 @@ async def stream_playback_session_playlist(
         Rewritten HLS playlist response for the session.
     """
     return await streaming_api_service.stream_playback_session_playlist(
-        session_id, request, rds,
+        session_id,
+        request,
+        rds,
     )
 
 
@@ -117,7 +118,10 @@ async def request_stream_playback(
         JSON body describing the stable playback session.
     """
     return await streaming_api_service.request_stream_playback(
-        request_body, credentials, db, rds,
+        request_body,
+        credentials,
+        db,
+        rds,
     )
 
 
@@ -140,7 +144,10 @@ async def request_stream_playback_batch(
         JSON body containing playback sessions and batch metadata.
     """
     return await streaming_api_service.request_stream_playback_batch(
-        request_body, credentials, db, rds,
+        request_body,
+        credentials,
+        db,
+        rds,
     )
 
 
@@ -161,7 +168,9 @@ async def release_stream_playback(
         JSON status confirming whether the session was released.
     """
     return await streaming_api_service.release_stream_playback(
-        request_body, credentials, rds,
+        request_body,
+        credentials,
+        rds,
     )
 
 
@@ -188,7 +197,12 @@ async def get_streams_for_label_route(
         JSON body containing visible stream playback descriptors.
     """
     return await streaming_api_service.get_streams_for_label(
-        label, overlay, language, credentials, db, rds,
+        label,
+        overlay,
+        language,
+        credentials,
+        db,
+        rds,
     )
 
 
@@ -234,7 +248,14 @@ async def metadata_stream_id(
         Streaming server-sent-event response.
     """
     return await streaming_metadata_service.metadata_stream_response(
-        request, label, stream_id, overlay, language, credentials, db, rds,
+        request,
+        label,
+        stream_id,
+        overlay,
+        language,
+        credentials,
+        db,
+        rds,
     )
 
 
@@ -256,5 +277,9 @@ async def websocket_metadata_stream_id(
         db: Request-scoped database session.
     """
     await streaming_metadata_service.metadata_stream_websocket(
-        websocket, label, stream_id, rds, db,
+        websocket,
+        label,
+        stream_id,
+        rds,
+        db,
     )

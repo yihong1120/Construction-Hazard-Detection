@@ -27,7 +27,6 @@ from examples.streaming_web.media_paths import build_preview_media_path
 from examples.streaming_web.media_paths import encode_media_segment
 from examples.streaming_web.media_paths import parse_annotated_media_path
 
-
 MEDIA_PUBLISHER_IDLE_GRACE_SECONDS = max(
     30,
     int(os.getenv('MEDIA_PUBLISHER_IDLE_GRACE_SECONDS', '180')),
@@ -115,14 +114,14 @@ def append_query(url: str, query: str) -> str:
     if not query:
         return url
     separator = '&' if '?' in url else '?'
-    return f'{url}{separator}{query}'
+    return f"{url}{separator}{query}"
 
 
 def rewrite_hls_uri(uri: str, media_path: str, auth_query: str) -> str:
     """Rewrite one HLS URI so child reads retain media authorisation."""
     if not auth_query:
         return uri
-    public_base_path = f'/hazard/media/{quote(media_path, safe="")}/'
+    public_base_path = f"/hazard/media/{quote(media_path, safe='')}/"
     parts = urlsplit(uri)
     path = parts.path
     if path.startswith('/hazard/media/'):
@@ -160,7 +159,9 @@ def rewrite_hls_playlist_media_urls(
         Returns:
             The callable result.
         """
-        return f'URI="{rewrite_hls_uri(match.group(1), media_path, auth_query)}"'
+        return (
+            f'URI="{rewrite_hls_uri(match.group(1), media_path, auth_query)}"'
+        )
 
     rewritten_lines: list[str] = []
     for line in playlist.splitlines():
@@ -169,7 +170,13 @@ def rewrite_hls_playlist_media_urls(
         elif line.startswith('#'):
             rewritten_lines.append(uri_attr.sub(rewrite_uri_attr, line))
         else:
-            rewritten_lines.append(rewrite_hls_uri(line, media_path, auth_query))
+            rewritten_lines.append(
+                rewrite_hls_uri(
+                    line,
+                    media_path,
+                    auth_query,
+                ),
+            )
     suffix = '\n' if playlist.endswith('\n') else ''
     return '\n'.join(rewritten_lines) + suffix
 
@@ -183,9 +190,9 @@ def media_hls_session_cookie(
         return None
     if not re.fullmatch(r'[A-Za-z0-9._~-]+', session_value):
         raise HTTPException(status_code=502, detail='invalid_hls_session')
-    public_path = f'/hazard/media/{quote(media_path, safe="")}/'
+    public_path = f"/hazard/media/{quote(media_path, safe='')}/"
     return (
-        f'hlsSession={session_value}; Path={public_path}; '
+        f"hlsSession={session_value}; Path={public_path}; "
         'Secure; HttpOnly; SameSite=None; Partitioned'
     )
 
@@ -196,9 +203,9 @@ async def fetch_internal_hls_playlist(
     http_client: httpx.AsyncClient | None = None,
 ) -> tuple[str, str | None]:
     """Fetch an HLS playlist and return its scoped MediaMTX session cookie."""
+    playlist_path = f"{quote(media_path, safe='')}/index.m3u8"
     url = append_query(
-        f'{MEDIA_INTERNAL_HLS_BASE_URL}/{quote(media_path, safe="")}/index.m3u8',
-        media_query,
+        f"{MEDIA_INTERNAL_HLS_BASE_URL}/{playlist_path}", media_query,
     )
     try:
         if http_client is not None:
@@ -229,7 +236,9 @@ async def fetch_internal_hls_playlist(
 
 def extract_media_path_from_uri(uri: str) -> str:
     """Extract the decoded MediaMTX stream path from an external URI."""
-    segments = [unquote(part) for part in uri.split('?', 1)[0].split('/') if part]
+    segments = [
+        unquote(part) for part in uri.split('?', 1)[0].split('/') if part
+    ]
     try:
         path_index = segments.index('media') + 1
     except ValueError:
@@ -241,7 +250,7 @@ def extract_media_path_from_uri(uri: str) -> str:
 
 def media_path_matches_site(media_path: str, site_name: str) -> bool:
     """Check whether a MediaMTX path belongs to the supplied site."""
-    return media_path.startswith(f'hazard_{encode_media_segment(site_name)}_')
+    return media_path.startswith(f"hazard_{encode_media_segment(site_name)}_")
 
 
 def opaque_media_session_allows_path(
@@ -254,7 +263,8 @@ def opaque_media_session_allows_path(
     if quality not in {'detail', 'preview'}:
         return False
     base_paths = {
-        build_media_path(site, camera) for camera in media_session_cameras(session)
+        build_media_path(site, camera)
+        for camera in media_session_cameras(session)
     }
     if quality == 'preview':
         base_paths = {build_preview_media_path(path) for path in base_paths}

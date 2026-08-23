@@ -10,7 +10,6 @@ import redis.asyncio as redis
 from examples.streaming_web.redis_service import fetch_latest_metadata_for_key
 from examples.streaming_web.schemas import FrameOutData
 
-
 _subscriber_queue_size = 1
 _retry_delay_seconds = 1.0
 _idle_retry_delay_seconds = 0.05
@@ -24,7 +23,8 @@ class _StreamSubscribers:
     rds: redis.Redis
     queues: set[asyncio.Queue[FrameOutData | Exception]]
     fetcher: Callable[
-        [redis.Redis, str, str], Awaitable[FrameOutData | None],
+        [redis.Redis, str, str],
+        Awaitable[FrameOutData | None],
     ]
     task: asyncio.Task[None] | None = None
 
@@ -66,8 +66,7 @@ class MetadataFanout:
     """Share one blocking Redis read per metadata key and process."""
 
     def __init__(self) -> None:
-        """Perform init.
-        """
+        """Perform init."""
         self._streams: dict[str, _StreamSubscribers] = {}
         self._lock = asyncio.Lock()
 
@@ -77,7 +76,8 @@ class MetadataFanout:
         redis_key: str,
         *,
         fetcher: Callable[
-            [redis.Redis, str, str], Awaitable[FrameOutData | None],
+            [redis.Redis, str, str],
+            Awaitable[FrameOutData | None],
         ] = fetch_latest_metadata_for_key,
     ) -> MetadataSubscription:
         """Subscribe a browser connection using a bounded latest-only queue."""
@@ -104,6 +104,7 @@ class MetadataFanout:
         queue: asyncio.Queue[FrameOutData | Exception],
     ) -> None:
         """Drop a subscriber and let an idle reader exit after its XREAD."""
+
         async with self._lock:
             state = self._streams.get(redis_key)
             if state is not None:

@@ -6,7 +6,7 @@ from src import nvenc_session
 
 
 def test_nvenc_session_budget_limits_concurrent_publishers(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """The local budget prevents ffmpeg from exceeding NVENC sessions."""
     monkeypatch.setenv('MEDIA_NVENC_MAX_SESSIONS', '2')
@@ -36,7 +36,7 @@ def test_release_nvenc_session_never_makes_active_count_negative() -> None:
 
 
 def test_nvenc_session_invalid_environment_uses_default(
-        monkeypatch: Any,
+    monkeypatch: Any,
 ) -> None:
     """An invalid process budget does not break media publishing."""
     monkeypatch.setenv('MEDIA_NVENC_MAX_SESSIONS', 'not-a-number')

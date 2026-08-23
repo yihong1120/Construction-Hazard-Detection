@@ -20,6 +20,7 @@ class AsyncHttpClientOwner:
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Return the live pooled client, creating it only when necessary."""
+
         async with self._client_lock:
             if self._client is None or self._client.is_closed:
                 self._client = httpx.AsyncClient(
@@ -35,6 +36,7 @@ class AsyncHttpClientOwner:
 
     async def close(self) -> None:
         """Close and discard the pooled client, if it is still open."""
+
         async with self._client_lock:
             if self._client is not None and not self._client.is_closed:
                 await self._client.aclose()

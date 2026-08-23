@@ -9,15 +9,11 @@ from src.stream_viewer import StreamViewer
 
 
 class TestStreamViewer(unittest.TestCase):
-    """
-    Unit tests for the StreamViewer class methods.
-    """
+    """Unit tests for the StreamViewer class methods."""
 
     @patch('src.stream_viewer.cv2.VideoCapture')
     def test_initialisation(self, mock_video_capture: MagicMock) -> None:
-        """
-        Test the initialisation of the StreamViewer instance.
-        """
+        """Test the initialisation of the StreamViewer instance."""
         # Initialise StreamViewer with a test URL
         stream_url: str = 'tests/videos/test.mp4'
         viewer: StreamViewer = StreamViewer(stream_url)
@@ -42,16 +38,16 @@ class TestStreamViewer(unittest.TestCase):
         mock_video_capture: MagicMock,
         mock_destroy_all_windows: MagicMock,
     ) -> None:
-        """
-        Test the display_stream method for streaming video.
-        """
+        """Test the display_stream method for streaming video."""
         # Mock VideoCapture instance
         mock_cap_instance = MagicMock()
         mock_video_capture.return_value = mock_cap_instance
 
         # Simulate read() returning True with a dummy frame
         mock_cap_instance.read.side_effect = [
-            (True, MagicMock()), (True, MagicMock()), (False, None),
+            (True, MagicMock()),
+            (True, MagicMock()),
+            (False, None),
         ]
 
         # Simulate waitKey() returning 'q' to break the loop
@@ -80,9 +76,7 @@ class TestStreamViewer(unittest.TestCase):
         mock_destroy_all_windows: MagicMock,
         mock_video_capture: MagicMock,
     ) -> None:
-        """
-        Test the release_resources method.
-        """
+        """Test the release_resources method."""
         # Mock VideoCapture instance
         mock_cap_instance = MagicMock()
         mock_video_capture.return_value = mock_cap_instance
@@ -123,9 +117,7 @@ class TestStreamViewer(unittest.TestCase):
         mock_init: MagicMock,
         mock_display_stream: MagicMock,
     ) -> None:
-        """
-        Test the main function.
-        """
+        """Test the main function."""
         main(['https://example.com/stream', '--window-name', 'Preview'])
 
         # Check if StreamViewer was initialised with the correct URL
