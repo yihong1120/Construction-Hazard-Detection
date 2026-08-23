@@ -29,6 +29,8 @@ def test_remaining_lifetime_handles_expired_values(
 def test_revoke_and_query_access_tokens() -> None:
     """Only live token identifiers are stored and queried in Redis."""
     async def run_case() -> None:
+        """Perform run case.
+        """
         redis = AsyncMock()
         redis.exists.return_value = 1
         original_time = token_revocation.time.time

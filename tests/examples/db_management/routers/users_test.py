@@ -4,7 +4,6 @@ import unittest
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
-from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -57,12 +56,12 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create_user: AsyncMock,
     ) -> None:
-        """Test adding a new user successfully.
-
-        Ensures that a new user is created and the response contains
-        correct user details.
-        """
         # Construct a complete user ORM mock
+        """Test add user.
+
+        Args:
+            mock_create_user: Value used by this callable.
+        """
         mock_group: MagicMock = MagicMock()
         mock_group.name = 'group1'
         mock_group.uniform_number = 'G123'
@@ -259,10 +258,11 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_delete_user: AsyncMock,
         mock_get_user_by_id: AsyncMock,
     ) -> None:
-        """Test removing a user successfully.
+        """Test remove user.
 
-        Ensures that a user is deleted and the response contains a
-        success message.
+        Args:
+            mock_delete_user: Value used by this callable.
+            mock_get_user_by_id: Value used by this callable.
         """
         mock_user: MagicMock = MagicMock()
         mock_user.group_id = 10
@@ -279,10 +279,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response['message'], 'User deleted successfully.')
 
     async def test_update_my_pwd_incorrect_old_password(self) -> None:
-        """Test updating own password with incorrect old password.
-
-        Ensures that an HTTPException with status 401 is raised if the
-        old password is incorrect.
+        """Test update my pwd incorrect old password.
         """
         self.current_user.check_password.return_value = False
 
@@ -417,76 +414,21 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
                 'User profile updated successfully.',
             )
 
-    @patch('examples.db_management.routers.users.list_users_service')
-    @patch(
-        'examples.db_management.routers.users.is_super_admin',
-        return_value=False,
-    )
+    @patch('examples.db_management.routers.users.list_users_for_operator')
     async def test_list_users(
         self,
-        mock_is_super_admin: MagicMock,
-        mock_list_users_service: AsyncMock,
+        list_users_for_operator: AsyncMock,
     ) -> None:
-        """Test listing admin-scoped users with group and profile info."""
-        # Construct two complete user ORM mocks
-        mock_group1: MagicMock = MagicMock()
-        mock_group1.name = 'group1'
-        mock_group1.uniform_number = 'G123'
-        mock_profile1: MagicMock = MagicMock()
-        mock_profile1.family_name = 'Family1'
-        mock_profile1.middle_name = 'Middle1'
-        mock_profile1.given_name = 'Given1'
-        mock_profile1.email = 'test1@example.com'
-        mock_profile1.mobile_number = '0911111111'
-        mock_user1: MagicMock = MagicMock(
-            id=1,
-            username='user1',
-            role='user',
-            status='active',
-            group_id=10,
-            group=mock_group1,
-            profile=mock_profile1,
-        )
-        mock_group2: MagicMock = MagicMock()
-        mock_group2.name = 'group2'
-        mock_group2.uniform_number = 'G456'
-        mock_profile2: MagicMock = MagicMock()
-        mock_profile2.family_name = 'Family2'
-        mock_profile2.middle_name = 'Middle2'
-        mock_profile2.given_name = 'Given2'
-        mock_profile2.email = 'test2@example.com'
-        mock_profile2.mobile_number = '0922222222'
-        mock_user2: MagicMock = MagicMock(
-            id=2,
-            username='user2',
-            role='admin',
-            status='active',
-            group_id=10,
-            group=mock_group2,
-            profile=mock_profile2,
-        )
-        mock_list_users_service.return_value = [
-            mock_user1,
-            mock_user2,
-        ]
-
-        result = cast(
-            list[UserRead],
-            await users.list_users(self.db, self.current_user),
-        )
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0].username, 'user1')
-        group = result[1].group
-        profile = result[1].profile
-        self.assertIsNotNone(group)
-        self.assertIsNotNone(profile)
-        assert group is not None
-        assert profile is not None
-        self.assertEqual(group.name, 'group2')
-        self.assertEqual(profile.email, 'test2@example.com')
-        mock_list_users_service.assert_awaited_once_with(
+        """The HTTP handler only delegates to the listing application service."""
+        expected = users.UserPage(items=[], next_cursor=None)
+        list_users_for_operator.return_value = expected
+        result = await users.list_users(self.db, self.current_user)
+        self.assertIs(result, expected)
+        list_users_for_operator.assert_awaited_once_with(
+            self.current_user,
             self.db,
-            group_id=10,
+            cursor=None,
+            page_size=50,
         )
 
     async def test_list_pending_users(self) -> None:
@@ -524,14 +466,14 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 
         result = await users.list_pending_users(self.db)
 
-        self.assertEqual(len(result), 1)
-        self.assertIsInstance(result[0], PendingUserReviewRead)
-        self.assertEqual(result[0].username, 'pending-user')
-        self.assertEqual(result[0].status, 'pending_admin_approval')
-        self.assertIsNone(result[0].group_id)
-        self.assertEqual(result[0].email, 'pending@example.com')
-        self.assertEqual(result[0].terms_version, '2026-06-27')
-        self.assertEqual(result[0].provider, 'google')
+        self.assertEqual(len(result.items), 1)
+        self.assertIsInstance(result.items[0], PendingUserReviewRead)
+        self.assertEqual(result.items[0].username, 'pending-user')
+        self.assertEqual(result.items[0].status, 'pending_admin_approval')
+        self.assertIsNone(result.items[0].group_id)
+        self.assertEqual(result.items[0].email, 'pending@example.com')
+        self.assertEqual(result.items[0].terms_version, '2026-06-27')
+        self.assertEqual(result.items[0].provider, 'google')
 
     @patch(
         'examples.db_management.services.user_management_services.'
@@ -682,8 +624,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             'Password updated successfully by user ID.',
         )
 
-    @patch('examples.auth.cache.set_user_data')
-    @patch('examples.auth.cache.get_user_data')
+    @patch('examples.auth.cache.rate_limiter_service.set_user_data')
+    @patch('examples.auth.cache.rate_limiter_service.get_user_data')
     @patch('examples.db_management.routers.users.update_password')
     async def test_update_my_pwd_success(
         self,
@@ -959,6 +901,8 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
     """Cover the user-management authorization and alias edge cases."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.admin: Any = SimpleNamespace(
             username='admin',
             group_id=10,
@@ -1033,7 +977,6 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(users, 'is_super_admin', return_value=False),
-            patch.object(users, 'ensure_admin_with_group'),
             patch.object(
                 users,
                 'create_user',
@@ -1066,38 +1009,6 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             db=self.db,
         )
         self.db.commit.assert_awaited_once()
-
-    async def test_registration_and_pending_list_aliases_delegate(
-        self,
-    ) -> None:
-        """Public registration and admin pending-list aliases share logic."""
-        payload = MagicMock()
-        request = MagicMock()
-        redis = MagicMock()
-        expected = SimpleNamespace(id=3)
-
-        with patch.object(
-            users,
-            'register_signup_user',
-            AsyncMock(return_value=expected),
-        ) as register:
-            result = await users.register_user(
-                payload, request, self.db, redis,
-            )
-
-        self.assertIs(result, expected)
-        register.assert_awaited_once_with(payload, request, self.db, redis)
-
-        rows = [SimpleNamespace(id=1)]
-        with patch.object(
-            users,
-            'list_pending_users',
-            AsyncMock(return_value=rows),
-        ) as list_pending:
-            result = await users.admin_list_pending_users(self.db)
-
-        self.assertIs(result, rows)
-        list_pending.assert_awaited_once_with(self.db)
 
     async def test_signup_approval_routes_cover_rejection_and_approval(
         self,
@@ -1227,19 +1138,22 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_super_admin_lists_all_users(self) -> None:
-        """Super administrators call the unscoped user-list service."""
-        with (
-            patch.object(users, 'is_super_admin', return_value=True),
-            patch.object(
-                users,
-                'list_users_service',
-                AsyncMock(return_value=[]),
-            ) as list_users_service,
-        ):
+        """Super administrators delegate to the same scoped-list service."""
+        expected = users.UserPage(items=[], next_cursor=None)
+        with patch.object(
+            users,
+            'list_users_for_operator',
+            AsyncMock(return_value=expected),
+        ) as list_users_for_operator:
             result = await users.list_users(self.db, self.admin)
 
-        self.assertEqual(result, [])
-        list_users_service.assert_awaited_once_with(self.db)
+        self.assertIs(result, expected)
+        list_users_for_operator.assert_awaited_once_with(
+            self.admin,
+            self.db,
+            cursor=None,
+            page_size=50,
+        )
 
 
 if __name__ == '__main__':

@@ -25,6 +25,7 @@ class DbUserInfo(TypedDict):
     role: str
     group_id: int | None
     status: str
+    tenant_id: str
 
 
 class UserCache(TypedDict):
@@ -73,6 +74,9 @@ class AccessTokenSubject(SubjectUsername):
     role: str
     jti: str
     features: list[str]
+    tenant_id: NotRequired[str]
+    deployment_id: NotRequired[str]
+    config_revision: NotRequired[int]
 
 
 class RefreshTokenSubject(SubjectUsername):
@@ -85,6 +89,9 @@ class RefreshTokenSubject(SubjectUsername):
 
     family_id: str
     token_id: str
+    tenant_id: NotRequired[str]
+    deployment_id: NotRequired[str]
+    config_revision: NotRequired[int]
 
 
 class JwtSubjectModel(BaseModel):
@@ -114,6 +121,11 @@ class AccessTokenSubjectModel(JwtSubjectModel):
     role: str = Field(min_length=1)
     jti: str = Field(min_length=1)
     features: list[str]
+    # These claims are optional in the schema only so old stored tokens can be
+    # decoded for logout/revocation.  HTTP authentication requires all three.
+    tenant_id: str | None = None
+    deployment_id: str | None = None
+    config_revision: int | None = Field(default=None, ge=1)
 
 
 class RefreshTokenSubjectModel(JwtSubjectModel):
@@ -126,6 +138,9 @@ class RefreshTokenSubjectModel(JwtSubjectModel):
 
     family_id: str = Field(min_length=1)
     token_id: str = Field(min_length=1)
+    tenant_id: str | None = None
+    deployment_id: str | None = None
+    config_revision: int | None = Field(default=None, ge=1)
 
 
 class ProviderClaims(BaseModel):
@@ -375,6 +390,17 @@ class TokenPairData(TypedDict):
     role: NotRequired[str]
     user_id: NotRequired[int]
     group_id: NotRequired[int | None]
+    deployment: NotRequired[DeploymentInfo]
+
+
+class DeploymentInfo(BaseModel):
+    """Managed deployment identity returned after authentication succeeds."""
+
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    deployment_id: str
+    tenant_id: str
+    config_revision: int = Field(ge=1)
 
 
 class TokenPair(BaseModel):
@@ -397,3 +423,4 @@ class TokenPair(BaseModel):
     user_id: int | None = None
     group_id: int | None = None
     feature_names: list[str] = []
+    deployment: DeploymentInfo | None = None

@@ -19,8 +19,10 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
     @patch('examples.auth.lifespan.engine')
     @patch('examples.auth.lifespan.start_jwt_scheduler')
     @patch('examples.auth.lifespan.RedisClient')
+    @patch('examples.auth.lifespan.drain_site_media_cleanup_jobs')
     async def test_global_lifespan(
         self,
+        mock_drain_cleanup: AsyncMock,
         mock_redis_client_cls: MagicMock,
         mock_start_scheduler: MagicMock,
         mock_engine_obj: MagicMock,
@@ -71,7 +73,8 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
             # while we are in the context.
             mock_scheduler.shutdown.assert_not_called()
 
-            mock_conn.run_sync.assert_awaited_once()
+            mock_conn.run_sync.assert_not_awaited()
+            mock_drain_cleanup.assert_awaited_once()
         # Once we exit the context => "shutdown" logic runs.
         mock_scheduler.shutdown.assert_called_once()
         mock_redis_client.close.assert_awaited_once()
@@ -80,10 +83,12 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
     @patch('examples.auth.lifespan.engine')
     @patch('examples.auth.lifespan.start_jwt_scheduler')
     @patch('examples.auth.lifespan.RedisClient')
-    @patch('examples.auth.lifespan._DEFAULT_SERVICE')
+    @patch('examples.auth.lifespan.rate_limiter_service')
+    @patch('examples.auth.lifespan.drain_site_media_cleanup_jobs')
     async def test_global_lifespan_preload_script_exception(
         self,
-        mock_default_service: MagicMock,
+        mock_drain_cleanup: AsyncMock,
+        mock_rate_limiter_service: MagicMock,
         mock_redis_client_cls: MagicMock,
         mock_start_scheduler: MagicMock,
         mock_engine_obj: MagicMock,
@@ -96,7 +101,7 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
             mock_start_scheduler (MagicMock): Patches start_jwt_scheduler to
                 avoid real scheduling.
         """
-        mock_default_service.preload_script = AsyncMock(
+        mock_rate_limiter_service.preload_script = AsyncMock(
             side_effect=Exception('boom'),
         )
 
@@ -122,7 +127,8 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
 
         async with global_lifespan(app):
             # Startup proceeds even when preload_script fails
-            mock_conn.run_sync.assert_awaited_once()
+            mock_conn.run_sync.assert_not_awaited()
+            mock_drain_cleanup.assert_awaited_once()
 
         # Shutdown still occurs
         mock_scheduler.shutdown.assert_called_once()

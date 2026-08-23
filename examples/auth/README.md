@@ -13,7 +13,8 @@ standalone application.
 
 - `config.py`: environment-backed settings.
 - `database.py`: async SQLAlchemy engine, session factory, and base model.
-- `models.py`: users, groups, sites, stream configs, features, and violations.
+- `models.py`: canonical SQLAlchemy ORM definitions, loaded before metadata
+  creation by `global_lifespan`.
 - `jwt_config.py`: JWT access and refresh dependencies.
 - `cache.py`: Redis user cache, token cache, and lightweight rate helper.
 - `redis_pool.py`: shared async Redis pool for HTTP and WebSocket handlers.

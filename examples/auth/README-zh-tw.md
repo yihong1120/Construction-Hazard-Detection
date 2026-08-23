@@ -11,7 +11,8 @@ token/session cache、密碼雜湊、資料庫 session，以及 user/site models
 
 - `config.py`：從環境變數讀取設定。
 - `database.py`：async SQLAlchemy engine、session factory 與 base model。
-- `models.py`：users、groups、sites、stream configs、features 與 violations。
+- `models.py`：唯一的 SQLAlchemy ORM 定義模組，在 `global_lifespan`
+  建立 metadata 前載入。
 - `jwt_config.py`：JWT access 與 refresh dependencies。
 - `cache.py`：Redis user cache、token cache 與輕量 rate helper。
 - `redis_pool.py`：HTTP 與 WebSocket handlers 共用的 async Redis pool。

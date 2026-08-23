@@ -42,9 +42,10 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_list_features_super_admin(
         self, mock_list_features: AsyncMock,
     ) -> None:
-        """Test super admin can list all features.
+        """Test endpoint list features super admin.
 
-        Ensures that a super admin can retrieve all features.
+        Args:
+            mock_list_features: Value used by this callable.
         """
         mock_list_features.return_value = [self.example_feature]
 
@@ -57,10 +58,7 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
         mock_list_features.assert_awaited_once_with(self.db_session)
 
     async def test_endpoint_list_features_non_super_admin(self) -> None:
-        """Test listing features raises HTTPException for non-super admin.
-
-        Ensures that a non-super admin cannot list all features and
-        receives a 403 error.
+        """Test endpoint list features non super admin.
         """
         non_admin_user: User = User(id=2, username='user', role='user')
 
@@ -75,9 +73,10 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_create_feature(
         self, mock_create_feature: AsyncMock,
     ) -> None:
-        """Test creating a new feature.
+        """Test endpoint create feature.
 
-        Verifies that a new feature is created and returned correctly.
+        Args:
+            mock_create_feature: Value used by this callable.
         """
         payload: FeatureCreate = FeatureCreate(
             feature_name='New Feature', description='Feature desc',
@@ -100,10 +99,10 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_update_feature_success(
         self, mock_update_feature: AsyncMock,
     ) -> None:
-        """Test updating an existing feature successfully.
+        """Test endpoint update feature success.
 
-        Ensures that an existing feature is updated and a success
-        message is returned.
+        Args:
+            mock_update_feature: Value used by this callable.
         """
         payload: FeatureUpdate = FeatureUpdate(
             feature_id=1, new_name='Updated Feature', new_description=None,
@@ -128,9 +127,7 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_endpoint_update_feature_not_found(self) -> None:
-        """Test updating non-existent feature raises 404 error.
-
-        Ensures that a 404 error is raised if the feature does not exist.
+        """Test endpoint update feature not found.
         """
         payload: FeatureUpdate = FeatureUpdate(
             feature_id=999, new_name='Updated Feature',
@@ -151,10 +148,10 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_delete_feature_success(
         self, mock_delete_feature: AsyncMock,
     ) -> None:
-        """Test deleting an existing feature successfully.
+        """Test endpoint delete feature success.
 
-        Ensures that an existing feature is deleted and a success
-        message is returned.
+        Args:
+            mock_delete_feature: Value used by this callable.
         """
         payload: FeatureDelete = FeatureDelete(feature_id=1)
         execute_result: MagicMock = MagicMock()
@@ -175,9 +172,7 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_endpoint_delete_feature_not_found(self) -> None:
-        """Test deleting non-existent feature raises 404 error.
-
-        Ensures that a 404 error is raised if the feature does not exist.
+        """Test endpoint delete feature not found.
         """
         payload: FeatureDelete = FeatureDelete(feature_id=999)
         execute_result: MagicMock = MagicMock()
@@ -196,10 +191,10 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_update_group_feature_success(
         self, mock_update_group_features: AsyncMock,
     ) -> None:
-        """Test updating group features successfully.
+        """Test endpoint update group feature success.
 
-        Ensures that group features are updated and a success message
-        is returned.
+        Args:
+            mock_update_group_features: Value used by this callable.
         """
         payload: GroupFeatureUpdate = GroupFeatureUpdate(
             group_id=1, feature_ids=[1, 2],
@@ -248,10 +243,10 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_list_group_features(
         self, mock_list_group_features: AsyncMock,
     ) -> None:
-        """Test listing group features returns correct data.
+        """Test endpoint list group features.
 
-        Ensures that the endpoint returns the correct group-feature
-        associations.
+        Args:
+            mock_list_group_features: Value used by this callable.
         """
         mock_list_group_features.return_value = [
             (self.example_group, [1, 2]),

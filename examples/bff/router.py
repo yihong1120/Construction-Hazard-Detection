@@ -61,6 +61,7 @@ async def login(
 async def get_session(
     request: Request,
     response: Response,
+    db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> BffSessionResponse:
     """Return the current BFF session without exposing JWTs.
@@ -73,13 +74,14 @@ async def get_session(
     Returns:
         Token-free browser session response.
     """
-    return await current_bff_session(request, response, redis)
+    return await current_bff_session(request, response, redis, db)
 
 
 @router.get('/auth/csrf', response_model=CsrfResponse)
 async def get_csrf(
     request: Request,
     response: Response,
+    db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> CsrfResponse:
     """Return the CSRF token for an active BFF session.
@@ -92,7 +94,7 @@ async def get_csrf(
     Returns:
         CSRF token required by mutating BFF requests.
     """
-    return await csrf_response(request, response, redis)
+    return await csrf_response(request, response, redis, db)
 
 
 @router.post('/auth/logout', status_code=204)
@@ -123,6 +125,7 @@ async def api_proxy(
     path: str,
     request: Request,
     x_csrf_token: str | None = Header(None, alias='X-CSRF-Token'),
+    db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> Response:
     """Forward an authenticated browser request to an allow-listed service.
@@ -143,4 +146,5 @@ async def api_proxy(
         request,
         x_csrf_token,
         redis,
+        db,
     )

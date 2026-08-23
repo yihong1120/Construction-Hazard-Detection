@@ -10,7 +10,6 @@ from typing import Any
 import httpx
 from fastapi import HTTPException
 from redis.asyncio import Redis
-from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -23,6 +22,7 @@ from examples.auth.models import USER_STATUS_PENDING_ADMIN_APPROVAL
 from examples.auth.models import USER_STATUS_REJECTED
 from examples.auth.models import USER_STATUS_SUSPENDED
 from examples.auth.models import UserProfile
+from src.http_client_pool import get_application_http_client
 
 settings = Settings()
 logger = logging.getLogger(__name__)
@@ -217,7 +217,7 @@ async def _find_user_by_email(
         select(User)
         .options(selectinload(User.profile))
         .join(UserProfile, UserProfile.user_id == User.id)
-        .where(func.lower(UserProfile.email) == email.lower()),
+        .where(UserProfile.email == email.strip().lower()),
     )
 
 
@@ -356,18 +356,31 @@ async def _send_email_verification_email(
             ),
         })
 
+    headers = {
+        'accept': 'application/json',
+        'api-key': settings.brevo_api_key,
+        'content-type': 'application/json',
+    }
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        client = await get_application_http_client(
+            'brevo-email',
+            timeout=10.0,
+        )
+        if client is not None:
             response = await client.post(
                 BREVO_SEND_EMAIL_URL,
-                headers={
-                    'accept': 'application/json',
-                    'api-key': settings.brevo_api_key,
-                    'content-type': 'application/json',
-                },
+                headers=headers,
                 json=payload,
             )
             response.raise_for_status()
+        else:
+            async with httpx.AsyncClient(timeout=10.0) as ephemeral_client:
+                response = await ephemeral_client.post(
+                    BREVO_SEND_EMAIL_URL,
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         body = exc.response.text[:500] if exc.response else ''
         logger.warning(

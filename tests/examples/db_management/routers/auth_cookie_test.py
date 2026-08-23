@@ -40,6 +40,10 @@ def make_request(
 
 
 class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
+
+    """Provide TestAuthCookieCoverage.
+    """
+
     def test_web_request_detection_accepts_explicit_modes(self) -> None:
         """Explicit platform and cookie mode headers select the Web flow."""
         self.assertTrue(
@@ -54,6 +58,8 @@ class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_token_pair_omits_refresh_token_for_cookie_response(self) -> None:
+        """Test token pair omits refresh token for cookie response.
+        """
         result = web_auth.token_pair_response(
             {'access_token': 'access', 'refresh_token': 'refresh', 'feature_names': []},
             omit_refresh_token=True,
@@ -188,10 +194,17 @@ class TestAuthCookieCoverage(unittest.IsolatedAsyncioTestCase):
         intent."""
 
         class FormRequest:
+            """Provide FormRequest.
+            """
             method = 'POST'
             query_params = QueryParams()
 
             async def form(self) -> FormData:
+                """Perform form.
+
+                Returns:
+                    The callable result.
+                """
                 return FormData(
                     [('code', 'apple-code'), ('state', 'signed-state')],
                 )

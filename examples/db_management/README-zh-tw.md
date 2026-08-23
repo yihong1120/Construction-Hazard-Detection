@@ -8,6 +8,8 @@
 ## 職責
 
 - 使用者可用 username 或 e-mail 搭配密碼登入，並支援 JWT refresh。
+- 供原生 App 以公司一次性啟用碼選定 deployment，並在登入前取得 Ed25519 簽章
+  deployment 設定的匿名 Registry。
 - 管理使用者、待審核註冊、角色與群組。
 - 依群組管理功能權限。
 - 管理工地與 user-site access。
@@ -58,7 +60,11 @@ BFF_SESSION_COOKIE_SECURE=true
 BFF_SESSION_TTL_SECONDS=2592000
 MEDIA_SESSION_TTL_SECONDS=600
 PLAYBACK_STREAMING_API_URL=http://127.0.0.1:8800
-CORS_ALLOWED_ORIGINS=https://changdar-server.mooo.com,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5000,http://127.0.0.1:5000,http://localhost:8080,http://127.0.0.1:8080
+CORS_ALLOWED_ORIGINS=https://changdar-server.mooo.com,https://visionnaire-cda17.web.app,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5000,http://127.0.0.1:5000,http://localhost:8080,http://127.0.0.1:8080
+DEPLOYMENT_API_BASE_PATH=/hazard/api
+DEPLOYMENT_REGISTRY_ED25519_PRIVATE_KEY=load-from-secret-manager-only
+DEPLOYMENT_REGISTRY_KEY_ID=registry-ed25519-2026-01
+DEPLOYMENT_REGISTRY_TTL_SECONDS=86400
 BREVO_API_KEY=replace-with-your-brevo-api-key
 MAIL_FROM=verified-sender@example.com
 MAIL_FROM_NAME=Visionnaire
@@ -75,6 +81,10 @@ PASSWORD_RESET_TOKEN_TTL_SECONDS=1800
 OAuth Authorization Code + PKCE。
 `CORS_ALLOWED_ORIGINS` 必須列出允許帶 cookie 的 Web origin；credentialed
 request 不可以使用 `*`。
+`DEPLOYMENT_REGISTRY_ED25519_PRIVATE_KEY` 只能由 KMS、Secret Manager 或受保護
+runtime 環境變數提供 Ed25519 PKCS#8 PEM，絕不可寫入 Git、App 或 API 回應。
+`DEPLOYMENT_REGISTRY_TTL_SECONDS` 必須介於 1 與 86400；缺少或無效私鑰時 Registry
+會 fail closed。
 若使用 Docker Compose，`PLAYBACK_STREAMING_API_URL` 應設為
 `http://streaming-web-backend:8000`；若所有服務直接跑在 host 上，才使用
 `http://127.0.0.1:8800`。
@@ -118,6 +128,37 @@ Native 使用 `GET /hazard/api/db_management/oauth/authorize`、
 `POST /hazard/api/db_management/oauth/revoke`。只接受 S256 PKCE 與設定檔列出的
 client/redirect 配對。
 Access token 有效 15 分鐘；refresh token 每次旋轉並保存 family reuse-detection。
+
+原生 App 輸入公司一次性啟用碼後，先呼叫：
+
+```text
+POST /hazard/api/deployment-registry/v1/enrollments/exchange
+```
+
+成功回應只含 `deployment_id`；接著在登入前呼叫獨立的：
+
+```text
+GET /hazard/api/deployment-registry/v1/deployments/{deployment_id}
+```
+
+此 router 不在 `/db_management` 或 `/bff` 下，不讀取 Authorization、Cookie、CSRF
+或 refresh token，只會回傳一份最長 24 小時的九欄位 Ed25519 簽章文件。Nginx 必須
+將公開路徑轉送到同一個 8005 process 的 `/deployment-registry/` router；完整部署
+契約與可提交的 Nginx 片段見 `deploy/tenant-deployments/README-zh-tw.md`。
+
+tenant admin 與 super-admin 可建立、列出或撤銷目前登入 deployment 的一次性裝置
+邀請：
+
+```text
+POST   /hazard/api/db_management/deployment-enrollment-codes
+GET    /hazard/api/db_management/deployment-enrollment-codes
+DELETE /hazard/api/db_management/deployment-enrollment-codes/{id}
+```
+
+POST body 僅接受 `{"expires_in_minutes":30}`（1–1440）。新 code 只在 POST 成功
+回應中出現一次；GET 和 audit 均不回傳 code 或 verifier。Web 必須透過
+`/bff/db_management/deployment-enrollment-codes` 呼叫，BFF 會以 HttpOnly session
+保存 server-side token，並為 POST／DELETE 驗證 Origin 與 CSRF token。
 
 Flutter Web/iOS/Android 直播統一呼叫既有
 `/hazard/api/db_management/` base path 下的 playback facade：
@@ -173,7 +214,7 @@ APPLE_PRIVATE_KEY_PATH=config/secrets/apple/AuthKey_NGC4QBS7ZY.p8
 
 ```bash
 psql "$DATABASE_URL" \
-  -f scripts/migrations/20260621_upgrade_user_identities_login_methods.sql
+  -f scripts/migrations/20260621_upgrade_user_identities_login_methods_postgres.sql
 ```
 
 ## 忘記密碼

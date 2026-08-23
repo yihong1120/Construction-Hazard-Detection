@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Query
 from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -15,14 +18,13 @@ from examples.auth.models import USER_STATUS_PENDING_ADMIN_APPROVAL
 from examples.auth.models import USER_STATUS_REJECTED
 from examples.auth.redis_pool import get_redis_pool
 from examples.auth.user_service import invalidate_effective_site_cache
-from examples.db_management.deps import ensure_admin_with_group
 from examples.db_management.deps import ensure_not_super
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
 from examples.db_management.deps import require_admin
 from examples.db_management.schemas.user import AdminUserApproval
 from examples.db_management.schemas.user import ApproveUserSignup
-from examples.db_management.schemas.user import PendingUserReviewRead
+from examples.db_management.schemas.user import PendingUserReviewPage
 from examples.db_management.schemas.user import SetUserStatus
 from examples.db_management.schemas.user import UpdateMyPassword
 from examples.db_management.schemas.user import UpdatePassword
@@ -33,6 +35,7 @@ from examples.db_management.schemas.user import UpdateUsernameById
 from examples.db_management.schemas.user import UpdateUserRole
 from examples.db_management.schemas.user import UserCreate
 from examples.db_management.schemas.user import UserDelete
+from examples.db_management.schemas.user import UserPage
 from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
 from examples.db_management.schemas.user import UserSignup
@@ -47,6 +50,8 @@ from examples.db_management.services.user_management_services import \
 from examples.db_management.services.user_management_services import \
     get_group_or_404
 from examples.db_management.services.user_management_services import \
+    list_users_for_operator
+from examples.db_management.services.user_management_services import \
     load_user_read
 from examples.db_management.services.user_management_services import \
     pending_user_review_read
@@ -60,9 +65,6 @@ from examples.db_management.services.user_services import (
 from examples.db_management.services.user_services import create_user
 from examples.db_management.services.user_services import delete_user
 from examples.db_management.services.user_services import get_user_by_id
-from examples.db_management.services.user_services import (
-    list_users as list_users_service,
-)
 from examples.db_management.services.user_services import set_user_status
 from examples.db_management.services.user_services import update_password
 from examples.db_management.services.user_services import update_username
@@ -102,6 +104,7 @@ async def add_user(
         role=payload.role,
         group_id=target_group_id,
         db=db,
+        tenant_id=getattr(me, 'tenant_id', None),
         profile=payload.profile.model_dump() if payload.profile else None,
     )
     if target_group_id:
@@ -142,38 +145,16 @@ async def signup_user(
     return await register_signup_user(payload, request, db, redis)
 
 
-@router.post('/auth/register', response_model=UserRead, status_code=201)
-async def register_user(
-    payload: UserSignup,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis_pool),
-) -> UserRead:
-    """Provide the legacy-path alias for public account registration.
-
-    Args:
-        payload: Registration details, profile, and legal consents.
-        request: HTTP request used to capture consent audit metadata.
-        db: Database session used to create the account.
-        redis: Redis connection used to create verification-token state.
-
-    Returns:
-        Newly created account in its email-unverified state.
-
-    Raises:
-        HTTPException: If registration validation or verification delivery fails.
-    """
-    return await register_signup_user(payload, request, db, redis)
-
-
 @router.get(
     '/list_pending_users',
-    response_model=list[PendingUserReviewRead],
+    response_model=PendingUserReviewPage,
     dependencies=[Depends(require_admin)],
 )
 async def list_pending_users(
     db: AsyncSession = Depends(get_db),
-) -> list[PendingUserReviewRead]:
+    cursor: Annotated[int | None, Query(ge=0)] = None,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> PendingUserReviewPage:
     """List email-verified signups awaiting administrator approval.
 
     Args:
@@ -182,7 +163,7 @@ async def list_pending_users(
     Returns:
         Pending account records suitable for an administrator review queue.
     """
-    result = await db.execute(
+    query = (
         select(User)
         .options(
             selectinload(User.group),
@@ -195,29 +176,18 @@ async def list_pending_users(
             User.status == USER_STATUS_PENDING_ADMIN_APPROVAL,
             User.email_verified_at.is_not(None),
             User.group_id.is_(None),
-        ),
+        )
     )
-    users = result.scalars().all()
-    return [pending_user_review_read(user) for user in users]
-
-
-@router.get(
-    '/admin/pending-users',
-    response_model=list[PendingUserReviewRead],
-    dependencies=[Depends(require_admin)],
-)
-async def admin_list_pending_users(
-    db: AsyncSession = Depends(get_db),
-) -> list[PendingUserReviewRead]:
-    """Provide the admin-path alias for the pending-signup review queue.
-
-    Args:
-        db: Database session used to load pending accounts.
-
-    Returns:
-        Pending account records suitable for administrator review.
-    """
-    return await list_pending_users(db)
+    if cursor is not None:
+        query = query.where(User.id > cursor)
+    result = await db.execute(query.order_by(User.id).limit(page_size + 1))
+    users = list(result.scalars().all())
+    has_more = len(users) > page_size
+    page = users[:page_size]
+    return PendingUserReviewPage(
+        items=[pending_user_review_read(user) for user in page],
+        next_cursor=page[-1].id if has_more and page else None,
+    )
 
 
 @router.put('/approve_user_signup', response_model=UserRead)
@@ -297,27 +267,21 @@ async def review_user_signup(
 
 
 @router.get(
-    '/list_users', response_model=list[UserRead],
+    '/list_users', response_model=UserPage,
 )
 async def list_users(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(require_admin),
-) -> list[UserRead]:
-    """List users with group information, scoped by the operator role.
-
-    Args:
-        db: Async database session.
-
-    Returns:
-        List of user details.
-    """
-    if is_super_admin(me):
-        users = await list_users_service(db)
-    else:
-        ensure_admin_with_group(me)
-        users = await list_users_service(db, group_id=me.group_id)
-
-    return [UserRead.model_validate(u) for u in users]
+    cursor: Annotated[int | None, Query(ge=0)] = None,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> UserPage:
+    """Delegate the paginated, scoped user listing to its application service."""
+    return await list_users_for_operator(
+        me,
+        db,
+        cursor=cursor,
+        page_size=page_size,
+    )
 
 
 @router.delete('/delete_user', dependencies=[Depends(require_admin)])
@@ -418,12 +382,12 @@ async def update_my_pwd(
     await update_password(me, payload.new_password, db)
 
     # Clear existing tokens from Redis cache
-    from examples.auth.cache import get_user_data, set_user_data
-    cache = await get_user_data(redis_pool, me.username)
+    from examples.auth.cache import rate_limiter_service
+    cache = await rate_limiter_service.get_user_data(redis_pool, me.username)
     if cache:
         cache['jti_list'] = []
         cache['refresh_tokens'] = []
-        await set_user_data(redis_pool, me.username, cache)
+        await rate_limiter_service.set_user_data(redis_pool, me.username, cache)
 
     return {'message': 'Password changed successfully, please log in again.'}
 

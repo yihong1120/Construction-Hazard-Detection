@@ -28,9 +28,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.user_id: int = 20
 
     async def test_list_sites_without_group(self) -> None:
-        """Test retrieving all sites when no group_id is provided.
-
-        Ensures that all sites are returned if no group_id is specified.
+        """Test list sites without group.
         """
         mock_result: MagicMock = MagicMock()
         scalars_mock: MagicMock = (
@@ -45,10 +43,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sites, ['site1', 'site2'])
 
     async def test_list_sites_with_group(self) -> None:
-        """Test retrieving sites filtered by group_id.
-
-        Ensures that only sites belonging to the specified group_id are
-        returned.
+        """Test list sites with group.
         """
         mock_result: MagicMock = MagicMock()
         scalars_mock: MagicMock = (
@@ -95,10 +90,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(site_ids, [4, 9])
 
     async def test_create_site_success(self) -> None:
-        """Test successful creation of a new site.
-
-        Verifies that a new site is created and committed to the database
-        without error.
+        """Test create site success.
         """
         self.db.commit = AsyncMock()
         self.db.refresh = AsyncMock()
@@ -145,10 +137,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.refresh.assert_not_called()
 
     async def test_create_site_exception(self) -> None:
-        """Test handling exception during site creation.
-
-        Ensures that an HTTPException is raised and rollback is called if the
-        database commit fails during site creation.
+        """Test create site exception.
         """
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
@@ -177,9 +166,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_update_site_success(self) -> None:
-        """Test successful site name update.
-
-        Verifies that the site name is updated and committed to the database.
+        """Test update site success.
         """
         self.db.commit = AsyncMock()
 
@@ -193,10 +180,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.site.name, 'Updated Site')
 
     async def test_update_site_exception(self) -> None:
-        """Test handling exception during site update.
-
-        Ensures that an HTTPException is raised and rollback is called if the
-        database commit fails during site update.
+        """Test update site exception.
         """
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
@@ -211,34 +195,33 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.status_code, 500)
         self.db.rollback.assert_awaited()
 
-    async def test_delete_site_success(self) -> None:
-        """Test successful deletion of a site and related records.
+    @patch(
+        'examples.db_management.services.site_services.'
+        'enqueue_site_media_cleanup_for_site',
+        new_callable=AsyncMock,
+    )
+    async def test_delete_site_success(
+        self,
+        enqueue_cleanup: AsyncMock,
+    ) -> None:
+        """Test delete site success.
 
-        Verifies that the site and its related image records are deleted and
-        the transaction is committed.
+        Args:
+            enqueue_cleanup: Value used by this callable.
         """
-        mock_execute_result: MagicMock = MagicMock()
-        mock_execute_result.scalars.return_value.all.return_value = [
-            'image1.png',
-            'image2.png',
-        ]
-        self.db.execute = AsyncMock(return_value=mock_execute_result)
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock()
 
-        with patch('pathlib.Path.unlink') as mock_unlink:
-            mock_unlink.return_value = None
+        await site_services.delete_site(site=self.site, db=self.db)
 
-            await site_services.delete_site(site=self.site, db=self.db)
-
-            self.db.commit.assert_awaited()
-            self.db.delete.assert_awaited_with(self.site)
+        enqueue_cleanup.assert_awaited_once_with(
+            self.site.name, self.db,
+        )
+        self.db.commit.assert_awaited()
+        self.db.delete.assert_awaited_with(self.site)
 
     async def test_delete_site_exception(self) -> None:
-        """Test handling exception during site deletion.
-
-        Ensures that an HTTPException is raised and rollback is called if the
-        database commit fails during site deletion.
+        """Test delete site exception.
         """
         mock_execute_result: MagicMock = MagicMock()
         mock_execute_result.scalars.return_value.all.return_value = [
@@ -259,10 +242,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
             self.db.rollback.assert_awaited()
 
     async def test_add_user_to_site(self) -> None:
-        """Test adding a user to a site.
-
-        Verifies that a user is added to a site and a default notification
-        preference is created, then the transaction is committed.
+        """Test add user to site.
         """
         self.db.execute = AsyncMock()
         self.db.commit = AsyncMock()
@@ -278,12 +258,9 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_remove_user_from_site(self) -> None:
-        """Test removing a user from a site.
-
-        When the user has no group-based access, the notification preference is
-        also deleted and the transaction is committed.
-        """
         # Simulate a user with no group → pref is deleted directly
+        """Test remove user from site.
+        """
         mock_user: MagicMock = MagicMock()
         mock_user.group_id = None
         self.db.get = AsyncMock(return_value=mock_user)
@@ -301,10 +278,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_create_site_without_group_id(self) -> None:
-        """Test exception raised when creating site without a group_id.
-
-        Ensures that an HTTPException with status 400 is raised if group_id is
-        not provided.
+        """Test create site without group id.
         """
         with self.assertRaises(HTTPException) as context:
             await site_services.create_site(
@@ -319,27 +293,24 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
             'group_id is required for new site',
         )
 
-    async def test_delete_site_removes_images(self) -> None:
-        """Test file deletion during site deletion.
-
-        Verifies that image files are deleted from the filesystem when a site
-        is deleted.
-        """
-        mock_execute_result: MagicMock = MagicMock()
-        mock_execute_result.scalars.return_value.all.return_value = [
-            '/fake/path/image1.png',
-        ]
-        self.db.execute = AsyncMock(return_value=mock_execute_result)
+    @patch(
+        'examples.db_management.services.site_services.'
+        'enqueue_site_media_cleanup_for_site',
+        new_callable=AsyncMock,
+    )
+    async def test_delete_site_queues_images_after_commit(
+        self,
+        enqueue_cleanup: AsyncMock,
+    ) -> None:
+        """Test image deletion is durably queued before the DB commit."""
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock()
 
-        with patch('pathlib.Path.is_file', return_value=True) as mock_is_file:
-            with patch('pathlib.Path.unlink') as mock_unlink:
-                await site_services.delete_site(site=self.site, db=self.db)
+        await site_services.delete_site(site=self.site, db=self.db)
 
-                mock_is_file.assert_called_once()
-                mock_unlink.assert_called_once_with(missing_ok=True)
-
+        enqueue_cleanup.assert_awaited_once_with(
+            self.site.name, self.db,
+        )
         self.db.commit.assert_awaited()
         self.db.delete.assert_awaited_with(self.site)
 

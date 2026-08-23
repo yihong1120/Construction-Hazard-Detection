@@ -99,7 +99,7 @@ class TestUserCreate(unittest.TestCase):
             username='u', password='p', group_id=1, profile=profile,
         )
         self.assertIsNotNone(data.profile)
-        assert data.profile is not None  # 明確告知型別檢查工具
+        assert data.profile is not None  # Inform the type checker explicitly.
         self.assertEqual(data.profile.family_name, 'f')
 
     def test_missing(self) -> None:

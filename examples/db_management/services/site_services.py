@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import base64
-from pathlib import Path
 from typing import Final
 
 from fastapi import HTTPException
-from redis.asyncio import Redis
+from sqlalchemy import column
 from sqlalchemy import delete
-from sqlalchemy import insert
+from sqlalchemy import Integer
+from sqlalchemy import literal
+from sqlalchemy import values
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -15,48 +16,23 @@ from sqlalchemy.orm import selectinload
 from examples.auth.models import Site
 from examples.auth.models import site_groups_table
 from examples.auth.models import SiteNotificationPreference
-from examples.auth.models import StreamConfig
 from examples.auth.models import User
 from examples.auth.models import user_sites_table
-from examples.auth.models import Violation
 from examples.db_management.deps import SUPER_ADMIN_NAME
 from examples.db_management.schemas.site import SiteRead
+from examples.db_management.services.site_media_cleanup import (
+    enqueue_site_media_cleanup_for_site,
+)
 
-_bulk_insert_chunk_size: Final[int] = 1000
-
-
-def encode_site_name(site_name: str) -> str:
-    """Encode a site name for its Redis key namespace.
-
-    Args:
-        site_name: Human-readable site name.
-
-    Returns:
-        URL-safe ASCII key component.
-    """
-    return base64.urlsafe_b64encode(site_name.encode('utf-8')).decode('ascii')
+_bulk_insert_chunk_size: Final[int] = 250
 
 
-async def delete_matching_redis_keys(
-    redis: Redis,
-    key_pattern: str,
-    batch_size: int = 500,
-) -> None:
-    """Delete keys matching a Redis pattern using incremental batches.
-
-    Args:
-        redis: Redis connection used to scan and delete keys.
-        key_pattern: Redis glob pattern identifying keys to remove.
-        batch_size: Maximum keys deleted in one command.
-    """
-    pending: list[bytes] = []
-    async for key in redis.scan_iter(match=key_pattern, count=batch_size):
-        pending.append(key)
-        if len(pending) >= batch_size:
-            await redis.delete(*pending)
-            pending = []
-    if pending:
-        await redis.delete(*pending)
+def _chunks(values_: list[int], size: int) -> list[list[int]]:
+    """Split identifiers into bounded SQL VALUES inputs."""
+    return [
+        values_[start:start + size]
+        for start in range(0, len(values_), size)
+    ]
 
 
 def site_to_read(
@@ -147,21 +123,35 @@ async def seed_site_notification_preferences(
     if not user_ids or not site_ids:
         return
 
-    stmt = insert(SiteNotificationPreference).prefix_with('IGNORE')
-    rows: list[dict[str, int | bool]] = []
-    for user_id in user_ids:
-        for site_id in site_ids:
-            rows.append({
-                'user_id': user_id,
-                'site_id': site_id,
-                'is_enabled': True,
-            })
-            if len(rows) >= _bulk_insert_chunk_size:
-                await db.execute(stmt, rows)
-                rows = []
-
-    if rows:
-        await db.execute(stmt, rows)
+    # Let PostgreSQL construct the Cartesian product.  Materialising it in
+    # Python used O(users * sites) application memory before any SQL ran.
+    unique_user_ids = list(dict.fromkeys(user_ids))
+    unique_site_ids = list(dict.fromkeys(site_ids))
+    for user_chunk in _chunks(unique_user_ids, _bulk_insert_chunk_size):
+        user_values = values(
+            column('user_id', Integer),
+            name='notification_preference_user_ids',
+        ).data([(user_id,) for user_id in user_chunk])
+        for site_chunk in _chunks(
+            unique_site_ids,
+            _bulk_insert_chunk_size,
+        ):
+            site_values = values(
+                column('site_id', Integer),
+                name='notification_preference_site_ids',
+            ).data([(site_id,) for site_id in site_chunk])
+            rows = select(
+                user_values.c.user_id,
+                site_values.c.site_id,
+                literal(True),
+            )
+            await db.execute(
+                pg_insert(SiteNotificationPreference)
+                .from_select(['user_id', 'site_id', 'is_enabled'], rows)
+                .on_conflict_do_nothing(
+                    index_elements=['user_id', 'site_id'],
+                ),
+            )
 
 
 async def list_sites(
@@ -233,11 +223,17 @@ async def create_site(
 
         # Link the site to all specified groups
         await db.execute(
-            site_groups_table.insert().prefix_with('IGNORE'),
-            [
-                {'site_id': site.id, 'group_id': gid}
-                for gid in group_ids
-            ],
+            pg_insert(site_groups_table)
+            .values([
+                {'site_id': site.id, 'group_id': group_id}
+                for group_id in group_ids
+            ])
+            .on_conflict_do_nothing(
+                index_elements=[
+                    site_groups_table.c.site_id,
+                    site_groups_table.c.group_id,
+                ],
+            ),
         )
 
         # Seed notification preferences for all users in the linked groups
@@ -256,8 +252,13 @@ async def create_site(
         ).unique().scalar_one_or_none()
         if super_admin:
             await db.execute(
-                user_sites_table.insert().prefix_with('IGNORE').values(
-                    user_id=super_admin.id, site_id=site.id,
+                pg_insert(user_sites_table)
+                .values(user_id=super_admin.id, site_id=site.id)
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        user_sites_table.c.user_id,
+                        user_sites_table.c.site_id,
+                    ],
                 ),
             )
             await seed_site_notification_preferences(
@@ -317,14 +318,7 @@ async def delete_site(
     db: AsyncSession,
 ) -> None:
     """
-    Delete an existing site, along with associated violations,
-    stream configurations, and images.
-
-    The deletion process includes:
-        - Deleting related violation image files from the file system.
-        - Removing related StreamConfig and Violation records
-            from the database.
-        - Deleting the Site itself.
+    Delete an existing site and queue its evidence files for post-commit cleanup.
 
     Args:
         site (Site): The Site object to delete.
@@ -333,26 +327,13 @@ async def delete_site(
     Raises:
         HTTPException: If a database error occurs during deletion.
     """
-    # Step 1: Delete violation image files associated with the site
-    image_paths = list((
-        await db.execute(
-            select(Violation.image_path).where(Violation.site == site.name),
-        )
-    ).scalars().all())
+    # Queue image deletion inside the same database transaction.  Physical
+    # removal only runs after that transaction commits, so a failed site
+    # deletion cannot orphan a surviving violation record from its image.
+    await enqueue_site_media_cleanup_for_site(site.name, db)
 
-    for path_str in image_paths:
-        if path_str:
-            image_path: Path = Path(path_str)
-            # Remove the file if it exists
-            if image_path.is_file():
-                image_path.unlink(missing_ok=True)
-
-    # Step 2: Delete related database records
-    # (StreamConfig, Violation, and Site itself)
-    await db.execute(
-        delete(StreamConfig).where(StreamConfig.site_id == site.id),
-    )
-    await db.execute(delete(Violation).where(Violation.site == site.name))
+    # PostgreSQL foreign keys cascade stream, violation, group, and access
+    # rows.  Deleting only the site eliminates two redundant DELETE round trips.
     await db.delete(site)
 
     try:
@@ -376,15 +357,20 @@ async def add_user_to_site(
     """
     # Insert a new record to grant the user access to the site
     await db.execute(
-        user_sites_table.insert()
-        .prefix_with('IGNORE')  # Prevent duplicate entries
-        .values(user_id=user_id, site_id=site_id),
+        pg_insert(user_sites_table)
+        .values(user_id=user_id, site_id=site_id)
+        .on_conflict_do_nothing(
+            index_elements=[
+                user_sites_table.c.user_id,
+                user_sites_table.c.site_id,
+            ],
+        ),
     )
     # Pre-seed a default enabled notification preference
     await db.execute(
-        insert(SiteNotificationPreference)
-        .prefix_with('IGNORE')
-        .values(user_id=user_id, site_id=site_id, is_enabled=True),
+        pg_insert(SiteNotificationPreference)
+        .values(user_id=user_id, site_id=site_id, is_enabled=True)
+        .on_conflict_do_nothing(index_elements=['user_id', 'site_id']),
     )
     await db.commit()
 
@@ -443,9 +429,14 @@ async def add_group_to_site(
         db (AsyncSession): The asynchronous database session.
     """
     await db.execute(
-        site_groups_table.insert()
-        .prefix_with('IGNORE')
-        .values(site_id=site_id, group_id=group_id),
+        pg_insert(site_groups_table)
+        .values(site_id=site_id, group_id=group_id)
+        .on_conflict_do_nothing(
+            index_elements=[
+                site_groups_table.c.site_id,
+                site_groups_table.c.group_id,
+            ],
+        ),
     )
     # Seed notification preferences for all users in this group
     user_ids = await _list_user_ids_for_groups([group_id], db)

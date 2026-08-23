@@ -38,11 +38,15 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         """When user cache is missing, return None and do not write back."""
         with (
             patch.object(
-                tc,
+                tc.rate_limiter_service,
                 'get_user_data',
                 new=AsyncMock(return_value=None),
             ) as mock_get,
-            patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
+            patch.object(
+                tc.rate_limiter_service,
+                'set_user_data',
+                new=AsyncMock(),
+            ) as mock_set,
         ):
             out = await tc.prune_user_cache(object(), 'alice')
         self.assertIsNone(out)
@@ -68,11 +72,15 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
-                tc,
+                tc.rate_limiter_service,
                 'get_user_data',
                 new=AsyncMock(return_value=cache.copy()),
             ) as mock_get,
-            patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
+            patch.object(
+                tc.rate_limiter_service,
+                'set_user_data',
+                new=AsyncMock(),
+            ) as mock_set,
             patch.object(
                 tc.jwt_refresh,
                 'decode_token',
@@ -115,11 +123,15 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
-                tc,
+                tc.rate_limiter_service,
                 'get_user_data',
                 new=AsyncMock(return_value=cache.copy()),
             ) as mock_get,
-            patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
+            patch.object(
+                tc.rate_limiter_service,
+                'set_user_data',
+                new=AsyncMock(),
+            ) as mock_set,
             # not used in this path
             patch.object(tc.jwt_refresh, 'decode_token', return_value={}),
         ):
@@ -160,11 +172,15 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
-                tc,
+                tc.rate_limiter_service,
                 'get_user_data',
                 new=AsyncMock(return_value=cache.copy()),
             ) as mock_get,
-            patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
+            patch.object(
+                tc.rate_limiter_service,
+                'set_user_data',
+                new=AsyncMock(),
+            ) as mock_set,
             patch.object(
                 tc.jwt_refresh,
                 'decode_token',
@@ -199,11 +215,15 @@ class TestPruneUserCache(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(tc.time, 'time', return_value=now),
             patch.object(
-                tc,
+                tc.rate_limiter_service,
                 'get_user_data',
                 new=AsyncMock(return_value=cache.copy()),
             ) as mock_get,
-            patch.object(tc, 'set_user_data', new=AsyncMock()) as mock_set,
+            patch.object(
+                tc.rate_limiter_service,
+                'set_user_data',
+                new=AsyncMock(),
+            ) as mock_set,
             patch.object(
                 tc.jwt_refresh,
                 'decode_token',

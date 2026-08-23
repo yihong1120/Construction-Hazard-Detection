@@ -9,12 +9,14 @@ from unittest.mock import AsyncMock
 from unittest.mock import patch
 from urllib.parse import parse_qs
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from examples.auth.database import get_db
+from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import jwt_refresh
 from examples.auth.redis_pool import get_redis_pool
@@ -25,30 +27,58 @@ from examples.db_management.services import oauth_protocol_services as oauth_ser
 from tests.examples.auth.session_store_test import FakeRedis
 
 
+_DEPLOYMENT = DeploymentBinding(
+    tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
+    deployment_id=UUID('00000000-0000-0000-0000-000000000002'),
+    api_base_url='https://api.example.com',
+    config_revision=1,
+)
+
+
 def _access_subject() -> dict[str, object]:
+    """Perform access subject.
+
+    Returns:
+        The callable result.
+    """
     return {
         'username': 'alice',
         'user_id': 1,
         'role': 'user',
         'jti': 'access-jti',
         'features': [],
+        'tenant_id': str(_DEPLOYMENT.tenant_id),
+        'deployment_id': str(_DEPLOYMENT.deployment_id),
+        'config_revision': _DEPLOYMENT.config_revision,
     }
 
 
-def _refresh_subject() -> dict[str, str]:
+def _refresh_subject() -> dict[str, object]:
+    """Perform refresh subject.
+
+    Returns:
+        The callable result.
+    """
     return {
         'username': 'alice',
         'family_id': 'refresh-family',
         'token_id': 'refresh-token-id',
+        'tenant_id': str(_DEPLOYMENT.tenant_id),
+        'deployment_id': str(_DEPLOYMENT.deployment_id),
+        'config_revision': _DEPLOYMENT.config_revision,
     }
 
 
 class OAuthRouterTest(unittest.TestCase):
+    """Provide OAuthRouterTest.
+    """
     verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
     challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
     redirect_uri = 'com.changdar.visionnaire:/oauth2redirect'
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         app = FastAPI()
         app.include_router(oauth.router)
         self.redis = FakeRedis()
@@ -63,9 +93,24 @@ class OAuthRouterTest(unittest.TestCase):
         app.dependency_overrides[get_redis_pool] = lambda: self.redis
         app.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(app)
+        deployment_resolver = patch.object(
+            oauth_service,
+            'resolve_request_deployment',
+            new=AsyncMock(return_value=_DEPLOYMENT),
+        )
+        deployment_resolver.start()
+        self.addCleanup(deployment_resolver.stop)
 
-        access = jwt_access.create_access_token(_access_subject())
-        refresh = jwt_refresh.create_access_token(_refresh_subject())
+        access = jwt_access.create_access_token(
+            _access_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
+        )
+        refresh = jwt_refresh.create_access_token(
+            _refresh_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
+        )
         self.session_id, _ = asyncio.run(
             create_auth_session(
                 self.redis,  # type: ignore[arg-type]
@@ -73,6 +118,7 @@ class OAuthRouterTest(unittest.TestCase):
                     'access_token': access,
                     'refresh_token': refresh,
                     'feature_names': [],
+                    'deployment': _DEPLOYMENT.as_response(),
                 },
                 {'id': 1, 'username': 'alice'},
             ),
@@ -87,13 +133,25 @@ class OAuthRouterTest(unittest.TestCase):
         self,
         issue_token_pair: AsyncMock,
     ) -> None:
-        issued_access = jwt_access.create_access_token(_access_subject())
+        """Test pkce code is bound and single use.
+
+        Args:
+            issue_token_pair: Value used by this callable.
+        """
+        issued_access = jwt_access.create_access_token(
+            _access_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
+        )
         issued_refresh = jwt_refresh.create_access_token(
             _refresh_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
         )
         issue_token_pair.return_value = {
             'access_token': issued_access,
             'refresh_token': issued_refresh,
+            'deployment': _DEPLOYMENT.as_response(),
         }
         authorize = self.client.get(
             '/oauth/authorize',
@@ -130,6 +188,8 @@ class OAuthRouterTest(unittest.TestCase):
         self.assertEqual(reused.json()['detail'], 'invalid_grant')
 
     def test_authorize_rejects_unregistered_redirect(self) -> None:
+        """Test authorize rejects unregistered redirect.
+        """
         response = self.client.get(
             '/oauth/authorize',
             follow_redirects=False,
@@ -151,6 +211,10 @@ if __name__ == '__main__':
 
 
 class _Request:
+
+    """Provide Request.
+    """
+
     def __init__(
         self,
         data: object | None = None,
@@ -159,6 +223,14 @@ class _Request:
         cookies: dict[str, str] | None = None,
         authorization: str | None = None,
     ) -> None:
+        """Perform init.
+
+        Args:
+            data: Value used by this callable.
+            content_type: Value used by this callable.
+            cookies: Value used by this callable.
+            authorization: Value used by this callable.
+        """
         self._data = data if data is not None else {}
         self.cookies = cookies or {}
         self.headers = {'content-type': content_type}
@@ -166,13 +238,25 @@ class _Request:
             self.headers['authorization'] = authorization
 
     async def json(self) -> object:
+        """Perform json.
+
+        Returns:
+            The callable result.
+        """
         return self._data
 
     async def form(self) -> object:
+        """Perform form.
+
+        Returns:
+            The callable result.
+        """
         return self._data
 
 
 class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
+    """Provide TestOAuthRouterCoverage.
+    """
     client_id = 'visionnaire-ios'
     redirect_uri = 'com.changdar.visionnaire:/oauth2redirect'
     verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
@@ -181,6 +265,8 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_helpers_parse_json_and_reject_invalid_native_config(
         self,
     ) -> None:
+        """Test helpers parse json and reject invalid native config.
+        """
         self.assertEqual(
             await oauth_service.request_data(
                 _Request({'grant_type': 'refresh_token'}),
@@ -222,6 +308,8 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_authorize_rejects_invalid_pkce_and_missing_login(
         self,
     ) -> None:
+        """Test authorize rejects invalid pkce and missing login.
+        """
         redis = AsyncMock()
         request = _Request(cookies={oauth_service.SESSION_COOKIE: 'session'})
         cases = [
@@ -295,6 +383,8 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'login_required')
 
     async def test_token_rejects_invalid_authorization_codes(self) -> None:
+        """Test token rejects invalid authorization codes.
+        """
         db = AsyncMock()
         redis = AsyncMock()
         base = {
@@ -371,6 +461,8 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'invalid_grant')
 
     async def test_token_refresh_and_unsupported_grants(self) -> None:
+        """Test token refresh and unsupported grants.
+        """
         redis = AsyncMock()
         with patch.object(
             oauth_service,
@@ -422,6 +514,8 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail, 'unsupported_grant_type')
 
     async def test_me_handles_invalid_and_active_users(self) -> None:
+        """Test me handles invalid and active users.
+        """
         db = AsyncMock()
         user = SimpleNamespace(id=7)
         db.scalar.return_value = None
@@ -457,6 +551,8 @@ class TestOAuthRouterCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_revoke_handles_refresh_access_and_authorization(
         self,
     ) -> None:
+        """Test revoke handles refresh access and authorization.
+        """
         redis = AsyncMock()
         with patch.object(oauth_service, 'logout_user', AsyncMock()) as logout:
             with patch.object(

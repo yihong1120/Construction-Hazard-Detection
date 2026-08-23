@@ -13,11 +13,9 @@ from fastapi import Response
 from redis.asyncio import Redis
 from redis.exceptions import NoScriptError
 
-from examples.auth.cache import custom_rate_limiter
-from examples.auth.cache import get_user_data
 from examples.auth.cache import PROJECT_PREFIX
+from examples.auth.cache import rate_limiter_service
 from examples.auth.cache import RateLimiterService
-from examples.auth.cache import set_user_data
 
 
 class CacheTestCase(unittest.IsolatedAsyncioTestCase):
@@ -36,7 +34,10 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             return_value=b'{"username": "test_user", "role": "user"}',
         )
 
-        user_data = await get_user_data(redis_pool, 'test_user')
+        user_data = await rate_limiter_service.get_user_data(
+            redis_pool,
+            'test_user',
+        )
         self.assertIsInstance(user_data, dict)
         assert user_data is not None
         self.assertEqual(user_data['username'], 'test_user')
@@ -54,7 +55,10 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         # Return None so it looks like no data found
         redis_pool.get = AsyncMock(return_value=None)
 
-        user_data = await get_user_data(redis_pool, 'nonexistent_user')
+        user_data = await rate_limiter_service.get_user_data(
+            redis_pool,
+            'nonexistent_user',
+        )
         self.assertIsNone(user_data)
 
         redis_pool.get.assert_awaited_once_with(
@@ -73,7 +77,11 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'username': 'test_user',
             'role': 'user',
         }
-        await set_user_data(redis_pool, 'test_user', user_data_dict)
+        await rate_limiter_service.set_user_data(
+            redis_pool,
+            'test_user',
+            user_data_dict,
+        )
 
         redis_pool.set.assert_awaited_once_with(
             f"{PROJECT_PREFIX}:user_cache:test_user",
@@ -154,7 +162,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             await service._incr_and_get_ttl(redis_pool, 'k5', 10)
 
     @patch(
-        'examples.auth.cache.get_user_data',
+        'examples.auth.cache.rate_limiter_service.get_user_data',
         return_value={'jti_list': 'not_a_list'},
     )
     async def test_rate_limiter_jti_list_not_iterable(
@@ -178,12 +186,12 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(mock_request, Response(), creds)
+            await rate_limiter_service(mock_request, Response(), creds)
         self.assertEqual(exc.exception.status_code, 401)
         self.assertIn('invalid or replaced', exc.exception.detail)
 
     @patch(
-        'examples.auth.cache.get_user_data',
+        'examples.auth.cache.rate_limiter_service.get_user_data',
         return_value={'jti_list': ['abc']},
     )
     async def test_custom_rate_limiter_with_response_and_negative_ttl(
@@ -212,7 +220,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'features': [],
         }
 
-        remaining = await custom_rate_limiter(
+        remaining = await rate_limiter_service(
             mock_request,
             service_response,
             creds,
@@ -225,7 +233,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.auth.cache.get_user_data',
+        'examples.auth.cache.rate_limiter_service.get_user_data',
         return_value={'jti_list': ['test_jti']},
     )
     async def test_rate_limiter_guest_role_exceeds(
@@ -250,7 +258,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(
+            await rate_limiter_service(
                 mock_request, Response(),
                 mock_credentials,
             )
@@ -260,7 +268,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         redis_pool.evalsha.assert_awaited_once()
 
     @patch(
-        'examples.auth.cache.get_user_data',
+        'examples.auth.cache.rate_limiter_service.get_user_data',
         return_value={'jti_list': ['test_jti']},
     )
     async def test_rate_limiter_guest_role_within_limit(
@@ -285,7 +293,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'jti': 'test_jti',
         }
 
-        remaining = await custom_rate_limiter(
+        remaining = await rate_limiter_service(
             mock_request, Response(), mock_credentials,
         )
         self.assertEqual(remaining, 24 - 5)
@@ -293,7 +301,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         redis_pool.evalsha.assert_awaited_once()
 
     @patch(
-        'examples.auth.cache.get_user_data',
+        'examples.auth.cache.rate_limiter_service.get_user_data',
         return_value={'jti_list': ['test_jti']},
     )
     async def test_rate_limiter_user_role_within_limit(
@@ -318,7 +326,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'jti': 'test_jti',
         }
 
-        remaining = await custom_rate_limiter(
+        remaining = await rate_limiter_service(
             mock_request, Response(), mock_credentials,
         )
         self.assertEqual(remaining, 3000 - 500)
@@ -326,7 +334,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         redis_pool.evalsha.assert_awaited_once()
 
     @patch(
-        'examples.auth.cache.get_user_data',
+        'examples.auth.cache.rate_limiter_service.get_user_data',
         return_value={'jti_list': ['test_jti']},
     )
     async def test_rate_limiter_user_role_exceeds_limit(
@@ -352,7 +360,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         with self.assertRaises(HTTPException) as exc:
-            await custom_rate_limiter(
+            await rate_limiter_service(
                 mock_request, Response(),
                 mock_credentials,
             )
@@ -360,7 +368,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exc.exception.detail, 'Rate limit exceeded')
 
     @patch(
-        'examples.auth.cache.get_user_data',
+        'examples.auth.cache.rate_limiter_service.get_user_data',
         return_value={'jti_list': ['test_jti']},
     )
     async def test_rate_limiter_with_ttl_expiry(
@@ -384,7 +392,7 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'jti': 'test_jti',
         }
 
-        remaining = await custom_rate_limiter(
+        remaining = await rate_limiter_service(
             mock_request, Response(), mock_credentials,
         )
         self.assertEqual(remaining, 24 - 10)
@@ -408,11 +416,11 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            'examples.auth.cache.get_user_data',
+            'examples.auth.cache.rate_limiter_service.get_user_data',
             return_value={'jti_list': ['test_jti']},
         ):
             with self.assertRaises(HTTPException) as exc:
-                await custom_rate_limiter(
+                await rate_limiter_service(
                     mock_request, Response(),
                     mock_credentials,
                 )
@@ -439,9 +447,12 @@ class CacheTestCase(unittest.IsolatedAsyncioTestCase):
             'jti': 'test_jti',
         }
 
-        with patch('examples.auth.cache.get_user_data', return_value=None):
+        with patch(
+            'examples.auth.cache.rate_limiter_service.get_user_data',
+            return_value=None,
+        ):
             with self.assertRaises(HTTPException) as exc:
-                await custom_rate_limiter(
+                await rate_limiter_service(
                     mock_request, Response(), mock_credentials,
                 )
             self.assertEqual(exc.exception.status_code, 401)

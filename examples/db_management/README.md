@@ -61,7 +61,7 @@ BFF_SESSION_COOKIE_SECURE=true
 BFF_SESSION_TTL_SECONDS=2592000
 MEDIA_SESSION_TTL_SECONDS=600
 PLAYBACK_STREAMING_API_URL=http://127.0.0.1:8800
-CORS_ALLOWED_ORIGINS=https://changdar-server.mooo.com,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5000,http://127.0.0.1:5000,http://localhost:8080,http://127.0.0.1:8080
+CORS_ALLOWED_ORIGINS=https://changdar-server.mooo.com,https://visionnaire-cda17.web.app,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5000,http://127.0.0.1:5000,http://localhost:8080,http://127.0.0.1:8080
 BREVO_API_KEY=replace-with-your-brevo-api-key
 MAIL_FROM=verified-sender@example.com
 MAIL_FROM_NAME=Visionnaire
@@ -187,7 +187,7 @@ If the earlier `user_identities` migration was already applied, run:
 
 ```bash
 psql "$DATABASE_URL" \
-  -f scripts/migrations/20260621_upgrade_user_identities_login_methods.sql
+  -f scripts/migrations/20260621_upgrade_user_identities_login_methods_postgres.sql
 ```
 
 ## Password Reset

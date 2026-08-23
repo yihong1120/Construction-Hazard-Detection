@@ -20,6 +20,8 @@ from pydantic import ValidationError
 from redis.exceptions import RedisError
 
 from examples.auth.config import Settings
+from examples.auth.database import AsyncSessionLocal
+from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.token_revocation import is_access_token_revoked
 from examples.db_management.schemas.auth import AccessTokenSubject
 from examples.db_management.schemas.auth import AccessTokenSubjectModel
@@ -105,6 +107,9 @@ class PyJWTBearer:
         self,
         subject: Mapping[str, object],
         expires_delta: timedelta | None = None,
+        *,
+        issuer: str | None = None,
+        audience: str | None = None,
     ) -> str:
         """Create a signed JWT using PyJWT."""
         now = datetime.now(timezone.utc)
@@ -128,8 +133,12 @@ class PyJWTBearer:
             'sub': subject_data['username'],
             'subject': subject_data,
             'token_use': self.token_use,
-            'aud': f'docformify:{self.token_use}',
-            'iss': 'docformify',
+            # Deployment-issued tokens receive an explicit API-origin issuer
+            # and deployment audience.  The legacy defaults only preserve
+            # programmatic token construction for maintenance tooling; HTTP
+            # authentication rejects subjects without deployment claims.
+            'aud': audience or f'docformify:{self.token_use}',
+            'iss': issuer or 'docformify',
             'iat': now,
             'exp': expire,
         }
@@ -144,14 +153,17 @@ class PyJWTBearer:
         self,
         token: str,
         verify_exp: bool = True,
+        *,
+        expected_issuer: str | None = None,
+        expected_audience: str | None = None,
     ) -> dict[str, Any]:
         """Decode and validate a JWT with the shared token contract."""
         payload = jwt.decode(
             token,
             self.secret_key,
             algorithms=[self.algorithm],
-            audience=f'docformify:{self.token_use}',
-            issuer='docformify',
+            audience=expected_audience or f'docformify:{self.token_use}',
+            issuer=expected_issuer or 'docformify',
             options={
                 'verify_exp': verify_exp,
                 'require': [
@@ -167,7 +179,63 @@ class PyJWTBearer:
             payload['subject'] = refresh_token_subject_from_payload(payload)
         return payload
 
+    def decode_token_for_lifecycle(
+        self,
+        token: str,
+        verify_exp: bool = True,
+    ) -> dict[str, Any]:
+        """Verify a token for cleanup or revocation without authorising it.
+
+        Normal request authentication always supplies the deployment selected
+        from the current API origin. Cache cleanup and logout instead need to
+        recognise a previously issued token solely to expire or revoke it. In
+        that narrow case, parse its issuer/audience without trust, then verify
+        the signature and both claims using those values. Callers must never
+        use this method to grant access.
+        """
+        try:
+            unsigned = jwt.decode(
+                token,
+                options={
+                    'verify_signature': False,
+                    'verify_exp': False,
+                    'verify_aud': False,
+                    'verify_iss': False,
+                },
+            )
+            issuer = unsigned.get('iss')
+            audience = unsigned.get('aud')
+        except jwt.PyJWTError:
+            # Preserve the regular decoder's canonical error handling.
+            if verify_exp:
+                return self.decode_token(token)
+            return self.decode_token(token, verify_exp=False)
+        if isinstance(issuer, str) and isinstance(audience, str):
+            if not verify_exp:
+                return self.decode_token(
+                    token,
+                    verify_exp=False,
+                    expected_issuer=issuer,
+                    expected_audience=audience,
+                )
+            return self.decode_token(
+                token,
+                expected_issuer=issuer,
+                expected_audience=audience,
+            )
+        if verify_exp:
+            return self.decode_token(token)
+        return self.decode_token(token, verify_exp=False)
+
     async def __call__(self, request: Request) -> JwtAuthorizationCredentials:
+        """Perform call.
+
+        Args:
+            request: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         token = await self.oauth2_scheme(request)
         credentials_exception = HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -177,10 +245,40 @@ class PyJWTBearer:
         try:
             if token is None:
                 raise credentials_exception
-            payload = self.decode_token(token)
+            binding = None
+            if isinstance(request, Request):
+                async with AsyncSessionLocal() as db:
+                    # Resolve from the actual API origin before token decoding;
+                    # neither a client header nor a body field can select it.
+                    binding = await resolve_request_deployment(request, db)
+            payload = self.decode_token(
+                token,
+                expected_issuer=binding.issuer if binding else None,
+                expected_audience=binding.audience if binding else None,
+            )
             if self.token_use != 'access':
                 raise credentials_exception
             subject = access_token_subject_from_payload(payload)
+            tenant_id = subject.get('tenant_id')
+            deployment_id = subject.get('deployment_id')
+            config_revision = subject.get('config_revision')
+            if binding is not None and (
+                not isinstance(tenant_id, str)
+                or not isinstance(deployment_id, str)
+                or not isinstance(config_revision, int)
+                or str(binding.tenant_id) != tenant_id
+                or str(binding.deployment_id) != deployment_id
+                or binding.config_revision != config_revision
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        'code': 'deployment_configuration_changed',
+                        'message': (
+                            'Deployment configuration changed; sign in again.'
+                        ),
+                    },
+                )
             redis_client = getattr(request.app.state, 'redis_client', None)
             redis = getattr(redis_client, 'client', None)
             if redis is None:

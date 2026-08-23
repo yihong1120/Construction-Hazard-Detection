@@ -7,6 +7,8 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import RootModel
 
+from examples.db_management.schemas.auth import DeploymentInfo
+
 
 class OAuthTokenResponse(BaseModel):
     """Represent tokens issued after a successful native OAuth exchange.
@@ -22,6 +24,7 @@ class OAuthTokenResponse(BaseModel):
     refresh_token: str
     token_type: Literal['Bearer'] = 'Bearer'
     expires_in: int
+    deployment: DeploymentInfo | None = None
 
 
 class NativeOAuthClients(RootModel[dict[str, list[str]]]):

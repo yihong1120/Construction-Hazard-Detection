@@ -29,20 +29,21 @@ from examples.db_management.schemas.site import SiteUserOp
 from examples.db_management.services.site_services import add_group_to_site
 from examples.db_management.services.site_services import add_user_to_site
 from examples.db_management.services.site_services import create_site
-from examples.db_management.services.site_services import delete_matching_redis_keys
 from examples.db_management.services.site_services import delete_site
-from examples.db_management.services.site_services import encode_site_name
 from examples.db_management.services.site_services import list_sites
 from examples.db_management.services.site_services import \
     remove_group_from_site
 from examples.db_management.services.site_services import remove_user_from_site
 from examples.db_management.services.site_services import site_to_read
 from examples.db_management.services.site_services import update_site
-from examples.local_notification_server.services import (
+from examples.local_notification_server.site_recipient_cache import (
     invalidate_site_notification_user_cache,
 )
-from examples.local_notification_server.services import \
+from examples.local_notification_server.site_recipient_cache import \
     refresh_site_notification_user_cache
+from examples.streaming_web.metadata_keys import (
+    increment_metadata_site_generation,
+)
 
 router: APIRouter = APIRouter(tags=['site-mgmt'])
 
@@ -203,9 +204,7 @@ async def endpoint_delete_site(
     # Check permissions for deletion
     _site_permission(me, site=site)
 
-    encoded_name: str = encode_site_name(site.name)
-    key_pattern: str = f'stream_metadata:{encoded_name}*'
-    await delete_matching_redis_keys(rds, key_pattern)
+    await increment_metadata_site_generation(rds, site.name)
 
     await invalidate_site_notification_user_cache([site.name], rds)
 

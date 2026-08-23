@@ -8,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from examples.auth.deployment_context import DeploymentBinding
+from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.models import User
 from examples.auth.session_store import auth_tokens
 from examples.auth.session_store import create_auth_session
@@ -25,6 +27,7 @@ from examples.bff.security import clear_session_cookie
 from examples.bff.security import require_trusted_origin
 from examples.bff.security import SESSION_COOKIE
 from examples.bff.security import set_session_cookie
+from examples.db_management.schemas.auth import DeploymentInfo
 from examples.db_management.services.auth_services import login_user
 from examples.db_management.services.auth_services import logout_user
 
@@ -51,6 +54,34 @@ async def _session(
     if not session_id or data is None:
         raise HTTPException(status_code=401, detail='app_session_expired')
     return session_id, data
+
+
+async def _require_session_deployment(
+    request: Request,
+    db: AsyncSession,
+    session: dict[str, object],
+) -> DeploymentBinding:
+    """Require a BFF session to match the current active deployment."""
+    try:
+        stored = DeploymentInfo.model_validate(session['deployment'])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'deployment_configuration_changed',
+                'message': 'Deployment configuration changed; sign in again.',
+            },
+        )
+    binding = await resolve_request_deployment(request, db)
+    if binding.as_response() != stored.model_dump():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'deployment_configuration_changed',
+                'message': 'Deployment configuration changed; sign in again.',
+            },
+        )
+    return binding
 
 
 async def _roll_session(
@@ -158,6 +189,7 @@ async def login_bff_session(
         hcaptcha_bypass_key=hcaptcha_bypass_key,
         client_ip=request.client.host if request.client else None,
         hash_refresh_token=True,
+        request=request,
     )
     summary = await _user_summary(db, int(result['user_id']))
     session_id, session = await create_auth_session(
@@ -175,6 +207,7 @@ async def current_bff_session(
     request: Request,
     response: Response,
     redis: Redis,
+    db: AsyncSession,
 ) -> BffSessionResponse:
     """Return an active BFF session and renew its idle timeout.
 
@@ -186,8 +219,13 @@ async def current_bff_session(
     Returns:
         Public session response without token material.
     """
-    session_id, _ = await _session(request, redis)
-    _, session = await get_proxy_access_token(redis, session_id)
+    session_id, stored = await _session(request, redis)
+    deployment = await _require_session_deployment(request, db, stored)
+    _, session = await get_proxy_access_token(
+        redis,
+        session_id,
+        deployment=deployment,
+    )
     await _roll_session(response, redis, session_id)
     response.headers['Cache-Control'] = 'no-store'
     return _session_response(session)
@@ -197,6 +235,7 @@ async def csrf_response(
     request: Request,
     response: Response,
     redis: Redis,
+    db: AsyncSession,
 ) -> CsrfResponse:
     """Return a session's CSRF secret and renew its idle timeout.
 
@@ -209,6 +248,7 @@ async def csrf_response(
         CSRF response for use with subsequent mutating requests.
     """
     session_id, session = await _session(request, redis)
+    await _require_session_deployment(request, db, session)
     await _roll_session(response, redis, session_id)
     response.headers['Cache-Control'] = 'no-store'
     return CsrfResponse(csrf_token=str(session['csrf_secret']))
@@ -246,6 +286,7 @@ async def proxy_bff_request(
     request: Request,
     csrf_token: str | None,
     redis: Redis,
+    db: AsyncSession,
 ) -> Response:
     """Proxy an authenticated BFF request and renew its idle timeout.
 
@@ -263,6 +304,12 @@ async def proxy_bff_request(
         HTTPException: If session, CSRF, routing, or upstream processing fails.
     """
     session_id, session = await _session(request, redis)
+    deployment = await _require_session_deployment(request, db, session)
+    # A metadata/SSE proxy can live indefinitely.  Deployment verification is
+    # the only database work in this request path, so release its connection
+    # before constructing the upstream response rather than holding a pool
+    # slot for the lifetime of the browser stream.
+    await db.close()
     if request.method not in {'GET', 'HEAD', 'OPTIONS'}:
         check_csrf(request, session, csrf_token)
     response = await proxy_request(
@@ -270,6 +317,7 @@ async def proxy_bff_request(
         redis,
         session_id,
         f'{service}/{path}',
+        deployment=deployment,
     )
     await _roll_session(response, redis, session_id)
     return response

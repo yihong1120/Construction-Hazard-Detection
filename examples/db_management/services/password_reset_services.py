@@ -9,7 +9,6 @@ from typing import Any
 import httpx
 from fastapi import HTTPException
 from redis.asyncio import Redis
-from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -27,6 +26,7 @@ from examples.db_management.services.auth_services import (
 from examples.db_management.services.password_policy import (
     validate_password_minimum,
 )
+from src.http_client_pool import get_application_http_client
 
 settings = Settings()
 logger = logging.getLogger(__name__)
@@ -198,7 +198,7 @@ async def _find_user_by_email(
         select(User)
         .join(UserProfile, UserProfile.user_id == User.id)
         .where(
-            func.lower(UserProfile.email) == email.lower(),
+            UserProfile.email == email.strip().lower(),
             User.status == USER_STATUS_ACTIVE,
         ),
     )
@@ -241,18 +241,31 @@ async def _send_password_reset_email(
         ),
     }
 
+    headers = {
+        'accept': 'application/json',
+        'api-key': settings.brevo_api_key,
+        'content-type': 'application/json',
+    }
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        client = await get_application_http_client(
+            'brevo-email',
+            timeout=10.0,
+        )
+        if client is not None:
             response = await client.post(
                 BREVO_SEND_EMAIL_URL,
-                headers={
-                    'accept': 'application/json',
-                    'api-key': settings.brevo_api_key,
-                    'content-type': 'application/json',
-                },
+                headers=headers,
                 json=payload,
             )
             response.raise_for_status()
+        else:
+            async with httpx.AsyncClient(timeout=10.0) as ephemeral_client:
+                response = await ephemeral_client.post(
+                    BREVO_SEND_EMAIL_URL,
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         body = exc.response.text[:500] if exc.response else ''
         logger.warning(
@@ -342,6 +355,11 @@ async def reset_password(
         )
 
     validate_password_minimum(new_password)
+    if new_password is None:
+        raise HTTPException(
+            status_code=400,
+            detail='New password is required.',
+        )
 
     token = raw_token.strip()
     if not token:

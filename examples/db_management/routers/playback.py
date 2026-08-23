@@ -47,7 +47,7 @@ async def create_playback_session(
     Returns:
         The streaming service session response.
     """
-    return await playback_session_response(payload, request, redis)
+    return await playback_session_response(payload, request, redis, db)
 
 
 @router.post('/walls')
@@ -68,7 +68,7 @@ async def create_playback_wall(
     Returns:
         The streaming service wall response.
     """
-    return await playback_wall_response(payload, request, redis)
+    return await playback_wall_response(payload, request, redis, db)
 
 
 @router.post('/sessions/renew')
@@ -89,7 +89,7 @@ async def renew_playback_session(
     Returns:
         The renewed playback response.
     """
-    return await renew_playback_response(payload, request, redis)
+    return await renew_playback_response(payload, request, redis, db)
 
 
 @router.delete('/sessions/{session_id}', status_code=204)
@@ -110,4 +110,4 @@ async def delete_playback_session(
     Returns:
         An empty successful deletion response.
     """
-    return await delete_playback_response(session_id, request, redis)
+    return await delete_playback_response(session_id, request, redis, db)

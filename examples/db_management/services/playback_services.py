@@ -18,7 +18,10 @@ from pydantic import TypeAdapter
 from pydantic import ValidationError
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from examples.auth.deployment_context import DeploymentBinding
+from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.jwt_config import access_token_subject_from_payload
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
@@ -44,6 +47,7 @@ from examples.streaming_web.media_paths import build_media_path
 from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_preview_media_path
 from examples.streaming_web.overlay_renderer import normalise_label_language
+from src.http_client_pool import HttpClientPool
 
 _STREAMING_RESPONSE = TypeAdapter(dict[str, object])
 STREAMING_PLAYBACK_API_URL = os.getenv(
@@ -53,6 +57,19 @@ PLAYBACK_PUBLIC_BASE_PATH = '/hazard/api/db_management/api/playback'
 PLAYBACK_UPSTREAM_TIMEOUT_SECONDS = float(
     os.getenv('PLAYBACK_UPSTREAM_TIMEOUT_SECONDS', '20'),
 )
+
+
+async def _request_http_client(
+    request: Request,
+) -> httpx.AsyncClient | None:
+    """Return the app-lifetime streaming client when the lifespan is active."""
+    http_clients = getattr(request.app.state, 'http_clients', None)
+    if not isinstance(http_clients, HttpClientPool):
+        return None
+    return await http_clients.get(
+        'streaming-playback',
+        timeout=PLAYBACK_UPSTREAM_TIMEOUT_SECONDS,
+    )
 
 
 @dataclass(frozen=True)
@@ -90,6 +107,7 @@ def _bearer_token(request: Request) -> str | None:
 async def _decode_access_token(
     token: str,
     redis: Redis,
+    deployment: DeploymentBinding,
 ) -> JwtAuthorizationCredentials:
     """Validate a non-revoked access token for playback.
 
@@ -105,8 +123,18 @@ async def _decode_access_token(
             unavailable.
     """
     try:
-        payload = jwt_access.decode_token(token)
+        payload = jwt_access.decode_token(
+            token,
+            expected_issuer=deployment.issuer,
+            expected_audience=deployment.audience,
+        )
         subject = access_token_subject_from_payload(payload)
+        if (
+            subject.get('tenant_id') != str(deployment.tenant_id)
+            or subject.get('deployment_id') != str(deployment.deployment_id)
+            or subject.get('config_revision') != deployment.config_revision
+        ):
+            raise InvalidTokenError('Deployment binding does not match token')
     except InvalidTokenError as exc:
         raise HTTPException(
             status_code=401,
@@ -131,6 +159,7 @@ async def _decode_access_token(
 async def _resolve_playback_principal(
     request: Request,
     redis: Redis,
+    db: AsyncSession,
 ) -> PlaybackPrincipal:
     """Resolve native bearer or BFF-cookie credentials to playback scope.
 
@@ -145,9 +174,10 @@ async def _resolve_playback_principal(
         HTTPException: If authentication, session lookup, or CSRF validation
             fails.
     """
+    deployment = await resolve_request_deployment(request, db)
     bearer = _bearer_token(request)
     if bearer:
-        credentials = await _decode_access_token(bearer, redis)
+        credentials = await _decode_access_token(bearer, redis, deployment)
         user_id = credentials.subject['user_id']
         return PlaybackPrincipal(
             username=credentials.subject['username'],
@@ -161,8 +191,12 @@ async def _resolve_playback_principal(
     if not session_id or app_session is None:
         raise HTTPException(status_code=401, detail='app_session_expired')
     check_csrf(request, app_session, request.headers.get('x-csrf-token'))
-    access_token, _ = await get_proxy_access_token(redis, session_id)
-    credentials = await _decode_access_token(access_token, redis)
+    access_token, _ = await get_proxy_access_token(
+        redis,
+        session_id,
+        deployment=deployment,
+    )
+    credentials = await _decode_access_token(access_token, redis, deployment)
     return PlaybackPrincipal(
         username=credentials.subject['username'],
         user_id=credentials.subject['user_id'],
@@ -196,6 +230,7 @@ async def _post_streaming_playback(
     *,
     principal: PlaybackPrincipal,
     payload: dict[str, object],
+    http_client: httpx.AsyncClient | None = None,
 ) -> tuple[dict[str, object], int]:
     """Call the streaming playback API using the caller's access token.
 
@@ -212,14 +247,23 @@ async def _post_streaming_playback(
             request, or returns malformed JSON.
     """
     try:
-        async with httpx.AsyncClient(
-            timeout=PLAYBACK_UPSTREAM_TIMEOUT_SECONDS,
-        ) as client:
-            response = await client.post(
+        if http_client is not None:
+            response = await http_client.post(
                 f'{STREAMING_PLAYBACK_API_URL}{path}',
                 json=payload,
                 headers={'Authorization': f'Bearer {principal.access_token}'},
             )
+        else:
+            async with httpx.AsyncClient(
+                timeout=PLAYBACK_UPSTREAM_TIMEOUT_SECONDS,
+            ) as client:
+                response = await client.post(
+                    f'{STREAMING_PLAYBACK_API_URL}{path}',
+                    json=payload,
+                    headers={
+                        'Authorization': f'Bearer {principal.access_token}',
+                    },
+                )
     except (httpx.TimeoutException, httpx.NetworkError) as exc:
         raise HTTPException(
             status_code=502,
@@ -480,7 +524,10 @@ def _wall_response_body(
 
 
 async def _create_single_playback(
-    payload: PlaybackSessionRequest, principal: PlaybackPrincipal, redis: Redis,
+    payload: PlaybackSessionRequest,
+    principal: PlaybackPrincipal,
+    redis: Redis,
+    http_client: httpx.AsyncClient | None = None,
 ) -> tuple[dict[str, object], int]:
     """Create one detail-quality playback media capability.
 
@@ -503,6 +550,7 @@ async def _create_single_playback(
             'rendition': 'detail', 'language': payload.language,
             'transport': payload.transport,
         },
+        http_client=http_client,
     )
     try:
         stream = StreamingPlaybackItem.model_validate(stream_item)
@@ -552,7 +600,10 @@ def _wall_upstream_payload(
 
 
 async def _create_wall_playback(
-    payload: PlaybackWallRequest, principal: PlaybackPrincipal, redis: Redis,
+    payload: PlaybackWallRequest,
+    principal: PlaybackPrincipal,
+    redis: Redis,
+    http_client: httpx.AsyncClient | None = None,
 ) -> tuple[dict[str, object], int]:
     """Create a preview-quality media capability for a camera wall.
 
@@ -572,6 +623,7 @@ async def _create_wall_playback(
     upstream, status_code = await _post_streaming_playback(
         '/stream-playback/batch', principal=principal,
         payload=_wall_upstream_payload(payload, profile),
+        http_client=http_client,
     )
     try:
         batch = StreamingPlaybackBatchResponse.model_validate(upstream)
@@ -601,7 +653,10 @@ async def _create_wall_playback(
 
 
 async def playback_session_response(
-    payload: PlaybackSessionRequest, request: Request, redis: Redis,
+    payload: PlaybackSessionRequest,
+    request: Request,
+    redis: Redis,
+    db: AsyncSession,
 ) -> JSONResponse:
     """Create a signed single-camera playback response.
 
@@ -613,8 +668,13 @@ async def playback_session_response(
     Returns:
         Non-cacheable signed single-camera playback response.
     """
-    principal = await _resolve_playback_principal(request, redis)
-    body, status_code = await _create_single_playback(payload, principal, redis)
+    principal = await _resolve_playback_principal(request, redis, db)
+    body, status_code = await _create_single_playback(
+        payload,
+        principal,
+        redis,
+        await _request_http_client(request),
+    )
     return JSONResponse(
         body,
         status_code=status_code,
@@ -623,7 +683,10 @@ async def playback_session_response(
 
 
 async def playback_wall_response(
-    payload: PlaybackWallRequest, request: Request, redis: Redis,
+    payload: PlaybackWallRequest,
+    request: Request,
+    redis: Redis,
+    db: AsyncSession,
 ) -> JSONResponse:
     """Create signed playback responses for a camera wall.
 
@@ -635,8 +698,13 @@ async def playback_wall_response(
     Returns:
         Non-cacheable signed multi-camera playback response.
     """
-    principal = await _resolve_playback_principal(request, redis)
-    body, status_code = await _create_wall_playback(payload, principal, redis)
+    principal = await _resolve_playback_principal(request, redis, db)
+    body, status_code = await _create_wall_playback(
+        payload,
+        principal,
+        redis,
+        await _request_http_client(request),
+    )
     return JSONResponse(
         body,
         status_code=status_code,
@@ -645,7 +713,10 @@ async def playback_wall_response(
 
 
 async def renew_playback_response(
-    payload: PlaybackRenewRequest, request: Request, redis: Redis,
+    payload: PlaybackRenewRequest,
+    request: Request,
+    redis: Redis,
+    db: AsyncSession,
 ) -> JSONResponse:
     """Renew an existing signed playback session.
 
@@ -660,7 +731,7 @@ async def renew_playback_response(
     Raises:
         HTTPException: If the session expired or is not owned by the caller.
     """
-    principal = await _resolve_playback_principal(request, redis)
+    principal = await _resolve_playback_principal(request, redis, db)
     current = await renew_media_session(redis, payload.id, owner=principal.parent)
     if current is None:
         raise HTTPException(status_code=401, detail='expired_media_session')
@@ -676,7 +747,10 @@ async def renew_playback_response(
 
 
 async def delete_playback_response(
-    session_id: str, request: Request, redis: Redis,
+    session_id: str,
+    request: Request,
+    redis: Redis,
+    db: AsyncSession,
 ) -> Response:
     """Delete a signed playback session owned by the caller.
 
@@ -691,7 +765,7 @@ async def delete_playback_response(
     Raises:
         HTTPException: If the session is unavailable or not owned by the caller.
     """
-    principal = await _resolve_playback_principal(request, redis)
+    principal = await _resolve_playback_principal(request, redis, db)
     if not await delete_media_session(redis, session_id, owner=principal.parent):
         raise HTTPException(status_code=404, detail='session_not_found')
     return Response(status_code=204, headers={'Cache-Control': 'no-store'})

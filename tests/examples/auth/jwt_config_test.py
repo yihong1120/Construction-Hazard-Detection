@@ -22,6 +22,15 @@ def _access_subject(
     username: str = 'alice',
     user_id: int = 1,
 ) -> AccessTokenSubject:
+    """Perform access subject.
+
+    Args:
+        username: Value used by this callable.
+        user_id: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     return {
         'username': username,
         'user_id': user_id,
@@ -32,6 +41,14 @@ def _access_subject(
 
 
 def _refresh_subject(username: str = 'alice') -> dict[str, str]:
+    """Perform refresh subject.
+
+    Args:
+        username: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     return {
         'username': username,
         'family_id': 'refresh-family',
@@ -118,6 +135,8 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
     """Exercise JWT authorization subjects and invalid credential handling."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.bearer = PyJWTBearer('test-secret-key-with-at-least-32-bytes')
         self.request = MagicMock()
 

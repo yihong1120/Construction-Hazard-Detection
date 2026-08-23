@@ -23,6 +23,14 @@ from examples.db_management.services import oauth_services as svc
 
 
 def _claims(**values: object) -> ProviderClaims:
+    """Perform claims.
+
+    Args:
+        **values: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     return ProviderClaims.model_validate(
         {'sub': 'provider-user', **values},
     )
@@ -32,6 +40,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
     """Tests for Google/Apple provider account resolution."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db: MagicMock = MagicMock()
         self.db.scalar = AsyncMock()
         self.db.get = AsyncMock()
@@ -50,6 +60,11 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         self,
         mock_issue_tokens: AsyncMock,
     ) -> None:
+        """Test existing identity active user gets tokens.
+
+        Args:
+            mock_issue_tokens: Value used by this callable.
+        """
         user = MagicMock(
             id=10,
             username='user',
@@ -85,6 +100,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_existing_identity_pending_user_is_rejected(self) -> None:
+        """Test existing identity pending user is rejected.
+        """
         user = MagicMock(status=USER_STATUS_PENDING_ADMIN_APPROVAL)
         self.db.scalar.return_value = MagicMock(user_id=10)
         self.db.get.return_value = user
@@ -107,6 +124,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_existing_identity_inactive_user_is_rejected(self) -> None:
+        """Test existing identity inactive user is rejected.
+        """
         user = MagicMock(status=USER_STATUS_SUSPENDED)
         self.db.scalar.return_value = MagicMock(user_id=10)
         self.db.get.return_value = user
@@ -126,6 +145,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_verified_email_existing_user_requires_binding(self) -> None:
+        """Test verified email existing user requires binding.
+        """
         user = MagicMock(status=USER_STATUS_ACTIVE)
         self.db.scalar.side_effect = [None, user]
 
@@ -147,6 +168,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
     async def test_unverified_email_existing_user_requires_binding(
         self,
     ) -> None:
+        """Test unverified email existing user requires binding.
+        """
         self.db.scalar.side_effect = [None, MagicMock()]
 
         with self.assertRaises(HTTPException) as ctx:
@@ -177,6 +200,13 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_record_consent: AsyncMock,
         mock_create_pending: AsyncMock,
     ) -> None:
+        """Test new provider account creates pending user.
+
+        Args:
+            mock_validate_consents: Value used by this callable.
+            mock_record_consent: Value used by this callable.
+            mock_create_pending: Value used by this callable.
+        """
         self.db.scalar.side_effect = [None, None]
         user = MagicMock(id=99, status=USER_STATUS_PENDING_ADMIN_APPROVAL)
         mock_create_pending.return_value = user
@@ -236,6 +266,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
     async def test_link_provider_rejects_identity_bound_to_another_user(
         self,
     ) -> None:
+        """Test link provider rejects identity bound to another user.
+        """
         user = MagicMock(id=1)
         self.db.scalar.return_value = MagicMock(user_id=2)
 
@@ -260,6 +292,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
     async def test_link_provider_creates_identity_for_current_user(
         self,
     ) -> None:
+        """Test link provider creates identity for current user.
+        """
         user = MagicMock(id=1)
         self.db.scalar.side_effect = [None, None]
         identity = MagicMock(
@@ -272,6 +306,11 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         self.db.refresh = AsyncMock(side_effect=lambda obj: None)
 
         def add_side_effect(obj: object) -> None:
+            """Perform add side effect.
+
+            Args:
+                obj: Value used by this callable.
+            """
             self.assertIsInstance(obj, UserIdentity)
             assert isinstance(obj, UserIdentity)
             obj.id = identity.id
@@ -300,6 +339,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
     async def test_link_provider_rejects_second_identity_for_same_provider(
         self,
     ) -> None:
+        """Test link provider rejects second identity for same provider.
+        """
         user = MagicMock(id=1)
         self.db.scalar.side_effect = [
             None,
@@ -325,6 +366,8 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_unlink_rejects_last_login_method(self) -> None:
+        """Test unlink rejects last login method.
+        """
         user = MagicMock(id=1, password_hash=svc.OAUTH_DISABLED_PASSWORD_HASH)
         self.db.get.return_value = MagicMock(user_id=1)
         self.db.scalar.return_value = 1
@@ -344,6 +387,12 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_verify_jwt: MagicMock,
         mock_exchange_code: AsyncMock,
     ) -> None:
+        """Test apple nonce mismatch is rejected.
+
+        Args:
+            mock_verify_jwt: Value used by this callable.
+            mock_exchange_code: Value used by this callable.
+        """
         mock_verify_jwt.return_value = {
             'sub': 'apple-sub',
             'aud': 'com.changdar.visionnaire',
@@ -366,6 +415,14 @@ if __name__ == '__main__':
 
 
 def _settings(**values: object) -> SimpleNamespace:
+    """Perform settings.
+
+    Args:
+        **values: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     defaults: dict[str, object] = {
         'google_client_ids': '',
         'apple_client_ids': '',
@@ -382,7 +439,13 @@ def _settings(**values: object) -> SimpleNamespace:
 
 
 class TestOAuthHelperCoverage(unittest.TestCase):
+
+    """Provide TestOAuthHelperCoverage.
+    """
+
     def test_configured_client_ids_and_claim_normalisation(self) -> None:
+        """Test configured client ids and claim normalisation.
+        """
         settings = _settings(
             google_client_ids=' web-client, ,mobile-client ',
             apple_client_ids=' ios-client, service-client ',
@@ -409,6 +472,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
     def test_verify_jwt_rejects_unconfigured_invalid_and_missing_subject(
         self,
     ) -> None:
+        """Test verify jwt rejects unconfigured invalid and missing subject.
+        """
         with self.assertRaises(HTTPException) as missing_audience:
             svc._verify_jwt_with_jwks('token', 'jwks', [], ['issuer'])
         self.assertEqual(missing_audience.exception.status_code, 500)
@@ -444,6 +509,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         self.assertEqual(missing_subject.exception.status_code, 401)
 
     def test_verify_jwt_returns_verified_claims(self) -> None:
+        """Test verify jwt returns verified claims.
+        """
         signing_key = MagicMock(key='public-key')
         jwk_client = MagicMock()
         jwk_client.get_signing_key_from_jwt.return_value = signing_key
@@ -472,6 +539,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
     def test_load_apple_private_key_from_value_file_and_missing_config(
         self,
     ) -> None:
+        """Test load apple private key from value file and missing config.
+        """
         with patch.object(
             svc,
             'settings',
@@ -496,6 +565,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         self.assertEqual(missing_config.exception.status_code, 500)
 
     def test_build_apple_client_secret_checks_config_and_signs(self) -> None:
+        """Test build apple client secret checks config and signs.
+        """
         with patch.object(svc, 'settings', _settings()):
             with self.assertRaises(HTTPException) as missing_config:
                 svc._build_apple_client_secret('client')
@@ -523,6 +594,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         self.assertEqual(encode.call_args.kwargs['headers'], {'kid': 'key-id'})
 
     def test_apple_candidate_and_user_profile_helpers(self) -> None:
+        """Test apple candidate and user profile helpers.
+        """
         settings = _settings(
             apple_service_id='service',
             apple_bundle_id='bundle',
@@ -582,6 +655,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         self.assertIsNone(svc._display_name_from_claims(_claims()))
 
     def test_status_identity_and_password_helpers(self) -> None:
+        """Test status identity and password helpers.
+        """
         self.assertEqual(
             svc._status_error(USER_STATUS_EMAIL_UNVERIFIED).detail['code'],
             'email_unverified',
@@ -630,6 +705,8 @@ class TestOAuthHelperCoverage(unittest.TestCase):
         )
 
     def test_new_identity_and_claim_update(self) -> None:
+        """Test new identity and claim update.
+        """
         user = MagicMock()
         with patch.object(
             svc,
@@ -671,7 +748,13 @@ class TestOAuthHelperCoverage(unittest.TestCase):
 
 
 class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
+
+    """Provide TestOAuthAsyncCoverage.
+    """
+
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db = MagicMock()
         self.db.scalar = AsyncMock()
         self.db.get = AsyncMock()
@@ -681,6 +764,8 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
         self.db.delete = AsyncMock()
 
     async def test_google_token_verification_validates_email(self) -> None:
+        """Test google token verification validates email.
+        """
         with patch.object(
             svc.asyncio,
             'to_thread',
@@ -713,6 +798,8 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_verify_apple_identity_token_all_exchange_paths(
         self,
     ) -> None:
+        """Test verify apple identity token all exchange paths.
+        """
         settings = _settings(
             apple_client_ids='web-client, native-client',
             apple_service_id='web-client',
@@ -817,6 +904,8 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_apple_code_exchange_retries_and_validates_response(
         self,
     ) -> None:
+        """Test apple code exchange retries and validates response.
+        """
         error = HTTPException(status_code=401, detail='Invalid provider token')
         with patch.object(
             svc,
@@ -912,6 +1001,8 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(invalid_json.exception.status_code, 401)
 
     async def test_database_lookup_and_new_pending_user(self) -> None:
+        """Test database lookup and new pending user.
+        """
         with self.assertRaises(HTTPException) as missing_provider_subject:
             svc._provider_claims({})
         self.assertEqual(missing_provider_subject.exception.status_code, 401)
@@ -931,14 +1022,18 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
             await svc._find_user_by_email(self.db, 'USER@example.com'),
             'email-user',
         )
-        self.db.scalar.side_effect = [True, True, None]
+        identity_username = svc._identity_username(
+            'google',
+            _claims(sub='provider-user', email='name@example.com'),
+        )
+        self.assertTrue(identity_username.startswith('name_'))
+        self.assertLessEqual(len(identity_username), 80)
         self.assertEqual(
-            await svc._unique_username(
-                self.db,
+            identity_username,
+            svc._identity_username(
                 'google',
-                _claims(email='name@example.com'),
+                _claims(sub='provider-user', email='name@example.com'),
             ),
-            'name_3',
         )
 
         with self.assertRaises(HTTPException) as missing_email:
@@ -957,8 +1052,8 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
                 with patch.object(svc, '_new_identity', return_value=identity):
                     with patch.object(
                         svc,
-                        '_unique_username',
-                        new=AsyncMock(return_value='unique'),
+                        '_identity_username',
+                        return_value='unique',
                     ):
                         result = await svc._create_pending_user_with_identity(
                             self.db,
@@ -978,6 +1073,8 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_login_wrappers_and_identity_list(self) -> None:
+        """Test login wrappers and identity list.
+        """
         google_claims = _claims(sub='google-user')
         with patch.object(
             svc,
@@ -1051,6 +1148,8 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(listed.identities[0].provider, 'google')
 
     async def test_link_wrappers_update_and_unlink(self) -> None:
+        """Test link wrappers update and unlink.
+        """
         user = MagicMock(id=1, password_hash='hashed')
         existing = MagicMock(
             id=9,

@@ -21,9 +21,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from examples.auth.deployment_context import DeploymentBinding
+from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.models import User
 from examples.auth.session_store import get_auth_session
 from examples.auth.session_store import revoke_media_for_parent
+from examples.db_management.schemas.auth import DeploymentInfo
 from examples.db_management.schemas.auth import RefreshRequest
 from examples.db_management.schemas.auth import TokenPairData
 from examples.db_management.schemas.oauth import AuthSession
@@ -167,6 +170,7 @@ def _token_response(result: TokenPairData) -> OAuthTokenResponse:
         access_token=result['access_token'],
         refresh_token=result['refresh_token'],
         expires_in=int(ACCESS_TTL.total_seconds()),
+        deployment=result.get('deployment'),
     )
 
 
@@ -179,6 +183,7 @@ async def authorize_native_app(
     code_challenge_method: str,
     state: str,
     redis: Redis,
+    db: AsyncSession | None = None,
 ) -> RedirectResponse:
     """Issue a one-use PKCE code for an authenticated native app.
 
@@ -207,6 +212,22 @@ async def authorize_native_app(
         auth_session = AuthSession.model_validate(session)
     except ValidationError:
         raise HTTPException(status_code=401, detail='login_required')
+    if db is not None:
+        try:
+            stored_deployment = DeploymentInfo.model_validate(
+                session['deployment'],
+            )
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail='deployment_configuration_changed',
+            ) from exc
+        binding = await resolve_request_deployment(request, db)
+        if stored_deployment.model_dump() != binding.as_response():
+            raise HTTPException(
+                status_code=409,
+                detail='deployment_configuration_changed',
+            )
     code = secrets.token_urlsafe(32)
     record = OAuthAuthorizationCode(
         user_id=auth_session.user.id,
@@ -242,6 +263,10 @@ async def exchange_native_token(
         Newly issued native OAuth token pair.
     """
     data = await request_data(request)
+    deployment = (
+        await resolve_request_deployment(request, db)
+        if isinstance(request, Request) else None
+    )
     try:
         grant_request = OAuthTokenRequest.model_validate(data)
     except ValidationError as exc:
@@ -251,7 +276,12 @@ async def exchange_native_token(
             exchange = OAuthAuthorizationCodeRequest.model_validate(data)
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail='invalid_grant') from exc
-        return await _exchange_authorization_code(exchange, db, redis)
+        return await _exchange_authorization_code(
+            exchange,
+            db,
+            redis,
+            deployment,
+        )
     if grant_request.grant_type == 'refresh_token':
         if grant_request.client_id not in native_clients():
             raise HTTPException(status_code=400, detail='invalid_oauth_client')
@@ -259,7 +289,7 @@ async def exchange_native_token(
             exchange = OAuthRefreshTokenRequest.model_validate(data)
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail='invalid_grant') from exc
-        return await _exchange_refresh_token(exchange, redis)
+        return await _exchange_refresh_token(exchange, redis, deployment)
     raise HTTPException(status_code=400, detail='unsupported_grant_type')
 
 
@@ -267,6 +297,7 @@ async def _exchange_authorization_code(
     data: OAuthAuthorizationCodeRequest,
     db: AsyncSession,
     redis: Redis,
+    deployment: DeploymentBinding | None,
 ) -> OAuthTokenResponse:
     """Exchange a validated PKCE authorisation-code request.
 
@@ -297,7 +328,14 @@ async def _exchange_authorization_code(
     user = await db.scalar(select(User).where(User.id == stored.user_id))
     if user is None or user.status != 'active':
         raise HTTPException(status_code=400, detail='invalid_grant')
-    return _token_response(await issue_token_pair_for_user(user, db, redis))
+    return _token_response(
+        await issue_token_pair_for_user(
+            user,
+            db,
+            redis,
+            deployment=deployment,
+        ),
+    )
 
 
 async def _load_authorization_code(
@@ -328,6 +366,7 @@ async def _load_authorization_code(
 async def _exchange_refresh_token(
     data: OAuthRefreshTokenRequest,
     redis: Redis,
+    deployment: DeploymentBinding | None,
 ) -> OAuthTokenResponse:
     """Rotate a native OAuth refresh token into a new token pair.
 
@@ -341,6 +380,7 @@ async def _exchange_refresh_token(
     result = await refresh_tokens(
         RefreshRequest(refresh_token=data.refresh_token),
         redis,
+        deployment=deployment,
     )
     return _token_response(result)
 

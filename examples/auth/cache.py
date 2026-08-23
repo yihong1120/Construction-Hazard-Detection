@@ -233,9 +233,8 @@ return { current, ttl }
         # Obtain Redis connection
         redis_pool: Redis = request.app.state.redis_client.client
 
-        # Load user data and verify JTI list membership
-        # Wrapped via a module-level function to ease patching in tests
-        user_data: dict[str, object] | None = await get_user_data(
+        # Load user data and verify JTI list membership.
+        user_data: dict[str, object] | None = await self.get_user_data(
             redis_pool,
             username,
         )
@@ -284,63 +283,10 @@ return { current, ttl }
         return remaining
 
 
-_DEFAULT_SERVICE = RateLimiterService()
+rate_limiter_service = RateLimiterService()
 
 
-PROJECT_PREFIX: str = _DEFAULT_SERVICE.project_prefix
+PROJECT_PREFIX: str = rate_limiter_service.project_prefix
 
 # Centralised role quotas: ``(max_requests, window_seconds)``
-LIMITS: dict[str, tuple[int, int]] = _DEFAULT_SERVICE.limits
-
-
-async def get_user_data(
-    redis_pool: Redis,
-    username: str,
-) -> dict[str, object] | None:
-    """
-    Backwards-compatible wrapper for ``RateLimiterService.get_user_data``.
-
-    Args:
-        redis_pool: Asynchronous Redis client/connection.
-        username: Username used to compose the Redis key.
-
-    Returns:
-        The cached user dictionary if present and valid, otherwise ``None``.
-    """
-    return await _DEFAULT_SERVICE.get_user_data(redis_pool, username)
-
-
-async def set_user_data(
-    redis_pool: Redis,
-    username: str,
-    data: dict[str, object],
-) -> None:
-    """
-    Backwards-compatible wrapper for ``RateLimiterService.set_user_data``.
-
-    Args:
-        redis_pool: Asynchronous Redis client/connection.
-        username: Username used to compose the Redis key.
-        data: JSON-serialisable user data to persist.
-    """
-    await _DEFAULT_SERVICE.set_user_data(redis_pool, username, data)
-
-
-async def custom_rate_limiter(
-    request: Request,
-    response: Response,
-    credentials: JwtAuthorizationCredentials = Security(jwt_access),
-) -> int:
-    """
-    Backwards-compatible wrapper for ``RateLimiterService.__call__``.
-
-    Args:
-        request: The incoming FastAPI request.
-        response: The outgoing FastAPI response (or a credentials object in
-            the test-friendly short form).
-        credentials: JWT credential object produced by ``jwt_access``.
-
-    Returns:
-        Remaining requests in the current window after this request.
-    """
-    return await _DEFAULT_SERVICE(request, response, credentials)
+LIMITS: dict[str, tuple[int, int]] = rate_limiter_service.limits

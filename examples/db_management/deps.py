@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
+from uuid import UUID
 
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Request
 from fastapi import Security
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from examples.auth.database import get_db
+from examples.auth.deployment_context import DeploymentBinding
+from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.models import Site
@@ -40,6 +45,15 @@ class _GroupedRoleUser(Protocol):
 
     role: str
     group_id: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class TenantDeploymentAdministrator:
+    """Verified tenant/deployment scope for one invitation administrator."""
+
+    user: User
+    tenant_id: UUID
+    deployment_id: UUID
 
 
 async def get_current_user(
@@ -76,6 +90,19 @@ async def get_current_user(
 
     if user is None:
         raise HTTPException(status_code=401, detail='User not found')
+
+    token_tenant_id = credentials.subject.get('tenant_id')
+    # ``jwt_access`` rejects a real HTTP token without this claim.  Keeping
+    # the check conditional lets non-HTTP service tests inject a minimal
+    # credential double without weakening the production authentication path.
+    if isinstance(token_tenant_id, str) and str(user.tenant_id) != token_tenant_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'deployment_configuration_changed',
+                'message': 'Account tenant changed; sign in again.',
+            },
+        )
 
     return user
 
@@ -126,6 +153,34 @@ def require_super_admin(user: User = Depends(get_current_user)) -> User:
         raise HTTPException(status_code=403, detail='Super admin only')
 
     return user
+
+
+async def require_tenant_deployment_administrator(
+    request: Request,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> TenantDeploymentAdministrator:
+    """Resolve an admin's invitation scope without client-selected IDs.
+
+    ``require_admin`` authenticates a deployment-bound JWT.  The binding below
+    is independently resolved from the server-recognised API origin and must
+    still match that user's tenant, so neither an input field nor a forwarded
+    header can choose a different tenant or deployment.
+    """
+    binding: DeploymentBinding = await resolve_request_deployment(request, db)
+    if user.tenant_id != binding.tenant_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'deployment_configuration_changed',
+                'message': 'Account tenant changed; sign in again.',
+            },
+        )
+    return TenantDeploymentAdministrator(
+        user=user,
+        tenant_id=binding.tenant_id,
+        deployment_id=binding.deployment_id,
+    )
 
 
 def ensure_not_super(target: User) -> None:

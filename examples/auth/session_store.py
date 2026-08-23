@@ -33,16 +33,37 @@ MEDIA_SESSION_TTL_SECONDS = max(
 
 
 def _text(value: bytes | None) -> str | None:
+    """Perform text.
+
+    Args:
+        value: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     if value is None:
         return None
     return value.decode('utf-8')
 
 
 def _digest(value: str) -> str:
+    """Perform digest.
+
+    Args:
+        value: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
 
 def _fernet() -> Fernet:
+    """Perform fernet.
+
+    Returns:
+        The callable result.
+    """
     secret = (
         os.getenv('BFF_TOKEN_ENCRYPTION_KEY', '').strip()
         or settings.authjwt_secret_key
@@ -52,14 +73,38 @@ def _fernet() -> Fernet:
 
 
 def _encrypt(value: str) -> str:
+    """Perform encrypt.
+
+    Args:
+        value: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     return _fernet().encrypt(value.encode()).decode()
 
 
 def _decrypt(value: str) -> str:
+    """Perform decrypt.
+
+    Args:
+        value: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     return _fernet().decrypt(value.encode()).decode()
 
 
 def _jwt_exp(token: str) -> int:
+    """Perform jwt exp.
+
+    Args:
+        token: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     try:
         payload = jwt.decode(
             token,
@@ -105,6 +150,13 @@ async def create_auth_session(
         'updated_at': now,
         'revoked': False,
     }
+    # BFF sessions retain the same non-secret deployment contract as their
+    # tokens.  It is checked before reuse and refresh, so deployment changes
+    # force a fresh browser sign-in as well.
+    if token_pair.get('deployment') is not None:
+        data['deployment'] = dict(
+            cast(Mapping[str, object], token_pair['deployment']),
+        )
     await redis.set(
         key,
         json.dumps(data, separators=(',', ':')).encode('utf-8'),
@@ -117,6 +169,15 @@ async def get_auth_session(
     redis: Redis,
     session_id: str | None,
 ) -> dict[str, Any] | None:
+    """Perform get auth session.
+
+    Args:
+        redis: Value used by this callable.
+        session_id: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     if not session_id:
         return None
     raw = await redis.get(auth_session_key(session_id))
@@ -157,6 +218,16 @@ async def save_auth_tokens(
     refresh_token: str,
     feature_names: list[str] | None = None,
 ) -> None:
+    """Perform save auth tokens.
+
+    Args:
+        redis: Value used by this callable.
+        session_id: Value used by this callable.
+        session: Value used by this callable.
+        access_token: Value used by this callable.
+        refresh_token: Value used by this callable.
+        feature_names: Value used by this callable.
+    """
     key = auth_session_key(session_id)
     session['access_token_encrypted'] = _encrypt(access_token)
     session['access_expires_at'] = _jwt_exp(access_token)
@@ -173,6 +244,12 @@ async def save_auth_tokens(
 
 
 async def delete_auth_session(redis: Redis, session_id: str | None) -> None:
+    """Perform delete auth session.
+
+    Args:
+        redis: Value used by this callable.
+        session_id: Value used by this callable.
+    """
     if not session_id:
         return
     parent = auth_session_key(session_id)
@@ -185,6 +262,16 @@ async def acquire_refresh_lock(
     session_id: str,
     ttl_seconds: int = 15,
 ) -> str | None:
+    """Perform acquire refresh lock.
+
+    Args:
+        redis: Value used by this callable.
+        session_id: Value used by this callable.
+        ttl_seconds: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     owner = secrets.token_urlsafe(18)
     acquired = await redis.set(
         f'{auth_session_key(session_id)}:refresh-lock',
@@ -200,6 +287,13 @@ async def release_refresh_lock(
     session_id: str,
     owner: str,
 ) -> None:
+    """Perform release refresh lock.
+
+    Args:
+        redis: Value used by this callable.
+        session_id: Value used by this callable.
+        owner: Value used by this callable.
+    """
     key = f'{auth_session_key(session_id)}:refresh-lock'
     if _text(await redis.get(key)) == owner:
         await redis.delete(key)
@@ -299,6 +393,15 @@ async def get_media_session(
     redis: Redis,
     token: str | None,
 ) -> dict[str, Any] | None:
+    """Perform get media session.
+
+    Args:
+        redis: Value used by this callable.
+        token: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     if not token:
         return None
     raw = await redis.get(media_session_key(token))
@@ -378,6 +481,16 @@ async def delete_media_session(
     *,
     owner: str | None = None,
 ) -> bool:
+    """Perform delete media session.
+
+    Args:
+        redis: Value used by this callable.
+        public_id: Value used by this callable.
+        owner: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     public_key = f'{MEDIA_PUBLIC_PREFIX}:{public_id}'
     token_key = _text(await redis.get(public_key))
     if token_key is None:
@@ -396,6 +509,12 @@ async def delete_media_session(
 
 
 async def revoke_media_for_parent(redis: Redis, parent: str) -> None:
+    """Perform revoke media for parent.
+
+    Args:
+        redis: Value used by this callable.
+        parent: Value used by this callable.
+    """
     parent_key = f'{MEDIA_PARENT_PREFIX}:{_digest(parent)}'
     members = await redis.smembers(parent_key)
     for member in members:

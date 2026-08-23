@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from uuid import uuid4
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import sessionmaker
 
-from examples.auth.models import Base
+from examples.auth.database import Base
 from examples.auth.models import Feature
 from examples.auth.models import Group
+from examples.auth.models import Tenant
 from examples.auth.models import User
 
 # Define the in-memory database URI for testing
@@ -31,6 +33,9 @@ class TestUserModel(unittest.TestCase):
         Set up a test database session.
         """
         self.session: Session = SessionLocal()
+        self.tenant = Tenant(name=f'test-tenant-{uuid4()}')
+        self.session.add(self.tenant)
+        self.session.commit()
 
     def tearDown(self) -> None:
         """
@@ -71,7 +76,12 @@ class TestUserModel(unittest.TestCase):
         """
         Test the to_dict method of the User model.
         """
-        user = User(username='testuser', role='admin', status='active')
+        user = User(
+            username='testuser',
+            role='admin',
+            status='active',
+            tenant_id=self.tenant.id,
+        )
         user.set_password('secure_password')
         self.session.add(user)
         self.session.commit()

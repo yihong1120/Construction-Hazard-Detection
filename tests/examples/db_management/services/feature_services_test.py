@@ -33,10 +33,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.group.id = 100
 
     async def test_list_features(self) -> None:
-        """Test retrieving a list of all features.
-
-        Ensures that all features are returned as expected from the
-        database query.
+        """Test list features.
         """
         mock_result: MagicMock = MagicMock()
         scalars_mock: MagicMock = (
@@ -51,10 +48,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(features, ['feature1', 'feature2'])
 
     async def test_create_feature_success(self) -> None:
-        """Test successful creation of a feature.
-
-        Verifies that a new feature is created and committed to the
-        database without error.
+        """Test create feature success.
         """
         self.db.commit = AsyncMock()
         self.db.refresh = AsyncMock()
@@ -78,10 +72,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
             self.db.refresh.assert_awaited_with(mock_feature)
 
     async def test_create_feature_exception(self) -> None:
-        """Test feature creation raises HTTPException on database error.
-
-        Ensures that an HTTPException is raised and rollback is called
-        if the database commit fails during feature creation.
+        """Test create feature exception.
         """
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
@@ -98,10 +89,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_update_feature_success(self) -> None:
-        """Test successful update of feature details.
-
-        Verifies that the feature details are updated and committed to
-        the database.
+        """Test update feature success.
         """
         self.db.commit = AsyncMock()
 
@@ -117,10 +105,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.feat.description, 'Updated description')
 
     async def test_update_feature_no_fields(self) -> None:
-        """Test updating feature raises HTTPException if no fields provided.
-
-        Ensures that an HTTPException with status 400 is raised if no
-        update fields are provided.
+        """Test update feature no fields.
         """
         with self.assertRaises(HTTPException) as context:
             await feature_services.update_feature(
@@ -133,10 +118,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.status_code, 400)
 
     async def test_update_feature_exception(self) -> None:
-        """Test feature update raises HTTPException on database error.
-
-        Ensures that an HTTPException is raised and rollback is called
-        if the database commit fails during feature update.
+        """Test update feature exception.
         """
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
         self.db.rollback = AsyncMock()
@@ -153,10 +135,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_delete_feature_success(self) -> None:
-        """Test successful deletion of a feature.
-
-        Verifies that the feature is deleted and the transaction is
-        committed.
+        """Test delete feature success.
         """
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock()
@@ -167,10 +146,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.db.commit.assert_awaited()
 
     async def test_delete_feature_exception(self) -> None:
-        """Test feature deletion raises HTTPException on database error.
-
-        Ensures that an HTTPException with status 500 is raised if the
-        database commit fails during feature deletion.
+        """Test delete feature exception.
         """
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock(side_effect=Exception('DB error'))
@@ -183,10 +159,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback.assert_awaited()
 
     async def test_update_group_features(self) -> None:
-        """Test updating features associated with a group.
-
-        Verifies that the features associated with a group are updated
-        and the transactions are committed.
+        """Test update group features.
         """
         self.db.execute = AsyncMock()
         self.db.commit = AsyncMock()
@@ -203,10 +176,7 @@ class TestFeatureServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.db.commit.call_count, 1)
 
     async def test_list_group_features(self) -> None:
-        """Test listing groups with their associated feature IDs.
-
-        Ensures that the correct group-feature associations are returned
-        from the database query.
+        """Test list group features.
         """
         mock_group: MagicMock = MagicMock()
         mock_group.features = [MagicMock(id=1), MagicMock(id=2)]

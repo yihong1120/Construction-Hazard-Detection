@@ -25,24 +25,7 @@ from examples.db_management.schemas.site import SiteDelete
 from examples.db_management.schemas.site import SiteGroupOp
 from examples.db_management.schemas.site import SiteUpdate
 from examples.db_management.schemas.site import SiteUserOp
-from examples.db_management.services.site_services import \
-    delete_matching_redis_keys
-
-
-class AsyncKeyIterator:
-    """Small async iterator used to mock Redis SCAN results."""
-
-    def __init__(self, keys: list[bytes]) -> None:
-        """Support __init__."""
-        self._keys = keys
-
-    def __aiter__(self) -> AsyncKeyIterator:
-        return self
-
-    async def __anext__(self) -> bytes:
-        if not self._keys:
-            raise StopAsyncIteration
-        return self._keys.pop(0)
+from examples.streaming_web.metadata_keys import metadata_site_generation_key
 
 
 class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
@@ -65,11 +48,11 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_list_sites: MagicMock,
     ) -> None:
-        """Test listing sites as a super admin.
+        """Test endpoint list sites super admin.
 
         Args:
-            mock_is_super_admin (MagicMock): Patched is_super_admin function.
-            mock_list_sites (MagicMock): Patched list_sites function.
+            mock_is_super_admin: Value used by this callable.
+            mock_list_sites: Value used by this callable.
         """
         self.user.role = 'super_admin'
         mock_list_sites.return_value = []
@@ -95,10 +78,10 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create_site: MagicMock,
     ) -> None:
-        """Test successful creation of a new site.
+        """Test endpoint create site success.
 
         Args:
-            mock_create_site (MagicMock): Patched create_site function.
+            mock_create_site: Value used by this callable.
         """
         site = MagicMock()
         site.id = 1
@@ -167,10 +150,11 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_update_site: MagicMock,
         mock_refresh_site_cache: AsyncMock,
     ) -> None:
-        """Test successful update of a site's name.
+        """Test endpoint update site success.
 
         Args:
-            mock_update_site (MagicMock): Patched update_site function.
+            mock_update_site: Value used by this callable.
+            mock_refresh_site_cache: Value used by this callable.
         """
         site = MagicMock()
         site.id = 1
@@ -229,9 +213,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
 
         # Mock redis object
         mock_redis = MagicMock()
-        mock_redis.scan_iter.return_value = AsyncKeyIterator(
-            [b'key1', b'key2'],
-        )
+        mock_redis.incr = AsyncMock(return_value=1)
         mock_redis.delete = AsyncMock()
 
         payload = SiteDelete(site_id=1)
@@ -245,8 +227,9 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             result['message'],
             'Site and related data deleted successfully.',
         )
-        mock_redis.scan_iter.assert_called_once()
-        mock_redis.delete.assert_any_call(b'key1', b'key2')
+        mock_redis.incr.assert_awaited_once_with(
+            metadata_site_generation_key('Site'),
+        )
         mock_redis.delete.assert_any_call(
             'site_notification_users:Site',
             'site_notification_users_ready:Site',
@@ -274,10 +257,11 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_add_user: MagicMock,
         mock_refresh_site_cache: AsyncMock,
     ) -> None:
-        """Test successful addition of user to site.
+        """Test endpoint add user to site success.
 
         Args:
-            mock_add_user (MagicMock): Patched add_user_to_site function.
+            mock_add_user: Value used by this callable.
+            mock_refresh_site_cache: Value used by this callable.
         """
         site = MagicMock()
         site.groups = [MagicMock(id=1)]
@@ -580,11 +564,11 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_remove_user: MagicMock,
         mock_refresh_site_cache: AsyncMock,
     ) -> None:
-        """Test successful removal of a user from a site.
+        """Test endpoint remove user from site success.
 
         Args:
-            mock_remove_user (MagicMock):
-                Patched remove_user_from_site function.
+            mock_remove_user: Value used by this callable.
+            mock_refresh_site_cache: Value used by this callable.
         """
         site = MagicMock()
         site.id = 1
@@ -621,21 +605,22 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
             mock_redis,
         )
 
-    async def test_delete_matching_redis_keys_flushes_full_batches(
+    async def test_metadata_generation_increment_is_constant_time(
         self,
     ) -> None:
-        """Redis SCAN deletes complete batches without a blocking KEYS call."""
-        rds = MagicMock()
-        rds.scan_iter.return_value = AsyncKeyIterator([b'first', b'second'])
-        rds.delete = AsyncMock()
-
-        await delete_matching_redis_keys(
-            rds, 'stream_metadata:*', batch_size=1,
+        """Site metadata invalidation uses one atomic Redis increment."""
+        rds = AsyncMock()
+        rds.incr.return_value = 4
+        from examples.streaming_web.metadata_keys import (
+            increment_metadata_site_generation,
         )
 
-        self.assertEqual(rds.delete.await_count, 2)
-        rds.delete.assert_any_await(b'first')
-        rds.delete.assert_any_await(b'second')
+        generation = await increment_metadata_site_generation(rds, 'Site One')
+
+        self.assertEqual(generation, 4)
+        rds.incr.assert_awaited_once_with(
+            metadata_site_generation_key('Site One'),
+        )
 
     @patch('examples.db_management.routers.sites.add_group_to_site')
     async def test_add_group_to_site_handles_success_and_missing_site(

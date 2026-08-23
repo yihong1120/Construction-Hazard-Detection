@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
+from examples.db_management.schemas.auth import DeploymentInfo
 from examples.db_management.schemas.auth import UserLogin
 
 
@@ -45,6 +46,7 @@ class BffSessionResponse(BaseModel):
     authenticated: bool = True
     user: UserSummary
     feature_names: list[str] = Field(default_factory=list)
+    deployment: DeploymentInfo | None = None
 
 
 class CsrfResponse(BaseModel):

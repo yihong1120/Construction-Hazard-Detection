@@ -19,14 +19,26 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
     """Tests for password reset router endpoints."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.app = FastAPI()
         self.app.include_router(password_reset.router)
         self.client = TestClient(self.app)
 
         async def override_get_db() -> AsyncGenerator[MagicMock]:
+            """Perform override get db.
+
+            Returns:
+                The callable result.
+            """
             yield MagicMock()
 
         async def override_get_redis_pool() -> MagicMock:
+            """Perform override get redis pool.
+
+            Returns:
+                The callable result.
+            """
             return MagicMock()
 
         self.app.dependency_overrides[get_db] = override_get_db
@@ -40,6 +52,11 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_request_password_reset: AsyncMock,
     ) -> None:
+        """Test forgot password success.
+
+        Args:
+            mock_request_password_reset: Value used by this callable.
+        """
         mock_request_password_reset.return_value = {
             'message': 'If the email exists, a reset link has been sent.',
         }
@@ -70,6 +87,11 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_reset_password: AsyncMock,
     ) -> None:
+        """Test reset password success.
+
+        Args:
+            mock_reset_password: Value used by this callable.
+        """
         mock_reset_password.return_value = {
             'message': 'Password reset successfully.',
         }
@@ -95,6 +117,11 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_reset_password: AsyncMock,
     ) -> None:
+        """Test reset password error uses message field.
+
+        Args:
+            mock_reset_password: Value used by this callable.
+        """
         mock_reset_password.side_effect = HTTPException(
             status_code=400,
             detail={
@@ -120,6 +147,8 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
     async def test_reset_password_missing_fields_returns_400_message(
         self,
     ) -> None:
+        """Test reset password missing fields returns 400 message.
+        """
         response = self.client.post('/password/reset', json={})
 
         self.assertEqual(response.status_code, 400)
@@ -139,6 +168,11 @@ class TestPasswordResetRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_reset_password: AsyncMock,
     ) -> None:
+        """Test reset password preserves structured error.
+
+        Args:
+            mock_reset_password: Value used by this callable.
+        """
         mock_reset_password.side_effect = HTTPException(
             status_code=400,
             detail={

@@ -6,8 +6,7 @@ from typing import cast
 from jwt.exceptions import InvalidTokenError
 from redis.asyncio import Redis
 
-from examples.auth.cache import get_user_data
-from examples.auth.cache import set_user_data
+from examples.auth.cache import rate_limiter_service
 from examples.auth.jwt_config import jwt_refresh
 from examples.db_management.schemas.auth import UserCache
 
@@ -42,7 +41,11 @@ def _prune_refresh_tokens(cache: UserCache) -> tuple[list[str], bool]:
             # Refresh tokens carry a refresh-only audience.  Decoding with
             # bare PyJWT would reject that audience and incorrectly delete a
             # valid session from Redis.
-            jwt_refresh.decode_token(tok)
+            # A cache may contain refresh tokens from multiple deployments.
+            # This only removes expired/invalid entries; it never authorises a
+            # request, so the lifecycle decoder validates each token against
+            # its own signed issuer/audience.
+            jwt_refresh.decode_token_for_lifecycle(tok)
             new_tokens.append(tok)
         except InvalidTokenError:
             changed = True
@@ -102,7 +105,7 @@ async def prune_user_cache(
         The updated cache dictionary if present, otherwise ``None`` when no
         cache entry exists.
     """
-    raw_cache = await get_user_data(redis_pool, username)
+    raw_cache = await rate_limiter_service.get_user_data(redis_pool, username)
     cache = cast(UserCache, raw_cache) if raw_cache is not None else None
     if not cache:
         return None
@@ -123,6 +126,10 @@ async def prune_user_cache(
     changed = changed or changed_jti
 
     if changed:
-        await set_user_data(redis_pool, username, cast(dict[str, object], cache))
+        await rate_limiter_service.set_user_data(
+            redis_pool,
+            username,
+            cast(dict[str, object], cache),
+        )
 
     return cache

@@ -20,12 +20,16 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
     """Unit tests for email verification token lifecycle."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db: AsyncMock = AsyncMock()
         self.redis: AsyncMock = AsyncMock()
 
     async def test_verify_email_token_success_advances_to_pending_admin(
         self,
     ) -> None:
+        """Test verify email token success advances to pending admin.
+        """
         user: MagicMock = MagicMock()
         user.id = 7
         user.status = USER_STATUS_EMAIL_UNVERIFIED
@@ -50,6 +54,8 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
         self.redis.set.assert_awaited_once()
 
     async def test_verify_email_token_rejects_used_token(self) -> None:
+        """Test verify email token rejects used token.
+        """
         self.redis.getdel = AsyncMock(return_value=None)
         self.redis.get = AsyncMock(return_value=b'1')
 
@@ -62,6 +68,8 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
     async def test_verify_email_token_rejects_invalid_or_expired_token(
         self,
     ) -> None:
+        """Test verify email token rejects invalid or expired token.
+        """
         self.redis.getdel = AsyncMock(return_value=None)
         self.redis.get = AsyncMock(return_value=None)
 
@@ -88,6 +96,12 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
         mock_settings: MagicMock,
         mock_async_client: MagicMock,
     ) -> None:
+        """Test send email uses brevo template when configured.
+
+        Args:
+            mock_settings: Value used by this callable.
+            mock_async_client: Value used by this callable.
+        """
         mock_settings.brevo_api_key = 'brevo-key'
         mock_settings.mail_from = 'sender@example.com'
         mock_settings.mail_from_name = 'Visionnaire'
@@ -116,6 +130,8 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
     async def test_resend_verification_returns_generic_for_unknown_email(
         self,
     ) -> None:
+        """Test resend verification returns generic for unknown email.
+        """
         self.redis.incr = AsyncMock(return_value=1)
         self.redis.expire = AsyncMock()
         self.db.scalar = AsyncMock(return_value=None)
@@ -132,6 +148,8 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
     async def test_resend_verification_rate_limit_returns_retry_after(
         self,
     ) -> None:
+        """Test resend verification rate limit returns retry after.
+        """
         self.redis.incr = AsyncMock(return_value=2)
         self.redis.expire = AsyncMock()
         self.redis.ttl = AsyncMock(return_value=42)
@@ -160,6 +178,11 @@ class TestEmailVerificationServices(unittest.IsolatedAsyncioTestCase):
         self,
         mock_settings: MagicMock,
     ) -> None:
+        """Test resend verification daily limit returns retry after.
+
+        Args:
+            mock_settings: Value used by this callable.
+        """
         mock_settings.email_verification_resend_rate_limit_seconds = 60
         mock_settings.email_verification_daily_limit = 5
         mock_settings.email_verification_daily_limit_window_seconds = 86400
@@ -230,6 +253,14 @@ if __name__ == '__main__':
 
 
 def _settings(**values: object) -> SimpleNamespace:
+    """Perform settings.
+
+    Args:
+        **values: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     defaults = {
         'app_public_url': 'https://app.example',
         'email_verification_resend_rate_limit_seconds': 60,
@@ -246,6 +277,14 @@ def _settings(**values: object) -> SimpleNamespace:
 
 
 def _http_client_context(post_result: object) -> tuple[MagicMock, MagicMock]:
+    """Perform http client context.
+
+    Args:
+        post_result: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     client = MagicMock()
     client.post = AsyncMock(return_value=post_result)
     context = MagicMock()
@@ -255,7 +294,13 @@ def _http_client_context(post_result: object) -> tuple[MagicMock, MagicMock]:
 
 
 class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
+
+    """Provide TestEmailVerificationServiceCoverage.
+    """
+
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db = MagicMock()
         self.db.get = AsyncMock()
         self.db.scalar = AsyncMock()
@@ -270,6 +315,8 @@ class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
         self.redis.ttl = AsyncMock(return_value=0)
 
     def test_url_and_profile_helpers(self) -> None:
+        """Test url and profile helpers.
+        """
         with patch.object(
             svc, 'settings', _settings(app_public_url='https://app.example/'),
         ):
@@ -286,6 +333,8 @@ class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_delete_existing_token_removes_the_stored_hash(
         self,
     ) -> None:
+        """Test delete existing token removes the stored hash.
+        """
         self.redis.get.return_value = b'old-hash'
         await svc._delete_existing_token_for_user(7, self.redis)
         self.redis.delete.assert_any_await('email_verification:old-hash')
@@ -305,6 +354,8 @@ class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_send_email_handles_configuration_and_http_failures(
         self,
     ) -> None:
+        """Test send email handles configuration and http failures.
+        """
         with patch.object(svc, 'settings', _settings(brevo_api_key='')):
             with self.assertRaises(HTTPException) as unconfigured:
                 await svc._send_email_verification_email(
@@ -357,6 +408,8 @@ class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unavailable.exception.status_code, 502)
 
     async def test_signup_and_resend_email_paths(self) -> None:
+        """Test signup and resend email paths.
+        """
         user = MagicMock(
             id=7,
             username='alice',
@@ -421,6 +474,8 @@ class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_verify_email_token_rejects_missing_user(
         self,
     ) -> None:
+        """Test verify email token rejects missing user.
+        """
         with self.assertRaises(HTTPException) as empty_token:
             await svc.verify_email_token(None, self.db, self.redis)
         self.assertEqual(empty_token.exception.status_code, 400)
@@ -437,6 +492,8 @@ class TestEmailVerificationServiceCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_verify_email_token_rejects_non_verifiable_statuses(
         self,
     ) -> None:
+        """Test verify email token rejects non verifiable statuses.
+        """
         for status, code in [
             (USER_STATUS_REJECTED, 'account_not_verifiable'),
             ('unexpected', 'account_not_active'),

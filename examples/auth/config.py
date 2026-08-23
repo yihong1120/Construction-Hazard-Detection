@@ -5,6 +5,8 @@ import os
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 
+from examples.deployment_registry.schemas import MAX_REGISTRY_TTL_SECONDS
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -176,6 +178,55 @@ class Settings(BaseSettings):
             'http://localhost:5000,http://127.0.0.1:5000,'
             'http://localhost:8080,http://127.0.0.1:8080'
         ),
+    )
+    # The reverse proxy removes this prefix before forwarding to individual
+    # services.  It is still part of the public deployment contract and token
+    # issuer, so it must never be supplied by a client request.
+    deployment_api_base_path: str = os.getenv(
+        'DEPLOYMENT_API_BASE_PATH',
+        '/hazard/api',
+    )
+    # Explicit local-only development escape hatch.  The resolver requires a
+    # loopback peer and host, then maps it to this server-controlled ID; a
+    # request can never select a tenant/deployment itself.
+    local_development_auth_enabled: bool = _env_bool(
+        'LOCAL_DEVELOPMENT_AUTH_ENABLED',
+        False,
+    )
+    local_development_deployment_id: str = os.getenv(
+        'LOCAL_DEVELOPMENT_DEPLOYMENT_ID',
+        '',
+    )
+    # This value is injected by the backend secret store (or a KMS-backed
+    # deployment secret) at runtime.  It is intentionally empty by default:
+    # the public registry must fail closed rather than emit an unsigned config.
+    deployment_registry_ed25519_private_key: str = os.getenv(
+        'DEPLOYMENT_REGISTRY_ED25519_PRIVATE_KEY',
+        '',
+    )
+    deployment_registry_key_id: str = os.getenv(
+        'DEPLOYMENT_REGISTRY_KEY_ID',
+        'registry-ed25519-2026-01',
+    )
+    deployment_registry_ttl_seconds: int = int(
+        os.getenv(
+            'DEPLOYMENT_REGISTRY_TTL_SECONDS',
+            str(MAX_REGISTRY_TTL_SECONDS),
+        ),
+    )
+    # An independent secret used to make enrollment-code verifiers
+    # non-reversible even if the registry database is disclosed.  It is
+    # intentionally empty by default so enrollment fails closed until the
+    # deployment secret store supplies it.
+    deployment_enrollment_code_pepper: str = os.getenv(
+        'DEPLOYMENT_ENROLLMENT_CODE_PEPPER',
+        '',
+    )
+    deployment_enrollment_rate_limit_max: int = int(
+        os.getenv('DEPLOYMENT_ENROLLMENT_RATE_LIMIT_MAX', '5'),
+    )
+    deployment_enrollment_rate_limit_window_seconds: int = int(
+        os.getenv('DEPLOYMENT_ENROLLMENT_RATE_LIMIT_WINDOW_SECONDS', '300'),
     )
     sqlalchemy_database_uri: str = os.getenv(
         'DATABASE_URL',

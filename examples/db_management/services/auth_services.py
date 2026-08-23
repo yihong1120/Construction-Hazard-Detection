@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 import datetime
-import hashlib
-import json
+from functools import partial
 from typing import cast
 from uuid import uuid4
 
 import httpx
 import jwt
 from fastapi import HTTPException
+from fastapi import Request
 from redis.asyncio import Redis
-from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from examples.auth.cache import get_user_data
-from examples.auth.cache import set_user_data
+from examples.auth.cache import rate_limiter_service
 from examples.auth.config import Settings
+from examples.auth.deployment_context import DeploymentBinding
+from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.jwt_config import access_token_subject_from_payload
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import jwt_refresh
@@ -40,6 +40,37 @@ from examples.db_management.schemas.auth import RefreshTokenPayload
 from examples.db_management.schemas.auth import TokenPairData
 from examples.db_management.schemas.auth import UserCache
 from examples.db_management.schemas.auth import UserLogin
+from examples.db_management.services.auth_login_guard import check_login_guard
+from examples.db_management.services.auth_login_guard import clear_login_guard
+from examples.db_management.services.auth_login_guard import (
+    clear_login_guard_for_identifier,
+)
+from examples.db_management.services.auth_login_guard import record_failed_login
+from examples.db_management.services.auth_refresh_state import (
+    _cache_contains_refresh_token,
+)
+from examples.db_management.services.auth_refresh_state import (
+    _refresh_family_revoked_key,
+)
+from examples.db_management.services.auth_refresh_state import (
+    _remove_refresh_token_from_cache,
+)
+from examples.db_management.services.auth_refresh_state import (
+    _store_refresh_token_in_cache,
+)
+from examples.db_management.services.auth_refresh_state import (
+    consume_refresh_token_state,
+)
+from examples.db_management.services.auth_refresh_state import (
+    register_refresh_token_state,
+)
+from examples.db_management.services.auth_refresh_state import revoke_refresh_family
+from examples.db_management.services.auth_refresh_state import (
+    revoke_user_access_tokens,
+)
+from examples.db_management.services.auth_token_issuer import issue_access_token
+from examples.db_management.services.auth_token_issuer import issue_refresh_token
+from src.http_client_pool import get_application_http_client
 
 # Configuration settings for JWT authentication
 settings = Settings()
@@ -54,364 +85,11 @@ ACCESS_TTL = datetime.timedelta(minutes=15)  # Short-lived API capability
 REFRESH_TTL = datetime.timedelta(days=30)    # Refresh token expiry time
 
 
-def _hash_account_identifier(identifier: str) -> str:
-    """Hash an account identifier before storing it in Redis keys.
-
-    Args:
-        identifier: Username or email address from an authentication request.
-
-    Returns:
-        Stable non-reversible identifier hash.
-    """
-    normalized = identifier.strip().lower()
-    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
-
-
-def _hash_login_pair(identifier: str, client_ip: str | None) -> str:
-    """Hash a login identifier and client IP for Redis keying.
-
-    Args:
-        identifier: Login identifier.
-        client_ip: Requesting client address.
-
-    Returns:
-        Stable non-reversible pair hash.
-    """
-    normalized = identifier.strip().lower()
-    source = client_ip or 'unknown'
-    return hashlib.sha256(f'{normalized}|{source}'.encode()).hexdigest()
-
-
-def _login_fail_key(identifier: str, client_ip: str | None) -> str:
-    """Build the Redis key for failures from one login pair.
-
-    Args:
-        identifier: Login identifier.
-        client_ip: Requesting client address.
-
-    Returns:
-        Login-pair failure-counter key.
-    """
-    return f'login_fail:pair:{_hash_login_pair(identifier, client_ip)}'
-
-
-def _login_cooldown_key(identifier: str, client_ip: str | None) -> str:
-    """Build the Redis key for a login-pair cooldown.
-
-    Args:
-        identifier: Login identifier.
-        client_ip: Requesting client address.
-
-    Returns:
-        Login-pair cooldown key.
-    """
-    return f'login_cooldown:pair:{_hash_login_pair(identifier, client_ip)}'
-
-
-def _account_fail_key(identifier: str) -> str:
-    """Build the Redis key for account-wide login failures.
-
-    Args:
-        identifier: Login identifier.
-
-    Returns:
-        Account failure-counter key.
-    """
-    return f'login_fail:account:{_hash_account_identifier(identifier)}'
-
-
-def _login_lock_key(identifier: str) -> str:
-    """Build the Redis key for an account login lock.
-
-    Args:
-        identifier: Login identifier.
-
-    Returns:
-        Account-lock key.
-    """
-    return f'login_lock:account:{_hash_account_identifier(identifier)}'
-
-
-def _login_pair_index_key(identifier: str) -> str:
-    """Build the Redis key indexing client-pair login records.
-
-    Args:
-        identifier: Login identifier.
-
-    Returns:
-        Client-pair index key.
-    """
-    return f'login_pairs:account:{_hash_account_identifier(identifier)}'
-
-
-def _login_fail_pair_key(pair_hash: str) -> str:
-    """Build the failure-counter key for a client-pair hash.
-
-    Args:
-        pair_hash: Hashed login identifier and client IP.
-
-    Returns:
-        Login-pair failure-counter key.
-    """
-    return f'login_fail:pair:{pair_hash}'
-
-
-def _login_cooldown_pair_key(pair_hash: str) -> str:
-    """Build the cooldown key for a client-pair hash.
-
-    Args:
-        pair_hash: Hashed login identifier and client IP.
-
-    Returns:
-        Login-pair cooldown key.
-    """
-    return f'login_cooldown:pair:{pair_hash}'
-
-
-def _utc_iso_after(seconds: int) -> str:
-    """Return a UTC ISO timestamp offset by the requested seconds.
-
-    Args:
-        seconds: Time offset from the current UTC time.
-
-    Returns:
-        Timezone-aware ISO 8601 timestamp.
-    """
-    expires_at = (
-        datetime.datetime.now(datetime.timezone.utc)
-        + datetime.timedelta(seconds=seconds)
-    )
-    return expires_at.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-
-
-def _decode_redis_value(value: bytes | None) -> str | None:
-    """Decode an optional UTF-8 Redis value.
-
-    Args:
-        value: Redis value that may be bytes, text, or absent.
-
-    Returns:
-        Decoded text, or ``None`` when no value is supplied.
-    """
-    if value is None:
-        return None
-    return value.decode('utf-8')
-
-
-def _decode_redis_members(values: set[bytes]) -> list[str]:
-    """Decode and sort UTF-8 Redis set members.
-
-    Args:
-        values: Raw Redis set members.
-
-    Returns:
-        Sorted decoded set members.
-    """
-    return sorted(value.decode('utf-8') for value in values)
-
-
-async def _get_positive_ttl(redis_pool: Redis, key: str, fallback: int) -> int:
-    """Return a positive Redis TTL, using a fallback when necessary.
-
-    Args:
-        redis_pool: Redis connection used to read expiry state.
-        key: Key whose expiry is inspected.
-        fallback: TTL used when the key has no positive expiry.
-
-    Returns:
-        Positive TTL in seconds.
-    """
-    ttl = int(await redis_pool.ttl(key))
-    return ttl if ttl > 0 else fallback
-
-
-async def _check_login_guard(
-    redis_pool: Redis,
-    identifier: str,
-    client_ip: str | None,
-) -> None:
-    """Reject a login while its identifier or IP is guarded.
-
-    Args:
-        redis_pool: Redis connection holding login guards.
-        identifier: Login identifier being checked.
-        client_ip: Requesting client address.
-
-    Raises:
-        HTTPException: If a lock or cooldown is active.
-    """
-    lock_key = _login_lock_key(identifier)
-    locked_until = _decode_redis_value(await redis_pool.get(lock_key))
-    if locked_until:
-        raise HTTPException(
-            status_code=423,
-            detail={
-                'code': 'account_locked',
-                'locked_until': locked_until,
-            },
-        )
-
-    cooldown_key = _login_cooldown_key(identifier, client_ip)
-    cooldown_marker = await redis_pool.get(cooldown_key)
-    if cooldown_marker is not None:
-        retry_after = await _get_positive_ttl(
-            redis_pool,
-            cooldown_key,
-            settings.login_cooldown_seconds,
-        )
-        raise HTTPException(
-            status_code=429,
-            detail={
-                'code': 'login_cooldown',
-                'retry_after_seconds': retry_after,
-            },
-            headers={'Retry-After': str(retry_after)},
-        )
-
-
-async def _record_failed_login(
-    redis_pool: Redis,
-    identifier: str,
-    client_ip: str | None,
-) -> None:
-    """Record a failed login and apply the relevant guard.
-
-    Args:
-        redis_pool: Redis connection holding guard counters.
-        identifier: Login identifier that failed.
-        client_ip: Requesting client address.
-    """
-    pair_hash = _hash_login_pair(identifier, client_ip)
-    pair_index_key = _login_pair_index_key(identifier)
-    index_ttl = max(
-        settings.login_failure_window_seconds,
-        settings.login_cooldown_seconds,
-        settings.login_lock_seconds,
-    )
-    await redis_pool.sadd(pair_index_key, pair_hash)
-    await redis_pool.expire(pair_index_key, index_ttl)
-
-    fail_key = _login_fail_key(identifier, client_ip)
-    pair_fail_count = int(await redis_pool.incr(fail_key))
-    if pair_fail_count == 1:
-        await redis_pool.expire(
-            fail_key,
-            settings.login_failure_window_seconds,
-        )
-
-    account_fail_key = _account_fail_key(identifier)
-    account_fail_count = int(await redis_pool.incr(account_fail_key))
-    if account_fail_count == 1:
-        await redis_pool.expire(
-            account_fail_key,
-            settings.login_failure_window_seconds,
-        )
-
-    if account_fail_count >= settings.login_lock_threshold:
-        locked_until = _utc_iso_after(settings.login_lock_seconds)
-        await redis_pool.set(
-            _login_lock_key(identifier),
-            locked_until,
-            ex=settings.login_lock_seconds,
-        )
-        await redis_pool.delete(
-            account_fail_key,
-        )
-        raise HTTPException(
-            status_code=423,
-            detail={
-                'code': 'account_locked',
-                'locked_until': locked_until,
-            },
-        )
-
-    if pair_fail_count >= settings.login_cooldown_threshold:
-        await redis_pool.set(
-            _login_cooldown_key(identifier, client_ip),
-            '1',
-            ex=settings.login_cooldown_seconds,
-        )
-        raise HTTPException(
-            status_code=429,
-            detail={
-                'code': 'login_cooldown',
-                'retry_after_seconds': settings.login_cooldown_seconds,
-            },
-            headers={'Retry-After': str(settings.login_cooldown_seconds)},
-        )
-
-    remaining_attempts = max(
-        settings.login_cooldown_threshold - pair_fail_count,
-        0,
-    )
-    raise HTTPException(
-        status_code=401,
-        detail={
-            'code': 'invalid_credentials',
-            'remaining_attempts': remaining_attempts,
-        },
-    )
-
-
-async def _clear_login_guard(
-    redis_pool: Redis,
-    identifier: str,
-    client_ip: str | None,
-) -> None:
-    """Clear login failure and cooldown state after authentication.
-
-    Args:
-        redis_pool: Redis connection holding guard state.
-        identifier: Successfully authenticated login identifier.
-        client_ip: Requesting client address.
-    """
-    await redis_pool.delete(
-        _login_fail_key(identifier, client_ip),
-        _login_cooldown_key(identifier, client_ip),
-        _account_fail_key(identifier),
-        _login_lock_key(identifier),
-    )
-
-
-async def clear_login_guard_for_identifier(
-    redis_pool: Redis,
-    identifier: str,
-) -> None:
-    """Clear all tracked login guards for an account identifier.
-
-    Args:
-        redis_pool: Redis connection holding guard state.
-        identifier: Login identifier whose guards are removed.
-    """
-    pair_index_key = _login_pair_index_key(identifier)
-    pair_hashes = _decode_redis_members(
-        await redis_pool.smembers(
-            pair_index_key,
-        ),
-    )
-    keys = [
-        _account_fail_key(identifier),
-        _login_lock_key(identifier),
-        pair_index_key,
-    ]
-    for pair_hash in pair_hashes:
-        keys.extend([
-            _login_fail_pair_key(pair_hash),
-            _login_cooldown_pair_key(pair_hash),
-        ])
-    await redis_pool.delete(*keys)
-
-
 async def clear_login_guard_for_identifiers(
     redis_pool: Redis,
     identifiers: list[str],
 ) -> None:
-    """Clear login guards for username and email aliases after a reset.
-
-    Args:
-        redis_pool: Redis connection holding guard state.
-        identifiers: Username and email aliases to clear.
-    """
+    """Clear login guards for a user's known aliases."""
     seen: set[str] = set()
     for identifier in identifiers:
         normalized = identifier.strip().lower()
@@ -476,7 +154,7 @@ async def _authenticate(
         user = await db.scalar(
             select(User)
             .join(UserProfile, UserProfile.user_id == User.id)
-            .where(func.lower(UserProfile.email) == login_identifier.lower()),
+            .where(UserProfile.email == login_identifier.lower()),
         )
 
     if not user or not await user.check_password(password):
@@ -564,7 +242,11 @@ async def _verify_hcaptcha(
         raise HTTPException(status_code=500, detail='hCaptcha not configured')
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        client = await get_application_http_client(
+            'hcaptcha',
+            timeout=10.0,
+        )
+        if client is not None:
             response = await client.post(
                 HCAPTCHA_VERIFY_URL,
                 data={
@@ -575,6 +257,18 @@ async def _verify_hcaptcha(
             )
             response.raise_for_status()
             result = response.json()
+        else:
+            async with httpx.AsyncClient(timeout=10.0) as ephemeral_client:
+                response = await ephemeral_client.post(
+                    HCAPTCHA_VERIFY_URL,
+                    data={
+                        'secret': HCAPTCHA_SECRET_KEY,
+                        'response': token,
+                        'sitekey': HCAPTCHA_SITE_KEY,
+                    },
+                )
+                response.raise_for_status()
+                result = response.json()
     except (httpx.HTTPError, ValueError):
         raise HTTPException(
             status_code=403, detail='hCaptcha verification failed',
@@ -589,6 +283,7 @@ async def _verify_hcaptcha(
 async def verify_refresh_token(
     refresh_token: str,
     redis_pool: Redis,
+    deployment: DeploymentBinding | None = None,
 ) -> RefreshTokenPayload:
     """Verify and decode a JWT refresh token.
 
@@ -604,7 +299,11 @@ async def verify_refresh_token(
     """
     try:
         # Decode and verify JWT refresh token and its purpose.
-        payload = jwt_refresh.decode_token(refresh_token)
+        payload = jwt_refresh.decode_token(
+            refresh_token,
+            expected_issuer=deployment.issuer if deployment else None,
+            expected_audience=deployment.audience if deployment else None,
+        )
         subject = refresh_token_subject_from_payload(payload)
     except jwt.ExpiredSignatureError:
         raise HTTPException(
@@ -614,6 +313,18 @@ async def verify_refresh_token(
         raise HTTPException(status_code=401, detail='Invalid refresh token')
 
     username = subject['username']
+    if deployment is not None and (
+        subject.get('tenant_id') != str(deployment.tenant_id)
+        or subject.get('deployment_id') != str(deployment.deployment_id)
+        or subject.get('config_revision') != deployment.config_revision
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'deployment_configuration_changed',
+                'message': 'Deployment configuration changed; sign in again.',
+            },
+        )
     family_id = subject['family_id']
     if await redis_pool.get(
         _refresh_family_revoked_key(family_id),
@@ -624,241 +335,28 @@ async def verify_refresh_token(
     await prune_user_cache(redis_pool, username)
     user_data = cast(
         UserCache | None,
-        await get_user_data(redis_pool, username),
+        await rate_limiter_service.get_user_data(redis_pool, username),
     )
     if (
         not user_data
         or not _cache_contains_refresh_token(user_data, refresh_token)
     ):
         if family_id:
-            await _revoke_refresh_family(redis_pool, family_id)
-            await _revoke_user_access_tokens(redis_pool, username)
+            await revoke_refresh_family(
+                redis_pool, family_id, refresh_ttl=REFRESH_TTL,
+            )
+            await revoke_user_access_tokens(
+                redis_pool,
+                username,
+                get_user_data_fn=rate_limiter_service.get_user_data,
+                revoke_access_token_jtis_fn=revoke_access_token_jtis,
+            )
             raise HTTPException(status_code=401, detail='Refresh token reused')
         raise HTTPException(
             status_code=401, detail='Refresh token not recognised',
         )
 
     return cast(RefreshTokenPayload, payload)
-
-
-def _hash_refresh_token(refresh_token: str) -> str:
-    """Hash a refresh token before storing web-cookie session state.
-
-    Args:
-        refresh_token: Raw refresh token.
-
-    Returns:
-        Stable non-reversible token hash.
-    """
-    return hashlib.sha256(refresh_token.encode('utf-8')).hexdigest()
-
-
-def _refresh_state_key(refresh_token: str) -> str:
-    """Build the Redis key tracking one refresh token's state.
-
-    Args:
-        refresh_token: Raw refresh token.
-
-    Returns:
-        Refresh-token state key.
-    """
-    return f'oauth:refresh-state:{_hash_refresh_token(refresh_token)}'
-
-
-def _refresh_family_revoked_key(family_id: str) -> str:
-    """Build the Redis key marking a refresh-token family revoked.
-
-    Args:
-        family_id: Refresh-token rotation-family identifier.
-
-    Returns:
-        Family-revocation marker key.
-    """
-    return f'oauth:refresh-family-revoked:{family_id}'
-
-
-async def _register_refresh_token_state(
-    redis_pool: Redis,
-    refresh_token: str,
-    username: str,
-    family_id: str,
-    *,
-    enforce_family_active: bool = False,
-) -> None:
-    """Register an active refresh token without storing its bearer value.
-
-    Args:
-        redis_pool: Redis connection holding token state.
-        refresh_token: Raw refresh token to register.
-        username: Username that owns the token.
-        family_id: Rotation-family identifier.
-        enforce_family_active: Whether a revoked family must be rejected.
-
-    Raises:
-        HTTPException: If the refresh-token family is revoked.
-    """
-    if enforce_family_active and await redis_pool.get(
-        _refresh_family_revoked_key(family_id),
-    ):
-        raise HTTPException(status_code=401, detail='Refresh token reused')
-    await redis_pool.set(
-        _refresh_state_key(refresh_token),
-        json.dumps(
-            {
-                'status': 'active',
-                'username': username,
-                'family_id': family_id,
-            },
-            separators=(',', ':'),
-        ).encode('utf-8'),
-        ex=int(REFRESH_TTL.total_seconds()),
-    )
-
-
-async def _revoke_refresh_family(
-    redis_pool: Redis,
-    family_id: str,
-) -> None:
-    """Mark a refresh-token family revoked for its remaining lifetime.
-
-    Args:
-        redis_pool: Redis connection holding token state.
-        family_id: Rotation-family identifier to revoke.
-    """
-    await redis_pool.set(
-        _refresh_family_revoked_key(family_id),
-        b'1',
-        ex=int(REFRESH_TTL.total_seconds()),
-    )
-
-
-async def _revoke_user_access_tokens(
-    redis_pool: Redis,
-    username: str,
-) -> int:
-    """Immediately revoke every unexpired access token for a user.
-
-    Args:
-        redis_pool: Redis connection holding user token state.
-        username: Username whose tokens are revoked.
-
-    Returns:
-        Number of access-token identifiers revoked.
-    """
-    cache = cast(UserCache | None, await get_user_data(redis_pool, username))
-    if not cache:
-        return 0
-    return await revoke_access_token_jtis(redis_pool, cache['jti_meta'])
-
-
-async def _consume_refresh_token_state(
-    redis_pool: Redis,
-    refresh_token: str,
-    family_id: str,
-    username: str,
-) -> None:
-    """Make a rotating refresh token single-use across all workers.
-
-    Args:
-        redis_pool: Redis connection holding token state.
-        refresh_token: Raw refresh token to consume.
-        family_id: Rotation-family identifier from token claims.
-        username: Username from token claims.
-
-    Raises:
-        HTTPException: If the token is unknown, reused, or revoked.
-    """
-    if await redis_pool.get(_refresh_family_revoked_key(family_id)):
-        await _revoke_user_access_tokens(redis_pool, username)
-        raise HTTPException(status_code=401, detail='Refresh token reused')
-    lock_key = f'{_refresh_state_key(refresh_token)}:consume'
-    acquired = await redis_pool.set(lock_key, b'1', ex=30, nx=True)
-    if not acquired:
-        await _revoke_refresh_family(redis_pool, family_id)
-        await _revoke_user_access_tokens(redis_pool, username)
-        raise HTTPException(status_code=401, detail='Refresh token reused')
-    raw = await redis_pool.get(_refresh_state_key(refresh_token))
-    if raw is None:
-        await _revoke_refresh_family(redis_pool, family_id)
-        await _revoke_user_access_tokens(redis_pool, username)
-        raise HTTPException(status_code=401, detail='Refresh token reused')
-    state = json.loads(raw)
-    if (
-        state.get('status') != 'active'
-        or state.get('family_id') != family_id
-    ):
-        await _revoke_refresh_family(redis_pool, family_id)
-        await _revoke_user_access_tokens(redis_pool, username)
-        raise HTTPException(status_code=401, detail='Refresh token reused')
-    state['status'] = 'used'
-    await redis_pool.set(
-        _refresh_state_key(refresh_token),
-        json.dumps(state, separators=(',', ':')).encode('utf-8'),
-        ex=int(REFRESH_TTL.total_seconds()),
-    )
-
-
-def _cache_contains_refresh_token(
-    cache: UserCache,
-    refresh_token: str,
-) -> bool:
-    """Return whether a raw or hashed refresh token is recognised.
-
-    Args:
-        cache: Cached user token state.
-        refresh_token: Raw refresh token to look up.
-
-    Returns:
-        ``True`` when the cache recognises the token.
-    """
-    if refresh_token in cache['refresh_tokens']:
-        return True
-    token_hash = _hash_refresh_token(refresh_token)
-    return token_hash in cache['refresh_token_hashes']
-
-
-def _remove_refresh_token_from_cache(
-    cache: UserCache,
-    refresh_token: str,
-) -> None:
-    """Remove a refresh token and its hash from a cache payload.
-
-    Args:
-        cache: Mutable cached user token state.
-        refresh_token: Raw refresh token to remove.
-    """
-    token_hash = _hash_refresh_token(refresh_token)
-    cache['refresh_tokens'] = [
-        token
-        for token in cache['refresh_tokens']
-        if token != refresh_token
-    ]
-    cache['refresh_token_hashes'] = [
-        value
-        for value in cache['refresh_token_hashes']
-        if value != token_hash
-    ]
-
-
-def _store_refresh_token_in_cache(
-    cache: UserCache,
-    refresh_token: str,
-    *,
-    hash_refresh_token: bool = False,
-) -> None:
-    """Store a refresh token raw for mobile or hashed for web.
-
-    Args:
-        cache: Mutable cached user token state.
-        refresh_token: Raw refresh token to store.
-        hash_refresh_token: Whether to retain only a token hash.
-    """
-    if hash_refresh_token:
-        cache['refresh_token_hashes'].append(
-            _hash_refresh_token(refresh_token),
-        )
-    else:
-        cache['refresh_tokens'].append(refresh_token)
 
 
 async def login_user(
@@ -868,6 +366,8 @@ async def login_user(
     hcaptcha_bypass_key: str | None = None,
     client_ip: str | None = None,
     hash_refresh_token: bool = False,
+    deployment: DeploymentBinding | None = None,
+    request: Request | None = None,
 ) -> TokenPairData:
     """Authenticate user, issue JWT tokens, and store session in Redis cache.
 
@@ -879,9 +379,17 @@ async def login_user(
     Returns:
         TokenPairData: Generated tokens and user-related details.
     """
+    if deployment is None and request is not None:
+        deployment = await resolve_request_deployment(request, db)
+
     await _verify_hcaptcha(payload.hcaptcha_token, hcaptcha_bypass_key)
 
-    await _check_login_guard(redis_pool, payload.identifier, client_ip)
+    await check_login_guard(
+        redis_pool,
+        payload.identifier,
+        client_ip,
+        policy=settings,
+    )
 
     try:
         user = await _authenticate(
@@ -889,20 +397,22 @@ async def login_user(
         )
     except HTTPException as exc:
         if exc.status_code == 401:
-            await _record_failed_login(
+            await record_failed_login(
                 redis_pool,
                 payload.identifier,
                 client_ip,
+                policy=settings,
             )
         raise
 
-    await _clear_login_guard(redis_pool, payload.identifier, client_ip)
+    await clear_login_guard(redis_pool, payload.identifier, client_ip)
 
     return await issue_token_pair_for_user(
         user,
         db,
         redis_pool,
         hash_refresh_token=hash_refresh_token,
+        deployment=deployment,
     )
 
 
@@ -911,6 +421,7 @@ async def issue_token_pair_for_user(
     db: AsyncSession,
     redis_pool: Redis,
     hash_refresh_token: bool = False,
+    deployment: DeploymentBinding | None = None,
 ) -> TokenPairData:
     """Issue local JWT tokens for an already verified user.
 
@@ -923,10 +434,19 @@ async def issue_token_pair_for_user(
     Returns:
         Token-pair data for the authentication response.
     """
+    if deployment is not None and user.tenant_id != deployment.tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                'code': 'tenant_access_denied',
+                'message': 'This account does not belong to this deployment.',
+            },
+        )
+
     await prune_user_cache(redis_pool, user.username)
     cache = cast(
         UserCache | None,
-        await get_user_data(redis_pool, user.username),
+        await rate_limiter_service.get_user_data(redis_pool, user.username),
     )
     if cache is None:
         cache = UserCache(
@@ -936,6 +456,7 @@ async def issue_token_pair_for_user(
                 role=user.role,
                 group_id=user.group_id,
                 status=user.status,
+                tenant_id=str(user.tenant_id) if deployment else '',
             ),
             jti_list=[],
             jti_meta={},
@@ -951,58 +472,67 @@ async def issue_token_pair_for_user(
 
     # Generate JWT tokens
     new_jti = str(uuid4())
-    access_token = jwt_access.create_access_token(
-        subject={
-            'username': user.username,
-            'user_id': user.id,
-            'role': user.role,
-            'jti': new_jti,
-            'features': feature_names,
-        },
+    access_token = issue_access_token(
+        jwt_access,
+        username=user.username,
+        user_id=user.id,
+        role=user.role,
+        jti=new_jti,
+        feature_names=feature_names,
         expires_delta=ACCESS_TTL,
+        deployment=deployment,
     )
     refresh_family_id = str(uuid4())
-    refresh_token = jwt_refresh.create_access_token(
-        subject={
-            'username': user.username,
-            'family_id': refresh_family_id,
-            'token_id': str(uuid4()),
-        },
+    refresh_token = issue_refresh_token(
+        jwt_refresh,
+        username=user.username,
+        family_id=refresh_family_id,
+        token_id=str(uuid4()),
         expires_delta=REFRESH_TTL,
+        deployment=deployment,
     )
 
     # Update cache and store in Redis
     cache['jti_list'].append(new_jti)
 
     # store access token expiry timestamp for pruning (epoch seconds)
-    at_payload = jwt_access.decode_token(access_token, verify_exp=False)
+    at_payload = jwt_access.decode_token(
+        access_token,
+        verify_exp=False,
+        expected_issuer=deployment.issuer if deployment else None,
+        expected_audience=deployment.audience if deployment else None,
+    )
     cache['jti_meta'][new_jti] = int(at_payload['exp'])
     _store_refresh_token_in_cache(
         cache,
         refresh_token,
         hash_refresh_token=hash_refresh_token,
     )
-    await set_user_data(
+    await rate_limiter_service.set_user_data(
         redis_pool,
         user.username,
         cast(dict[str, object], cache),
     )
-    await _register_refresh_token_state(
+    await register_refresh_token_state(
         redis_pool,
         refresh_token,
         user.username,
         refresh_family_id,
+        refresh_ttl=REFRESH_TTL,
     )
 
-    return {
-        'access_token': access_token,
-        'refresh_token': refresh_token,
-        'username': user.username,
-        'role': user.role,
-        'user_id': user.id,
-        'group_id': user.group_id,
-        'feature_names': feature_names,
-    }
+    return cast(
+        TokenPairData, {
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'username': user.username,
+            'role': user.role,
+            'user_id': user.id,
+            'group_id': user.group_id,
+            'feature_names': feature_names,
+            **({'deployment': deployment.as_response()} if deployment else {}),
+        },
+    )
 
 
 async def logout_user(
@@ -1036,11 +566,18 @@ async def logout_user(
     if access_payload is not None:
         await revoke_access_token(redis_pool, access_payload)
     if refresh_family_id:
-        await _revoke_refresh_family(redis_pool, refresh_family_id)
+        await revoke_refresh_family(
+            redis_pool,
+            refresh_family_id,
+            refresh_ttl=REFRESH_TTL,
+        )
 
     # Remove the tokens from Redis cache
     await prune_user_cache(redis_pool, username)
-    cache = cast(UserCache | None, await get_user_data(redis_pool, username))
+    cache = cast(
+        UserCache | None,
+        await rate_limiter_service.get_user_data(redis_pool, username),
+    )
     if not cache:
         return
 
@@ -1048,10 +585,15 @@ async def logout_user(
     # revoke the user's current access capabilities rather than leaving them
     # valid until their natural expiry.
     if access_payload is None:
-        await _revoke_user_access_tokens(redis_pool, username)
+        await revoke_user_access_tokens(
+            redis_pool,
+            username,
+            get_user_data_fn=rate_limiter_service.get_user_data,
+            revoke_access_token_jtis_fn=revoke_access_token_jtis,
+        )
 
     _remove_logout_tokens_from_cache(cache, jti, refresh_token)
-    await set_user_data(
+    await rate_limiter_service.set_user_data(
         redis_pool,
         username,
         cast(dict[str, object], cache),
@@ -1075,7 +617,10 @@ def _access_logout_context(
     if len(parts) != 2:
         return None, None, None
     try:
-        payload = jwt_access.decode_token(parts[1], verify_exp=False)
+        payload = jwt_access.decode_token_for_lifecycle(
+            parts[1],
+            verify_exp=False,
+        )
         subject = access_token_subject_from_payload(payload)
     except jwt.PyJWTError:
         return None, None, None
@@ -1099,7 +644,10 @@ def _refresh_logout_context(
     if not refresh_token:
         return None
     try:
-        payload = jwt_refresh.decode_token(refresh_token, verify_exp=False)
+        payload = jwt_refresh.decode_token_for_lifecycle(
+            refresh_token,
+            verify_exp=False,
+        )
         subject = refresh_token_subject_from_payload(payload)
     except jwt.PyJWTError:
         return None
@@ -1131,6 +679,9 @@ async def refresh_tokens(
     payload: RefreshRequest,
     redis_pool: Redis,
     hash_refresh_token: bool = False,
+    deployment: DeploymentBinding | None = None,
+    request: Request | None = None,
+    db: AsyncSession | None = None,
 ) -> TokenPairData:
     """Issue new JWT tokens using a refresh token.
 
@@ -1148,77 +699,121 @@ async def refresh_tokens(
     if not old_refresh:
         raise HTTPException(status_code=401, detail='Missing refresh token')
 
-    # Verify provided refresh token
-    data = await verify_refresh_token(old_refresh, redis_pool)
+    if deployment is None and request is not None and db is not None:
+        deployment = await resolve_request_deployment(request, db)
+
+    # Verify provided refresh token against the current API deployment.
+    data = await verify_refresh_token(old_refresh, redis_pool, deployment)
     username = data['subject']['username']
     family_id = str(data['subject'].get('family_id') or '')
 
     await prune_user_cache(redis_pool, username)
-    cache = cast(UserCache | None, await get_user_data(redis_pool, username))
+    cache = cast(
+        UserCache | None,
+        await rate_limiter_service.get_user_data(redis_pool, username),
+    )
     if not cache or not _cache_contains_refresh_token(cache, old_refresh):
         if family_id:
-            await _revoke_refresh_family(redis_pool, family_id)
-            await _revoke_user_access_tokens(redis_pool, username)
+            await revoke_refresh_family(
+                redis_pool, family_id, refresh_ttl=REFRESH_TTL,
+            )
+            await revoke_user_access_tokens(
+                redis_pool,
+                username,
+                get_user_data_fn=rate_limiter_service.get_user_data,
+                revoke_access_token_jtis_fn=revoke_access_token_jtis,
+            )
             raise HTTPException(status_code=401, detail='Refresh token reused')
         raise HTTPException(status_code=401, detail='Refresh token invalid')
+    db_user = cast(DbUserInfo, cache['db_user'])
+    if (
+        deployment is not None
+        and db_user.get('tenant_id') != str(deployment.tenant_id)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'deployment_configuration_changed',
+                'message': 'Deployment configuration changed; sign in again.',
+            },
+        )
 
     if family_id:
-        await _consume_refresh_token_state(
+        await consume_refresh_token_state(
             redis_pool,
             old_refresh,
             family_id,
             username,
+            refresh_ttl=REFRESH_TTL,
+            revoke_refresh_family_fn=partial(
+                revoke_refresh_family,
+                refresh_ttl=REFRESH_TTL,
+            ),
+            revoke_user_access_tokens_fn=partial(
+                revoke_user_access_tokens,
+                get_user_data_fn=rate_limiter_service.get_user_data,
+                revoke_access_token_jtis_fn=revoke_access_token_jtis,
+            ),
         )
 
     _remove_refresh_token_from_cache(cache, old_refresh)
 
     # Generate new JWT tokens
     new_jti = str(uuid4())
-    access_token = jwt_access.create_access_token(
-        subject={
-            'username': username,
-            'user_id': cast(DbUserInfo, cache['db_user'])['id'],
-            'role': cast(DbUserInfo, cache['db_user'])['role'],
-            'jti': new_jti,
-            'features': cache['feature_names'],
-        },
+    access_token = issue_access_token(
+        jwt_access,
+        username=username,
+        user_id=db_user['id'],
+        role=db_user['role'],
+        jti=new_jti,
+        feature_names=cache['feature_names'],
         expires_delta=ACCESS_TTL,
+        deployment=deployment,
     )
     new_family_id = family_id or str(uuid4())
-    new_refresh = jwt_refresh.create_access_token(
-        subject={
-            'username': username,
-            'family_id': new_family_id,
-            'token_id': str(uuid4()),
-        },
+    new_refresh = issue_refresh_token(
+        jwt_refresh,
+        username=username,
+        family_id=new_family_id,
+        token_id=str(uuid4()),
         expires_delta=REFRESH_TTL,
+        deployment=deployment,
     )
 
     # Update and store new tokens in Redis cache
     cache['jti_list'].append(new_jti)
     # store access token expiry for pruning
-    at_payload = jwt_access.decode_token(access_token, verify_exp=False)
+    at_payload = jwt_access.decode_token(
+        access_token,
+        verify_exp=False,
+        expected_issuer=deployment.issuer if deployment else None,
+        expected_audience=deployment.audience if deployment else None,
+    )
     cache['jti_meta'][new_jti] = int(at_payload['exp'])
     _store_refresh_token_in_cache(
         cache,
         new_refresh,
         hash_refresh_token=hash_refresh_token,
     )
-    await set_user_data(
+    await rate_limiter_service.set_user_data(
         redis_pool,
         username,
         cast(dict[str, object], cache),
     )
-    await _register_refresh_token_state(
+    await register_refresh_token_state(
         redis_pool,
         new_refresh,
         username,
         new_family_id,
+        refresh_ttl=REFRESH_TTL,
         enforce_family_active=bool(family_id),
     )
 
-    return {
-        'access_token': access_token,
-        'refresh_token': new_refresh,
-        'feature_names': cache['feature_names'],
-    }
+    return cast(
+        TokenPairData, {
+            'access_token': access_token,
+            'refresh_token': new_refresh,
+            'feature_names': cache['feature_names'],
+            **({'deployment': deployment.as_response()} if deployment else {}),
+        },
+    )

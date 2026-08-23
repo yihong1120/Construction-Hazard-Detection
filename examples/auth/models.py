@@ -3,15 +3,21 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from datetime import timezone
+from uuid import UUID
+from uuid import uuid4
 
 from pwdlib import PasswordHash
 from pwdlib.exceptions import UnknownHashError
+from sqlalchemy import BigInteger
 from sqlalchemy import Boolean
 from sqlalchemy import CheckConstraint
 from sqlalchemy import Column
 from sqlalchemy import DateTime
+from sqlalchemy import event
 from sqlalchemy import Float
 from sqlalchemy import ForeignKey
+from sqlalchemy import Index
+from sqlalchemy import inspect
 from sqlalchemy import Integer
 from sqlalchemy import JSON
 from sqlalchemy import String
@@ -19,18 +25,279 @@ from sqlalchemy import Table
 from sqlalchemy import Text
 from sqlalchemy import text
 from sqlalchemy import UniqueConstraint
+from sqlalchemy import Uuid
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
 
 from examples.auth.database import Base
 
-password_hash = PasswordHash.recommended()
-
 
 def utc_now() -> datetime:
     """Return a timezone-aware UTC timestamp for ORM-side defaults."""
     return datetime.now(timezone.utc)
+
+
+TENANT_STATUS_ACTIVE = 'active'
+TENANT_STATUS_DISABLED = 'disabled'
+TENANT_STATUS_VALUES = (TENANT_STATUS_ACTIVE, TENANT_STATUS_DISABLED)
+DEPLOYMENT_STATUS_ACTIVE = 'active'
+DEPLOYMENT_STATUS_REVOKED = 'revoked'
+DEPLOYMENT_STATUS_VALUES = (
+    DEPLOYMENT_STATUS_ACTIVE,
+    DEPLOYMENT_STATUS_REVOKED,
+)
+
+
+class Tenant(Base):
+    """Formal tenant boundary used by every authenticated account."""
+
+    __tablename__ = 'tenants'
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'disabled')",
+            name='chk_tenants_status',
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=TENANT_STATUS_ACTIVE,
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now,
+        onupdate=utc_now,
+    )
+
+    deployments: Mapped[list[Deployment]] = relationship(
+        'Deployment', back_populates='tenant', cascade='all, delete-orphan',
+    )
+    users: Mapped[list[User]] = relationship('User', back_populates='tenant')
+
+
+class Deployment(Base):
+    """One canonical API deployment published through the signed Registry."""
+
+    __tablename__ = 'deployments'
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'revoked')",
+            name='chk_deployments_status',
+        ),
+        CheckConstraint(
+            'config_revision >= 1',
+            name='chk_deployments_config_revision',
+        ),
+        UniqueConstraint('api_base_url', name='uq_deployments_api_base_url'),
+        Index('idx_deployments_tenant', 'tenant_id'),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4,
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='RESTRICT'),
+        nullable=False,
+    )
+    api_base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    config_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1,
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=DEPLOYMENT_STATUS_ACTIVE,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now,
+        onupdate=utc_now,
+    )
+
+    tenant: Mapped[Tenant] = relationship(
+        'Tenant', back_populates='deployments', lazy='joined',
+    )
+
+
+class DeploymentEnrollmentCode(Base):
+    """One-time native-device enrollment verifier for a deployment.
+
+    The raw enrollment code is deliberately never represented by this model.
+    Only its HMAC-SHA256 verifier is persisted, so a database backup cannot be
+    used as a list of usable company activation codes.
+    """
+
+    __tablename__ = 'deployment_enrollment_codes'
+    __table_args__ = (
+        CheckConstraint(
+            'expires_at > created_at',
+            name='chk_deployment_enrollment_codes_expiry',
+        ),
+        UniqueConstraint(
+            'code_verifier_hash',
+            name='uq_deployment_enrollment_codes_verifier',
+        ),
+        Index(
+            'uq_deployment_enrollment_codes_public_id',
+            'public_id',
+            unique=True,
+        ),
+        Index(
+            'idx_deployment_enrollment_codes_deployment',
+            'deployment_id',
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # The internal bigint key remains private.  Management clients address an
+    # invitation by this opaque UUID so database row counts are not exposed.
+    public_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        default=uuid4,
+    )
+    deployment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey('deployments.id', ondelete='RESTRICT'),
+        nullable=False,
+    )
+    code_verifier_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    redeemed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now,
+    )
+    created_by: Mapped[str] = mapped_column(String(160), nullable=False)
+
+
+class DeploymentEnrollmentCodeAuditLog(Base):
+    """Immutable, non-secret audit event for an enrollment invitation."""
+
+    __tablename__ = 'deployment_enrollment_code_audit_logs'
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('created', 'revoked')",
+            name='chk_deployment_enrollment_code_audit_action',
+        ),
+        Index(
+            'idx_deployment_enrollment_code_audit_code',
+            'enrollment_code_id',
+            text('created_at DESC'),
+        ),
+        Index(
+            'idx_deployment_enrollment_code_audit_deployment',
+            'deployment_id',
+            text('created_at DESC'),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    enrollment_code_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey('deployment_enrollment_codes.id', ondelete='RESTRICT'),
+        nullable=False,
+    )
+    deployment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey('deployments.id', ondelete='RESTRICT'),
+        nullable=False,
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='RESTRICT'),
+        nullable=False,
+    )
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now,
+    )
+
+
+@event.listens_for(Deployment, 'before_insert')
+def _canonicalise_new_deployment(
+    _mapper: object,
+    _connection: object,
+    target: Deployment,
+) -> None:
+    """Reject non-canonical deployment origins before they reach storage."""
+    from examples.auth.deployment_context import canonical_api_base_url
+
+    target.api_base_url = canonical_api_base_url(target.api_base_url)
+    if target.config_revision < 1:
+        raise ValueError('config_revision must start at 1')
+
+
+@event.listens_for(Deployment, 'before_update')
+def _revision_on_deployment_change(
+    _mapper: object,
+    _connection: object,
+    target: Deployment,
+) -> None:
+    """Invalidate tokens whenever the deployment security contract changes."""
+    from examples.auth.deployment_context import canonical_api_base_url
+
+    target.api_base_url = canonical_api_base_url(target.api_base_url)
+    state = inspect(target)
+    changed = any(
+        state.attrs[name].history.has_changes()
+        for name in ('tenant_id', 'api_base_url', 'status')
+    )
+    if changed and not state.attrs.config_revision.history.has_changes():
+        target.config_revision += 1
+
+
+user_sites_table: Table = Table(
+    'user_sites',
+    Base.metadata,
+    Column('user_id', ForeignKey('users.id'), primary_key=True),
+    Column('site_id', ForeignKey('sites.id'), primary_key=True),
+)
+
+
+site_groups_table: Table = Table(
+    'site_groups',
+    Base.metadata,
+    Column(
+        'site_id', ForeignKey('sites.id', ondelete='CASCADE'),
+        primary_key=True,
+    ),
+    Column(
+        'group_id', ForeignKey('group_info.id', ondelete='CASCADE'),
+        primary_key=True,
+    ),
+    Column(
+        'created_at',
+        DateTime(timezone=True),
+        server_default=text('CURRENT_TIMESTAMP'),
+    ),
+)
+
+
+# -------------------------------------------------------
+#  Site Model
+# -------------------------------------------------------
+password_hash = PasswordHash.recommended()
 
 
 # -------------------------------------------------------
@@ -58,7 +325,7 @@ class Feature(Base):
 
     __tablename__ = 'features'
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     feature_name: Mapped[str] = mapped_column(
         String(50), unique=True, nullable=False,
     )
@@ -84,6 +351,11 @@ class Feature(Base):
     )
 
     def __repr__(self) -> str:
+        """Perform repr.
+
+        Returns:
+            The callable result.
+        """
         return f"<Feature id={self.id} name={self.feature_name}>"
 
 
@@ -186,53 +458,17 @@ class Group(Base):
     )
 
     def __repr__(self) -> str:
+        """Perform repr.
+
+        Returns:
+            The callable result.
+        """
         return f"<Group id={self.id} name={self.name}>"
 
 
 # -------------------------------------------------------
 #  Association Table: Many-to-Many Relationship between User and Site
 # -------------------------------------------------------
-user_sites_table: Table = Table(
-    'user_sites',
-    Base.metadata,
-    Column('user_id', ForeignKey('users.id'), primary_key=True),
-    Column('site_id', ForeignKey('sites.id'), primary_key=True),
-)
-
-
-class SiteNotificationPreference(Base):
-    """Per-user notification preference for a specific site."""
-
-    __tablename__ = 'site_notification_preferences'
-
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey('users.id', ondelete='CASCADE'),
-        primary_key=True,
-    )
-    site_id: Mapped[int] = mapped_column(
-        ForeignKey('sites.id', ondelete='CASCADE'),
-        primary_key=True,
-    )
-    is_enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True,
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=utc_now,
-        onupdate=utc_now,
-        nullable=False,
-    )
-
-    user: Mapped[User] = relationship(
-        'User', back_populates='notification_preferences',
-    )
-    site: Mapped[Site] = relationship(
-        'Site', back_populates='notification_preferences',
-    )
 
 
 # -------------------------------------------------------
@@ -286,10 +522,21 @@ class UserProfile(Base):
         nullable=False,
     )
 
-    # 一對一
+    # One-to-one relationship.
     user: Mapped[User] = relationship(
         'User', back_populates='profile', uselist=False,
     )
+
+
+@event.listens_for(UserProfile.email, 'set', retval=True)
+def _normalise_profile_email(
+    _target: UserProfile,
+    value: str | None,
+    _oldvalue: object,
+    _initiator: object,
+) -> str | None:
+    """Store e-mail addresses in one canonical form for indexed lookups."""
+    return value.strip().lower() if isinstance(value, str) else value
 
 
 class User(Base):
@@ -324,6 +571,12 @@ class User(Base):
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
     )
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='RESTRICT'),
+        nullable=False,
+        index=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now,
@@ -348,6 +601,8 @@ class User(Base):
         back_populates='users',
         lazy='joined',
     )
+
+    tenant: Mapped[Tenant] = relationship('Tenant', back_populates='users')
 
     # Many-to-many relationship to Site
     # This is an association table linking users to sites
@@ -439,6 +694,7 @@ class User(Base):
             'username': self.username,
             'role': self.role,
             'status': self.status,
+            'tenant_id': str(self.tenant_id),
             'created_at': self.created_at,
             'updated_at': self.updated_at,
         }
@@ -495,134 +751,6 @@ class UserIdentity(Base):
     user: Mapped[User] = relationship(
         'User',
         back_populates='identities',
-    )
-
-
-class Notification(Base):
-    """In-app notification record for notification center history."""
-
-    __tablename__ = 'notifications'
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey('users.id', ondelete='CASCADE'),
-        nullable=False,
-        index=True,
-    )
-    type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
-    title: Mapped[str] = mapped_column(String(120), nullable=False)
-    body: Mapped[str] = mapped_column(Text, nullable=False)
-    deep_link: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    is_read: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-        index=True,
-    )
-    metadata_json: Mapped[dict[str, object]] = mapped_column(
-        'metadata',
-        JSON,
-        nullable=False,
-        default=dict,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utc_now,
-    )
-
-    user: Mapped[User] = relationship(
-        'User',
-        back_populates='notifications',
-    )
-
-
-class FcmDeviceToken(Base):
-    """Push-notification device token stored as encrypted source of truth."""
-
-    __tablename__ = 'fcm_device_tokens'
-    __table_args__ = (
-        UniqueConstraint(
-            'device_token_hash',
-            name='uq_fcm_device_tokens_token_hash',
-        ),
-        CheckConstraint(
-            "platform IN ('android', 'ios', 'web', 'unknown')",
-            name='chk_fcm_device_tokens_platform',
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey('users.id', ondelete='CASCADE'),
-        nullable=False,
-        index=True,
-    )
-    device_token_encrypted: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-    )
-    device_token_hash: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        unique=True,
-        index=True,
-    )
-    platform: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        default='unknown',
-    )
-    device_lang: Mapped[str] = mapped_column(String(20), nullable=False)
-    permission_status: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        default='unknown',
-    )
-    app_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    web_vapid_key_available: Mapped[bool | None] = mapped_column(
-        Boolean,
-        nullable=True,
-    )
-    web_service_worker_registered: Mapped[bool | None] = mapped_column(
-        Boolean,
-        nullable=True,
-    )
-    last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=utc_now,
-    )
-    last_success_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-    last_failure_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-    failure_reason: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-    )
-    disabled_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-        index=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=utc_now,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=utc_now,
-        onupdate=utc_now,
-    )
-
-    user: Mapped[User] = relationship(
-        'User',
-        back_populates='fcm_device_tokens',
     )
 
 
@@ -706,28 +834,6 @@ class UserConsent(Base):
 
 # -------------------------------------------------------
 #  site_groups  (Many-to-Many: Site ↔ Group)
-# -------------------------------------------------------
-site_groups_table: Table = Table(
-    'site_groups',
-    Base.metadata,
-    Column(
-        'site_id', ForeignKey('sites.id', ondelete='CASCADE'),
-        primary_key=True,
-    ),
-    Column(
-        'group_id', ForeignKey('group_info.id', ondelete='CASCADE'),
-        primary_key=True,
-    ),
-    Column(
-        'created_at',
-        DateTime(timezone=True),
-        server_default=text('CURRENT_TIMESTAMP'),
-    ),
-)
-
-
-# -------------------------------------------------------
-#  Site Model
 # -------------------------------------------------------
 class Site(Base):
     """
@@ -896,6 +1002,199 @@ class StreamConfig(Base):
 # -------------------------------------------------------
 #  Violation Model
 # -------------------------------------------------------
+class SiteNotificationPreference(Base):
+    """Per-user notification preference for a specific site."""
+
+    __tablename__ = 'site_notification_preferences'
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey('users.id', ondelete='CASCADE'),
+        primary_key=True,
+    )
+    site_id: Mapped[int] = mapped_column(
+        ForeignKey('sites.id', ondelete='CASCADE'),
+        primary_key=True,
+    )
+    is_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship(
+        'User', back_populates='notification_preferences',
+    )
+    site: Mapped[Site] = relationship(
+        'Site', back_populates='notification_preferences',
+    )
+
+
+class Notification(Base):
+    """In-app notification record for notification center history."""
+
+    __tablename__ = 'notifications'
+    __table_args__ = (
+        CheckConstraint(
+            "type IN ('signature', 'violation', 'document', 'site_alert', 'system')",
+            name='chk_notifications_type',
+        ),
+        Index(
+            'idx_notifications_user_created_id',
+            'user_id',
+            text('created_at DESC'),
+            text('id DESC'),
+        ),
+        Index(
+            'idx_notifications_user_read_created_id',
+            'user_id',
+            'is_read',
+            text('created_at DESC'),
+            text('id DESC'),
+        ),
+        Index(
+            'idx_notifications_user_type_created_id',
+            'user_id',
+            'type',
+            text('created_at DESC'),
+            text('id DESC'),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+    )
+    type: Mapped[str] = mapped_column(String(30), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    deep_link: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_read: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        'metadata',
+        JSON,
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now,
+    )
+
+    user: Mapped[User] = relationship(
+        'User',
+        back_populates='notifications',
+    )
+
+
+class FcmDeviceToken(Base):
+    """Push-notification device token stored as encrypted source of truth."""
+
+    __tablename__ = 'fcm_device_tokens'
+    __table_args__ = (
+        UniqueConstraint(
+            'device_token_hash',
+            name='uq_fcm_device_tokens_token_hash',
+        ),
+        CheckConstraint(
+            "platform IN ('android', 'ios', 'web', 'unknown')",
+            name='chk_fcm_device_tokens_platform',
+        ),
+        Index(
+            'idx_fcm_device_tokens_user_active',
+            'user_id',
+            'disabled_at',
+        ),
+        Index(
+            'idx_fcm_device_tokens_user_seen',
+            'user_id',
+            text('last_seen_at DESC'),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+    )
+    device_token_encrypted: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+    device_token_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    platform: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default='unknown',
+    )
+    device_lang: Mapped[str] = mapped_column(String(20), nullable=False)
+    permission_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default='unknown',
+    )
+    app_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    web_vapid_key_available: Mapped[bool | None] = mapped_column(
+        Boolean,
+        nullable=True,
+    )
+    web_service_worker_registered: Mapped[bool | None] = mapped_column(
+        Boolean,
+        nullable=True,
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    last_failure_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    failure_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    disabled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+    user: Mapped[User] = relationship(
+        'User',
+        back_populates='fcm_device_tokens',
+    )
+
+
 class Violation(Base):
     """
     Represents a safety violation detected at a specific site and time.
@@ -918,7 +1217,7 @@ class Violation(Base):
 
     __tablename__ = 'violations'
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     stream_name: Mapped[str] = mapped_column(String(80), nullable=False)
     detection_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now,
@@ -933,7 +1232,6 @@ class Violation(Base):
     stream_config_id: Mapped[int | None] = mapped_column(
         ForeignKey('stream_configs.id', ondelete='SET NULL'),
         nullable=True,
-        index=True,
     )
     violation_type_codes: Mapped[list[str]] = mapped_column(
         JSON,
@@ -942,7 +1240,7 @@ class Violation(Base):
     )
 
     is_flagged: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, index=True,
+        Boolean, nullable=False, default=False,
     )
     flag_reason: Mapped[str | None] = mapped_column(
         String(120), nullable=True,
@@ -955,7 +1253,7 @@ class Violation(Base):
         DateTime(timezone=True), nullable=True,
     )
     review_status: Mapped[str | None] = mapped_column(
-        String(20), nullable=True, default=None, index=True,
+        String(20), nullable=True, default=None,
     )
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_by: Mapped[int | None] = mapped_column(
@@ -983,6 +1281,71 @@ class Violation(Base):
         back_populates='violations',
     )
 
+    __table_args__ = (
+        CheckConstraint(
+            "review_status IN ('pending', 'resolved', 'dismissed')",
+            name='chk_vio_review_status',
+        ),
+        # Match the list keyset ordering exactly.  The trailing primary key
+        # keeps timestamp ties index-only and cursor seeks deterministic.
+        Index(
+            'idx_vio_site_detection_id',
+            'site',
+            detection_time.desc(),
+            id.desc(),
+        ),
+        Index(
+            'idx_vio_stream_config_detection_id',
+            'stream_config_id',
+            detection_time.desc(),
+            id.desc(),
+        ),
+        Index('idx_vio_flagged_status', 'is_flagged', 'review_status'),
+        Index('idx_vio_reviewed_at', 'reviewed_at'),
+    )
+
+
+class SiteMediaCleanupJob(Base):
+    """Durable post-commit cleanup task for site-owned evidence files."""
+
+    __tablename__ = 'site_media_cleanup_jobs'
+    __table_args__ = (
+        Index(
+            'idx_site_media_cleanup_jobs_pending',
+            'completed_at',
+            'lease_expires_at',
+            'id',
+            postgresql_where=text('completed_at IS NULL'),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+    path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
 
 class ViolationFeedback(Base):
     """
@@ -993,24 +1356,38 @@ class ViolationFeedback(Base):
     """
 
     __tablename__ = 'violation_feedback'
+    __table_args__ = (
+        CheckConstraint(
+            'feedback_type IN ('
+            "'false_positive', 'false_negative', 'wrong_class', 'bad_bbox'"
+            ')',
+            name='chk_vf_feedback_type',
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'reviewed', 'accepted', 'rejected')",
+            name='chk_vf_status',
+        ),
+        Index('idx_vf_violation_created', 'violation_id', 'created_at'),
+        Index('idx_vf_type_status', 'feedback_type', 'status'),
+        Index('idx_vf_user_created', 'user_id', 'created_at'),
+        Index('idx_vf_status_created', 'status', 'created_at'),
+    )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     violation_id: Mapped[int] = mapped_column(
         ForeignKey('violations.id', ondelete='CASCADE'),
         nullable=False,
-        index=True,
     )
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey('users.id', ondelete='SET NULL'),
         nullable=True,
-        index=True,
     )
     anonymous_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     target_detection_id: Mapped[str | None] = mapped_column(
         String(120), nullable=True,
     )
     feedback_type: Mapped[str] = mapped_column(
-        String(30), nullable=False, index=True,
+        String(30), nullable=False,
     )
     original_label: Mapped[str | None] = mapped_column(
         String(120), nullable=True,
@@ -1030,7 +1407,7 @@ class ViolationFeedback(Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default='pending', index=True,
+        String(20), nullable=False, default='pending',
     )
     reviewer_id: Mapped[int | None] = mapped_column(
         ForeignKey('users.id', ondelete='SET NULL'),
@@ -1048,12 +1425,20 @@ class ViolationReviewAuditLog(Base):
     """Audit trail for review status changes on violation records."""
 
     __tablename__ = 'violation_review_audit_logs'
+    __table_args__ = (
+        CheckConstraint(
+            "new_status IN ('pending', 'resolved', 'dismissed')",
+            name='chk_vral_new_status',
+        ),
+        Index('idx_vral_violation_time', 'violation_id', 'reviewed_at'),
+        Index('idx_vral_reviewer_time', 'reviewed_by', 'reviewed_at'),
+        Index('idx_vral_action_time', 'action', 'reviewed_at'),
+    )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     violation_id: Mapped[int] = mapped_column(
         ForeignKey('violations.id', ondelete='CASCADE'),
         nullable=False,
-        index=True,
     )
     action: Mapped[str] = mapped_column(
         String(40),

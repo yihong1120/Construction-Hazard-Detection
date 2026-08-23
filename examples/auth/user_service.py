@@ -6,6 +6,7 @@ from typing import TypeAlias
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 from sqlalchemy.orm import selectinload
 
 from examples.auth.models import Site
@@ -90,6 +91,35 @@ async def list_effective_sites_for_user(
     return list((await db.execute(stmt_sites)).scalars().unique().all())
 
 
+async def list_effective_site_names_for_user(
+    user: User,
+    db: AsyncSession,
+) -> list[str]:
+    """Return only the site names needed by request-time authorisation.
+
+    Streaming authorisation does not need site ORM instances (or their
+    relationships).  Keeping this projection narrow reduces both database
+    transfer and identity-map growth on long-lived API workers.
+    """
+    if user.role == 'super_admin':
+        result = await db.execute(select(Site.name).order_by(Site.id))
+        return [str(getattr(name, 'name', name)) for name in result.scalars().all()]
+    if user.group_id is None:
+        return []
+    result = await db.execute(
+        select(Site.name)
+        .join(user_sites_table, user_sites_table.c.site_id == Site.id)
+        .join(site_groups_table, site_groups_table.c.site_id == Site.id)
+        .where(
+            user_sites_table.c.user_id == user.id,
+            site_groups_table.c.group_id == user.group_id,
+        )
+        .order_by(Site.name)
+        .distinct(),
+    )
+    return [str(getattr(name, 'name', name)) for name in result.scalars().all()]
+
+
 async def load_user_with_effective_sites(
     username: str,
     db: AsyncSession,
@@ -158,12 +188,26 @@ async def load_user_access_context(
     Raises:
         HTTPException: With status code 401 if the user cannot be found.
     """
-    user, sites = await load_user_with_effective_sites(
-        username,
-        db,
-        status_code=401,
-        detail='Invalid user',
+    # Keep the hot authorisation path independent of ``User.group``, profile,
+    # and site relationship loading.  Callers only inspect status, role, and
+    # the final allowed site-name projection.
+    stmt_user = (
+        select(User)
+        .options(
+            load_only(
+                User.id,
+                User.status,
+                User.role,
+                User.group_id,
+            ),
+        )
+        .where(User.username == username)
     )
-    user_role: str = user.role
-    user_site_names: list[str] = [site.name for site in sites]
+    user: User | None = (
+        (await db.execute(stmt_user)).unique().scalars().one_or_none()
+    )
+    if user is None:
+        raise HTTPException(status_code=401, detail='Invalid user')
+    user_role = user.role
+    user_site_names = await list_effective_site_names_for_user(user, db)
     return user, user_site_names, user_role

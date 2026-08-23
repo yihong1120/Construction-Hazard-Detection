@@ -31,6 +31,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         (admin by default), and a mock site object for use in all tests.
         """
         self.db: AsyncMock = AsyncMock()
+        self.db.add = MagicMock()
         self.current_user: MagicMock = MagicMock()
         self.current_user.role = 'admin'
         self.current_user.group_id = 1
@@ -62,9 +63,12 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_limit: AsyncMock,
         mock_list: AsyncMock,
     ) -> None:
-        """Test listing stream configurations successfully.
+        """Test endpoint list stream configs.
 
-        Ensures the endpoint returns a list of configs when the site exists.
+        Args:
+            mock_is_super_admin: Value used by this callable.
+            mock_limit: Value used by this callable.
+            mock_list: Value used by this callable.
         """
         mock_limit.return_value = (2, 5)
         # Mock a complete stream config object
@@ -113,9 +117,12 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_limit: AsyncMock,
         mock_create: AsyncMock,
     ) -> None:
-        """Test creating a stream configuration successfully.
+        """Test endpoint create stream config.
 
-        Ensures the endpoint returns the new config ID when creation succeeds.
+        Args:
+            mock_is_super_admin: Value used by this callable.
+            mock_limit: Value used by this callable.
+            mock_create: Value used by this callable.
         """
         mock_limit.return_value = (1, 5)
         mock_create.return_value = MagicMock(id=1)
@@ -140,9 +147,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created_payload.group_id, 1)
 
     async def test_endpoint_create_stream_config_limit_reached(self) -> None:
-        """Test creating a stream configuration when limit is reached.
-
-        Should raise HTTP 403 if the group stream limit is already reached.
+        """Test endpoint create stream config limit reached.
         """
         self.db.get.return_value = self.site_mock
 
@@ -209,12 +214,12 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
                 SiteStreamConfigItem(
                     id=11,
                     stream_name='Old Cam',
-                    rtsp_url='rtsp://updated',
+                    video_url='rtsp://updated',
                     recognition_enabled=False,
                 ),
                 SiteStreamConfigItem(
                     stream_name='New Cam',
-                    rtsp_url='rtsp://new',
+                    video_url='rtsp://new',
                 ),
             ],
         )
@@ -240,18 +245,17 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
                 self.current_user,
             )
 
-        mock_list.assert_any_await(1, self.db, group_id=1)
-        mock_update.assert_awaited_once()
-        mock_create.assert_awaited_once()
-        assert mock_create.await_args is not None
-        created_payload = mock_create.await_args.args[0]
-        self.assertEqual(created_payload.site_id, 1)
-        self.assertEqual(created_payload.group_id, 1)
-        self.assertEqual(created_payload.video_url, 'rtsp://new')
-        self.assertTrue(created_payload.recognition_enabled)
-        assert mock_update.await_args is not None
-        updated_payload = mock_update.await_args.args[1]
-        self.assertFalse(updated_payload.recognition_enabled)
+        mock_list.assert_awaited_once_with(1, self.db)
+        mock_update.assert_not_awaited()
+        mock_create.assert_not_awaited()
+        self.db.add.assert_called_once()
+        created_config = self.db.add.call_args.args[0]
+        self.assertEqual(created_config.site_id, 1)
+        self.assertEqual(created_config.group_id, 1)
+        self.assertEqual(created_config.video_url, 'rtsp://new')
+        self.assertTrue(created_config.recognition_enabled)
+        self.assertFalse(existing.recognition_enabled)
+        self.db.commit.assert_awaited_once()
         self.assertEqual(len(response), 1)
 
     async def test_endpoint_put_site_stream_config_rejects_duplicate_names(
@@ -263,11 +267,11 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
             streams=[
                 SiteStreamConfigItem(
                     stream_name='Cam1',
-                    rtsp_url='rtsp://one',
+                    video_url='rtsp://one',
                 ),
                 SiteStreamConfigItem(
                     stream_name='Cam1',
-                    rtsp_url='rtsp://two',
+                    video_url='rtsp://two',
                 ),
             ],
         )
@@ -292,9 +296,11 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_update: AsyncMock,
     ) -> None:
-        """Test updating stream configuration successfully.
+        """Test endpoint update stream config.
 
-        Ensures the endpoint returns a success message when update is valid.
+        Args:
+            mock_is_super_admin: Value used by this callable.
+            mock_update: Value used by this callable.
         """
         cfg_mock: MagicMock = MagicMock(site=self.site_mock, stream_name='old')
         cfg_mock.group_id = 1
@@ -323,9 +329,10 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_is_super_admin: MagicMock,
     ) -> None:
-        """Test updating stream configuration with name conflict.
+        """Test endpoint update stream config name conflict.
 
-        Should raise HTTP 400 if the new name already exists in the site.
+        Args:
+            mock_is_super_admin: Value used by this callable.
         """
         cfg_mock: MagicMock = MagicMock(site=self.site_mock, stream_name='old')
         cfg_mock.group_id = 1
@@ -356,9 +363,11 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_delete: AsyncMock,
     ) -> None:
-        """Test deleting stream configuration successfully.
+        """Test endpoint delete stream config.
 
-        Ensures the endpoint returns a success message when deletion is valid.
+        Args:
+            mock_is_super_admin: Value used by this callable.
+            mock_delete: Value used by this callable.
         """
         cfg_mock: MagicMock = MagicMock(site=self.site_mock)
         cfg_mock.group_id = 1
@@ -386,10 +395,11 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_limit: AsyncMock,
     ) -> None:
-        """Test retrieving group stream limit successfully.
+        """Test endpoint group stream limit.
 
-        Ensures the endpoint returns correct stream count and limit for the
-        group.
+        Args:
+            mock_is_super_admin: Value used by this callable.
+            mock_limit: Value used by this callable.
         """
         mock_limit.return_value = (3, 10)
         self.current_user.role = 'admin'
@@ -538,6 +548,14 @@ if __name__ == '__main__':
 
 
 def _site(*group_ids: int) -> Site:
+    """Perform site.
+
+    Args:
+        *group_ids: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     site = Site()
     site.groups = [Group(id=group_id) for group_id in group_ids]
     return site
@@ -547,7 +565,10 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
     """Exercise stream ownership and batch upsert guardrails."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db = AsyncMock()
+        self.db.add = MagicMock()
         self.admin = User(
             role='admin',
             group_id=1,
@@ -643,7 +664,7 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
             streams=[
                 SiteStreamConfigItem(
                     stream_name='New',
-                    rtsp_url='rtsp://new',
+                    video_url='rtsp://new',
                 ),
             ],
         )
@@ -657,11 +678,6 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 'examples.db_management.routers.streams.list_stream_configs',
                 new_callable=AsyncMock,
                 return_value=[],
-            ),
-            patch(
-                'examples.db_management.routers.streams.'
-                '_ensure_stream_name_available',
-                new_callable=AsyncMock,
             ),
             patch(
                 'examples.db_management.routers.streams.'
@@ -683,7 +699,7 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 SiteStreamConfigItem(
                     id=999,
                     stream_name='Missing',
-                    rtsp_url='rtsp://missing',
+                    video_url='rtsp://missing',
                 ),
             ],
         )
@@ -737,7 +753,7 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 SiteStreamConfigItem(
                     id=7,
                     stream_name='Renamed',
-                    rtsp_url='rtsp://renamed',
+                    video_url='rtsp://renamed',
                 ),
             ],
         )
@@ -754,15 +770,6 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
             ),
             patch(
                 'examples.db_management.routers.streams.'
-                '_ensure_stream_name_available',
-                new_callable=AsyncMock,
-            ) as ensure_name,
-            patch(
-                'examples.db_management.routers.streams.update_stream_config',
-                new_callable=AsyncMock,
-            ) as update,
-            patch(
-                'examples.db_management.routers.streams.'
                 '_list_site_stream_config_reads',
                 new_callable=AsyncMock,
                 return_value=[],
@@ -776,13 +783,10 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result, [])
-        ensure_name.assert_awaited_once_with(
-            1,
-            'Renamed',
-            self.db,
-            exclude_config_id=7,
-        )
-        update.assert_awaited_once()
+        self.assertEqual(existing.stream_name, 'Renamed')
+        self.assertEqual(existing.video_url, 'rtsp://renamed')
+        self.db.flush.assert_awaited_once()
+        self.db.commit.assert_awaited_once()
 
 
 if __name__ == '__main__':

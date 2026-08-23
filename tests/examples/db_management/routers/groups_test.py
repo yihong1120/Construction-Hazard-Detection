@@ -51,9 +51,11 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_list_groups: AsyncMock,
     ) -> None:
-        """Test super admin lists all groups.
+        """Test endpoint list groups.
 
-        Ensures that the endpoint returns a list of groups as expected.
+        Args:
+            mock_is_super_admin: Value used by this callable.
+            mock_list_groups: Value used by this callable.
         """
         mock_list_groups.return_value = [self.example_group]
 
@@ -93,10 +95,10 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_create_group(
         self, mock_create_group: AsyncMock,
     ) -> None:
-        """Test creating a new group.
+        """Test endpoint create group.
 
-        Verifies that the endpoint creates a group and returns the
-        correct object.
+        Args:
+            mock_create_group: Value used by this callable.
         """
         payload: GroupCreate = GroupCreate(
             name='New Group', uniform_number='87654321',
@@ -119,10 +121,10 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_update_group_success(
         self, mock_update_group: AsyncMock,
     ) -> None:
-        """Test successfully updating an existing group.
+        """Test endpoint update group success.
 
-        Ensures that the endpoint updates the group and returns a
-        success message.
+        Args:
+            mock_update_group: Value used by this callable.
         """
         payload: GroupUpdate = GroupUpdate(
             group_id=1, new_name='Updated Group', new_uniform_number=None,
@@ -146,10 +148,7 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_endpoint_update_group_nothing_to_update(self) -> None:
-        """Test updating a group with no fields provided raises error.
-
-        Ensures that the endpoint raises an HTTPException if no update
-        fields are provided.
+        """Test endpoint update group nothing to update.
         """
         payload: GroupUpdate = GroupUpdate(group_id=1)
 
@@ -160,10 +159,7 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.detail, 'Nothing to update.')
 
     async def test_endpoint_update_group_not_found(self) -> None:
-        """Test updating a non-existent group raises 404 error.
-
-        Ensures that the endpoint raises an HTTPException if the group
-        does not exist in the database.
+        """Test endpoint update group not found.
         """
         payload: GroupUpdate = GroupUpdate(
             group_id=999, new_name='Updated Group',
@@ -184,10 +180,10 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_delete_group_success(
         self, mock_delete_group: AsyncMock,
     ) -> None:
-        """Test successfully deleting a group.
+        """Test endpoint delete group success.
 
-        Ensures that the endpoint deletes the group and returns a
-        success message.
+        Args:
+            mock_delete_group: Value used by this callable.
         """
         payload: GroupDelete = GroupDelete(group_id=1)
         execute_result: MagicMock = MagicMock()
@@ -206,10 +202,7 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_endpoint_delete_group_not_found(self) -> None:
-        """Test deleting a non-existent group raises 404 error.
-
-        Ensures that the endpoint raises an HTTPException if the group
-        does not exist in the database.
+        """Test endpoint delete group not found.
         """
         payload: GroupDelete = GroupDelete(group_id=999)
         execute_result: MagicMock = MagicMock()

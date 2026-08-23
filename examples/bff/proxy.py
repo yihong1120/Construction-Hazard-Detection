@@ -7,6 +7,7 @@ import os
 import time
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
@@ -16,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.session_store import acquire_refresh_lock
 from examples.auth.session_store import auth_tokens
 from examples.auth.session_store import delete_auth_session
@@ -24,6 +26,7 @@ from examples.auth.session_store import release_refresh_lock
 from examples.auth.session_store import save_auth_tokens
 from examples.db_management.schemas.auth import RefreshRequest
 from examples.db_management.services.auth_services import refresh_tokens
+from src.http_client_pool import HttpClientPool
 
 # Uvicorn configures this logger at INFO level in the deployed tmux services.
 logger = logging.getLogger('uvicorn.error')
@@ -85,6 +88,8 @@ _DROP_REQUEST_HEADERS = {
     'transfer-encoding',
     'upgrade',
     'x-csrf-token',
+    'x-forwarded-host',
+    'x-forwarded-proto',
 }
 _PASS_RESPONSE_HEADERS = {
     'accept-ranges',
@@ -194,6 +199,8 @@ def _is_terminal_refresh_error(exc: HTTPException) -> bool:
     Returns:
         ``True`` for a permanent authentication failure.
     """
+    if exc.status_code == 409:
+        return True
     if exc.status_code != 401:
         return False
     detail = str(exc.detail).lower()
@@ -208,6 +215,7 @@ async def get_proxy_access_token(
     session_id: str,
     *,
     force_refresh: bool = False,
+    deployment: DeploymentBinding | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Return a valid BFF access token, refreshing it when necessary.
 
@@ -249,6 +257,7 @@ async def get_proxy_access_token(
             access_token,
             refresh_token,
             force_refresh=force_refresh,
+            deployment=deployment,
         )
     finally:
         await release_refresh_lock(redis, session_id, lock_owner)
@@ -297,6 +306,7 @@ async def _refresh_proxy_session(
     refresh_token: str,
     *,
     force_refresh: bool,
+    deployment: DeploymentBinding | None,
 ) -> tuple[str, dict[str, Any]]:
     """Refresh a lock-owning BFF session and persist its rotated tokens.
 
@@ -324,6 +334,7 @@ async def _refresh_proxy_session(
             RefreshRequest(refresh_token=latest_refresh or refresh_token),
             redis,
             hash_refresh_token=True,
+            deployment=deployment,
         )
     except HTTPException as exc:
         if _is_terminal_refresh_error(exc):
@@ -352,6 +363,7 @@ async def _get_proxy_access_token_or_503(
     request_path: str,
     *,
     force_refresh: bool = False,
+    deployment: DeploymentBinding | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Return a BFF access token or translate Redis failure to HTTP 503.
 
@@ -372,6 +384,7 @@ async def _get_proxy_access_token_or_503(
             redis,
             session_id,
             force_refresh=force_refresh,
+            deployment=deployment,
         )
     except RedisError as exc:
         logger.warning(
@@ -389,6 +402,7 @@ async def _get_proxy_access_token_or_503(
 def _proxy_request_headers(
     request: Request,
     access_token: str,
+    deployment: DeploymentBinding | None = None,
 ) -> dict[str, str]:
     """Build upstream headers without forwarding browser credentials.
 
@@ -406,6 +420,15 @@ def _proxy_request_headers(
     }
     headers['Authorization'] = f"Bearer {access_token}"
     headers['X-BFF-Request'] = '1'
+    if deployment is not None:
+        # The internal services resolve their deployment from the request's
+        # scheme and Host.  ``url`` points to a loopback upstream, so retain
+        # the verified public deployment authority instead of forwarding an
+        # untrusted browser-supplied Host/origin.
+        public_url = urlsplit(deployment.api_base_url)
+        headers['Host'] = public_url.netloc
+        headers['X-Forwarded-Host'] = public_url.netloc
+        headers['X-Forwarded-Proto'] = public_url.scheme
     return headers
 
 
@@ -414,6 +437,8 @@ async def proxy_request(
     redis: Redis,
     session_id: str,
     path: str,
+    *,
+    deployment: DeploymentBinding | None = None,
 ) -> Response:
     """Forward an authenticated request to an allow-listed upstream service.
 
@@ -437,6 +462,7 @@ async def proxy_request(
         redis,
         session_id,
         request.url.path,
+        deployment=deployment,
     )
     if request.method == 'GET' and _is_sse_request(request, suffix):
         return await _proxy_streaming_request(
@@ -445,17 +471,29 @@ async def proxy_request(
             session_id,
             url,
             access_token,
+            deployment,
         )
 
-    upstream = await _send_proxy_request(request, url, access_token)
+    upstream = await _send_proxy_request(
+        request,
+        url,
+        access_token,
+        deployment,
+    )
     if upstream.status_code == 401:
         access_token, _ = await _get_proxy_access_token_or_503(
             redis,
             session_id,
             request.url.path,
             force_refresh=True,
+            deployment=deployment,
         )
-        upstream = await _send_proxy_request(request, url, access_token)
+        upstream = await _send_proxy_request(
+            request,
+            url,
+            access_token,
+            deployment,
+        )
 
     return Response(
         content=upstream.content,
@@ -468,6 +506,7 @@ async def _send_proxy_request(
     request: Request,
     url: str,
     access_token: str,
+    deployment: DeploymentBinding | None = None,
 ) -> httpx.Response:
     """Send one non-streaming request to an allow-listed upstream service.
 
@@ -482,23 +521,46 @@ async def _send_proxy_request(
     Raises:
         HTTPException: If the upstream connection cannot be established.
     """
+    client, close_client = await _proxy_http_client(request)
     try:
-        async with httpx.AsyncClient(
-            timeout=UPSTREAM_TIMEOUT_SECONDS,
-            follow_redirects=False,
-        ) as client:
-            return await client.request(
-                request.method,
-                url,
-                params=request.query_params,
-                content=await request.body(),
-                headers=_proxy_request_headers(request, access_token),
-            )
+        return await client.request(
+            request.method,
+            url,
+            params=request.query_params,
+            content=await request.body(),
+            headers=_proxy_request_headers(
+                request,
+                access_token,
+                deployment,
+            ),
+        )
     except (httpx.TimeoutException, httpx.NetworkError) as exc:
         raise HTTPException(
             status_code=502,
             detail='bff_upstream_unavailable',
         ) from exc
+    finally:
+        if close_client:
+            await client.aclose()
+
+
+async def _proxy_http_client(
+    request: Request,
+) -> tuple[httpx.AsyncClient, bool]:
+    """Return the application pool client or a disposable test fallback."""
+    app = getattr(request, 'app', None)
+    state = getattr(app, 'state', None)
+    pool = getattr(state, 'http_clients', None)
+    if isinstance(pool, HttpClientPool):
+        return await pool.get(
+            'bff-upstream',
+            timeout=UPSTREAM_TIMEOUT_SECONDS,
+            follow_redirects=False,
+        ), False
+    return httpx.AsyncClient(
+        timeout=UPSTREAM_TIMEOUT_SECONDS,
+        follow_redirects=False,
+    ), True
 
 
 def _proxy_response_headers(
@@ -532,6 +594,7 @@ async def _proxy_streaming_request(
     session_id: str,
     url: str,
     access_token: str,
+    deployment: DeploymentBinding | None = None,
 ) -> StreamingResponse:
     """Proxy one long-lived upstream stream without buffering it.
 
@@ -546,22 +609,34 @@ async def _proxy_streaming_request(
         Non-buffering response that forwards upstream stream bytes.
     """
 
-    client, upstream = await _open_proxy_stream(request, url, access_token)
+    client, upstream, close_client = await _open_proxy_stream(
+        request,
+        url,
+        access_token,
+        deployment,
+    )
     if upstream.status_code == 401:
-        client, upstream = await _refresh_unauthorized_proxy_stream(
+        client, upstream, close_client = await _refresh_unauthorized_proxy_stream(
             request,
             redis,
             session_id,
             url,
             client,
             upstream,
+            close_client,
+            deployment,
         )
     _log_proxy_stream_open(request.url.path, upstream.status_code)
 
     headers = _proxy_response_headers(upstream, streaming=True)
 
     return StreamingResponse(
-        _proxy_stream_body(request.url.path, client, upstream),
+        _proxy_stream_body(
+            request.url.path,
+            client,
+            upstream,
+            close_client=close_client,
+        ),
         status_code=upstream.status_code,
         headers=headers,
         media_type=headers.get('content-type'),
@@ -572,7 +647,8 @@ async def _open_proxy_stream(
     request: Request,
     url: str,
     access_token: str,
-) -> tuple[httpx.AsyncClient, httpx.Response]:
+    deployment: DeploymentBinding | None = None,
+) -> tuple[httpx.AsyncClient, httpx.Response, bool]:
     """Open an upstream SSE response without buffering its body.
 
     Args:
@@ -581,25 +657,27 @@ async def _open_proxy_stream(
         access_token: Server-side access token for the upstream request.
 
     Returns:
-        Open HTTP client and streaming upstream response.
+        Open HTTP client, streaming upstream response, and client ownership.
 
     Raises:
         HTTPException: If the upstream streaming connection cannot be opened.
     """
-    client = httpx.AsyncClient(
-        timeout=httpx.Timeout(UPSTREAM_TIMEOUT_SECONDS, read=None),
-        follow_redirects=False,
-    )
+    client, close_client = await _proxy_sse_http_client(request)
     try:
         upstream_request = client.build_request(
             request.method,
             url,
             params=request.query_params,
-            headers=_proxy_request_headers(request, access_token),
+            headers=_proxy_request_headers(
+                request,
+                access_token,
+                deployment,
+            ),
         )
         response = await client.send(upstream_request, stream=True)
     except (httpx.TimeoutException, httpx.NetworkError) as exc:
-        await client.aclose()
+        if close_client:
+            await client.aclose()
         logger.warning(
             'BFF SSE upstream connection failed path=%s error_type=%s',
             request.url.path,
@@ -610,7 +688,27 @@ async def _open_proxy_stream(
             status_code=502,
             detail='bff_upstream_unavailable',
         ) from exc
-    return client, response
+    return client, response, close_client
+
+
+async def _proxy_sse_http_client(
+    request: Request,
+) -> tuple[httpx.AsyncClient, bool]:
+    """Return the lifespan SSE client or a disposable non-app fallback."""
+    app = getattr(request, 'app', None)
+    state = getattr(app, 'state', None)
+    pool = getattr(state, 'http_clients', None)
+    timeout = httpx.Timeout(UPSTREAM_TIMEOUT_SECONDS, read=None)
+    if isinstance(pool, HttpClientPool):
+        return await pool.get(
+            'bff-upstream-sse',
+            timeout=timeout,
+            follow_redirects=False,
+        ), False
+    return httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=False,
+    ), True
 
 
 async def _refresh_unauthorized_proxy_stream(
@@ -620,7 +718,9 @@ async def _refresh_unauthorized_proxy_stream(
     url: str,
     client: httpx.AsyncClient,
     upstream: httpx.Response,
-) -> tuple[httpx.AsyncClient, httpx.Response]:
+    close_client: bool,
+    deployment: DeploymentBinding | None = None,
+) -> tuple[httpx.AsyncClient, httpx.Response, bool]:
     """Refresh a BFF session once after an unauthorised SSE response.
 
     Args:
@@ -630,6 +730,7 @@ async def _refresh_unauthorized_proxy_stream(
         url: Fully resolved allow-listed upstream URL.
         client: Client used by the rejected upstream response.
         upstream: Rejected upstream response to close before retrying.
+        close_client: Whether the rejected client is disposable.
 
     Returns:
         Replacement client and upstream streaming response.
@@ -639,14 +740,21 @@ async def _refresh_unauthorized_proxy_stream(
         request.url.path,
     )
     await upstream.aclose()
-    await client.aclose()
+    if close_client:
+        await client.aclose()
     access_token, _ = await _get_proxy_access_token_or_503(
         redis,
         session_id,
         request.url.path,
         force_refresh=True,
+        deployment=deployment,
     )
-    return await _open_proxy_stream(request, url, access_token)
+    return await _open_proxy_stream(
+        request,
+        url,
+        access_token,
+        deployment,
+    )
 
 
 def _log_proxy_stream_open(request_path: str, upstream_status: int) -> None:
@@ -674,13 +782,17 @@ async def _proxy_stream_body(
     request_path: str,
     client: httpx.AsyncClient,
     upstream: httpx.Response,
+    *,
+    close_client: bool,
 ) -> AsyncIterator[bytes]:
-    """Yield SSE bytes and ensure both HTTP resources are always closed.
+    """Yield SSE bytes and close its response and any disposable client.
 
     Args:
         request_path: Original BFF request path for observability.
         client: Open HTTP client used for the upstream stream.
         upstream: Open upstream response whose bytes are yielded.
+        close_client: Whether this request, rather than app lifespan, owns the
+            HTTP client.
 
     Yields:
         Unmodified upstream SSE byte chunks.
@@ -722,4 +834,5 @@ async def _proxy_stream_body(
             bytes_sent,
         )
         await upstream.aclose()
-        await client.aclose()
+        if close_client:
+            await client.aclose()

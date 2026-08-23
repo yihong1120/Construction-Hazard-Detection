@@ -58,6 +58,11 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         self.current_user.password_hash = 'argon2-hash'
 
         async def override_get_current_user() -> MagicMock:
+            """Perform override get current user.
+
+            Returns:
+                The callable result.
+            """
             return self.current_user
 
         self.app.dependency_overrides[get_current_user] = (
@@ -69,10 +74,10 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_login_success(self, mock_login_user: AsyncMock) -> None:
-        """Test successful login returns correct token pair and user info.
+        """Test login success.
 
         Args:
-            mock_login_user (AsyncMock): Mocked login_user service function.
+            mock_login_user: Value used by this callable.
         """
         mock_login_user.return_value = {
             'access_token': 'access123',
@@ -317,6 +322,11 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_list_user_identities: AsyncMock,
     ) -> None:
+        """Test get identities success.
+
+        Args:
+            mock_list_user_identities: Value used by this callable.
+        """
         mock_list_user_identities.return_value = {
             'identities': [
                 {
@@ -344,6 +354,11 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_link_google_identity: AsyncMock,
     ) -> None:
+        """Test link google success.
+
+        Args:
+            mock_link_google_identity: Value used by this callable.
+        """
         mock_link_google_identity.return_value = {
             'id': 12,
             'provider': 'google',
@@ -372,6 +387,11 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_link_apple_identity: AsyncMock,
     ) -> None:
+        """Test link apple forwards nonce.
+
+        Args:
+            mock_link_apple_identity: Value used by this callable.
+        """
         mock_link_apple_identity.return_value = {
             'id': 13,
             'provider': 'apple',
@@ -404,6 +424,11 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_unlink_identity: AsyncMock,
     ) -> None:
+        """Test unlink identity success.
+
+        Args:
+            mock_unlink_identity: Value used by this callable.
+        """
         mock_unlink_identity.return_value = {
             'message': 'Identity unlinked successfully.',
         }
@@ -422,10 +447,10 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_logout_success(self, mock_logout_user: AsyncMock) -> None:
-        """Test successful logout returns a confirmation message.
+        """Test logout success.
 
         Args:
-            mock_logout_user (AsyncMock): Mocked logout_user service function.
+            mock_logout_user: Value used by this callable.
         """
         payload: LogoutRequest = LogoutRequest(refresh_token='refresh123')
         headers: dict[str, str] = {'Authorization': 'Bearer access123'}
@@ -448,11 +473,10 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_refresh_tokens: AsyncMock,
     ) -> None:
-        """Test successful token refresh returns new access and refresh tokens.
+        """Test refresh success.
 
         Args:
-            mock_refresh_tokens (AsyncMock):
-                Mocked refresh_tokens service function.
+            mock_refresh_tokens: Value used by this callable.
         """
         mock_refresh_tokens.return_value = {
             'access_token': 'new_access',
@@ -498,10 +522,10 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_login_fail(self, mock_login_user: AsyncMock) -> None:
-        """Test failed login returns 401 and error detail.
+        """Test login fail.
 
         Args:
-            mock_login_user (AsyncMock): Mocked login_user service function.
+            mock_login_user: Value used by this callable.
         """
         mock_login_user.side_effect = HTTPException(
             status_code=401,
@@ -521,10 +545,10 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_logout_fail(self, mock_logout_user: AsyncMock) -> None:
-        """Test failed logout returns 401 and error detail.
+        """Test logout fail.
 
         Args:
-            mock_logout_user (AsyncMock): Mocked logout_user service function.
+            mock_logout_user: Value used by this callable.
         """
         mock_logout_user.side_effect = HTTPException(
             status_code=401,
@@ -576,11 +600,10 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_refresh_fail(self, mock_refresh_tokens: AsyncMock) -> None:
-        """Test failed token refresh returns 401 and error detail.
+        """Test refresh fail.
 
         Args:
-            mock_refresh_tokens (AsyncMock):
-                Mocked refresh_tokens service function.
+            mock_refresh_tokens: Value used by this callable.
         """
         mock_refresh_tokens.side_effect = HTTPException(
             status_code=401,

@@ -1,23 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from collections.abc import Sequence
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from functools import lru_cache
 from typing import Literal
 
 import httpx
 import jwt
 from fastapi import HTTPException
+from fastapi import Request
 from pydantic import ValidationError
 from redis.asyncio import Redis
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from examples.auth.config import Settings
+from examples.auth.deployment_context import DeploymentBinding
+from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.models import User
 from examples.auth.models import USER_STATUS_ACTIVE
 from examples.auth.models import USER_STATUS_EMAIL_UNVERIFIED
@@ -39,6 +45,7 @@ from examples.db_management.services.legal_services import SignupConsentPayload
 from examples.db_management.services.legal_services import (
     validate_signup_consents,
 )
+from src.http_client_pool import get_application_http_client
 
 Provider = Literal['google', 'apple']
 OAUTH_DISABLED_PASSWORD_HASH = 'oauth_disabled:provider-only'
@@ -111,6 +118,12 @@ def _provider_claims(payload: object) -> ProviderClaims:
         ) from exc
 
 
+@lru_cache(maxsize=4)
+def _jwks_client(jwks_url: str) -> jwt.PyJWKClient:
+    """Return the process-wide JWKS client for an identity provider."""
+    return jwt.PyJWKClient(jwks_url)
+
+
 def _verify_jwt_with_jwks(
     token: str,
     jwks_url: str,
@@ -138,7 +151,7 @@ def _verify_jwt_with_jwks(
         )
 
     try:
-        signing_key = jwt.PyJWKClient(jwks_url).get_signing_key_from_jwt(token)
+        signing_key = _jwks_client(jwks_url).get_signing_key_from_jwt(token)
         payload = jwt.decode(
             token,
             signing_key.key,
@@ -376,11 +389,21 @@ async def _exchange_apple_authorization_code_once(
     if client_id == settings.apple_service_id:
         data['redirect_uri'] = settings.apple_redirect_uri
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    client = await get_application_http_client(
+        'apple-token-exchange',
+        timeout=10.0,
+    )
+    if client is not None:
         response = await client.post(
             APPLE_TOKEN_URL,
             data=data,
         )
+    else:
+        async with httpx.AsyncClient(timeout=10.0) as ephemeral_client:
+            response = await ephemeral_client.post(
+                APPLE_TOKEN_URL,
+                data=data,
+            )
     if response.status_code >= 400:
         raise HTTPException(status_code=401, detail='Invalid provider token')
     try:
@@ -456,28 +479,28 @@ def _username_from_claims(provider: Provider, claims: ProviderClaims) -> str:
     return username[:64] or f"{provider}_user"
 
 
-async def _unique_username(
-    db: AsyncSession,
+def _identity_username(
     provider: Provider,
     claims: ProviderClaims,
 ) -> str:
-    """Return an unused local username derived from provider claims.
+    """Return a deterministic, collision-resistant OAuth username.
 
     Args:
-        db: Database session used to check username availability.
         provider: Identity-provider name.
         claims: Verified identity-provider claims.
 
     Returns:
-        Unique local username.
+        A stable username at most 80 characters long.
     """
     base = _username_from_claims(provider, claims)
-    candidate = base
-    suffix = 1
-    while await db.scalar(select(User.id).where(User.username == candidate)):
-        suffix += 1
-        candidate = f"{base[:70]}_{suffix}"
-    return candidate
+    # Provider subjects are already stable identity keys.  A short digest keeps
+    # a human-readable prefix while avoiding serial SELECT/retry loops for
+    # common display names such as "john".
+    digest = hashlib.blake2s(
+        f'{provider}:{claims.sub}'.encode(),
+        digest_size=6,
+    ).hexdigest()
+    return f'{base[:67]}_{digest}'
 
 
 def _profile_names(
@@ -617,7 +640,7 @@ async def _find_user_by_email(db: AsyncSession, email: str) -> User | None:
     return await db.scalar(
         select(User)
         .join(UserProfile, UserProfile.user_id == User.id)
-        .where(func.lower(UserProfile.email) == email.lower()),
+        .where(UserProfile.email == email.strip().lower()),
     )
 
 
@@ -625,6 +648,7 @@ async def _create_pending_user_with_identity(
     db: AsyncSession,
     provider: Provider,
     claims: ProviderClaims,
+    deployment: DeploymentBinding | None = None,
 ) -> User:
     """Create a pending account and identity from provider claims.
 
@@ -645,27 +669,40 @@ async def _create_pending_user_with_identity(
 
     family_name, given_name = _profile_names(provider, claims)
     user = User(
-        username=await _unique_username(db, provider, claims),
+        username=_identity_username(provider, claims),
         password_hash=OAUTH_DISABLED_PASSWORD_HASH,
         role='user',
         status=USER_STATUS_PENDING_ADMIN_APPROVAL,
         email_verified_at=datetime.now(timezone.utc),
         group_id=None,
+        **({'tenant_id': deployment.tenant_id} if deployment else {}),
     )
-    db.add(user)
-    await db.flush()
-    db.add(
-        UserProfile(
-            user_id=user.id,
-            family_name=family_name,
-            given_name=given_name,
-            middle_name=None,
-            email=email,
-            mobile_number=None,
-        ),
-    )
-    db.add(_new_identity(user, provider, claims))
-    await db.commit()
+    try:
+        db.add(user)
+        await db.flush()
+        db.add(
+            UserProfile(
+                user_id=user.id,
+                family_name=family_name,
+                given_name=given_name,
+                middle_name=None,
+                email=email,
+                mobile_number=None,
+            ),
+        )
+        db.add(_new_identity(user, provider, claims))
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        # Concurrent callbacks for the same provider subject should converge
+        # on the account that won the unique identity constraint.
+        existing = await _find_identity_user(db, provider, claims.sub)
+        if existing is not None:
+            return existing
+        raise HTTPException(
+            status_code=409,
+            detail='OAuth account creation conflict',
+        ) from exc
     await db.refresh(user, attribute_names=['profile', 'group'])
     return user
 
@@ -677,14 +714,31 @@ async def authenticate_provider_user(
     redis_pool: Redis,
     consent_payload: SignupConsentPayload | None = None,
     hash_refresh_token: bool = False,
+    deployment: DeploymentBinding | None = None,
+    request: Request | None = None,
 ) -> TokenPairData:
     """Resolve a verified provider identity to a local user and issue
     tokens."""
     provider_user_id = claims.sub
+    if deployment is None and isinstance(request, Request):
+        deployment = await resolve_request_deployment(request, db)
+    if deployment is None and isinstance(request, Request):
+        raise HTTPException(
+            status_code=409,
+            detail='deployment_required',
+        )
 
     user = await _find_identity_user(db, provider, provider_user_id)
     if user is not None:
         _ensure_active_user(user)
+        if deployment is not None:
+            return await issue_token_pair_for_user(
+                user,
+                db,
+                redis_pool,
+                hash_refresh_token=hash_refresh_token,
+                deployment=deployment,
+            )
         return await issue_token_pair_for_user(
             user,
             db,
@@ -717,7 +771,12 @@ async def authenticate_provider_user(
         )
 
     await validate_signup_consents(consent_payload, db)
-    user = await _create_pending_user_with_identity(db, provider, claims)
+    user = await _create_pending_user_with_identity(
+        db,
+        provider,
+        claims,
+        deployment,
+    )
     await record_user_consent(user.id, consent_payload, db, request=None)
     raise _status_error(user.status)
 
@@ -731,6 +790,8 @@ async def login_with_google(
     device_lang: str | None = None,
     consent_payload: SignupConsentPayload | None = None,
     hash_refresh_token: bool = False,
+    deployment: DeploymentBinding | None = None,
+    request: Request | None = None,
 ) -> TokenPairData:
     """Authenticate a Google identity token and issue local tokens.
 
@@ -759,6 +820,8 @@ async def login_with_google(
         redis_pool,
         consent_payload=consent_payload,
         hash_refresh_token=hash_refresh_token,
+        deployment=deployment,
+        request=request,
     )
 
 
@@ -774,6 +837,8 @@ async def login_with_apple(
     device_lang: str | None = None,
     consent_payload: SignupConsentPayload | None = None,
     hash_refresh_token: bool = False,
+    deployment: DeploymentBinding | None = None,
+    request: Request | None = None,
 ) -> TokenPairData:
     """Authenticate an Apple identity and issue local tokens.
 
@@ -813,6 +878,8 @@ async def login_with_apple(
         redis_pool,
         consent_payload=consent_payload,
         hash_refresh_token=hash_refresh_token,
+        deployment=deployment,
+        request=request,
     )
 
 

@@ -69,7 +69,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
                     'admin',
                     1,
                     self.db,
-                    self.profile_data,
+                    profile=self.profile_data,
                 )
 
                 # Assert
@@ -123,7 +123,7 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
                 'user',
                 None,
                 self.db,
-                self.profile_data,
+                profile=self.profile_data,
                 status='pending',
             )
 
@@ -190,9 +190,10 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         scalars_mock.all.return_value = ['user1', 'user2']
         self.db.execute = AsyncMock(return_value=mock_result)
 
-        users: list[User] = await user_services.list_users(self.db)
+        users, next_cursor = await user_services.list_users(self.db)
 
         self.assertEqual(users, ['user1', 'user2'])
+        self.assertIsNone(next_cursor)
 
     async def test_list_users_filters_by_group(self) -> None:
         """An administrator list can be restricted to its own group."""
@@ -203,9 +204,12 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         ]
         self.db.execute = AsyncMock(return_value=mock_result)
 
-        users = await user_services.list_users(self.db, group_id=9)
+        users, next_cursor = await user_services.list_users(
+            self.db, group_id=9,
+        )
 
         self.assertEqual(users, ['group-user'])
+        self.assertIsNone(next_cursor)
         query = self.db.execute.await_args.args[0]
         self.assertIn('users.group_id', str(query))
 

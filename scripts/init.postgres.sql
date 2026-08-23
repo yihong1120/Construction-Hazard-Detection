@@ -1,5 +1,5 @@
 -- =============================================
--- Construction-Hazard-Detection Database Schema
+-- Construction-Hazard-Detection PostgreSQL baseline through 20260827.
 -- Compatible with PostgreSQL 15+
 -- violations.site -> FK to sites(name)
 -- =============================================
@@ -7,6 +7,8 @@
 SET TIME ZONE 'UTC';
 
 DROP TABLE IF EXISTS group_features CASCADE;
+DROP TABLE IF EXISTS deployment_enrollment_code_audit_logs CASCADE;
+DROP TABLE IF EXISTS deployment_enrollment_codes CASCADE;
 DROP TABLE IF EXISTS user_consents CASCADE;
 DROP TABLE IF EXISTS email_verification_tokens CASCADE;
 DROP TABLE IF EXISTS fcm_device_tokens CASCADE;
@@ -14,6 +16,7 @@ DROP TABLE IF EXISTS notifications CASCADE;
 DROP TABLE IF EXISTS site_notification_preferences CASCADE;
 DROP TABLE IF EXISTS violation_review_audit_logs CASCADE;
 DROP TABLE IF EXISTS violation_feedback CASCADE;
+DROP TABLE IF EXISTS site_media_cleanup_jobs CASCADE;
 DROP TABLE IF EXISTS user_sites CASCADE;
 DROP TABLE IF EXISTS site_groups CASCADE;
 DROP TABLE IF EXISTS stream_configs CASCADE;
@@ -25,6 +28,102 @@ DROP TABLE IF EXISTS sites CASCADE;
 DROP TABLE IF EXISTS legal_documents CASCADE;
 DROP TABLE IF EXISTS features CASCADE;
 DROP TABLE IF EXISTS group_info CASCADE;
+DROP TABLE IF EXISTS deployments CASCADE;
+DROP TABLE IF EXISTS tenants CASCADE;
+
+CREATE TABLE tenants (
+    id UUID PRIMARY KEY,
+    name VARCHAR(160) NOT NULL UNIQUE,
+    description TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_tenants_status CHECK (status IN ('active', 'disabled'))
+);
+
+-- The seed is a bootstrap tenant only. Production tenant/deployment values
+-- must be managed through the privileged deployment API and signed Registry.
+-- The value is the public API root; service routes are appended by the client.
+INSERT INTO tenants (id, name, description, status)
+VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    'Default tenant',
+    'Bootstrap tenant for local and first deployment setup.',
+    'active'
+);
+
+CREATE TABLE deployments (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    api_base_url VARCHAR(2048) NOT NULL UNIQUE,
+    config_revision INTEGER NOT NULL DEFAULT 1,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_deployments_tenant
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE RESTRICT,
+    CONSTRAINT chk_deployments_status CHECK (status IN ('active', 'revoked')),
+    CONSTRAINT chk_deployments_config_revision CHECK (config_revision >= 1)
+);
+CREATE INDEX idx_deployments_tenant ON deployments (tenant_id);
+
+INSERT INTO deployments (id, tenant_id, api_base_url, config_revision, status)
+VALUES (
+    '00000000-0000-0000-0000-000000000002',
+    '00000000-0000-0000-0000-000000000001',
+    'https://changdar-server.mooo.com/hazard/api',
+    1,
+    'active'
+);
+
+CREATE TABLE deployment_enrollment_codes (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id UUID NOT NULL,
+    deployment_id UUID NOT NULL,
+    code_verifier_hash VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    redeemed_at TIMESTAMP WITH TIME ZONE,
+    revoked_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(160) NOT NULL,
+    CONSTRAINT fk_deployment_enrollment_codes_deployment
+        FOREIGN KEY (deployment_id) REFERENCES deployments(id)
+        ON DELETE RESTRICT,
+    CONSTRAINT uq_deployment_enrollment_codes_verifier
+        UNIQUE (code_verifier_hash),
+    CONSTRAINT chk_deployment_enrollment_codes_expiry
+        CHECK (expires_at > created_at)
+);
+CREATE UNIQUE INDEX uq_deployment_enrollment_codes_public_id
+    ON deployment_enrollment_codes (public_id);
+CREATE INDEX idx_deployment_enrollment_codes_deployment
+    ON deployment_enrollment_codes (deployment_id);
+CREATE INDEX idx_deployment_enrollment_codes_expiry
+    ON deployment_enrollment_codes (expires_at);
+
+CREATE TABLE deployment_enrollment_code_audit_logs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    enrollment_code_id BIGINT NOT NULL,
+    deployment_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    actor_user_id INTEGER,
+    action VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_deployment_enrollment_code_audit_code
+        FOREIGN KEY (enrollment_code_id)
+        REFERENCES deployment_enrollment_codes(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_deployment_enrollment_code_audit_deployment
+        FOREIGN KEY (deployment_id) REFERENCES deployments(id)
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_deployment_enrollment_code_audit_tenant
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE RESTRICT,
+    CONSTRAINT chk_deployment_enrollment_code_audit_action
+        CHECK (action IN ('created', 'revoked'))
+);
+CREATE INDEX idx_deployment_enrollment_code_audit_code
+    ON deployment_enrollment_code_audit_logs (enrollment_code_id, created_at DESC);
+CREATE INDEX idx_deployment_enrollment_code_audit_deployment
+    ON deployment_enrollment_code_audit_logs (deployment_id, created_at DESC);
 
 CREATE TABLE group_info (
     id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -52,12 +151,16 @@ CREATE TABLE users (
     role VARCHAR(20) NOT NULL DEFAULT 'user',
     status VARCHAR(20) NOT NULL DEFAULT 'active',
     email_verified_at TIMESTAMP WITH TIME ZONE,
+    tenant_id UUID NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     group_id INTEGER,
     CONSTRAINT fk_users_group
         FOREIGN KEY (group_id) REFERENCES group_info(id)
         ON DELETE SET NULL,
+    CONSTRAINT fk_users_tenant
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+        ON DELETE RESTRICT,
     CONSTRAINT chk_users_status CHECK (
         status IN (
             'active',
@@ -69,6 +172,11 @@ CREATE TABLE users (
     )
 );
 CREATE INDEX idx_users_group ON users (group_id);
+CREATE INDEX idx_users_tenant ON users (tenant_id);
+
+ALTER TABLE deployment_enrollment_code_audit_logs
+    ADD CONSTRAINT fk_deployment_enrollment_code_audit_actor
+    FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL;
 
 CREATE TABLE sites (
     id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -115,6 +223,8 @@ CREATE TABLE user_profiles (
     CONSTRAINT fk_up_user
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX uq_user_profiles_email_lower
+    ON user_profiles (lower(email));
 
 CREATE TABLE user_identities (
     id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -187,12 +297,12 @@ CREATE TABLE notifications (
         )
     )
 );
-CREATE INDEX idx_notifications_user_created
-    ON notifications (user_id, created_at DESC);
-CREATE INDEX idx_notifications_user_read
-    ON notifications (user_id, is_read);
-CREATE INDEX idx_notifications_user_type
-    ON notifications (user_id, type);
+CREATE INDEX idx_notifications_user_created_id
+    ON notifications (user_id, created_at DESC, id DESC);
+CREATE INDEX idx_notifications_user_read_created_id
+    ON notifications (user_id, is_read, created_at DESC, id DESC);
+CREATE INDEX idx_notifications_user_type_created_id
+    ON notifications (user_id, type, created_at DESC, id DESC);
 
 CREATE TABLE fcm_device_tokens (
     id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -223,8 +333,6 @@ CREATE INDEX idx_fcm_device_tokens_user_active
     ON fcm_device_tokens (user_id, disabled_at);
 CREATE INDEX idx_fcm_device_tokens_user_seen
     ON fcm_device_tokens (user_id, last_seen_at DESC);
-CREATE INDEX idx_fcm_device_tokens_token_hash
-    ON fcm_device_tokens (device_token_hash);
 
 CREATE TABLE legal_documents (
     id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -469,17 +577,31 @@ CREATE TABLE violations (
         review_status IN ('pending', 'resolved', 'dismissed')
     )
 );
-CREATE INDEX idx_vio_site_name ON violations (site);
 CREATE INDEX idx_vio_time ON violations (detection_time);
-CREATE INDEX idx_vio_site_time ON violations (site, detection_time);
+CREATE INDEX idx_vio_site_detection_id
+    ON violations (site, detection_time DESC, id DESC);
 CREATE INDEX idx_vio_stream_time ON violations (stream_name, detection_time);
-CREATE INDEX idx_vio_stream_config_time
-    ON violations (stream_config_id, detection_time);
+CREATE INDEX idx_vio_stream_config_detection_id
+    ON violations (stream_config_id, detection_time DESC, id DESC);
 CREATE INDEX idx_vio_type_codes ON violations USING GIN (violation_type_codes);
 CREATE INDEX idx_vio_warnings_time ON violations (warnings_json, detection_time);
 CREATE INDEX idx_vio_flagged_status
     ON violations (is_flagged, review_status);
 CREATE INDEX idx_vio_reviewed_at ON violations (reviewed_at);
+
+CREATE TABLE site_media_cleanup_jobs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    path VARCHAR(1024) NOT NULL UNIQUE,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    lease_token VARCHAR(36),
+    lease_expires_at TIMESTAMP WITH TIME ZONE
+);
+CREATE INDEX idx_site_media_cleanup_jobs_pending
+    ON site_media_cleanup_jobs (completed_at, lease_expires_at, id)
+    WHERE completed_at IS NULL;
 
 CREATE TABLE violation_feedback (
     id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -576,6 +698,30 @@ CREATE TRIGGER trg_users_updated_at
 BEFORE UPDATE ON users
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE TRIGGER trg_tenants_updated_at
+BEFORE UPDATE ON tenants
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_deployments_updated_at
+BEFORE UPDATE ON deployments
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE FUNCTION increment_deployment_config_revision()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
+       OR NEW.api_base_url IS DISTINCT FROM OLD.api_base_url
+       OR NEW.status IS DISTINCT FROM OLD.status THEN
+        NEW.config_revision = OLD.config_revision + 1;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_deployments_config_revision
+BEFORE UPDATE ON deployments
+FOR EACH ROW EXECUTE FUNCTION increment_deployment_config_revision();
+
 CREATE TRIGGER trg_sites_updated_at
 BEFORE UPDATE ON sites
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -629,19 +775,21 @@ VALUES ('yolo_api', 'Utilising YOLO for real-time object detection.')
 ON CONFLICT (feature_name) DO UPDATE SET
     description = EXCLUDED.description;
 
-INSERT INTO users (username, password_hash, role, status, group_id)
+INSERT INTO users (username, password_hash, role, status, group_id, tenant_id)
 VALUES (
     'user',
     '$argon2id$v=19$m=65536,t=3,p=4$WWrgNzRESjrJxeP6KC+jsQ$LRWIP3bk3vAJf5kSEA+gkSk1+KYvVU2VDwCKGiUtBCg',
     'admin',
     'active',
-    1
+    1,
+    '00000000-0000-0000-0000-000000000001'
 )
 ON CONFLICT (username) DO UPDATE SET
     password_hash = EXCLUDED.password_hash,
     role = EXCLUDED.role,
     status = EXCLUDED.status,
-    group_id = EXCLUDED.group_id;
+    group_id = EXCLUDED.group_id,
+    tenant_id = EXCLUDED.tenant_id;
 
 INSERT INTO group_features (group_id, feature_id)
 SELECT 1, f.id

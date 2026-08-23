@@ -95,13 +95,13 @@ class TestStreamConfigUpdate(unittest.TestCase):
 class TestSiteStreamConfigUpsert(unittest.TestCase):
     """Unit tests for site-scoped stream config payloads."""
 
-    def test_rtsp_url_alias(self) -> None:
-        """Frontend can send rtsp_url without group_id or site_id."""
+    def test_video_url_is_required_without_group_id_or_site_id(self) -> None:
+        """Site-scoped stream payloads require the canonical video URL."""
         payload = SiteStreamConfigUpsert(
             streams=[
                 SiteStreamConfigItem(
                     stream_name='Cam1',
-                    rtsp_url='rtsp://camera/stream',
+                    video_url='rtsp://camera/stream',
                 ),
             ],
         )

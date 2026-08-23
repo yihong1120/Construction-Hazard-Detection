@@ -38,6 +38,7 @@ async def authorize(
     code_challenge: str,
     code_challenge_method: str,
     state: str = '',
+    db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> RedirectResponse:
     """Create a PKCE authorisation code for a native OAuth client.
@@ -64,6 +65,7 @@ async def authorize(
         code_challenge_method,
         state,
         redis,
+        db,
     )
 
 

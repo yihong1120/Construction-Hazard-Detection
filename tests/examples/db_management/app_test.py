@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Response
 from fastapi.testclient import TestClient
 
@@ -146,6 +147,9 @@ class AppIntegrationTest(unittest.TestCase):
             'stream-config',
             'legal',
             'playback',
+            'deployment-registry',
+            'deployment-enrollment-codes',
+            'tenant-deployment-mgmt',
         }
         self.assertTrue(
             expected.issubset(tags),
@@ -153,11 +157,18 @@ class AppIntegrationTest(unittest.TestCase):
         )
 
     def test_bff_module_and_playback_routes_are_registered(self) -> None:
+        """Test bff module and playback routes are registered.
+        """
         paths = self.app.openapi()['paths']
         bff_paths = [route.path for route in bff_router.routes]
 
         self.assertIn('/bff/auth/session', paths)
         self.assertIn('/api/playback/walls', paths)
+        self.assertIn(
+            '/deployment-registry/v1/deployments/{deployment_id}',
+            paths,
+        )
+        self.assertIn('/deployment-enrollment-codes', paths)
         self.assertNotIn('/api/media/sessions/batch', paths)
         self.assertNotIn('/bff/media/sessions/batch', paths)
         self.assertIn('/bff/{service}/{path:path}', bff_paths)
@@ -169,12 +180,37 @@ class AppIntegrationTest(unittest.TestCase):
         )
 
         async def call_next(_request: object) -> Response:
+            """Perform call next.
+
+            Args:
+                _request: Value used by this callable.
+
+            Returns:
+                The callable result.
+            """
             return Response()
 
         response = asyncio.run(
             app_module.prevent_sensitive_response_caching(request, call_next),
         )
 
+        self.assertEqual(response.headers.get('cache-control'), 'no-store')
+
+    def test_registry_signing_unavailable_remains_a_safe_503(self) -> None:
+        """The registry must fail closed without masquerading as a 500."""
+        request = SimpleNamespace(state=SimpleNamespace(request_id='test-id'))
+        response = asyncio.run(
+            app_module.safe_http_exception(
+                request,
+                HTTPException(
+                    status_code=503,
+                    detail={'code': 'registry_signing_unavailable'},
+                    headers={'Cache-Control': 'no-store'},
+                ),
+            ),
+        )
+
+        self.assertEqual(response.status_code, 503)
         self.assertEqual(response.headers.get('cache-control'), 'no-store')
 
     def test_main_calls_uvicorn_run(self) -> None:

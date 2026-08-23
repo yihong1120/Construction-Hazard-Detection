@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import AliasChoices
 from pydantic import BaseModel
-from pydantic import ConfigDict
-from pydantic import Field
 
 
 class StreamConfigCreate(BaseModel):
@@ -94,7 +91,7 @@ class SiteStreamConfigItem(BaseModel):
     Attributes:
         id: Existing stream identifier; omitted for a new stream.
         stream_name: Unique stream name within the site.
-        video_url: Source URL, accepting the legacy ``rtsp_url`` input alias.
+        video_url: Source URL used to ingest the stream.
         model_key: Detection-model identifier selected for the stream.
         recognition_enabled: Whether automated recognition is enabled.
         work_start_hour: Start of the daily recognition window in local hours.
@@ -111,13 +108,9 @@ class SiteStreamConfigItem(BaseModel):
         expire_date: Optional time after which the configuration expires.
     """
 
-    model_config = ConfigDict(populate_by_name=True)
-
     id: int | None = None
     stream_name: str
-    video_url: str = Field(
-        validation_alias=AliasChoices('video_url', 'rtsp_url'),
-    )
+    video_url: str
     model_key: str = 'yolo26n'
     recognition_enabled: bool = True
     work_start_hour: int = 7

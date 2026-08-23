@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import HTTPException
 from fastapi import Request
 from redis.asyncio import Redis
@@ -7,6 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from examples.auth.deployment_context import DeploymentBinding
+from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.models import Group
 from examples.auth.models import User
 from examples.auth.models import USER_STATUS_ACTIVE
@@ -15,6 +19,7 @@ from examples.auth.user_service import invalidate_effective_site_cache
 from examples.db_management.deps import ensure_admin_with_group
 from examples.db_management.deps import is_super_admin
 from examples.db_management.schemas.user import PendingUserReviewRead
+from examples.db_management.schemas.user import UserPage
 from examples.db_management.schemas.user import UserRead
 from examples.db_management.schemas.user import UserSignup
 from examples.db_management.services.email_verification_services import (
@@ -29,6 +34,36 @@ from examples.db_management.services.site_services import \
 from examples.db_management.services.site_services import \
     seed_site_notification_preferences
 from examples.db_management.services.user_services import create_user
+from examples.db_management.services.user_services import list_users
+
+
+async def list_users_for_operator(
+    operator: User,
+    db: AsyncSession,
+    *,
+    cursor: int | None,
+    page_size: int,
+) -> UserPage:
+    """Return one keyset page within an administrator's permitted scope."""
+    group_id: int | None = None
+    tenant_id: UUID | None = None
+    if not is_super_admin(operator):
+        ensure_admin_with_group(operator)
+        group_id = operator.group_id
+        if isinstance(operator.tenant_id, UUID):
+            tenant_id = operator.tenant_id
+
+    users, next_cursor = await list_users(
+        db,
+        group_id=group_id,
+        tenant_id=tenant_id,
+        after_id=cursor,
+        page_size=page_size,
+    )
+    return UserPage(
+        items=[UserRead.model_validate(user) for user in users],
+        next_cursor=next_cursor,
+    )
 
 
 async def load_user_read(user_id: int, db: AsyncSession) -> UserRead:
@@ -117,6 +152,7 @@ async def register_signup_user(
     request: Request,
     db: AsyncSession,
     redis_pool: Redis,
+    deployment: DeploymentBinding | None = None,
 ) -> UserRead:
     """Create an email-unverified account and start verification.
 
@@ -133,15 +169,27 @@ async def register_signup_user(
         HTTPException: If consent validation, account creation, or verification
             delivery fails.
     """
+    if deployment is None and isinstance(request, Request):
+        deployment = await resolve_request_deployment(request, db)
+    if deployment is None and isinstance(request, Request):
+        raise HTTPException(
+            status_code=409,
+            detail='deployment_required',
+        )
     await validate_signup_consents(payload, db)
+    create_user_kwargs = {
+        'username': payload.username,
+        'password': payload.password,
+        'role': 'user',
+        'group_id': None,
+        'db': db,
+        'profile': payload.profile.model_dump(),
+        'status': USER_STATUS_EMAIL_UNVERIFIED,
+    }
+    if deployment is not None:
+        create_user_kwargs['tenant_id'] = deployment.tenant_id
     new_user = await create_user(
-        username=payload.username,
-        password=payload.password,
-        role='user',
-        group_id=None,
-        db=db,
-        profile=payload.profile.model_dump(),
-        status=USER_STATUS_EMAIL_UNVERIFIED,
+        **create_user_kwargs,
     )
     await record_user_consent(new_user.id, payload, db, request)
     await send_signup_verification_email(new_user, redis_pool)
@@ -198,6 +246,17 @@ def ensure_user_management_scope(
     if is_super_admin(operator):
         return
     ensure_admin_with_group(operator)
+    target_tenant_id = getattr(target, 'tenant_id', None)
+    operator_tenant_id = getattr(operator, 'tenant_id', None)
+    if (
+        isinstance(target_tenant_id, UUID)
+        and isinstance(operator_tenant_id, UUID)
+        and target_tenant_id != operator_tenant_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail='Cannot manage users in another tenant.',
+        )
     if target.group_id != operator.group_id:
         raise HTTPException(
             status_code=403,

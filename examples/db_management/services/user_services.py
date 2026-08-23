@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +24,7 @@ async def create_user(
     role: str,
     group_id: int | None,
     db: AsyncSession,
+    tenant_id: UUID | None = None,
     profile: dict[str, Any] | None = None,
     status: str = USER_STATUS_ACTIVE,
 ) -> User:
@@ -55,6 +57,7 @@ async def create_user(
             role=role,
             group_id=group_id,
             status=status,
+            **({'tenant_id': tenant_id} if tenant_id is not None else {}),
         )
         new_user.set_password(password)
         db.add(new_user)
@@ -86,7 +89,11 @@ async def create_user(
 async def list_users(
     db: AsyncSession,
     group_id: int | None = None,
-) -> list[User]:
+    tenant_id: UUID | None = None,
+    *,
+    after_id: int | None = None,
+    page_size: int = 50,
+) -> tuple[list[User], int | None]:
     """
     Retrieve users, optionally scoped to a group.
 
@@ -95,7 +102,7 @@ async def list_users(
         group_id: Optional group identifier used to scope admin results.
 
     Returns:
-        A list of ``User`` instances.
+        A page of ``User`` instances and the next keyset cursor, if any.
     """
     query = select(User).options(
         selectinload(User.group),
@@ -104,9 +111,18 @@ async def list_users(
     )
     if group_id is not None:
         query = query.where(User.group_id == group_id)
+    if tenant_id is not None:
+        query = query.where(User.tenant_id == tenant_id)
+    if after_id is not None:
+        query = query.where(User.id > after_id)
 
-    result = await db.execute(query)
-    return list(result.unique().scalars().all())
+    result = await db.execute(
+        query.order_by(User.id).limit(page_size + 1),
+    )
+    users = list(result.unique().scalars().all())
+    has_more = len(users) > page_size
+    page = users[:page_size]
+    return page, page[-1].id if has_more and page else None
 
 
 async def get_user_by_id(user_id: int, db: AsyncSession) -> User:

@@ -4,11 +4,12 @@ import logging
 import runpy
 import sys
 import unittest
+from collections.abc import Callable
 from contextlib import redirect_stderr
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import cast
 from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,18 @@ def _run_as_script(relative_path: str) -> dict[str, object]:
     return runpy.run_path(
         str(PROJECT_ROOT / relative_path),
         run_name='__main__',
+    )
+
+
+def _load_migration_runner() -> dict[str, object]:
+    """Load migration-runner helpers without invoking its command line.
+
+    Returns:
+        The migration runner's module namespace.
+    """
+    return runpy.run_path(
+        str(PROJECT_ROOT / 'scripts/apply_postgres_migrations.py'),
+        run_name='postgres_migration_runner_test',
     )
 
 
@@ -53,6 +66,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         )
 
         def close_coroutine(coroutine: object) -> None:
+            """Perform close coroutine.
+
+            Args:
+                coroutine: Value used by this callable.
+            """
             close = getattr(coroutine, 'close', None)
             if not callable(close):
                 self.fail('asyncio.run received a non-coroutine')
@@ -96,45 +114,6 @@ class ScriptEntrypointTests(unittest.TestCase):
                 self.assertEqual(exit_context.exception.code, 0)
                 self.assertIn('usage:', output.getvalue())
 
-    def test_sample_notification_entrypoints_use_mocked_http(self) -> None:
-        """Example notification scripts must not make real HTTP requests."""
-        response = MagicMock()
-        response.status_code = 200
-        response.json.return_value = {
-            'access_token': 'token',
-            'media_id': 'id',
-        }
-
-        with (
-            patch('requests.get', return_value=response) as get_request,
-            patch('requests.post', return_value=response) as post_request,
-            patch('logging.basicConfig') as configure_logging,
-            redirect_stdout(StringIO()),
-        ):
-            _run_as_script('src/notifiers/wechat_notifier.py')
-            _run_as_script('src/notifiers/messenger_notifier.py')
-            _run_as_script('src/notifiers/broadcast_notifier.py')
-
-        get_request.assert_called_once()
-        self.assertGreaterEqual(post_request.call_count, 3)
-        configure_logging.assert_called()
-
-    def test_model_fetcher_entrypoint_registers_then_runs_scheduler(
-        self,
-    ) -> None:
-        """The scheduler entrypoint registers work before entering its loop."""
-        schedule_job = MagicMock()
-
-        with (
-            patch('schedule.every', return_value=schedule_job) as every,
-            patch('schedule.run_pending', side_effect=KeyboardInterrupt),
-            self.assertRaises(KeyboardInterrupt),
-        ):
-            _run_as_script('src/model_fetcher.py')
-
-        every.assert_called_once_with(1)
-        schedule_job.hour.do.assert_called_once()
-
     def test_remaining_sample_entrypoints_do_not_touch_external_resources(
         self,
     ) -> None:
@@ -151,6 +130,42 @@ class ScriptEntrypointTests(unittest.TestCase):
             _run_as_script('src/danger_detector.py')
             _run_as_script('src/monitor_logger.py')
             _run_as_script('examples/local_notification_server/lang_config.py')
+
+    def test_migration_sql_splitter_preserves_postgresql_dollar_blocks(
+        self,
+    ) -> None:
+        """Concurrent-index SQL must not share an asyncpg query batch."""
+        namespace = _load_migration_runner()
+        splitter = cast(
+            Callable[[str], list[str]],
+            namespace['split_sql_statements'],
+        )
+        execution_units = cast(
+            Callable[[str], list[str]],
+            namespace['statements_for_execution'],
+        )
+        source = '''
+        DO $body$
+        BEGIN
+            PERFORM 1;
+        END
+        $body$;
+        CREATE INDEX CONCURRENTLY example_index ON example_table (id);
+        INSERT INTO schema_migrations (version, checksum)
+        VALUES ('example', 'checksum');
+        '''
+
+        statements = splitter(source)
+
+        self.assertEqual(len(statements), 3)
+        self.assertIn('PERFORM 1;', statements[0])
+        self.assertIn('CREATE INDEX CONCURRENTLY', statements[1])
+        self.assertIn('INSERT INTO schema_migrations', statements[2])
+        self.assertEqual(execution_units(source), statements)
+        self.assertEqual(
+            execution_units('SELECT 1; SELECT 2;'),
+            ['SELECT 1; SELECT 2;'],
+        )
 
 
 if __name__ == '__main__':

@@ -8,11 +8,13 @@ from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from sqlalchemy.dialects import postgresql
 
 from examples.auth.user_service import _cache_ttl
 from examples.auth.user_service import _user_sites_cache
 from examples.auth.user_service import get_cached_effective_site_names
 from examples.auth.user_service import invalidate_effective_site_cache
+from examples.auth.user_service import list_effective_site_names_for_user
 from examples.auth.user_service import list_effective_sites_for_user
 from examples.auth.user_service import load_user_access_context
 from examples.auth.user_service import load_user_with_effective_sites
@@ -277,6 +279,25 @@ class TestGetUserSitesCached(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(sites, [])
+
+    async def test_effective_site_names_are_distinct_and_ordered_by_name(
+        self,
+    ) -> None:
+        """Compile valid PostgreSQL SQL for the narrow site-name projection."""
+        user = SimpleNamespace(
+            id=21,
+            username='alice',
+            role='admin',
+            group_id=9,
+        )
+        self.db.execute.return_value = self.scalars_all_result(['Alpha'])
+
+        await list_effective_site_names_for_user(cast(Any, user), self.db)
+
+        statement = self.db.execute.await_args.args[0]
+        sql = str(statement.compile(dialect=postgresql.dialect()))
+        self.assertIn('SELECT DISTINCT sites.name', sql)
+        self.assertIn('ORDER BY sites.name', sql)
 
     async def test_load_user_with_effective_sites_success(self) -> None:
         """The loader should return the correct effective site payload."""

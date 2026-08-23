@@ -8,12 +8,14 @@ from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
+from uuid import UUID
 
 import httpx
 import pytest
 from fastapi import HTTPException
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+from examples.auth.deployment_context import DeploymentBinding
 from examples.bff import proxy
 from examples.bff.proxy import _get_proxy_access_token_or_503
 from examples.bff.proxy import _is_sse_request
@@ -22,6 +24,10 @@ from examples.bff.proxy import resolve_upstream
 
 
 class BffServicesTest(unittest.TestCase):
+
+    """Provide BffServicesTest.
+    """
+
     def test_db_management_service_is_allowlisted(self) -> None:
         """The Web client can reach db_management routes through the BFF."""
         base, suffix = resolve_upstream('db_management/list_sites')
@@ -45,12 +51,16 @@ class BffServicesTest(unittest.TestCase):
         self.assertEqual(suffix, 'labels')
 
     def test_fcm_service_is_allowlisted(self) -> None:
+        """Test fcm service is allowlisted.
+        """
         base, suffix = resolve_upstream('fcm/notifications/unread_count')
 
         self.assertTrue(base)
         self.assertEqual(suffix, 'notifications/unread_count')
 
     def test_metadata_path_uses_sse_streaming_proxy(self) -> None:
+        """Test metadata path uses sse streaming proxy.
+        """
         request = type(
             'Request',
             (),
@@ -67,6 +77,8 @@ class BffServicesTest(unittest.TestCase):
         )
 
     def test_accept_event_stream_uses_sse_streaming_proxy(self) -> None:
+        """Test accept event stream uses sse streaming proxy.
+        """
         request = type(
             'Request',
             (),
@@ -83,6 +95,8 @@ class BffServicesTest(unittest.TestCase):
         )
 
     def test_redis_sse_error_is_logged_with_upstream_status(self) -> None:
+        """Test redis sse error is logged with upstream status.
+        """
         buffer = bytearray()
 
         with self.assertLogs('uvicorn.error', level='WARNING') as logs:
@@ -108,7 +122,14 @@ class BffServicesTest(unittest.TestCase):
         self.assertIn('code=redis_unavailable', logs.output[0])
 
     def test_bff_redis_connection_failure_returns_503(self) -> None:
+        """Test bff redis connection failure returns 503.
+        """
         async def get_token() -> HTTPException:
+            """Perform get token.
+
+            Returns:
+                The callable result.
+            """
             with (
                 patch(
                     'examples.bff.proxy.get_proxy_access_token',
@@ -147,6 +168,15 @@ class FakeResponse:
         chunks: tuple[bytes, ...] = (),
         stream_error: BaseException | None = None,
     ) -> None:
+        """Perform init.
+
+        Args:
+            status_code: Value used by this callable.
+            content: Value used by this callable.
+            headers: Value used by this callable.
+            chunks: Value used by this callable.
+            stream_error: Value used by this callable.
+        """
         self.status_code = status_code
         self.content = content
         self.headers = headers or {}
@@ -155,9 +185,16 @@ class FakeResponse:
         self.closed = False
 
     async def aclose(self) -> None:
+        """Perform aclose.
+        """
         self.closed = True
 
     async def aiter_bytes(self) -> AsyncIterator[bytes]:
+        """Perform aiter bytes.
+
+        Returns:
+            The callable result.
+        """
         for chunk in self.chunks:
             yield chunk
         if self.stream_error is not None:
@@ -172,31 +209,76 @@ class FakeAsyncClient:
         response: FakeResponse | None = None,
         error: Exception | None = None,
     ) -> None:
+        """Perform init.
+
+        Args:
+            response: Value used by this callable.
+            error: Value used by this callable.
+        """
         self.response = response or FakeResponse()
         self.error = error
         self.request_calls: list[dict[str, Any]] = []
         self.closed = False
 
     async def __aenter__(self) -> FakeAsyncClient:
+        """Perform aenter.
+
+        Returns:
+            The callable result.
+        """
         return self
 
     async def __aexit__(self, *_args: object) -> None:
+        """Perform aexit.
+
+        Args:
+            *_args: Value used by this callable.
+        """
         await self.aclose()
 
     async def aclose(self) -> None:
+        """Perform aclose.
+        """
         self.closed = True
 
     async def request(self, *args: object, **kwargs: object) -> FakeResponse:
+        """Perform request.
+
+        Args:
+            *args: Value used by this callable.
+            **kwargs: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         self.request_calls.append({'args': args, 'kwargs': kwargs})
         if self.error is not None:
             raise self.error
         return self.response
 
     def build_request(self, *args: object, **kwargs: object) -> object:
+        """Perform build request.
+
+        Args:
+            *args: Value used by this callable.
+            **kwargs: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         self.request_calls.append({'args': args, 'kwargs': kwargs})
         return object()
 
     async def send(self, _request: object, *, stream: bool) -> FakeResponse:
+        """Perform send.
+
+        Args:
+            _request: Value used by this callable.
+            stream: Value used by this callable.
+
+        Returns:
+            The callable result.
+        """
         assert stream is True
         if self.error is not None:
             raise self.error
@@ -293,6 +375,26 @@ def test_proxy_request_headers_drop_credentials_and_keep_safe_values() -> None:
         'Authorization': 'Bearer server-token',
         'X-BFF-Request': '1',
     }
+
+
+def test_proxy_request_headers_use_server_verified_deployment_authority() -> None:
+    """A loopback upstream must receive the canonical public authority."""
+    deployment = DeploymentBinding(
+        tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
+        deployment_id=UUID('00000000-0000-0000-0000-000000000002'),
+        api_base_url='https://api.example.com/hazard/api',
+        config_revision=1,
+    )
+
+    headers = proxy._proxy_request_headers(
+        _request(),
+        'server-token',
+        deployment,
+    )
+
+    assert headers['Host'] == 'api.example.com'
+    assert headers['X-Forwarded-Host'] == 'api.example.com'
+    assert headers['X-Forwarded-Proto'] == 'https'
 
 
 def test_resolve_upstream_rejects_unknown_service() -> None:
@@ -728,6 +830,35 @@ def test_streaming_proxy_forwards_chunks_logs_errors_and_closes(
     assert client.closed is True
     assert response.headers['x-accel-buffering'] == 'no'
     assert logger.info.call_count >= 2
+
+
+def test_streaming_proxy_reuses_lifespan_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SSE responses close independently while their app client stays pooled."""
+    upstream = FakeResponse(chunks=(b'event: update\n\n',))
+    client = FakeAsyncClient(upstream)
+    pool = proxy.HttpClientPool()
+    pool.get = AsyncMock(return_value=client)  # type: ignore[method-assign]
+    request = _request(accept='text/event-stream')
+    request.app = SimpleNamespace(
+        state=SimpleNamespace(http_clients=pool),
+    )
+
+    response = _run(
+        proxy._proxy_streaming_request(
+            request,
+            AsyncMock(),
+            'session',
+            'http://upstream/events',
+            'token',
+        ),
+    )
+
+    assert _run(_collect_stream(response)) == [b'event: update\n\n']
+    assert upstream.closed is True
+    assert client.closed is False
+    pool.get.assert_awaited_once()
 
 
 def test_streaming_proxy_retries_401_then_logs_upstream_error(

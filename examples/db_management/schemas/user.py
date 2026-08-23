@@ -212,6 +212,20 @@ class PendingUserReviewRead(UserRead):
     provider: str = 'password'
 
 
+class UserPage(BaseModel):
+    """A keyset-paginated administrator user listing."""
+
+    items: list[UserRead]
+    next_cursor: int | None = None
+
+
+class PendingUserReviewPage(BaseModel):
+    """A keyset-paginated pending-signup review queue."""
+
+    items: list[PendingUserReviewRead]
+    next_cursor: int | None = None
+
+
 class UpdateUsername(BaseModel):
     """Define a username change identified by the current username.
 

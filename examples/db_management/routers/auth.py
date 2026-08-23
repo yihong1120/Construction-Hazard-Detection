@@ -107,6 +107,7 @@ async def login(
         hcaptcha_bypass_key=x_hcaptcha_bypass_key,
         client_ip=request.client.host if request.client else None,
         hash_refresh_token=use_web_cookie,
+        request=request,
     )
     if use_web_cookie:
         # Web clients keep refresh tokens in an HTTP-only cookie, never JSON.
@@ -203,6 +204,7 @@ async def google_login(
         device_lang=payload.device_lang,
         consent_payload=payload,
         hash_refresh_token=use_web_cookie,
+        request=request,
     )
     if use_web_cookie:
         set_web_refresh_cookie(response, result['refresh_token'])
@@ -254,6 +256,7 @@ async def apple_login(
         device_lang=payload.device_lang,
         consent_payload=payload,
         hash_refresh_token=use_web_cookie,
+        request=request,
     )
     if use_web_cookie:
         set_web_refresh_cookie(response, result['refresh_token'])
@@ -410,6 +413,7 @@ async def refresh(
     request: Request,
     response: Response,
     payload: RefreshRequest | None = Body(default=None),
+    db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ) -> TokenPair:
     """Issue a replacement token pair using a valid refresh token.
@@ -438,6 +442,8 @@ async def refresh(
         RefreshRequest(refresh_token=refresh_token),
         redis,
         hash_refresh_token=use_web_cookie,
+        request=request,
+        db=db,
     )
     if use_web_cookie:
         set_web_refresh_cookie(response, result['refresh_token'])

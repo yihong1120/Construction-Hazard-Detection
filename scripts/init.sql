@@ -34,6 +34,53 @@ DROP TABLE IF EXISTS sites;
 DROP TABLE IF EXISTS legal_documents;
 DROP TABLE IF EXISTS features;
 DROP TABLE IF EXISTS group_info;
+DROP TABLE IF EXISTS deployments;
+DROP TABLE IF EXISTS tenants;
+
+CREATE TABLE tenants (
+    id CHAR(32) PRIMARY KEY,
+    name VARCHAR(160) NOT NULL UNIQUE,
+    description TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_tenants_status CHECK (status IN ('active', 'disabled'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO tenants (id, name, description, status)
+VALUES (
+    '00000000000000000000000000000001',
+    'Default tenant',
+    'Bootstrap tenant for local and first deployment setup.',
+    'active'
+);
+
+CREATE TABLE deployments (
+    id CHAR(32) PRIMARY KEY,
+    tenant_id CHAR(32) NOT NULL,
+    api_base_url VARCHAR(2048) NOT NULL,
+    config_revision INT NOT NULL DEFAULT 1,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_deployments_tenant
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE RESTRICT,
+    CONSTRAINT uq_deployments_api_base_url UNIQUE (api_base_url),
+    CONSTRAINT chk_deployments_status CHECK (status IN ('active', 'revoked')),
+    CONSTRAINT chk_deployments_config_revision CHECK (config_revision >= 1),
+    INDEX idx_deployments_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO deployments (id, tenant_id, api_base_url, config_revision, status)
+VALUES (
+    '00000000000000000000000000000002',
+    '00000000000000000000000000000001',
+    'https://changdar-server.mooo.com/hazard/api',
+    1,
+    'active'
+);
 
 -- ========== Parent Tables ==========
 CREATE TABLE group_info (
@@ -60,13 +107,18 @@ CREATE TABLE users (
     role VARCHAR(20) NOT NULL DEFAULT 'user',
     status VARCHAR(20) NOT NULL DEFAULT 'active',
     email_verified_at DATETIME NULL,
+    tenant_id CHAR(32) NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     group_id INT,
     CONSTRAINT fk_users_group
         FOREIGN KEY (group_id) REFERENCES group_info(id)
         ON DELETE SET NULL,
+    CONSTRAINT fk_users_tenant
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+        ON DELETE RESTRICT,
     INDEX idx_users_group (group_id),
+    INDEX idx_users_tenant (tenant_id),
     CONSTRAINT chk_users_status CHECK (
         status IN (
             'active',
@@ -184,8 +236,11 @@ CREATE TABLE notifications (
         )
     ),
     INDEX idx_notifications_user_created (user_id, created_at),
+    INDEX idx_notifications_user_created_id (user_id, created_at, id),
     INDEX idx_notifications_user_read (user_id, is_read),
-    INDEX idx_notifications_user_type (user_id, type)
+    INDEX idx_notifications_user_read_created_id (user_id, is_read, created_at, id),
+    INDEX idx_notifications_user_type (user_id, type),
+    INDEX idx_notifications_user_type_created_id (user_id, type, created_at, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE fcm_device_tokens (
@@ -462,8 +517,11 @@ CREATE TABLE violations (
     INDEX idx_vio_site_name (site),
     INDEX idx_vio_time (detection_time),
     INDEX idx_vio_site_time (site, detection_time),
+    INDEX idx_vio_site_detection_id (site, detection_time DESC, id DESC),
     INDEX idx_vio_stream_time (stream_name, detection_time),
     INDEX idx_vio_stream_config_time (stream_config_id, detection_time),
+    INDEX idx_vio_stream_config_detection_id
+        (stream_config_id, detection_time DESC, id DESC),
     INDEX idx_vio_warnings_time (warnings_json(191), detection_time),
     INDEX idx_vio_flagged_status (is_flagged, review_status),
     INDEX idx_vio_reviewed_at (reviewed_at)
@@ -515,6 +573,19 @@ CREATE TABLE violation_review_audit_logs (
 
 SET FOREIGN_KEY_CHECKS = 1;
 
+DELIMITER //
+CREATE TRIGGER trg_deployments_config_revision
+BEFORE UPDATE ON deployments
+FOR EACH ROW
+BEGIN
+    IF NOT (NEW.tenant_id <=> OLD.tenant_id)
+       OR NOT (NEW.api_base_url <=> OLD.api_base_url)
+       OR NOT (NEW.status <=> OLD.status) THEN
+        SET NEW.config_revision = OLD.config_revision + 1;
+    END IF;
+END//
+DELIMITER ;
+
 -- ========== Seed Data ==========
 -- Default group (ensure id=1 exists)
 INSERT INTO group_info (id, name, uniform_number, max_allowed_streams)
@@ -530,19 +601,21 @@ ON DUPLICATE KEY UPDATE
     description = VALUES(description);
 
 -- Guest admin user (update if already present)
-INSERT INTO users (username, password_hash, role, status, group_id)
+INSERT INTO users (username, password_hash, role, status, group_id, tenant_id)
 VALUES (
     'user',
     '$argon2id$v=19$m=65536,t=3,p=4$WWrgNzRESjrJxeP6KC+jsQ$LRWIP3bk3vAJf5kSEA+gkSk1+KYvVU2VDwCKGiUtBCg',
     'admin',
     'active',
-    1
+    1,
+    '00000000000000000000000000000001'
 )
 ON DUPLICATE KEY UPDATE
     password_hash = VALUES(password_hash),
     role = VALUES(role),
     status = VALUES(status),
-    group_id = VALUES(group_id);
+    group_id = VALUES(group_id),
+    tenant_id = VALUES(tenant_id);
 
 -- Enable yolo_api for default group (map by name to avoid hard-coded ID)
 INSERT IGNORE INTO group_features (group_id, feature_id)

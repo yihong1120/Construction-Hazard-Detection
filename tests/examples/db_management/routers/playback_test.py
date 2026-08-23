@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 from urllib.parse import parse_qs
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import httpx
 from fastapi import FastAPI
@@ -18,6 +19,7 @@ from fastapi.testclient import TestClient
 from jwt.exceptions import InvalidTokenError
 
 from examples.auth.database import get_db
+from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import jwt_refresh
 from examples.auth.jwt_config import JwtAuthorizationCredentials
@@ -34,29 +36,66 @@ from examples.db_management.services import playback_services as playback
 from tests.examples.auth.session_store_test import FakeRedis
 
 
+_DEPLOYMENT = DeploymentBinding(
+    tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
+    deployment_id=UUID('00000000-0000-0000-0000-000000000002'),
+    api_base_url='https://api.example.com',
+    config_revision=1,
+)
+
+
 def _access_subject(
     username: str = 'alice',
     user_id: int = 1,
 ) -> dict[str, object]:
+    """Perform access subject.
+
+    Args:
+        username: Value used by this callable.
+        user_id: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     return {
         'username': username,
         'user_id': user_id,
         'role': 'user',
         'jti': 'access-jti',
         'features': [],
+        'tenant_id': str(_DEPLOYMENT.tenant_id),
+        'deployment_id': str(_DEPLOYMENT.deployment_id),
+        'config_revision': _DEPLOYMENT.config_revision,
     }
 
 
-def _refresh_subject(username: str = 'alice') -> dict[str, str]:
+def _refresh_subject(username: str = 'alice') -> dict[str, object]:
+    """Perform refresh subject.
+
+    Args:
+        username: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     return {
         'username': username,
         'family_id': 'refresh-family',
         'token_id': 'refresh-token-id',
+        'tenant_id': str(_DEPLOYMENT.tenant_id),
+        'deployment_id': str(_DEPLOYMENT.deployment_id),
+        'config_revision': _DEPLOYMENT.config_revision,
     }
 
 
 class PlaybackRouterTest(unittest.TestCase):
+
+    """Provide PlaybackRouterTest.
+    """
+
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         app = FastAPI()
         app.include_router(playback_router.router)
         self.redis = FakeRedis()
@@ -64,12 +103,23 @@ class PlaybackRouterTest(unittest.TestCase):
         app.dependency_overrides[get_redis_pool] = lambda: self.redis
         app.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(app)
+        deployment_resolver = patch.object(
+            playback,
+            'resolve_request_deployment',
+            new=AsyncMock(return_value=_DEPLOYMENT),
+        )
+        deployment_resolver.start()
+        self.addCleanup(deployment_resolver.stop)
         self.access_token = jwt_access.create_access_token(
             _access_subject('ChangDar'),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
         )
         self.headers = {'Authorization': f"Bearer {self.access_token}"}
 
     def test_native_single_playback_returns_signed_detail_url(self) -> None:
+        """Test native single playback returns signed detail url.
+        """
         upstream = {
             'session_id': 'stream-session-1',
             'key': 'Cam1',
@@ -150,6 +200,8 @@ class PlaybackRouterTest(unittest.TestCase):
         )
 
     def test_native_wall_playback_returns_shared_preview_token(self) -> None:
+        """Test native wall playback returns shared preview token.
+        """
         upstream = {
             'items': [
                 {
@@ -245,13 +297,19 @@ class PlaybackRouterTest(unittest.TestCase):
         )
 
     def test_web_bff_session_uses_same_playback_endpoint(self) -> None:
+        """Test web bff session uses same playback endpoint.
+        """
         access = jwt_access.create_access_token(
             _access_subject(user_id=2),
             timedelta(minutes=15),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
         )
         refresh = jwt_refresh.create_access_token(
             _refresh_subject(),
             timedelta(days=30),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
         )
         session_id, session = asyncio.run(
             create_auth_session(
@@ -260,6 +318,7 @@ class PlaybackRouterTest(unittest.TestCase):
                     'access_token': access,
                     'refresh_token': refresh,
                     'feature_names': [],
+                    'deployment': _DEPLOYMENT.as_response(),
                 },
                 {
                     'id': 2,
@@ -369,6 +428,15 @@ def _request(
     authorization: str = '',
     session_id: str | None = None,
 ) -> SimpleNamespace:
+    """Perform request.
+
+    Args:
+        authorization: Value used by this callable.
+        session_id: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     cookies = {}
     if session_id is not None:
         cookies[playback.SESSION_COOKIE] = session_id
@@ -382,6 +450,14 @@ def _request(
 
 
 def _http_context(response: object) -> tuple[MagicMock, MagicMock]:
+    """Perform http context.
+
+    Args:
+        response: Value used by this callable.
+
+    Returns:
+        The callable result.
+    """
     client = MagicMock()
     client.post = AsyncMock(return_value=response)
     context = MagicMock()
@@ -391,10 +467,24 @@ def _http_context(response: object) -> tuple[MagicMock, MagicMock]:
 
 
 class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
+
+    """Provide TestPlaybackCoverage.
+    """
+
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db = MagicMock()
         self.db.scalar = AsyncMock()
         self.redis = MagicMock()
+        self.binding = _DEPLOYMENT
+        deployment_resolver = patch.object(
+            playback,
+            'resolve_request_deployment',
+            new=AsyncMock(return_value=self.binding),
+        )
+        deployment_resolver.start()
+        self.addCleanup(deployment_resolver.stop)
         self.principal = playback.PlaybackPrincipal(
             username='alice',
             user_id=7,
@@ -404,6 +494,8 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_bearer_decode_and_subject_helpers(self) -> None:
+        """Test bearer decode and subject helpers.
+        """
         self.assertEqual(
             playback._bearer_token(
                 _request('Bearer token'),
@@ -417,7 +509,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             side_effect=InvalidTokenError('bad token'),
         ):
             with self.assertRaises(HTTPException) as invalid:
-                await playback._decode_access_token('bad', self.redis)
+                await playback._decode_access_token(
+                    'bad', self.redis, self.binding,
+                )
         self.assertEqual(invalid.exception.status_code, 401)
 
         with (
@@ -438,6 +532,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             credentials = await playback._decode_access_token(
                 'token',
                 self.redis,
+                self.binding,
             )
         self.assertEqual(credentials.subject, _access_subject())
 
@@ -454,7 +549,9 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             with self.assertRaises(HTTPException) as empty_subject:
-                await playback._decode_access_token('token', self.redis)
+                await playback._decode_access_token(
+                    'token', self.redis, self.binding,
+                )
         self.assertEqual(empty_subject.exception.status_code, 401)
 
     async def test_bearer_decode_rejects_revoked_and_redis_failures(
@@ -478,7 +575,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(HTTPException) as revoked,
         ):
-            await playback._decode_access_token('token', self.redis)
+            await playback._decode_access_token('token', self.redis, self.binding)
         self.assertEqual(revoked.exception.status_code, 401)
 
         with (
@@ -494,18 +591,20 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(HTTPException) as unavailable,
         ):
-            await playback._decode_access_token('token', self.redis)
+            await playback._decode_access_token('token', self.redis, self.binding)
         self.assertEqual(unavailable.exception.status_code, 503)
 
     async def test_principal_resolution_rejects_expired_app_sessions(
         self,
     ) -> None:
+        """Test principal resolution rejects expired app sessions.
+        """
         with patch.object(
             playback, 'get_auth_session', new=AsyncMock(return_value=None),
         ):
             with self.assertRaises(HTTPException) as expired_session:
                 await playback._resolve_playback_principal(
-                    _request(), self.redis,
+                    _request(), self.redis, self.db,
                 )
         self.assertEqual(
             expired_session.exception.detail,
@@ -515,6 +614,8 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
     async def test_principal_resolution_uses_access_subject(
         self,
     ) -> None:
+        """Test principal resolution uses access subject.
+        """
         credentials = JwtAuthorizationCredentials(
             subject=cast(AccessTokenSubject, _access_subject(user_id=9)),
         )
@@ -522,7 +623,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             playback, '_decode_access_token', return_value=credentials,
         ):
             principal = await playback._resolve_playback_principal(
-                _request('Bearer token'), self.redis,
+                _request('Bearer token'), self.redis, self.db,
             )
         self.assertEqual(principal.parent, 'native:user:9')
 
@@ -542,12 +643,14 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                         return_value=credentials,
                     ):
                         principal = await playback._resolve_playback_principal(
-                            _request(session_id='session'), self.redis,
+                            _request(session_id='session'), self.redis, self.db,
                         )
         self.assertEqual(principal.platform, 'web')
         self.assertEqual(principal.user_id, 9)
 
     async def test_streaming_upstream_errors_and_detail_parsing(self) -> None:
+        """Test streaming upstream errors and detail parsing.
+        """
         response = MagicMock()
         response.json.side_effect = ValueError('not json')
         response.text = 'plain error'
@@ -632,6 +735,8 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((body, status_code), ({'key': 'Cam1'}, 201))
 
     def test_signed_urls_profiles_and_wall_payload(self) -> None:
+        """Test signed urls profiles and wall payload.
+        """
         self.assertEqual(playback._normalise_profile(None), 'clean')
         with self.assertRaises(HTTPException):
             playback._normalise_profile('unknown')
@@ -708,6 +813,8 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             PlaybackWallRequest(site='Site', cameras=['Cam 1', 'Cam 1'])
 
     async def test_wall_validation_and_session_lifecycle_errors(self) -> None:
+        """Test wall validation and session lifecycle errors.
+        """
         payload = PlaybackWallRequest(site='Site')
         with patch.object(
             playback,

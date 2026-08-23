@@ -1,0 +1,38 @@
+# Signed Deployment Registry reverse-proxy snippets.
+#
+# Insert the first two locations in the HTTP :80 server before its generic
+# HTTPS redirect.  Insert the final location in the HTTPS :443 server before
+# the generic /hazard/api/ fallback location.
+
+# HTTP server: do not redirect the registry to HTTPS.  A managed device must
+# treat an HTTP configuration fetch as a failure.
+location = /hazard/api/deployment-registry {
+    default_type application/json;
+    add_header Cache-Control "no-store" always;
+    return 400 '{"detail":{"code":"https_required"}}';
+}
+
+location ^~ /hazard/api/deployment-registry/ {
+    default_type application/json;
+    add_header Cache-Control "no-store" always;
+    return 400 '{"detail":{"code":"https_required"}}';
+}
+
+# HTTPS server: this replaces the public prefix with the independent FastAPI
+# router prefix.  It must be above a generic /hazard/api/ location.
+location ^~ /hazard/api/deployment-registry/ {
+    proxy_pass http://127.0.0.1:8005/deployment-registry/;
+    proxy_http_version 1.1;
+    proxy_redirect off;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+
+    # The Registry router rejects Authorization, Cookie, CSRF, and refresh
+    # headers with a non-200 response.  Do not clear them here: silently
+    # stripping credentials would make a credentialed request appear valid.
+
+    proxy_hide_header Cache-Control;
+    add_header Cache-Control "no-store" always;
+}

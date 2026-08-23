@@ -17,6 +17,8 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
     """Tests for password reset service behaviour."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db: AsyncMock = AsyncMock()
         self.redis: AsyncMock = AsyncMock()
         self.redis.incr = AsyncMock(side_effect=[1, 1])
@@ -36,6 +38,13 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         mock_find_user: AsyncMock,
         mock_send_email: AsyncMock,
     ) -> None:
+        """Test request password reset existing email.
+
+        Args:
+            mock_token_urlsafe: Value used by this callable.
+            mock_find_user: Value used by this callable.
+            mock_send_email: Value used by this callable.
+        """
         user = MagicMock(id=123)
         mock_find_user.return_value = user
 
@@ -69,6 +78,12 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         mock_find_user: AsyncMock,
         mock_send_email: AsyncMock,
     ) -> None:
+        """Test request password reset unknown email does not send.
+
+        Args:
+            mock_find_user: Value used by this callable.
+            mock_send_email: Value used by this callable.
+        """
         mock_find_user.return_value = None
 
         result = await svc.request_password_reset(
@@ -93,6 +108,13 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         mock_find_user: AsyncMock,
         mock_send_email: AsyncMock,
     ) -> None:
+        """Test request password reset deletes token on mail failure.
+
+        Args:
+            _mock_token_urlsafe: Value used by this callable.
+            mock_find_user: Value used by this callable.
+            mock_send_email: Value used by this callable.
+        """
         mock_find_user.return_value = MagicMock(id=123)
         mock_send_email.side_effect = HTTPException(502, 'send failed')
 
@@ -108,6 +130,8 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_request_password_reset_email_rate_limited(self) -> None:
+        """Test request password reset email rate limited.
+        """
         self.redis.incr = AsyncMock(return_value=2)
 
         with self.assertRaises(HTTPException) as ctx:
@@ -120,6 +144,8 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 429)
 
     async def test_reset_password_invalid_or_expired_token(self) -> None:
+        """Test reset password invalid or expired token.
+        """
         self.redis.getdel.return_value = None
 
         with self.assertRaises(HTTPException) as ctx:
@@ -137,6 +163,8 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_reset_password_missing_token(self) -> None:
+        """Test reset password missing token.
+        """
         with self.assertRaises(HTTPException) as ctx:
             await svc.reset_password(
                 None,
@@ -153,6 +181,8 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         self.redis.getdel.assert_not_awaited()
 
     async def test_reset_password_missing_new_password(self) -> None:
+        """Test reset password missing new password.
+        """
         with self.assertRaises(HTTPException) as ctx:
             await svc.reset_password(
                 'raw-token',
@@ -173,6 +203,8 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
         self.redis.getdel.assert_not_awaited()
 
     async def test_reset_password_rejects_short_password(self) -> None:
+        """Test reset password rejects short password.
+        """
         with self.assertRaises(HTTPException) as ctx:
             await svc.reset_password(
                 'raw-token',
@@ -196,6 +228,8 @@ class TestPasswordResetServices(unittest.IsolatedAsyncioTestCase):
     async def test_reset_password_success_updates_password_and_revokes_cache(
         self,
     ) -> None:
+        """Test reset password success updates password and revokes cache.
+        """
         user = MagicMock(id=123, username='user')
         self.db.get = AsyncMock(return_value=user)
         self.db.commit = AsyncMock()
@@ -248,6 +282,8 @@ class TestPasswordResetServiceCoverage(unittest.IsolatedAsyncioTestCase):
     """Exercise password-reset operational failures and validation guards."""
 
     def setUp(self) -> None:
+        """Perform setUp.
+        """
         self.db = AsyncMock()
         self.redis = AsyncMock()
         self.redis.getdel = AsyncMock()
