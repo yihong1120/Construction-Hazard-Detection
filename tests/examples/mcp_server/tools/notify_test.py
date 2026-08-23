@@ -295,6 +295,58 @@ class EnsureInitialisationTests(unittest.IsolatedAsyncioTestCase):
             await tool._ensure_telegram_notifier()
             mock_tel.assert_called_once()
 
+    async def test_messenger_and_wechat_share_client_and_return_results(
+        self,
+    ) -> None:
+        """Messenger and WeChat initialise once and preserve results.
+
+        Both feature clients use the shared async HTTP transport.
+        """
+        messenger = AsyncMock()
+        messenger.send_notification.return_value = 201
+        wechat = AsyncMock()
+        wechat.send_notification.return_value = {'errcode': 1}
+        client = AsyncMock()
+        tool = NotifyTools()
+        tool._http_client = client
+
+        with (
+            patch(
+                'examples.mcp_server.tools.notify.MessengerNotifier',
+                return_value=messenger,
+            ) as messenger_class,
+            patch(
+                'examples.mcp_server.tools.notify.WeChatNotifier',
+                return_value=wechat,
+            ) as wechat_class,
+        ):
+            messenger_result = await tool.messenger_send('recipient', 'hello')
+            wechat_result = await tool.wechat_send('user', 'hello')
+            wechat_success = await tool.wechat_send('user', 'again')
+
+        self.assertTrue(messenger_result['success'])
+        self.assertFalse(wechat_result['success'])
+        self.assertFalse(wechat_success['success'])
+        messenger_class.assert_called_once_with(client=client)
+        wechat_class.assert_called_once_with(client=client)
+
+    async def test_close_releases_line_and_http_transports(self) -> None:
+        """Closing a tool releases transports and clears all lazy clients."""
+        tool = NotifyTools()
+        tool._http_client = AsyncMock()
+        tool._line_session = AsyncMock()
+        tool._line_messenger = MagicMock()
+        tool._messenger_notifier = MagicMock()
+        tool._wechat_notifier = MagicMock()
+
+        await tool.close()
+
+        self.assertIsNone(tool._http_client)
+        self.assertIsNone(tool._line_session)
+        self.assertIsNone(tool._line_messenger)
+        self.assertIsNone(tool._messenger_notifier)
+        self.assertIsNone(tool._wechat_notifier)
+
 
 if __name__ == '__main__':
     unittest.main()

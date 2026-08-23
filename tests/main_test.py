@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from contextlib import suppress
 from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -3784,3 +3785,21 @@ def test_main_config_mode_handles_no_runnable_streams() -> None:
         app.cleanup_resources.assert_awaited_once()
 
     asyncio.run(run_case())
+
+
+def test_main_uses_expiry_aware_reload_delay_and_stable_stream_ids() -> None:
+    """Configuration health checks wake for valid expiries and stream IDs."""
+    app = MainApp(poll_interval=10)
+    future = datetime.now(timezone.utc) + timedelta(seconds=1)
+    app.running_processes = {
+        'without-expiry': {'cfg': {'expire_date': None}},
+        'invalid-expiry': {'cfg': {'expire_date': 'not-a-date'}},
+        'naive-expiry': {'cfg': {'expire_date': future.replace(tzinfo=None)}},
+    }
+
+    delay = app._next_configuration_reload_delay()
+
+    assert 0.1 <= delay < 10
+    assert app._stream_process_key(
+        cast(StreamConfig, {'stream_id': 42}),
+    ) == 'id:42'

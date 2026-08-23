@@ -96,3 +96,17 @@ class WeChatNotifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(client, notifier._http_client())
         await notifier.aclose()
         self.assertTrue(client.is_closed)
+
+    async def test_image_upload_requires_a_media_identifier(self) -> None:
+        """WeChat image uploads fail when the API omits the media ID."""
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, json={}),
+            ),
+        ) as client:
+            notifier = WeChatNotifier('corp', 'secret', client=client)
+            with self.assertRaisesRegex(ValueError, 'media ID'):
+                await notifier.upload_media(
+                    np.zeros((2, 2, 3), dtype=np.uint8),
+                    token='token',
+                )

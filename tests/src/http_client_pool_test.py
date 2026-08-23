@@ -4,6 +4,7 @@ import unittest
 
 import httpx
 
+import src.http_client_pool as client_pool
 from src.http_client_pool import HttpClientPool
 
 
@@ -33,3 +34,31 @@ class HttpClientPoolTests(unittest.IsolatedAsyncioTestCase):
         await pool.close()
         self.assertTrue(upstream.is_closed)
         self.assertTrue(streaming.is_closed)
+
+    async def test_application_client_is_optional_outside_lifespan(
+        self,
+    ) -> None:
+        """Services receive no shared client before the application starts."""
+        client_pool.set_application_http_clients(None)
+        self.assertIsNone(
+            await client_pool.get_application_http_client(
+                'upstream',
+                timeout=5.0,
+            ),
+        )
+
+    async def test_application_client_uses_the_registered_pool(self) -> None:
+        """Lifespan callers receive the registered named HTTP client."""
+        pool = HttpClientPool()
+        client_pool.set_application_http_clients(pool)
+        try:
+            client = await client_pool.get_application_http_client(
+                'upstream',
+                timeout=5.0,
+                follow_redirects=True,
+            )
+        finally:
+            client_pool.set_application_http_clients(None)
+            await pool.close()
+
+        self.assertIsNotNone(client)

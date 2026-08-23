@@ -148,7 +148,8 @@ class NetClient(AsyncHttpClientOwner):
             raise RuntimeError('HTTP POST retries exhausted')
 
         client = await self._get_client()
-        for attempt in range(max_retries):
+        attempt = 0
+        while True:
             try:
                 resp = await client.post(
                     self.build_http_url(path),
@@ -162,6 +163,7 @@ class NetClient(AsyncHttpClientOwner):
                 if attempt == max_retries - 1:
                     raise
                 await self._wait_for_http_retry(attempt)
+                attempt += 1
             except httpx.HTTPStatusError as exc:
                 if self.auth_required and exc.response.status_code in (
                     401,
@@ -172,10 +174,9 @@ class NetClient(AsyncHttpClientOwner):
                     if attempt == max_retries - 1:
                         raise
                     await self._wait_for_http_retry(attempt)
+                    attempt += 1
                     continue
                 raise
-
-        raise RuntimeError('HTTP POST retries exhausted')
 
     async def _wait_for_http_retry(self, attempt: int) -> None:
         """Apply the bounded HTTP retry backoff for a failed attempt."""

@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import jwt
+import numpy as np
 from shapely.geometry import MultiPolygon
 from shapely.geometry import Polygon
 from sklearn.cluster import HDBSCAN
@@ -1403,6 +1404,75 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
                 '[ERROR] Failed to close Redis connection: CloseErr',
                 log.output[0],
             )
+
+
+class TestMinimumSpanningTreeFallbacks(unittest.TestCase):
+    """Exercise all MST candidate and degenerate-input paths."""
+
+    def test_mst_handles_small_and_fully_coincident_inputs(self) -> None:
+        """MST returns direct edges for trivial and coincident pole sets."""
+        self.assertEqual(utils.build_mst_pairs([]), [])
+        self.assertEqual(utils.build_mst_pairs([(1.0, 1.0, 1.0)]), [])
+        self.assertEqual(
+            utils.build_mst_pairs([(1.0, 1.0, 1.0), (2.0, 1.0, 1.0)]),
+            [(0, 1)],
+        )
+        self.assertEqual(
+            utils.build_mst_pairs(
+                [
+                    (1.0, 1.0, 1.0),
+                    (1.0, 1.0, 3.0),
+                    (1.0, 1.0, 2.0),
+                ],
+            ),
+            [(1, 0), (1, 2)],
+        )
+
+    def test_mst_uses_delaunay_edges_and_dense_fallbacks(self) -> None:
+        """MST joins Delaunay candidates and retains both fallbacks.
+
+        The fallback preserves a valid tree for incomplete graph candidates.
+        """
+        poles = [
+            (0.0, 0.0, 1.0),
+            (4.0, 0.0, 1.0),
+            (0.0, 4.0, 1.0),
+        ]
+        triangulation = MagicMock(
+            simplices=np.asarray([[0, 1, 2]], dtype=np.int64),
+        )
+
+        with patch.object(utils, 'Delaunay', return_value=triangulation):
+            candidate_edges = utils.build_mst_pairs(poles)
+        self.assertEqual(len(candidate_edges), 2)
+
+        cycle_poles = [
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (10.0, 0.0, 0.0),
+        ]
+        cycle_triangulation = MagicMock(
+            simplices=np.asarray([[0, 1, 2], [0, 1, 3]], dtype=np.int64),
+        )
+        with patch.object(utils, 'Delaunay', return_value=cycle_triangulation):
+            cycle_edges = utils.build_mst_pairs(cycle_poles)
+        self.assertEqual(len(cycle_edges), 3)
+
+        empty_triangulation = MagicMock(
+            simplices=np.empty((0, 3), dtype=np.int64),
+        )
+        with patch.object(utils, 'Delaunay', return_value=empty_triangulation):
+            dense_edges = utils.build_mst_pairs(poles)
+        self.assertEqual(len(dense_edges), 2)
+
+        with patch.object(
+            utils,
+            'Delaunay',
+            side_effect=utils.QhullError('bad'),
+        ):
+            qhull_edges = utils.build_mst_pairs(poles)
+        self.assertEqual(len(qhull_edges), 2)
 
 
 if __name__ == '__main__':

@@ -39,3 +39,28 @@ class UtilityFunctionTests(unittest.TestCase):
         invalid = validate_detection_data([{'bbox': [2, 0, 1, 0]}], 100, 100)
         self.assertTrue(valid['is_valid'])
         self.assertFalse(invalid['is_valid'])
+
+    def test_detection_validation_reports_each_invalid_field_type(
+        self,
+    ) -> None:
+        """Detection validation identifies malformed boxes and metadata types.
+
+        Every invalid field produces a clear response error.
+        """
+        result = validate_detection_data(
+            [
+                'not-an-object',
+                {'bbox': [0, 1]},
+                {'bbox': [0, 0, 'x', 1]},
+                {
+                    'bbox': [-1, 0, 200, 1],
+                    'confidence': 'high',
+                    'class': 'person',
+                },
+            ],
+            100,
+            50,
+        )
+
+        self.assertFalse(result['is_valid'])
+        self.assertGreaterEqual(len(result['validation_errors']), 6)

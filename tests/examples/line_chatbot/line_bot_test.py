@@ -8,6 +8,8 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+import examples.line_chatbot as line_chatbot
+
 pytest.importorskip('linebot')
 
 from examples.line_chatbot.line_bot import app  # noqa: E402
@@ -37,6 +39,10 @@ class TestLineBot(unittest.TestCase):
 
         # Mock the LINE Bot WebhookHandler handle method
         self.mock_handler_handle = patch.object(handler, 'handle').start()
+
+    def test_line_chatbot_package_imports_cleanly(self) -> None:
+        """The optional chatbot package has no import-time side effects."""
+        self.assertIsNotNone(line_chatbot)
 
     def tearDown(self) -> None:
         """Clean up resources and stop all patches after each test."""
