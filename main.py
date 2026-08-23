@@ -39,8 +39,7 @@ class MainApp:
     """
 
     def __init__(self, poll_interval: int = 300) -> None:
-        """
-        Initialise the application.
+        """Initialise the application.
 
         Args:
             poll_interval (int): Maximum seconds between fallback database
@@ -67,10 +66,8 @@ class MainApp:
         self.yolo_worker_startup_lock: Any | None = None
 
     async def _ensure_db_pool(self) -> None:
-        """
-        Ensure a connection pool to the database is
-        established before querying.
-        """
+        """Ensure a connection pool to the database is established before
+        querying."""
         if self.db_pool is None:
             database_url = os.getenv('DATABASE_URL')
             if database_url is None:
@@ -138,10 +135,7 @@ class MainApp:
     ) -> None:
         """Schedule a reload when PostgreSQL signals a config change."""
         self._config_reload_requested = True
-        if (
-            self._config_reload_task is None
-            or self._config_reload_task.done()
-        ):
+        if self._config_reload_task is None or self._config_reload_task.done():
             reload_task = asyncio.create_task(
                 self._reload_configurations_from_notification(),
             )
@@ -193,8 +187,7 @@ class MainApp:
             await target_pool.release(connection)
 
     async def fetch_stream_configs(self) -> list[StreamConfig]:
-        """
-        Query the database for current stream configurations.
+        """Query the database for current stream configurations.
 
         Returns:
             list[StreamConfig]: All configured stream records.
@@ -231,11 +224,21 @@ class MainApp:
 
         for row in rows:
             (
-                stream_id, video_url, updated_at, model_key, site, stream_name,
-                recognition_enabled, expire_date,
-                work_start, work_end,
-                vest_helmet, near_vehicle, in_area,
-                in_pole_area, machine_close_pole,
+                stream_id,
+                video_url,
+                updated_at,
+                model_key,
+                site,
+                stream_name,
+                recognition_enabled,
+                expire_date,
+                work_start,
+                work_end,
+                vest_helmet,
+                near_vehicle,
+                in_area,
+                in_pole_area,
+                machine_close_pole,
             ) = row
 
             # Organise detection flags into a dictionary
@@ -315,11 +318,11 @@ class MainApp:
             - Restarts modified streams (based on updated_at)
             - Starts newly added streams not yet tracked
         """
+
         async with self.lock:
             configs = await self.fetch_stream_configs()
             cfg_map = {
-                self._stream_process_key(config): config
-                for config in configs
+                self._stream_process_key(config): config for config in configs
             }
             active_configs = {
                 stream_key: cfg
@@ -386,7 +389,7 @@ class MainApp:
         """
         stream_id = cfg.get('stream_id')
         if stream_id is not None:
-            return f'id:{stream_id}'
+            return f"id:{stream_id}"
         return str(cfg['video_url'])
 
     @staticmethod
@@ -437,8 +440,7 @@ class MainApp:
         return not is_expired(cfg.get('expire_date'))
 
     def start_process(self, cfg: StreamConfig) -> Process:
-        """
-        Launch a new child process to handle stream detection.
+        """Launch a new child process to handle stream detection.
 
         Args:
             cfg (StreamConfig): Configuration for the stream.
@@ -543,11 +545,10 @@ class MainApp:
                 key=lambda cfg: str(cfg['video_url']),
             )
             for start in range(0, len(sorted_configs), cameras_per_engine):
-                shard = sorted_configs[start:start + cameras_per_engine]
+                shard = sorted_configs[start: start + cameras_per_engine]
                 source_urls = [str(cfg['video_url']) for cfg in shard]
                 camera_ids = [
-                    f"{cfg['site']}|{cfg['stream_name']}"
-                    for cfg in shard
+                    f"{cfg['site']}|{cfg['stream_name']}" for cfg in shard
                 ]
                 for source_url in source_urls:
                     slots[source_url] = worker_index
@@ -599,12 +600,10 @@ class MainApp:
                 process.join()
             request_queue = self.yolo_request_queues[worker_index]
             device = devices[worker_index % len(devices)]
-            self.yolo_worker_processes[worker_index] = (
-                self._start_yolo_worker(
-                    worker_index,
-                    request_queue,
-                    device,
-                )
+            self.yolo_worker_processes[worker_index] = self._start_yolo_worker(
+                worker_index,
+                request_queue,
+                device,
             )
             self.logger.warning(
                 '[YOLO-Worker] process %s exited; restarted with existing '
@@ -743,8 +742,7 @@ class MainApp:
         await delete_stream_live_metadata(cfg)
 
     def stop_process(self, proc: Process) -> None:
-        """
-        Gracefully terminate a child process.
+        """Gracefully terminate a child process.
 
         Args:
             proc (Process): The process to be terminated.
@@ -762,9 +760,7 @@ class MainApp:
             self.logger.error(f"Error stopping process: {e}")
 
     async def cleanup_resources(self) -> None:
-        """
-        Clean up all resources
-        """
+        """Clean up all resources."""
         # Stop all processes
         for info in self.running_processes.values():
             self.stop_process(info['process'])
@@ -818,9 +814,8 @@ class MainApp:
         self.yolo_worker_startup_lock = None
 
     async def run(self) -> None:
-        """
-        Start the application loop that continuously checks the stream configs.
-        """
+        """Start the application loop that continuously checks the stream
+        configs."""
         try:
             self.logger.info(
                 '[startup] Stream supervisor started; PostgreSQL LISTEN '
@@ -838,18 +833,19 @@ class MainApp:
 
 
 async def main() -> None:
-    """
-    Parse command-line arguments and run the MainApp.
-    """
+    """Parse command-line arguments and run the MainApp."""
     parser = argparse.ArgumentParser(
         description='Hazard detection from DB configs or JSON file',
     )
     parser.add_argument(
-        '--poll', type=int, default=300,
+        '--poll',
+        type=int,
+        default=300,
         help='LISTEN health fallback interval in seconds',
     )
     parser.add_argument(
-        '--config', type=str,
+        '--config',
+        type=str,
         help='Path to JSON config file for stream configs',
     )
     args = parser.parse_args()
@@ -859,9 +855,7 @@ async def main() -> None:
         with open(args.config, encoding='utf-8') as f:
             configs = json.load(f)
         app = MainApp(poll_interval=args.poll)
-        active_configs = [
-            cfg for cfg in configs if app._can_run_stream(cfg)
-        ]
+        active_configs = [cfg for cfg in configs if app._can_run_stream(cfg)]
         if active_configs:
             app._ensure_yolo_worker(active_configs)
             # Start a process for every enabled, non-expired config.
@@ -921,8 +915,8 @@ def _positive_int_env(name: str, default: int = 0) -> int:
 def _model_camera_limits_env() -> dict[str, int]:
     """Read positive per-model camera limits from a comma-separated setting.
 
-    The value format is ``model_key=camera_count``. Invalid entries are
-    ignored so a typo falls back to ``YOLO_WORKER_CAMERAS_PER_ENGINE``.
+    The value format is ``model_key=camera_count``. Invalid entries are ignored
+    so a typo falls back to ``YOLO_WORKER_CAMERAS_PER_ENGINE``.
     """
     limits: dict[str, int] = {}
     raw_value = os.getenv('YOLO_WORKER_CAMERAS_PER_ENGINE_BY_MODEL', '')
@@ -949,9 +943,8 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, _handle_sigterm)
     multiprocessing.set_start_method('spawn', force=True)
     asyncio.run(main())
-
-"""
-python main.py --poll 15
+\
+"""Python main.py --poll 15.
 
 uv run python main.py --poll 15
 """

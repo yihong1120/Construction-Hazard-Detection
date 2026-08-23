@@ -20,8 +20,7 @@ UTILITY_POLE_RADIUS_FACTOR: float = 0.35
 
 
 def normalise_bbox(bbox: list[float]) -> list[float]:
-    """
-    Normalises the bounding box coordinates.
+    """Normalises the bounding box coordinates.
 
     Args:
         bbox (List[float]): The bounding box coordinates.
@@ -40,8 +39,7 @@ def detect_polygon_from_cones(
     datas: list[list[float]],
     clusterer: HDBSCAN,
 ) -> list[Polygon]:
-    """
-    Detects polygons from the safety cones in the detection data.
+    """Detects polygons from the safety cones in the detection data.
 
     Args:
         datas (list[list[float]]): The detection data.
@@ -53,13 +51,16 @@ def detect_polygon_from_cones(
         return []
 
     # Get positions of safety cones
-    cone_positions = np.array([
-        (
-            (float(data[0]) + float(data[2])) / 2,
-            (float(data[1]) + float(data[3])) / 2,
-        )
-        for data in datas if data[5] == 6
-    ])
+    cone_positions = np.array(
+        [
+            (
+                (float(data[0]) + float(data[2])) / 2,
+                (float(data[1]) + float(data[3])) / 2,
+            )
+            for data in datas
+            if data[5] == 6
+        ],
+    )
 
     # Check if there are at least three safety cones to form a polygon
     if len(cone_positions) < 3:
@@ -91,8 +92,7 @@ def calculate_people_in_controlled_area(
     polygons: list[Polygon],
     datas: list[list[float]],
 ) -> int:
-    """
-    Calculates the number of people within the safety cone area.
+    """Calculates the number of people within the safety cone area.
 
     Args:
         polygons (list[Polygon]): Polygons representing controlled areas.
@@ -131,8 +131,7 @@ def build_utility_pole_union(
     datas: list[list[float]],
     clusterer: HDBSCAN,
 ) -> Polygon:
-    """
-    Builds a union Polygon representing the controlled area for utility
+    """Builds a union Polygon representing the controlled area for utility
     poles.
 
     This method clusters detected utility poles, constructs minimum
@@ -183,8 +182,7 @@ def build_utility_pole_union(
 def _extract_utility_poles(
     datas: list[list[float]],
 ) -> list[tuple[float, float, float]]:
-    """
-    Extract utility pole centre-bottom and radius from detections.
+    """Extract utility pole centre-bottom and radius from detections.
 
     Args:
         datas (list[list[float]]): Detection data, each entry is a list
@@ -208,8 +206,7 @@ def _extract_utility_poles(
 
 
 def _union_circles(poles: list[tuple[float, float, float]]) -> Polygon:
-    """
-    Union buffered circles for all given poles.
+    """Union buffered circles for all given poles.
 
     Args:
         poles (list[tuple[float, float, float]]): List of utility pole
@@ -229,8 +226,7 @@ def _cluster_utility_poles(
     poles: list[tuple[float, float, float]],
     clusterer: HDBSCAN,
 ) -> dict[str | int, list[tuple[float, float, float]]]:
-    """
-    Cluster poles using HDBSCAN, grouping noise separately.
+    """Cluster poles using HDBSCAN, grouping noise separately.
 
     Args:
         poles (list[tuple[float, float, float]]): List of utility pole
@@ -259,8 +255,7 @@ def _cluster_utility_poles(
 def _build_cluster_union(
     circles_in_cluster: list[tuple[float, float, float]],
 ) -> Polygon:
-    """
-    Build union polygon for a cluster of poles (circles + tangents).
+    """Build union polygon for a cluster of poles (circles + tangents).
 
     Args:
         circles_in_cluster (list[tuple[float, float, float]]):
@@ -273,7 +268,8 @@ def _build_cluster_union(
     if len(circles_in_cluster) == 1:
         cx, cy, r = circles_in_cluster[0]
         return Point(cx, cy).buffer(
-            r, quad_segs=CIRCLE_BUFFER_SEGMENTS,
+            r,
+            quad_segs=CIRCLE_BUFFER_SEGMENTS,
         )
 
     # Multiple poles: circles + outer tangents along MST edges
@@ -288,8 +284,7 @@ def _build_cluster_union(
 def _build_mst_tangent_buffers(
     circles_in_cluster: list[tuple[float, float, float]],
 ) -> list[Polygon]:
-    """
-    Build buffered polygons from outer tangents along MST edges.
+    """Build buffered polygons from outer tangents along MST edges.
 
     Args:
         circles_in_cluster (list[tuple[float, float, float]]):
@@ -302,7 +297,7 @@ def _build_mst_tangent_buffers(
         circles_in_cluster,
     )
     lines: list[LineString] = []
-    for (u, v) in mst_edges:
+    for u, v in mst_edges:
         cx1, cy1, r1 = circles_in_cluster[u]
         cx2, cy2, r2 = circles_in_cluster[v]
         lines.extend(get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2))
@@ -310,15 +305,15 @@ def _build_mst_tangent_buffers(
         ls.buffer(
             TANGENT_BUFFER_WIDTH,
             quad_segs=TANGENT_BUFFER_SEGMENTS,
-        ) for ls in lines
+        )
+        for ls in lines
     ]
 
 
 def build_mst_pairs(
     poles: list[tuple[float, float, float]],
 ) -> list[tuple[int, int]]:
-    """
-    Builds a minimum spanning tree (MST) for a set of utility poles.
+    """Builds a minimum spanning tree (MST) for a set of utility poles.
 
     Args:
         poles (list[tuple[float, float, float]]): List of utility pole
@@ -445,9 +440,7 @@ def _dense_prim_mst_pairs(
 
     for _ in range(count):
         current = min(
-            (
-                index for index in range(count) if not selected[index]
-            ),
+            (index for index in range(count) if not selected[index]),
             key=best_weight.__getitem__,
         )
         selected[current] = True
@@ -477,8 +470,7 @@ def get_outer_tangents(
     r2: float,
     eps: float = 1e-9,
 ) -> list[LineString]:
-    """
-    Calculates the outer tangents between two circles.
+    """Calculates the outer tangents between two circles.
 
     Args:
         cx1 (float): Centre x-coordinate of the first circle.
@@ -529,10 +521,12 @@ def get_outer_tangents(
         y1t: float = cy1 + r1 * math.sin(phi)
         x2t: float = cx2 + r2 * math.cos(phi)
         y2t: float = cy2 + r2 * math.sin(phi)
-        ls: LineString = LineString([
-            (x1t, y1t),
-            (x2t, y2t),
-        ])
+        ls: LineString = LineString(
+            [
+                (x1t, y1t),
+                (x2t, y2t),
+            ],
+        )
         lines.append(ls)
 
     return lines
@@ -542,8 +536,7 @@ def count_people_in_polygon(
     poly: Polygon,
     datas: list[list[float]],
 ) -> int:
-    """
-    Counts the number of people within a specified polygon.
+    """Counts the number of people within a specified polygon.
 
     Args:
         poly (Polygon): The polygon representing the area of interest.
@@ -569,9 +562,8 @@ def count_people_in_polygon(
 
 
 def polygons_to_coords(polygons: list[Polygon]) -> list[list[list[float]]]:
-    """
-    Converts Polygon or MultiPolygon objects to a list of lists of
-    [x, y] coordinates.
+    """Converts Polygon or MultiPolygon objects to a list of lists of [x, y]
+    coordinates.
 
     Args:
         polygons (list[Polygon]): List of Polygon or MultiPolygon objects.
@@ -589,17 +581,11 @@ def polygons_to_coords(polygons: list[Polygon]) -> list[list[list[float]]]:
         if poly.is_empty:
             continue  # Skip empty polygons
         if poly.geom_type == 'Polygon':
-            coords_list.append([
-                list(pt) for pt in poly.exterior.coords
-            ])
+            coords_list.append([list(pt) for pt in poly.exterior.coords])
         elif poly.geom_type == 'MultiPolygon':
             for subpoly in poly.geoms:
-                if (
-                    not subpoly.is_empty and
-                    subpoly.geom_type == 'Polygon'
-                ):
-                    coords_list.append([
-                        list(pt)
-                        for pt in subpoly.exterior.coords
-                    ])
+                if not subpoly.is_empty and subpoly.geom_type == 'Polygon':
+                    coords_list.append(
+                        [list(pt) for pt in subpoly.exterior.coords],
+                    )
     return coords_list

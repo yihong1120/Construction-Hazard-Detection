@@ -12,7 +12,8 @@ from watchdog.events import FileSystemEventHandler
 
 
 class FileEventHandler(FileSystemEventHandler):
-    """Schedule at most one in-flight reload for a watched configuration file."""
+    """Schedule at most one in-flight reload for a watched configuration
+    file."""
 
     def __init__(
         self,
@@ -38,7 +39,10 @@ class FileEventHandler(FileSystemEventHandler):
         if os.path.abspath(os.fsdecode(event.src_path)) != self.file_path:
             return
         pending = self._pending
-        if pending is not None and not getattr(pending, 'done', lambda: True)():
+        if (
+            pending is not None
+            and not getattr(pending, 'done', lambda: True)()
+        ):
             self.logger.debug(
                 'Configuration reload already queued path=%s',
                 self.file_path,

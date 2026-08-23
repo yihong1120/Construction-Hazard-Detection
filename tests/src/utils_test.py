@@ -25,9 +25,8 @@ from src.runtime_utils import should_notify
 
 
 class MockSharedToken:
-    """
-    A mock shared token object to simulate race conditions
-    for TokenManager tests.
+    """A mock shared token object to simulate race conditions for TokenManager
+    tests.
 
     Attributes:
         _data (dict[str, str | bool]):
@@ -40,9 +39,7 @@ class MockSharedToken:
     _call_count: int
 
     def __init__(self) -> None:
-        """
-        Initialise the mock shared token with default values.
-        """
+        """Initialise the mock shared token with default values."""
         self._data = {
             'access_token': 'OLD',
             'refresh_token': 'ORIGINAL',
@@ -51,8 +48,7 @@ class MockSharedToken:
         self._call_count = 0
 
     def get(self, key: str, default: str | bool | None = None) -> str | bool:
-        """
-        Retrieve a value from the mock token dictionary, simulating a change
+        """Retrieve a value from the mock token dictionary, simulating a change
         in 'refresh_token' after the first call.
 
         Args:
@@ -81,8 +77,7 @@ class MockSharedToken:
         return value
 
     def __getitem__(self, key: str) -> str | bool:
-        """
-        Enable bracket access to the internal dictionary.
+        """Enable bracket access to the internal dictionary.
 
         Args:
             key (str): The key to retrieve.
@@ -95,8 +90,7 @@ class MockSharedToken:
         return value
 
     def __setitem__(self, key: str, value: str | bool) -> None:
-        """
-        Set a value in the internal dictionary.
+        """Set a value in the internal dictionary.
 
         Args:
             key (str): The key to set.
@@ -106,18 +100,14 @@ class MockSharedToken:
 
 
 class TestTokenManager(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the TokenManager class,
-    covering authentication and token refresh logic.
-    """
+    """Unit tests for the TokenManager class, covering authentication and token
+    refresh logic."""
 
     shared_token: dict[str, str | bool]
     tm: TokenManager
 
     def setUp(self) -> None:
-        """
-        Set up a fresh TokenManager and shared_token for each test.
-        """
+        """Set up a fresh TokenManager and shared_token for each test."""
         # Initialise shared_token dictionary for each test
         self.shared_token = {
             'access_token': '',
@@ -133,12 +123,11 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
     async def test_refresh_token_changed_before_post(
-        self, m_sess: AsyncMock,
+        self,
+        m_sess: AsyncMock,
     ) -> None:
-        """
-        Verify early return if refresh_token changes before HTTP POST
-        (covers concurrency line 134).
-        """
+        """Verify early return if refresh_token changes before HTTP POST
+        (covers concurrency line 134)."""
         post_mock = AsyncMock()
         m_sess.return_value.__aenter__.return_value.post = post_mock
 
@@ -150,7 +139,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
         post_mock.assert_not_awaited()
         self.assertEqual(
-            mock_shared_token['access_token'], 'OLD',
+            mock_shared_token['access_token'],
+            'OLD',
         )
 
     @patch.dict(
@@ -163,13 +153,12 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     )
     @patch('aiohttp.ClientSession')
     async def test_authenticate_success(self, m_session: AsyncMock) -> None:
-        """
-        Verify successful authentication sets correct tokens.
-        """
+        """Verify successful authentication sets correct tokens."""
         mock_resp = AsyncMock()
         mock_resp.status = 200
         mock_resp.json.return_value = {
-            'access_token': 'A', 'refresh_token': 'B',
+            'access_token': 'A',
+            'refresh_token': 'B',
         }
 
         mock_sessinst = AsyncMock()
@@ -179,7 +168,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         await self.tm.authenticate(force=True)
         self.assertEqual(self.shared_token['access_token'], 'A')
         self.assertEqual(
-            self.shared_token['refresh_token'], 'B',
+            self.shared_token['refresh_token'],
+            'B',
         )
         mock_sessinst.post.assert_awaited_once_with(
             'http://example.com/api/login',
@@ -193,9 +183,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     )
     @patch('aiohttp.ClientSession')
     async def test_authenticate_fail(self, m_session: AsyncMock) -> None:
-        """
-        Test authentication failure results in RuntimeError.
-        """
+        """Test authentication failure results in RuntimeError."""
         mock_resp = AsyncMock()
         mock_resp.status = 401
         mock_sessinst = AsyncMock()
@@ -207,11 +195,10 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch('aiohttp.ClientSession')
     async def test_authenticate_missing_env(
-        self, m_session: AsyncMock,
+        self,
+        m_session: AsyncMock,
     ) -> None:
-        """
-        Test that missing environment variables raises ValueError.
-        """
+        """Test that missing environment variables raises ValueError."""
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(ValueError):
                 await self.tm.authenticate(force=True)
@@ -219,10 +206,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_authenticate_no_force_noop(self) -> None:
-        """
-        Test authenticate is skipped when force is False and access_token
-        exists.
-        """
+        """Test authenticate is skipped when force is False and access_token
+        exists."""
         self.shared_token['access_token'] = 'EXIST'
         with patch('aiohttp.ClientSession') as mock_sess:
             await self.tm.authenticate(force=False)
@@ -234,13 +219,13 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     )
     @patch('aiohttp.ClientSession')
     async def test_authenticate_network_error(
-        self, m_session: AsyncMock,
+        self,
+        m_session: AsyncMock,
     ) -> None:
-        """
-        Test authentication with network error.
-        """
+        """Test authentication with network error."""
         # Mock aiohttp.ClientError
         import aiohttp
+
         session_manager = AsyncMock()
         session_manager.post.side_effect = aiohttp.ClientError('Network error')
         m_session.return_value.__aenter__.return_value = session_manager
@@ -259,11 +244,10 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     )
     @patch('aiohttp.ClientSession')
     async def test_authenticate_general_exception(
-        self, m_session: AsyncMock,
+        self,
+        m_session: AsyncMock,
     ) -> None:
-        """
-        Test authentication with general exception.
-        """
+        """Test authentication with general exception."""
         session_manager = AsyncMock()
         session_manager.post.side_effect = Exception('General error')
         m_session.return_value.__aenter__.return_value = session_manager
@@ -275,14 +259,12 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_refresh_token_no_refresh_token(self) -> None:
-        """
-        Test that no refresh_token triggers authenticate.
-        """
+        """Test that no refresh_token triggers authenticate."""
         self.shared_token['refresh_token'] = ''
         with patch.object(
             self.tm,
             'authenticate',
-                new_callable=AsyncMock,
+            new_callable=AsyncMock,
         ) as m_auth:
             await self.tm.refresh_token()
             m_auth.assert_awaited_once()
@@ -290,11 +272,10 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
     async def test_refresh_token_already_refreshing(
-        self, m_sess: AsyncMock,
+        self,
+        m_sess: AsyncMock,
     ) -> None:
-        """
-        Test that refresh_token exits early if already refreshing.
-        """
+        """Test that refresh_token exits early if already refreshing."""
         self.shared_token['is_refreshing'] = True
         await self.tm.refresh_token()
         m_sess.assert_not_called()
@@ -302,18 +283,19 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
     async def test_refresh_token_changed_refresh_token_midway(
-        self, m_sess: AsyncMock,
+        self,
+        m_sess: AsyncMock,
     ) -> None:
-        """
-        Test refresh_token behaviour when refresh_token changes during POST.
-        """
+        """Test refresh_token behaviour when refresh_token changes during
+        POST."""
         self.shared_token['refresh_token'] = 'X'
         self.shared_token['access_token'] = 'OLD'
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
         mock_resp.json.return_value = {
-            'access_token': 'NEW', 'refresh_token': 'NEWREF',
+            'access_token': 'NEW',
+            'refresh_token': 'NEWREF',
         }
 
         async def side_effect(*_: Any, **__: Any) -> Any:
@@ -328,22 +310,22 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
         await self.tm.refresh_token()
         self.assertEqual(
-            self.shared_token['access_token'], 'NEW',
+            self.shared_token['access_token'],
+            'NEW',
         )
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
     async def test_refresh_token_200_ok(self, m_sess: AsyncMock) -> None:
-        """
-        Verify token update on HTTP 200 OK response.
-        """
+        """Verify token update on HTTP 200 OK response."""
         self.shared_token['access_token'] = 'OLD'
         self.shared_token['refresh_token'] = 'RRR'
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
         mock_resp.json.return_value = {
-            'access_token': 'NNN', 'refresh_token': 'RRR2',
+            'access_token': 'NNN',
+            'refresh_token': 'RRR2',
         }
 
         mock_sessinst = AsyncMock()
@@ -353,16 +335,15 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         await self.tm.refresh_token()
         self.assertEqual(self.shared_token['access_token'], 'NNN')
         self.assertEqual(
-            self.shared_token['refresh_token'], 'RRR2',
+            self.shared_token['refresh_token'],
+            'RRR2',
         )
         self.assertFalse(self.shared_token['is_refreshing'])
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
     async def test_refresh_token_fail_401(self, m_sess: AsyncMock) -> None:
-        """
-        Trigger retry to authenticate on 401 response.
-        """
+        """Trigger retry to authenticate on 401 response."""
         self.shared_token['access_token'] = 'OLD'
         self.shared_token['refresh_token'] = 'RRR'
 
@@ -384,9 +365,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
     async def test_refresh_token_fail_other(self, m_sess: AsyncMock) -> None:
-        """
-        Raise RuntimeError on non-401 HTTP errors.
-        """
+        """Raise RuntimeError on non-401 HTTP errors."""
         self.shared_token['access_token'] = 'X'
         self.shared_token['refresh_token'] = 'Y'
 
@@ -402,9 +381,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_ensure_token_valid_no_token(self) -> None:
-        """
-        Trigger authenticate if access_token is missing.
-        """
+        """Trigger authenticate if access_token is missing."""
         self.shared_token['access_token'] = ''
         with patch.object(
             self.tm,
@@ -416,34 +393,31 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_ensure_token_valid_has_token(self) -> None:
-        """
-        Skip authentication if access_token exists and is not expired.
-        """
+        """Skip authentication if access_token exists and is not expired."""
         self.shared_token['access_token'] = 'EXIST'
-        with patch.object(
-            self.tm,
-            'authenticate',
-            new_callable=AsyncMock,
-        ) as m_auth, patch.object(
-            self.tm,
-            'is_token_expired',
-            return_value=False,
+        with (
+            patch.object(
+                self.tm,
+                'authenticate',
+                new_callable=AsyncMock,
+            ) as m_auth,
+            patch.object(
+                self.tm,
+                'is_token_expired',
+                return_value=False,
+            ),
         ):
             await self.tm.ensure_token_valid()
             m_auth.assert_not_awaited()
 
     async def test_handle_401_over_retries(self) -> None:
-        """
-        Raise RuntimeError if retry limit exceeded on 401 handling.
-        """
+        """Raise RuntimeError if retry limit exceeded on 401 handling."""
         with self.assertRaises(RuntimeError):
             await self.tm.handle_401(retry_count=5)
 
     @patch.object(TokenManager, 'refresh_token', new_callable=AsyncMock)
     async def test_handle_401_refresh_error(self, m_ref: AsyncMock) -> None:
-        """
-        Retry to authenticate if refresh_token fails during 401 handling.
-        """
+        """Retry to authenticate if refresh_token fails during 401 handling."""
         m_ref.side_effect = Exception('some error')
         with patch.object(
             self.tm,
@@ -455,11 +429,11 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch('asyncio.sleep', new_callable=AsyncMock)
     async def test_refresh_token_wait_timeout(
-        self, mock_sleep: AsyncMock,
+        self,
+        mock_sleep: AsyncMock,
     ) -> None:
-        """
-        Ensure refresh_token exits after timeout if is_refreshing remains True.
-        """
+        """Ensure refresh_token exits after timeout if is_refreshing remains
+        True."""
         counter = 0.0
 
         async def fake_sleep(duration: float) -> None:
@@ -474,9 +448,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(counter, 10)
 
     async def test_ensure_token_valid_over_retries(self) -> None:
-        """
-        Raise RuntimeError if ensure_token_valid exceeds retry limit.
-        """
+        """Raise RuntimeError if ensure_token_valid exceeds retry limit."""
         with self.assertRaises(RuntimeError) as ctx:
             await self.tm.ensure_token_valid(retry_count=10)
         self.assertIn(
@@ -485,30 +457,22 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_is_token_valid_true(self) -> None:
-        """
-        Test is_token_valid returns True when token exists.
-        """
+        """Test is_token_valid returns True when token exists."""
         self.shared_token['access_token'] = 'test_token'
         self.assertTrue(self.tm.is_token_valid())
 
     def test_is_token_valid_false(self) -> None:
-        """
-        Test is_token_valid returns False when token is empty.
-        """
+        """Test is_token_valid returns False when token is empty."""
         self.shared_token['access_token'] = ''
         self.assertFalse(self.tm.is_token_valid())
 
     def test_is_token_expired_no_token(self) -> None:
-        """
-        Test is_token_expired returns True when no token exists.
-        """
+        """Test is_token_expired returns True when no token exists."""
         self.shared_token['access_token'] = ''
         self.assertTrue(self.tm.is_token_expired())
 
     def test_is_token_expired_valid_token(self) -> None:
-        """
-        Test is_token_expired with a valid JWT token that's not expired.
-        """
+        """Test is_token_expired with a valid JWT token that's not expired."""
         # Create a valid JWT token that expires in 2 hours
         exp = int(time.time()) + 7200  # 2 hours from now
         payload = {'exp': exp, 'user': 'test'}
@@ -517,9 +481,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.tm.is_token_expired())
 
     def test_is_token_expired_expired_token(self) -> None:
-        """
-        Test is_token_expired with a JWT token that's expired.
-        """
+        """Test is_token_expired with a JWT token that's expired."""
         # Create a JWT token that expired 1 hour ago
         exp = int(time.time()) - 3600  # 1 hour ago
         payload = {'exp': exp, 'user': 'test'}
@@ -528,9 +490,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.tm.is_token_expired())
 
     def test_is_token_expired_soon_to_expire(self) -> None:
-        """
-        Test is_token_expired with a JWT token that expires in 30 seconds.
-        """
+        """Test is_token_expired with a JWT token that expires in 30
+        seconds."""
         # Create a JWT token that expires in 30 seconds
         # (less than 60 second threshold)
         exp = int(time.time()) + 30
@@ -540,9 +501,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.tm.is_token_expired())
 
     def test_is_token_expired_no_exp_field(self) -> None:
-        """
-        Test is_token_expired with a JWT token that has no exp field.
-        """
+        """Test is_token_expired with a JWT token that has no exp field."""
         payload = {'user': 'test'}  # No exp field
         token = jwt.encode(payload, 'secret', algorithm='HS256')
         self.shared_token['access_token'] = token
@@ -550,9 +509,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_get_valid_token_success(self) -> None:
-        """
-        Test get_valid_token returns token when valid.
-        """
+        """Test get_valid_token returns token when valid."""
         # Create a valid JWT token
         exp = int(time.time()) + 7200  # 2 hours from now
         payload = {'exp': exp, 'user': 'test'}
@@ -563,10 +520,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, token)
 
     async def test_get_valid_token_no_token_after_refresh(self) -> None:
-        """
-        Test get_valid_token raises error
-        when no token available after refresh.
-        """
+        """Test get_valid_token raises error when no token available after
+        refresh."""
         self.shared_token['access_token'] = ''
         self.shared_token['refresh_token'] = ''
 
@@ -581,11 +536,11 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
     async def test_get_valid_token_retry_authenticate(
-        self, m_session: AsyncMock,
+        self,
+        m_session: AsyncMock,
     ) -> None:
-        """
-        Test get_valid_token falls back to authenticate when refresh fails.
-        """
+        """Test get_valid_token falls back to authenticate when refresh
+        fails."""
         self.shared_token['access_token'] = ''
         self.shared_token['refresh_token'] = 'bad_refresh'
 
@@ -615,9 +570,7 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_ensure_token_valid_exception_retry(self) -> None:
-        """
-        Test ensure_token_valid retries on exception.
-        """
+        """Test ensure_token_valid retries on exception."""
         self.shared_token['access_token'] = ''
         self.shared_token['refresh_token'] = 'test_refresh'
 
@@ -636,9 +589,8 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_ensure_token_valid_exception_max_retries(self) -> None:
-        """
-        Test ensure_token_valid raises exception when max retries reached.
-        """
+        """Test ensure_token_valid raises exception when max retries
+        reached."""
         self.shared_token['access_token'] = ''
         self.shared_token['refresh_token'] = 'test_refresh'
 
@@ -664,18 +616,18 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
     async def test_refresh_token_changed_refresh_token_immediately(
-        self, m_sess: AsyncMock,
+        self,
+        m_sess: AsyncMock,
     ) -> None:
-        """
-        Handle token change just before post is executed.
-        """
+        """Handle token change just before post is executed."""
         self.shared_token['refresh_token'] = 'X'
         self.shared_token['access_token'] = 'OLD'
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
         mock_resp.json.return_value = {
-            'access_token': 'NEW', 'refresh_token': 'NEWREF',
+            'access_token': 'NEW',
+            'refresh_token': 'NEWREF',
         }
 
         mock_sessinst = AsyncMock()
@@ -686,21 +638,22 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             """Support change_token_side_effect."""
             self.shared_token['refresh_token'] = 'CHANGED'
             return mock_resp
+
         mock_sessinst.post = AsyncMock(side_effect=change_token_side_effect)
 
         await self.tm.refresh_token()
         self.assertEqual(
-            self.shared_token['access_token'], 'NEW',
+            self.shared_token['access_token'],
+            'NEW',
         )
         self.assertEqual(
-            self.shared_token['refresh_token'], 'NEWREF',
+            self.shared_token['refresh_token'],
+            'NEWREF',
         )
 
     @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_refresh_token_exit_while(self) -> None:
-        """
-        Test loop exits once is_refreshing becomes False within timeout.
-        """
+        """Test loop exits once is_refreshing becomes False within timeout."""
         self.shared_token['is_refreshing'] = True
 
         async def stop_refresh() -> None:
@@ -714,23 +667,21 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
 
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the Utils class, covering all utility functions and edge
+    """Unit tests for the Utils class, covering all utility functions and edge
     cases.
 
     This test class provides comprehensive coverage for the Utils static
-    methods,
-    including error handling, boundary conditions, and various data scenarios.
+    methods, including error handling, boundary conditions, and various data
+    scenarios.
     """
 
     def test_file_event_handler_init_and_on_modified(self) -> None:
-        """
-        Test FileEventHandler initialisation and on_modified method branches
+        """Test FileEventHandler initialisation and on_modified method branches
         for coverage.
 
-        # Verifies that the FileEventHandler correctly processes file
-        # modification events and handles both matching and non-matching
-        # file paths appropriately.
+        # Verifies that the FileEventHandler correctly processes file #
+        modification events and handles both matching and non-matching # file
+        paths appropriately.
         """
         called: list[str] = []
 
@@ -740,12 +691,15 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
         loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
         handler: FileEventHandler = FileEventHandler(
-            '/tmp/testfile', callback, loop,
+            '/tmp/testfile',
+            callback,
+            loop,
         )
 
         # Simulate event with matching path using a precise event type
         class _DummyEvent:
             """Tests for _DummyEvent."""
+
             src_path: str
 
         event: _DummyEvent = _DummyEvent()
@@ -764,13 +718,12 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             mock_run.assert_not_called()
 
     def test_normalise_bbox_extra_fields(self) -> None:
-        """
-        Test normalise_bbox with more than 4 fields (should preserve extra
+        """Test normalise_bbox with more than 4 fields (should preserve extra
         fields).
 
-        # Verifies that bounding boxes with additional fields beyond the
-        # standard [left, top, right, bottom] format retain their extra data
-        # correctly.
+        # Verifies that bounding boxes with additional fields beyond the #
+        standard [left, top, right, bottom] format retain their extra data #
+        correctly.
         """
         bbox: list[float] = [1, 2, 3, 4, 5, 6]
         result: list[float] = utils.normalise_bbox(bbox)
@@ -781,9 +734,8 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [2, 1, 4, 3, 0.9, 5, 42, 1])
 
     def test_detect_polygon_from_cones_no_cones(self) -> None:
-        """
-        # Test detect_polygon_from_cones with no cones present (should return
-        # empty list).
+        """# Test detect_polygon_from_cones with no cones present (should
+        return # empty list).
 
         Ensures the method handles detection data that contains no safety
         # cones (class_id != 6) gracefully by returning an empty polygon
@@ -795,18 +747,18 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         ]
         clusterer: MagicMock = MagicMock()
         result: list[Polygon] = utils.detect_polygon_from_cones(
-            datas, clusterer,
+            datas,
+            clusterer,
         )
         self.assertEqual(result, [])
 
     def test_calculate_people_in_controlled_area_no_polygons(self) -> None:
-        """
-        # Test calculate_people_in_controlled_area with no polygons (should
+        """# Test calculate_people_in_controlled_area with no polygons (should
         # return 0).
 
-        Verifies that when no controlled area polygons are defined, the
-        # method correctly returns zero people count regardless of detection
-        # data.
+        Verifies that when no controlled area polygons are defined, the #
+        method correctly returns zero people count regardless of detection #
+        data.
         """
         polygons: list[Polygon] = []
         datas: list[list[float]] = [
@@ -817,12 +769,10 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(count, 0)
 
     def test_is_expired_with_valid_date(self) -> None:
-        """
-        Test is_expired method with valid ISO 8601 date strings.
+        """Test is_expired method with valid ISO 8601 date strings.
 
-        # Verifies that the method correctly identifies expired and
-        # non-expired dates when given properly formatted ISO 8601 date
-        # strings.
+        # Verifies that the method correctly identifies expired and # non-
+        expired dates when given properly formatted ISO 8601 date # strings.
         """
         # Test with a past date (should return True)
         past_date: str = (datetime.now() - timedelta(days=1)).isoformat()
@@ -833,19 +783,17 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(is_expired(future_date))
 
     def test_is_expired_with_invalid_date(self) -> None:
-        """
-        Test is_expired method with invalid ISO 8601 date string.
+        """Test is_expired method with invalid ISO 8601 date string.
 
-        # Ensures that malformed date strings are handled gracefully by
-        # returning False rather than raising an exception.
+        # Ensures that malformed date strings are handled gracefully by #
+        returning False rather than raising an exception.
         """
         # Test with an invalid ISO 8601 date (should return False)
         invalid_date: str = '2024-13-01T00:00:00'
         self.assertFalse(is_expired(invalid_date))
 
     def test_is_expired_with_none(self) -> None:
-        """
-        Test is_expired method with None input.
+        """Test is_expired method with None input.
 
         Verifies that None input is handled appropriately by returning False.
         """
@@ -853,11 +801,10 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(is_expired(None))
 
     def test_should_notify_true(self) -> None:
-        """
-        Test should_notify returning True when cooldown period has passed.
+        """Test should_notify returning True when cooldown period has passed.
 
-        # Verifies that notifications are allowed when sufficient time has
-        # elapsed since the last notification based on the cooldown period.
+        # Verifies that notifications are allowed when sufficient time has #
+        elapsed since the last notification based on the cooldown period.
         """
         timestamp: int = int(datetime.now().timestamp())
         last_notification_time: int = timestamp - 400  # 400 seconds ago
@@ -865,16 +812,18 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(
             should_notify(
-                timestamp, last_notification_time, cooldown_period,
+                timestamp,
+                last_notification_time,
+                cooldown_period,
             ),
         )
 
     def test_should_notify_false(self) -> None:
-        """
-        Test should_notify returning False when cooldown period has not passed.
+        """Test should_notify returning False when cooldown period has not
+        passed.
 
-        # Ensures that notifications are blocked when insufficient time has
-        # elapsed since the last notification based on the cooldown period.
+        # Ensures that notifications are blocked when insufficient time has #
+        elapsed since the last notification based on the cooldown period.
         """
         timestamp: int = int(datetime.now().timestamp())
         last_notification_time: int = timestamp - 200  # 200 seconds ago
@@ -882,16 +831,17 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(
             should_notify(
-                timestamp, last_notification_time, cooldown_period,
+                timestamp,
+                last_notification_time,
+                cooldown_period,
             ),
         )
 
     def test_calculate_people_in_controlled_area(self) -> None:
-        """
-        Test case for calculating the number of people in the controlled area.
-        """
+        """Test case for calculating the number of people in the controlled
+        area."""
         datas: list[list[float]] = [
-            [50, 50, 150, 150, 0.95, 0],    # Hardhat
+            [50, 50, 150, 150, 0.95, 0],  # Hardhat
             [200, 200, 300, 300, 0.85, 5],  # Person
             [400, 400, 500, 500, 0.75, 9],  # Vehicle
         ]
@@ -899,7 +849,8 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
         polygons = utils.detect_polygon_from_cones(normalised_datas, clusterer)
         people_count = utils.calculate_people_in_controlled_area(
-            polygons, normalised_datas,
+            polygons,
+            normalised_datas,
         )
         self.assertEqual(people_count, 0)
 
@@ -924,14 +875,13 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         normalised_datas = [utils.normalise_bbox(data) for data in datas]
         polygons = utils.detect_polygon_from_cones(normalised_datas, clusterer)
         people_count = utils.calculate_people_in_controlled_area(
-            polygons, normalised_datas,
+            polygons,
+            normalised_datas,
         )
         self.assertEqual(people_count, 1)
 
     def test_no_cones(self) -> None:
-        """
-        Test case for checking behavior when no cones are detected.
-        """
+        """Test case for checking behavior when no cones are detected."""
         data: list[list[float]] = [
             [50, 50, 150, 150, 0.95, 0],  # Hardhat
             [200, 200, 300, 300, 0.85, 5],  # Person
@@ -943,9 +893,8 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(polygons), 0)
 
     def test_person_inside_polygon(self) -> None:
-        """
-        Test case for checking behavior when a person is inside a polygon.
-        """
+        """Test case for checking behavior when a person is inside a
+        polygon."""
         polygons = [
             Polygon([(0, 0), (10, 0), (10, 10), (0, 10)]),
         ]
@@ -954,17 +903,17 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         ]
         normalised_data = [utils.normalise_bbox(item) for item in data]
         people_count = utils.calculate_people_in_controlled_area(
-            polygons, normalised_data,
+            polygons,
+            normalised_data,
         )
         self.assertEqual(people_count, 1)
 
     def test_build_utility_pole_union_no_pole(self) -> None:
-        """
-        Test building utility pole union with no pole data.
+        """Test building utility pole union with no pole data.
 
         Verifies that when no utility pole data is provided, the function
-        returns an empty Polygon object, ensuring proper handling of
-        empty datasets in the utility pole union calculation.
+        returns an empty Polygon object, ensuring proper handling of empty
+        datasets in the utility pole union calculation.
         """
         datas: list[list[float]] = []  # No utility pole data
         cluster = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
@@ -973,12 +922,11 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(poly.is_empty)
 
     def test_build_utility_pole_union_single_pole(self) -> None:
-        """
-        Test building utility pole union with a single pole.
+        """Test building utility pole union with a single pole.
 
         Verifies that when only one utility pole is provided, the function
-        correctly creates a non-empty Polygon representing the controlled
-        area around the single pole.
+        correctly creates a non-empty Polygon representing the controlled area
+        around the single pole.
         """
         datas: list[list[float]] = [[10, 2, 20, 30, 0.9, 9]]
         cluster = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
@@ -987,12 +935,11 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(poly.is_empty)
 
     def test_build_utility_pole_union_multiple_poles(self) -> None:
-        """
-        Test building utility pole union with multiple poles.
+        """Test building utility pole union with multiple poles.
 
         Verifies that when multiple utility poles are provided, the function
-        correctly clusters them and creates a union polygon with positive
-        area covering all pole positions.
+        correctly clusters them and creates a union polygon with positive area
+        covering all pole positions.
         """
         datas: list[list[float]] = [
             [10, 2, 20, 30, 0.9, 9],
@@ -1006,8 +953,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(poly.area, 0)
 
     def test_detect_polygon_from_cones_empty_list(self) -> None:
-        """
-        Test polygon detection with empty cone data list.
+        """Test polygon detection with empty cone data list.
 
         # Verifies that when an empty list is passed to
         # detect_polygon_from_cones, the function returns an empty list,
@@ -1019,12 +965,13 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
         result = utils.detect_polygon_from_cones([], clusterer)
         self.assertEqual(
-            result, [], 'Expected an empty list when datas is empty.',
+            result,
+            [],
+            'Expected an empty list when datas is empty.',
         )
 
     def test_detect_polygon_from_cones_with_noise(self) -> None:
-        """
-        Test polygon detection when all cones are classified as noise.
+        """Test polygon detection when all cones are classified as noise.
 
         # Verifies that when all safety cones are classified as noise
         # (label -1) by the clustering algorithm, the function returns an
@@ -1034,7 +981,6 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         Returns:
             None
         """
-
         # Arrange: Prepare test data
         datas: list[list[float]] = [
             [10, 10, 20, 20, 0.9, 6],
@@ -1051,12 +997,13 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         polygons = utils.detect_polygon_from_cones(datas, dummy_clusterer)
         # Expected empty list as all points are skipped
         self.assertEqual(
-            polygons, [], 'Expected no polygons when all points are noise.',
+            polygons,
+            [],
+            'Expected no polygons when all points are noise.',
         )
 
     def test_calculate_people_in_controlled_area_no_datas(self) -> None:
-        """
-        Test people count calculation with empty detection data.
+        """Test people count calculation with empty detection data.
 
         # Verifies that calculate_people_in_controlled_area returns 0 when no
         # detections are provided (empty datas list), ensuring proper
@@ -1071,15 +1018,17 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         datas: list[list[float]] = []  # Empty list
 
         people_count = utils.calculate_people_in_controlled_area(
-            polygons, datas,
+            polygons,
+            datas,
         )
         self.assertEqual(
-            people_count, 0, 'Expected 0 when datas is empty.',
+            people_count,
+            0,
+            'Expected 0 when datas is empty.',
         )
 
     def test_build_utility_pole_union_less_than_min_samples(self) -> None:
-        """
-        Test utility pole union when pole count is below minimum samples.
+        """Test utility pole union when pole count is below minimum samples.
 
         # Verifies that when the number of utility poles is less than the
         # clusterer's minimum samples requirement, the function directly
@@ -1107,12 +1056,14 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             'Expected a non-empty union polygon with two poles.',
         )
         self.assertGreater(
-            poly.area, 0, 'Union polygon should have a positive area.',
+            poly.area,
+            0,
+            'Union polygon should have a positive area.',
         )
 
     def test_build_utility_pole_union_multiple_poles_mst(self) -> None:
-        """
-        Test utility pole union with multiple poles triggering MST calculation.
+        """Test utility pole union with multiple poles triggering MST
+        calculation.
 
         Verifies the branch where multiple poles are in the same cluster,
         which triggers the Minimum Spanning Tree (MST) algorithm and
@@ -1124,9 +1075,9 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         # Prepare 3 utility pole detections (class_id=9), ensuring >1 pole
         # with radius>0
         datas: list[list[float]] = [
-            [10, 2, 20, 30, 0.9, 9],   # pole1
-            [25, 1, 35, 30, 0.9, 9],   # pole2
-            [50, 3, 60, 32, 0.9, 9],   # pole3
+            [10, 2, 20, 30, 0.9, 9],  # pole1
+            [25, 1, 35, 30, 0.9, 9],  # pole2
+            [50, 3, 60, 32, 0.9, 9],  # pole3
         ]
 
         # Use MagicMock to mock clusterer with min_samples and fit_predict
@@ -1161,8 +1112,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_get_outer_tangents_distance_less_than_radius_diff(self) -> None:
-        """
-        Test outer tangent calculation with insufficient circle separation.
+        """Test outer tangent calculation with insufficient circle separation.
 
         Verifies that when the distance between circle centres is less than
         the absolute difference of their radii, get_outer_tangents returns
@@ -1179,12 +1129,13 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
         lines = utils.get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2)
         self.assertEqual(
-            lines, [], 'Expected empty list when d < abs(r1 - r2).',
+            lines,
+            [],
+            'Expected empty list when d < abs(r1 - r2).',
         )
 
     def test_get_outer_tangents_distance_less_than_rdiff(self) -> None:
-        """
-        Test outer tangent calculation when distance is less than radius
+        """Test outer tangent calculation when distance is less than radius
         difference.
 
         Verifies that when the distance between circle centres d is less than
@@ -1203,8 +1154,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lines, [], 'Expected empty list when d < (r1 - r2).')
 
     def test_get_outer_tangents_second_check(self) -> None:
-        """
-        Test outer tangent calculation with mocked distance recalculation.
+        """Test outer tangent calculation with mocked distance recalculation.
 
         Verifies the branch where after ensuring r1>=r2, the recomputed
         distance is less than the radius difference, causing get_outer_tangents
@@ -1223,12 +1173,13 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         with patch('math.sqrt', side_effect=[20, 4]):
             lines = utils.get_outer_tangents(0, 0, 10, 20, 0, 5)
         self.assertEqual(
-            lines, [], 'Expected empty list when second sqrt result < rdiff.',
+            lines,
+            [],
+            'Expected empty list when second sqrt result < rdiff.',
         )
 
     def test_count_people_in_polygon(self) -> None:
-        """
-        Test counting people within a polygon boundary.
+        """Test counting people within a polygon boundary.
 
         Verifies that count_people_in_polygon returns the correct number
         of unique people (based on centre points) within a given polygon,
@@ -1244,12 +1195,12 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         # confidence, class_id]
         # where class_id 5 represents a person
         datas: list[list[float]] = [
-            [1, 1, 3, 3, 0.9, 5],   # Person 1, centre = (2,2), inside polygon
-            [4, 4, 8, 8, 0.9, 5],   # Person 2, centre = (6,6), inside polygon
+            [1, 1, 3, 3, 0.9, 5],  # Person 1, centre = (2,2), inside polygon
+            [4, 4, 8, 8, 0.9, 5],  # Person 2, centre = (6,6), inside polygon
             # Person 3, centre = (13,13), outside polygon
             [12, 12, 14, 14, 0.9, 5],
-            [2, 2, 4, 4, 0.9, 5],   # Person 4, centre = (3,3), inside polygon
-            [0, 0, 5, 5, 0.8, 2],   # Not a person (class_id != 5)
+            [2, 2, 4, 4, 0.9, 5],  # Person 4, centre = (3,3), inside polygon
+            [0, 0, 5, 5, 0.8, 2],  # Not a person (class_id != 5)
         ]
 
         # Calculate number of people inside the polygon
@@ -1257,12 +1208,13 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
         # Expected three different centre points inside: (2,2), (6,6) and (3,3)
         self.assertEqual(
-            count, 3, 'Expected 3 unique people inside the polygon.',
+            count,
+            3,
+            'Expected 3 unique people inside the polygon.',
         )
 
     def test_polygons_to_coords(self) -> None:
-        """
-        Test polygon coordinates conversion functionality.
+        """Test polygon coordinates conversion functionality.
 
         Verifies that polygons_to_coords correctly converts Polygon
         and MultiPolygon objects into a list of coordinate lists,
@@ -1290,28 +1242,31 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
         # Verify result contains poly1 coordinates
         self.assertIn(
-            expected_poly1, result,
+            expected_poly1,
+            result,
             'Expected poly1 coordinates to be in the result.',
         )
         # Verify result contains coordinates from multipoly's sub-Polygons
         self.assertIn(
-            expected_poly2, result,
+            expected_poly2,
+            result,
             'Expected poly2 coordinates to be in the result.',
         )
         self.assertIn(
-            expected_poly3, result,
+            expected_poly3,
+            result,
             'Expected poly3 coordinates to be in the result.',
         )
         # Since empty Polygon is ignored, result should have exactly three
         # items
         self.assertEqual(
-            len(result), 3,
+            len(result),
+            3,
             'Expected 3 coordinate lists when skipping empty polygons.',
         )
 
     def test_get_outer_tangents_d_less_than_eps(self) -> None:
-        """
-        Test outer tangent calculation with coincident circle centres.
+        """Test outer tangent calculation with coincident circle centres.
 
         Verifies that when the distance between circle centres is smaller
         than the epsilon threshold (i.e., circles have the same centre and
@@ -1328,13 +1283,13 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
         lines = utils.get_outer_tangents(cx1, cy1, r1, cx2, cy2, r2)
         self.assertEqual(
-            lines, [], 'Expected empty list when d < abs(r1 - r2).',
+            lines,
+            [],
+            'Expected empty list when d < abs(r1 - r2).',
         )
 
     def test_is_expired_with_exception(self) -> None:
-        """
-        Test is_expired with date string that causes parsing exception.
-        """
+        """Test is_expired with date string that causes parsing exception."""
         # Test with a string that can't be parsed
         invalid_date = 'not-a-date'
         result = is_expired(invalid_date)
@@ -1342,8 +1297,7 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
 
 class TestRedisManager(unittest.IsolatedAsyncioTestCase):
-    """
-    Unit tests for the RedisManager class, covering basic Redis operations.
+    """Unit tests for the RedisManager class, covering basic Redis operations.
 
     This test class provides comprehensive coverage for Redis operations
     including error handling, connection management, and data persistence.
@@ -1354,8 +1308,7 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
 
     @patch('src.redis_client.redis.Redis')
     def setUp(self, mock_redis: MagicMock) -> None:
-        """
-        Set up a RedisManager instance with a mocked Redis connection.
+        """Set up a RedisManager instance with a mocked Redis connection.
 
         Args:
             mock_redis (MagicMock): Mocked Redis class for testing.
@@ -1369,32 +1322,29 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
         self.rmgr = RedisManager()
 
     async def test_set_success(self) -> None:
-        """
-        Test successful Redis set operation.
+        """Test successful Redis set operation.
 
-        Verifies that the set method correctly calls the underlying
-        Redis set operation with the provided key-value pair.
+        Verifies that the set method correctly calls the underlying Redis set
+        operation with the provided key-value pair.
         """
         await self.rmgr.set('key', b'value')
         self.mock_redis.set.assert_called_once_with('key', b'value')
 
     async def test_set_error(self) -> None:
-        """
-        Test Redis set operation error handling.
+        """Test Redis set operation error handling.
 
-        Ensures that exceptions during set operations are caught
-        and logged appropriately without propagating to the caller.
+        Ensures that exceptions during set operations are caught and logged
+        appropriately without propagating to the caller.
         """
         self.mock_redis.set.side_effect = Exception('Redis error')
         with self.assertLogs(level='ERROR'):
             await self.rmgr.set('key', b'value')
 
     async def test_get_success(self) -> None:
-        """
-        Test successful Redis get operation.
+        """Test successful Redis get operation.
 
-        Verifies that the get method correctly retrieves values
-        from Redis and returns the expected data.
+        Verifies that the get method correctly retrieves values from Redis and
+        returns the expected data.
         """
         self.mock_redis.get.return_value = b'val'
         val: bytes | None = await self.rmgr.get('key')
@@ -1402,11 +1352,10 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(val, b'val')
 
     async def test_get_error(self) -> None:
-        """
-        Test Redis get operation error handling.
+        """Test Redis get operation error handling.
 
-        Ensures that exceptions during get operations are caught,
-        logged appropriately, and None is returned to the caller.
+        Ensures that exceptions during get operations are caught, logged
+        appropriately, and None is returned to the caller.
         """
         self.mock_redis.get.side_effect = Exception('Error')
         with self.assertLogs(level='ERROR'):
@@ -1414,42 +1363,38 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(val)
 
     async def test_delete_success(self) -> None:
-        """
-        Test successful Redis delete operation.
+        """Test successful Redis delete operation.
 
-        Verifies that the delete method correctly calls the underlying
-        Redis delete operation with the specified key.
+        Verifies that the delete method correctly calls the underlying Redis
+        delete operation with the specified key.
         """
         await self.rmgr.delete('del_key')
         self.mock_redis.delete.assert_called_once_with('del_key')
 
     async def test_delete_error(self) -> None:
-        """
-        Test Redis delete operation error handling.
+        """Test Redis delete operation error handling.
 
-        Ensures that exceptions during delete operations are caught
-        and logged appropriately without propagating to the caller.
+        Ensures that exceptions during delete operations are caught and logged
+        appropriately without propagating to the caller.
         """
         self.mock_redis.delete.side_effect = Exception('DelErr')
         with self.assertLogs(level='ERROR'):
             await self.rmgr.delete('del_key2')
 
     async def test_close_connection_success(self) -> None:
-        """
-        Test successful Redis connection closure.
+        """Test successful Redis connection closure.
 
-        Verifies that the close_connection method correctly calls
-        the underlying Redis close operation.
+        Verifies that the close_connection method correctly calls the
+        underlying Redis close operation.
         """
         await self.rmgr.close_connection()
         self.mock_redis.close.assert_called_once()
 
     async def test_close_connection_error(self) -> None:
-        """
-        Test Redis connection closure error handling.
+        """Test Redis connection closure error handling.
 
-        Ensures that exceptions during connection closure are caught
-        and logged with appropriate error messages for debugging.
+        Ensures that exceptions during connection closure are caught and logged
+        with appropriate error messages for debugging.
         """
         self.mock_redis.close.side_effect = Exception('CloseErr')
         with self.assertLogs(level='ERROR') as log:
@@ -1462,9 +1407,3 @@ class TestRedisManager(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-"""
-pytest \
-    --cov=src.geometry --cov=src.runtime_utils \
-    --cov-report=term-missing tests/src/utils_test.py
-"""

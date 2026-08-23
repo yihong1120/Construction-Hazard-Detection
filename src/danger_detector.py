@@ -16,7 +16,6 @@ from src.geometry import detect_polygon_from_cones
 from src.geometry import normalise_bbox
 from src.geometry import polygons_to_coords
 
-
 _SPATIAL_MIN_CELL_SIZE = 64.0
 _SPATIAL_MAX_CELL_SIZE = 256.0
 
@@ -30,9 +29,8 @@ class _SpatialIndex:
 
 
 class DangerDetector:
-    """
-    A class to detect potential safety hazards based on the detection data.
-    """
+    """A class to detect potential safety hazards based on the detection
+    data."""
 
     def __init__(self, detection_items: dict[str, bool] | None = None) -> None:
         """Initialise the danger detector.
@@ -62,8 +60,7 @@ class DangerDetector:
         self,
         datas: list[list[float]],
     ) -> tuple[dict[str, dict[str, object]], list[Polygon], list[Polygon]]:
-        """
-        Detects potential safety violations in a construction site.
+        """Detects potential safety violations in a construction site.
 
         Returns:
             Tuple[
@@ -83,9 +80,8 @@ class DangerDetector:
         # (A) detect_in_restricted_area:
         # Check if personnel enter the controlled area
         # formed by the safety cone
-        if (
-            not self.detection_items
-            or self.detection_items.get('detect_in_restricted_area', False)
+        if not self.detection_items or self.detection_items.get(
+            'detect_in_restricted_area', False,
         ):
             self.check_cone_restricted_area(datas, warnings, cone_polygons_raw)
 
@@ -117,28 +113,28 @@ class DangerDetector:
         # (D) detect_near_machinery_or_vehicle
         if detect_proximity:
             self.check_proximity_violations(
-                persons, machinery_vehicles, warnings,
+                persons,
+                machinery_vehicles,
+                warnings,
             )
 
         # (E) detect_machinery_close_to_pole
-        if (
-            self.detection_items
-            and self.detection_items.get(
-                'detect_machinery_close_to_pole', False,
-            )
+        if self.detection_items and self.detection_items.get(
+            'detect_machinery_close_to_pole',
+            False,
         ):
             self.check_machinery_near_utility_pole(
-                datas, warnings, circle_ratio=0.35,
+                datas,
+                warnings,
+                circle_ratio=0.35,
             )
 
         # (F) detect_in_utility_pole_restricted_area:
         # Check if personnel enter the controlled area
         # formed by the utility pole
-        if (
-            self.detection_items
-            and self.detection_items.get(
-                'detect_in_utility_pole_restricted_area', False,
-            )
+        if self.detection_items and self.detection_items.get(
+            'detect_in_utility_pole_restricted_area',
+            False,
         ):
             self.check_pole_restricted_area(datas, warnings, pole_polygons_raw)
 
@@ -188,9 +184,8 @@ class DangerDetector:
         warnings: dict[str, dict[str, object]],
         polygons: list[Polygon],
     ) -> None:
-        """
-        Checks if personnel enter the controlled area
-        formed by the safety cone.
+        """Checks if personnel enter the controlled area formed by the safety
+        cone.
 
         Arg:
             datas: The input data containing personnel information.
@@ -201,7 +196,8 @@ class DangerDetector:
         polygons.extend(new_polygons)
 
         people_count = calculate_people_in_controlled_area(
-            new_polygons, datas,
+            new_polygons,
+            datas,
         )
         if people_count > 0:
             warnings['warning_people_in_controlled_area'] = {
@@ -214,9 +210,8 @@ class DangerDetector:
         warnings: dict[str, dict[str, object]],
         pole_polygons: list[Polygon],
     ) -> None:
-        """
-        Checks if personnel enter the controlled area
-        formed by the utility pole.
+        """Checks if personnel enter the controlled area formed by the utility
+        pole.
 
         Arg:
             datas: The input data containing personnel information.
@@ -229,7 +224,8 @@ class DangerDetector:
 
             # Count people in the utility pole controlled area
             count_in_pole_area = count_people_in_polygon(
-                pole_union_poly, datas,
+                pole_union_poly,
+                datas,
             )
             if count_in_pole_area > 0:
                 warnings['warning_people_in_utility_pole_controlled_area'] = {
@@ -242,8 +238,7 @@ class DangerDetector:
         count_no_vest: int,
         warnings: dict[str, dict[str, object]],
     ) -> None:
-        """
-        Checks for safety violations among personnel.
+        """Checks for safety violations among personnel.
 
         Arg:
             datas: The input data containing personnel information.
@@ -501,9 +496,8 @@ class DangerDetector:
         person_height = person[3] - person[1]
         person_area = person_width * person_height
         machinery_vehicle_area = (
-            (machinery_vehicle[2] - machinery_vehicle[0])
-            * (machinery_vehicle[3] - machinery_vehicle[1])
-        )
+            machinery_vehicle[2] - machinery_vehicle[0]
+        ) * (machinery_vehicle[3] - machinery_vehicle[1])
         if machinery_vehicle_area <= 0:
             return False
 
@@ -532,8 +526,7 @@ class DangerDetector:
         warnings: dict[str, dict[str, object]],
         circle_ratio: float = 3.5,
     ) -> None:
-        """
-        Checks if machinery/vehicles are near the utility pole.
+        """Checks if machinery/vehicles are near the utility pole.
 
         Args:
             datas: The input data containing personnel information.
@@ -543,10 +536,7 @@ class DangerDetector:
         """
         # 1. Count violations
         poles = [d for d in datas if d[5] == 9]
-        machinery_vehicles = [
-            d for d in datas if d[5]
-            in [8, 10]
-        ]
+        machinery_vehicles = [d for d in datas if d[5] in [8, 10]]
 
         if not poles or not machinery_vehicles:
             return
@@ -556,12 +546,12 @@ class DangerDetector:
 
         for pole in poles:
             px1, py1, px2, py2, *_ = pole
-            pole_height = (py2 - py1)
+            pole_height = py2 - py1
             if pole_height <= 0:
                 continue
 
             # Compute 2/3 height position
-            two_thirds_y = py1 + (2.0/3.0) * pole_height
+            two_thirds_y = py1 + (2.0 / 3.0) * pole_height
 
             # Create the circle at the bottom of the utility pole
             circle_radius = circle_ratio * pole_height
@@ -594,8 +584,7 @@ class DangerDetector:
     def _filter_static_machinery(
         datas: list[list[float]],
     ) -> list[list[float]]:
-        """
-        Filter static machinery/vehicles from the input data.
+        """Filter static machinery/vehicles from the input data.
 
         Args:
             datas: The input data containing machinery/vehicle information.
@@ -604,7 +593,8 @@ class DangerDetector:
             A list of filtered machinery/vehicle data.
         """
         return [
-            d for d in datas
+            d
+            for d in datas
             if (
                 (d[5] in (8, 10) and len(d) > 7 and (d[6] != -1 or d[7] == 1))
                 or (d[5] not in (8, 10))
@@ -615,9 +605,8 @@ class DangerDetector:
     def _filter_and_normalise_static_machinery(
         datas: list[list[float]],
     ) -> list[list[float]]:
-        """
-        Filter static machinery/vehicles and normalise bboxes in one pass.
-        """
+        """Filter static machinery/vehicles and normalise bboxes in one
+        pass."""
         normalised: list[list[float]] = []
         for detection in datas:
             class_id = detection[5]
@@ -633,13 +622,11 @@ class DangerDetector:
 
 
 def main() -> None:
-    """
-    Main function to demonstrate the usage of the DangerDetector class.
-    """
+    """Main function to demonstrate the usage of the DangerDetector class."""
     detector = DangerDetector()
 
     data: list[list[float]] = [
-        [50, 50, 150, 150, 0.95, 0],    # Hardhat
+        [50, 50, 150, 150, 0.95, 0],  # Hardhat
         [200, 200, 300, 300, 0.85, 5],  # Person
         [400, 400, 500, 500, 0.75, 2],  # NO-Hardhat
         [0, 0, 10, 10, 0.88, 6],  # Safety cone
@@ -658,8 +645,7 @@ def main() -> None:
         [750, 750, 770, 770, 0.78, 6],  # Safety cone
         [800, 800, 820, 820, 0.76, 6],  # Safety cone
         [850, 850, 870, 870, 0.74, 6],  # Safety cone
-
-        [100, 100, 120, 200, 0.9, 9],   # pole
+        [100, 100, 120, 200, 0.9, 9],  # pole
         [200, 180, 230, 210, 0.85, 8],  # machinery
         [180, 190, 195, 205, 0.88, 8],  # machinery
     ]

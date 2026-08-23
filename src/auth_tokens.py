@@ -10,17 +10,14 @@ import jwt
 
 
 class TokenManager:
-    """
-    Manages authentication and token refreshing for API requests.
-    """
+    """Manages authentication and token refreshing for API requests."""
 
     def __init__(
         self,
         api_url: str | None = None,
         shared_token: dict[str, str | bool] | None = None,
     ) -> None:
-        """
-        Initialises the TokenManager instance.
+        """Initialises the TokenManager instance.
 
         Args:
             api_url (str | None): The base API URL for authentication.
@@ -29,9 +26,13 @@ class TokenManager:
         """
         # API endpoint for authentication;
         # defaults to environment variable or local address.
-        self.api_url: str = api_url or os.getenv(
-            'DB_MANAGEMENT_API_URL',
-        ) or 'http://127.0.0.1:8005'
+        self.api_url: str = (
+            api_url
+            or os.getenv(
+                'DB_MANAGEMENT_API_URL',
+            )
+            or 'http://127.0.0.1:8005'
+        )
         # Shared token dictionary for access/refresh tokens and refresh state.
         self.shared_token: dict[str, str | bool] = shared_token or {
             'access_token': '',
@@ -51,8 +52,7 @@ class TokenManager:
         )
 
     async def authenticate(self, force: bool = False) -> None:
-        """
-        Authenticates with the API and retrieves access/refresh tokens.
+        """Authenticates with the API and retrieves access/refresh tokens.
 
         Args:
             force (bool):
@@ -97,7 +97,8 @@ class TokenManager:
                 data: dict = await resp.json()
                 self.shared_token['access_token'] = data['access_token']
                 self.shared_token['refresh_token'] = data.get(
-                    'refresh_token', '',
+                    'refresh_token',
+                    '',
                 )
                 self.logger.info(
                     'Successfully authenticated and retrieved token.',
@@ -113,8 +114,7 @@ class TokenManager:
             raise
 
     async def refresh_token(self) -> None:
-        """
-        Refreshes the access token using the refresh token.
+        """Refreshes the access token using the refresh token.
 
         Raises:
             RuntimeError:
@@ -142,13 +142,17 @@ class TokenManager:
             async with self._create_session() as session:
                 # First attempt with the bearer-token header.
                 resp = await self._attempt_token_refresh(
-                    session, refresh_token, with_auth=True,
+                    session,
+                    refresh_token,
+                    with_auth=True,
                 )
 
                 # Retry without header if 401 returned.
                 if resp.status == 401:
                     resp = await self._attempt_token_refresh(
-                        session, refresh_token, with_auth=False,
+                        session,
+                        refresh_token,
+                        with_auth=False,
                     )
 
                 if resp.status == 200:
@@ -201,8 +205,8 @@ class TokenManager:
         )
 
     async def ensure_token_valid(self, retry_count: int = 0) -> None:
-        """
-        Ensures a valid access token is present, authenticating if necessary.
+        """Ensures a valid access token is present, authenticating if
+        necessary.
 
         Args:
             retry_count (int): Number of previous retries.
@@ -236,9 +240,8 @@ class TokenManager:
                     raise
 
     async def handle_401(self, retry_count: int = 0) -> None:
-        """
-        Handles HTTP 401 errors by attempting to refresh the token,
-        then re-authenticating if needed.
+        """Handles HTTP 401 errors by attempting to refresh the token, then re-
+        authenticating if needed.
 
         Args:
             retry_count (int): Number of previous retries.
@@ -258,8 +261,7 @@ class TokenManager:
             await self.authenticate(force=True)
 
     def is_token_valid(self) -> bool:
-        """
-        Check if current access token exists and is not empty.
+        """Check if current access token exists and is not empty.
 
         Returns:
             bool: True if token exists and is not empty, False otherwise.
@@ -267,8 +269,7 @@ class TokenManager:
         return bool(self.shared_token.get('access_token'))
 
     def is_token_expired(self) -> bool:
-        """
-        Check if current access token is expired or will expire soon.
+        """Check if current access token is expired or will expire soon.
 
         Returns:
             bool:
@@ -283,7 +284,8 @@ class TokenManager:
             # Decode JWT token without verifying signature
             # (since we only need to check expiry)
             decoded = jwt.decode(
-                str(token), options={
+                str(token),
+                options={
                     'verify_signature': False,
                 },
             )
@@ -300,8 +302,7 @@ class TokenManager:
             return True  # Treat tokens that cannot be decoded as expired.
 
     async def get_valid_token(self) -> str:
-        """
-        Get a valid access token, refreshing or authenticating if necessary.
+        """Get a valid access token, refreshing or authenticating if necessary.
 
         Returns:
             str: A valid access token.

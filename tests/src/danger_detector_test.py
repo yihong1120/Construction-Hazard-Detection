@@ -12,20 +12,16 @@ from src.danger_detector import main
 
 
 class TestDangerDetector(unittest.TestCase):
-    """
-    Unit tests for the DangerDetector class methods.
-    """
+    """Unit tests for the DangerDetector class methods."""
 
     def setUp(self) -> None:
-        """
-        Set up method to create an instance of DangerDetector for each test.
-        """
+        """Set up method to create an instance of DangerDetector for each
+        test."""
         self.detector: DangerDetector = DangerDetector()
 
     def test_initialization(self) -> None:
-        """
-        Test case for checking if a person is driving based on bounding boxes.
-        """
+        """Test case for checking if a person is driving based on bounding
+        boxes."""
         # Valid detection items (missing required keys)
         partial_detection_items = {
             'detect_no_safety_vest_or_helmet': True,
@@ -61,17 +57,15 @@ class TestDangerDetector(unittest.TestCase):
         self.assertEqual(detector.detection_items, {})
 
     def test_detect_danger(self) -> None:
-        """
-        Test case for detecting danger based on a list of data points.
-        """
+        """Test case for detecting danger based on a list of data points."""
         data: list[list[float]] = [
-            [50, 50, 150, 150, 0.95, 0, -1, 0],    # Hardhat
+            [50, 50, 150, 150, 0.95, 0, -1, 0],  # Hardhat
             [200, 200, 300, 300, 0.85, 5, -1, 0],  # Person
             [400, 400, 500, 500, 0.75, 2, -1, 0],  # No-Safety Vest
-            [0, 0, 10, 10, 0.88, 6, -1, 0],        # Safety cone
-            [0, 1000, 10, 1010, 0.87, 6, -1, 0],   # Safety cone
-            [1000, 0, 1010, 10, 0.89, 6, -1, 0],   # Safety cone
-            [100, 100, 120, 120, 0.9, 6, -1, 0],   # Safety cone
+            [0, 0, 10, 10, 0.88, 6, -1, 0],  # Safety cone
+            [0, 1000, 10, 1010, 0.87, 6, -1, 0],  # Safety cone
+            [1000, 0, 1010, 10, 0.89, 6, -1, 0],  # Safety cone
+            [100, 100, 120, 120, 0.9, 6, -1, 0],  # Safety cone
             [150, 150, 170, 170, 0.85, 6, -1, 0],  # Safety cone
             [200, 200, 220, 220, 0.89, 6, -1, 0],  # Safety cone
             [250, 250, 270, 270, 0.85, 6, -1, 0],  # Safety cone
@@ -89,7 +83,8 @@ class TestDangerDetector(unittest.TestCase):
             data,
         )
         self.assertIn(
-            'warning_people_in_controlled_area', warnings,
+            'warning_people_in_controlled_area',
+            warnings,
         )
         self.assertIn('warning_no_hardhat', warnings)
 
@@ -109,7 +104,8 @@ class TestDangerDetector(unittest.TestCase):
             data,
         )
         self.assertIn(
-            'warning_no_safety_vest', warnings,
+            'warning_no_safety_vest',
+            warnings,
         )
 
         data = [
@@ -126,16 +122,16 @@ class TestDangerDetector(unittest.TestCase):
         )
         self.assertIn('warning_no_hardhat', warnings)
         self.assertIn(
-            'warning_no_safety_vest', warnings,
+            'warning_no_safety_vest',
+            warnings,
         )
         self.assertNotIn(
-            'warning_close_to_machinery', warnings,
+            'warning_close_to_machinery',
+            warnings,
         )
 
     def test_no_data(self) -> None:
-        """
-        Test case for checking behavior when no data is provided.
-        """
+        """Test case for checking behavior when no data is provided."""
         data: list[list[float]] = []
         warnings, cone_polygons, pole_polygons = self.detector.detect_danger(
             data,
@@ -145,10 +141,8 @@ class TestDangerDetector(unittest.TestCase):
         self.assertEqual(len(pole_polygons), 0)
 
     def test_vehicle_too_close(self) -> None:
-        """
-        Test case for checking behaviour
-        when a person is too close to a vehicle.
-        """
+        """Test case for checking behaviour when a person is too close to a
+        vehicle."""
         # Use default detector (when detection_items is empty, all checks run)
         data: list[list[float]] = [
             # Small person (5x10=50 area)
@@ -171,9 +165,7 @@ class TestDangerDetector(unittest.TestCase):
         )
 
     def test_utility_pole_detection(self) -> None:
-        """
-        Test case for utility pole detection functionality.
-        """
+        """Test case for utility pole detection functionality."""
         # Test with utility pole detection enabled
         detection_items = {
             'detect_no_safety_vest_or_helmet': False,
@@ -187,8 +179,8 @@ class TestDangerDetector(unittest.TestCase):
         # Simple test - just ensure the functionality runs without error
         # since the utility pole detection requires complex clustering logic
         data: list[list[float]] = [
-            [100, 10, 110, 50, 0.9, 9, -1, 0],    # Utility pole
-            [125, 20, 135, 25, 0.85, 5, -1, 0],   # Person near poles
+            [100, 10, 110, 50, 0.9, 9, -1, 0],  # Utility pole
+            [125, 20, 135, 25, 0.85, 5, -1, 0],  # Person near poles
         ]
 
         warnings, cone_polygons, pole_polygons = detector.detect_danger(data)
@@ -198,9 +190,7 @@ class TestDangerDetector(unittest.TestCase):
         self.assertIsInstance(pole_polygons, list)
 
     def test_machinery_filtering(self) -> None:
-        """
-        Test static machinery filtering functionality.
-        """
+        """Test static machinery filtering functionality."""
         data: list[list[float]] = [
             # Static machinery (should be filtered)
             [100, 100, 200, 200, 0.9, 8, -1, 0],
@@ -217,9 +207,7 @@ class TestDangerDetector(unittest.TestCase):
         self.assertEqual(len(warnings), 0)
 
     def test_invalid_detection_items_wrong_keys(self) -> None:
-        """
-        Test initialization with wrong keys in detection items.
-        """
+        """Test initialization with wrong keys in detection items."""
         invalid_items = {
             'wrong_key': True,
             'another_wrong_key': False,
@@ -228,9 +216,7 @@ class TestDangerDetector(unittest.TestCase):
         self.assertEqual(detector.detection_items, {})
 
     def test_vehicle_proximity_detection(self) -> None:
-        """
-        Test vehicle proximity detection functionality.
-        """
+        """Test vehicle proximity detection functionality."""
         # Use default detector (when detection_items is empty, all checks run)
         data: list[list[float]] = [
             # Small person (5x10=50 area)
@@ -250,9 +236,7 @@ class TestDangerDetector(unittest.TestCase):
         )
 
     def test_vehicle_proximity_counts_person_once(self) -> None:
-        """
-        A person close to multiple vehicles is one warning target.
-        """
+        """A person close to multiple vehicles is one warning target."""
         data: list[list[float]] = [
             [100, 100, 105, 110, 0.95, 5, 42, 0],
             [107, 105, 200, 200, 0.85, 10, 1, 1],
@@ -272,9 +256,7 @@ class TestDangerDetector(unittest.TestCase):
         )
 
     def test_vehicle_proximity_uses_spatial_candidates(self) -> None:
-        """
-        Far vehicles should not be checked as proximity candidates.
-        """
+        """Far vehicles should not be checked as proximity candidates."""
         data: list[list[float]] = [
             [100, 100, 105, 110, 0.95, 5, -1, 0],
             [107, 105, 200, 200, 0.85, 10, 1, 1],
@@ -305,14 +287,12 @@ class TestDangerDetector(unittest.TestCase):
         self.assertLess(mock_close.call_count, 10)
 
     def test_driver_filtering(self) -> None:
-        """
-        Test that drivers are filtered out from person detections.
-        """
+        """Test that drivers are filtered out from person detections."""
         data: list[list[float]] = [
             [100, 100, 120, 120, 0.95, 5, -1, 0],  # Person (driver)
             # Machinery containing person
             [95, 95, 125, 125, 0.85, 8, 1, 1],
-            [200, 200, 220, 220, 0.9, 5, -1, 0],   # Person (not driver)
+            [200, 200, 220, 220, 0.9, 5, -1, 0],  # Person (not driver)
         ]
         warnings, cone_polygons, pole_polygons = self.detector.detect_danger(
             data,
@@ -321,9 +301,7 @@ class TestDangerDetector(unittest.TestCase):
         # The exact warning content depends on the driver detection logic
 
     def test_empty_polygon_scenarios(self) -> None:
-        """
-        Test scenarios with no polygons formed.
-        """
+        """Test scenarios with no polygons formed."""
         data: list[list[float]] = [
             [100, 100, 120, 120, 0.95, 5, -1, 0],  # Just a person, no cones
         ]
@@ -336,9 +314,7 @@ class TestDangerDetector(unittest.TestCase):
         self.assertEqual(len(pole_polygons), 0)
 
     def test_machinery_close_to_pole_detection(self) -> None:
-        """
-        Test machinery close to utility pole detection functionality.
-        """
+        """Test machinery close to utility pole detection functionality."""
         detection_items = {
             'detect_no_safety_vest_or_helmet': False,
             'detect_near_machinery_or_vehicle': False,
@@ -353,7 +329,7 @@ class TestDangerDetector(unittest.TestCase):
         # Machinery top must be within [10, 36.67] and bottom must intersect
         # circle
         data: list[list[float]] = [
-            [100, 10, 110, 50, 0.9, 9, -1, 0],    # Utility pole (height=40)
+            [100, 10, 110, 50, 0.9, 9, -1, 0],  # Utility pole (height=40)
             # Machinery: top=30 (valid), bottom=40
             [95, 30, 115, 40, 0.85, 8, 1, 1],
         ]
@@ -363,17 +339,14 @@ class TestDangerDetector(unittest.TestCase):
         self.assertIn('detect_machinery_close_to_pole', warnings)
 
     def test_main_function_execution(self) -> None:
-        """
-        Test the main function can be executed without errors.
-        """
+        """Test the main function can be executed without errors."""
         from src.danger_detector import main
+
         # Should run without raising any exceptions
         main()
 
     def test_machinery_close_to_pole_edge_cases(self) -> None:
-        """
-        Test edge cases for machinery close to utility pole detection.
-        """
+        """Test edge cases for machinery close to utility pole detection."""
         detection_items = {
             'detect_no_safety_vest_or_helmet': False,
             'detect_near_machinery_or_vehicle': False,
@@ -385,8 +358,8 @@ class TestDangerDetector(unittest.TestCase):
 
         # Test with zero or negative pole height
         data: list[list[float]] = [
-            [100, 50, 110, 50, 0.9, 9, -1, 0],    # Pole with zero height
-            [105, 45, 125, 55, 0.85, 8, 1, 1],    # Machinery
+            [100, 50, 110, 50, 0.9, 9, -1, 0],  # Pole with zero height
+            [105, 45, 125, 55, 0.85, 8, 1, 1],  # Machinery
         ]
 
         warnings, cone_polygons, pole_polygons = detector.detect_danger(data)
@@ -395,8 +368,8 @@ class TestDangerDetector(unittest.TestCase):
 
         # Test with machinery not in height range
         data2: list[list[float]] = [
-            [100, 10, 110, 50, 0.9, 9, -1, 0],    # Utility pole (height=40)
-            [105, 60, 125, 70, 0.85, 8, 1, 1],    # Machinery below pole
+            [100, 10, 110, 50, 0.9, 9, -1, 0],  # Utility pole (height=40)
+            [105, 60, 125, 70, 0.85, 8, 1, 1],  # Machinery below pole
         ]
 
         warnings2, _, _ = detector.detect_danger(data2)
@@ -404,18 +377,15 @@ class TestDangerDetector(unittest.TestCase):
         self.assertNotIn('detect_machinery_close_to_pole', warnings2)
 
     def test_main_function_coverage(self) -> None:
-        """
-        Test the main function for coverage purposes.
-        """
+        """Test the main function for coverage purposes."""
         # This will cover the if __name__ == '__main__' line
         from src.danger_detector import main
+
         with patch('builtins.print'):
             main()  # Should run without error
 
     def test_pole_restricted_area_with_people(self) -> None:
-        """
-        Test utility pole restricted area detection with people inside.
-        """
+        """Test utility pole restricted area detection with people inside."""
         detection_items = {
             'detect_no_safety_vest_or_helmet': False,
             'detect_near_machinery_or_vehicle': False,
@@ -434,13 +404,14 @@ class TestDangerDetector(unittest.TestCase):
             ) as mock_count_people:
                 # Mock a non-empty polygon
                 from shapely.geometry import Polygon
+
                 mock_polygon = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
                 mock_build_union.return_value = mock_polygon
                 mock_count_people.return_value = 2  # 2 people in the area
 
                 data: list[list[float]] = [
-                    [100, 10, 110, 50, 0.9, 9, -1, 0],    # Utility pole
-                    [105, 20, 115, 30, 0.85, 5, -1, 0],   # Person
+                    [100, 10, 110, 50, 0.9, 9, -1, 0],  # Utility pole
+                    [105, 20, 115, 30, 0.85, 5, -1, 0],  # Person
                 ]
 
                 warnings, cone_polygons, pole_polygons = (
@@ -448,22 +419,23 @@ class TestDangerDetector(unittest.TestCase):
                 )
                 # Should detect people in utility pole controlled area
                 self.assertIn(
-                    'warning_people_in_utility_pole_controlled_area', warnings,
+                    'warning_people_in_utility_pole_controlled_area',
+                    warnings,
                 )
                 self.assertEqual(
-                    warnings[
-                        'warning_people_in_utility_pole_controlled_area'
-                    ]['count'],
+                    warnings['warning_people_in_utility_pole_controlled_area'][
+                        'count'
+                    ],
                     2,
                 )
 
     @patch('builtins.print')
     def test_main(self, mock_print: MagicMock) -> None:
-        """
-        Test case for the main function.
-        """
+        """Test case for the main function."""
         with patch.object(
-            DangerDetector, 'detect_danger', return_value=(
+            DangerDetector,
+            'detect_danger',
+            return_value=(
                 {
                     'warning_no_hardhat': {'count': 1},
                     'warning_people_in_controlled_area': {'count': 1},
@@ -537,9 +509,3 @@ class TestDangerDetector(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-"""
-pytest \
-    --cov=src.danger_detector \
-    --cov-report=term-missing tests/src/danger_detector_test.py
-"""

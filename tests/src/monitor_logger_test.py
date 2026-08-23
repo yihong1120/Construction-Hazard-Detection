@@ -14,14 +14,10 @@ from src.monitor_logger import main
 
 
 class TestLoggerConfig(unittest.TestCase):
-    """
-    Unit tests for the LoggerConfig class methods.
-    """
+    """Unit tests for the LoggerConfig class methods."""
 
     def setUp(self) -> None:
-        """
-        Initialise test variables and ensure the log directory exists.
-        """
+        """Initialise test variables and ensure the log directory exists."""
         self.temp_dir = tempfile.TemporaryDirectory(prefix='monitor-logger-')
         self.log_file: str = 'test.log'
         self.log_dir: str = self.temp_dir.name
@@ -44,9 +40,7 @@ class TestLoggerConfig(unittest.TestCase):
         mock_rotating_file_handler: MagicMock,
         mock_mkdir: MagicMock,
     ) -> None:
-        """
-        Test setting up the logger with file and console handlers.
-        """
+        """Test setting up the logger with file and console handlers."""
         # Create mock handlers
         mock_file_handler = MagicMock()
         mock_console_handler = MagicMock()
@@ -86,18 +80,14 @@ class TestLoggerConfig(unittest.TestCase):
         )
 
     def test_get_file_handler(self) -> None:
-        """
-        Test retrieving the file handler from LoggerConfig.
-        """
+        """Test retrieving the file handler from LoggerConfig."""
         file_handler = self.logger_config.get_file_handler()
         self.assertIsInstance(file_handler, logging.Handler)
         self.assertEqual(file_handler.level, self.level)
         self.assertEqual(file_handler.formatter, self.formatter)
 
     def test_get_console_handler(self) -> None:
-        """
-        Test retrieving the console handler from LoggerConfig.
-        """
+        """Test retrieving the console handler from LoggerConfig."""
         console_handler = self.logger_config.get_console_handler()
         self.assertIsInstance(console_handler, logging.Handler)
         self.assertEqual(console_handler.level, self.level)
@@ -112,9 +102,7 @@ class TestLoggerConfig(unittest.TestCase):
         mock_rotating_file_handler: MagicMock,
         mock_mkdir: MagicMock,
     ) -> None:
-        """
-        Test the logger output to ensure it logs messages correctly.
-        """
+        """Test the logger output to ensure it logs messages correctly."""
         mock_file_handler = MagicMock()
         mock_console_handler = MagicMock()
         mock_rotating_file_handler.return_value = mock_file_handler
@@ -122,8 +110,10 @@ class TestLoggerConfig(unittest.TestCase):
 
         # Initialise logger configuration
         from src.monitor_logger import LoggerConfig
+
         self.logger_config = LoggerConfig(
-            log_file='test.log', log_dir=self.log_dir,
+            log_file='test.log',
+            log_dir=self.log_dir,
         )
 
         # Mock the mkdir function to avoid actual directory creation
@@ -148,9 +138,7 @@ class TestLoggerConfig(unittest.TestCase):
 
     @patch('src.monitor_logger.LoggerConfig')
     def test_main_function(self, mock_logger_config: MagicMock) -> None:
-        """
-        Test the main function to ensure the logging setup is complete.
-        """
+        """Test the main function to ensure the logging setup is complete."""
         # Create a mock logger instance
         mock_logger_instance = MagicMock()
         mock_logger_config.return_value.get_logger.return_value = (
@@ -169,9 +157,7 @@ class TestLoggerConfig(unittest.TestCase):
         )
 
     def test_if_main_called(self) -> None:
-        """
-        Test case to ensure `main` is called when the script is executed.
-        """
+        """Test case to ensure `main` is called when the script is executed."""
         result = subprocess.run(
             [sys.executable, 'src/monitor_logger.py'],
             capture_output=True,

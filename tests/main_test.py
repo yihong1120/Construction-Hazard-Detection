@@ -658,7 +658,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         yolo_detector.close.assert_not_called()
         streaming_capture.release_resources.assert_not_called()
 
-    async def test_record_detection_suppresses_live_warning_outside_working_hours(
+    async def test_record_detection_blocks_warning_off_hours(
         self,
     ) -> None:
         """Off-shift detections do not reach SSE or notification clients."""
@@ -705,7 +705,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         store_viewer_data.assert_not_awaited()
         send_violation.assert_not_awaited()
 
-    async def test_record_detection_publishes_live_warning_during_working_hours(
+    async def test_record_detection_publishes_warning_on_hours(
         self,
     ) -> None:
         """Working-time warnings remain available to SSE clients."""
@@ -819,6 +819,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
     async def test_decoupled_loop_starts_all_requested_tasks(self) -> Any:
         """Exercise this test."""
+
         async def stop_capture(**_kwargs: Any) -> Any:
             """Support stop_capture."""
             return None
@@ -1798,7 +1799,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaisesRegex(ValueError, 'unsupported media rendition'):
             processor.create_media_publisher(
-                'rtsp://media/unknown', rendition='raw',
+                'rtsp://media/unknown',
+                rendition='raw',
             )
 
     def test_media_timing_configuration_falls_back_on_invalid_values(
@@ -2049,8 +2051,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         configs = []
         for index in range(4):
             cfg = self.dummy_cfg.copy()
-            cfg['video_url'] = f'rtsp://example.com/cam{index}'
-            cfg['stream_name'] = f'Cam{index}'
+            cfg['video_url'] = f"rtsp://example.com/cam{index}"
+            cfg['stream_name'] = f"Cam{index}"
             configs.append(cfg)
         result_queues = [MagicMock() for _ in configs]
         request_queues = [MagicMock(), MagicMock()]
@@ -2085,10 +2087,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.app.yolo_request_queues, request_queues)
         self.assertEqual(
             self.app.yolo_result_queues,
-            {
-                f'SiteA|Cam{index}': result_queues[index]
-                for index in range(4)
-            },
+            {f"SiteA|Cam{index}": result_queues[index] for index in range(4)},
         )
         for worker_process in worker_processes:
             worker_process.start.assert_called_once()
@@ -2150,7 +2149,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         for index in range(7):
             cfg = self.dummy_cfg.copy()
             cfg['model_key'] = 'yolo26m'
-            cfg['video_url'] = f'rtsp://example.com/m{index:02d}'
+            cfg['video_url'] = f"rtsp://example.com/m{index:02d}"
             medium_configs.append(cfg)
         nano_cfg = self.dummy_cfg.copy()
         nano_cfg['model_key'] = 'yolo26n'
@@ -2182,11 +2181,11 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         for index in range(5):
             medium_cfg = self.dummy_cfg.copy()
             medium_cfg['model_key'] = 'yolo26m'
-            medium_cfg['video_url'] = f'rtsp://example.com/m{index:02d}'
+            medium_cfg['video_url'] = f"rtsp://example.com/m{index:02d}"
             medium_configs.append(medium_cfg)
             nano_cfg = self.dummy_cfg.copy()
             nano_cfg['model_key'] = 'yolo26n'
-            nano_cfg['video_url'] = f'rtsp://example.com/n{index:02d}'
+            nano_cfg['video_url'] = f"rtsp://example.com/n{index:02d}"
             nano_configs.append(nano_cfg)
 
         with patch.dict(
@@ -2436,10 +2435,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self,
         mock_getenv: Any,
     ) -> None:
-        """
-        Test that _ensure_db_pool raises RuntimeError
-        when DATABASE_URL is None.
-        """
+        """Test that _ensure_db_pool raises RuntimeError when DATABASE_URL is
+        None."""
         # Mock os.getenv to return None for DATABASE_URL
         mock_getenv.return_value = None
 
@@ -2806,9 +2803,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self,
         mock_fetch: Any,
     ) -> None:
-        """
-        Test Redis cleanup during stream restart.
-        """
+        """Test Redis cleanup during stream restart."""
         video_url = self.dummy_cfg['video_url']
         old_cfg = self.dummy_cfg.copy()
         new_cfg = self.dummy_cfg.copy()
@@ -2832,7 +2827,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock,
             ) as mock_delete,
         ):
-
             mock_start.return_value = MagicMock()
 
             await self.app.reload_configurations()
@@ -2954,9 +2948,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_print: Any,
         _mock_ensure_yolo_worker: Any,
     ) -> Any:
-        """
-        Test main function with JSON config handling KeyboardInterrupt
-        """
+        """Test main function with JSON config handling KeyboardInterrupt."""
         from main import main as main_entry
 
         # Mock command line args
@@ -3026,9 +3018,7 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         mock_process_class: Any,
         _mock_ensure_yolo_worker: Any,
     ) -> Any:
-        """
-        Test main function JSON config with alive process cleanup
-        """
+        """Test main function JSON config with alive process cleanup."""
         from main import main as main_entry
 
         # Mock command line args
@@ -3199,9 +3189,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create_pool: Any,
     ) -> Any:
-        """
-        Test the actual database operation code paths in fetch_stream_configs.
-        """
+        """Test the actual database operation code paths in
+        fetch_stream_configs."""
         # This test covers the SQL query and row processing logic
 
         # Mock database row data
@@ -3293,12 +3282,6 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 if __name__ == '__main__':
     unittest.main()
 
-"""
-pytest \
-    --cov=main \
-    --cov-report=term-missing tests/main_test.py
-"""
-
 
 def test_stream_processor_media_environment_helpers() -> None:
     """Malformed demand settings and rendition rates retain safe defaults."""
@@ -3337,17 +3320,19 @@ def test_overlay_frame_helpers_cover_fallback_and_ready_timing() -> None:
     assert ready_started_at == {'en': 1.0}
 
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         loop = MagicMock()
         loop.time.side_effect = [10.0, 11.1]
         with (
             patch.object(
-                processor.asyncio, 'get_running_loop',
+                processor.asyncio,
+                'get_running_loop',
                 return_value=loop,
             ),
             patch.object(
-                processor, '_overlay_ready_grace_seconds', return_value=1,
+                processor,
+                '_overlay_ready_grace_seconds',
+                return_value=1,
             ),
         ):
             started_at: dict[str, float] = {}
@@ -3359,9 +3344,9 @@ def test_overlay_frame_helpers_cover_fallback_and_ready_timing() -> None:
 
 def test_overlay_snapshot_uses_detection_frame_when_capture_is_empty() -> None:
     """Detection output remains publishable during a brief capture handoff."""
+
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         latest_frame = processor._LatestFrameState()
         latest_detection = processor._LatestDetectionState()
         frame = np.ones((2, 2, 3), dtype=np.uint8)
@@ -3382,9 +3367,9 @@ def test_overlay_snapshot_uses_detection_frame_when_capture_is_empty() -> None:
 
 def test_overlay_language_snapshot_creates_publisher_and_marks_ready() -> None:
     """The first demand for a language creates and advertises its rendition."""
+
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         redis_manager = MagicMock()
         publisher = AsyncMock()
         publishers: dict[str, object] = {}
@@ -3417,13 +3402,13 @@ def test_overlay_language_snapshot_creates_publisher_and_marks_ready() -> None:
     asyncio.run(run_case())
 
 
-def test_overlay_publish_loop_processes_demand_then_closes_publishers(
-) -> None:
+def test_overlay_publish_loop_processes_demand_then_closes_publishers() -> (
+    None
+):
     """Demanded overlays render once, publish, and clean up on shutdown."""
-    class DemandCache:
 
-        """Provide DemandCache.
-        """
+    class DemandCache:
+        """Provide DemandCache."""
 
         async def overlay_languages(
             self,
@@ -3442,8 +3427,7 @@ def test_overlay_publish_loop_processes_demand_then_closes_publishers(
             return {'en'}
 
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         stop_event = asyncio.Event()
         variants = [
             processor._OverlayPublisherVariant('hazard_site_cam', 'detail'),
@@ -3504,10 +3488,9 @@ def test_overlay_publish_loop_processes_demand_then_closes_publishers(
 
 def test_clean_restreamer_restarts_after_frozen_source_signal() -> None:
     """A freeze reconnect signal restarts the active source restreamer."""
-    class DemandCache:
 
-        """Provide DemandCache.
-        """
+    class DemandCache:
+        """Provide DemandCache."""
 
         async def clean_requested(self, _redis: object, _path: str) -> bool:
             """Perform clean requested.
@@ -3522,8 +3505,7 @@ def test_clean_restreamer_restarts_after_frozen_source_signal() -> None:
             return True
 
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         stop_event = asyncio.Event()
         reconnect_event = asyncio.Event()
         restreamer = AsyncMock()
@@ -3577,9 +3559,9 @@ def test_clean_restreamer_restarts_after_frozen_source_signal() -> None:
 
 def test_capture_reconnect_invalidates_shared_frames() -> None:
     """A source outage removes stale video and forwards a clean restart."""
+
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         reconnect_event = asyncio.Event()
         clean_reconnect_event = asyncio.Event()
         latest_frame = processor._LatestFrameState(
@@ -3622,9 +3604,9 @@ def test_capture_reconnect_invalidates_shared_frames() -> None:
 
 def test_detection_result_is_discarded_across_reconnect() -> None:
     """An in-flight result from the old decoder generation is never used."""
+
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         latest_frame = processor._LatestFrameState(
             frame=np.zeros((2, 2, 3), dtype=np.uint8),
             timestamp=10.0,
@@ -3645,6 +3627,7 @@ def test_detection_result_is_discarded_across_reconnect() -> None:
             Returns:
                 The callable result.
             """
+
             async with latest_frame.lock:
                 latest_frame.frame = None
                 latest_frame.generation += 1
@@ -3678,10 +3661,9 @@ def test_detection_result_is_discarded_across_reconnect() -> None:
 
 def test_overlay_publish_loop_retries_after_demand_failure() -> None:
     """A transient demand read failure is logged, delayed, and cleaned up."""
-    class DemandCache:
 
-        """Provide DemandCache.
-        """
+    class DemandCache:
+        """Provide DemandCache."""
 
         async def overlay_languages(
             self,
@@ -3700,8 +3682,7 @@ def test_overlay_publish_loop_retries_after_demand_failure() -> None:
             raise RuntimeError('redis offline')
 
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         stop_event = asyncio.Event()
         variants = [
             processor._OverlayPublisherVariant('hazard_site_cam', 'detail'),
@@ -3758,11 +3739,13 @@ def test_main_worker_and_environment_guard_paths() -> None:
 
     app.yolo_request_queues = [MagicMock()]
     with patch.object(app, '_yolo_worker_result_queue', return_value=None):
-        assert app._yolo_worker_slot({
-            'video_url': 'stream',
-            'site': 'SiteA',
-            'stream_name': 'Cam1',
-        }) == (None, None)
+        assert app._yolo_worker_slot(
+            {
+                'video_url': 'stream',
+                'site': 'SiteA',
+                'stream_name': 'Cam1',
+            },
+        ) == (None, None)
     app._ensure_yolo_result_queues(None)
 
     with patch.dict(
@@ -3780,9 +3763,9 @@ def test_main_worker_and_environment_guard_paths() -> None:
 
 def test_main_config_mode_handles_no_runnable_streams() -> None:
     """A config file with no active stream still performs normal cleanup."""
+
     async def run_case() -> None:
-        """Perform run case.
-        """
+        """Perform run case."""
         app = MagicMock()
         app._can_run_stream.return_value = False
         app.cleanup_resources = AsyncMock()
