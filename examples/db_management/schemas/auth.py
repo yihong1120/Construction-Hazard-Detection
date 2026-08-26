@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Literal
 from typing import NotRequired
 from typing import TypedDict
 
@@ -318,6 +319,100 @@ class AppleAuthRequest(LegalConsentFields):
     family_name: str | None = None
     nonce: str | None = None
     device_lang: str | None = None
+
+
+NativeSocialProvider = Literal['google', 'apple']
+
+
+class NativeSocialExchangeBeginRequest(BaseModel):
+    """Start a short-lived native social assertion exchange.
+
+    The client supplies its normal Authorization Code + PKCE parameters before
+    it talks to Google or Apple.  The server returns a nonce that must be
+    supplied to the native provider SDK and binds the resulting identity
+    assertion to this exact future Keycloak authorisation request.
+    """
+
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    provider: NativeSocialProvider
+    client_id: str = Field(min_length=1, max_length=128)
+    redirect_uri: str = Field(min_length=1, max_length=2048)
+    code_challenge: str = Field(
+        min_length=43,
+        max_length=128,
+        pattern=r'^[A-Za-z0-9_-]+$',
+    )
+    code_challenge_method: Literal['S256']
+    state: str = Field(min_length=1, max_length=2048)
+
+
+class NativeSocialExchangeBeginResponse(BaseModel):
+    """Return the opaque exchange ID and provider nonce to Flutter."""
+
+    transaction_id: str = Field(min_length=43, max_length=128)
+    nonce: str = Field(min_length=43, max_length=128)
+    expires_in: int = Field(ge=30, le=300)
+
+
+class NativeSocialCredential(BaseModel):
+    """Provider credentials returned by an official native SDK.
+
+    Google completes with ``id_token``.  Apple must include its one-use
+    ``authorization_code`` and may additionally include the identity token
+    returned by the platform API.
+    """
+
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    id_token: str | None = Field(default=None, min_length=1, max_length=16384)
+    authorization_code: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+    )
+
+
+class NativeSocialExchangeCompleteRequest(NativeSocialCredential):
+    """Complete a PKCE-bound native social exchange."""
+
+    transaction_id: str = Field(min_length=43, max_length=128)
+
+
+class NativeSocialExchangeCompleteResponse(BaseModel):
+    """Return the Keycloak URL that creates a normal OIDC code."""
+
+    authorization_url: str = Field(min_length=1, max_length=4096)
+    expires_in: int = Field(ge=30, le=300)
+
+
+class NativeSocialLinkBeginRequest(BaseModel):
+    """Start a freshly-authenticated social-identity linking transaction."""
+
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    provider: NativeSocialProvider
+
+
+class NativeSocialLinkBeginResponse(BaseModel):
+    """Return the nonce bound to a recent Keycloak session."""
+
+    transaction_id: str = Field(min_length=43, max_length=128)
+    nonce: str = Field(min_length=43, max_length=128)
+    expires_in: int = Field(ge=30, le=300)
+
+
+class NativeSocialLinkCompleteRequest(NativeSocialCredential):
+    """Submit the provider proof that will be linked to the current account."""
+
+    transaction_id: str = Field(min_length=43, max_length=128)
+
+
+class NativeSocialLinkResponse(BaseModel):
+    """Report whether provider subject was newly linked or already present."""
+
+    provider: NativeSocialProvider
+    status: Literal['linked', 'already_linked']
 
 
 class IdentityRead(BaseModel):

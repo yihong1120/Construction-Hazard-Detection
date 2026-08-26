@@ -168,11 +168,21 @@ def _verify_jwt_with_jwks(
     return _provider_claims(payload)
 
 
-async def verify_google_id_token(id_token: str) -> ProviderClaims:
+async def verify_google_id_token(
+    id_token: str,
+    *,
+    expected_nonce: str | None = None,
+    require_verified_email: bool = True,
+) -> ProviderClaims:
     """Verify Google identity-token signature and registered claims.
 
     Args:
         id_token: Raw Google OpenID Connect identity token.
+        expected_nonce: Optional one-use nonce bound to the native request.
+        require_verified_email: Whether this caller requires a verified email.
+            Account linking and the Keycloak exchange use the immutable
+            provider subject rather than an email address, so they do not
+            require an email claim.
 
     Returns:
         Verified Google provider claims.
@@ -185,12 +195,17 @@ async def verify_google_id_token(id_token: str) -> ProviderClaims:
         GOOGLE_ISSUERS,
     )
     claims = _provider_claims(payload)
-    if not claims.email_verified:
+    if expected_nonce is not None and claims.nonce != expected_nonce:
+        raise HTTPException(
+            status_code=401,
+            detail='Invalid provider token',
+        )
+    if require_verified_email and not claims.email_verified:
         raise HTTPException(
             status_code=401,
             detail='Google email is not verified',
         )
-    if not _normalise_email(claims.email):
+    if require_verified_email and not _normalise_email(claims.email):
         raise HTTPException(
             status_code=401,
             detail='Google account did not return an email address',

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
+import re
+from collections.abc import Mapping
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
@@ -34,6 +38,11 @@ DEFAULT_GOOGLE_CLIENT_IDS = (
 
 DEFAULT_APPLE_BUNDLE_ID = 'com.changdar.visionnaire'
 DEFAULT_APPLE_SERVICE_ID = 'com.changdar.visionnaire.signin'
+DEFAULT_NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON = (
+    '{"visionnaire-mobile":['
+    '"com.changdar.visionnaire:/oauthredirect"]}'
+)
+_OIDC_CLIENT_ID_RE = re.compile(r'^[A-Za-z0-9._-]{1,128}$')
 
 
 class Settings(BaseSettings):
@@ -100,6 +109,52 @@ class Settings(BaseSettings):
         'OIDC_PASSWORDS_MANAGED_EXTERNALLY',
         False,
     )
+    # Native Google / Apple credentials are never exchanged through
+    # Keycloak's deprecated external token-exchange grant.  Instead the API
+    # validates the provider assertion, creates a one-use proof bound to
+    # PKCE, and Keycloak turns that proof into its ordinary authorisation
+    # code.  The values below are deliberately separate from browser broker
+    # credentials and never leave the server processes.
+    native_social_exchange_enabled: bool = _env_bool(
+        'NATIVE_SOCIAL_EXCHANGE_ENABLED',
+        False,
+    )
+    native_social_exchange_shared_secret: str = os.getenv(
+        'NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET',
+        '',
+    ).strip()
+    native_social_allowed_clients_json: str = os.getenv(
+        'NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON',
+        DEFAULT_NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON,
+    ).strip()
+    native_social_exchange_ttl_seconds: int = max(
+        30,
+        min(300, int(os.getenv('NATIVE_SOCIAL_EXCHANGE_TTL_SECONDS', '90'))),
+    )
+    native_social_link_ttl_seconds: int = max(
+        30,
+        min(300, int(os.getenv('NATIVE_SOCIAL_LINK_TTL_SECONDS', '120'))),
+    )
+    native_social_link_max_auth_age_seconds: int = max(
+        60,
+        min(
+            900,
+            int(os.getenv('NATIVE_SOCIAL_LINK_MAX_AUTH_AGE_SECONDS', '300')),
+        ),
+    )
+    keycloak_admin_base_url: str = os.getenv(
+        'KEYCLOAK_ADMIN_BASE_URL',
+        '',
+    ).strip().rstrip('/')
+    keycloak_realm: str = os.getenv('KEYCLOAK_REALM', 'visionnaire').strip()
+    keycloak_user_linker_client_id: str = os.getenv(
+        'KEYCLOAK_USER_LINKER_CLIENT_ID',
+        'visionnaire-user-linker',
+    ).strip()
+    keycloak_user_linker_client_secret: str = os.getenv(
+        'KEYCLOAK_USER_LINKER_CLIENT_SECRET',
+        '',
+    ).strip()
     oidc_state_ttl_seconds: int = max(
         60,
         min(600, int(os.getenv('OIDC_STATE_TTL_SECONDS', '300'))),
@@ -326,6 +381,40 @@ class Settings(BaseSettings):
                     'OIDC_ACCOUNT_URL is required when Keycloak manages '
                     'passwords',
                 )
+        if self.native_social_exchange_enabled:
+            missing = [
+                name
+                for name, value in (
+                    (
+                        'NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET',
+                        self.native_social_exchange_shared_secret,
+                    ),
+                    (
+                        'KEYCLOAK_USER_LINKER_CLIENT_SECRET',
+                        self.keycloak_user_linker_client_secret,
+                    ),
+                    ('KEYCLOAK_REALM', self.keycloak_realm),
+                )
+                if not value
+            ]
+            if missing:
+                raise RuntimeError(
+                    'Native social exchange is enabled but required settings '
+                    'are missing: ' + ', '.join(missing),
+                )
+            if len(self.native_social_exchange_shared_secret) < 32:
+                raise RuntimeError(
+                    'NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET must be at least '
+                    '32 characters',
+                )
+            if not self.oidc_enabled:
+                raise RuntimeError(
+                    'OIDC_ENABLED is required for native social exchange',
+                )
+            # Parse once at startup, rather than accepting a malformed client
+            # allow-list at the unauthenticated exchange endpoint.
+            _ = self.native_social_allowed_clients
+            _ = self.resolved_keycloak_admin_base_url
 
     @property
     def oidc_audiences(self) -> tuple[str, ...]:
@@ -357,3 +446,94 @@ class Settings(BaseSettings):
                 self.oidc_web_redirect_uri,
             ),
         )
+
+    @property
+    def native_social_allowed_clients(self) -> dict[str, tuple[str, ...]]:
+        """Return the strict Keycloak client/redirect allow-list.
+
+        This is not an OAuth dynamic-registration mechanism.  Every native
+        callback is a deployment-owned, exact URI and is subsequently checked
+        again by Keycloak before it can issue an authorisation code.
+        """
+        try:
+            raw = json.loads(self.native_social_allowed_clients_json)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                'NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON must be valid JSON',
+            ) from exc
+        if not isinstance(raw, Mapping) or not raw:
+            raise RuntimeError(
+                'NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON must be a non-empty map',
+            )
+        allowed: dict[str, tuple[str, ...]] = {}
+        for client_id, redirect_uris in raw.items():
+            if (
+                not isinstance(client_id, str)
+                or not _OIDC_CLIENT_ID_RE.fullmatch(client_id)
+                or not isinstance(redirect_uris, list)
+                or not redirect_uris
+            ):
+                raise RuntimeError(
+                    'NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON contains an invalid '
+                    'client entry',
+                )
+            validated_uris: list[str] = []
+            for redirect_uri in redirect_uris:
+                if not isinstance(redirect_uri, str) or not redirect_uri:
+                    raise RuntimeError(
+                        'NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON contains an '
+                        'invalid redirect URI',
+                    )
+                parsed = urlsplit(redirect_uri)
+                # Native custom schemes and HTTPS browser callbacks are both
+                # valid; opaque / relative URLs, credentials, fragments, and
+                # wildcard redirects are not.
+                if (
+                    not parsed.scheme
+                    or parsed.scheme.lower() in {'data', 'file', 'javascript'}
+                    or not (
+                        parsed.netloc
+                        or redirect_uri.startswith(f'{parsed.scheme}:/')
+                    )
+                    or parsed.username
+                    or parsed.password
+                    or parsed.fragment
+                    or '*' in redirect_uri
+                ):
+                    raise RuntimeError(
+                        'NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON contains an '
+                        'unsafe redirect URI',
+                    )
+                if parsed.scheme.lower() == 'https' and not parsed.netloc:
+                    raise RuntimeError(
+                        'NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON contains an '
+                        'unsafe HTTPS redirect URI',
+                    )
+                if redirect_uri not in validated_uris:
+                    validated_uris.append(redirect_uri)
+            allowed[client_id] = tuple(validated_uris)
+        return allowed
+
+    @property
+    def resolved_keycloak_admin_base_url(self) -> str:
+        """Return trusted Keycloak base used by backend-only Admin calls."""
+        candidate = self.keycloak_admin_base_url
+        if not candidate:
+            marker = '/realms/'
+            if marker not in self.oidc_issuer_url:
+                raise RuntimeError(
+                    'OIDC_ISSUER_URL must contain /realms/ for Keycloak '
+                    'native social exchange',
+                )
+            candidate = self.oidc_issuer_url.split(marker, maxsplit=1)[0]
+        parsed = urlsplit(candidate)
+        if (
+            parsed.scheme not in {'http', 'https'}
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise RuntimeError('KEYCLOAK_ADMIN_BASE_URL is invalid')
+        return candidate.rstrip('/')

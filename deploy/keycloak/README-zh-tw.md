@@ -33,15 +33,22 @@ hostname；外部服務異常或設定不完整時會 fail closed，絕不略過
 
 ## Google 與 Apple 社群登入
 
-Google／Apple 由 Keycloak Identity Broker 處理，不可讓 Flutter 或 Visionnaire API
-直接接收第三方 token。啟動時會將 Identity Provider Redirector 放在 browser flow 的
-帳密表單之前：Google／Apple 按鈕走第三方登入；帳密分支才會進入 hCaptcha。
+Web BFF 的 Google／Apple 仍由 Keycloak Identity Broker 處理。啟動時會將 Identity
+Provider Redirector 放在 browser flow 的帳密表單之前：Google／Apple 按鈕走第三方登入；
+帳密分支才會進入 hCaptcha。
 
 provider 預設停用。設定 `KEYCLOAK_GOOGLE_ENABLED=true` 或
 `KEYCLOAK_APPLE_ENABLED=true` 時，必須同時提供其 client ID 與 secret；否則啟動程序
 會停用該 provider，避免 UI 出現無法使用的按鈕。完整的外部回呼 URL、Apple JWT secret
 輪替與三平台驗收程序見
 [Keycloak 社群登入部署規格](../../docs/zh/keycloak_social_login.md)。
+
+Flutter iOS／Android 可另外使用官方 Google／Apple SDK，但不是直接取得 Visionnaire
+JWT，也不使用 Keycloak 已淘汰的 external Token Exchange v1。Visionnaire API 先驗證
+provider assertion 和 nonce，Keycloak custom authenticator 再透過 loopback HMAC 消耗
+PKCE-bound one-use proof，最終仍回到標準 Authorization Code + PKCE。完整 API、連結
+交易與前端規格在
+[原生社群憑證交換規格](../../docs/zh/native_social_exchange.md)。
 
 ## Flutter Native client
 

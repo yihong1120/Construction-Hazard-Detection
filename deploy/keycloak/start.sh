@@ -230,6 +230,10 @@ configure_visionnaire_browser_flow() {
     # An existing Keycloak SSO session completes the alternative branch; a
     # fresh password login enters the forms branch below.
     ensure_execution "$browser_flow" auth-cookie ALTERNATIVE
+    # A native Google/Apple assertion is first verified by Visionnaire and
+    # then redeemed exactly once over loopback HMAC. Put this before browser
+    # brokering/forms so Keycloak still issues a normal Code + PKCE response.
+    ensure_execution "$browser_flow" visionnaire-native-social-exchange ALTERNATIVE
     # A social button sends kc_idp_hint.  The redirector must appear before
     # the password subflow so social sign-in never asks for a local password
     # or hCaptcha challenge.
@@ -256,7 +260,13 @@ configure_visionnaire_browser_flow() {
     fi
     set_execution_requirement "$browser_flow" "$forms_execution_id" ALTERNATIVE
 
-    local identity_provider_execution_id
+    local native_social_execution_id identity_provider_execution_id
+    native_social_execution_id=$(execution_id_for_provider \
+        "$browser_flow" visionnaire-native-social-exchange)
+    if [[ -z "$native_social_execution_id" ]]; then
+        echo 'Unable to resolve the native social exchange execution' >&2
+        return 1
+    fi
     identity_provider_execution_id=$(execution_id_for_provider \
         "$browser_flow" identity-provider-redirector)
     if [[ -z "$identity_provider_execution_id" ]]; then
@@ -264,9 +274,11 @@ configure_visionnaire_browser_flow() {
         return 1
     fi
     set_execution_priority \
-        "$browser_flow" "$identity_provider_execution_id" ALTERNATIVE 1
+        "$browser_flow" "$native_social_execution_id" ALTERNATIVE 1
     set_execution_priority \
-        "$browser_flow" "$forms_execution_id" ALTERNATIVE 2
+        "$browser_flow" "$identity_provider_execution_id" ALTERNATIVE 2
+    set_execution_priority \
+        "$browser_flow" "$forms_execution_id" ALTERNATIVE 3
 
     ensure_execution "$browser_forms_flow" auth-username-password-form REQUIRED
     ensure_execution "$browser_forms_flow" visionnaire-hcaptcha REQUIRED
@@ -347,6 +359,20 @@ configure_mobile_client() {
     fi
 }
 
+configure_user_linker_service_account() {
+    # This client is never exposed to Flutter. Its credentials are held by the
+    # Visionnaire API, which always derives the target Keycloak user from a
+    # freshly verified bearer token. ``manage-users`` is needed by Keycloak's
+    # supported federated-identity Admin endpoint; no client/realm management
+    # role is assigned.
+    "$kcadm" add-roles --target-realm "$realm" \
+        --uusername service-account-visionnaire-user-linker \
+        --cclientid realm-management \
+        --rolename view-users \
+        --rolename manage-users \
+        >/dev/null
+}
+
 shutdown() {
     if [[ -n "${keycloak_pid:-}" ]] && kill -0 "$keycloak_pid" 2>/dev/null; then
         kill -TERM "$keycloak_pid"
@@ -371,6 +397,7 @@ for _ in $(seq 1 60); do
         >/dev/null 2>&1; then
         configure_visionnaire_browser_flow
         configure_mobile_client
+        configure_user_linker_service_account
         configure_social_identity_providers
         wait "$keycloak_pid"
         exit $?

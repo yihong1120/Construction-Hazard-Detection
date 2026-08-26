@@ -25,6 +25,11 @@ services:
       KC_HCAPTCHA_EXPECTED_HOSTNAME: changdar-server.mooo.com
       KEYCLOAK_VISIONNAIRE_WEB_CLIENT_SECRET: ${OIDC_WEB_CLIENT_SECRET:?OIDC_WEB_CLIENT_SECRET must be set}
       KEYCLOAK_USER_LINKER_CLIENT_SECRET: ${KEYCLOAK_USER_LINKER_CLIENT_SECRET:?KEYCLOAK_USER_LINKER_CLIENT_SECRET must be set}
+      # The custom authenticator may only redeem a native assertion through
+      # this loopback-only endpoint. It shares an independent HMAC secret
+      # with the Visionnaire API and never receives Google/Apple credentials.
+      KC_NATIVE_SOCIAL_EXCHANGE_REDEEM_URL: http://127.0.0.1:8005/auth/native-social/keycloak/redeem
+      KC_NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET: ${NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET:-}
       # Third-party credentials belong only to Keycloak. The providers stay
       # hidden unless their corresponding *_ENABLED flag is true and every
       # required credential is present.
