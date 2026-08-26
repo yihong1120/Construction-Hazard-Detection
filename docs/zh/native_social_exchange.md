@@ -56,8 +56,41 @@ Flutter ── PKCE verifier ──> Keycloak token endpoint
 6. 接到 callback 後驗證原始 `state`，再以原始 PKCE verifier 對 Keycloak token endpoint
    換 token。access token 放記憶體；refresh token 僅放 iOS Keychain／Android Keystore。
 
-若回應 `native_social_account_not_linked`（或 Keycloak 顯示通用登入失敗），不可註冊新
-帳號、不可依 email 合併，應顯示「請先以既有 Visionnaire 帳號連結此社群帳號」。
+### 已有帳號的順暢連結
+
+當供應商 assertion 內含**已驗證** email，且它只命中一個 active、已映射 Keycloak `sub`
+的 Visionnaire 帳號時，complete 會回傳 HTTP `409`：
+
+```json
+{
+  "detail": {
+    "code": "account_link_required",
+    "link_transaction_id": "<opaque one-time value>",
+    "expires_in": 300
+  }
+}
+```
+
+這不是登入失敗，也不代表後端已依 email 合併帳號；response 不會透露命中的 email、姓名、
+使用者或租戶。App 必須將 `link_transaction_id` **只留在記憶體**，並立即以一般 Keycloak
+Authorization Code + PKCE 重新驗證既有 Visionnaire 帳號，明確加入 `prompt=login`、
+`max_age=0`。取得新的 access token 後呼叫：
+
+```http
+POST /auth/native-social/email-link-confirmations/complete
+Authorization: Bearer <fresh Keycloak access token>
+
+{ "transaction_id": "<link_transaction_id>" }
+```
+
+後端同時驗證五分鐘內的 `auth_time`、當前 Keycloak `sub` 與預先命中的本機 user，才會以
+Google／Apple 的不可變 `sub` 建立 Keycloak federated identity 與 Visionnaire 本機 identity
+mirror。使用者完成這一次確認後，往後可直接用原本帳密、Google 或 Apple 登入，三者會解析到
+**同一個** Keycloak `sub` 與 Visionnaire user 資料。
+
+若 email 未驗證、命中零個或多個帳號，或重新驗證的是另一帳號，絕不合併；可讓使用者改用
+既有的「安全帳號連結」流程或請管理員處理。`link_transaction_id` 過期或已使用時，必須從
+社群登入開始重新取得 assertion。
 
 ## 安全帳號連結
 
@@ -87,9 +120,9 @@ Keycloak Authorization Code + PKCE，額外帶入 `prompt=login` 與 `max_age=0`
 
 3. 後端驗證 issuer、JWKS 簽章、audience、expiry、nonce（Apple 也會 server-to-server
    換驗 authorization code），再以 Keycloak Admin API 的官方 federated-identity
-   endpoint 寫入 `provider + sub`。client body 從來沒有 target user ID；email 不參與
-   連結。已連到另一帳號會得到 `409 provider_identity_already_linked`；同一帳號重試回
-   `already_linked`。
+   endpoint 寫入 `provider + sub`，並同步 Visionnaire 的 `user_identities` mirror。client
+   body 從來沒有 target user ID；email 不參與**手動**連結。已連到另一帳號會得到
+   `409 provider_identity_already_linked`；同一帳號重試回 `already_linked`。
 
 連結成功後建議主動以 `prompt=login` 重新取得 token；不必也不應把社群 token 或 Apple
 code 留在 App、Crash report、analytics、log 或資料庫。

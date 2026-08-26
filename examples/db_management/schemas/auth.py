@@ -408,6 +408,14 @@ class NativeSocialLinkCompleteRequest(NativeSocialCredential):
     transaction_id: str = Field(min_length=43, max_length=128)
 
 
+class NativeSocialEmailLinkConfirmRequest(BaseModel):
+    """Confirm a verified-email link after fresh Keycloak authentication."""
+
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    transaction_id: str = Field(min_length=43, max_length=128)
+
+
 class NativeSocialLinkResponse(BaseModel):
     """Report whether provider subject was newly linked or already present."""
 

@@ -4,12 +4,16 @@ import json
 import time
 import unittest
 from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from fastapi import HTTPException
 from starlette.requests import Request
 
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.db_management.schemas.auth import (
+    NativeSocialEmailLinkConfirmRequest,
+)
 from examples.db_management.schemas.auth import (
     NativeSocialExchangeBeginRequest,
 )
@@ -69,6 +73,10 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.redis = _NativeSocialRedis()
+        self.db = MagicMock()
+        self.db.scalar = AsyncMock()
+        self.db.execute = AsyncMock()
+        self.user = MagicMock(id=1)
         self._settings = {
             name: getattr(svc.settings, name)
             for name in (
@@ -121,13 +129,18 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
             svc,
             'verify_google_id_token',
             AsyncMock(return_value=claims),
-        ) as verify:
+        ) as verify, patch.object(
+            svc,
+            '_find_email_link_candidate',
+            AsyncMock(return_value=None),
+        ):
             completed = await svc.complete_native_social_exchange(
                 NativeSocialExchangeCompleteRequest(
                     transaction_id=begin.transaction_id,
                     id_token='provider-id-token',
                 ),
                 self.redis,  # type: ignore[arg-type]
+                self.db,
             )
 
         verify.assert_awaited_once_with(
@@ -181,6 +194,10 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
             AsyncMock(
                 return_value=ProviderClaims.model_validate({'sub': 'g'}),
             ),
+        ), patch.object(
+            svc,
+            '_find_email_link_candidate',
+            AsyncMock(return_value=None),
         ):
             await svc.complete_native_social_exchange(
                 NativeSocialExchangeCompleteRequest(
@@ -188,6 +205,7 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
                     id_token='id-token',
                 ),
                 self.redis,  # type: ignore[arg-type]
+                self.db,
             )
         body = json.dumps(
             {
@@ -239,14 +257,22 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
             'verify_apple_identity_token',
             AsyncMock(
                 return_value=ProviderClaims.model_validate(
-                {'sub': 'apple-sub'},
+                    {'sub': 'apple-sub'},
                 ),
             ),
         ) as verify, patch.object(
             svc,
             '_link_keycloak_federated_identity',
             AsyncMock(return_value='linked'),
-        ) as link:
+        ) as link, patch.object(
+            svc,
+            '_ensure_local_identity_available',
+            AsyncMock(),
+        ), patch.object(
+            svc,
+            '_sync_local_provider_identity',
+            AsyncMock(),
+        ):
             result = await svc.complete_native_social_link(
                 NativeSocialLinkCompleteRequest(
                     transaction_id=started.transaction_id,
@@ -255,6 +281,8 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 credentials,
                 self.redis,  # type: ignore[arg-type]
+                self.db,
+                self.user,
             )
         self.assertEqual(result.status, 'linked')
         verify.assert_awaited_once_with(
@@ -266,6 +294,114 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
             keycloak_subject='keycloak-user-id',
             provider='apple',
             provider_subject='apple-sub',
+        )
+
+    async def test_verified_email_requires_reauthentication_then_links(
+        self,
+    ) -> None:
+        begin = await svc.begin_native_social_exchange(
+            self._begin_payload(),
+            _request(),
+            self.redis,  # type: ignore[arg-type]
+        )
+        claims = ProviderClaims.model_validate(
+            {
+                'sub': 'google-sub',
+                'email': 'alice@example.com',
+                'email_verified': True,
+            },
+        )
+        candidate = svc.EmailLinkCandidate(
+            local_user_id=1,
+            keycloak_subject='keycloak-user-id',
+        )
+        with patch.object(
+            svc,
+            'verify_google_id_token',
+            AsyncMock(return_value=claims),
+        ), patch.object(
+            svc,
+            '_find_email_link_candidate',
+            AsyncMock(return_value=candidate),
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                await svc.complete_native_social_exchange(
+                    NativeSocialExchangeCompleteRequest(
+                        transaction_id=begin.transaction_id,
+                        id_token='provider-id-token',
+                    ),
+                    self.redis,  # type: ignore[arg-type]
+                    self.db,
+                )
+        self.assertEqual(ctx.exception.status_code, 409)
+        detail = ctx.exception.detail
+        self.assertEqual(detail['code'], 'account_link_required')
+
+        credentials = JwtAuthorizationCredentials(
+            subject={
+                'username': 'alice',
+                'user_id': 1,
+                'role': 'user',
+                'jti': 'jti',
+                'features': [],
+            },
+            payload={
+                'iss': svc.settings.oidc_issuer_url,
+                'sub': 'keycloak-user-id',
+                'sid': 'session-id',
+                'auth_time': int(time.time()),
+            },
+            token='keycloak-token',
+        )
+        with patch.object(
+            svc,
+            '_ensure_local_identity_available',
+            AsyncMock(),
+        ), patch.object(
+            svc,
+            '_link_keycloak_federated_identity',
+            AsyncMock(return_value='linked'),
+        ) as link, patch.object(
+            svc,
+            '_sync_local_provider_identity',
+            AsyncMock(),
+        ):
+            result = await svc.confirm_native_social_email_link(
+                NativeSocialEmailLinkConfirmRequest(
+                    transaction_id=detail['link_transaction_id'],
+                ),
+                credentials,
+                self.redis,  # type: ignore[arg-type]
+                self.db,
+                self.user,
+            )
+        self.assertEqual(result.status, 'linked')
+        link.assert_awaited_once_with(
+            keycloak_subject='keycloak-user-id',
+            provider='google',
+            provider_subject='google-sub',
+        )
+
+    def test_email_candidate_requires_provider_verified_email(self) -> None:
+        """Never use a provider's unverified email for account discovery."""
+        unverified = ProviderClaims.model_validate(
+            {
+                'sub': 'google-sub',
+                'email': 'Alice@Example.com',
+                'email_verified': False,
+            },
+        )
+        verified = ProviderClaims.model_validate(
+            {
+                'sub': 'google-sub',
+                'email': ' Alice@Example.com ',
+                'email_verified': True,
+            },
+        )
+        self.assertIsNone(svc._normalised_verified_email(unverified))
+        self.assertEqual(
+            svc._normalised_verified_email(verified),
+            'alice@example.com',
         )
 
     async def test_link_rejects_stale_auth_time(self) -> None:

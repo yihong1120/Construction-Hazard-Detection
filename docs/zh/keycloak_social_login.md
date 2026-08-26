@@ -3,8 +3,9 @@
 Google／Apple 在 Flutter Web BFF 作為 Keycloak Identity Broker；Flutter iOS／Android
 則可使用官方 SDK 加上 Visionnaire 的一次性原生憑證交換。兩條路徑的最終 access／refresh
 token 都由同一個 Keycloak issuer 核發。Visionnaire 保留本機的 tenant、角色、群組、site
-與 feature 授權資料，且不依 email 自動連結帳號。這個界線適用 Flutter Web、iOS、Android
-與後續 Open WebUI。
+與 feature 授權資料。已驗證 email 僅可發現唯一候選帳號，仍必須由該帳號完成一次近期
+Keycloak 驗證才會連結社群身份；不會靜默依 email 接管或合併帳號。這個界線適用 Flutter
+Web、iOS、Android 與後續 Open WebUI。
 
 ## 三平台流程
 
@@ -92,9 +93,11 @@ https://changdar-server.mooo.com/bff/auth/oidc/login?return_to=/&idp_hint=apple
 ## 帳號與權限
 
 Keycloak 的 `sub` 才是 Visionnaire 授權對應的不可變識別；Google／Apple 的 `sub` 由
-Keycloak 保存為 federated identity。不要以 email 自動連結，Apple Private Relay 特別容易
-造成誤綁。原生 SDK 路徑僅在使用者已用近期 Keycloak reauthentication 明確執行連結後，才
-會把 `provider + sub` 寫入 Keycloak；不存在 first-login 自動註冊或 email 合併。
+Keycloak 保存為 federated identity。原生 SDK 的已驗證 email 若唯一命中既有 active
+Visionnaire user，後端會要求一次近期 Keycloak reauthentication，並將 transaction 限定到
+該**精確** Keycloak `sub` 後才寫入 `provider + sub`；完成後社群與帳密都落在同一筆 user。
+這不是 first-login 自動註冊或靜默 email 合併；Apple Private Relay、未驗證 email、重複命中
+或不同 Keycloak `sub` 一律不會連結。
 
 既有使用者應先由管理員建立／關聯 Keycloak 帳號並用 `scripts/keycloak_link_users.py` 對應到 Visionnaire `user_identities(provider=keycloak)`。之後使用者可在 Keycloak Account Console 將 Google 或 Apple 加為登入方法。尚未連結的 Keycloak 使用者即使第三方驗證成功，也不會獲得 Visionnaire API 權限。
 

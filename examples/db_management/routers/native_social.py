@@ -11,12 +11,17 @@ from fastapi import Depends
 from fastapi import Request
 from fastapi import Security
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.models import User
 from examples.auth.redis_pool import get_redis_pool
 from examples.db_management.deps import get_current_user
+from examples.db_management.schemas.auth import (
+    NativeSocialEmailLinkConfirmRequest,
+)
 from examples.db_management.schemas.auth import (
     NativeSocialExchangeBeginRequest,
 )
@@ -46,6 +51,9 @@ from examples.db_management.services.native_social_exchange_services import (
     complete_native_social_link,
 )
 from examples.db_management.services.native_social_exchange_services import (
+    confirm_native_social_email_link,
+)
+from examples.db_management.services.native_social_exchange_services import (
     redeem_keycloak_native_social_exchange,
 )
 
@@ -69,9 +77,10 @@ async def begin_exchange(
 async def complete_exchange(
     payload: NativeSocialExchangeCompleteRequest,
     redis: Redis = Depends(get_redis_pool),
+    db: AsyncSession = Depends(get_db),
 ) -> NativeSocialExchangeCompleteResponse:
     """Validate provider proof and return a standard Keycloak code URL."""
-    return await complete_native_social_exchange(payload, redis)
+    return await complete_native_social_exchange(payload, redis, db)
 
 
 @router.post('/links', response_model=NativeSocialLinkBeginResponse)
@@ -91,9 +100,37 @@ async def complete_link(
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
     _me: User = Depends(get_current_user),
     redis: Redis = Depends(get_redis_pool),
+    db: AsyncSession = Depends(get_db),
 ) -> NativeSocialLinkResponse:
     """Validate nonce-bound provider assertion and link stable subject."""
-    return await complete_native_social_link(payload, credentials, redis)
+    return await complete_native_social_link(
+        payload,
+        credentials,
+        redis,
+        db,
+        _me,
+    )
+
+
+@router.post(
+    '/email-link-confirmations/complete',
+    response_model=NativeSocialLinkResponse,
+)
+async def confirm_email_link(
+    payload: NativeSocialEmailLinkConfirmRequest,
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
+    _me: User = Depends(get_current_user),
+    redis: Redis = Depends(get_redis_pool),
+    db: AsyncSession = Depends(get_db),
+) -> NativeSocialLinkResponse:
+    """Link a verified social identity after a password/MFA confirmation."""
+    return await confirm_native_social_email_link(
+        payload,
+        credentials,
+        redis,
+        db,
+        _me,
+    )
 
 
 @router.post('/keycloak/redeem', include_in_schema=False)

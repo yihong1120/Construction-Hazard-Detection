@@ -21,6 +21,7 @@ import re
 import secrets
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import quote
 from urllib.parse import urlencode
@@ -29,10 +30,20 @@ import httpx
 from fastapi import HTTPException
 from fastapi import Request
 from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.config import Settings
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.auth.models import User
+from examples.auth.models import USER_STATUS_ACTIVE
+from examples.auth.models import UserIdentity
+from examples.auth.models import UserProfile
 from examples.db_management.schemas.auth import NativeSocialCredential
+from examples.db_management.schemas.auth import (
+    NativeSocialEmailLinkConfirmRequest,
+)
 from examples.db_management.schemas.auth import (
     NativeSocialExchangeBeginRequest,
 )
@@ -57,6 +68,15 @@ from examples.db_management.services.oauth_services import (
 )
 
 NativeSocialProvider = Literal['google', 'apple']
+
+
+@dataclass(frozen=True, slots=True)
+class EmailLinkCandidate:
+    """One local account eligible for a verified-email link confirmation."""
+
+    local_user_id: int
+    keycloak_subject: str
+
 
 settings = Settings()
 
@@ -240,6 +260,94 @@ def _provider_subject(claims: ProviderClaims) -> str:
     return subject
 
 
+def _normalised_verified_email(claims: ProviderClaims) -> str | None:
+    """Return only a provider-verified, canonical email address.
+
+    Email is deliberately used solely to offer a one-time account-link
+    confirmation. It is never accepted as a login identifier or copied into
+    the resulting Keycloak federated identity.
+    """
+    if not claims.email_verified or not isinstance(claims.email, str):
+        return None
+    email = claims.email.strip().lower()
+    return email or None
+
+
+async def _find_email_link_candidate(
+    db: AsyncSession,
+    *,
+    provider: NativeSocialProvider,
+    provider_subject: str,
+    claims: ProviderClaims,
+) -> EmailLinkCandidate | None:
+    """Find one active, already-Keycloak-linked local account by email.
+
+    A provider assertion must already prove possession of a verified email.
+    Even then this function does not authenticate the account; its result can
+    only be used after a separate recent Keycloak reauthentication that proves
+    control of the target Keycloak account.
+    """
+    email = _normalised_verified_email(claims)
+    if email is None:
+        return None
+    existing_provider_identity = await db.scalar(
+        select(UserIdentity.id).where(
+            UserIdentity.provider == provider,
+            UserIdentity.provider_user_id == provider_subject,
+        ),
+    )
+    if existing_provider_identity is not None:
+        # A local mirror indicates this provider subject has already gone
+        # through an explicit Keycloak link. Let the regular Keycloak proof
+        # path resolve it without requesting another password confirmation.
+        return None
+    rows = await db.execute(
+        select(User.id, UserIdentity.provider_user_id)
+        .join(UserProfile, UserProfile.user_id == User.id)
+        .join(UserIdentity, UserIdentity.user_id == User.id)
+        .where(
+            User.status == USER_STATUS_ACTIVE,
+            User.email_verified_at.is_not(None),
+            UserProfile.email == email,
+            UserIdentity.provider == settings.oidc_identity_provider,
+        ),
+    )
+    candidates = [
+        EmailLinkCandidate(local_user_id=user_id, keycloak_subject=subject)
+        for user_id, subject in rows.all()
+        if isinstance(user_id, int)
+        and isinstance(subject, str)
+        and _KEYCLOAK_SUBJECT_RE.fullmatch(subject)
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+async def _store_email_link_confirmation(
+    redis: Redis,
+    *,
+    provider: NativeSocialProvider,
+    provider_subject: str,
+    candidate: EmailLinkCandidate,
+) -> str:
+    """Store the non-secret proof required after Keycloak reauthentication."""
+    transaction_id = _opaque_identifier()
+    await _store_transaction(
+        redis,
+        transaction_id,
+        {
+            'kind': 'email-link-confirmation',
+            'provider': provider,
+            'provider_subject_b64': base64.urlsafe_b64encode(
+                provider_subject.encode('utf-8'),
+            ).rstrip(b'=').decode('ascii'),
+            'local_user_id': candidate.local_user_id,
+            'keycloak_subject': candidate.keycloak_subject,
+        },
+        settings.native_social_link_ttl_seconds,
+    )
+    return transaction_id
+
+
 def _authorisation_url(
     transaction_id: str,
     record: Mapping[str, object],
@@ -297,6 +405,7 @@ async def begin_native_social_exchange(
 async def complete_native_social_exchange(
     payload: NativeSocialExchangeCompleteRequest,
     redis: Redis,
+    db: AsyncSession,
 ) -> NativeSocialExchangeCompleteResponse:
     """Validate native credentials and hand a one-use proof to Keycloak."""
     _require_enabled()
@@ -309,6 +418,30 @@ async def complete_native_social_exchange(
     nonce = _required_string(record, 'nonce')
     claims = await _verify_credential(provider, payload, nonce)
     subject = _provider_subject(claims)
+    candidate = await _find_email_link_candidate(
+        db,
+        provider=provider,
+        provider_subject=subject,
+        claims=claims,
+    )
+    if candidate is not None:
+        confirmation_id = await _store_email_link_confirmation(
+            redis,
+            provider=provider,
+            provider_subject=subject,
+            candidate=candidate,
+        )
+        # Do not reveal any user, tenant, or email information. The app can
+        # now start Keycloak with prompt=login/max_age=0. Confirmation accepts
+        # only the exact Keycloak subject selected above.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'account_link_required',
+                'link_transaction_id': confirmation_id,
+                'expires_in': settings.native_social_link_ttl_seconds,
+            },
+        )
 
     # Keep only the Keycloak lookup key and the exact PKCE/client binding.
     # The record is consumed by Keycloak's loopback-only authenticator call.
@@ -395,10 +528,130 @@ async def begin_native_social_link(
     )
 
 
+def _provider_subject_from_record(record: Mapping[str, object]) -> str:
+    """Decode and validate the provider subject retained in a proof record."""
+    encoded_subject = _required_string(record, 'provider_subject_b64')
+    try:
+        padded = encoded_subject + '=' * (-len(encoded_subject) % 4)
+        subject = base64.urlsafe_b64decode(
+            padded.encode('ascii'),
+        ).decode('utf-8')
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=401,
+            detail='native_social_exchange_invalid',
+        ) from exc
+    if not subject or len(subject.encode('utf-8')) > 512:
+        raise HTTPException(
+            status_code=401,
+            detail='native_social_exchange_invalid',
+        )
+    return subject
+
+
+async def _ensure_local_identity_available(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    provider: NativeSocialProvider,
+    provider_subject: str,
+) -> None:
+    """Reject a provider subject that belongs to another local user."""
+    identity = await db.scalar(
+        select(UserIdentity).where(
+            UserIdentity.provider == provider,
+            UserIdentity.provider_user_id == provider_subject,
+        ),
+    )
+    if identity is not None and identity.user_id != user_id:
+        raise HTTPException(
+            status_code=409,
+            detail='provider_identity_already_linked',
+        )
+    identity_for_user = await db.scalar(
+        select(UserIdentity).where(
+            UserIdentity.user_id == user_id,
+            UserIdentity.provider == provider,
+        ),
+    )
+    if (
+        identity_for_user is not None
+        and identity_for_user.provider_user_id != provider_subject
+    ):
+        raise HTTPException(status_code=409, detail='provider_already_linked')
+
+
+async def _sync_local_provider_identity(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    provider: NativeSocialProvider,
+    provider_subject: str,
+) -> None:
+    """Mirror a completed Keycloak link in Visionnaire's local identity map."""
+    await _ensure_local_identity_available(
+        db,
+        user_id=user_id,
+        provider=provider,
+        provider_subject=provider_subject,
+    )
+    existing = await db.scalar(
+        select(UserIdentity).where(
+            UserIdentity.user_id == user_id,
+            UserIdentity.provider == provider,
+        ),
+    )
+    if existing is not None:
+        if existing.provider_user_id != provider_subject:
+            raise HTTPException(
+                status_code=409, detail='provider_already_linked',
+            )
+        return
+    db.add(
+        UserIdentity(
+            user_id=user_id,
+            provider=provider,
+            provider_user_id=provider_subject,
+            email=None,
+            email_verified=False,
+            display_name=None,
+            raw_profile=None,
+            raw_email_is_private=False,
+        ),
+    )
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        await _ensure_local_identity_available(
+            db,
+            user_id=user_id,
+            provider=provider,
+            provider_subject=provider_subject,
+        )
+        existing = await db.scalar(
+            select(UserIdentity).where(
+                UserIdentity.user_id == user_id,
+                UserIdentity.provider == provider,
+            ),
+        )
+        if (
+            existing is not None
+            and existing.provider_user_id == provider_subject
+        ):
+            return
+        raise HTTPException(
+            status_code=409,
+            detail='provider_identity_already_linked',
+        ) from exc
+
+
 async def complete_native_social_link(
     payload: NativeSocialLinkCompleteRequest,
     credentials: JwtAuthorizationCredentials,
     redis: Redis,
+    db: AsyncSession,
+    user: User,
 ) -> NativeSocialLinkResponse:
     """Validate provider proof and attach it to the current Keycloak user."""
     _require_enabled()
@@ -433,10 +686,77 @@ async def complete_native_social_link(
         payload,
         _required_string(record, 'nonce'),
     )
+    provider_subject = _provider_subject(claims)
+    await _ensure_local_identity_available(
+        db,
+        user_id=user.id,
+        provider=provider,
+        provider_subject=provider_subject,
+    )
     status = await _link_keycloak_federated_identity(
         keycloak_subject=current_subject,
         provider=provider,
-        provider_subject=_provider_subject(claims),
+        provider_subject=provider_subject,
+    )
+    await _sync_local_provider_identity(
+        db,
+        user_id=user.id,
+        provider=provider,
+        provider_subject=provider_subject,
+    )
+    return NativeSocialLinkResponse(provider=provider, status=status)
+
+
+async def confirm_native_social_email_link(
+    payload: NativeSocialEmailLinkConfirmRequest,
+    credentials: JwtAuthorizationCredentials,
+    redis: Redis,
+    db: AsyncSession,
+    user: User,
+) -> NativeSocialLinkResponse:
+    """Finish a verified-email link only after fresh Keycloak proof.
+
+    The original Google/Apple assertion has already been consumed. This route
+    simply binds its immutable subject to the *preselected* local Keycloak
+    account after the user proves possession of that account's own credential.
+    """
+    _require_enabled()
+    current_subject, _ = _keycloak_identity_from_credentials(credentials)
+    record = await _consume_transaction(redis, payload.transaction_id)
+    if record.get('kind') != 'email-link-confirmation':
+        raise HTTPException(
+            status_code=401, detail='native_social_link_expired',
+        )
+    local_user_id = record.get('local_user_id')
+    if not isinstance(local_user_id, int) or local_user_id != user.id:
+        raise HTTPException(
+            status_code=401, detail='native_social_link_expired',
+        )
+    if not hmac.compare_digest(
+        _required_string(record, 'keycloak_subject'),
+        current_subject,
+    ):
+        raise HTTPException(
+            status_code=401, detail='native_social_link_expired',
+        )
+    provider = _record_provider(record)
+    provider_subject = _provider_subject_from_record(record)
+    await _ensure_local_identity_available(
+        db,
+        user_id=user.id,
+        provider=provider,
+        provider_subject=provider_subject,
+    )
+    status = await _link_keycloak_federated_identity(
+        keycloak_subject=current_subject,
+        provider=provider,
+        provider_subject=provider_subject,
+    )
+    await _sync_local_provider_identity(
+        db,
+        user_id=user.id,
+        provider=provider,
+        provider_subject=provider_subject,
     )
     return NativeSocialLinkResponse(provider=provider, status=status)
 

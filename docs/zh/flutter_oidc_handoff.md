@@ -73,6 +73,28 @@ Native UI 的 Google／Apple 按鈕改用官方 provider SDK，但不能直接�
 4. Keycloak callback 回到 App 後，驗證 state，使用**同一個** PKCE verifier 交換普通
    Keycloak token。
 
+若第 3 步回傳 HTTP `409` 且 `detail.code == 'account_link_required'`，代表供應商已驗證的
+email 唯一命中既有 Visionnaire 帳號；這仍**不是**自動合併。App 將
+`detail.link_transaction_id` 暫存在記憶體，立刻以正常 Keycloak Authorization Code + PKCE
+重新登入，並加入 `prompt=login`、`max_age=0`。例如 `flutter_appauth` request 加上：
+
+```dart
+additionalParameters: const {'prompt': 'login', 'max_age': '0'},
+```
+
+以 callback 換得、已更新到 secure storage 的 fresh access token 呼叫：
+
+```http
+POST /hazard/api/db_management/auth/native-social/email-link-confirmations/complete
+Authorization: Bearer <fresh access token>
+
+{ "transaction_id": "<link_transaction_id>" }
+```
+
+成功後 Google／Apple `sub`、Keycloak `sub` 與 Visionnaire user 已永久連結；再次使用同一個
+Google／Apple 或既有帳密會直接登入同一筆資料。若重新登入的是不同帳號、交易過期或已使用，
+清除記憶體中的 transaction，回到社群登入起點；不得在 App 端以 email 選擇或合併帳號。
+
 完整 request/response、Apple one-use code 重試規則與帳號連結實作在
 [原生社群憑證交換規格](native_social_exchange.md)，工程師須逐項遵守。
 
@@ -82,7 +104,9 @@ Native UI 的 Google／Apple 按鈕改用官方 provider SDK，但不能直接�
 - Native 直接呼叫 `/hazard/api/...`，例如 `POST /hazard/api/db_management/api/playback/sessions`；不要使用 Web BFF cookie 路徑。
 - Android Manifest 與 iOS URL Types 都需註冊 scheme `com.changdar.visionnaire`，讓 `com.changdar.visionnaire:/oauthredirect` 回到 App。
 - Native 登出需清除 secure storage，並用 discovery document 的 `end_session_endpoint` 和 `id_token_hint` 執行 Keycloak 全域登出。
-- 帳號連結前必須再做一次 Keycloak `prompt=login`、`max_age=0`；後端只接受 `auth_time` 不超過五分鐘的 bearer token。不得用 email 自動判定或合併帳號。
+- 顯式帳號連結、以及 `account_link_required` 的確認，都必須再做一次 Keycloak
+  `prompt=login`、`max_age=0`；後端只接受 `auth_time` 不超過五分鐘的 bearer token。已驗證
+  email 僅能安全地發現唯一候選帳號，不能在 App 端自動判定或合併帳號。
 
 ## 真人驗證、授權與驗收
 
