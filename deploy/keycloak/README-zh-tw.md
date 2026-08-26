@@ -31,6 +31,11 @@ PostgreSQL 管理者在初次部署時使用；不需要授予 Keycloak 或 Visi
 Provider 對 hCaptcha 的 `siteverify` 回應會同時驗證成功狀態、site key 與公開
 hostname；外部服務異常或設定不完整時會 fail closed，絕不略過真人驗證。
 
+Keycloak realm 的 `browserSecurityHeaders.contentSecurityPolicy` 必須在
+`frame-src` 明確允許 `https://hcaptcha.com` 與 `https://*.hcaptcha.com`；這是
+hCaptcha iframe 實際使用的回應標頭，不能只寫在 login theme 的
+`theme.properties`。
+
 ### 舊 Visionnaire 密碼的一次性遷移
 
 遷移期間，Keycloak 密碼政策必須與既有 Visionnaire 的最小長度相容（目前為

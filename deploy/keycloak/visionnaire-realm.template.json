@@ -14,6 +14,9 @@
   "quickLoginCheckMilliSeconds": 1000,
   "maxDeltaTimeSeconds": 43200,
   "failureFactor": 5,
+  "browserSecurityHeaders": {
+    "contentSecurityPolicy": "frame-src 'self' https://hcaptcha.com https://*.hcaptcha.com; frame-ancestors 'self'; object-src 'none';"
+  },
   "passwordPolicy": "length(8) and notUsername(undefined) and passwordHistory(5)",
   "clients": [
     {

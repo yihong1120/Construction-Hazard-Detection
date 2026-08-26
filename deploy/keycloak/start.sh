@@ -314,6 +314,7 @@ configure_visionnaire_browser_flow() {
         -s 'waitIncrementSeconds=60' \
         -s 'maxFailureWaitSeconds=900' \
         -s 'maxDeltaTimeSeconds=43200' \
+        -s "browserSecurityHeaders.contentSecurityPolicy=frame-src 'self' https://hcaptcha.com https://*.hcaptcha.com; frame-ancestors 'self'; object-src 'none';" \
         -s 'passwordPolicy=length(8) and notUsername(undefined) and passwordHistory(5)' \
         >/dev/null
 }
