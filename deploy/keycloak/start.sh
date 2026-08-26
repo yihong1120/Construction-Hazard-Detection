@@ -213,6 +213,18 @@ configure_social_identity_providers() {
     configure_apple_identity_provider
 }
 
+configure_required_actions() {
+    # Visionnaire accounts historically require only a username and password.
+    # Do not interrupt an OIDC login to demand profile fields that do not
+    # exist in the legacy user store. Users can still edit their profile in
+    # the Keycloak Account Console after they are signed in.
+    "$kcadm" update authentication/required-actions/VERIFY_PROFILE \
+        --target-realm "$realm" \
+        -s 'enabled=false' \
+        -s 'defaultAction=false' \
+        >/dev/null
+}
+
 configure_visionnaire_browser_flow() {
     if ! "$kcadm" get authentication/flows --target-realm "$realm" \
         | grep -Fq "\"alias\" : \"${browser_flow}\""; then
@@ -422,6 +434,7 @@ for _ in $(seq 1 60); do
         configure_mobile_client
         configure_user_linker_service_account
         configure_social_identity_providers
+        configure_required_actions
         wait "$keycloak_pid"
         exit $?
     fi

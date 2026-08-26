@@ -34,6 +34,10 @@ Provider 對 hCaptcha 的 `siteverify` 會帶入 server-side secret、一次性 
 `mooo.com`（會涵蓋 `changdar-server.mooo.com`）；不可依賴 `siteverify` 回傳的
 `hostname`，因為該值是瀏覽器衍生的統計資訊。
 
+既有 Visionnaire 使用者可能沒有 email、名字或姓氏。為使 OIDC 切換後仍可直接登入，
+部署會停用 Keycloak 的 `VERIFY_PROFILE` required action；使用者可在登入後的 Keycloak
+Account Console 自行補齊個人資料，但不會在登入流程中被強制要求。
+
 Keycloak realm 的 `browserSecurityHeaders.contentSecurityPolicy` 必須在
 `frame-src` 明確允許 `https://hcaptcha.com` 與 `https://*.hcaptcha.com`；這是
 hCaptcha iframe 實際使用的回應標頭，不能只寫在 login theme 的
