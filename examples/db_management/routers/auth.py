@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.database import get_db
+from examples.auth.identity_provider import require_local_login
 from examples.auth.models import User
 from examples.auth.redis_pool import get_redis_pool
 from examples.db_management.deps import get_current_user
@@ -197,6 +198,7 @@ async def google_login(
         HTTPException: If provider-token validation or account registration
             fails.
     """
+    require_local_login()
     reject_legacy_web_token_request(request)
     use_web_cookie = is_web_auth_request(request)
     result = await login_with_google(
@@ -248,6 +250,7 @@ async def apple_login(
     Raises:
         HTTPException: If Apple-token validation or account registration fails.
     """
+    require_local_login()
     reject_legacy_web_token_request(request)
     use_web_cookie = is_web_auth_request(request)
     result = await login_with_apple(

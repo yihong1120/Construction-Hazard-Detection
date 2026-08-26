@@ -138,6 +138,9 @@ async def create_auth_session(
     key = auth_session_key(session_id)
     now = int(time.time())
     data: dict[str, Any] = {
+        # ``legacy`` tokens are issued by Visionnaire; ``oidc`` tokens are
+        # refreshed only against the configured identity provider.
+        'auth_provider': str(token_pair.get('auth_provider') or 'legacy'),
         'session_id_hash': key.rsplit(':', 1)[-1],
         'user': dict(user),
         'feature_names': feature_names,
@@ -519,6 +522,8 @@ async def revoke_media_for_parent(redis: Redis, parent: str) -> None:
     members = await redis.smembers(parent_key)
     for member in members:
         token_key = _text(member)
+        if token_key is None:
+            continue
         raw = await redis.get(token_key)
         if raw is not None:
             public_id = json.loads(raw)['id']

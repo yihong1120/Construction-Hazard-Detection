@@ -17,6 +17,7 @@ from examples.auth.cache import rate_limiter_service
 from examples.auth.config import Settings
 from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.deployment_context import resolve_request_deployment
+from examples.auth.identity_provider import require_local_login
 from examples.auth.jwt_config import access_token_subject_from_payload
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import jwt_refresh
@@ -393,6 +394,7 @@ async def login_user(
     Returns:
         TokenPairData: Generated tokens and user-related details.
     """
+    require_local_login()
     if deployment is None and request is not None:
         deployment = await resolve_request_deployment(request, db)
 
@@ -714,6 +716,7 @@ async def refresh_tokens(
     Raises:
         HTTPException: If refresh token is invalid or missing.
     """
+    require_local_login()
     old_refresh = payload.refresh_token or ''
     if not old_refresh:
         raise HTTPException(status_code=401, detail='Missing refresh token')

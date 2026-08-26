@@ -22,6 +22,8 @@ from redis.exceptions import RedisError
 from examples.auth.config import Settings
 from examples.auth.database import AsyncSessionLocal
 from examples.auth.deployment_context import resolve_request_deployment
+from examples.auth.oidc import OidcTokenVerifier
+from examples.auth.oidc_identity import subject_from_oidc_identity
 from examples.auth.token_revocation import is_access_token_revoked
 from examples.db_management.schemas.auth import AccessTokenSubject
 from examples.db_management.schemas.auth import AccessTokenSubjectModel
@@ -90,6 +92,8 @@ class PyJWTBearer:
         algorithm: str = 'HS256',
         token_url: str = '/api/auth/login',
         token_use: str = 'access',
+        oidc_verifier: OidcTokenVerifier | None = None,
+        oidc_identity_provider: str = 'keycloak',
     ) -> None:
         """Initialise the JWT bearer dependency.
 
@@ -101,6 +105,8 @@ class PyJWTBearer:
         self.secret_key = secret_key
         self.algorithm = algorithm
         self.token_use = token_use
+        self.oidc_verifier = oidc_verifier
+        self.oidc_identity_provider = oidc_identity_provider
         self.oauth2_scheme = OAuth2PasswordBearer(tokenUrl=token_url)
 
     def create_access_token(
@@ -252,19 +258,45 @@ class PyJWTBearer:
             if token is None:
                 raise credentials_exception
             binding = None
+            oidc_token = bool(
+                self.token_use == 'access'
+                and self.oidc_verifier is not None
+                and self.oidc_verifier.matches_configured_issuer(token),
+            )
+            if (
+                self.token_use == 'access'
+                and settings.oidc_passwords_managed_externally
+                and not oidc_token
+            ):
+                raise credentials_exception
             if isinstance(request, Request):
                 async with AsyncSessionLocal() as db:
                     # Resolve from the actual API origin before token decoding;
                     # neither a client header nor a body field can select it.
                     binding = await resolve_request_deployment(request, db)
-            payload = self.decode_token(
-                token,
-                expected_issuer=binding.issuer if binding else None,
-                expected_audience=binding.audience if binding else None,
-            )
+                    if oidc_token:
+                        assert self.oidc_verifier is not None
+                        payload = await self.oidc_verifier.decode_access_token(
+                            token,
+                        )
+                        subject = await subject_from_oidc_identity(
+                            db,
+                            payload,
+                            provider=self.oidc_identity_provider,
+                            binding=binding,
+                        )
+                    else:
+                        payload = self.decode_token(
+                            token,
+                            expected_issuer=binding.issuer,
+                            expected_audience=binding.audience,
+                        )
+                        subject = access_token_subject_from_payload(payload)
+            else:
+                payload = self.decode_token(token)
+                subject = access_token_subject_from_payload(payload)
             if self.token_use != 'access':
                 raise credentials_exception
-            subject = access_token_subject_from_payload(payload)
             tenant_id = subject.get('tenant_id')
             deployment_id = subject.get('deployment_id')
             config_revision = subject.get('config_revision')
@@ -314,10 +346,14 @@ class PyJWTBearer:
 
 settings: Settings = Settings()
 
+oidc_access_verifier = OidcTokenVerifier.from_settings(settings)
+
 jwt_access: PyJWTBearer = PyJWTBearer(
     secret_key=settings.authjwt_secret_key,
     algorithm=settings.ALGORITHM,
     token_use='access',
+    oidc_verifier=oidc_access_verifier,
+    oidc_identity_provider=settings.oidc_identity_provider,
 )
 
 jwt_refresh: PyJWTBearer = PyJWTBearer(

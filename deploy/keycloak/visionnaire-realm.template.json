@@ -1,0 +1,60 @@
+{
+  "realm": "visionnaire",
+  "enabled": true,
+  "displayName": "Visionnaire",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "bruteForceProtected": true,
+  "clients": [
+    {
+      "clientId": "visionnaire-web",
+      "name": "Visionnaire Web BFF",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "__VISIONNAIRE_WEB_CLIENT_SECRET__",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://changdar-server.mooo.com/bff/auth/oidc/callback"
+      ],
+      "webOrigins": [
+        "https://changdar-server.mooo.com"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://changdar-server.mooo.com/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "visionnaire-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "visionnaire-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "visionnaire-user-linker",
+      "name": "Visionnaire User Linker",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "__USER_LINKER_CLIENT_SECRET__",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    }
+  ]
+}

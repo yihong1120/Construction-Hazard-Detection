@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.database import get_db
+from examples.auth.identity_provider import require_local_password_management
 from examples.auth.redis_pool import get_redis_pool
 from examples.db_management.schemas.password_reset import (
     ForgotPasswordRequest,
@@ -51,6 +52,7 @@ async def forgot_password(
     Raises:
         HTTPException: If the request exceeds reset rate limits.
     """
+    require_local_password_management()
     client_ip = request.client.host if request.client else None
     result = await request_password_reset(
         str(payload.email),
@@ -77,6 +79,7 @@ async def reset_password_endpoint(
     Returns:
         Success response, or a structured password-operation error response.
     """
+    require_local_password_management()
     try:
         result = await reset_password(
             payload.token,

@@ -51,6 +51,59 @@ class Settings(BaseSettings):
     """
 
     authjwt_secret_key: str = os.getenv('JWT_SECRET_KEY', '')
+    # OIDC resource-server settings. They are deliberately generic so the
+    # application can use a standards-compliant provider, while the deployment
+    # guide supplies Keycloak values. Existing application JWTs remain enabled
+    # during the migration.
+    oidc_enabled: bool = _env_bool('OIDC_ENABLED', False)
+    oidc_issuer_url: str = os.getenv('OIDC_ISSUER_URL', '').strip().rstrip('/')
+    oidc_jwks_url: str = os.getenv('OIDC_JWKS_URL', '').strip()
+    oidc_audience: str = os.getenv('OIDC_AUDIENCE', '').strip()
+    oidc_identity_provider: str = os.getenv(
+        'OIDC_IDENTITY_PROVIDER',
+        'keycloak',
+    ).strip()
+    oidc_jwt_algorithms: str = os.getenv(
+        'OIDC_JWT_ALGORITHMS',
+        'RS256',
+    ).strip()
+    oidc_jwks_cache_seconds: int = max(
+        60,
+        int(os.getenv('OIDC_JWKS_CACHE_SECONDS', '300')),
+    )
+    oidc_jwks_timeout_seconds: float = max(
+        1.0,
+        float(os.getenv('OIDC_JWKS_TIMEOUT_SECONDS', '5')),
+    )
+    # Browser BFF client settings. OIDC may be enabled for API bearer-token
+    # validation before the BFF itself is switched to the authorization-code
+    # flow, so these are validated only by ``oidc_web_client_configured``.
+    oidc_web_client_id: str = os.getenv('OIDC_WEB_CLIENT_ID', '').strip()
+    oidc_web_client_secret: str = os.getenv(
+        'OIDC_WEB_CLIENT_SECRET',
+        '',
+    ).strip()
+    oidc_web_authorization_endpoint: str = os.getenv(
+        'OIDC_WEB_AUTHORIZATION_ENDPOINT',
+        '',
+    ).strip()
+    oidc_web_token_endpoint: str = os.getenv(
+        'OIDC_WEB_TOKEN_ENDPOINT',
+        '',
+    ).strip()
+    oidc_web_redirect_uri: str = os.getenv(
+        'OIDC_WEB_REDIRECT_URI',
+        '',
+    ).strip()
+    oidc_account_url: str = os.getenv('OIDC_ACCOUNT_URL', '').strip()
+    oidc_passwords_managed_externally: bool = _env_bool(
+        'OIDC_PASSWORDS_MANAGED_EXTERNALLY',
+        False,
+    )
+    oidc_state_ttl_seconds: int = max(
+        60,
+        min(600, int(os.getenv('OIDC_STATE_TTL_SECONDS', '300'))),
+    )
     hcaptcha_enabled: bool = _env_bool('HCAPTCHA_ENABLED', True)
     hcaptcha_secret_key: str = os.getenv('HCAPTCHA_SECRET_KEY', '')
     hcaptcha_site_key: str = os.getenv('HCAPTCHA_SITE_KEY', '')
@@ -238,3 +291,69 @@ class Settings(BaseSettings):
         super().__init__()
         if not self.authjwt_secret_key:
             raise RuntimeError('JWT_SECRET_KEY is required')
+        if (
+            self.oidc_passwords_managed_externally
+            and not self.oidc_enabled
+        ):
+            raise RuntimeError(
+                'OIDC_ENABLED is required when Keycloak manages passwords',
+            )
+        if self.oidc_enabled:
+            missing = [
+                name
+                for name, value in (
+                    ('OIDC_ISSUER_URL', self.oidc_issuer_url),
+                    ('OIDC_JWKS_URL', self.oidc_jwks_url),
+                    ('OIDC_AUDIENCE', self.oidc_audience),
+                    ('OIDC_IDENTITY_PROVIDER', self.oidc_identity_provider),
+                )
+                if not value
+            ]
+            if missing:
+                raise RuntimeError(
+                    'OIDC is enabled but required settings are missing: '
+                    + ', '.join(missing),
+                )
+            if len(self.oidc_identity_provider) > 20:
+                raise RuntimeError(
+                    'OIDC_IDENTITY_PROVIDER must be at most 20 characters',
+                )
+            if (
+                self.oidc_passwords_managed_externally
+                and not self.oidc_account_url
+            ):
+                raise RuntimeError(
+                    'OIDC_ACCOUNT_URL is required when Keycloak manages '
+                    'passwords',
+                )
+
+    @property
+    def oidc_audiences(self) -> tuple[str, ...]:
+        """Return the configured API audiences as non-empty values."""
+        return tuple(
+            value.strip()
+            for value in self.oidc_audience.split(',')
+            if value.strip()
+        )
+
+    @property
+    def oidc_algorithms(self) -> tuple[str, ...]:
+        """Return the explicit asymmetric JWT algorithms accepted for OIDC."""
+        return tuple(
+            value.strip()
+            for value in self.oidc_jwt_algorithms.split(',')
+            if value.strip()
+        )
+
+    @property
+    def oidc_web_client_configured(self) -> bool:
+        """Return whether this deployment can start BFF OIDC sign-in."""
+        return self.oidc_enabled and all(
+            (
+                self.oidc_web_client_id,
+                self.oidc_web_client_secret,
+                self.oidc_web_authorization_endpoint,
+                self.oidc_web_token_endpoint,
+                self.oidc_web_redirect_uri,
+            ),
+        )

@@ -117,6 +117,26 @@ user，需由管理員核准後才能取得本地 JWT。
 解除綁定時，若該 user 沒有密碼且只剩一個 provider identity，後端會回
 `last_login_method`，避免帳號失去所有登入方式。
 
+### Keycloak 與 Open WebUI 共用登入
+
+這個 service 保留 Visionnaire 的 tenant、角色、group、feature、site 及 stream 授權資料；
+Keycloak 只負責帳號、密碼、MFA、重設與 SSO。設定 `OIDC_ENABLED=true` 後，BFF 可使用
+`GET /bff/auth/oidc/login` 的 Authorization Code + PKCE flow 取得 Keycloak token，所有
+protected API（包括 streaming、violations、FCM）會透過共用驗證層接受其
+`OIDC_AUDIENCE`。Open WebUI 也連同一 Keycloak realm，但必須使用另一個 OIDC client，
+且不得收到 `visionnaire-api` audience。
+
+每個 Keycloak `sub` 都必須先在 `user_identities` 連到一個本機使用者。使用
+`scripts/keycloak_link_users.py` 預覽、確認後套用帳號連結；這個步驟不會讀取或搬移
+password hash。設定範例、切換順序及改密碼行為見 `examples/auth/README-zh-tw.md`。
+
+全數切換完成後設定 `OIDC_PASSWORDS_MANAGED_EXTERNALLY=true`：
+`/password/forgot`、`/password/reset`、`/update_my_password` 與兩個管理者改密碼 API
+都會停止寫入本機資料庫，回傳 Keycloak Account Console URL。Visionnaire 的帳號設定 UI
+應連到 `/bff/auth/account`，讓使用者仍從主 App 進入 Keycloak 修改密碼。為確保
+Keycloak 真的是唯一帳密來源，此開關也會拒絕舊帳密、Google、Apple 與 legacy refresh
+登入，既有使用者需重新走 `/bff/auth/oidc/login`。
+
 ## Native OAuth 與 Unified Playback
 
 Flutter Web BFF 路由由掛載於同一 process 的 `examples/bff` 模組提供。此服務也

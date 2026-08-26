@@ -15,6 +15,7 @@ from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import jwt_refresh
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.jwt_config import PyJWTBearer
+from examples.auth.jwt_config import settings as jwt_settings
 from examples.db_management.schemas.auth import AccessTokenSubject
 
 
@@ -130,6 +131,13 @@ class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         """Perform setUp."""
+        self._external_passwords = patch.object(
+            jwt_settings,
+            'oidc_passwords_managed_externally',
+            False,
+        )
+        self._external_passwords.start()
+        self.addCleanup(self._external_passwords.stop)
         self.bearer = PyJWTBearer('test-secret-key-with-at-least-32-bytes')
         self.request = MagicMock()
 

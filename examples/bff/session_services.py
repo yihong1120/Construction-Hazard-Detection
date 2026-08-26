@@ -278,8 +278,9 @@ async def logout_bff_session(
     """
     session_id, session = await _session(request, redis)
     check_csrf(request, session, csrf_token)
-    access_token, refresh_token = auth_tokens(session)
-    await logout_user(refresh_token, f"Bearer {access_token}", redis)
+    if session.get('auth_provider', 'legacy') == 'legacy':
+        access_token, refresh_token = auth_tokens(session)
+        await logout_user(refresh_token, f"Bearer {access_token}", redis)
     await delete_auth_session(redis, session_id)
     clear_session_cookie(response)
     response.headers['Cache-Control'] = 'no-store'

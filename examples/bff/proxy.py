@@ -6,6 +6,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
@@ -25,6 +26,7 @@ from examples.auth.session_store import delete_auth_session
 from examples.auth.session_store import get_auth_session
 from examples.auth.session_store import release_refresh_lock
 from examples.auth.session_store import save_auth_tokens
+from examples.bff.oidc_services import refresh_oidc_tokens
 from examples.db_management.schemas.auth import RefreshRequest
 from examples.db_management.services.auth_services import refresh_tokens
 from src.http_client_pool import HttpClientPool
@@ -331,6 +333,8 @@ def _is_terminal_refresh_error(exc: HTTPException) -> bool:
     if exc.status_code != 401:
         return False
     detail = str(exc.detail).lower()
+    if detail.startswith('oidc_'):
+        return True
     return any(
         marker in detail
         for marker in ('expired', 'revoked', 'reused', 'invalid', 'recognised')
@@ -456,13 +460,19 @@ async def _refresh_proxy_session(
     latest_access, latest_refresh = auth_tokens(latest)
     if latest_access != access_token and not force_refresh:
         return latest_access, latest
+    result: Mapping[str, object]
     try:
-        result = await refresh_tokens(
-            RefreshRequest(refresh_token=latest_refresh or refresh_token),
-            redis,
-            hash_refresh_token=True,
-            deployment=deployment,
-        )
+        if latest.get('auth_provider', 'legacy') == 'oidc':
+            result = await refresh_oidc_tokens(
+                latest_refresh or refresh_token,
+            )
+        else:
+            result = await refresh_tokens(
+                RefreshRequest(refresh_token=latest_refresh or refresh_token),
+                redis,
+                hash_refresh_token=True,
+                deployment=deployment,
+            )
     except HTTPException as exc:
         if _is_terminal_refresh_error(exc):
             await delete_auth_session(redis, session_id)
@@ -473,13 +483,20 @@ async def _refresh_proxy_session(
         raise
     new_access = str(result['access_token'])
     new_refresh = str(result['refresh_token'])
+    returned_features = result.get('feature_names')
+    feature_names = (
+        [str(feature) for feature in returned_features]
+        if isinstance(returned_features, list)
+        and latest.get('auth_provider', 'legacy') == 'legacy'
+        else None
+    )
     await save_auth_tokens(
         redis,
         session_id,
         latest,
         new_access,
         new_refresh,
-        list(result.get('feature_names') or []),
+        feature_names,
     )
     return new_access, latest
 

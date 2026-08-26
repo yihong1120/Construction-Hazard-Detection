@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Annotated
+from typing import cast
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -13,11 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from examples.auth.database import get_db
+from examples.auth.identity_provider import require_local_password_management
 from examples.auth.models import User
 from examples.auth.models import USER_STATUS_PENDING_ADMIN_APPROVAL
 from examples.auth.models import USER_STATUS_REJECTED
 from examples.auth.redis_pool import get_redis_pool
 from examples.auth.user_service import invalidate_effective_site_cache
+from examples.db_management.deps import _NamedRoleUser
 from examples.db_management.deps import ensure_not_super
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
@@ -337,6 +340,7 @@ async def admin_update_pwd(
     Returns:
         Confirmation message.
     """
+    require_local_password_management()
     user = (
         await db.execute(select(User).where(User.username == payload.username))
     ).scalar_one_or_none()
@@ -366,6 +370,7 @@ async def admin_update_pwd_by_id(
     Returns:
         Confirmation message.
     """
+    require_local_password_management()
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
@@ -391,6 +396,7 @@ async def update_my_pwd(
     Returns:
         Message indicating password change success.
     """
+    require_local_password_management()
     if not await me.check_password(payload.old_password):
         raise HTTPException(401, 'Old password incorrect.')
 
@@ -502,7 +508,9 @@ async def change_role(
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
 
-    if payload.new_role == 'admin' and not is_super_admin(me):
+    if payload.new_role == 'admin' and not is_super_admin(
+        cast(_NamedRoleUser, me),
+    ):
         raise HTTPException(403, 'Only super admin can assign admin role.')
 
     user.role = payload.new_role
