@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
@@ -733,6 +734,102 @@ def test_proxy_request_forwards_response_and_retries_401(
     assert second_client.request_calls[0]['kwargs']['headers'][
         'Authorization'
     ] == ('Bearer new')
+
+
+def test_proxy_request_rewrites_violation_media_urls_for_the_bff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Evidence URLs use the cookie-authenticated BFF route, not SPA root."""
+    upstream = FakeResponse(
+        content=json.dumps(
+            {
+                'items': [
+                    {
+                        'thumbnail_url': (
+                            'https://api.example.test/'
+                            'get_violation_thumbnail?image_path=2026%2Fa.jpg'
+                        ),
+                    },
+                ],
+                'image_url': (
+                    'https://api.example.test/'
+                    'get_violation_image?image_path=2026%2Fa.jpg'
+                ),
+                'external_url': 'https://example.test/get_violation_image',
+            },
+        ).encode(),
+        headers={
+            'content-type': 'application/json; charset=utf-8',
+            'etag': 'upstream-validator',
+        },
+    )
+    client = FakeAsyncClient(upstream)
+    request = _request()
+    request.url = SimpleNamespace(path='/bff/violations/violations')
+    deployment = DeploymentBinding(
+        tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
+        deployment_id=UUID('00000000-0000-0000-0000-000000000002'),
+        api_base_url='https://api.example.test/hazard/api',
+        config_revision=1,
+    )
+    monkeypatch.setattr(proxy.httpx, 'AsyncClient', lambda **_kwargs: client)
+    monkeypatch.setattr(
+        proxy,
+        '_get_proxy_access_token_or_503',
+        AsyncMock(return_value=('token', {})),
+    )
+
+    response = _run(
+        proxy.proxy_request(
+            request,
+            AsyncMock(),
+            'session',
+            'violations/violations',
+            deployment=deployment,
+        ),
+    )
+
+    payload = json.loads(response.body)
+    assert payload['items'][0]['thumbnail_url'] == (
+        'https://api.example.test/bff/violations/get_violation_thumbnail?'
+        'image_path=2026%2Fa.jpg'
+    )
+    assert payload['image_url'] == (
+        'https://api.example.test/bff/violations/get_violation_image?'
+        'image_path=2026%2Fa.jpg'
+    )
+    assert payload['external_url'] == (
+        'https://example.test/get_violation_image'
+    )
+    assert 'etag' not in response.headers
+
+
+def test_proxy_request_does_not_rewrite_violation_media_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The JPEG endpoint remains a byte-for-byte BFF proxy response."""
+    upstream = FakeResponse(
+        content=b'\xff\xd8jpeg',
+        headers={'content-type': 'image/jpeg'},
+    )
+    client = FakeAsyncClient(upstream)
+    monkeypatch.setattr(proxy.httpx, 'AsyncClient', lambda **_kwargs: client)
+    monkeypatch.setattr(
+        proxy,
+        '_get_proxy_access_token_or_503',
+        AsyncMock(return_value=('token', {})),
+    )
+
+    response = _run(
+        proxy.proxy_request(
+            _request(),
+            AsyncMock(),
+            'session',
+            'violations/get_violation_thumbnail',
+        ),
+    )
+
+    assert response.body == b'\xff\xd8jpeg'
 
 
 def test_proxy_request_maps_network_error_to_bad_gateway(

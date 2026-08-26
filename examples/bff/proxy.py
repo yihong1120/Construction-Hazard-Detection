@@ -8,6 +8,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlsplit
+from urllib.parse import urlunsplit
 
 import httpx
 from fastapi import HTTPException
@@ -101,6 +102,10 @@ _PASS_RESPONSE_HEADERS = {
     'last-modified',
     'retry-after',
 }
+_VIOLATION_MEDIA_FIELDS = frozenset({'image_url', 'thumbnail_url'})
+_VIOLATION_MEDIA_ENDPOINTS = frozenset(
+    {'/get_violation_image', '/get_violation_thumbnail'},
+)
 
 
 def _is_sse_request(request: Request, suffix: str) -> bool:
@@ -116,6 +121,128 @@ def _is_sse_request(request: Request, suffix: str) -> bool:
     accept = request.headers.get('accept', '').lower()
     return 'text/event-stream' in accept or suffix.startswith(
         'metadata/stream-id/',
+    )
+
+
+def _bff_service_path(
+    request: Request,
+    service: str,
+) -> str:
+    """Return the public BFF prefix for one proxied service.
+
+    The request path retains any deployment-specific API prefix, while the
+    upstream service only knows its own root routes. Deriving the prefix from
+    the original browser request therefore works for both ``/bff`` and a BFF
+    mounted below a public API path.
+    """
+    marker = f'/{service}'
+    request_path = request.url.path.rstrip('/')
+    offset = request_path.find(marker)
+    if offset >= 0:
+        marker_end = offset + len(marker)
+        if marker_end == len(request_path) or request_path[
+            marker_end
+        ] == '/':
+            return request_path[:marker_end]
+    return f'/bff/{service}'
+
+
+def _bff_violation_media_url(
+    value: object,
+    request: Request,
+    deployment: DeploymentBinding | None,
+) -> str | None:
+    """Map one internal violation-media URL to its BFF-protected URL.
+
+    Violation services generate URLs for their own root endpoints, but browser
+    sessions are authenticated only by the BFF cookie. Only recognised media
+    paths are rewritten so an arbitrary URL in an upstream JSON response can
+    never be redirected through the BFF.
+    """
+    if not isinstance(value, str):
+        return None
+    source = urlsplit(value)
+    if source.path not in _VIOLATION_MEDIA_ENDPOINTS:
+        return None
+
+    path = f'{_bff_service_path(request, "violations")}{source.path}'
+    if deployment is None:
+        return urlunsplit(('', '', path, source.query, ''))
+    public_url = urlsplit(deployment.api_base_url)
+    return urlunsplit(
+        (public_url.scheme, public_url.netloc, path, source.query, ''),
+    )
+
+
+def _rewrite_violation_media_urls(
+    payload: object,
+    request: Request,
+    deployment: DeploymentBinding | None,
+) -> bool:
+    """Rewrite recognised evidence URLs in a violation JSON response.
+
+    Returns:
+        ``True`` when at least one URL was changed.
+    """
+    changed = False
+    if isinstance(payload, list):
+        for item in payload:
+            changed |= _rewrite_violation_media_urls(
+                item,
+                request,
+                deployment,
+            )
+        return changed
+    if not isinstance(payload, dict):
+        return False
+
+    for key, value in payload.items():
+        if key in _VIOLATION_MEDIA_FIELDS:
+            rewritten = _bff_violation_media_url(
+                value,
+                request,
+                deployment,
+            )
+            if rewritten is not None and rewritten != value:
+                payload[key] = rewritten
+                changed = True
+            continue
+        changed |= _rewrite_violation_media_urls(
+            value,
+            request,
+            deployment,
+        )
+    return changed
+
+
+def _rewrite_violation_response_content(
+    content: bytes,
+    content_type: str | None,
+    request: Request,
+    deployment: DeploymentBinding | None,
+) -> tuple[bytes, bool]:
+    """Return violation JSON content with browser-reachable media URLs.
+
+    Non-JSON response bodies, including the protected JPEG endpoints
+    themselves, must pass through without parsing or re-encoding.
+    """
+    if not content_type or content_type.split(';', 1)[0].lower() != (
+        'application/json'
+    ):
+        return content, False
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return content, False
+    if not _rewrite_violation_media_urls(payload, request, deployment):
+        return content, False
+    return (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(',', ':'),
+        ).encode('utf-8'),
+        True,
     )
 
 
@@ -495,10 +622,25 @@ async def proxy_request(
             deployment,
         )
 
+    response_content = upstream.content
+    content_rewritten = False
+    if path.strip('/').partition('/')[0] == 'violations':
+        response_content, content_rewritten = (
+            _rewrite_violation_response_content(
+                response_content,
+                upstream.headers.get('content-type'),
+                request,
+                deployment,
+            )
+        )
+
     return Response(
-        content=upstream.content,
+        content=response_content,
         status_code=upstream.status_code,
-        headers=_proxy_response_headers(upstream),
+        headers=_proxy_response_headers(
+            upstream,
+            content_rewritten=content_rewritten,
+        ),
     )
 
 
@@ -573,6 +715,7 @@ def _proxy_response_headers(
     upstream: httpx.Response,
     *,
     streaming: bool = False,
+    content_rewritten: bool = False,
 ) -> dict[str, str]:
     """Select safe upstream response headers for a browser response.
 
@@ -589,6 +732,10 @@ def _proxy_response_headers(
         if name.lower() in _PASS_RESPONSE_HEADERS
     }
     headers['Cache-Control'] = 'no-store'
+    if content_rewritten:
+        # The BFF serialised a different JSON body, so the upstream validator
+        # would no longer describe the bytes being returned to the browser.
+        headers.pop('etag', None)
     if streaming:
         headers['X-Accel-Buffering'] = 'no'
     return headers

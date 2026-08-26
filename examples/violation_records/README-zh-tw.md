@@ -47,7 +47,9 @@ JWT_SECRET_KEY=replace-with-a-long-random-secret
 
 - `GET /my_sites`：登入使用者可見的 sites。
 - `GET /violations/filter-options?site_id=...`：回傳登入者在所選工地可用的
-  鏡頭與固定違規項目。`stream_id` 是鏡頭設定的數字 ID，不是鏡頭名稱。
+  鏡頭與固定違規項目；省略 `site_id` 時，回傳所有授權工地的鏡頭。已部署的 Web
+  用戶端也可相容使用 `GET /filter-options`。`stream_id` 是鏡頭設定的數字 ID，
+  不是鏡頭名稱。
 - `GET /violations`：filtered 與 paginated violation list。支援選用的
   `site_id`、`stream_id`、`violation_type`、時間範圍；審核者可加 `flagged=true`
   與選用的 `review_status=pending|resolved|dismissed`。

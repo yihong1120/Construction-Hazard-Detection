@@ -27,6 +27,10 @@ uvicorn examples.db_management.app:app \
 `streaming`、`streaming_web` 與 `violations`。例如，站點列表使用
 `GET /bff/db_management/list_sites`。
 
+違規列表與詳情回應中的 `image_url`、`thumbnail_url` 會由 BFF 改寫為
+`/bff/violations/...`，使證據圖片維持走同源、以 Cookie 驗證的路徑，而不會讓
+瀏覽器直接存取違規服務的內部根路由。
+
 所有變更狀態的 request 都必須送允許的 `Origin` 與 `X-CSRF-Token`。
 
 ## 推播裝置註冊

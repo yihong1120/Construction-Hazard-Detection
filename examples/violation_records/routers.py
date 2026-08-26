@@ -64,8 +64,14 @@ async def get_my_sites(
     response_model=ViolationFilterOptions,
     summary='Get authorized camera and violation type filter options',
 )
+@router.get(
+    '/filter-options',
+    response_model=ViolationFilterOptions,
+    include_in_schema=False,
+    deprecated=True,
+)
 async def get_violation_filter_options(
-    site_id: int = Query(..., gt=0),
+    site_id: int | None = Query(None, gt=0),
     group_id: int | None = Query(None, gt=0),
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
@@ -73,7 +79,8 @@ async def get_violation_filter_options(
     """Return violation filters available within an authorised site.
 
     Args:
-        site_id: Selected site identifier.
+        site_id: Optional selected site identifier. When omitted, cameras from
+            every authorised site are returned for the initial filter state.
         group_id: Optional group filter within the selected site.
         db: Database session used to load site cameras.
         credentials: Validated JWT credentials for the requesting user.

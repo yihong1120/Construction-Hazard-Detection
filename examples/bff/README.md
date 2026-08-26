@@ -27,6 +27,11 @@ The canonical service names are `chat`, `db_management`, `detection`, `fcm`,
 `files`, `streaming`, `streaming_web`, and `violations`. For example, sites are
 listed through `GET /bff/db_management/list_sites`.
 
+For violation list and detail responses, the BFF rewrites `image_url` and
+`thumbnail_url` to `/bff/violations/...`. This keeps evidence requests on the
+same cookie-authenticated route instead of exposing the violation service's
+internal root paths to the browser.
+
 Unsafe requests require an allowed `Origin` and `X-CSRF-Token`.
 
 ## Push-device registration

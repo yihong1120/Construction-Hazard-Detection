@@ -115,6 +115,34 @@ class TestViolationQueryService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(options.cameras[0].name, 'Camera A')
         self.assertGreater(len(options.violation_types), 1)
 
+    async def test_filter_options_without_a_site_use_authorised_scope(
+        self,
+    ) -> None:
+        """The initial filter state exposes cameras from accessible sites."""
+        user = SimpleNamespace(role='super_admin', group_id=None)
+        camera_result = SimpleNamespace(all=lambda: [(12, 'Camera A')])
+        db = SimpleNamespace(
+            scalar=AsyncMock(),
+            execute=AsyncMock(return_value=camera_result),
+        )
+
+        with patch.object(
+            violation_query_service.user_service,
+            'load_user_access_context',
+            new=AsyncMock(return_value=(user, ['Site A'], None)),
+        ):
+            options = (
+                await violation_query_service.get_violation_filter_options(
+                    None,
+                    None,
+                    cast(AsyncSession, db),
+                    _credentials(),
+                )
+            )
+
+        self.assertEqual(options.cameras[0].stream_id, '12')
+        db.scalar.assert_not_awaited()
+
     async def test_get_violations_builds_a_keyset_page(self) -> None:
         """The list service maps only the requested page and next cursor."""
         timestamp = datetime(2026, 8, 23, tzinfo=timezone.utc)

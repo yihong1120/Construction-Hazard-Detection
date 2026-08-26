@@ -49,8 +49,10 @@ JWT_SECRET_KEY=replace-with-a-long-random-secret
 
 - `GET /my_sites`: sites visible to the authenticated user.
 - `GET /violations/filter-options?site_id=...`: authorized cameras and fixed
-  violation types for one site. `stream_id` is the numeric camera config ID,
-  not a camera name.
+  violation types for one site. Omitting `site_id` returns cameras across all
+  authorized sites. The deployed Web client may also use the compatible
+  `GET /filter-options` path. `stream_id` is the numeric camera config ID, not
+  a camera name.
 - `GET /violations`: filtered and paginated violation list with optional
   `site_id`, `stream_id`, `violation_type`, and time-range filters. Admin
   reviewers can add `flagged=true` and optional

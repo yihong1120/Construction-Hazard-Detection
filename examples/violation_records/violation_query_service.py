@@ -60,24 +60,26 @@ async def get_my_sites(
 
 
 async def get_violation_filter_options(
-    site_id: int,
+    site_id: int | None,
     group_id: int | None,
     db: AsyncSession,
     credentials: JwtAuthorizationCredentials,
 ) -> ViolationFilterOptions:
-    """Return cameras and violation types available for one authorised site."""
+    """Return cameras and violation types within the authorised site scope."""
     user, site_names, _ = await user_service.load_user_access_context(
         db,
         credentials.subject['username'],
     )
-    site = await db.scalar(
-        select(Site).where(
-            Site.id == site_id,
-            Site.name.in_(site_names),
-        ),
-    )
-    if site is None:
-        raise HTTPException(status_code=403, detail='No access to site_id')
+    site = None
+    if site_id is not None:
+        site = await db.scalar(
+            select(Site).where(
+                Site.id == site_id,
+                Site.name.in_(site_names),
+            ),
+        )
+        if site is None:
+            raise HTTPException(status_code=403, detail='No access to site_id')
     if group_id is not None and user.role != 'super_admin':
         if group_id != user.group_id:
             raise HTTPException(
@@ -87,13 +89,17 @@ async def get_violation_filter_options(
     visible_group_id = (
         group_id if user.role == 'super_admin' else user.group_id
     )
-    statement = (
-        select(StreamConfig.id, StreamConfig.stream_name)
-        .where(StreamConfig.site_id == site.id)
-        .order_by(StreamConfig.stream_name, StreamConfig.id)
-    )
+    statement = select(StreamConfig.id, StreamConfig.stream_name)
+    if site is not None:
+        statement = statement.where(StreamConfig.site_id == site.id)
+    else:
+        statement = statement.join(
+            Site,
+            StreamConfig.site_id == Site.id,
+        ).where(Site.name.in_(site_names))
     if visible_group_id is not None:
         statement = statement.where(StreamConfig.group_id == visible_group_id)
+    statement = statement.order_by(StreamConfig.stream_name, StreamConfig.id)
     rows = (await db.execute(statement)).all()
     return ViolationFilterOptions(
         cameras=[
