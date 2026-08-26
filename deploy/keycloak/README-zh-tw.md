@@ -31,6 +31,26 @@ PostgreSQL 管理者在初次部署時使用；不需要授予 Keycloak 或 Visi
 Provider 對 hCaptcha 的 `siteverify` 回應會同時驗證成功狀態、site key 與公開
 hostname；外部服務異常或設定不完整時會 fail closed，絕不略過真人驗證。
 
+### 舊 Visionnaire 密碼的一次性遷移
+
+既有帳號的 Argon2 hash 不可直接複製到 Keycloak database。遷移期間設定：
+
+```dotenv
+LEGACY_PASSWORD_MIGRATION_ENABLED=true
+LEGACY_PASSWORD_MIGRATION_TTL_SECONDS=30
+```
+
+使用者第一次以原 Visionnaire 密碼登入時，Keycloak 先驗證自己的 credential；失敗才會由
+custom form 透過 loopback HMAC 向 Visionnaire 驗證既有 hash。驗證成功後，Keycloak 立即以
+同一份密碼建立自己的 credential，並以一個 30 秒、一次性的 migration token 回呼停用
+`users.password_hash`。明文密碼、舊 hash、migration token 都不會寫入 Keycloak log、Redis
+或 HTTP response。
+
+此橋接只接受 `127.0.0.1` 的 Keycloak container，並以與 native-social HMAC 不可互換的
+domain-separated signature 保護；它不會恢復 Visionnaire 的舊登入 API。所有已遷移的帳號
+後續只使用 Keycloak 密碼。確認 active 密碼帳號都已遷移後，設定
+`LEGACY_PASSWORD_MIGRATION_ENABLED=false` 並重新部署 Keycloak 與 db-management。
+
 ## Google 與 Apple 社群登入
 
 Web BFF 的 Google／Apple 仍由 Keycloak Identity Broker 處理。啟動時會將 Identity

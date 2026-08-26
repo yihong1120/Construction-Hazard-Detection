@@ -30,6 +30,13 @@ services:
       # with the Visionnaire API and never receives Google/Apple credentials.
       KC_NATIVE_SOCIAL_EXCHANGE_REDEEM_URL: http://127.0.0.1:8005/auth/native-social/keycloak/redeem
       KC_NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET: ${NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET:-}
+      # Existing Visionnaire Argon2 passwords are upgraded only after a
+      # successful one-time loopback verification. The authenticator derives
+      # a separate HMAC domain from this server-only secret.
+      KC_LEGACY_PASSWORD_MIGRATION_ENABLED: ${LEGACY_PASSWORD_MIGRATION_ENABLED:-false}
+      KC_LEGACY_PASSWORD_MIGRATION_VERIFY_URL: http://127.0.0.1:8005/auth/legacy-password/keycloak/verify
+      KC_LEGACY_PASSWORD_MIGRATION_COMPLETE_URL: http://127.0.0.1:8005/auth/legacy-password/keycloak/complete
+      KC_LEGACY_PASSWORD_MIGRATION_SHARED_SECRET: ${NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET:-}
       # Third-party credentials belong only to Keycloak. The providers stay
       # hidden unless their corresponding *_ENABLED flag is true and every
       # required credential is present.

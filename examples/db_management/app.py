@@ -24,6 +24,9 @@ from examples.db_management.routers.deployments import (
 )
 from examples.db_management.routers.features import router as feature_router
 from examples.db_management.routers.groups import router as group_router
+from examples.db_management.routers.legacy_password_migration import (
+    router as legacy_password_migration_router,
+)
 from examples.db_management.routers.legal import router as legal_router
 from examples.db_management.routers.native_social import (
     router as native_social_router,
@@ -194,6 +197,7 @@ app.include_router(deployment_router)
 app.include_router(deployment_enrollment_code_router)
 app.include_router(registry_router)
 app.include_router(oauth_router)
+app.include_router(legacy_password_migration_router)
 app.include_router(native_social_router)
 app.include_router(playback_router)
 app.include_router(bff_router)

@@ -280,7 +280,26 @@ configure_visionnaire_browser_flow() {
     set_execution_priority \
         "$browser_flow" "$forms_execution_id" ALTERNATIVE 3
 
-    ensure_execution "$browser_forms_flow" auth-username-password-form REQUIRED
+    # Replace Keycloak's stock form with a Keycloak-first compatibility form.
+    # It only proves a Visionnaire Argon2 password after the normal Keycloak
+    # credential check fails, then immediately upgrades the credential and
+    # disables the old verifier through a one-use loopback acknowledgement.
+    ensure_execution "$browser_forms_flow" visionnaire-legacy-password-migration REQUIRED
+    local legacy_password_execution_id stock_password_execution_id
+    legacy_password_execution_id=$(execution_id_for_provider \
+        "$browser_forms_flow" visionnaire-legacy-password-migration)
+    stock_password_execution_id=$(execution_id_for_provider \
+        "$browser_forms_flow" auth-username-password-form)
+    if [[ -z "$legacy_password_execution_id" ]]; then
+        echo 'Unable to resolve the legacy password migration execution' >&2
+        return 1
+    fi
+    set_execution_priority \
+        "$browser_forms_flow" "$legacy_password_execution_id" REQUIRED 0
+    if [[ -n "$stock_password_execution_id" ]]; then
+        set_execution_requirement \
+            "$browser_forms_flow" "$stock_password_execution_id" DISABLED
+    fi
     ensure_execution "$browser_forms_flow" visionnaire-hcaptcha REQUIRED
 
     "$kcadm" update "realms/${realm}" \

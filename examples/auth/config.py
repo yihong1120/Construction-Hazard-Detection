@@ -142,6 +142,21 @@ class Settings(BaseSettings):
             int(os.getenv('NATIVE_SOCIAL_LINK_MAX_AUTH_AGE_SECONDS', '300')),
         ),
     )
+    # A short-lived, one-time bridge for existing Visionnaire Argon2
+    # credentials. Keycloak verifies its own password first; this is only a
+    # temporary fallback that upgrades a successfully proved legacy password
+    # into Keycloak's credential store.
+    legacy_password_migration_enabled: bool = _env_bool(
+        'LEGACY_PASSWORD_MIGRATION_ENABLED',
+        False,
+    )
+    legacy_password_migration_ttl_seconds: int = max(
+        15,
+        min(
+            120,
+            int(os.getenv('LEGACY_PASSWORD_MIGRATION_TTL_SECONDS', '30')),
+        ),
+    )
     keycloak_admin_base_url: str = os.getenv(
         'KEYCLOAK_ADMIN_BASE_URL',
         '',
@@ -415,6 +430,17 @@ class Settings(BaseSettings):
             # allow-list at the unauthenticated exchange endpoint.
             _ = self.native_social_allowed_clients
             _ = self.resolved_keycloak_admin_base_url
+        if self.legacy_password_migration_enabled:
+            if not self.oidc_passwords_managed_externally:
+                raise RuntimeError(
+                    'OIDC_PASSWORDS_MANAGED_EXTERNALLY is required for '
+                    'legacy password migration',
+                )
+            if len(self.native_social_exchange_shared_secret) < 32:
+                raise RuntimeError(
+                    'NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET must be at least '
+                    '32 characters when legacy password migration is enabled',
+                )
 
     @property
     def oidc_audiences(self) -> tuple[str, ...]:

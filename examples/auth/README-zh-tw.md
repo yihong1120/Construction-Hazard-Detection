@@ -55,9 +55,13 @@ username 自動比對。這使串流、違規、通知和管理 API 仍沿用本
 1. 建立 Keycloak realm、`visionnaire-web`（confidential）和 `open-webui`（依 Open WebUI
    OIDC 文件設定）兩個 client；為 Visionnaire client 加入 `visionnaire-api` audience
    mapper，勿加入 Open WebUI client。
-2. 先在 Keycloak 建立既有帳號與初始密碼。是否可保留原密碼取決於 Keycloak 的 credential
-   import 與現有 Argon2 參數是否經過實測相容；無法驗證時，使用 Keycloak 的 required
-   password update/reset，而不是複製或降級雜湊。
+2. 先在 Keycloak 建立既有帳號，並以不變的 Keycloak `sub` 連到既有本機 user。不要把
+   `users.password_hash` 複製到 Keycloak database。若要保留既有密碼，暫時設定
+   `LEGACY_PASSWORD_MIGRATION_ENABLED=true`：使用者首次輸入舊密碼時，Keycloak 會先驗證
+   自己的 credential，僅在失敗時透過 loopback HMAC 驗證舊 Argon2 hash；成功後馬上寫入
+   Keycloak credential，並在一次性完成交易後停用舊 hash。詳見
+   [Keycloak 部署說明](../../deploy/keycloak/README-zh-tw.md#舊-visionnaire-密碼的一次性遷移)。
+   所有帳號完成後必須關閉此 temporary bridge；不得批次複製 hash 或讓兩套登入長期並存。
 3. 以 service-account（僅授予目標 realm 的 `view-users`）先執行：
 
    ```bash
