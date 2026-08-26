@@ -125,6 +125,11 @@ public final class LegacyPasswordMigrationAuthenticator extends UsernamePassword
             LOG.warn("Legacy password migration acknowledgement was rejected");
             return false;
         }
+        // A Keycloak user provisioned before the migration can carry an
+        // UPDATE_PASSWORD required action from its placeholder credential.
+        // The legacy password is now a non-temporary Keycloak credential, so
+        // retaining that action would incorrectly force a password change.
+        user.removeRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
         LOG.info("Legacy password migrated to Keycloak");
         return true;
     }
