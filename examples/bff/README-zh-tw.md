@@ -17,17 +17,16 @@ uvicorn examples.db_management.app:app \
 
 公開路徑：
 
-- `POST /bff/auth/login`
 - `GET /bff/auth/session`
 - `GET /bff/auth/csrf`
 - `POST /bff/auth/logout`
-- `GET /bff/auth/oidc/login?return_to=/...`（Keycloak 登入切換後）
+- `GET /bff/auth/oidc/login?return_to=/...`
 - `GET /bff/auth/oidc/callback`（僅供 Keycloak callback）
 - `GET /bff/auth/account`（開啟 Keycloak Account Console）
 - `/bff/{allowlisted-service}/*`
 
 部署提供 `https://<app-host>/login` 作為主 App 的 OIDC 登入入口；它會安全地導向
-`/bff/auth/oidc/login`，再由 Keycloak 完成帳密與 MFA（如有設定）。
+`/bff/auth/oidc/login`，再由 Keycloak 完成帳密、hCaptcha 與 MFA（如有設定）。
 
 正式 service 名稱為 `chat`、`db_management`、`detection`、`fcm`、`files`、
 `streaming`、`streaming_web` 與 `violations`。例如，站點列表使用
@@ -41,7 +40,7 @@ uvicorn examples.db_management.app:app \
 
 ## Keycloak / OpenID Connect 單一登入
 
-設定 `OIDC_ENABLED=true` 後，Web 前端的登入按鈕應導向：
+本部署已啟用 OIDC-only；Web 前端登入按鈕必須導向：
 
 ```text
 GET /bff/auth/oidc/login?return_to=/violations
@@ -61,7 +60,8 @@ Visionnaire 必須使用不同 client，否則 Open WebUI token 可能被誤用�
 `OIDC_PASSWORDS_MANAGED_EXTERNALLY=true` 時，舊的 Visionnaire 密碼變更與重設 API
 會回傳 `409 password_managed_by_identity_provider` 與 Keycloak Account Console URL，不再
 寫入本機 `password_hash`。同一開關也會停用舊的帳密、Google、Apple 與 legacy refresh
-登入路徑；登入按鈕必須改用 `/bff/auth/oidc/login`。
+登入路徑；登入按鈕必須使用 `/bff/auth/oidc/login`。hCaptcha 僅在 Keycloak login theme
+顯示並由 Keycloak server-side Provider 驗證，Web 不得重複嵌入或傳送 hCaptcha token。
 
 ## 推播裝置註冊
 

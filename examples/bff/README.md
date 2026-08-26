@@ -17,7 +17,9 @@ uvicorn examples.db_management.app:app \
 
 Public routes:
 
-- `POST /bff/auth/login`
+- `GET /bff/auth/oidc/login?return_to=/...`
+- `GET /bff/auth/oidc/callback` (Keycloak callback only)
+- `GET /bff/auth/account` (Keycloak Account Console)
 - `GET /bff/auth/session`
 - `GET /bff/auth/csrf`
 - `POST /bff/auth/logout`
