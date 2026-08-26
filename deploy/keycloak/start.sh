@@ -284,10 +284,10 @@ configure_visionnaire_browser_flow() {
     # It only proves a Visionnaire Argon2 password after the normal Keycloak
     # credential check fails, then immediately upgrades the credential and
     # disables the old verifier through a one-use loopback acknowledgement.
-    ensure_execution "$browser_forms_flow" visionnaire-legacy-password-migration REQUIRED
+    ensure_execution "$browser_forms_flow" visionnaire-legacy-password REQUIRED
     local legacy_password_execution_id stock_password_execution_id
     legacy_password_execution_id=$(execution_id_for_provider \
-        "$browser_forms_flow" visionnaire-legacy-password-migration)
+        "$browser_forms_flow" visionnaire-legacy-password)
     stock_password_execution_id=$(execution_id_for_provider \
         "$browser_forms_flow" auth-username-password-form)
     if [[ -z "$legacy_password_execution_id" ]]; then

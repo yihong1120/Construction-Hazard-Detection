@@ -41,7 +41,8 @@ import org.keycloak.services.managers.AuthenticationManager;
  * password and acknowledged to Visionnaire, which disables the old hash.
  */
 public final class LegacyPasswordMigrationAuthenticator extends UsernamePasswordForm {
-    public static final String PROVIDER_ID = "visionnaire-legacy-password-migration";
+    // Keycloak persists authenticator provider IDs in a varchar(36) column.
+    public static final String PROVIDER_ID = "visionnaire-legacy-password";
     private static final Logger LOG = Logger.getLogger(LegacyPasswordMigrationAuthenticator.class);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(5);
     private static final String SIGNATURE_CONTEXT = "visionnaire:legacy-password-migration:v1.";
