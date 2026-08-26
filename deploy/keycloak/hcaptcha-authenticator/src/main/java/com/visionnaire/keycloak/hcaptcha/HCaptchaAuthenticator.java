@@ -147,10 +147,18 @@ public final class HCaptchaAuthenticator implements Authenticator {
         String body
     ) {
         Matcher hostname = HOSTNAME.matcher(body);
-        if (!hostname.find() || !configuration.expectedHostname().equals(
-            hostname.group(1).toLowerCase(Locale.ROOT)
-        )) {
-            LOG.warn("hCaptcha response hostname did not match the configured public hostname");
+        String responseHostname = hostname.find()
+            ? hostname.group(1).toLowerCase(Locale.ROOT)
+            : "<missing>";
+        if (!configuration.expectedHostname().equals(responseHostname)) {
+            // A hostname is public metadata. Logging only it and the expected
+            // public host makes a deployment mismatch diagnosable without
+            // recording the short-lived challenge token or verification body.
+            LOG.warnf(
+                "hCaptcha response hostname mismatch (expected=%s, received=%s)",
+                configuration.expectedHostname(),
+                responseHostname
+            );
             return false;
         }
         Matcher siteKey = SITE_KEY.matcher(body);
