@@ -33,6 +33,11 @@ hostname；外部服務異常或設定不完整時會 fail closed，絕不略過
 
 ### 舊 Visionnaire 密碼的一次性遷移
 
+遷移期間，Keycloak 密碼政策必須與既有 Visionnaire 的最小長度相容（目前為
+8 字元）。若在此期間提高最小長度，原本合法但較短的密碼無法寫入 Keycloak，
+使用者就會被錯誤地拒絕登入。所有帳號完成遷移並通知使用者更新密碼後，才可再
+提高 Keycloak 的密碼政策。
+
 既有帳號的 Argon2 hash 不可直接複製到 Keycloak database。遷移期間設定：
 
 ```dotenv

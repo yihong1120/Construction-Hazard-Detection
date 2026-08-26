@@ -14,7 +14,7 @@
   "quickLoginCheckMilliSeconds": 1000,
   "maxDeltaTimeSeconds": 43200,
   "failureFactor": 5,
-  "passwordPolicy": "length(14) and notUsername(undefined) and passwordHistory(5)",
+  "passwordPolicy": "length(8) and notUsername(undefined) and passwordHistory(5)",
   "clients": [
     {
       "clientId": "visionnaire-web",

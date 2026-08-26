@@ -302,6 +302,9 @@ configure_visionnaire_browser_flow() {
     fi
     ensure_execution "$browser_forms_flow" visionnaire-hcaptcha REQUIRED
 
+    # Match Visionnaire's pre-OIDC minimum while legacy passwords are
+    # migrated. Raising this before the migration window ends would lock out
+    # valid existing accounts whose passwords were accepted at 8–13 chars.
     "$kcadm" update "realms/${realm}" \
         -s "browserFlow=${browser_flow}" \
         -s 'loginTheme=visionnaire' \
@@ -311,7 +314,7 @@ configure_visionnaire_browser_flow() {
         -s 'waitIncrementSeconds=60' \
         -s 'maxFailureWaitSeconds=900' \
         -s 'maxDeltaTimeSeconds=43200' \
-        -s 'passwordPolicy=length(14) and notUsername(undefined) and passwordHistory(5)' \
+        -s 'passwordPolicy=length(8) and notUsername(undefined) and passwordHistory(5)' \
         >/dev/null
 }
 
