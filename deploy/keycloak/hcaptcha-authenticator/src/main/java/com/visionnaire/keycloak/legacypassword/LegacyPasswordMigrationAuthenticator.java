@@ -134,8 +134,8 @@ public final class LegacyPasswordMigrationAuthenticator extends UsernamePassword
         String password,
         Configuration configuration
     ) {
-        String body = "{\\\"keycloak_subject\\\":" + json(keycloakSubject)
-            + ",\\\"password\\\":" + json(password) + "}";
+        String body = "{\"keycloak_subject\":" + json(keycloakSubject)
+            + ",\"password\":" + json(password) + "}";
         HttpResponse<String> response = post(configuration.verifyUri(), body, configuration);
         if (response == null || response.statusCode() != 200) {
             return null;
@@ -149,8 +149,8 @@ public final class LegacyPasswordMigrationAuthenticator extends UsernamePassword
         String migrationToken,
         Configuration configuration
     ) {
-        String body = "{\\\"keycloak_subject\\\":" + json(keycloakSubject)
-            + ",\\\"migration_token\\\":" + json(migrationToken) + "}";
+        String body = "{\"keycloak_subject\":" + json(keycloakSubject)
+            + ",\"migration_token\":" + json(migrationToken) + "}";
         HttpResponse<String> response = post(configuration.completeUri(), body, configuration);
         return response != null && response.statusCode() == 200;
     }
