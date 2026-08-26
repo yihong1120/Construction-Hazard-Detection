@@ -36,15 +36,22 @@ async def oidc_account() -> RedirectResponse:
 async def oidc_login(
     request: Request,
     return_to: str | None = None,
+    idp_hint: str | None = None,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis_pool),
 ):
-    """Start the Keycloak/OIDC authorization-code + PKCE browser flow."""
+    """Start the Keycloak/OIDC authorization-code + PKCE browser flow.
+
+    ``idp_hint`` only accepts the centrally configured Google or Apple
+    providers. It is a convenience for a branded Web button; OAuth still
+    runs entirely through Keycloak.
+    """
     return await oidc_login_redirect(
         request,
         redis,
         db,
         return_to=return_to,
+        idp_hint=idp_hint,
     )
 
 

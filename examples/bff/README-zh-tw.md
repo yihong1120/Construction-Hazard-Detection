@@ -56,6 +56,10 @@ Keycloak access token 的簽章、issuer 和 `OIDC_AUDIENCE`，再以 Keycloak `
 `visionnaire-api`）。不要把它加到 Open WebUI client 的 token；Open WebUI 與
 Visionnaire 必須使用不同 client，否則 Open WebUI token 可能被誤用於 Visionnaire API。
 
+需要保留 Web 的 Google／Apple 品牌按鈕時，只能導向
+`/bff/auth/oidc/login?return_to=/&idp_hint=google` 或 `idp_hint=apple`。BFF 只轉送
+allow-list provider hint 給 Keycloak；不接受、驗證或儲存第三方 social token。
+
 完成帳號切換後，帳號設定中的「變更密碼」請連到 `/bff/auth/account`。開啟
 `OIDC_PASSWORDS_MANAGED_EXTERNALLY=true` 時，舊的 Visionnaire 密碼變更與重設 API
 會回傳 `409 password_managed_by_identity_provider` 與 Keycloak Account Console URL，不再

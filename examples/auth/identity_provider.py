@@ -51,3 +51,22 @@ def require_local_login() -> None:
             'login_url': '/bff/auth/oidc/login',
         },
     )
+
+
+def require_local_identity_management() -> None:
+    """Keep social-account linking inside the configured identity provider.
+
+    During the OIDC cutover, accepting a Google or Apple token directly in
+    Visionnaire would recreate a second identity-broker implementation. The
+    Keycloak Account Console is the single place to link or unlink these
+    identities instead.
+    """
+    if not settings.oidc_passwords_managed_externally:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            'code': 'social_identities_managed_by_identity_provider',
+            'account_url': identity_provider_account_url(),
+        },
+    )

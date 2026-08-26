@@ -91,6 +91,36 @@ class TestBffOidcServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state_record['return_to'], '/')
         self.assertIn('code_verifier', state_record)
 
+    async def test_login_redirect_allows_only_known_social_provider_hints(
+        self,
+    ) -> None:
+        """A branded button can select a broker without arbitrary redirects."""
+        with unittest.mock.patch.object(
+            oidc_services,
+            'resolve_request_deployment',
+            new=AsyncMock(return_value=_DEPLOYMENT),
+        ):
+            response = await oidc_services.oidc_login_redirect(
+                self.request,
+                self.redis,  # type: ignore[arg-type]
+                self.db,
+                return_to='/violations',
+                idp_hint='Google',
+            )
+
+        query = parse_qs(urlsplit(response.headers['location']).query)
+        self.assertEqual(query['kc_idp_hint'], ['google'])
+
+        with self.assertRaises(HTTPException) as error:
+            await oidc_services.oidc_login_redirect(
+                self.request,
+                self.redis,  # type: ignore[arg-type]
+                self.db,
+                return_to='/violations',
+                idp_hint='attacker-identity-provider',
+            )
+        self.assertEqual(error.exception.status_code, 400)
+
     async def test_callback_creates_a_token_private_session(self) -> None:
         """Callback maps a verified OIDC token to an opaque BFF session."""
         state = 'single-use-state'

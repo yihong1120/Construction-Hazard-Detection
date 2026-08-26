@@ -25,4 +25,13 @@ services:
       KC_HCAPTCHA_EXPECTED_HOSTNAME: changdar-server.mooo.com
       KEYCLOAK_VISIONNAIRE_WEB_CLIENT_SECRET: ${OIDC_WEB_CLIENT_SECRET:?OIDC_WEB_CLIENT_SECRET must be set}
       KEYCLOAK_USER_LINKER_CLIENT_SECRET: ${KEYCLOAK_USER_LINKER_CLIENT_SECRET:?KEYCLOAK_USER_LINKER_CLIENT_SECRET must be set}
+      # Third-party credentials belong only to Keycloak. The providers stay
+      # hidden unless their corresponding *_ENABLED flag is true and every
+      # required credential is present.
+      KEYCLOAK_GOOGLE_ENABLED: ${KEYCLOAK_GOOGLE_ENABLED:-false}
+      KEYCLOAK_GOOGLE_CLIENT_ID: ${KEYCLOAK_GOOGLE_CLIENT_ID:-}
+      KEYCLOAK_GOOGLE_CLIENT_SECRET: ${KEYCLOAK_GOOGLE_CLIENT_SECRET:-}
+      KEYCLOAK_APPLE_ENABLED: ${KEYCLOAK_APPLE_ENABLED:-false}
+      KEYCLOAK_APPLE_CLIENT_ID: ${KEYCLOAK_APPLE_CLIENT_ID:-}
+      KEYCLOAK_APPLE_CLIENT_SECRET: ${KEYCLOAK_APPLE_CLIENT_SECRET:-}
     network_mode: host

@@ -68,6 +68,20 @@ class TestAuthRouter(unittest.IsolatedAsyncioTestCase):
         self.app.dependency_overrides[get_current_user] = (
             override_get_current_user
         )
+        # These router tests exercise the legacy handlers in isolation. The
+        # deployed .env enables Keycloak ownership, which correctly rejects
+        # those handlers and is covered by identity_provider_test instead.
+        local_login = patch(
+            'examples.db_management.routers.auth.require_local_login',
+        )
+        local_login.start()
+        self.addCleanup(local_login.stop)
+        local_identity_management = patch(
+            'examples.db_management.routers.auth.'
+            'require_local_identity_management',
+        )
+        local_identity_management.start()
+        self.addCleanup(local_identity_management.stop)
 
     @patch(
         'examples.db_management.routers.auth.login_user',

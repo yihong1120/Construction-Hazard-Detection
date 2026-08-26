@@ -64,3 +64,32 @@ class TestIdentityProviderBoundaries(unittest.TestCase):
             detail['code'],
             'login_managed_by_identity_provider',
         )
+
+    def test_external_cutover_rejects_direct_social_identity_linking(
+        self,
+    ) -> None:
+        """Google and Apple linking moves to the Keycloak account console."""
+        with patch.object(
+            identity_provider,
+            'settings',
+            SimpleNamespace(
+                oidc_enabled=True,
+                oidc_account_url='https://sso.example.com/realms/app/account',
+                oidc_passwords_managed_externally=True,
+            ),
+        ):
+            with self.assertRaises(HTTPException) as error:
+                identity_provider.require_local_identity_management()
+
+        self.assertEqual(error.exception.status_code, 409)
+        detail = error.exception.detail
+        self.assertIsInstance(detail, dict)
+        assert isinstance(detail, dict)
+        self.assertEqual(
+            detail['code'],
+            'social_identities_managed_by_identity_provider',
+        )
+        self.assertEqual(
+            detail['account_url'],
+            'https://sso.example.com/realms/app/account',
+        )

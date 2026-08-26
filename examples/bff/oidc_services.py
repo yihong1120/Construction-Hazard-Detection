@@ -32,6 +32,7 @@ from src.http_client_pool import get_application_http_client
 settings = Settings()
 _access_verifier = OidcTokenVerifier.from_settings(settings)
 _STATE_PREFIX = 'bff:oidc:state'
+_SOCIAL_IDENTITY_PROVIDER_HINTS = frozenset({'google', 'apple'})
 
 
 def _state_key(state: str) -> str:
@@ -62,6 +63,24 @@ def _safe_return_to(value: str | None) -> str:
         or parsed.netloc
     ):
         return '/'
+    return candidate
+
+
+def _social_identity_provider_hint(value: str | None) -> str | None:
+    """Validate an optional Keycloak social-provider shortcut.
+
+    The value is forwarded as Keycloak's ``kc_idp_hint`` only after an exact
+    allow-list match.  This keeps a branded Flutter Web button from becoming
+    an arbitrary upstream-identity-provider redirect primitive.
+    """
+    if value is None or not value.strip():
+        return None
+    candidate = value.strip().lower()
+    if candidate not in _SOCIAL_IDENTITY_PROVIDER_HINTS:
+        raise HTTPException(
+            status_code=400,
+            detail='oidc_identity_provider_not_supported',
+        )
     return candidate
 
 
@@ -113,9 +132,11 @@ async def oidc_login_redirect(
     db: AsyncSession,
     *,
     return_to: str | None,
+    idp_hint: str | None = None,
 ) -> RedirectResponse:
     """Store single-use state and redirect the browser to the OIDC provider."""
     _require_web_client()
+    provider_hint = _social_identity_provider_hint(idp_hint)
     binding = await resolve_request_deployment(request, db)
     state = secrets.token_urlsafe(32)
     verifier = _code_verifier()
@@ -129,17 +150,18 @@ async def oidc_login_redirect(
         json.dumps(record, separators=(',', ':')).encode('utf-8'),
         ex=settings.oidc_state_ttl_seconds,
     )
-    query = urlencode(
-        {
-            'client_id': settings.oidc_web_client_id,
-            'code_challenge': _code_challenge(verifier),
-            'code_challenge_method': 'S256',
-            'redirect_uri': settings.oidc_web_redirect_uri,
-            'response_type': 'code',
-            'scope': 'openid profile email offline_access',
-            'state': state,
-        },
-    )
+    parameters = {
+        'client_id': settings.oidc_web_client_id,
+        'code_challenge': _code_challenge(verifier),
+        'code_challenge_method': 'S256',
+        'redirect_uri': settings.oidc_web_redirect_uri,
+        'response_type': 'code',
+        'scope': 'openid profile email offline_access',
+        'state': state,
+    }
+    if provider_hint is not None:
+        parameters['kc_idp_hint'] = provider_hint
+    query = urlencode(parameters)
     return RedirectResponse(
         f'{settings.oidc_web_authorization_endpoint}?{query}',
         status_code=307,

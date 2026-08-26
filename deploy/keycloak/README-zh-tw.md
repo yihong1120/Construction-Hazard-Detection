@@ -31,6 +31,18 @@ PostgreSQL 管理者在初次部署時使用；不需要授予 Keycloak 或 Visi
 Provider 對 hCaptcha 的 `siteverify` 回應會同時驗證成功狀態、site key 與公開
 hostname；外部服務異常或設定不完整時會 fail closed，絕不略過真人驗證。
 
+## Google 與 Apple 社群登入
+
+Google／Apple 由 Keycloak Identity Broker 處理，不可讓 Flutter 或 Visionnaire API
+直接接收第三方 token。啟動時會將 Identity Provider Redirector 放在 browser flow 的
+帳密表單之前：Google／Apple 按鈕走第三方登入；帳密分支才會進入 hCaptcha。
+
+provider 預設停用。設定 `KEYCLOAK_GOOGLE_ENABLED=true` 或
+`KEYCLOAK_APPLE_ENABLED=true` 時，必須同時提供其 client ID 與 secret；否則啟動程序
+會停用該 provider，避免 UI 出現無法使用的按鈕。完整的外部回呼 URL、Apple JWT secret
+輪替與三平台驗收程序見
+[Keycloak 社群登入部署規格](../../docs/zh/keycloak_social_login.md)。
+
 ## Flutter Native client
 
 啟動程序也會建立 `visionnaire-mobile` public OIDC client。它只允許 Authorization

@@ -90,6 +90,129 @@ ensure_execution() {
     set_execution_requirement "$flow_alias" "$execution_id" "$requirement"
 }
 
+set_execution_priority() {
+    local flow_alias=$1
+    local execution_id=$2
+    local requirement=$3
+    local priority=$4
+    "$kcadm" update "authentication/flows/${flow_alias}/executions" \
+        --target-realm "$realm" \
+        --body "{\"id\":\"${execution_id}\",\"requirement\":\"${requirement}\",\"priority\":${priority}}" \
+        >/dev/null
+}
+
+is_enabled() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+identity_provider_exists() {
+    local alias=$1
+    "$kcadm" get "identity-provider/instances/${alias}" \
+        --target-realm "$realm" \
+        >/dev/null 2>&1
+}
+
+disable_identity_provider() {
+    local alias=$1
+    if identity_provider_exists "$alias"; then
+        "$kcadm" update "identity-provider/instances/${alias}" \
+            --target-realm "$realm" \
+            -s 'enabled=false' \
+            >/dev/null
+    fi
+}
+
+ensure_identity_provider() {
+    local alias=$1
+    local provider_id=$2
+    if identity_provider_exists "$alias"; then
+        return
+    fi
+    "$kcadm" create identity-provider/instances \
+        --target-realm "$realm" \
+        -s "alias=${alias}" \
+        -s "providerId=${provider_id}" \
+        -s 'enabled=true' \
+        >/dev/null
+}
+
+configure_google_identity_provider() {
+    local client_id=${KEYCLOAK_GOOGLE_CLIENT_ID:-}
+    local client_secret=${KEYCLOAK_GOOGLE_CLIENT_SECRET:-}
+    if ! is_enabled "${KEYCLOAK_GOOGLE_ENABLED:-false}"; then
+        disable_identity_provider google
+        return
+    fi
+    if [[ -z "$client_id" || -z "$client_secret" ]]; then
+        echo 'Google social login is enabled but incomplete; disabling it' >&2
+        disable_identity_provider google
+        return
+    fi
+
+    ensure_identity_provider google google
+    "$kcadm" update identity-provider/instances/google \
+        --target-realm "$realm" \
+        -s 'enabled=true' \
+        -s 'displayName=Google' \
+        -s 'hideOnLoginPage=false' \
+        -s 'trustEmail=true' \
+        -s 'storeToken=false' \
+        -s 'addReadTokenRoleOnCreate=false' \
+        -s 'firstBrokerLoginFlowAlias=first broker login' \
+        -s "config.clientId=${client_id}" \
+        -s "config.clientSecret=${client_secret}" \
+        -s 'config.prompt=select_account' \
+        -s 'config.syncMode=IMPORT' \
+        >/dev/null
+}
+
+configure_apple_identity_provider() {
+    local client_id=${KEYCLOAK_APPLE_CLIENT_ID:-}
+    local client_secret=${KEYCLOAK_APPLE_CLIENT_SECRET:-}
+    if ! is_enabled "${KEYCLOAK_APPLE_ENABLED:-false}"; then
+        disable_identity_provider apple
+        return
+    fi
+    if [[ -z "$client_id" || -z "$client_secret" ]]; then
+        echo 'Apple social login is enabled but incomplete; disabling it' >&2
+        disable_identity_provider apple
+        return
+    fi
+
+    # Keycloak has a maintained generic OIDC broker. Apple is configured
+    # through it because Apple client secrets are short-lived signed JWTs.
+    ensure_identity_provider apple oidc
+    "$kcadm" update identity-provider/instances/apple \
+        --target-realm "$realm" \
+        -s 'enabled=true' \
+        -s 'displayName=Apple' \
+        -s 'hideOnLoginPage=false' \
+        -s 'trustEmail=true' \
+        -s 'storeToken=false' \
+        -s 'addReadTokenRoleOnCreate=false' \
+        -s 'firstBrokerLoginFlowAlias=first broker login' \
+        -s "config.clientId=${client_id}" \
+        -s "config.clientSecret=${client_secret}" \
+        -s 'config.authorizationUrl=https://appleid.apple.com/auth/authorize?response_mode=form_post' \
+        -s 'config.tokenUrl=https://appleid.apple.com/auth/token' \
+        -s 'config.jwksUrl=https://appleid.apple.com/auth/keys' \
+        -s 'config.issuer=https://appleid.apple.com' \
+        -s 'config.defaultScope=openid name email' \
+        -s 'config.useJwksUrl=true' \
+        -s 'config.validateSignature=true' \
+        -s 'config.disableUserInfo=true' \
+        -s 'config.syncMode=IMPORT' \
+        >/dev/null
+}
+
+configure_social_identity_providers() {
+    configure_google_identity_provider
+    configure_apple_identity_provider
+}
+
 configure_visionnaire_browser_flow() {
     if ! "$kcadm" get authentication/flows --target-realm "$realm" \
         | grep -Fq "\"alias\" : \"${browser_flow}\""; then
@@ -107,6 +230,10 @@ configure_visionnaire_browser_flow() {
     # An existing Keycloak SSO session completes the alternative branch; a
     # fresh password login enters the forms branch below.
     ensure_execution "$browser_flow" auth-cookie ALTERNATIVE
+    # A social button sends kc_idp_hint.  The redirector must appear before
+    # the password subflow so social sign-in never asks for a local password
+    # or hCaptcha challenge.
+    ensure_execution "$browser_flow" identity-provider-redirector ALTERNATIVE
 
     local forms_execution_id
     forms_execution_id=$(execution_id_for_display_name \
@@ -128,6 +255,18 @@ configure_visionnaire_browser_flow() {
         return 1
     fi
     set_execution_requirement "$browser_flow" "$forms_execution_id" ALTERNATIVE
+
+    local identity_provider_execution_id
+    identity_provider_execution_id=$(execution_id_for_provider \
+        "$browser_flow" identity-provider-redirector)
+    if [[ -z "$identity_provider_execution_id" ]]; then
+        echo 'Unable to resolve the identity-provider redirector execution' >&2
+        return 1
+    fi
+    set_execution_priority \
+        "$browser_flow" "$identity_provider_execution_id" ALTERNATIVE 1
+    set_execution_priority \
+        "$browser_flow" "$forms_execution_id" ALTERNATIVE 2
 
     ensure_execution "$browser_forms_flow" auth-username-password-form REQUIRED
     ensure_execution "$browser_forms_flow" visionnaire-hcaptcha REQUIRED
@@ -232,6 +371,7 @@ for _ in $(seq 1 60); do
         >/dev/null 2>&1; then
         configure_visionnaire_browser_flow
         configure_mobile_client
+        configure_social_identity_providers
         wait "$keycloak_pid"
         exit $?
     fi

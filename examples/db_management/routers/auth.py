@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.database import get_db
+from examples.auth.identity_provider import require_local_identity_management
 from examples.auth.identity_provider import require_local_login
 from examples.auth.models import User
 from examples.auth.redis_pool import get_redis_pool
@@ -306,6 +307,7 @@ async def get_identities(
     Returns:
         Linked provider identities and password-credential availability.
     """
+    require_local_identity_management()
     return await list_user_identities(me, db)
 
 
@@ -328,6 +330,7 @@ async def link_google(
     Raises:
         HTTPException: If the token is invalid or belongs to another user.
     """
+    require_local_identity_management()
     return await link_google_identity(me, payload.id_token, db)
 
 
@@ -352,6 +355,7 @@ async def link_apple(
             another
             user.
     """
+    require_local_identity_management()
     return await link_apple_identity(
         me,
         payload.identity_token,
@@ -381,6 +385,7 @@ async def unlink_provider_identity(
         HTTPException: If the identity does not belong to the current user or
             removing it would leave no authentication method.
     """
+    require_local_identity_management()
     return await unlink_identity(me, identity_id, db)
 
 
