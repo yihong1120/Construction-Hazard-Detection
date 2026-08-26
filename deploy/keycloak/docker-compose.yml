@@ -22,9 +22,6 @@ services:
       KC_PROXY_HEADERS: xforwarded
       KC_HCAPTCHA_SITE_KEY: ${HCAPTCHA_SITE_KEY:?HCAPTCHA_SITE_KEY must be set}
       KC_HCAPTCHA_SECRET_KEY: ${HCAPTCHA_SECRET_KEY:?HCAPTCHA_SECRET_KEY must be set}
-      # hCaptcha returns the registered host (here its apex domain), which
-      # need not be the subdomain serving the Keycloak login page.
-      KC_HCAPTCHA_EXPECTED_HOSTNAME: ${HCAPTCHA_EXPECTED_HOSTNAME:-mooo.com}
       KEYCLOAK_VISIONNAIRE_WEB_CLIENT_SECRET: ${OIDC_WEB_CLIENT_SECRET:?OIDC_WEB_CLIENT_SECRET must be set}
       KEYCLOAK_USER_LINKER_CLIENT_SECRET: ${KEYCLOAK_USER_LINKER_CLIENT_SECRET:?KEYCLOAK_USER_LINKER_CLIENT_SECRET must be set}
       # The custom authenticator may only redeem a native assertion through

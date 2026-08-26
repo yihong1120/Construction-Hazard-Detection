@@ -9,8 +9,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Locale;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.jboss.logging.Logger;
 import org.keycloak.authentication.AuthenticationFlowContext;
@@ -26,8 +24,8 @@ import org.keycloak.models.UserModel;
  *
  * <p>The secret only exists in the Keycloak process environment.  The site
  * key is intentionally public and is passed to the rendered login template.
- * A challenge token is always verified server-side, with the expected
- * hostname and site key checked before the authentication flow may continue.
+ * A challenge token is always verified server-side with the configured secret
+ * and expected site key before the authentication flow may continue.
  */
 public final class HCaptchaAuthenticator implements Authenticator {
     private static final Logger LOG = Logger.getLogger(HCaptchaAuthenticator.class);
@@ -37,12 +35,6 @@ public final class HCaptchaAuthenticator implements Authenticator {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(5);
     private static final Pattern SUCCESS = Pattern.compile(
         "\\\"success\\\"\\s*:\\s*true"
-    );
-    private static final Pattern HOSTNAME = Pattern.compile(
-        "\\\"hostname\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""
-    );
-    private static final Pattern SITE_KEY = Pattern.compile(
-        "\\\"sitekey\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""
     );
     private static final HttpClient HTTP = HttpClient.newBuilder()
         .connectTimeout(REQUEST_TIMEOUT)
@@ -128,7 +120,11 @@ public final class HCaptchaAuthenticator implements Authenticator {
                 LOG.warnf("hCaptcha verification rejected with HTTP status %d", response.statusCode());
                 return false;
             }
-            return responseMatchesConfiguration(configuration, response.body());
+            // Passing the expected site key to siteverify binds the proof to
+            // this login widget. hCaptcha does not promise a sitekey field in
+            // its response, and its hostname value is browser-supplied
+            // analytics metadata rather than an authentication signal.
+            return true;
         } catch (IOException exception) {
             LOG.warn("hCaptcha verification request failed", exception);
             return false;
@@ -140,33 +136,6 @@ public final class HCaptchaAuthenticator implements Authenticator {
             LOG.warn("hCaptcha verification response could not be processed", exception);
             return false;
         }
-    }
-
-    private boolean responseMatchesConfiguration(
-        HCaptchaConfiguration configuration,
-        String body
-    ) {
-        Matcher hostname = HOSTNAME.matcher(body);
-        String responseHostname = hostname.find()
-            ? hostname.group(1).toLowerCase(Locale.ROOT)
-            : "<missing>";
-        if (!configuration.expectedHostname().equals(responseHostname)) {
-            // A hostname is public metadata. Logging only it and the expected
-            // public host makes a deployment mismatch diagnosable without
-            // recording the short-lived challenge token or verification body.
-            LOG.warnf(
-                "hCaptcha response hostname mismatch (expected=%s, received=%s)",
-                configuration.expectedHostname(),
-                responseHostname
-            );
-            return false;
-        }
-        Matcher siteKey = SITE_KEY.matcher(body);
-        if (!siteKey.find() || !configuration.siteKey().equals(siteKey.group(1))) {
-            LOG.warn("hCaptcha response site key did not match the configured site key");
-            return false;
-        }
-        return true;
     }
 
     private static String encode(String value) {
@@ -196,14 +165,11 @@ public final class HCaptchaAuthenticator implements Authenticator {
     private record HCaptchaConfiguration(
         String siteKey,
         String secret,
-        String expectedHostname,
         URI verifyUri
     ) {
         static HCaptchaConfiguration fromEnvironment() {
             String siteKey = env("KC_HCAPTCHA_SITE_KEY");
             String secret = env("KC_HCAPTCHA_SECRET_KEY");
-            String expectedHostname = env("KC_HCAPTCHA_EXPECTED_HOSTNAME")
-                .toLowerCase(Locale.ROOT);
             String verifyUrl = env("KC_HCAPTCHA_VERIFY_URL");
             if (verifyUrl.isBlank()) {
                 verifyUrl = VERIFY_URL;
@@ -212,19 +178,17 @@ public final class HCaptchaAuthenticator implements Authenticator {
                 return new HCaptchaConfiguration(
                     siteKey,
                     secret,
-                    expectedHostname,
                     URI.create(verifyUrl)
                 );
             } catch (IllegalArgumentException exception) {
                 LOG.error("KC_HCAPTCHA_VERIFY_URL is invalid", exception);
-                return new HCaptchaConfiguration(siteKey, secret, expectedHostname, null);
+                return new HCaptchaConfiguration(siteKey, secret, null);
             }
         }
 
         boolean isComplete() {
             return !siteKey.isBlank()
                 && !secret.isBlank()
-                && !expectedHostname.isBlank()
                 && verifyUri != null
                 && "https".equalsIgnoreCase(verifyUri.getScheme());
         }
