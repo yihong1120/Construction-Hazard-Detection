@@ -1,23 +1,6 @@
 name: visionnaire-keycloak
 
 services:
-  keycloak-postgres:
-    image: postgres:17.11-bookworm
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: keycloak
-      POSTGRES_USER: keycloak
-      POSTGRES_PASSWORD: ${KEYCLOAK_POSTGRES_PASSWORD:?KEYCLOAK_POSTGRES_PASSWORD must be set}
-    volumes:
-      - keycloak_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    networks:
-      - keycloak_network
-
   keycloak:
     build:
       context: ../..
@@ -27,27 +10,16 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?KEYCLOAK_ADMIN_USERNAME must be set}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD must be set}
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
-      KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: ${KEYCLOAK_POSTGRES_PASSWORD:?KEYCLOAK_POSTGRES_PASSWORD must be set}
+      KC_DB_URL: jdbc:postgresql://127.0.0.1:5432/keycloak
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USERNAME:?KEYCLOAK_DB_USERNAME must be set}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD must be set}
       KC_HEALTH_ENABLED: "true"
       KC_HOSTNAME: https://changdar-server.mooo.com/keycloak
       KC_HTTP_ENABLED: "true"
+      KC_HTTP_HOST: 127.0.0.1
+      KC_HTTP_PORT: "8081"
       KC_HTTP_RELATIVE_PATH: /keycloak
       KC_PROXY_HEADERS: xforwarded
       KEYCLOAK_VISIONNAIRE_WEB_CLIENT_SECRET: ${OIDC_WEB_CLIENT_SECRET:?OIDC_WEB_CLIENT_SECRET must be set}
       KEYCLOAK_USER_LINKER_CLIENT_SECRET: ${KEYCLOAK_USER_LINKER_CLIENT_SECRET:?KEYCLOAK_USER_LINKER_CLIENT_SECRET must be set}
-    depends_on:
-      keycloak-postgres:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:8081:8080"
-    networks:
-      - keycloak_network
-
-networks:
-  keycloak_network:
-    driver: bridge
-
-volumes:
-  keycloak_postgres_data:
+    network_mode: host
