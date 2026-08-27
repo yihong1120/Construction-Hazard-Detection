@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from examples.auth.config import Settings
 from examples.auth.database import get_db
 from examples.auth.identity_provider import require_local_password_management
 from examples.auth.models import User
@@ -38,10 +39,29 @@ from examples.db_management.schemas.user import UpdateUsernameById
 from examples.db_management.schemas.user import UpdateUserRole
 from examples.db_management.schemas.user import UserCreate
 from examples.db_management.schemas.user import UserDelete
+from examples.db_management.schemas.user import UserManagementCapabilities
 from examples.db_management.schemas.user import UserPage
 from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
 from examples.db_management.schemas.user import UserSignup
+from examples.db_management.services.keycloak_user_management_services import (
+    delete_keycloak_user,
+)
+from examples.db_management.services.keycloak_user_management_services import (
+    provision_keycloak_user,
+)
+from examples.db_management.services.keycloak_user_management_services import (
+    reset_keycloak_password,
+)
+from examples.db_management.services.keycloak_user_management_services import (
+    set_keycloak_user_enabled,
+)
+from examples.db_management.services.keycloak_user_management_services import (
+    update_keycloak_user,
+)
+from examples.db_management.services.password_policy import (
+    validate_password_minimum,
+)
 from examples.db_management.services.site_services import (
     list_site_ids_for_group,
 )
@@ -76,16 +96,39 @@ from examples.db_management.services.user_management_services import (
     resolve_target_group_id,
 )
 from examples.db_management.services.user_services import (
+    create_oidc_managed_user,
+)
+from examples.db_management.services.user_services import (
     create_or_update_profile,
 )
 from examples.db_management.services.user_services import create_user
 from examples.db_management.services.user_services import delete_user
+from examples.db_management.services.user_services import (
+    ensure_keycloak_subject_for_user,
+)
 from examples.db_management.services.user_services import get_user_by_id
 from examples.db_management.services.user_services import set_user_status
 from examples.db_management.services.user_services import update_password
 from examples.db_management.services.user_services import update_username
 
 router = APIRouter(tags=['user-mgmt'])
+settings = Settings()
+
+
+def _keycloak_manages_passwords() -> bool:
+    """Return whether administrator actions must update Keycloak identities."""
+    return (
+        settings.oidc_enabled
+        and settings.oidc_passwords_managed_externally
+    )
+
+
+def _ensure_role_can_be_assigned(role: str, operator: User) -> None:
+    """Keep the singleton platform super-admin role out of normal workflows."""
+    if role == 'super_admin':
+        raise HTTPException(403, 'The super admin role is reserved.')
+    if role == 'admin' and not is_super_admin(cast(_NamedRoleUser, operator)):
+        raise HTTPException(403, 'Only super admin can assign admin role.')
 
 
 @router.post(
@@ -113,16 +156,50 @@ async def add_user(
         me,
         default_to_operator_group=True,
     )
+    _ensure_role_can_be_assigned(payload.role, me)
 
-    new_user = await create_user(
-        username=payload.username,
-        password=payload.password,
-        role=payload.role,
-        group_id=target_group_id,
-        db=db,
-        tenant_id=getattr(me, 'tenant_id', None),
-        profile=payload.profile.model_dump() if payload.profile else None,
-    )
+    if _keycloak_manages_passwords():
+        if payload.profile is None:
+            raise HTTPException(
+                400,
+                'A profile with email and name is required for Keycloak.',
+            )
+        validate_password_minimum(payload.password)
+        profile = payload.profile.model_dump()
+        subject = await provision_keycloak_user(
+            username=payload.username,
+            password=payload.password,
+            email=str(profile['email']),
+            given_name=str(profile['given_name']),
+            family_name=str(profile['family_name']),
+            force_password_change=payload.force_password_change,
+        )
+        try:
+            new_user = await create_oidc_managed_user(
+                username=payload.username,
+                role=payload.role,
+                group_id=target_group_id,
+                tenant_id=me.tenant_id,
+                keycloak_subject=subject,
+                profile=profile,
+                db=db,
+            )
+        except HTTPException:
+            # Keycloak was provisioned first so a failed local transaction
+            # must be compensated before returning control to the operator.
+            await delete_keycloak_user(subject, suppress_errors=True)
+            raise
+    else:
+        new_user = await create_user(
+            username=payload.username,
+            password=payload.password,
+            role=payload.role,
+            group_id=target_group_id,
+            db=db,
+            tenant_id=getattr(me, 'tenant_id', None),
+            profile=payload.profile.model_dump() if payload.profile else None,
+        )
+
     if target_group_id:
         site_ids = await list_site_ids_for_group(target_group_id, db)
         await seed_site_notification_preferences(
@@ -321,6 +398,33 @@ async def list_users_page(
     )
 
 
+@router.get(
+    '/admin/capabilities',
+    response_model=UserManagementCapabilities,
+)
+async def user_management_capabilities(
+    me: User = Depends(require_admin),
+) -> UserManagementCapabilities:
+    """Return UI capabilities without trusting client-side role inference.
+
+    The backend still authorises every mutation independently.  This endpoint
+    merely prevents Flutter from showing ChangDar or a group administrator a
+    misleading read-only management screen.
+    """
+    super_admin = is_super_admin(cast(_NamedRoleUser, me))
+    return UserManagementCapabilities(
+        scope='all_groups' if super_admin else 'own_group',
+        managed_group_id=None if super_admin else me.group_id,
+        can_create_users=True,
+        can_reset_passwords=True,
+        can_suspend_users=True,
+        can_delete_users=True,
+        can_manage_groups=super_admin,
+        can_manage_group_features=super_admin,
+        can_assign_group_admins=super_admin,
+    )
+
+
 @router.delete('/delete_user', dependencies=[Depends(require_admin)])
 async def remove_user(
     payload: UserDelete,
@@ -339,6 +443,9 @@ async def remove_user(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
+    if _keycloak_manages_passwords():
+        subject = await ensure_keycloak_subject_for_user(user, db)
+        await delete_keycloak_user(subject)
     await delete_user(user, db)
     invalidate_effective_site_cache()
     return {'message': 'User deleted successfully.'}
@@ -359,7 +466,6 @@ async def admin_update_pwd(
     Returns:
         Confirmation message.
     """
-    require_local_password_management()
     user = (
         await db.execute(select(User).where(User.username == payload.username))
     ).scalar_one_or_none()
@@ -367,7 +473,18 @@ async def admin_update_pwd(
         raise HTTPException(404, 'User not found.')
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-    await update_password(user, payload.new_password, db)
+    if _keycloak_manages_passwords():
+        validate_password_minimum(payload.new_password)
+        subject = await ensure_keycloak_subject_for_user(user, db)
+        await reset_keycloak_password(
+            subject,
+            password=payload.new_password,
+            temporary=True,
+        )
+        await db.commit()
+    else:
+        require_local_password_management()
+        await update_password(user, payload.new_password, db)
     return {'message': 'Password updated successfully.'}
 
 
@@ -389,11 +506,21 @@ async def admin_update_pwd_by_id(
     Returns:
         Confirmation message.
     """
-    require_local_password_management()
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-    await update_password(user, payload.new_password, db)
+    if _keycloak_manages_passwords():
+        validate_password_minimum(payload.new_password)
+        subject = await ensure_keycloak_subject_for_user(user, db)
+        await reset_keycloak_password(
+            subject,
+            password=payload.new_password,
+            temporary=True,
+        )
+        await db.commit()
+    else:
+        require_local_password_management()
+        await update_password(user, payload.new_password, db)
     return {'message': 'Password updated successfully by user ID.'}
 
 
@@ -459,6 +586,9 @@ async def change_username(
         raise HTTPException(404, 'User not found.')
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
+    if _keycloak_manages_passwords():
+        subject = await ensure_keycloak_subject_for_user(user, db)
+        await update_keycloak_user(subject, username=payload.new_username)
     await update_username(user, payload.new_username, db)
     return {'message': 'Username updated successfully.'}
 
@@ -481,6 +611,9 @@ async def change_username_by_id(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
+    if _keycloak_manages_passwords():
+        subject = await ensure_keycloak_subject_for_user(user, db)
+        await update_keycloak_user(subject, username=payload.new_username)
     await update_username(user, payload.new_username, db)
     return {'message': 'Username updated successfully.'}
 
@@ -503,6 +636,12 @@ async def update_user_status(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
+    if _keycloak_manages_passwords():
+        subject = await ensure_keycloak_subject_for_user(user, db)
+        await set_keycloak_user_enabled(
+            subject,
+            enabled=payload.status == 'active',
+        )
     await set_user_status(user, payload.status, db)
     return {'message': 'User status updated successfully.'}
 
@@ -526,11 +665,7 @@ async def change_role(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-
-    if payload.new_role == 'admin' and not is_super_admin(
-        cast(_NamedRoleUser, me),
-    ):
-        raise HTTPException(403, 'Only super admin can assign admin role.')
+    _ensure_role_can_be_assigned(payload.new_role, me)
 
     user.role = payload.new_role
     await db.commit()
@@ -588,9 +723,33 @@ async def update_profile(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
+    profile_data = payload.model_dump(
+        exclude={'user_id'},
+        exclude_none=True,
+    )
+    if _keycloak_manages_passwords() and profile_data:
+        subject = await ensure_keycloak_subject_for_user(user, db)
+        await update_keycloak_user(
+            subject,
+            email=(
+                str(profile_data['email'])
+                if 'email' in profile_data
+                else None
+            ),
+            given_name=(
+                str(profile_data['given_name'])
+                if 'given_name' in profile_data
+                else None
+            ),
+            family_name=(
+                str(profile_data['family_name'])
+                if 'family_name' in profile_data
+                else None
+            ),
+        )
     await create_or_update_profile(
         user,
-        data=payload.model_dump(exclude={'user_id'}, exclude_none=True),
+        data=profile_data,
         db=db,
     )
     return {'message': 'User profile updated successfully.'}

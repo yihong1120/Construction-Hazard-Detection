@@ -396,10 +396,10 @@ configure_mobile_client() {
 
 configure_user_linker_service_account() {
     # This client is never exposed to Flutter. Its credentials are held by the
-    # Visionnaire API, which always derives the target Keycloak user from a
-    # freshly verified bearer token. ``manage-users`` is needed by Keycloak's
-    # supported federated-identity Admin endpoint; no client/realm management
-    # role is assigned.
+    # Visionnaire API, which authorises every target through its own tenant
+    # and group-scoped user-management policy. ``manage-users`` is needed for
+    # Keycloak's supported identity lifecycle and federated-identity Admin
+    # endpoints; no client/realm management role is assigned.
     "$kcadm" add-roles --target-realm "$realm" \
         --uusername service-account-visionnaire-user-linker \
         --cclientid realm-management \

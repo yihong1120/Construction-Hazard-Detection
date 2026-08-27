@@ -103,6 +103,33 @@ class TestUserManagementCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list_users_args.kwargs['group_id'], 3)
         self.assertEqual(list_users_args.kwargs['tenant_id'], _TENANT_ID)
 
+    def test_group_admin_cannot_manage_peer_administrators(self) -> None:
+        """Only ChangDar may appoint or modify a group administrator."""
+        operator = cast(
+            User,
+            SimpleNamespace(
+                group_id=3,
+                tenant_id=_TENANT_ID,
+                role='admin',
+            ),
+        )
+        target = cast(
+            User,
+            SimpleNamespace(
+                group_id=3,
+                tenant_id=_TENANT_ID,
+                role='admin',
+            ),
+        )
+        with (
+            patch.object(services, 'is_super_admin', return_value=False),
+            patch.object(services, 'ensure_admin_with_group'),
+        ):
+            with self.assertRaises(HTTPException) as error:
+                services.ensure_user_management_scope(target, operator)
+
+        self.assertEqual(error.exception.status_code, 403)
+
     async def test_list_all_users_reads_until_the_last_cursor(self) -> None:
         """The array endpoint combines bounded pages without losing rows."""
         operator = cast(User, SimpleNamespace())

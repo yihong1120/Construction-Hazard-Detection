@@ -81,6 +81,8 @@ class UserCreate(BaseModel):
         role: Role assigned to the new user.
         group_id: Optional group assigned to the new user.
         profile: Optional profile created with the user account.
+        force_password_change: Whether the supplied initial password must be
+            replaced on the first Keycloak sign-in.
     """
 
     username: str
@@ -89,6 +91,7 @@ class UserCreate(BaseModel):
     group_id: int | None
     # Administrators may create the optional profile with the account.
     profile: UserProfileBase | None = None
+    force_password_change: bool = True
 
 
 class UserDelete(BaseModel):
@@ -217,6 +220,20 @@ class UserPage(BaseModel):
 
     items: list[UserRead]
     next_cursor: int | None = None
+
+
+class UserManagementCapabilities(BaseModel):
+    """Server-authoritative controls visible in the user-management UI."""
+
+    scope: Literal['all_groups', 'own_group']
+    managed_group_id: int | None = None
+    can_create_users: bool
+    can_reset_passwords: bool
+    can_suspend_users: bool
+    can_delete_users: bool
+    can_manage_groups: bool
+    can_manage_group_features: bool
+    can_assign_group_admins: bool
 
 
 class PendingUserReviewPage(BaseModel):

@@ -9,13 +9,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from examples.auth.config import Settings
 from examples.auth.models import User
 from examples.auth.models import USER_STATUS_ACTIVE
 from examples.auth.models import USER_STATUS_VALUES
+from examples.auth.models import UserIdentity
 from examples.auth.models import UserProfile
+from examples.db_management.services.keycloak_user_management_services import (
+    find_keycloak_user_subject,
+)
 from examples.db_management.services.password_policy import (
     validate_password_minimum,
 )
+
+settings = Settings()
+
+# Keycloak is the only password verifier for accounts created after the OIDC
+# cutover.  The prefix intentionally makes legacy password verification fail
+# closed, including if a caller accidentally reaches an old password route.
+OIDC_MANAGED_PASSWORD_HASH = 'oauth_disabled:keycloak-managed'
 
 
 async def create_user(
@@ -83,6 +95,116 @@ async def create_user(
     except Exception as e:
         await db.rollback()
         raise HTTPException(500, f"Database error: {e}") from e
+
+
+async def create_oidc_managed_user(
+    *,
+    username: str,
+    role: str,
+    group_id: int | None,
+    tenant_id: UUID,
+    keycloak_subject: str,
+    profile: dict[str, Any],
+    db: AsyncSession,
+) -> User:
+    """Persist one Keycloak-managed identity and Visionnaire permissions.
+
+    The caller must provision Keycloak first and compensates by deleting that
+    identity when this transaction fails.  No clear-text or reusable local
+    password exists for these accounts.
+    """
+    try:
+        new_user = User(
+            username=username,
+            password_hash=OIDC_MANAGED_PASSWORD_HASH,
+            role=role,
+            group_id=group_id,
+            tenant_id=tenant_id,
+            status=USER_STATUS_ACTIVE,
+        )
+        db.add(new_user)
+        await db.flush()
+        db.add(UserProfile(user_id=new_user.id, **profile))
+        db.add(
+            UserIdentity(
+                user_id=new_user.id,
+                provider=settings.oidc_identity_provider,
+                provider_user_id=keycloak_subject,
+                email=profile['email'],
+                email_verified=True,
+                display_name=(
+                    f"{profile['family_name']} {profile['given_name']}"
+                ).strip(),
+            ),
+        )
+        await db.commit()
+        await db.refresh(new_user, attribute_names=['profile', 'group'])
+        return new_user
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail='username_or_email_already_exists',
+        ) from exc
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail='user_identity_persistence_failed',
+        ) from exc
+
+
+async def keycloak_subject_for_user(
+    user: User,
+    db: AsyncSession,
+) -> str | None:
+    """Return the immutable Keycloak subject linked to a local user."""
+    return await db.scalar(
+        select(UserIdentity.provider_user_id).where(
+            UserIdentity.user_id == user.id,
+            UserIdentity.provider == settings.oidc_identity_provider,
+        ),
+    )
+
+
+async def ensure_keycloak_subject_for_user(
+    user: User,
+    db: AsyncSession,
+) -> str:
+    """Return a linked Keycloak subject, recovering a legacy name mapping.
+
+    Existing users were migrated before every database row necessarily
+    received a ``UserIdentity`` record.  An administrator may safely repair
+    that missing link only by exact username lookup in the configured realm.
+    """
+    subject = await keycloak_subject_for_user(user, db)
+    if subject is not None:
+        return subject
+    subject = await find_keycloak_user_subject(user.username)
+    if subject is None:
+        raise HTTPException(
+            status_code=409,
+            detail='keycloak_identity_not_linked',
+        )
+    db.add(
+        UserIdentity(
+            user_id=user.id,
+            provider=settings.oidc_identity_provider,
+            provider_user_id=subject,
+            email=None,
+            email_verified=False,
+            display_name=None,
+        ),
+    )
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail='keycloak_identity_not_linked',
+        ) from exc
+    return subject
 
 
 async def list_users(

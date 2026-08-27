@@ -49,6 +49,21 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.current_user.username = 'testuser'
         self.current_user.role = 'admin'
         self.current_user.group_id = 10
+        # Most existing router tests verify the legacy branch in isolation.
+        # Dedicated tests below exercise Keycloak-managed administration.
+        self.keycloak_passwords = patch.object(
+            users,
+            '_keycloak_manages_passwords',
+            return_value=False,
+        )
+        self.keycloak_passwords.start()
+        self.addCleanup(self.keycloak_passwords.stop)
+        self.local_password_management = patch.object(
+            users,
+            'require_local_password_management',
+        )
+        self.local_password_management.start()
+        self.addCleanup(self.local_password_management.stop)
 
     @patch('examples.db_management.routers.users.create_user')
     async def test_add_user(
@@ -105,6 +120,189 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.group.name, 'group1')
         if response.profile is not None:
             self.assertEqual(response.profile.email, 'test@example.com')
+
+    async def test_add_user_provisions_keycloak_identity_when_enabled(
+        self,
+    ) -> None:
+        """OIDC-created users receive a linked Keycloak subject, not a hash."""
+        profile = UserProfileBase(
+            family_name='Example',
+            given_name='Alice',
+            email='alice@example.com',
+        )
+        payload = UserCreate(
+            username='alice',
+            password='safe-password',
+            role='user',
+            group_id=10,
+            profile=profile,
+        )
+        new_user = SimpleNamespace(id=42)
+        expected = MagicMock()
+
+        with (
+            patch.object(
+                users,
+                '_keycloak_manages_passwords',
+                return_value=True,
+            ),
+            patch.object(
+                users,
+                'provision_keycloak_user',
+                AsyncMock(return_value='keycloak-subject'),
+            ) as provision,
+            patch.object(
+                users,
+                'create_oidc_managed_user',
+                AsyncMock(return_value=new_user),
+            ) as create_oidc_user,
+            patch.object(
+                users,
+                'list_site_ids_for_group',
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                users,
+                'load_user_read',
+                AsyncMock(return_value=expected),
+            ),
+            patch.object(users, 'invalidate_effective_site_cache'),
+        ):
+            result = await users.add_user(
+                payload,
+                self.db,
+                self.current_user,
+            )
+
+        self.assertIs(result, expected)
+        provision.assert_awaited_once_with(
+            username='alice',
+            password='safe-password',
+            email='alice@example.com',
+            given_name='Alice',
+            family_name='Example',
+            force_password_change=True,
+        )
+        create_oidc_user.assert_awaited_once()
+        call = create_oidc_user.await_args
+        assert call is not None
+        self.assertEqual(
+            call.kwargs['keycloak_subject'],
+            'keycloak-subject',
+        )
+
+    async def test_admin_password_reset_uses_keycloak_when_enabled(
+        self,
+    ) -> None:
+        """An admin reset writes only Keycloak's credential store."""
+        target = MagicMock(username='member', role='user', group_id=10)
+        payload = UpdatePasswordById(
+            user_id=7,
+            new_password='safe-password',
+        )
+        with (
+            patch.object(
+                users,
+                '_keycloak_manages_passwords',
+                return_value=True,
+            ),
+            patch.object(
+                users,
+                'get_user_by_id',
+                AsyncMock(return_value=target),
+            ),
+            patch.object(users, 'ensure_not_super'),
+            patch.object(users, 'ensure_user_management_scope'),
+            patch.object(
+                users,
+                'ensure_keycloak_subject_for_user',
+                AsyncMock(return_value='keycloak-subject'),
+            ),
+            patch.object(
+                users,
+                'reset_keycloak_password',
+                AsyncMock(),
+            ) as reset_password,
+        ):
+            response = await users.admin_update_pwd_by_id(
+                payload,
+                self.db,
+                self.current_user,
+            )
+
+        reset_password.assert_awaited_once_with(
+            'keycloak-subject',
+            password='safe-password',
+            temporary=True,
+        )
+        self.db.commit.assert_awaited_once()
+        self.assertEqual(
+            response['message'],
+            'Password updated successfully by user ID.',
+        )
+
+    async def test_user_status_disables_keycloak_identity_when_enabled(
+        self,
+    ) -> None:
+        """Suspending a local user also blocks future Keycloak sign-ins."""
+        target = MagicMock(username='member', role='user', group_id=10)
+        payload = SetUserStatus(user_id=7, status='suspended')
+        with (
+            patch.object(
+                users,
+                '_keycloak_manages_passwords',
+                return_value=True,
+            ),
+            patch.object(
+                users,
+                'get_user_by_id',
+                AsyncMock(return_value=target),
+            ),
+            patch.object(users, 'ensure_not_super'),
+            patch.object(users, 'ensure_user_management_scope'),
+            patch.object(
+                users,
+                'ensure_keycloak_subject_for_user',
+                AsyncMock(return_value='keycloak-subject'),
+            ),
+            patch.object(
+                users,
+                'set_keycloak_user_enabled',
+                AsyncMock(),
+            ) as set_enabled,
+            patch.object(users, 'set_user_status', AsyncMock()),
+        ):
+            await users.update_user_status(
+                payload,
+                self.db,
+                self.current_user,
+            )
+
+        set_enabled.assert_awaited_once_with(
+            'keycloak-subject',
+            enabled=False,
+        )
+
+    async def test_management_capabilities_distinguish_super_admin_scope(
+        self,
+    ) -> None:
+        """Flutter receives server-derived controls rather than name checks."""
+        group_admin_capabilities = await users.user_management_capabilities(
+            self.current_user,
+        )
+        self.assertEqual(group_admin_capabilities.scope, 'own_group')
+        self.assertEqual(group_admin_capabilities.managed_group_id, 10)
+        self.assertFalse(group_admin_capabilities.can_manage_groups)
+        self.assertFalse(group_admin_capabilities.can_assign_group_admins)
+
+        self.current_user.username = 'changdar'
+        super_admin_capabilities = await users.user_management_capabilities(
+            self.current_user,
+        )
+        self.assertEqual(super_admin_capabilities.scope, 'all_groups')
+        self.assertIsNone(super_admin_capabilities.managed_group_id)
+        self.assertTrue(super_admin_capabilities.can_manage_groups)
+        self.assertTrue(super_admin_capabilities.can_assign_group_admins)
 
     @patch(
         'examples.db_management.services.user_management_services.'
@@ -928,6 +1126,13 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             role='admin',
         )
         self.db = AsyncMock()
+        self.keycloak_passwords = patch.object(
+            users,
+            '_keycloak_manages_passwords',
+            return_value=False,
+        )
+        self.keycloak_passwords.start()
+        self.addCleanup(self.keycloak_passwords.stop)
 
     async def test_group_lookup_and_scope_failures(self) -> None:
         """Missing groups and cross-group actions return their HTTP errors."""

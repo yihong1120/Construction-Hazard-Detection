@@ -42,6 +42,82 @@ Web 使用 BFF，不在瀏覽器內保存或讀取 OAuth token。
 
 必須移除的 Web 程式碼：帳號密碼表單送往 `/login` 或 `/bff/auth/login`、hCaptcha Flutter／JavaScript 元件、`X-HCaptcha-Bypass-Key`、將 OAuth token 存入 LocalStorage／IndexedDB，以及舊 Google、Apple、refresh-token **直接**登入入口。
 
+## Visionnaire 使用者與群組管理
+
+Keycloak Account Console 是**個人自助**頁面，只能修改自己的密碼、MFA、個人資料與已連結
+帳號；它不是 Visionnaire 的使用者管理後台。Flutter 的 `/users` 必須保留為 Visionnaire
+自己的管理頁面，絕不可從 App 直接呼叫 Keycloak Admin API。Web 走 BFF；iOS／Android 使用
+自己的 OIDC bearer token 直接呼叫 Visionnaire API。
+
+進入管理頁後，Web 先呼叫：
+
+```http
+GET /bff/db_management/admin/capabilities
+```
+
+iOS／Android 呼叫等價的：
+
+```http
+GET /hazard/api/db_management/admin/capabilities
+Authorization: Bearer <access token>
+```
+
+回應是後端判定的 UI 能力，例如：
+
+```json
+{
+  "scope": "all_groups",
+  "managed_group_id": null,
+  "can_create_users": true,
+  "can_reset_passwords": true,
+  "can_suspend_users": true,
+  "can_delete_users": true,
+  "can_manage_groups": true,
+  "can_manage_group_features": true,
+  "can_assign_group_admins": true
+}
+```
+
+不得在 Flutter 以帳號名稱或 Keycloak realm role 推斷 ChangDar 身分。前端只依此能力顯示
+控制項，後端仍會在每一個請求再次授權。
+
+| 操作人 | 可見範圍與可執行操作 |
+| --- | --- |
+| ChangDar（super admin） | 所有群組、使用者、工地範圍與功能權限；可建立／修改群組，並在指定群組建立或任命 `admin`。 |
+| 群組 admin | 僅自己的群組與其中一般成員；可建立、修改、停用及重設該群組一般成員帳號，但不可任命、降級或修改任何 `admin`，也不可管理群組定義或功能權限。 |
+
+管理頁不得顯示 `Read-only in this client` 這類全域唯讀提示。若能力不足，只隱藏或停用該
+單一操作並說明範圍限制；例如群組 admin 不應看到「管理所有群組」或「任命群組管理員」。
+
+使用者清單使用 `GET /bff/db_management/admin/users`（cursor 分頁）；群組清單使用
+`GET /bff/db_management/list_groups`。Web 的每個變更操作都先取得 CSRF token，並用
+`X-CSRF-Token` 呼叫下列 BFF 路徑；iOS／Android 將 `/bff` 替換為
+`/hazard/api`、使用 bearer token，且不傳 CSRF header：
+
+```text
+POST   /bff/db_management/add_user
+PUT    /bff/db_management/admin_update_password_userid
+PUT    /bff/db_management/update_user_role
+PUT    /bff/db_management/update_user_group
+PUT    /bff/db_management/set_user_status
+PUT    /bff/db_management/update_user_profile
+DELETE /bff/db_management/delete_user
+
+POST   /bff/db_management/create_group
+PUT    /bff/db_management/update_group
+DELETE /bff/db_management/delete_group
+POST   /bff/db_management/update_group_feature
+```
+
+建立使用者時請送完整 `profile`（email、given name、family name）、初始 `password`、
+`group_id` 與 `role`。新欄位 `force_password_change` 預設為 `true`；應提供管理者核取方塊，
+讓初始密碼或管理員重設密碼後，使用者在 Keycloak 下次登入時必須更新。密碼只會經 HTTPS
+送至 Visionnaire BFF，再由後端寫入 Keycloak；Flutter 不得保存、記錄或重送密碼。
+
+`role: "admin"` 的選項只在 `can_assign_group_admins=true` 時顯示。所有群組、角色、工地
+範圍與功能權限仍由 Visionnaire 資料庫管理；Keycloak 只管理 identity、登入、密碼、MFA 與
+SSO session。
+
 ## Flutter iOS／Android
 
 Native 的帳密／MFA 登入仍使用系統瀏覽器與 Authorization Code + PKCE。不要使用

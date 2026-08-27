@@ -286,6 +286,14 @@ def ensure_user_management_scope(
     if is_super_admin(operator):
         return
     ensure_admin_with_group(operator)
+    # A group administrator manages members, not peer administrators.  Only
+    # ChangDar may appoint, demote, suspend, reset, or otherwise change an
+    # administrator account.
+    if getattr(target, 'role', None) == 'admin':
+        raise HTTPException(
+            status_code=403,
+            detail='Only super admin can manage administrator accounts.',
+        )
     target_tenant_id = getattr(target, 'tenant_id', None)
     operator_tenant_id = getattr(operator, 'tenant_id', None)
     if (
