@@ -23,6 +23,10 @@ AUTH_PREFIX = 'bff:session'
 MEDIA_PREFIX = 'media:session'
 MEDIA_PUBLIC_PREFIX = 'media:public'
 MEDIA_PARENT_PREFIX = 'media:parent'
+# Browser BFF sessions use ordinary OIDC refresh tokens.  They therefore share
+# one online Keycloak SSO session with the Account Console instead of keeping
+# an independent offline login alive after browser SSO has expired.
+OIDC_ONLINE_SSO_SESSION_MODE = 'online_sso_v1'
 AUTH_SESSION_TTL_SECONDS = int(
     os.getenv('BFF_SESSION_TTL_SECONDS', str(30 * 24 * 3600)),
 )
@@ -153,6 +157,8 @@ async def create_auth_session(
         'updated_at': now,
         'revoked': False,
     }
+    if data['auth_provider'] == 'oidc':
+        data['oidc_session_mode'] = OIDC_ONLINE_SSO_SESSION_MODE
     # BFF sessions retain the same non-secret deployment contract as their
     # tokens.  It is checked before reuse and refresh, so deployment changes
     # force a fresh browser sign-in as well.

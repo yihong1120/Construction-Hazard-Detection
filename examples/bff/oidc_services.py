@@ -156,7 +156,11 @@ async def oidc_login_redirect(
         'code_challenge_method': 'S256',
         'redirect_uri': settings.oidc_web_redirect_uri,
         'response_type': 'code',
-        'scope': 'openid profile email offline_access',
+        # A browser BFF is an online client, not a background worker.  An
+        # ordinary refresh token keeps the browser's Keycloak SSO session and
+        # Account Console in step; ``offline_access`` would outlive that SSO
+        # session and cause an unexpected second login in the console.
+        'scope': 'openid profile email',
         'state': state,
     }
     if provider_hint is not None:

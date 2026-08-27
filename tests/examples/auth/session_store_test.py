@@ -24,6 +24,7 @@ from examples.auth.session_store import get_media_session_by_id
 from examples.auth.session_store import media_session_cameras
 from examples.auth.session_store import media_session_key
 from examples.auth.session_store import MEDIA_SESSION_TTL_SECONDS
+from examples.auth.session_store import OIDC_ONLINE_SSO_SESSION_MODE
 from examples.auth.session_store import renew_media_session
 from examples.auth.session_store import touch_auth_session
 from examples.bff.proxy import resolve_upstream
@@ -284,6 +285,27 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             self.redis.ttls[auth_session_key(session_id)],
             AUTH_SESSION_TTL_SECONDS,
+        )
+
+    async def test_oidc_session_records_the_online_sso_mode(self) -> None:
+        """Browser OIDC sessions must not be represented by offline tokens."""
+        access = jwt_access.create_access_token(_access_subject())
+        refresh = jwt_refresh.create_access_token(_refresh_subject())
+
+        _, session = await create_auth_session(
+            self.redis,  # type: ignore[arg-type]
+            {
+                'access_token': access,
+                'auth_provider': 'oidc',
+                'refresh_token': refresh,
+                'feature_names': [],
+            },
+            {'id': 1, 'username': 'alice'},
+        )
+
+        self.assertEqual(
+            session['oidc_session_mode'],
+            OIDC_ONLINE_SSO_SESSION_MODE,
         )
 
     async def test_parent_logout_revokes_media_without_revoking_auth_early(

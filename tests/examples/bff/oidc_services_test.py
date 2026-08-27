@@ -84,6 +84,7 @@ class TestBffOidcServices(unittest.IsolatedAsyncioTestCase):
         query = parse_qs(urlsplit(response.headers['location']).query)
         self.assertEqual(query['code_challenge_method'], ['S256'])
         self.assertEqual(query['client_id'], ['visionnaire-web'])
+        self.assertEqual(query['scope'], ['openid profile email'])
         state = query['state'][0]
         raw = await self.redis.get(oidc_services._state_key(state))
         assert raw is not None

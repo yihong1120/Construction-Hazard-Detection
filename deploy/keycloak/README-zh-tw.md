@@ -28,6 +28,11 @@ PostgreSQL 管理者在初次部署時使用；不需要授予 Keycloak 或 Visi
 則一定依序通過「帳密 → hCaptcha」驗證。hCaptcha secret 只存在容器環境變數，
 不會寫入 realm JSON、Keycloak 管理設定或 Flutter 前端。
 
+Web BFF 必須使用一般 OIDC refresh token，不得請求 `offline_access`。一般 refresh 會延長
+線上 SSO session，讓 Visionnaire 與 Account Console 共用同一次登入；offline token 的用途
+是無人背景工作，會在瀏覽器 SSO 已失效後仍保持 API session，造成使用者開啟 Account Console
+時被意外要求再次登入。
+
 Provider 對 hCaptcha 的 `siteverify` 會帶入 server-side secret、一次性 challenge token
 與預期 site key；外部服務異常、token 無效或 site key 不相符時會 fail closed，絕不
 略過真人驗證。網域限制必須在 hCaptcha Dashboard 的 sitekey **Domain Allowlist** 設定

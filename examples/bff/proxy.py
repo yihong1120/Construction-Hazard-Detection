@@ -24,6 +24,7 @@ from examples.auth.session_store import acquire_refresh_lock
 from examples.auth.session_store import auth_tokens
 from examples.auth.session_store import delete_auth_session
 from examples.auth.session_store import get_auth_session
+from examples.auth.session_store import OIDC_ONLINE_SSO_SESSION_MODE
 from examples.auth.session_store import release_refresh_lock
 from examples.auth.session_store import save_auth_tokens
 from examples.bff.oidc_services import refresh_oidc_tokens
@@ -364,6 +365,15 @@ async def get_proxy_access_token(
     """
     session = await get_auth_session(redis, session_id)
     if session is None:
+        raise HTTPException(status_code=401, detail='app_session_expired')
+    if (
+        session.get('auth_provider') == 'oidc'
+        and session.get('oidc_session_mode') != OIDC_ONLINE_SSO_SESSION_MODE
+    ):
+        # Sessions minted before the BFF moved away from offline tokens cannot
+        # participate in browser SSO. Clear only that opaque BFF session so
+        # the next application navigation performs one normal Keycloak login.
+        await delete_auth_session(redis, session_id)
         raise HTTPException(status_code=401, detail='app_session_expired')
 
     access_token, refresh_token = auth_tokens(session)

@@ -52,6 +52,11 @@ Keycloak access token 的簽章、issuer 和 `OIDC_AUDIENCE`，再以 Keycloak `
 `user_identities(provider=keycloak)`；本機的 tenant、角色、群組、site 與 feature 權限仍是
 唯一授權來源。
 
+Web BFF 只請求一般 refresh token，**不請求** `offline_access`。每次 refresh 都會延長
+同一個 Keycloak 線上 SSO session，因此 Visionnaire 與 Keycloak Account Console 在同一個
+瀏覽器中不會互相要求第二次登入。SSO idle 或最大期限到期時，兩者會一起要求重新驗證；這是
+帳號中心與主 App 共用安全邊界，而不是讓 BFF 以離線 token 無期限維持登入。
+
 `OIDC_AUDIENCE` 必須是 Visionnaire 專用的 Keycloak audience（建議
 `visionnaire-api`）。不要把它加到 Open WebUI client 的 token；Open WebUI 與
 Visionnaire 必須使用不同 client，否則 Open WebUI token 可能被誤用於 Visionnaire API。

@@ -465,6 +465,28 @@ def test_get_proxy_access_token_handles_session_and_lock_outcomes(
     assert session is newer
 
 
+def test_get_proxy_access_token_reauthenticates_old_offline_oidc_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-cutover offline BFF session cannot bypass browser SSO."""
+    old_session = _session()
+    old_session['auth_provider'] = 'oidc'
+    delete = AsyncMock()
+    redis = AsyncMock()
+    monkeypatch.setattr(
+        proxy,
+        'get_auth_session',
+        AsyncMock(return_value=old_session),
+    )
+    monkeypatch.setattr(proxy, 'delete_auth_session', delete)
+
+    with pytest.raises(HTTPException, match='app_session_expired') as raised:
+        _run(proxy.get_proxy_access_token(redis, 'session'))
+
+    assert raised.value.status_code == 401
+    delete.assert_awaited_once_with(redis, 'session')
+
+
 def test_get_proxy_access_token_waits_or_reports_busy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
