@@ -124,6 +124,22 @@ class TestDeps(unittest.IsolatedAsyncioTestCase):
         """Test is_super_admin returns True for super admin."""
         self.assertTrue(deps.is_super_admin(self.super_admin_user))
 
+    async def test_is_super_admin_accepts_keycloak_username_canonicalisation(
+        self,
+    ) -> None:
+        """Keycloak's lower-case username retains ChangDar's authority."""
+        migrated_super_admin = User(
+            id=2,
+            username='changdar',
+            role='super_admin',
+            group_id=None,
+        )
+
+        self.assertTrue(deps.is_super_admin(migrated_super_admin))
+        with self.assertRaises(HTTPException) as error:
+            deps.ensure_not_super(migrated_super_admin)
+        self.assertEqual(error.exception.status_code, 403)
+
     async def test_is_super_admin_false(self) -> None:
         """Test is_super_admin returns False for non-super admin."""
         self.assertFalse(deps.is_super_admin(self.admin_user))

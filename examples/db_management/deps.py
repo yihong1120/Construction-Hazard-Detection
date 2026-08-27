@@ -117,9 +117,15 @@ def is_super_admin(user: _NamedRoleUser) -> bool:
         user: User-like object containing a username and role.
 
     Returns:
-        ``True`` only for the configured administrator with the admin role.
+        ``True`` only for the configured administrator with an administrator
+        role. Keycloak canonicalises usernames to lower case in many realm
+        configurations, while the original Visionnaire record used
+        ``ChangDar``.
     """
-    return user.username == SUPER_ADMIN_NAME and user.role == 'admin'
+    return (
+        user.username.casefold() == SUPER_ADMIN_NAME.casefold()
+        and user.role in {'admin', 'super_admin'}
+    )
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
@@ -195,7 +201,7 @@ def ensure_not_super(target: User) -> None:
     Raises:
         HTTPException: If the target is the configured super administrator.
     """
-    if target.username == SUPER_ADMIN_NAME:
+    if target.username.casefold() == SUPER_ADMIN_NAME.casefold():
         raise HTTPException(
             status_code=403,
             detail='Cannot operate on super admin',
