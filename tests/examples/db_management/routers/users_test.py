@@ -410,22 +410,43 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
                 'User profile updated successfully.',
             )
 
-    @patch('examples.db_management.routers.users.list_users_for_operator')
+    @patch('examples.db_management.routers.users.list_all_users_for_operator')
     async def test_list_users(
+        self,
+        list_all_users_for_operator: AsyncMock,
+    ) -> None:
+        """The established route delegates to its array-listing service."""
+        expected: list[UserRead] = []
+        list_all_users_for_operator.return_value = expected
+        result = await users.list_users(self.db, self.current_user)
+        self.assertIs(result, expected)
+        list_all_users_for_operator.assert_awaited_once_with(
+            self.current_user,
+            self.db,
+        )
+
+    @patch('examples.db_management.routers.users.list_users_for_operator')
+    async def test_list_users_page(
         self,
         list_users_for_operator: AsyncMock,
     ) -> None:
-        """The HTTP handler only delegates to the listing application
-        service."""
+        """The explicit administrator route delegates to the page service."""
         expected = users.UserPage(items=[], next_cursor=None)
         list_users_for_operator.return_value = expected
-        result = await users.list_users(self.db, self.current_user)
+
+        result = await users.list_users_page(
+            self.db,
+            self.current_user,
+            cursor=20,
+            page_size=25,
+        )
+
         self.assertIs(result, expected)
         list_users_for_operator.assert_awaited_once_with(
             self.current_user,
             self.db,
-            cursor=None,
-            page_size=50,
+            cursor=20,
+            page_size=25,
         )
 
     async def test_list_pending_users(self) -> None:
@@ -1138,21 +1159,19 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_super_admin_lists_all_users(self) -> None:
-        """Super administrators delegate to the same scoped-list service."""
-        expected = users.UserPage(items=[], next_cursor=None)
+        """Super administrators receive the complete legacy user array."""
+        expected: list[UserRead] = []
         with patch.object(
             users,
-            'list_users_for_operator',
+            'list_all_users_for_operator',
             AsyncMock(return_value=expected),
-        ) as list_users_for_operator:
+        ) as list_all_users_for_operator:
             result = await users.list_users(self.db, self.admin)
 
         self.assertIs(result, expected)
-        list_users_for_operator.assert_awaited_once_with(
+        list_all_users_for_operator.assert_awaited_once_with(
             self.admin,
             self.db,
-            cursor=None,
-            page_size=50,
         )
 
 

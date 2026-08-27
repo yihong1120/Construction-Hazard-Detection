@@ -58,6 +58,9 @@ from examples.db_management.services.user_management_services import (
     get_group_or_404,
 )
 from examples.db_management.services.user_management_services import (
+    list_all_users_for_operator,
+)
+from examples.db_management.services.user_management_services import (
     list_users_for_operator,
 )
 from examples.db_management.services.user_management_services import (
@@ -284,16 +287,32 @@ async def review_user_signup(
 
 @router.get(
     '/list_users',
-    response_model=UserPage,
+    response_model=list[UserRead],
 )
 async def list_users(
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(require_admin),
+) -> list[UserRead]:
+    """Return the scoped user array required by deployed clients.
+
+    Pagination lives at ``/admin/users`` so this established endpoint never
+    changes its JSON top-level type.
+    """
+    return await list_all_users_for_operator(me, db)
+
+
+@router.get('/admin/users', response_model=UserPage)
+async def list_users_page(
     db: AsyncSession = Depends(get_db),
     me: User = Depends(require_admin),
     cursor: Annotated[int | None, Query(ge=0)] = None,
     page_size: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> UserPage:
-    """Delegate the paginated, scoped user listing to its application
-    service."""
+    """Return one cursor-based, administrator-scoped user page.
+
+    New management clients should use this endpoint and preserve
+    ``next_cursor`` when loading later pages.
+    """
     return await list_users_for_operator(
         me,
         db,

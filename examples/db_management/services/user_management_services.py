@@ -68,6 +68,39 @@ async def list_users_for_operator(
     )
 
 
+async def list_all_users_for_operator(
+    operator: User,
+    db: AsyncSession,
+) -> list[UserRead]:
+    """Return every user visible to an operator using bounded keyset reads.
+
+    The long-standing ``/list_users`` contract is an array.  Keep that
+    contract for deployed clients while the explicit administrator endpoint
+    exposes the cursor-based API for screens that need pagination.
+
+    Args:
+        operator: Authenticated administrator whose scope is enforced.
+        db: Database session used to retrieve the user pages.
+
+    Returns:
+        All user records visible to the administrator, ordered by identifier.
+    """
+    cursor: int | None = None
+    users: list[UserRead] = []
+
+    while True:
+        page = await list_users_for_operator(
+            operator,
+            db,
+            cursor=cursor,
+            page_size=100,
+        )
+        users.extend(page.items)
+        if page.next_cursor is None:
+            return users
+        cursor = page.next_cursor
+
+
 async def load_user_read(user_id: int, db: AsyncSession) -> UserRead:
     """Load a user and relations required by the public response schema.
 

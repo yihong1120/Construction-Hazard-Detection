@@ -103,6 +103,33 @@ class TestUserManagementCoverage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list_users_args.kwargs['group_id'], 3)
         self.assertEqual(list_users_args.kwargs['tenant_id'], _TENANT_ID)
 
+    async def test_list_all_users_reads_until_the_last_cursor(self) -> None:
+        """The array endpoint combines bounded pages without losing rows."""
+        operator = cast(User, SimpleNamespace())
+        first = UserPage(items=[_user_read()], next_cursor=1)
+        second = UserPage(items=[], next_cursor=None)
+
+        with patch.object(
+            services,
+            'list_users_for_operator',
+            new=AsyncMock(side_effect=[first, second]),
+        ) as list_users_for_operator:
+            result = await services.list_all_users_for_operator(
+                operator,
+                cast(AsyncSession, SimpleNamespace()),
+            )
+
+        self.assertEqual(result, first.items)
+        self.assertEqual(list_users_for_operator.await_count, 2)
+        self.assertEqual(
+            list_users_for_operator.await_args_list[0].kwargs,
+            {'cursor': None, 'page_size': 100},
+        )
+        self.assertEqual(
+            list_users_for_operator.await_args_list[1].kwargs,
+            {'cursor': 1, 'page_size': 100},
+        )
+
     async def test_signup_requires_resolved_deployment_when_request_is_real(
         self,
     ) -> None:

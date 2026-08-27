@@ -74,6 +74,7 @@ class AppIntegrationTest(unittest.TestCase):
             '/list_sites',
             '/list_stream_configs',
             '/list_users',
+            '/admin/users',
             '/sites/{site_id}/stream-config',
             '/approve_user_signup',
             '/signup',
