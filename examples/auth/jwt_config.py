@@ -18,9 +18,11 @@ from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
 from redis.exceptions import RedisError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.config import Settings
 from examples.auth.database import AsyncSessionLocal
+from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.oidc import OidcTokenVerifier
 from examples.auth.oidc_identity import subject_from_oidc_identity
@@ -239,6 +241,73 @@ class PyJWTBearer:
             return self.decode_token(token)
         return self.decode_token(token, verify_exp=False)
 
+    async def decode_access_token_for_deployment(
+        self,
+        token: str,
+        db: AsyncSession,
+        binding: DeploymentBinding,
+    ) -> JwtAuthorizationCredentials:
+        """Verify one access token and map it to local deployment grants.
+
+        Both regular API dependencies and lower-level services (such as media
+        playback) need the same OIDC subject mapping.  Keeping it here avoids
+        accidentally applying the legacy HMAC JWT decoder to a Keycloak token.
+        The caller remains responsible for checking the mapped JTI against the
+        revocation store.
+        """
+        if self.token_use != 'access':
+            raise InvalidTokenError('Invalid token use')
+
+        oidc_token = bool(
+            self.oidc_verifier is not None
+            and self.oidc_verifier.matches_configured_issuer(token),
+        )
+        if settings.oidc_passwords_managed_externally and not oidc_token:
+            raise InvalidTokenError('Legacy access tokens are disabled')
+
+        if oidc_token:
+            assert self.oidc_verifier is not None
+            payload = await self.oidc_verifier.decode_access_token(token)
+            subject = await subject_from_oidc_identity(
+                db,
+                payload,
+                provider=self.oidc_identity_provider,
+                binding=binding,
+            )
+        else:
+            payload = self.decode_token(
+                token,
+                expected_issuer=binding.issuer,
+                expected_audience=binding.audience,
+            )
+            subject = access_token_subject_from_payload(payload)
+
+        tenant_id = subject.get('tenant_id')
+        deployment_id = subject.get('deployment_id')
+        config_revision = subject.get('config_revision')
+        if (
+            not isinstance(tenant_id, str)
+            or not isinstance(deployment_id, str)
+            or not isinstance(config_revision, int)
+            or str(binding.tenant_id) != tenant_id
+            or str(binding.deployment_id) != deployment_id
+            or binding.config_revision != config_revision
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    'code': 'deployment_configuration_changed',
+                    'message': (
+                        'Deployment configuration changed; sign in again.'
+                    ),
+                },
+            )
+        return JwtAuthorizationCredentials(
+            subject=subject,
+            payload=payload,
+            token=token,
+        )
+
     async def __call__(self, request: Request) -> JwtAuthorizationCredentials:
         """Perform call.
 
@@ -258,65 +327,25 @@ class PyJWTBearer:
             if token is None:
                 raise credentials_exception
             binding = None
-            oidc_token = bool(
-                self.token_use == 'access'
-                and self.oidc_verifier is not None
-                and self.oidc_verifier.matches_configured_issuer(token),
-            )
-            if (
-                self.token_use == 'access'
-                and settings.oidc_passwords_managed_externally
-                and not oidc_token
-            ):
-                raise credentials_exception
             if isinstance(request, Request):
                 async with AsyncSessionLocal() as db:
                     # Resolve from the actual API origin before token decoding;
                     # neither a client header nor a body field can select it.
                     binding = await resolve_request_deployment(request, db)
-                    if oidc_token:
-                        assert self.oidc_verifier is not None
-                        payload = await self.oidc_verifier.decode_access_token(
+                    credentials = (
+                        await self.decode_access_token_for_deployment(
                             token,
-                        )
-                        subject = await subject_from_oidc_identity(
                             db,
-                            payload,
-                            provider=self.oidc_identity_provider,
-                            binding=binding,
+                            binding,
                         )
-                    else:
-                        payload = self.decode_token(
-                            token,
-                            expected_issuer=binding.issuer,
-                            expected_audience=binding.audience,
-                        )
-                        subject = access_token_subject_from_payload(payload)
+                    )
+                    payload = credentials.payload
+                    subject = credentials.subject
             else:
                 payload = self.decode_token(token)
                 subject = access_token_subject_from_payload(payload)
             if self.token_use != 'access':
                 raise credentials_exception
-            tenant_id = subject.get('tenant_id')
-            deployment_id = subject.get('deployment_id')
-            config_revision = subject.get('config_revision')
-            if binding is not None and (
-                not isinstance(tenant_id, str)
-                or not isinstance(deployment_id, str)
-                or not isinstance(config_revision, int)
-                or str(binding.tenant_id) != tenant_id
-                or str(binding.deployment_id) != deployment_id
-                or binding.config_revision != config_revision
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        'code': 'deployment_configuration_changed',
-                        'message': (
-                            'Deployment configuration changed; sign in again.'
-                        ),
-                    },
-                )
             redis_client = getattr(request.app.state, 'redis_client', None)
             redis = getattr(redis_client, 'client', None)
             if redis is None:

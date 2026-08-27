@@ -23,6 +23,7 @@ from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import jwt_refresh
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.auth.jwt_config import settings as jwt_settings
 from examples.auth.redis_pool import get_redis_pool
 from examples.auth.session_store import auth_session_key
 from examples.auth.session_store import create_auth_session
@@ -92,6 +93,13 @@ class PlaybackRouterTest(unittest.TestCase):
 
     def setUp(self) -> None:
         """Perform setUp."""
+        self._external_passwords = patch.object(
+            jwt_settings,
+            'oidc_passwords_managed_externally',
+            False,
+        )
+        self._external_passwords.start()
+        self.addCleanup(self._external_passwords.stop)
         app = FastAPI()
         app.include_router(playback_router.router)
         self.redis = FakeRedis()
@@ -464,6 +472,13 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         """Perform setUp."""
+        self._external_passwords = patch.object(
+            jwt_settings,
+            'oidc_passwords_managed_externally',
+            False,
+        )
+        self._external_passwords.start()
+        self.addCleanup(self._external_passwords.stop)
         self.db = MagicMock()
         self.db.scalar = AsyncMock()
         self.redis = MagicMock()
@@ -501,6 +516,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                 await playback._decode_access_token(
                     'bad',
                     self.redis,
+                    self.db,
                     self.binding,
                 )
         self.assertEqual(invalid.exception.status_code, 401)
@@ -523,6 +539,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             credentials = await playback._decode_access_token(
                 'token',
                 self.redis,
+                self.db,
                 self.binding,
             )
         self.assertEqual(credentials.subject, _access_subject())
@@ -543,9 +560,50 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
                 await playback._decode_access_token(
                     'token',
                     self.redis,
+                    self.db,
                     self.binding,
                 )
         self.assertEqual(empty_subject.exception.status_code, 401)
+
+    async def test_bearer_decode_accepts_mapped_oidc_credentials(
+        self,
+    ) -> None:
+        """Playback accepts a Keycloak token through the shared mapper."""
+        verifier = MagicMock()
+        verifier.matches_configured_issuer.return_value = True
+        verifier.decode_access_token = AsyncMock(
+            return_value={
+                'sub': 'keycloak-subject',
+                'iss': 'https://sso.example.com/realms/visionnaire',
+                'jti': 'keycloak-jti',
+            },
+        )
+        credentials = JwtAuthorizationCredentials(
+            subject=cast(AccessTokenSubject, _access_subject()),
+            payload={'jti': 'keycloak-jti'},
+            token='keycloak-token',
+        )
+        with (
+            patch.object(playback.jwt_access, 'oidc_verifier', verifier),
+            patch(
+                'examples.auth.jwt_config.subject_from_oidc_identity',
+                new=AsyncMock(return_value=credentials.subject),
+            ),
+            patch.object(
+                playback,
+                'is_access_token_revoked',
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            resolved = await playback._decode_access_token(
+                'keycloak-token',
+                self.redis,
+                self.db,
+                self.binding,
+            )
+
+        self.assertEqual(resolved.subject, credentials.subject)
+        verifier.decode_access_token.assert_awaited_once_with('keycloak-token')
 
     async def test_bearer_decode_rejects_revoked_and_redis_failures(
         self,
@@ -569,7 +627,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             self.assertRaises(HTTPException) as revoked,
         ):
             await playback._decode_access_token(
-                'token', self.redis, self.binding,
+                'token', self.redis, self.db, self.binding,
             )
         self.assertEqual(revoked.exception.status_code, 401)
 
@@ -587,7 +645,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             self.assertRaises(HTTPException) as unavailable,
         ):
             await playback._decode_access_token(
-                'token', self.redis, self.binding,
+                'token', self.redis, self.db, self.binding,
             )
         self.assertEqual(unavailable.exception.status_code, 503)
 

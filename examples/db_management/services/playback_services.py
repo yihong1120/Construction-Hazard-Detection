@@ -22,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.deployment_context import resolve_request_deployment
-from examples.auth.jwt_config import access_token_subject_from_payload
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.session_store import auth_session_key
@@ -113,6 +112,7 @@ def _bearer_token(request: Request) -> str | None:
 async def _decode_access_token(
     token: str,
     redis: Redis,
+    db: AsyncSession,
     deployment: DeploymentBinding,
 ) -> JwtAuthorizationCredentials:
     """Validate a non-revoked access token for playback.
@@ -129,18 +129,11 @@ async def _decode_access_token(
             unavailable.
     """
     try:
-        payload = jwt_access.decode_token(
+        credentials = await jwt_access.decode_access_token_for_deployment(
             token,
-            expected_issuer=deployment.issuer,
-            expected_audience=deployment.audience,
+            db,
+            deployment,
         )
-        subject = access_token_subject_from_payload(payload)
-        if (
-            subject.get('tenant_id') != str(deployment.tenant_id)
-            or subject.get('deployment_id') != str(deployment.deployment_id)
-            or subject.get('config_revision') != deployment.config_revision
-        ):
-            raise InvalidTokenError('Deployment binding does not match token')
     except InvalidTokenError as exc:
         raise HTTPException(
             status_code=401,
@@ -148,7 +141,10 @@ async def _decode_access_token(
             headers={'WWW-Authenticate': 'Bearer'},
         ) from exc
     try:
-        if await is_access_token_revoked(redis, payload):
+        if await is_access_token_revoked(
+            redis,
+            {'jti': credentials.subject['jti']},
+        ):
             raise HTTPException(
                 status_code=401,
                 detail='Could not validate credentials',
@@ -159,9 +155,7 @@ async def _decode_access_token(
             status_code=503,
             detail='Authentication revocation service unavailable',
         ) from exc
-    return JwtAuthorizationCredentials(
-        subject=subject, payload=payload, token=token,
-    )
+    return credentials
 
 
 async def _resolve_playback_principal(
@@ -185,7 +179,12 @@ async def _resolve_playback_principal(
     deployment = await resolve_request_deployment(request, db)
     bearer = _bearer_token(request)
     if bearer:
-        credentials = await _decode_access_token(bearer, redis, deployment)
+        credentials = await _decode_access_token(
+            bearer,
+            redis,
+            db,
+            deployment,
+        )
         user_id = credentials.subject['user_id']
         return PlaybackPrincipal(
             username=credentials.subject['username'],
@@ -204,7 +203,12 @@ async def _resolve_playback_principal(
         session_id,
         deployment=deployment,
     )
-    credentials = await _decode_access_token(access_token, redis, deployment)
+    credentials = await _decode_access_token(
+        access_token,
+        redis,
+        db,
+        deployment,
+    )
     return PlaybackPrincipal(
         username=credentials.subject['username'],
         user_id=credentials.subject['user_id'],
