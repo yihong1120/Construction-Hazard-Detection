@@ -59,6 +59,12 @@ class CsrfResponse(BaseModel):
     csrf_token: str
 
 
+class BffLogoutResponse(BaseModel):
+    """Return the optional one-use URL for Keycloak browser logout."""
+
+    global_logout_url: str | None = None
+
+
 class BffLoginRequest(UserLogin):
     """Define browser login credentials for a token-private BFF session.
 

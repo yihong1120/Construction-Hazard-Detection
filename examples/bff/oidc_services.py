@@ -24,7 +24,9 @@ from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.models import User
 from examples.auth.oidc import OidcTokenVerifier
 from examples.auth.oidc_identity import subject_from_oidc_identity
+from examples.auth.session_store import consume_oidc_logout_state
 from examples.auth.session_store import create_auth_session
+from examples.auth.session_store import create_oidc_logout_state
 from examples.bff.schemas import UserSummary
 from examples.bff.security import set_session_cookie
 from src.http_client_pool import get_application_http_client
@@ -90,6 +92,15 @@ def _require_web_client() -> None:
         raise HTTPException(
             status_code=503,
             detail='oidc_web_login_not_configured',
+        )
+
+
+def _require_web_logout() -> None:
+    """Fail closed until browser SSO logout is fully configured."""
+    if not settings.oidc_web_logout_configured:
+        raise HTTPException(
+            status_code=503,
+            detail='oidc_web_logout_not_configured',
         )
 
 
@@ -263,6 +274,48 @@ async def refresh_oidc_tokens(refresh_token: str) -> dict[str, Any]:
     assert _access_verifier is not None
     await _access_verifier.decode_access_token(str(payload['access_token']))
     return payload
+
+
+async def create_oidc_global_logout_url(
+    redis: Redis,
+) -> str:
+    """Return an opaque local bridge URL for a Keycloak browser logout.
+
+    The bridge is created only after the CSRF-protected local logout. Keycloak
+    identifies the browser SSO session from its own HttpOnly cookie, so no
+    access, refresh, or ID token needs to reach the browser or redirect URL.
+    """
+    _require_web_logout()
+    state = await create_oidc_logout_state(redis)
+    return f'/bff/auth/oidc/logout?{urlencode({"state": state})}'
+
+
+async def oidc_global_logout_redirect(
+    redis: Redis,
+    *,
+    state: str | None,
+) -> RedirectResponse:
+    """Consume the local bridge and redirect to Keycloak RP logout."""
+    _require_web_logout()
+    if not await consume_oidc_logout_state(redis, state):
+        raise HTTPException(
+            status_code=400, detail='oidc_logout_state_invalid',
+        )
+    query = urlencode(
+        {
+            'client_id': settings.oidc_web_client_id,
+            'post_logout_redirect_uri': (
+                settings.oidc_web_post_logout_redirect_uri
+            ),
+        },
+    )
+    response = RedirectResponse(
+        f'{settings.oidc_web_end_session_endpoint}?{query}',
+        status_code=303,
+    )
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    return response
 
 
 async def complete_oidc_login(

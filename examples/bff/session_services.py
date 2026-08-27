@@ -16,6 +16,7 @@ from examples.auth.session_store import create_auth_session
 from examples.auth.session_store import delete_auth_session
 from examples.auth.session_store import get_auth_session
 from examples.auth.session_store import touch_auth_session
+from examples.bff.oidc_services import create_oidc_global_logout_url
 from examples.bff.proxy import get_proxy_access_token
 from examples.bff.proxy import proxy_request
 from examples.bff.schemas import BffLoginRequest
@@ -264,7 +265,7 @@ async def logout_bff_session(
     response: Response,
     csrf_token: str | None,
     redis: Redis,
-) -> None:
+) -> str | None:
     """Revoke BFF credentials and remove the browser session.
 
     Args:
@@ -275,15 +276,25 @@ async def logout_bff_session(
 
     Raises:
         HTTPException: If the session is absent or CSRF validation fails.
+    Returns:
+        A one-use local URL which completes Keycloak browser logout for an
+        OIDC session, or ``None`` for a legacy/local-only session.
     """
     session_id, session = await _session(request, redis)
     check_csrf(request, session, csrf_token)
+    global_logout_url: str | None = None
+    if session.get('auth_provider') == 'oidc':
+        # Create the one-use bridge before deleting the session that holds
+        # its encrypted ID token.  A configuration failure leaves the user
+        # signed in instead of causing a partial, misleading logout.
+        global_logout_url = await create_oidc_global_logout_url(redis)
     if session.get('auth_provider', 'legacy') == 'legacy':
         access_token, refresh_token = auth_tokens(session)
         await logout_user(refresh_token, f"Bearer {access_token}", redis)
     await delete_auth_session(redis, session_id)
     clear_session_cookie(response)
     response.headers['Cache-Control'] = 'no-store'
+    return global_logout_url
 
 
 async def proxy_bff_request(

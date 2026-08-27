@@ -43,6 +43,11 @@ class TestBffOidcServices(unittest.IsolatedAsyncioTestCase):
                 oidc_web_client_configured=True,
                 oidc_web_client_id='visionnaire-web',
                 oidc_web_client_secret='client-secret',
+                oidc_web_end_session_endpoint=(
+                    'https://sso.example.com/logout'
+                ),
+                oidc_web_logout_configured=True,
+                oidc_web_post_logout_redirect_uri='https://app.example.com/',
                 oidc_web_redirect_uri=(
                     'https://app.example.com/bff/auth/oidc/callback'
                 ),
@@ -203,6 +208,37 @@ class TestBffOidcServices(unittest.IsolatedAsyncioTestCase):
                 self.redis,  # type: ignore[arg-type]
                 state,
             )
+
+    async def test_global_logout_uses_a_one_use_server_side_bridge(
+        self,
+    ) -> None:
+        """The browser receives an opaque route without any token material."""
+        bridge = await oidc_services.create_oidc_global_logout_url(
+            self.redis,  # type: ignore[arg-type]
+        )
+
+        assert bridge is not None
+        self.assertNotIn('token', bridge.lower())
+        state = parse_qs(urlsplit(bridge).query)['state'][0]
+        response = await oidc_services.oidc_global_logout_redirect(
+            self.redis,  # type: ignore[arg-type]
+            state=state,
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers['cache-control'], 'no-store')
+        self.assertEqual(response.headers['referrer-policy'], 'no-referrer')
+        self.assertEqual(
+            parse_qs(urlsplit(response.headers['location']).query)[
+                'client_id'
+            ],
+            ['visionnaire-web'],
+        )
+        with self.assertRaises(HTTPException) as reused:
+            await oidc_services.oidc_global_logout_redirect(
+                self.redis,  # type: ignore[arg-type]
+                state=state,
+            )
+        self.assertEqual(reused.exception.status_code, 400)
 
     async def test_refresh_rejects_invalid_new_access_token(self) -> None:
         """A refresh result is not trusted before API-token validation."""

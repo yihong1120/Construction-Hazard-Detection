@@ -20,6 +20,7 @@ from examples.auth.config import Settings
 settings = Settings()
 
 AUTH_PREFIX = 'bff:session'
+OIDC_LOGOUT_STATE_PREFIX = 'bff:oidc:logout'
 MEDIA_PREFIX = 'media:session'
 MEDIA_PUBLIC_PREFIX = 'media:public'
 MEDIA_PARENT_PREFIX = 'media:parent'
@@ -30,6 +31,7 @@ OIDC_ONLINE_SSO_SESSION_MODE = 'online_sso_v1'
 AUTH_SESSION_TTL_SECONDS = int(
     os.getenv('BFF_SESSION_TTL_SECONDS', str(30 * 24 * 3600)),
 )
+OIDC_LOGOUT_STATE_TTL_SECONDS = 120
 MEDIA_SESSION_TTL_SECONDS = max(
     300,
     min(900, int(os.getenv('MEDIA_SESSION_TTL_SECONDS', '600'))),
@@ -122,6 +124,11 @@ def _jwt_exp(token: str) -> int:
 def auth_session_key(session_id: str) -> str:
     """Build a Redis key without persisting the opaque cookie value."""
     return f"{AUTH_PREFIX}:{_digest(session_id)}"
+
+
+def oidc_logout_state_key(state: str) -> str:
+    """Build a Redis key without persisting a raw OIDC logout state."""
+    return f"{OIDC_LOGOUT_STATE_PREFIX}:{_digest(state)}"
 
 
 def media_session_key(token: str) -> str:
@@ -217,6 +224,30 @@ def auth_tokens(session: Mapping[str, object]) -> tuple[str, str]:
         _decrypt(str(session['access_token_encrypted'])),
         _decrypt(str(session['refresh_token_encrypted'])),
     )
+
+
+async def create_oidc_logout_state(
+    redis: Redis,
+) -> str:
+    """Persist a one-use, token-free bridge for browser SSO logout."""
+    state = secrets.token_urlsafe(32)
+    await redis.set(
+        oidc_logout_state_key(state),
+        b'1',
+        ex=OIDC_LOGOUT_STATE_TTL_SECONDS,
+    )
+    return state
+
+
+async def consume_oidc_logout_state(
+    redis: Redis,
+    state: str | None,
+) -> bool:
+    """Consume a global-logout state exactly once."""
+    if not state:
+        return False
+    raw = await redis.getdel(oidc_logout_state_key(state))
+    return raw == b'1'
 
 
 async def save_auth_tokens(

@@ -28,8 +28,8 @@ Web 使用 BFF，不在瀏覽器內保存或讀取 OAuth token。
 3. 回到 App 後呼叫 `GET /bff/auth/session`；若回傳 `401`，重新導向 `/login`。
 4. Web API 一律使用 `/bff/{service}/...`，並以 `credentials: include` 傳送 HttpOnly session cookie。例如違規列表走 `/bff/violations/...`。
 5. 每個變更狀態的 BFF request 先呼叫 `GET /bff/auth/csrf`，再傳送 `X-CSRF-Token`。不要加 `Authorization` header。
-6. 使用者改密碼或設定 MFA 時，導向 `GET /bff/auth/account`；這會開啟 Keycloak Account Console。Visionnaire 已不再提供密碼修改頁。
-7. App 登出：以 CSRF token 呼叫 `POST /bff/auth/logout`，清掉本 App 的 BFF session。若產品要求全域登出，另依 discovery document 的 `end_session_endpoint` 執行 Keycloak 登出。
+6. 使用者改密碼或設定 MFA 時，使用**同一個頂層瀏覽器視窗**導向 `GET /bff/auth/account`；這會開啟 Keycloak Account Console。它和 Visionnaire 共用 Keycloak 的瀏覽器 SSO session，正常情況下不會再次要求帳密。Visionnaire 已不再提供密碼修改頁。
+7. App 登出必須是全域登出：以 CSRF token 呼叫 `POST /bff/auth/logout`。回應為 `{ "global_logout_url": "/bff/auth/oidc/logout?state=..." }` 時，立刻用 `window.location.assign(global_logout_url)`（不可用 `fetch` 跟隨 redirect，也不可自行組 Keycloak logout URL）。此一次性 URL 會先清除 BFF cookie，再由後端以 Keycloak 自己的 HttpOnly SSO cookie 導向 RP-initiated logout，結束瀏覽器 SSO，最後回到網站根目錄；access、refresh、ID token 都不會進入 Flutter Web。回應為 `null` 僅代表遷移期的舊本機 session；照常清除前端狀態即可。
 
 若產品需要保留 Visionnaire Web 的「使用 Google／Apple 繼續」按鈕，按鈕只能導向下列 BFF URL，不能使用 Google Sign-In、Apple Sign In SDK 或將第三方 token POST 給 Visionnaire：
 
@@ -56,7 +56,7 @@ final result = await appAuth.authorizeAndExchangeCode(
     'visionnaire-mobile',
     'com.changdar.visionnaire:/oauthredirect',
     issuer: 'https://changdar-server.mooo.com/keycloak/realms/visionnaire',
-    scopes: const ['openid', 'profile', 'email', 'offline_access'],
+    scopes: const ['openid', 'profile', 'email'],
   ),
 );
 ```
@@ -99,11 +99,11 @@ Google／Apple 或既有帳密會直接登入同一筆資料。若重新登入�
 [原生社群憑證交換規格](native_social_exchange.md)，工程師須逐項遵守。
 
 - access token 只保留在記憶體；每個 API request 加上 `Authorization: Bearer <access-token>`。
-- 若要維持登入，把 refresh token 放在 iOS Keychain／Android Keystore（例如 `flutter_secure_storage`），絕不可存 SharedPreferences、檔案或 log。
+- 若要維持登入，把 refresh token 和 `idToken` 放在 iOS Keychain／Android Keystore（例如 `flutter_secure_storage`），絕不可存 SharedPreferences、檔案或 log。這是**一般 online refresh token**，不得要求 `offline_access`；它會隨 Keycloak 的 online SSO policy 到期。
 - access token 到期時以 refresh token 更新；更新失敗或 API 回傳 `401` 時清除本機 token 並重新登入。
 - Native 直接呼叫 `/hazard/api/...`，例如 `POST /hazard/api/db_management/api/playback/sessions`；不要使用 Web BFF cookie 路徑。
 - Android Manifest 與 iOS URL Types 都需註冊 scheme `com.changdar.visionnaire`，讓 `com.changdar.visionnaire:/oauthredirect` 回到 App。
-- Native 登出需清除 secure storage，並用 discovery document 的 `end_session_endpoint` 和 `id_token_hint` 執行 Keycloak 全域登出。
+- Native 登出順序固定為：停止 API request → 用系統瀏覽器開啟 discovery document 的 `end_session_endpoint`，帶 `id_token_hint`、`post_logout_redirect_uri=com.changdar.visionnaire:/oauthredirect` 與 `client_id=visionnaire-mobile` → callback 回 App 後清除 memory 與 secure storage。不得以 WebView 或手刻 Cookie 登出；若未取得 `idToken`，先清除本機資料並強制下一次完整登入。
 - 顯式帳號連結、以及 `account_link_required` 的確認，都必須再做一次 Keycloak
   `prompt=login`、`max_age=0`；後端只接受 `auth_time` 不超過五分鐘的 bearer token。已驗證
   email 僅能安全地發現唯一候選帳號，不能在 App 端自動判定或合併帳號。
@@ -129,5 +129,5 @@ hCaptcha token 只能由 Keycloak Provider 在伺服器端驗證，並會驗證 
 - Native client 沒有 client secret，登入請求有 `code_challenge_method=S256`。
 - Native Google／Apple network log 不會出現 Flutter 對舊 `/auth/google`、`/auth/apple` 的請求；只允許新的 nonce-bound `/auth/native-social/*` API。
 - API access token 的 `iss` 為上述 issuer，`aud` 包含 `visionnaire-api`。
-- 在 Keycloak Account Console 改密碼後，三個平台都以新密碼登入。
+- 在 Keycloak Account Console 改密碼後，三個平台都以新密碼登入；Web Account Console 與 Visionnaire 在同一個 online SSO session 期間不應重複詢問帳密。
 - 舊 Visionnaire 密碼登入 API 與 `/bff/auth/login` 帳密 POST 一律收到 `409 login_managed_by_identity_provider`。

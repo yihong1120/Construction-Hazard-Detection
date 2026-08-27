@@ -15,8 +15,10 @@ from examples.auth.jwt_config import jwt_refresh
 from examples.auth.session_store import auth_session_key
 from examples.auth.session_store import AUTH_SESSION_TTL_SECONDS
 from examples.auth.session_store import auth_tokens
+from examples.auth.session_store import consume_oidc_logout_state
 from examples.auth.session_store import create_auth_session
 from examples.auth.session_store import create_media_session
+from examples.auth.session_store import create_oidc_logout_state
 from examples.auth.session_store import delete_auth_session
 from examples.auth.session_store import get_auth_session
 from examples.auth.session_store import get_media_session
@@ -306,6 +308,27 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             session['oidc_session_mode'],
             OIDC_ONLINE_SSO_SESSION_MODE,
+        )
+
+    async def test_oidc_logout_state_is_one_use_and_token_free(
+        self,
+    ) -> None:
+        """Global logout state authorises exactly one token-free redirect."""
+        state = await create_oidc_logout_state(
+            self.redis,  # type: ignore[arg-type]
+        )
+        self.assertNotIn('token', str(self.redis.data).lower())
+        self.assertTrue(
+            await consume_oidc_logout_state(
+                self.redis,  # type: ignore[arg-type]
+                state,
+            ),
+        )
+        self.assertFalse(
+            await consume_oidc_logout_state(
+                self.redis,  # type: ignore[arg-type]
+                state,
+            ),
         )
 
     async def test_parent_logout_revokes_media_without_revoking_auth_early(

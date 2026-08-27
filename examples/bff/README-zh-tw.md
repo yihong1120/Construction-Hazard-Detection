@@ -20,6 +20,7 @@ uvicorn examples.db_management.app:app \
 - `GET /bff/auth/session`
 - `GET /bff/auth/csrf`
 - `POST /bff/auth/logout`
+- `GET /bff/auth/oidc/logout?state=...`（僅供登出後立即頂層導向）
 - `GET /bff/auth/oidc/login?return_to=/...`
 - `GET /bff/auth/oidc/callback`（僅供 Keycloak callback）
 - `GET /bff/auth/account`（開啟 Keycloak Account Console）
@@ -56,6 +57,12 @@ Web BFF 只請求一般 refresh token，**不請求** `offline_access`。每次 
 同一個 Keycloak 線上 SSO session，因此 Visionnaire 與 Keycloak Account Console 在同一個
 瀏覽器中不會互相要求第二次登入。SSO idle 或最大期限到期時，兩者會一起要求重新驗證；這是
 帳號中心與主 App 共用安全邊界，而不是讓 BFF 以離線 token 無期限維持登入。
+
+Web 登出一律先以 CSRF 保護呼叫 `POST /bff/auth/logout`。OIDC session 的回應會帶有一次性、
+不含 token 的 `global_logout_url`；前端必須用頂層瀏覽器導向該 URL。後端會清除 BFF cookie，
+再以 Keycloak 自己的 HttpOnly SSO cookie 導向 RP-initiated logout，結束同一個瀏覽器 SSO
+session。不要在 Flutter Web 自行拼接 Keycloak logout URL、讀取 token 或以 background fetch
+跟隨 redirect。
 
 `OIDC_AUDIENCE` 必須是 Visionnaire 專用的 Keycloak audience（建議
 `visionnaire-api`）。不要把它加到 Open WebUI client 的 token；Open WebUI 與

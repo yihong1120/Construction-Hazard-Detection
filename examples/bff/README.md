@@ -19,6 +19,7 @@ Public routes:
 
 - `GET /bff/auth/oidc/login?return_to=/...`
 - `GET /bff/auth/oidc/callback` (Keycloak callback only)
+- `GET /bff/auth/oidc/logout?state=...` (one-use global logout bridge)
 - `GET /bff/auth/account` (Keycloak Account Console)
 - `GET /bff/auth/session`
 - `GET /bff/auth/csrf`
@@ -35,6 +36,13 @@ same cookie-authenticated route instead of exposing the violation service's
 internal root paths to the browser.
 
 Unsafe requests require an allowed `Origin` and `X-CSRF-Token`.
+
+For OIDC sessions, `POST /bff/auth/logout` returns a one-use
+`global_logout_url`. Flutter Web must navigate the top-level browser to that
+URL after clearing its UI state. The BFF removes its own cookie first, then
+redirects the browser to Keycloak RP-initiated logout using Keycloak's own SSO
+cookie. No OAuth token is placed in browser storage, JavaScript, or the logout
+URL.
 
 ## Push-device registration
 

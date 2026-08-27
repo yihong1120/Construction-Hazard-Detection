@@ -104,6 +104,14 @@ class Settings(BaseSettings):
         'OIDC_WEB_REDIRECT_URI',
         '',
     ).strip()
+    oidc_web_end_session_endpoint: str = os.getenv(
+        'OIDC_WEB_END_SESSION_ENDPOINT',
+        '',
+    ).strip()
+    oidc_web_post_logout_redirect_uri: str = os.getenv(
+        'OIDC_WEB_POST_LOGOUT_REDIRECT_URI',
+        '',
+    ).strip()
     oidc_account_url: str = os.getenv('OIDC_ACCOUNT_URL', '').strip()
     oidc_passwords_managed_externally: bool = _env_bool(
         'OIDC_PASSWORDS_MANAGED_EXTERNALLY',
@@ -470,6 +478,16 @@ class Settings(BaseSettings):
                 self.oidc_web_authorization_endpoint,
                 self.oidc_web_token_endpoint,
                 self.oidc_web_redirect_uri,
+            ),
+        )
+
+    @property
+    def oidc_web_logout_configured(self) -> bool:
+        """Return whether the BFF can end the Keycloak browser session."""
+        return self.oidc_web_client_configured and all(
+            (
+                self.oidc_web_end_session_endpoint,
+                self.oidc_web_post_logout_redirect_uri,
             ),
         )
 

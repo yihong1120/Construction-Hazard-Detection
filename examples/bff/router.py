@@ -13,8 +13,10 @@ from examples.auth.database import get_db
 from examples.auth.identity_provider import identity_provider_account_url
 from examples.auth.redis_pool import get_redis_pool
 from examples.bff.oidc_services import complete_oidc_login
+from examples.bff.oidc_services import oidc_global_logout_redirect
 from examples.bff.oidc_services import oidc_login_redirect
 from examples.bff.schemas import BffLoginRequest
+from examples.bff.schemas import BffLogoutResponse
 from examples.bff.schemas import BffSessionResponse
 from examples.bff.schemas import CsrfResponse
 from examples.bff.session_services import csrf_response
@@ -71,6 +73,15 @@ async def oidc_callback(
         code=code,
         state=state,
     )
+
+
+@router.get('/auth/oidc/logout', include_in_schema=False)
+async def oidc_logout(
+    state: str | None = None,
+    redis: Redis = Depends(get_redis_pool),
+) -> RedirectResponse:
+    """Finish an opaque server-side bridge to Keycloak global logout."""
+    return await oidc_global_logout_redirect(redis, state=state)
 
 
 @router.post('/auth/login', response_model=BffSessionResponse)
@@ -149,14 +160,14 @@ async def get_csrf(
     return await csrf_response(request, response, redis, db)
 
 
-@router.post('/auth/logout', status_code=204)
+@router.post('/auth/logout', response_model=BffLogoutResponse)
 async def logout(
     request: Request,
     response: Response,
     x_csrf_token: str | None = Header(None, alias='X-CSRF-Token'),
     redis: Redis = Depends(get_redis_pool),
-) -> None:
-    """End the BFF session and revoke its credentials.
+) -> BffLogoutResponse:
+    """End the BFF session and prepare Keycloak browser logout.
 
     Args:
         request: HTTP request containing the opaque session cookie.
@@ -164,7 +175,13 @@ async def logout(
         x_csrf_token: CSRF token authorising the logout request.
         redis: Redis connection holding session and token state.
     """
-    await logout_bff_session(request, response, x_csrf_token, redis)
+    global_logout_url = await logout_bff_session(
+        request,
+        response,
+        x_csrf_token,
+        redis,
+    )
+    return BffLogoutResponse(global_logout_url=global_logout_url)
 
 
 @router.api_route(

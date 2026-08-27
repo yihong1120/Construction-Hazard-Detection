@@ -255,7 +255,58 @@ class BffRouterTest(unittest.TestCase):
                     'X-CSRF-Token': csrf,
                 },
             )
-        self.assertEqual(logged_out.status_code, 204)
+        self.assertEqual(logged_out.status_code, 200)
+        self.assertEqual(logged_out.json(), {'global_logout_url': None})
+
+    def test_oidc_logout_returns_an_opaque_global_logout_url(self) -> None:
+        """An OIDC BFF logout clears local state before browser navigation."""
+        access = jwt_access.create_access_token(
+            _access_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
+        )
+        refresh = jwt_refresh.create_access_token(
+            _refresh_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
+        )
+        session_id, _ = asyncio.run(
+            create_auth_session(
+                self.redis,  # type: ignore[arg-type]
+                {
+                    'access_token': access,
+                    'auth_provider': 'oidc',
+                    'feature_names': [],
+                    'refresh_token': refresh,
+                    'deployment': _DEPLOYMENT.as_response(),
+                },
+                {'id': 1, 'username': 'alice'},
+            ),
+        )
+        cookies = {session_services.SESSION_COOKIE: session_id}
+        csrf = self.client.get('/bff/auth/csrf', cookies=cookies).json()[
+            'csrf_token'
+        ]
+        with patch(
+            'examples.bff.session_services.create_oidc_global_logout_url',
+            new_callable=AsyncMock,
+            return_value='/bff/auth/oidc/logout?state=opaque-state',
+        ):
+            response = self.client.post(
+                '/bff/auth/logout',
+                cookies=cookies,
+                headers={
+                    'Origin': self.origin,
+                    'X-CSRF-Token': csrf,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {'global_logout_url': '/bff/auth/oidc/logout?state=opaque-state'},
+        )
+        self.assertNotIn('token', response.text.lower())
 
     def test_service_proxy_path_does_not_repeat_api(self) -> None:
         """Test service proxy path does not repeat api."""
