@@ -47,7 +47,7 @@ streaming = [
 violation = [
   "ckip_transformers==0.3.4",
   "torch==2.13.0",
-  "transformers==5.5.0",
+  "transformers==5.10.1",
 ]
 yolo = [
   "numpy==2.4.1",
