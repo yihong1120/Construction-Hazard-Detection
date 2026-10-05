@@ -11,28 +11,35 @@ license = { file = "LICENSE" }
 dependencies = [
   "aiofiles==25.1.0",
   "aiohttp==3.14.3",
-  "aiosqlite==0.22.1",
-  "apscheduler==3.11.2",
+  "anyio==4.15.1",
   "asyncpg==0.31.0",
   "cryptography==50.0.0",
   "fastapi==0.139.2",
-  "httpx==0.28.1",
-  "PyJWT==2.13.0",
+  "httpx[http2]==0.28.1",
+  "huggingface-hub==1.33.0",
+  "PyJWT==2.15.1",
   "pydantic[email]==2.12.5",
   "pydantic_settings==2.14.2",
-  "pwdlib[argon2]==0.3.0",
   "python-dotenv==1.2.2",
   "python-multipart==0.0.31",
   "redis==7.1.0",
   "sqlalchemy[asyncio]==2.0.46",
+  "urllib3==2.8.0",
   "uvicorn==0.40.0",
 ]
 
 [project.optional-dependencies]
+mcp = [
+  "mcp==1.28.1",
+  "requests==2.33.0",
+]
 notification = [
   "firebase_admin==7.1.0",
 ]
 social-notifications = [
+  "cloudinary==1.44.1",
+  "opencv_python==4.11.0.86",
+  "python-telegram-bot==22.6",
   "numpy==2.4.1",
   "Pillow==12.3.0",
 ]
@@ -42,17 +49,16 @@ streaming = [
   "opencv_python==4.11.0.86",
   "Pillow==12.3.0",
   "speedtest-cli==2.1.3",
-  "streamlink==8.4.0",
+  "streamlink==8.6.1",
 ]
 violation = [
-  "ckip_transformers==0.3.4",
-  "torch==2.13.0",
-  "transformers==5.5.0",
+  "Pillow==12.3.0",
 ]
 yolo = [
   "numpy==2.4.1",
   "opencv_python==4.11.0.86",
   "Pillow==12.3.0",
+  "requests==2.33.0",
   "sahi==0.11.36",
   "scikit-learn==1.8.0",
   "scipy==1.16.3",
@@ -68,6 +74,11 @@ yolo-gpu = [
   "tensorrt==11.1.0.106",
 ]
 training = [
+  "opencv_python==4.11.0.86",
+  "Pillow==12.3.0",
+  "sahi==0.11.36",
+  "scikit-learn==1.8.0",
+  "scipy==1.16.3",
   "albumentationsx==2.0.15",
   "numpy==2.4.1",
   "onnx==1.22.0",
@@ -77,28 +88,20 @@ training = [
   "torch==2.13.0",
   "torchvision==0.28.0",
   "tqdm==4.67.3",
+  "transformers==5.18.0",
   "ultralytics==8.4.115",
 ]
-mcp = [
-  "cloudinary==1.44.1",
-  "mcp==1.28.1",
-  "numpy==2.4.1",
-  "opencv_python==4.11.0.86",
-  "Pillow==12.3.0",
-  "python-telegram-bot==22.6",
-  "requests==2.33.0",
-]
 dev = [
-  "codecov==2.1.13",
+  "aiosqlite==0.22.1",
   "flake8==7.3.0",
-  "pre-commit==4.5.1",
+  "pre-commit==4.6.2",
   "Pygments==2.20.0",
   "pytest==9.0.3",
   "pytest-cov==7.0.0",
   "pytest-xdist==3.8.0",
   "types-aiofiles",
   "types-requests",
-  "virtualenv==20.36.1",
+  "virtualenv==21.14.5",
 ]
 
 [tool.uv]
@@ -111,32 +114,14 @@ environments = [
 show_error_codes = true
 
 [tool.coverage.run]
-omit = [
-  "*/examples/auth/cache copy.py",
-  "*/examples/YOLO_train/test.py",
-  "*/examples/line_chatbot/line_bot.py",
-]
+omit = ["*/examples/YOLO_train/test.py"]
 
 [tool.coverage.report]
-# The project currently has 96.24% measured coverage across application code.
-# Keep CI strict while leaving a small tolerance for platform-specific paths.
+# Keep application coverage at 96% or higher.
 fail_under = 96
-omit = [
-  "*/examples/auth/cache copy.py",
-  "*/examples/YOLO_train/test.py",
-  "*/examples/line_chatbot/line_bot.py",
-]
-
-[[tool.mypy.overrides]]
-module = ["ruamel.*"]
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["networkx.*", "shapely.*", "sklearn.*"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["cloudinary.*"]
 ignore_missing_imports = true
 
 [build-system]
