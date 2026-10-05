@@ -7,6 +7,7 @@ from typing import cast
 from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import lazyload
 
 from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.models import Feature
@@ -68,7 +69,12 @@ async def subject_from_oidc_identity(
     )
     if identity is None:
         raise InvalidTokenError('OIDC identity is not linked to a local user')
-    user = await db.get(User, identity.user_id)
+    user = await db.get(
+        User,
+        identity.user_id,
+        options=[lazyload('*')],
+        populate_existing=True,
+    )
     if user is None or user.status != USER_STATUS_ACTIVE:
         raise InvalidTokenError('OIDC identity is not an active local user')
     if binding is not None and user.tenant_id != binding.tenant_id:
@@ -88,7 +94,7 @@ async def subject_from_oidc_identity(
         'user_id': user.id,
         'role': user.role,
         # Namespace external JTIs so a provider value can never collide with
-        # a legacy application-issued token in the local revocation store.
+        # a token from another issuer in the local revocation store.
         'jti': f'oidc:{issuer}:{stable_token_id}',
         'features': await _feature_names(db, user.group_id),
         'tenant_id': str(user.tenant_id),

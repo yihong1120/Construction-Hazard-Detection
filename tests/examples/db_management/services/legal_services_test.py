@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
@@ -36,7 +35,7 @@ def _db_with_docs(docs: list[LegalDocument]) -> AsyncMock:
 
 
 class TestLegalServices(unittest.IsolatedAsyncioTestCase):
-    """Unit tests for legal document and consent services."""
+    """Unit tests for active legal document queries."""
 
     async def test_get_active_legal_documents_success(self) -> None:
         """It returns all active legal document types."""
@@ -91,135 +90,6 @@ class TestLegalServices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(docs['terms'].version, '2026-07-01')
         self.assertIn('privacy', docs)
         self.assertIn('ai_terms', docs)
-
-    async def test_validate_signup_consents_success(self) -> None:
-        """It accepts matching versions and mandatory booleans."""
-        db = _db_with_docs(
-            [
-                _doc('terms'),
-                _doc('privacy'),
-                _doc('ai_terms'),
-            ],
-        )
-        payload = SimpleNamespace(
-            accepted_terms=True,
-            terms_version='2026-06-27',
-            privacy_version='2026-06-27',
-            notification_consent=True,
-            ai_terms_accepted=True,
-            ai_terms_version='2026-06-27',
-        )
-
-        docs = await svc.validate_signup_consents(payload, db)
-
-        self.assertEqual(docs['terms'].version, '2026-06-27')
-
-    async def test_validate_signup_consents_version_mismatch(self) -> None:
-        """It rejects stale legal document versions."""
-        db = _db_with_docs(
-            [
-                _doc('terms'),
-                _doc('privacy'),
-                _doc('ai_terms'),
-            ],
-        )
-        payload = SimpleNamespace(
-            accepted_terms=True,
-            terms_version='old',
-            privacy_version='2026-06-27',
-            notification_consent=True,
-            ai_terms_accepted=True,
-            ai_terms_version='2026-06-27',
-        )
-
-        with self.assertRaises(HTTPException) as ctx:
-            await svc.validate_signup_consents(payload, db)
-
-        self.assertEqual(ctx.exception.status_code, 400)
-        self.assertEqual(
-            ctx.exception.detail['code'],
-            'legal_version_mismatch',
-        )
-
-    async def test_validate_signup_consents_requires_all_mandatory_flags(
-        self,
-    ) -> None:
-        """Each mandatory consent produces its dedicated validation error."""
-        complete_payload = {
-            'accepted_terms': True,
-            'terms_version': '2026-06-27',
-            'privacy_version': '2026-06-27',
-            'notification_consent': True,
-            'ai_terms_accepted': True,
-            'ai_terms_version': '2026-06-27',
-        }
-        for field, expected_message in [
-            ('accepted_terms', 'accepted_terms is required.'),
-            ('notification_consent', 'notification_consent is required.'),
-            ('ai_terms_accepted', 'ai_terms_accepted is required.'),
-        ]:
-            values = dict(complete_payload)
-            values[field] = False
-            with self.assertRaises(HTTPException) as missing:
-                await svc.validate_signup_consents(
-                    SimpleNamespace(**values),
-                    AsyncMock(),
-                )
-            self.assertEqual(missing.exception.detail, expected_message)
-
-    async def test_record_user_consent(self) -> None:
-        """It stores consent versions, timestamps, IP, and user-agent."""
-        payload = SimpleNamespace(
-            accepted_terms=True,
-            terms_version='2026-06-27',
-            privacy_version='2026-06-27',
-            notification_consent=True,
-            ai_terms_accepted=True,
-            ai_terms_version='2026-06-27',
-        )
-        request = SimpleNamespace(
-            headers={
-                'x-forwarded-for': '203.0.113.1, 10.0.0.1',
-                'user-agent': 'FlutterTest/1.0',
-            },
-            client=SimpleNamespace(host='127.0.0.1'),
-        )
-        db = AsyncMock()
-        db.add = MagicMock()
-        db.commit = AsyncMock()
-        db.refresh = AsyncMock()
-
-        consent = await svc.record_user_consent(7, payload, db, request)
-
-        self.assertEqual(consent.user_id, 7)
-        self.assertEqual(consent.ip_address, '203.0.113.1')
-        self.assertEqual(consent.user_agent, 'FlutterTest/1.0')
-        self.assertTrue(consent.accepted_terms)
-        self.assertTrue(consent.notification_consent)
-        self.assertTrue(consent.ai_terms_accepted)
-        db.add.assert_called_once_with(consent)
-        db.commit.assert_awaited_once()
-        db.refresh.assert_awaited_once_with(consent)
-
-    def test_request_metadata_helpers_handle_missing_and_direct_clients(
-        self,
-    ) -> None:
-        """Consent metadata supports reverse proxies and bare requests
-        safely."""
-        self.assertIsNone(svc._client_ip(None))
-        self.assertIsNone(svc._user_agent(None))
-        self.assertIsNone(
-            svc._client_ip(SimpleNamespace(headers={}, client=None)),
-        )
-        self.assertEqual(
-            svc._client_ip(
-                SimpleNamespace(
-                    headers={},
-                    client=SimpleNamespace(host='198.51.100.22'),
-                ),
-            ),
-            '198.51.100.22',
-        )
 
 
 if __name__ == '__main__':

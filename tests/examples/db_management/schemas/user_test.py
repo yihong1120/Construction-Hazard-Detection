@@ -122,38 +122,6 @@ class TestUserCreate(unittest.TestCase):
             cast(Any, user.UserCreate)(password='p', group_id=1)
 
 
-class TestUserSignup(unittest.TestCase):
-    """Unit tests for the UserSignup schema."""
-
-    def test_valid(self) -> None:
-        """Test creating a valid UserSignup instance."""
-        profile: user.UserProfileBase = user.UserProfileBase(
-            family_name='f',
-            given_name='g',
-            email='a@b.com',
-        )
-        data: user.UserSignup = user.UserSignup(
-            username='u',
-            password='p',
-            profile=profile,
-            accepted_terms=True,
-            terms_version='2026-06-27',
-            privacy_version='2026-06-27',
-            notification_consent=True,
-            ai_terms_accepted=True,
-            ai_terms_version='2026-06-27',
-        )
-        self.assertEqual(data.username, 'u')
-        self.assertEqual(data.profile.email, 'a@b.com')
-        self.assertTrue(data.accepted_terms)
-        self.assertEqual(data.terms_version, '2026-06-27')
-
-    def test_missing_profile(self) -> None:
-        """Test validation error when profile is missing."""
-        with self.assertRaises(ValidationError):
-            cast(Any, user.UserSignup)(username='u', password='p')
-
-
 class TestApproveUserSignup(unittest.TestCase):
     """Unit tests for the ApproveUserSignup schema."""
 

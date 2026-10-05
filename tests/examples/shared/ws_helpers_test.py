@@ -8,21 +8,6 @@ from unittest.mock import patch
 from examples.shared import ws_helpers as wh
 
 
-class TestConfigFlags(unittest.TestCase):
-    """Unit tests for configuration flags used by WebSocket helpers."""
-
-    def test_get_auto_register_jti_true_false(self) -> None:
-        """Test parsing WS_AUTO_REGISTER_JTI case-insensitively."""
-        with patch.dict('os.environ', {'WS_AUTO_REGISTER_JTI': 'true'}):
-            self.assertTrue(wh.get_auto_register_jti())
-        with patch.dict('os.environ', {'WS_AUTO_REGISTER_JTI': 'TRUE'}):
-            self.assertTrue(wh.get_auto_register_jti())
-        with patch.dict('os.environ', {'WS_AUTO_REGISTER_JTI': 'false'}):
-            self.assertFalse(wh.get_auto_register_jti())
-        with patch.dict('os.environ', {}, clear=True):
-            self.assertFalse(wh.get_auto_register_jti())
-
-
 class TestTimerAndPayload(unittest.TestCase):
     """Unit tests for timer utilities and timeout payload generation."""
 
@@ -207,21 +192,16 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
         """Test successful authentication."""
         ws = self.ws
         rds: object = object()
-        settings = SimpleNamespace()
 
         async def fake_auth(
             websocket: object,
             rds_arg: object,
-            settings_arg: object,
-            auto_register_jti: bool,
             client_tag: str,
         ) -> tuple[str, str, dict[str, str]]:
             """Simulate successful authentication."""
             # Validate the wrapper forwards parameters verbatim.
             assert websocket is ws
             assert rds_arg is rds
-            assert settings_arg is settings
-            assert auto_register_jti is True
             assert client_tag == 'TAG'
             return 'alice', 'jti-1', {'role': 'user'}
 
@@ -232,8 +212,6 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
             res = await wh.authenticate_ws_or_none(
                 websocket=ws,
                 rds=rds,
-                settings=settings,
-                auto_register_jti=True,
                 client_tag='TAG',
             )
         self.assertEqual(res, ('alice', {'role': 'user'}))
@@ -242,11 +220,6 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
         """Test behaviour on authentication failure."""
         ws = self.ws
         rds: object = object()
-        # Provide a minimal settings substitute that satisfies SettingsLike
-        settings = SimpleNamespace(
-            authjwt_secret_key='s',
-            ALGORITHM='HS256',
-        )
 
         async def fake_auth_raise(*args: object, **kwargs: object) -> object:
             """Simulate authentication failure."""
@@ -259,8 +232,6 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
             res = await wh.authenticate_ws_or_none(
                 websocket=ws,
                 rds=rds,
-                settings=settings,
-                auto_register_jti=False,
                 client_tag='ANY',
             )
         self.assertEqual(res, (None, None))

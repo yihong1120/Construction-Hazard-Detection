@@ -15,6 +15,9 @@ from examples.auth.models import DeploymentEnrollmentCode
 from examples.auth.models import DeploymentEnrollmentCodeAuditLog
 from examples.auth.models import utc_now
 from examples.db_management.deps import TenantDeploymentAdministrator
+from examples.db_management.services.invitation_policy import (
+    validate_invitation,
+)
 from examples.deployment_registry.enrollments import provision_enrollment_code
 from examples.deployment_registry.enrollments import ProvisionedEnrollmentCode
 
@@ -85,6 +88,7 @@ async def create_managed_enrollment_code(
     pepper: str,
 ) -> ManagedEnrollmentCode:
     """Create and audit one tenant-scoped code in one database commit."""
+    validate_invitation(str(administrator.tenant_id), expires_in_minutes)
     expires_at = utc_now() + timedelta(minutes=expires_in_minutes)
     try:
         provisioned: ProvisionedEnrollmentCode = (

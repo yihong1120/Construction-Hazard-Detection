@@ -14,7 +14,7 @@ class DeploymentEnrollmentCodeCreate(BaseModel):
 
     model_config = ConfigDict(extra='forbid', strict=True)
 
-    expires_in_minutes: int = Field(ge=1, le=1440)
+    expires_in_minutes: int = Field(ge=1)
 
 
 class DeploymentEnrollmentCodeCreated(BaseModel):

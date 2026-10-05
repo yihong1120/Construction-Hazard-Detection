@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import cast
 
 from fastapi import HTTPException
@@ -52,17 +51,6 @@ return { current, ttl }
         # SHA of the rate-limit Lua script (loaded lazily and cached).
         self._rate_limit_sha: str | None = None
 
-    def _user_key(self, username: str) -> str:
-        """Compose the Redis key for user cache entries.
-
-        Args:
-            username: The username used to compose the key.
-
-        Returns:
-            The fully qualified Redis key for the cached user data.
-        """
-        return f"{self.project_prefix}:user_cache:{username}"
-
     def _rate_key(
         self,
         role: str,
@@ -85,43 +73,6 @@ return { current, ttl }
             f"{self.project_prefix}:rate_limit:{role}:{username}:"
             f"{method}:{path}"
         )
-
-    async def get_user_data(
-        self,
-        redis_pool: Redis,
-        username: str,
-    ) -> dict[str, object] | None:
-        """Retrieve cached user data by username.
-
-        Args:
-            redis_pool: Asynchronous Redis client/connection.
-            username: Username used to compose the Redis key.
-
-        Returns:
-            The cached user dictionary, or ``None`` when no entry exists.
-        """
-        key: str = self._user_key(username)
-        raw_data: bytes | None = await redis_pool.get(key)
-        if raw_data is None:
-            return None
-        return json.loads(raw_data)
-
-    async def set_user_data(
-        self,
-        redis_pool: Redis,
-        username: str,
-        data: dict[str, object],
-    ) -> None:
-        """Store user data in Redis by username.
-
-        Args:
-            redis_pool: Asynchronous Redis client/connection.
-            username: Username used to compose the Redis key.
-            data: JSON-serialisable user data to persist.
-        """
-        key: str = self._user_key(username)
-        # Compact JSON to avoid unnecessary whitespace.
-        await redis_pool.set(key, json.dumps(data).encode('utf-8'))
 
     async def _ensure_rate_limit_script(self, redis_pool: Redis) -> str:
         """Ensure the rate-limit Lua script is loaded and return its SHA.
@@ -214,36 +165,14 @@ return { current, ttl }
             Remaining requests in the current window after this request.
 
         Raises:
-            HTTPException: If credentials are invalid, if the user is not
-                found in Redis, if the token JTI has been rotated/revoked, or
-                if the rate limit is exceeded.
+            HTTPException: If the rate limit is exceeded. Authentication is
+                enforced by the shared jwt_access dependency.
         """
         subject = jwt_creds.subject
         username = subject['username']
-        token_jti = subject['jti']
-
-        # Obtain Redis connection
         redis_pool: Redis = request.app.state.redis_client.client
 
-        # Load user data and verify JTI list membership.
-        user_data: dict[str, object] | None = await self.get_user_data(
-            redis_pool,
-            username,
-        )
-        if not user_data:
-            raise HTTPException(
-                status_code=401,
-                detail='No such user in Redis',
-            )
-
-        jti_list = cast(list[str], user_data['jti_list'])
-
-        if token_jti not in jti_list:
-            raise HTTPException(
-                status_code=401,
-                detail='Token jti is invalid or replaced',
-            )
-
+        # Authentication and revocation belong to the jwt_access dependency.
         # Determine role and quotas
         role = subject['role']
         max_requests, window_seconds = self.limits.get(

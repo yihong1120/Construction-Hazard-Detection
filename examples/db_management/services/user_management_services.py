@@ -3,39 +3,24 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import HTTPException
-from fastapi import Request
-from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from examples.auth.deployment_context import DeploymentBinding
-from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.models import Group
 from examples.auth.models import User
 from examples.auth.models import USER_STATUS_ACTIVE
-from examples.auth.models import USER_STATUS_EMAIL_UNVERIFIED
-from examples.auth.user_service import invalidate_effective_site_cache
 from examples.db_management.deps import ensure_admin_with_group
 from examples.db_management.deps import is_super_admin
 from examples.db_management.schemas.user import PendingUserReviewRead
 from examples.db_management.schemas.user import UserPage
 from examples.db_management.schemas.user import UserRead
-from examples.db_management.schemas.user import UserSignup
-from examples.db_management.services.email_verification_services import (
-    send_signup_verification_email,
-)
-from examples.db_management.services.legal_services import record_user_consent
-from examples.db_management.services.legal_services import (
-    validate_signup_consents,
-)
 from examples.db_management.services.site_services import (
     list_site_ids_for_group,
 )
 from examples.db_management.services.site_services import (
     seed_site_notification_preferences,
 )
-from examples.db_management.services.user_services import create_user
 from examples.db_management.services.user_services import list_users
 
 
@@ -187,55 +172,6 @@ async def get_group_or_404(group_id: int, db: AsyncSession) -> Group:
     return group
 
 
-async def register_signup_user(
-    payload: UserSignup,
-    request: Request,
-    db: AsyncSession,
-    redis_pool: Redis,
-    deployment: DeploymentBinding | None = None,
-) -> UserRead:
-    """Create an email-unverified account and start verification.
-
-    Args:
-        payload: Registration details, profile, and legal consents.
-        request: HTTP request used to record consent audit metadata.
-        db: Database session used to create the account.
-        redis_pool: Redis connection used to store verification-token state.
-
-    Returns:
-        Newly created account in the email-unverified state.
-
-    Raises:
-        HTTPException: If consent validation, account creation, or verification
-            delivery fails.
-    """
-    if deployment is None and isinstance(request, Request):
-        deployment = await resolve_request_deployment(request, db)
-    if deployment is None and isinstance(request, Request):
-        raise HTTPException(
-            status_code=409,
-            detail='deployment_required',
-        )
-    await validate_signup_consents(payload, db)
-    create_user_kwargs = {
-        'username': payload.username,
-        'password': payload.password,
-        'role': 'user',
-        'group_id': None,
-        'db': db,
-        'profile': payload.profile.model_dump(),
-        'status': USER_STATUS_EMAIL_UNVERIFIED,
-    }
-    if deployment is not None:
-        create_user_kwargs['tenant_id'] = deployment.tenant_id
-    new_user = await create_user(
-        **create_user_kwargs,
-    )
-    await record_user_consent(new_user.id, payload, db, request)
-    await send_signup_verification_email(new_user, redis_pool)
-    return await load_user_read(new_user.id, db)
-
-
 def resolve_target_group_id(
     requested_group_id: int | None,
     operator: User,
@@ -352,5 +288,4 @@ async def approve_signup_user(
         db=db,
     )
     await db.commit()
-    invalidate_effective_site_cache()
     return await load_user_read(user.id, db)

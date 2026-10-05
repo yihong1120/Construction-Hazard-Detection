@@ -15,13 +15,11 @@ from examples.auth.redis_pool import get_redis_pool
 from examples.bff.oidc_services import complete_oidc_login
 from examples.bff.oidc_services import oidc_global_logout_redirect
 from examples.bff.oidc_services import oidc_login_redirect
-from examples.bff.schemas import BffLoginRequest
 from examples.bff.schemas import BffLogoutResponse
 from examples.bff.schemas import BffSessionResponse
 from examples.bff.schemas import CsrfResponse
 from examples.bff.session_services import csrf_response
 from examples.bff.session_services import current_bff_session
-from examples.bff.session_services import login_bff_session
 from examples.bff.session_services import logout_bff_session
 from examples.bff.session_services import proxy_bff_request
 
@@ -82,42 +80,6 @@ async def oidc_logout(
 ) -> RedirectResponse:
     """Finish an opaque server-side bridge to Keycloak global logout."""
     return await oidc_global_logout_redirect(redis, state=state)
-
-
-@router.post('/auth/login', response_model=BffSessionResponse)
-async def login(
-    payload: BffLoginRequest,
-    request: Request,
-    response: Response,
-    x_hcaptcha_bypass_key: str | None = Header(
-        None,
-        alias='X-HCaptcha-Bypass-Key',
-    ),
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis_pool),
-) -> BffSessionResponse:
-    """Create a BFF session without exposing JWTs to the browser.
-
-    Args:
-        payload: Browser login credentials.
-        request: HTTP request used for origin and client-IP validation.
-        response: HTTP response receiving the opaque session cookie.
-        x_hcaptcha_bypass_key: Optional trusted server-side hCaptcha bypass
-            key.
-        db: Database session used by the authentication service.
-        redis: Redis connection holding token and BFF session state.
-
-    Returns:
-        Token-free browser session response.
-    """
-    return await login_bff_session(
-        payload,
-        request,
-        response,
-        x_hcaptcha_bypass_key,
-        db,
-        redis,
-    )
 
 
 @router.get('/auth/session', response_model=BffSessionResponse)

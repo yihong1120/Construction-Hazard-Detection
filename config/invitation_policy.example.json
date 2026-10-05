@@ -1,0 +1,7 @@
+{
+  "replace-with-tenant-uuid": {
+    "max_minutes": 120,
+    "minutes": [45, 90],
+    "default_minutes": 45
+  }
+}

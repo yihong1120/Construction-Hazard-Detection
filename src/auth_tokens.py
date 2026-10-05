@@ -4,9 +4,14 @@ import asyncio
 import logging
 import os
 import time
+from urllib.parse import urlsplit
 
 import aiohttp
 import jwt
+
+
+class AuthenticationConfigurationError(RuntimeError):
+    """Authentication requires operator configuration rather than retries."""
 
 
 class TokenManager:
@@ -14,33 +19,22 @@ class TokenManager:
 
     def __init__(
         self,
-        api_url: str | None = None,
         shared_token: dict[str, str | bool] | None = None,
     ) -> None:
         """Initialises the TokenManager instance.
 
         Args:
-            api_url (str | None): The base API URL for authentication.
             shared_token (dict[str, str | bool] | None):
-                Shared token dictionary for storing access and refresh tokens.
+                Shared dictionary for the provider access token.
         """
-        # API endpoint for authentication;
-        # defaults to environment variable or local address.
-        self.api_url: str = (
-            api_url
-            or os.getenv(
-                'DB_MANAGEMENT_API_URL',
-            )
-            or 'http://127.0.0.1:8005'
+        self.shared_token: dict[str, str | bool] = (
+            shared_token if shared_token is not None else {
+                'access_token': '',
+            }
         )
-        # Shared token dictionary for access/refresh tokens and refresh state.
-        self.shared_token: dict[str, str | bool] = shared_token or {
-            'access_token': '',
-            'refresh_token': '',
-            'is_refreshing': False,
-        }
         self.logger: logging.Logger = logging.getLogger(__name__)
 
+        self._token_lock = asyncio.Lock()
         # Maximum retries for token refresh attempts.
         self.max_retries: int = 3
 
@@ -52,157 +46,85 @@ class TokenManager:
         )
 
     async def authenticate(self, force: bool = False) -> None:
-        """Authenticates with the API and retrieves access/refresh tokens.
+        """Acquire an access token from the identity provider.
 
         Args:
             force (bool):
                 If True, forces re-authentication even if a token exists.
 
         Raises:
-            ValueError: If username or password is missing.
+            AuthenticationConfigurationError: If provider settings are missing.
             RuntimeError: If authentication fails.
         """
         # If token exists and not forced, skip authentication.
         if not force and self.shared_token.get('access_token'):
             return
 
-        # Load credentials from environment variables (supports .env)
-        username: str = os.getenv('API_USERNAME', '')
-        password: str = os.getenv('API_PASSWORD', '')
-        hcaptcha_bypass_key: str = os.getenv('HCAPTCHA_BYPASS_KEY', '')
+        await self._authenticate_service_account()
 
-        if not username or not password:
-            raise ValueError('Missing API_USERNAME or API_PASSWORD')
-
-        try:
-            headers: dict[str, str] = {}
-            if hcaptcha_bypass_key:
-                headers['X-HCaptcha-Bypass-Key'] = hcaptcha_bypass_key
-
-            async with self._create_session() as session:
-                resp: aiohttp.ClientResponse = await session.post(
-                    f"{self.api_url}/login",
-                    json={'identifier': username, 'password': password},
-                    headers=headers,
-                )
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    msg: str = (
-                        f"Authenticate failed with status {resp.status}: "
-                        f"{error_text}"
-                    )
-                    self.logger.error(msg)
-                    raise RuntimeError(msg)
-
-                data: dict = await resp.json()
-                self.shared_token['access_token'] = data['access_token']
-                self.shared_token['refresh_token'] = data.get(
-                    'refresh_token',
-                    '',
-                )
-                self.logger.info(
-                    'Successfully authenticated and retrieved token.',
-                )
-
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network error during authentication: {e}")
-            raise RuntimeError(
-                f"Authentication failed due to network error: {e}",
+    async def _authenticate_service_account(self) -> None:
+        """Acquire a short-lived token without a browser or user password."""
+        issuer = os.getenv('OIDC_ISSUER_URL', '').rstrip('/')
+        endpoint = os.getenv('WORKER_OIDC_TOKEN_ENDPOINT', '') or (
+            f'{issuer}/protocol/openid-connect/token' if issuer else ''
+        )
+        client_id = os.getenv('WORKER_OIDC_CLIENT_ID', '')
+        secret = os.getenv('WORKER_OIDC_CLIENT_SECRET', '')
+        if not endpoint or not client_id or not secret:
+            raise AuthenticationConfigurationError(
+                'OIDC worker requires WORKER_OIDC_CLIENT_ID, '
+                'WORKER_OIDC_CLIENT_SECRET and WORKER_OIDC_TOKEN_ENDPOINT '
+                '(or OIDC_ISSUER_URL).',
             )
-        except Exception as e:
-            self.logger.error(f"Authentication error: {e}")
-            raise
+        url = urlsplit(endpoint)
+        if (
+            not url.hostname or url.username or url.password
+            or url.query or url.fragment
+            or (
+                url.scheme != 'https' and not (
+                    url.scheme == 'http'
+                    and url.hostname in {'localhost', '127.0.0.1', '::1'}
+                )
+            )
+        ):
+            raise AuthenticationConfigurationError(
+                'Worker token endpoint must use HTTPS or loopback HTTP.',
+            )
+        async with self._create_session() as session:
+            async with session.post(
+                endpoint,
+                data={
+                    'grant_type': 'client_credentials',
+                    'client_id': client_id,
+                    'client_secret': secret,
+                },
+                allow_redirects=False,
+            ) as response:
+                if response.status != 200:
+                    # Never log provider response bodies containing
+                    # credentials.
+                    message = f'OIDC worker authentication failed (HTTP {
+                        response.status
+                    })'
+                    if response.status in {400, 401, 403}:
+                        raise AuthenticationConfigurationError(message)
+                    raise RuntimeError(message)
+                data = await response.json()
+        token = data.get('access_token')
+        if not isinstance(token, str) or not token:
+            raise AuthenticationConfigurationError(
+                'OIDC response has no access token',
+            )
+        if str(data.get('token_type', '')).lower() != 'bearer':
+            raise AuthenticationConfigurationError(
+                'OIDC response must contain a Bearer token',
+            )
+        self.shared_token['access_token'] = token
 
     async def refresh_token(self) -> None:
-        """Refreshes the access token using the refresh token.
-
-        Raises:
-            RuntimeError:
-                If refresh fails repeatedly or returns unexpected status.
-        """
-        # If another refresh is in progress, wait up to 10 seconds.
-        if self.shared_token.get('is_refreshing'):
-            await self._wait_for_refresh_completion()
-            return
-
-        refresh_token: str = str(self.shared_token.get('refresh_token', ''))
-        if not refresh_token:
-            # No refresh token available; force re-authentication.
-            await self.authenticate(force=True)
-            return
-
-        try:
-            # Double check for token changes during wait.
-            if self.shared_token.get('refresh_token') != refresh_token:
-                return
-
-            self.shared_token['is_refreshing'] = True
-            self.logger.warning('Token expired. Attempting to refresh...')
-
-            async with self._create_session() as session:
-                # First attempt with the bearer-token header.
-                resp = await self._attempt_token_refresh(
-                    session,
-                    refresh_token,
-                    with_auth=True,
-                )
-
-                # Retry without header if 401 returned.
-                if resp.status == 401:
-                    resp = await self._attempt_token_refresh(
-                        session,
-                        refresh_token,
-                        with_auth=False,
-                    )
-
-                if resp.status == 200:
-                    data: dict = await resp.json()
-                    self.shared_token['access_token'] = data['access_token']
-                    self.shared_token['refresh_token'] = data['refresh_token']
-                    self.logger.info('Token refreshed successfully.')
-                else:
-                    self.logger.warning(f"Refresh failed: {resp.status}")
-                    if resp.status in (401, 403):
-                        await self.authenticate(force=True)
-                    else:
-                        error_text = await resp.text()
-                        raise RuntimeError(
-                            f"Refresh failed with status {resp.status}: "
-                            f"{error_text}",
-                        )
-        finally:
-            self.shared_token['is_refreshing'] = False
-
-    async def _wait_for_refresh_completion(self) -> None:
-        """Wait for another refresh operation to complete."""
-        wait_time: float = 0.0
-        while self.shared_token.get('is_refreshing'):
-            await asyncio.sleep(0.1)
-            wait_time += 0.1
-            if wait_time >= 10:
-                self.logger.warning(
-                    'Waited 10s for refresh to finish, giving up.',
-                )
-                return
-
-    async def _attempt_token_refresh(
-        self,
-        session: aiohttp.ClientSession,
-        refresh_token: str,
-        with_auth: bool = True,
-    ) -> aiohttp.ClientResponse:
-        """Attempt to refresh token with or without Authorization header."""
-        headers = {}
-        if with_auth:
-            headers['Authorization'] = (
-                f"Bearer {self.shared_token['access_token']}"
-            )
-
-        return await session.post(
-            f"{self.api_url}/refresh",
-            json={'refresh_token': refresh_token},
-            headers=headers,
-        )
+        """Renew a worker access token with the client-credentials grant."""
+        async with self._token_lock:
+            await self._authenticate_service_account()
 
     async def ensure_token_valid(self, retry_count: int = 0) -> None:
         """Ensures a valid access token is present, authenticating if
@@ -222,16 +144,9 @@ class TokenManager:
         # Check if token is valid or expired
         if not self.is_token_valid() or self.is_token_expired():
             try:
-                if self.shared_token.get('refresh_token'):
-                    self.logger.info(
-                        'Token expired or missing, attempting refresh...',
-                    )
-                    await self.refresh_token()
-                else:
-                    self.logger.info(
-                        'No refresh token available, re-authenticating...',
-                    )
-                    await self.authenticate(force=True)
+                await self.authenticate(force=True)
+            except AuthenticationConfigurationError:
+                raise
             except Exception as e:
                 self.logger.error(f"Token refresh/authentication failed: {e}")
                 if retry_count < self.max_retries:
@@ -254,6 +169,8 @@ class TokenManager:
 
         try:
             await self.refresh_token()
+        except AuthenticationConfigurationError:
+            raise
         except Exception as e:
             self.logger.warning(
                 f"refresh_token() error: {e}, re-authenticate.",
@@ -302,6 +219,13 @@ class TokenManager:
             return True  # Treat tokens that cannot be decoded as expired.
 
     async def get_valid_token(self) -> str:
+        """Serialize acquisition so concurrent requests reuse the same
+        token.
+        """
+        async with self._token_lock:
+            return await self._get_valid_token()
+
+    async def _get_valid_token(self) -> str:
         """Get a valid access token, refreshing or authenticating if necessary.
 
         Returns:
@@ -313,10 +237,9 @@ class TokenManager:
         # Check if token is valid or expired
         if not self.is_token_valid() or self.is_token_expired():
             try:
-                if self.shared_token.get('refresh_token'):
-                    await self.refresh_token()
-                else:
-                    await self.authenticate(force=True)
+                await self.authenticate(force=True)
+            except AuthenticationConfigurationError:
+                raise
             except Exception as e:
                 self.logger.error(f"Failed to refresh/authenticate token: {e}")
                 await self.authenticate(force=True)

@@ -30,6 +30,13 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         This method initialises a mock database session, a mock current user
         (admin by default), and a mock site object for use in all tests.
         """
+        for name, replacement in [
+            ('require_site', AsyncMock()),
+            ('require_model', MagicMock()),
+        ]:
+            policy = patch.object(streams, name, replacement)
+            policy.start()
+            self.addCleanup(policy.stop)
         self.db: AsyncMock = AsyncMock()
         self.db.add = MagicMock()
         self.current_user: MagicMock = MagicMock()
@@ -57,7 +64,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         'is_super_admin',
         return_value=False,
     )
-    async def test_endpoint_list_stream_configs(
+    async def test_endpoint_get_site_stream_config(
         self,
         mock_is_super_admin: MagicMock,
         mock_limit: AsyncMock,
@@ -94,7 +101,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_list.return_value = [mock_config]
         self.db.get.return_value = self.site_mock
 
-        response = await streams.endpoint_list_stream_configs(
+        response = await streams.endpoint_get_site_stream_config(
             1,
             self.db,
             self.current_user,
@@ -413,7 +420,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response['max_allowed_streams'], 10)
         self.assertEqual(response['current_streams_count'], 3)
 
-    async def test_list_stream_configs_site_not_found(self) -> None:
+    async def test_get_site_stream_config_site_not_found(self) -> None:
         """Should raise 404 if site not found.
 
         This test ensures the endpoint returns HTTP 404 if the site does not
@@ -421,7 +428,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         """
         self.db.get.return_value = None
         with self.assertRaises(HTTPException) as ctx:
-            await streams.endpoint_list_stream_configs(
+            await streams.endpoint_get_site_stream_config(
                 1,
                 self.db,
                 self.current_user,
@@ -565,13 +572,19 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         """Perform setUp."""
+        for name, replacement in [
+            ('require_site', AsyncMock()),
+            ('require_model', MagicMock()),
+        ]:
+            policy = patch.object(streams, name, replacement)
+            policy.start()
+            self.addCleanup(policy.stop)
         self.db = AsyncMock()
         self.db.add = MagicMock()
         self.admin = User(
             role='admin',
             group_id=1,
             username='admin',
-            password_hash='unused-in-helper-tests',
         )
         self.site = _site(1, 2)
 

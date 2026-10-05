@@ -15,7 +15,6 @@ from starlette.responses import Response
 from examples.auth.config import Settings
 from examples.auth.lifespan import global_lifespan
 from examples.bff.router import router as bff_router
-from examples.db_management.routers.auth import router as auth_router
 from examples.db_management.routers.deployment_enrollment_codes import (
     router as deployment_enrollment_code_router,
 )
@@ -24,16 +23,13 @@ from examples.db_management.routers.deployments import (
 )
 from examples.db_management.routers.features import router as feature_router
 from examples.db_management.routers.groups import router as group_router
-from examples.db_management.routers.legacy_password_migration import (
-    router as legacy_password_migration_router,
-)
 from examples.db_management.routers.legal import router as legal_router
 from examples.db_management.routers.native_social import (
     router as native_social_router,
 )
 from examples.db_management.routers.oauth import router as oauth_router
-from examples.db_management.routers.password_reset import (
-    router as password_reset_router,
+from examples.db_management.routers.openwebui import (
+    router as openwebui_router,
 )
 from examples.db_management.routers.playback import router as playback_router
 from examples.db_management.routers.sites import router as site_router
@@ -101,6 +97,10 @@ async def safe_http_exception(
         in {
             'registry_signing_unavailable',
             'enrollment_unavailable',
+            'OPTIONS_UNAVAILABLE',
+            'MODEL_REGISTRY_UNAVAILABLE',
+            'INVITATION_POLICY_UNAVAILABLE',
+            'HISTORICAL_MODEL_METADATA_UNAVAILABLE',
         }
     )
     if exc.status_code < 500 or is_safe_registry_unavailable:
@@ -176,7 +176,7 @@ async def prevent_sensitive_response_caching(
             '/me',
             '/api/playback/',
         ),
-    ) or request.url.path in {'/login', '/refresh'}:
+    ):
         response.headers['Cache-Control'] = 'no-store'
     return response
 
@@ -192,18 +192,16 @@ if allowed_origins:
     )
 
 # Keep routing composition here; endpoint implementations remain in routers.
-app.include_router(auth_router)
 app.include_router(deployment_router)
 app.include_router(deployment_enrollment_code_router)
 app.include_router(registry_router)
 app.include_router(oauth_router)
-app.include_router(legacy_password_migration_router)
 app.include_router(native_social_router)
 app.include_router(playback_router)
 app.include_router(bff_router)
 app.include_router(legal_router)
-app.include_router(password_reset_router)
 app.include_router(user_management_router)
+app.include_router(openwebui_router)
 app.include_router(site_router)
 app.include_router(feature_router)
 app.include_router(group_router)

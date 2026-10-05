@@ -10,7 +10,6 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from fastapi import Request
-from jwt.exceptions import InvalidTokenError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth import deployment_context
@@ -22,8 +21,6 @@ from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.deployment_context import (
     trusted_local_development_deployment_id,
 )
-from examples.auth.jwt_config import jwt_access
-from examples.auth.jwt_config import jwt_refresh
 
 
 class TestDeploymentContract(unittest.IsolatedAsyncioTestCase):
@@ -60,64 +57,6 @@ class TestDeploymentContract(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(ValueError):
                 canonical_api_base_url(value)
-
-    def test_access_token_cannot_be_decoded_for_another_deployment_origin(
-        self,
-    ) -> None:
-        """Test access token cannot be decoded for another deployment
-        origin."""
-        token = jwt_access.create_access_token(
-            {
-                'username': 'alice',
-                'user_id': 1,
-                'role': 'user',
-                'jti': 'access-jti',
-                'features': [],
-                'tenant_id': str(self.binding.tenant_id),
-                'deployment_id': str(self.binding.deployment_id),
-                'config_revision': self.binding.config_revision,
-            },
-            issuer=self.binding.issuer,
-            audience=self.binding.audience,
-        )
-        payload = jwt_access.decode_token(
-            token,
-            expected_issuer=self.binding.issuer,
-            expected_audience=self.binding.audience,
-        )
-        self.assertEqual(
-            payload['subject']['deployment_id'],
-            str(self.binding.deployment_id),
-        )
-        with self.assertRaises(InvalidTokenError):
-            jwt_access.decode_token(
-                token,
-                expected_issuer='https://other.example.com',
-                expected_audience=self.binding.audience,
-            )
-
-    def test_lifecycle_decode_preserves_deployment_refresh_tokens(
-        self,
-    ) -> None:
-        """Cache cleanup can verify a bound refresh token without authorising
-        it."""
-        token = jwt_refresh.create_access_token(
-            {
-                'username': 'alice',
-                'family_id': 'refresh-family',
-                'token_id': 'refresh-token',
-                'tenant_id': str(self.binding.tenant_id),
-                'deployment_id': str(self.binding.deployment_id),
-                'config_revision': self.binding.config_revision,
-            },
-            issuer=self.binding.issuer,
-            audience=self.binding.audience,
-        )
-        payload = jwt_refresh.decode_token_for_lifecycle(token)
-        self.assertEqual(
-            payload['subject']['deployment_id'],
-            str(self.binding.deployment_id),
-        )
 
     @staticmethod
     def _request(host: str, client_host: str) -> Request:

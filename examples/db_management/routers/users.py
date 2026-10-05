@@ -7,30 +7,28 @@ from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Query
-from fastapi import Request
-from redis.asyncio import Redis
+from fastapi import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from examples.auth.config import Settings
 from examples.auth.database import get_db
-from examples.auth.identity_provider import require_local_password_management
 from examples.auth.models import User
 from examples.auth.models import USER_STATUS_PENDING_ADMIN_APPROVAL
 from examples.auth.models import USER_STATUS_REJECTED
-from examples.auth.redis_pool import get_redis_pool
-from examples.auth.user_service import invalidate_effective_site_cache
 from examples.db_management.deps import _NamedRoleUser
 from examples.db_management.deps import ensure_not_super
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
 from examples.db_management.deps import require_admin
+from examples.db_management.schemas.resource_options import Option
+from examples.db_management.schemas.resource_options import resource_options
+from examples.db_management.schemas.resource_options import ResourceOptions
 from examples.db_management.schemas.user import AdminUserApproval
 from examples.db_management.schemas.user import ApproveUserSignup
 from examples.db_management.schemas.user import PendingUserReviewPage
 from examples.db_management.schemas.user import SetUserStatus
-from examples.db_management.schemas.user import UpdateMyPassword
 from examples.db_management.schemas.user import UpdatePassword
 from examples.db_management.schemas.user import UpdatePasswordById
 from examples.db_management.schemas.user import UpdateUserGroup
@@ -43,7 +41,6 @@ from examples.db_management.schemas.user import UserManagementCapabilities
 from examples.db_management.schemas.user import UserPage
 from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
-from examples.db_management.schemas.user import UserSignup
 from examples.db_management.services.keycloak_user_management_services import (
     delete_keycloak_user,
 )
@@ -62,6 +59,8 @@ from examples.db_management.services.keycloak_user_management_services import (
 from examples.db_management.services.password_policy import (
     validate_password_minimum,
 )
+from examples.db_management.services.role_policy import assignable_roles
+from examples.db_management.services.role_policy import validate_role
 from examples.db_management.services.site_services import (
     list_site_ids_for_group,
 )
@@ -90,9 +89,6 @@ from examples.db_management.services.user_management_services import (
     pending_user_review_read,
 )
 from examples.db_management.services.user_management_services import (
-    register_signup_user,
-)
-from examples.db_management.services.user_management_services import (
     resolve_target_group_id,
 )
 from examples.db_management.services.user_services import (
@@ -101,34 +97,51 @@ from examples.db_management.services.user_services import (
 from examples.db_management.services.user_services import (
     create_or_update_profile,
 )
-from examples.db_management.services.user_services import create_user
 from examples.db_management.services.user_services import delete_user
 from examples.db_management.services.user_services import (
     ensure_keycloak_subject_for_user,
 )
 from examples.db_management.services.user_services import get_user_by_id
 from examples.db_management.services.user_services import set_user_status
-from examples.db_management.services.user_services import update_password
 from examples.db_management.services.user_services import update_username
 
 router = APIRouter(tags=['user-mgmt'])
-settings = Settings()
 
 
-def _keycloak_manages_passwords() -> bool:
-    """Return whether administrator actions must update Keycloak identities."""
-    return (
-        settings.oidc_enabled
-        and settings.oidc_passwords_managed_externally
+@router.get('/users/assignable-roles', response_model=ResourceOptions)
+async def get_assignable_roles(
+    response: Response,
+    target_user_id: int | None = Query(None, gt=0),
+    locale: str = 'zh-TW',
+    me: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ResourceOptions:
+    target = (
+        await db.get(User, target_user_id)
+        if target_user_id is not None
+        else None
     )
+    if target_user_id is not None and target is None:
+        raise HTTPException(404, detail='User not found')
+    labels = (
+        {'admin': '管理員', 'user': '使用者', 'guest': '訪客'}
+        if locale.lower().startswith('zh')
+        else {}
+    )
+    options = [
+        Option(id=r, label=labels.get(r, r))
+        for r in assignable_roles(me, target)
+    ]
+    response.headers['Cache-Control'] = 'private, no-store'
+    return resource_options(me, target_user_id, options)
+
+
+settings = Settings()
 
 
 def _ensure_role_can_be_assigned(role: str, operator: User) -> None:
     """Keep the singleton platform super-admin role out of normal workflows."""
-    if role == 'super_admin':
-        raise HTTPException(403, 'The super admin role is reserved.')
-    if role == 'admin' and not is_super_admin(cast(_NamedRoleUser, operator)):
-        raise HTTPException(403, 'Only super admin can assign admin role.')
+    validate_role(operator, role)
 
 
 @router.post(
@@ -158,47 +171,36 @@ async def add_user(
     )
     _ensure_role_can_be_assigned(payload.role, me)
 
-    if _keycloak_manages_passwords():
-        if payload.profile is None:
-            raise HTTPException(
-                400,
-                'A profile with email and name is required for Keycloak.',
-            )
-        validate_password_minimum(payload.password)
-        profile = payload.profile.model_dump()
-        subject = await provision_keycloak_user(
-            username=payload.username,
-            password=payload.password,
-            email=str(profile['email']),
-            given_name=str(profile['given_name']),
-            family_name=str(profile['family_name']),
-            force_password_change=payload.force_password_change,
+    if payload.profile is None:
+        raise HTTPException(
+            400,
+            'A profile with email and name is required for Keycloak.',
         )
-        try:
-            new_user = await create_oidc_managed_user(
-                username=payload.username,
-                role=payload.role,
-                group_id=target_group_id,
-                tenant_id=me.tenant_id,
-                keycloak_subject=subject,
-                profile=profile,
-                db=db,
-            )
-        except HTTPException:
-            # Keycloak was provisioned first so a failed local transaction
-            # must be compensated before returning control to the operator.
-            await delete_keycloak_user(subject, suppress_errors=True)
-            raise
-    else:
-        new_user = await create_user(
+    validate_password_minimum(payload.password)
+    profile = payload.profile.model_dump()
+    subject = await provision_keycloak_user(
+        username=payload.username,
+        password=payload.password,
+        email=str(profile['email']),
+        given_name=str(profile['given_name']),
+        family_name=str(profile['family_name']),
+        force_password_change=payload.force_password_change,
+    )
+    try:
+        new_user = await create_oidc_managed_user(
             username=payload.username,
-            password=payload.password,
             role=payload.role,
             group_id=target_group_id,
+            tenant_id=me.tenant_id,
+            keycloak_subject=subject,
+            profile=profile,
             db=db,
-            tenant_id=getattr(me, 'tenant_id', None),
-            profile=payload.profile.model_dump() if payload.profile else None,
         )
+    except HTTPException:
+        # Keycloak was provisioned first so a failed local transaction
+        # must be compensated before returning control to the operator.
+        await delete_keycloak_user(subject, suppress_errors=True)
+        raise
 
     if target_group_id:
         site_ids = await list_site_ids_for_group(target_group_id, db)
@@ -209,34 +211,7 @@ async def add_user(
         )
         if site_ids:
             await db.commit()
-    invalidate_effective_site_cache()
     return await load_user_read(new_user.id, db)
-
-
-@router.post('/signup', response_model=UserRead, status_code=201)
-async def signup_user(
-    payload: UserSignup,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    redis: Redis = Depends(get_redis_pool),
-) -> UserRead:
-    """Create an email-unverified account for the public signup flow.
-
-    Args:
-        payload: Registration details, profile, and legal consents.
-        request: HTTP request used to capture consent audit metadata.
-        db: Database session used to create the account.
-        redis: Redis connection used to create verification-token state.
-
-    Returns:
-        Newly created account in its email-unverified state.
-
-    Raises:
-        HTTPException: If the username or email is unavailable, legal consent
-            is
-            invalid, or verification delivery cannot be initiated.
-    """
-    return await register_signup_user(payload, request, db, redis)
 
 
 @router.get(
@@ -356,7 +331,6 @@ async def review_user_signup(
     if payload.decision == 'rejected':
         user.status = USER_STATUS_REJECTED
         await db.commit()
-        invalidate_effective_site_cache()
         return await load_user_read(user.id, db)
 
     return await approve_signup_user(user, payload.group_id, db, me)
@@ -443,11 +417,9 @@ async def remove_user(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-    if _keycloak_manages_passwords():
-        subject = await ensure_keycloak_subject_for_user(user, db)
-        await delete_keycloak_user(subject)
+    subject = await ensure_keycloak_subject_for_user(user, db)
+    await delete_keycloak_user(subject)
     await delete_user(user, db)
-    invalidate_effective_site_cache()
     return {'message': 'User deleted successfully.'}
 
 
@@ -473,18 +445,14 @@ async def admin_update_pwd(
         raise HTTPException(404, 'User not found.')
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-    if _keycloak_manages_passwords():
-        validate_password_minimum(payload.new_password)
-        subject = await ensure_keycloak_subject_for_user(user, db)
-        await reset_keycloak_password(
-            subject,
-            password=payload.new_password,
-            temporary=True,
-        )
-        await db.commit()
-    else:
-        require_local_password_management()
-        await update_password(user, payload.new_password, db)
+    validate_password_minimum(payload.new_password)
+    subject = await ensure_keycloak_subject_for_user(user, db)
+    await reset_keycloak_password(
+        subject,
+        password=payload.new_password,
+        temporary=True,
+    )
+    await db.commit()
     return {'message': 'Password updated successfully.'}
 
 
@@ -496,6 +464,7 @@ async def admin_update_pwd_by_id(
     payload: UpdatePasswordById,
     db: AsyncSession = Depends(get_db),
     me: User = Depends(require_admin),
+    temporary: bool = True,
 ) -> dict[str, str]:
     """Admin update user's password by user ID.
 
@@ -509,57 +478,15 @@ async def admin_update_pwd_by_id(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-    if _keycloak_manages_passwords():
-        validate_password_minimum(payload.new_password)
-        subject = await ensure_keycloak_subject_for_user(user, db)
-        await reset_keycloak_password(
-            subject,
-            password=payload.new_password,
-            temporary=True,
-        )
-        await db.commit()
-    else:
-        require_local_password_management()
-        await update_password(user, payload.new_password, db)
+    validate_password_minimum(payload.new_password)
+    subject = await ensure_keycloak_subject_for_user(user, db)
+    await reset_keycloak_password(
+        subject,
+        password=payload.new_password,
+        temporary=temporary,
+    )
+    await db.commit()
     return {'message': 'Password updated successfully by user ID.'}
-
-
-@router.put('/update_my_password', dependencies=[Depends(get_current_user)])
-async def update_my_pwd(
-    payload: UpdateMyPassword,
-    db: AsyncSession = Depends(get_db),
-    redis_pool: Redis = Depends(get_redis_pool),
-    me: User = Depends(get_current_user),
-) -> dict[str, str]:
-    """Allow users to update their own password.
-
-    Args:
-        payload: Contains old and new passwords.
-        db: Async database session.
-        redis_pool: Redis connection.
-        me: Currently authenticated user.
-
-    Returns:
-        Message indicating password change success.
-    """
-    require_local_password_management()
-    if not await me.check_password(payload.old_password):
-        raise HTTPException(401, 'Old password incorrect.')
-
-    await update_password(me, payload.new_password, db)
-
-    # Clear existing tokens from Redis cache
-    from examples.auth.cache import rate_limiter_service
-
-    cache = await rate_limiter_service.get_user_data(redis_pool, me.username)
-    if cache:
-        cache['jti_list'] = []
-        cache['refresh_tokens'] = []
-        await rate_limiter_service.set_user_data(
-            redis_pool, me.username, cache,
-        )
-
-    return {'message': 'Password changed successfully, please log in again.'}
 
 
 @router.put('/update_username', dependencies=[Depends(require_admin)])
@@ -586,9 +513,8 @@ async def change_username(
         raise HTTPException(404, 'User not found.')
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-    if _keycloak_manages_passwords():
-        subject = await ensure_keycloak_subject_for_user(user, db)
-        await update_keycloak_user(subject, username=payload.new_username)
+    subject = await ensure_keycloak_subject_for_user(user, db)
+    await update_keycloak_user(subject, username=payload.new_username)
     await update_username(user, payload.new_username, db)
     return {'message': 'Username updated successfully.'}
 
@@ -611,9 +537,8 @@ async def change_username_by_id(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-    if _keycloak_manages_passwords():
-        subject = await ensure_keycloak_subject_for_user(user, db)
-        await update_keycloak_user(subject, username=payload.new_username)
+    subject = await ensure_keycloak_subject_for_user(user, db)
+    await update_keycloak_user(subject, username=payload.new_username)
     await update_username(user, payload.new_username, db)
     return {'message': 'Username updated successfully.'}
 
@@ -636,12 +561,11 @@ async def update_user_status(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-    if _keycloak_manages_passwords():
-        subject = await ensure_keycloak_subject_for_user(user, db)
-        await set_keycloak_user_enabled(
-            subject,
-            enabled=payload.status == 'active',
-        )
+    subject = await ensure_keycloak_subject_for_user(user, db)
+    await set_keycloak_user_enabled(
+        subject,
+        enabled=payload.status == 'active',
+    )
     await set_user_status(user, payload.status, db)
     return {'message': 'User status updated successfully.'}
 
@@ -665,7 +589,7 @@ async def change_role(
     user = await get_user_by_id(payload.user_id, db)
     ensure_not_super(user)
     ensure_user_management_scope(user, me)
-    _ensure_role_can_be_assigned(payload.new_role, me)
+    validate_role(me, payload.new_role, user)
 
     user.role = payload.new_role
     await db.commit()
@@ -696,7 +620,6 @@ async def change_group(
     await get_group_or_404(target_group_id, db)
     user.group_id = target_group_id
     await db.commit()
-    invalidate_effective_site_cache()
     return {'message': 'User group updated successfully.'}
 
 
@@ -727,14 +650,12 @@ async def update_profile(
         exclude={'user_id'},
         exclude_none=True,
     )
-    if _keycloak_manages_passwords() and profile_data:
+    if profile_data:
         subject = await ensure_keycloak_subject_for_user(user, db)
         await update_keycloak_user(
             subject,
             email=(
-                str(profile_data['email'])
-                if 'email' in profile_data
-                else None
+                str(profile_data['email']) if 'email' in profile_data else None
             ),
             given_name=(
                 str(profile_data['given_name'])

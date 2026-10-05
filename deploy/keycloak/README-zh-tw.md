@@ -43,35 +43,20 @@ Provider 對 hCaptcha 的 `siteverify` 會帶入 server-side secret、一次性 
 部署會停用 Keycloak 的 `VERIFY_PROFILE` required action；使用者可在登入後的 Keycloak
 Account Console 自行補齊個人資料，但不會在登入流程中被強制要求。
 
+Realm 密碼政策以 `forceExpiredPasswordChange(180)` 將密碼有效期設為 180 天；期限從
+Keycloak 密碼 credential 最近一次建立或更新時計算，到期後才在登入流程要求變更。
+建立帳號與管理員重設密碼仍使用非暫時密碼，不會額外觸發首次登入強制變更。
+
 Keycloak realm 的 `browserSecurityHeaders.contentSecurityPolicy` 必須在
 `frame-src` 明確允許 `https://hcaptcha.com` 與 `https://*.hcaptcha.com`；這是
 hCaptcha iframe 實際使用的回應標頭，不能只寫在 login theme 的
 `theme.properties`。
 
-### 舊 Visionnaire 密碼的一次性遷移
+### 帳密驗證
 
-遷移期間，Keycloak 密碼政策必須與既有 Visionnaire 的最小長度相容（目前為
-8 字元）。若在此期間提高最小長度，原本合法但較短的密碼無法寫入 Keycloak，
-使用者就會被錯誤地拒絕登入。所有帳號完成遷移並通知使用者更新密碼後，才可再
-提高 Keycloak 的密碼政策。
-
-既有帳號的 Argon2 hash 不可直接複製到 Keycloak database。遷移期間設定：
-
-```dotenv
-LEGACY_PASSWORD_MIGRATION_ENABLED=true
-LEGACY_PASSWORD_MIGRATION_TTL_SECONDS=30
-```
-
-使用者第一次以原 Visionnaire 密碼登入時，Keycloak 先驗證自己的 credential；失敗才會由
-custom form 透過 loopback HMAC 向 Visionnaire 驗證既有 hash。驗證成功後，Keycloak 立即以
-同一份密碼建立自己的 credential，並以一個 30 秒、一次性的 migration token 回呼停用
-`users.password_hash`。明文密碼、舊 hash、migration token 都不會寫入 Keycloak log、Redis
-或 HTTP response。
-
-此橋接只接受 `127.0.0.1` 的 Keycloak container，並以與 native-social HMAC 不可互換的
-domain-separated signature 保護；它不會恢復 Visionnaire 的舊登入 API。所有已遷移的帳號
-後續只使用 Keycloak 密碼。確認 active 密碼帳號都已遷移後，設定
-`LEGACY_PASSWORD_MIGRATION_ENABLED=false` 並重新部署 Keycloak 與 db-management。
+帳密登入使用 Keycloak 的標準 `auth-username-password-form`，之後執行 hCaptcha。
+舊 Visionnaire 密碼搬移 provider 已移除；啟動腳本會清除既有 browser forms flow
+中殘留的搬移 execution，並重新啟用標準帳密驗證器。
 
 ## Google 與 Apple 社群登入
 

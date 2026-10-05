@@ -8,8 +8,7 @@ this backend is the control plane for the live detection runtime.
 
 ## Responsibilities
 
-- Authenticate users with a username or e-mail plus password, and refresh JWT
-  tokens.
+- Verify OIDC access tokens and manage Keycloak identities.
 - Manage users, pending signups, roles, and groups.
 - Manage feature permissions by group.
 - Manage construction sites and user-site access.
@@ -50,7 +49,11 @@ DB_POOL_RECYCLE_SECONDS=1800
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=password
-JWT_SECRET_KEY=replace-with-a-long-random-secret
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=https://sso.example.com/realms/visionnaire
+OIDC_JWKS_URL=https://sso.example.com/realms/visionnaire/protocol/openid-connect/certs
+OIDC_AUDIENCE=visionnaire-api
+OIDC_ACCOUNT_URL=https://sso.example.com/realms/visionnaire/account
 HCAPTCHA_ENABLED=true
 HCAPTCHA_SECRET_KEY=replace-with-your-hcaptcha-secret
 HCAPTCHA_SITE_KEY=3e5cc8c8-0e36-4316-8416-63f0e4c635d0
@@ -62,56 +65,21 @@ BFF_SESSION_TTL_SECONDS=2592000
 MEDIA_SESSION_TTL_SECONDS=600
 PLAYBACK_STREAMING_API_URL=http://127.0.0.1:8800
 CORS_ALLOWED_ORIGINS=https://changdar-server.mooo.com,https://visionnaire-cda17.web.app,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5000,http://127.0.0.1:5000,http://localhost:8080,http://127.0.0.1:8080
-BREVO_API_KEY=replace-with-your-brevo-api-key
-MAIL_FROM=verified-sender@example.com
-MAIL_FROM_NAME=Visionnaire
-APP_PUBLIC_URL=https://changdar-server.mooo.com
-PASSWORD_RESET_TOKEN_TTL_SECONDS=1800
 ```
 
-The same `JWT_SECRET_KEY` must be used by every API service.
-Keep `HCAPTCHA_SECRET_KEY` only in backend environment variables.
-Use `HCAPTCHA_BYPASS_KEY` only for trusted backend scripts that cannot solve
-hCaptcha. Never expose it to browser code.
-Keep `BREVO_API_KEY` only in backend environment variables.
-`BFF_TOKEN_ENCRYPTION_KEY` encrypts server-side access/refresh tokens. It must
-not be exposed to any client. Flutter Web receives only an opaque HttpOnly
-session cookie. Native clients use OAuth Authorization Code + PKCE.
-`CORS_ALLOWED_ORIGINS` must list the exact Web origins that may send cookies;
-do not use `*` with credentialed requests.
-When running with Docker Compose, set `PLAYBACK_STREAMING_API_URL` to
-`http://streaming-web-backend:8000`. Use `http://127.0.0.1:8800` only when the
-services are running directly on the host.
+API services share the configured OIDC issuer, JWKS URL and API audience.
 
 ## Login
 
-`POST /auth/login` uses one account identifier field that accepts a username or
-e-mail address:
+Web uses Keycloak Authorization Code + PKCE through `GET /bff/auth/oidc/login`.
+Native clients use Keycloak Authorization Code + PKCE directly. APIs accept
+OIDC access tokens only. Administrator account creation, password resets and
+identity updates use the Keycloak Admin API. Users manage their passwords and
+account recovery through `/bff/auth/account`.
 
-```json
-{
-  "identifier": "user@example.com",
-  "password": "password",
-  "hcaptcha_token": "frontend-hcaptcha-token"
-}
-```
-
-`POST /auth/google` and `POST /auth/apple` accept provider login tokens and
-return the same JWT response shape when the linked local user is active. New
-provider accounts are created as pending users and must be approved before
-they can receive local JWTs.
-If the provider token e-mail already belongs to an existing account, the
-backend returns `account_link_required` instead of automatically merging
-accounts. The user must sign in with an existing method and link the provider.
-
-Authenticated users can manage login methods with:
-
-- `GET /auth/identities`
-- `POST /auth/identities/google/link`
-- `POST /auth/identities/apple/link`
-- `DELETE /auth/identities/{identity_id}`
-
-Unlinking the last remaining login method is rejected with `last_login_method`.
+Local login, direct Google/Apple login, local JWT/refresh issuance and the
+password migration bridge have been removed. Existing databases need
+`scripts/migrate_remove_local_passwords.sql`.
 
 ## Native OAuth and Unified Playback
 
@@ -119,13 +87,7 @@ Flutter Web BFF routes are provided by the `examples/bff` module mounted in
 this same process. This service also retains Native OAuth and exposes the
 Flutter Web/iOS/Android playback facade.
 
-Native apps use `GET /hazard/api/db_management/oauth/authorize`,
-`POST /hazard/api/db_management/oauth/token`,
-`GET /hazard/api/db_management/me`, and
-`POST /hazard/api/db_management/oauth/revoke`. Only S256 PKCE and configured
-client/redirect pairs are
-accepted. Access tokens last 15 minutes; refresh tokens rotate and retain
-family reuse-detection state.
+Native apps use Keycloak Authorization Code + PKCE and `GET /me` for local business permissions.
 
 Native clients use the playback facade under the existing
 `/hazard/api/db_management/` base path. Flutter Web uses the authenticated
@@ -189,24 +151,6 @@ APPLE_REDIRECT_URI=https://changdar-server.mooo.com/hazard/api/db_management/aut
 APPLE_PRIVATE_KEY_PATH=config/secrets/apple/AuthKey_NGC4QBS7ZY.p8
 ```
 
-## Password Reset
-
-`POST /password/forgot` always returns:
-
-```json
-{
-  "message": "If the email exists, a reset link has been sent."
-}
-```
-
-If the e-mail belongs to a user, the backend stores only a SHA-256 hash of a
-one-time reset token in Redis with `PASSWORD_RESET_TOKEN_TTL_SECONDS`, then
-sends `APP_PUBLIC_URL/reset_password?token={raw_reset_token}` through Brevo.
-
-`POST /password/reset` accepts the raw token from the URL and a new password.
-The token is deleted after a successful reset, and the user's cached JWT
-session data is removed from Redis.
-
 ## Stream Configuration And Runtime
 
 Stream rows with recognition enabled during their configured working hours
@@ -229,3 +173,11 @@ Key fields include:
 
 For multi-camera deployments, prefer database mode over local JSON config so
 updates can be applied without editing `main.py`.
+
+## Retired routes
+
+Stream configuration reads use `GET /sites/{site_id}/stream-config`.
+`/list_stream_configs`, `/auth/verify-email`, and `/auth/resend-verification`
+are removed. Email verification and mail delivery belong to the configured
+Keycloak realm; configure its SMTP and verification policy before enabling
+that workflow. Retiring local verification never activates existing accounts.

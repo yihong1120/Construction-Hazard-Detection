@@ -72,12 +72,9 @@ Visionnaire 必須使用不同 client，否則 Open WebUI token 可能被誤用�
 `/bff/auth/oidc/login?return_to=/&idp_hint=google` 或 `idp_hint=apple`。BFF 只轉送
 allow-list provider hint 給 Keycloak；不接受、驗證或儲存第三方 social token。
 
-完成帳號切換後，帳號設定中的「變更密碼」請連到 `/bff/auth/account`。開啟
-`OIDC_PASSWORDS_MANAGED_EXTERNALLY=true` 時，舊的 Visionnaire 密碼變更與重設 API
-會回傳 `409 password_managed_by_identity_provider` 與 Keycloak Account Console URL，不再
-寫入本機 `password_hash`。同一開關也會停用舊的帳密、Google、Apple 與 legacy refresh
-登入路徑；登入按鈕必須使用 `/bff/auth/oidc/login`。hCaptcha 僅在 Keycloak login theme
-顯示並由 Keycloak server-side Provider 驗證，Web 不得重複嵌入或傳送 hCaptcha token。
+帳號設定中的「變更密碼」連到 `/bff/auth/account`。登入按鈕使用
+`/bff/auth/oidc/login`；本機帳密、直接 Google／Apple 登入及本機 refresh
+入口已移除。hCaptcha 由 Keycloak login theme 與 server-side provider 處理。
 
 ## 推播裝置註冊
 

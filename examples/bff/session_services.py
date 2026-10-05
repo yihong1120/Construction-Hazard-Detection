@@ -4,33 +4,23 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi import Response
 from redis.asyncio import Redis
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.deployment_context import resolve_request_deployment
-from examples.auth.models import User
-from examples.auth.session_store import auth_tokens
-from examples.auth.session_store import create_auth_session
 from examples.auth.session_store import delete_auth_session
 from examples.auth.session_store import get_auth_session
 from examples.auth.session_store import touch_auth_session
 from examples.bff.oidc_services import create_oidc_global_logout_url
 from examples.bff.proxy import get_proxy_access_token
 from examples.bff.proxy import proxy_request
-from examples.bff.schemas import BffLoginRequest
 from examples.bff.schemas import BffSessionResponse
 from examples.bff.schemas import CsrfResponse
-from examples.bff.schemas import UserSummary
 from examples.bff.security import check_csrf
 from examples.bff.security import clear_session_cookie
-from examples.bff.security import require_trusted_origin
 from examples.bff.security import SESSION_COOKIE
 from examples.bff.security import set_session_cookie
 from examples.db_management.schemas.auth import DeploymentInfo
-from examples.db_management.services.auth_services import login_user
-from examples.db_management.services.auth_services import logout_user
 
 
 async def _session(
@@ -115,100 +105,6 @@ def _session_response(session: dict[str, object]) -> BffSessionResponse:
     return BffSessionResponse.model_validate(session)
 
 
-async def _user_summary(
-    db: AsyncSession,
-    user_id: int,
-) -> UserSummary:
-    """Load a user summary suitable for server-side BFF session storage.
-
-    Args:
-        db: Database session used to load the account profile.
-        user_id: Identifier of the authenticated user.
-
-    Returns:
-        Public user summary used by BFF session responses.
-
-    Raises:
-        HTTPException: If the authenticated user no longer exists.
-    """
-    user = await db.scalar(
-        select(User)
-        .options(selectinload(User.profile))
-        .where(User.id == user_id),
-    )
-    if user is None:
-        raise HTTPException(status_code=401, detail='user_not_found')
-    profile = user.profile
-    display_name = user.username
-    if profile is not None:
-        display_name = (
-            ' '.join(
-                part
-                for part in (
-                    profile.given_name,
-                    profile.family_name,
-                )
-                if part
-            )
-            or user.username
-        )
-    return UserSummary(
-        id=user.id,
-        username=user.username,
-        display_name=display_name,
-        role=user.role,
-        group_id=user.group_id,
-        status=user.status,
-    )
-
-
-async def login_bff_session(
-    payload: BffLoginRequest,
-    request: Request,
-    response: Response,
-    hcaptcha_bypass_key: str | None,
-    db: AsyncSession,
-    redis: Redis,
-) -> BffSessionResponse:
-    """Authenticate a browser user and create a token-private BFF session.
-
-    Args:
-        payload: Browser login credentials.
-        request: HTTP request checked against trusted origins.
-        response: HTTP response receiving the session cookie.
-        hcaptcha_bypass_key: Optional trusted server-side hCaptcha bypass key.
-        db: Database session used for credential authentication and profile
-            data.
-        redis: Redis connection holding token and BFF session state.
-
-    Returns:
-        Public BFF session response without access or refresh tokens.
-
-    Raises:
-        HTTPException: If origin or credential validation fails.
-    """
-    require_trusted_origin(request)
-    result = await login_user(
-        payload,
-        db,
-        redis,
-        hcaptcha_bypass_key=hcaptcha_bypass_key,
-        client_ip=request.client.host if request.client else None,
-        hash_refresh_token=True,
-        request=request,
-    )
-    summary = await _user_summary(db, int(result['user_id']))
-    session_id, session = await create_auth_session(
-        redis,
-        result,
-        summary.model_dump(),
-    )
-    # Web clients receive only an opaque HTTP-only session identifier.
-    set_session_cookie(response, session_id)
-    response.headers['Cache-Control'] = 'no-store'
-    return _session_response(session)
-
-
 async def current_bff_session(
     request: Request,
     response: Response,
@@ -265,7 +161,7 @@ async def logout_bff_session(
     response: Response,
     csrf_token: str | None,
     redis: Redis,
-) -> str | None:
+) -> str:
     """Revoke BFF credentials and remove the browser session.
 
     Args:
@@ -278,19 +174,11 @@ async def logout_bff_session(
         HTTPException: If the session is absent or CSRF validation fails.
     Returns:
         A one-use local URL which completes Keycloak browser logout for an
-        OIDC session, or ``None`` for a legacy/local-only session.
+        OIDC session.
     """
     session_id, session = await _session(request, redis)
     check_csrf(request, session, csrf_token)
-    global_logout_url: str | None = None
-    if session.get('auth_provider') == 'oidc':
-        # Create the one-use bridge before deleting the session that holds
-        # its encrypted ID token.  A configuration failure leaves the user
-        # signed in instead of causing a partial, misleading logout.
-        global_logout_url = await create_oidc_global_logout_url(redis)
-    if session.get('auth_provider', 'legacy') == 'legacy':
-        access_token, refresh_token = auth_tokens(session)
-        await logout_user(refresh_token, f"Bearer {access_token}", redis)
+    global_logout_url = await create_oidc_global_logout_url(redis)
     await delete_auth_session(redis, session_id)
     clear_session_cookie(response)
     response.headers['Cache-Control'] = 'no-store'

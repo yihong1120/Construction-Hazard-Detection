@@ -15,86 +15,8 @@ from examples.auth.models import USER_STATUS_ACTIVE
 from examples.auth.models import USER_STATUS_VALUES
 from examples.auth.models import UserIdentity
 from examples.auth.models import UserProfile
-from examples.db_management.services.keycloak_user_management_services import (
-    find_keycloak_user_subject,
-)
-from examples.db_management.services.password_policy import (
-    validate_password_minimum,
-)
 
 settings = Settings()
-
-# Keycloak is the only password verifier for accounts created after the OIDC
-# cutover.  The prefix intentionally makes legacy password verification fail
-# closed, including if a caller accidentally reaches an old password route.
-OIDC_MANAGED_PASSWORD_HASH = 'oauth_disabled:keycloak-managed'
-
-
-async def create_user(
-    username: str,
-    password: str,
-    role: str,
-    group_id: int | None,
-    db: AsyncSession,
-    tenant_id: UUID | None = None,
-    profile: dict[str, Any] | None = None,
-    status: str = USER_STATUS_ACTIVE,
-) -> User:
-    """Create a new user and optionally its profile.
-
-    Args:
-        username: Username of the new user.
-        password: Plain-text password to be hashed and stored securely.
-        role: Role of the user (for example, ``"admin"`` or ``"user"``).
-        group_id: Group identifier the user belongs to, if any.
-        db: Async SQLAlchemy session.
-        profile: Optional dictionary of profile fields used to create a
-            ``UserProfile`` (for example, ``display_name``, ``email``).
-        status: Account status to assign when creating the user.
-
-    Returns:
-        The newly created ``User`` instance, refreshed to include relationships
-        ``profile`` and ``group``.
-
-    Raises:
-        HTTPException: If the username/email already exists (400) or a generic
-            database error occurs (500).
-    """
-    validate_password_minimum(password)
-
-    try:
-        new_user = User(
-            username=username,
-            role=role,
-            group_id=group_id,
-            status=status,
-            **({'tenant_id': tenant_id} if tenant_id is not None else {}),
-        )
-        new_user.set_password(password)
-        db.add(new_user)
-
-        # Important ①: flush to obtain ``new_user.id`` (not yet committed).
-        await db.flush()
-
-        # Important ②: if a profile payload exists, create it with ``user_id``.
-        if profile:
-            prof = UserProfile(user_id=new_user.id, **profile)
-            db.add(prof)
-
-        # Single commit for both user and profile operations.
-        await db.commit()
-
-        # Refresh to include the latest state, including profile and group.
-        await db.refresh(new_user, attribute_names=['profile', 'group'])
-        return new_user
-
-    except IntegrityError as e:
-        await db.rollback()
-        # Duplicate username/email likely triggers an integrity error.
-        raise HTTPException(400, 'Username or e-mail already exists.') from e
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(500, f"Database error: {e}") from e
 
 
 async def create_oidc_managed_user(
@@ -116,7 +38,6 @@ async def create_oidc_managed_user(
     try:
         new_user = User(
             username=username,
-            password_hash=OIDC_MANAGED_PASSWORD_HASH,
             role=role,
             group_id=group_id,
             tenant_id=tenant_id,
@@ -168,42 +89,12 @@ async def keycloak_subject_for_user(
 
 
 async def ensure_keycloak_subject_for_user(
-    user: User,
-    db: AsyncSession,
+    user: User, db: AsyncSession,
 ) -> str:
-    """Return a linked Keycloak subject, recovering a legacy name mapping.
-
-    Existing users were migrated before every database row necessarily
-    received a ``UserIdentity`` record.  An administrator may safely repair
-    that missing link only by exact username lookup in the configured realm.
-    """
+    """Require an immutable, already-linked identity-provider subject."""
     subject = await keycloak_subject_for_user(user, db)
-    if subject is not None:
-        return subject
-    subject = await find_keycloak_user_subject(user.username)
-    if subject is None:
-        raise HTTPException(
-            status_code=409,
-            detail='keycloak_identity_not_linked',
-        )
-    db.add(
-        UserIdentity(
-            user_id=user.id,
-            provider=settings.oidc_identity_provider,
-            provider_user_id=subject,
-            email=None,
-            email_verified=False,
-            display_name=None,
-        ),
-    )
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail='keycloak_identity_not_linked',
-        ) from exc
+    if not subject:
+        raise HTTPException(409, detail='keycloak_identity_not_linked')
     return subject
 
 
@@ -330,36 +221,6 @@ async def update_username(
         raise HTTPException(status_code=400, detail='Username already exists.')
     except Exception as e:
         # Roll back on unexpected errors.
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-
-async def update_password(
-    user: User,
-    new_password: str,
-    db: AsyncSession,
-) -> None:
-    """Update the password of an existing user.
-
-    Args:
-        user: ``User`` instance to update.
-        new_password: The new password in plain text.
-        db: Async SQLAlchemy session.
-
-    Raises:
-        HTTPException: If the password is too short (400) or a database error
-            occurs during password update (500).
-    """
-    validate_password_minimum(new_password)
-
-    # Securely hash and set the new password.
-    user.set_password(new_password)
-
-    try:
-        # Save changes to the database.
-        await db.commit()
-    except Exception as e:
-        # Roll back on error.
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 

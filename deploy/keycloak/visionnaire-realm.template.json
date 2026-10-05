@@ -7,6 +7,11 @@
   "resetPasswordAllowed": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 36000,
+  "clientSessionIdleTimeout": 28800,
+  "clientSessionMaxLifespan": 36000,
+  "accessTokenLifespan": 300,
   "bruteForceProtected": true,
   "permanentLockout": false,
   "maxFailureWaitSeconds": 900,
@@ -17,7 +22,7 @@
   "browserSecurityHeaders": {
     "contentSecurityPolicy": "frame-src 'self' https://hcaptcha.com https://*.hcaptcha.com; frame-ancestors 'self'; object-src 'none';"
   },
-  "passwordPolicy": "length(8) and notUsername(undefined) and passwordHistory(5)",
+  "passwordPolicy": "length(8) and notUsername(undefined) and passwordHistory(5) and forceExpiredPasswordChange(180)",
   "clients": [
     {
       "clientId": "visionnaire-web",

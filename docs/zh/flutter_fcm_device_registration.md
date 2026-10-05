@@ -38,7 +38,7 @@ Coordinator 應在下列時機執行：
 
 Web 使用 BFF session cookie，**不使用也不持有 bearer token**。
 
-1. `POST /bff/auth/login` 建立 BFF session。
+1. 透過 `GET /bff/auth/oidc/login` 完成 OIDC 回呼，建立 BFF session。
 2. `GET /bff/auth/csrf` 取得 CSRF token。
 3. 以 session cookie 與 `X-CSRF-Token` 呼叫 `PUT /bff/fcm/devices`。
 

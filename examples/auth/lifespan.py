@@ -12,7 +12,6 @@ from examples.auth import models
 from examples.auth.cache import rate_limiter_service
 from examples.auth.database import AsyncSessionLocal
 from examples.auth.database import engine
-from examples.auth.jwt_scheduler import start_jwt_scheduler
 from examples.auth.redis_pool import RedisClient
 from examples.db_management.services.site_media_cleanup import (
     drain_site_media_cleanup_jobs,
@@ -58,9 +57,6 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         None: Control is yielded back to the application
             after performing startup tasks.
     """
-    # Start the scheduler (e.g., for rotating JWT secret keys).
-    scheduler = start_jwt_scheduler(app)
-
     # Initialise Redis connection for auth cache scripts.
     redis_host: str = os.getenv('REDIS_HOST', '127.0.0.1')
     redis_port: str = os.getenv('REDIS_PORT', '6379')
@@ -118,7 +114,6 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
     cleanup_stop_event.set()
     if cleanup_task is not None:
         await cleanup_task
-    scheduler.shutdown()
     await app.state.http_clients.close()
     set_application_http_clients(None)
     await app.state.redis_client.close()

@@ -2,31 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 
 from fastapi import WebSocket
 from redis import asyncio as redis_async
 
 from examples.shared.ws_auth import authenticate_websocket
-from examples.shared.ws_auth import SettingsLike
 from examples.shared.ws_auth import WS_MAX_SESSION_SECONDS
 from examples.shared.ws_utils import _safe_websocket_send_json
 from examples.shared.ws_utils import _safe_websocket_send_text
 
 logger = logging.getLogger(__name__)
-
-
-def get_auto_register_jti(env_var: str = 'WS_AUTO_REGISTER_JTI') -> bool:
-    """Read the flag controlling automatic JTI registration from the env.
-
-    Args:
-        env_var: Name of the environment variable to read.
-
-    Returns:
-        Whether missing JTIs should be auto-registered for WebSocket tokens.
-    """
-    return os.getenv(env_var, 'false').lower() == 'true'
 
 
 def start_session_timer() -> float:
@@ -114,8 +100,6 @@ def log_every_n(
 async def authenticate_ws_or_none(
     websocket: WebSocket,
     rds: redis_async.Redis,
-    settings: SettingsLike,
-    auto_register_jti: bool,
     client_tag: str,
 ) -> tuple[str, dict[str, object]] | tuple[None, None]:
     """Authenticate a WebSocket connection and return the user information.
@@ -123,8 +107,6 @@ async def authenticate_ws_or_none(
     Args:
         websocket: Active WebSocket connection to authenticate.
         rds: Redis connection used by the authentication cache.
-        settings: Configuration required to verify JWTs.
-        auto_register_jti: Whether to auto-register unknown JTIs.
         client_tag: Label used in log lines for correlation.
 
     Returns:
@@ -135,8 +117,6 @@ async def authenticate_ws_or_none(
         username, jti, payload = await authenticate_websocket(
             websocket,
             rds,
-            settings,
-            auto_register_jti=auto_register_jti,
             client_tag=client_tag,
         )
         return username, payload

@@ -169,7 +169,7 @@ class TestBffOidcServices(unittest.IsolatedAsyncioTestCase):
             ),
             unittest.mock.patch.object(
                 oidc_services,
-                '_user_summary',
+                'load_user_summary',
                 new=AsyncMock(
                     return_value=UserSummary(
                         id=7,

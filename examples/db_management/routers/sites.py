@@ -13,7 +13,6 @@ from examples.auth.database import get_db
 from examples.auth.models import Site
 from examples.auth.models import User
 from examples.auth.redis_pool import get_redis_pool
-from examples.auth.user_service import invalidate_effective_site_cache
 from examples.db_management.deps import _site_permission
 from examples.db_management.deps import ensure_admin_with_group
 from examples.db_management.deps import get_current_user
@@ -119,7 +118,6 @@ async def endpoint_create_site(
         visible_group_id = me.group_id
 
     site: Site = await create_site(payload.name, group_ids, db)
-    invalidate_effective_site_cache()
 
     return site_to_read(site, visible_group_id=visible_group_id)
 
@@ -162,7 +160,6 @@ async def endpoint_update_site(
 
     old_name = site.name
     await update_site(site, payload.new_name, db)
-    invalidate_effective_site_cache()
     await invalidate_site_notification_user_cache([old_name], rds)
     await refresh_site_notification_user_cache(payload.new_name, db, rds)
     return {'message': 'Site updated successfully.'}
@@ -214,7 +211,6 @@ async def endpoint_delete_site(
     await invalidate_site_notification_user_cache([site.name], rds)
 
     await delete_site(site, db)
-    invalidate_effective_site_cache()
     return {'message': 'Site and related data deleted successfully.'}
 
 
@@ -292,7 +288,6 @@ async def endpoint_add_user_to_site(
         )
 
     await add_user_to_site(user.id, site.id, db)
-    invalidate_effective_site_cache()
     await refresh_site_notification_user_cache(site.name, db, rds)
     return {'message': 'User linked to site successfully.'}
 
@@ -364,7 +359,6 @@ async def endpoint_remove_user_from_site(
     _site_permission(me, group_id=user.group_id)
 
     await remove_user_from_site(user.id, site.id, db)
-    invalidate_effective_site_cache()
     await refresh_site_notification_user_cache(site.name, db, rds)
     return {'message': 'User unlinked from site successfully.'}
 
@@ -408,7 +402,6 @@ async def endpoint_add_group_to_site(
     _site_permission(me, group_id=payload.group_id)
 
     await add_group_to_site(site.id, payload.group_id, db)
-    invalidate_effective_site_cache()
     return {'message': 'Group linked to site successfully.'}
 
 
@@ -451,5 +444,4 @@ async def endpoint_remove_group_from_site(
     _site_permission(me, group_id=payload.group_id)
 
     await remove_group_from_site(site.id, payload.group_id, db)
-    invalidate_effective_site_cache()
     return {'message': 'Group unlinked from site successfully.'}

@@ -3,11 +3,15 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Request
 from fastapi import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.config import Settings
 from examples.auth.database import get_db
+from examples.auth.models import User
+from examples.db_management.deps import get_current_user
+from examples.db_management.deps import require_admin
 from examples.db_management.deps import require_tenant_deployment_administrator
 from examples.db_management.deps import TenantDeploymentAdministrator
 from examples.db_management.schemas.deployment_enrollment_code import (
@@ -22,11 +26,41 @@ from examples.db_management.schemas.deployment_enrollment_code import (
 from examples.db_management.schemas.deployment_enrollment_code import (
     DeploymentEnrollmentCodeList,
 )
+from examples.db_management.schemas.resource_options import Option
+from examples.db_management.schemas.resource_options import resource_options
+from examples.db_management.schemas.resource_options import ResourceOptions
 from examples.db_management.services import (
     deployment_enrollment_code_services as code_services,
 )
+from examples.db_management.services.invitation_policy import invitation_policy
 
 router = APIRouter(tags=['deployment-enrollment-codes'])
+
+
+@router.get(
+    '/deployment-enrollment-codes/expiry-options',
+    response_model=ResourceOptions,
+)
+async def get_invitation_expiry(
+    request: Request,
+    response: Response,
+    me: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ResourceOptions:
+    await require_tenant_deployment_administrator(request, me, db)
+    require_admin(me)
+    invitation = invitation_policy(str(me.tenant_id))
+    options = [Option(id=str(n), label=f'{n} min') for n in invitation.minutes]
+    default = (
+        str(invitation.default_minutes)
+        if invitation.default_minutes is not None
+        else None
+    )
+    policy = {'max_minutes': invitation.max_minutes}
+    response.headers['Cache-Control'] = 'private, no-store'
+    return resource_options(me, None, options, default, policy)
+
+
 settings = Settings()
 
 

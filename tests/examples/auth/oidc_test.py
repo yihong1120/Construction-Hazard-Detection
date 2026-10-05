@@ -7,6 +7,7 @@ from datetime import timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import patch
 from uuid import UUID
 
 import jwt
@@ -14,8 +15,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.exceptions import InvalidTokenError
 
 from examples.auth.deployment_context import DeploymentBinding
+from examples.auth.jwt_config import PyJWTBearer
 from examples.auth.oidc import OidcTokenVerifier
 from examples.auth.oidc_identity import subject_from_oidc_identity
+from examples.shared import ws_auth
 
 _ISSUER = 'https://sso.example.com/realms/visionnaire'
 _AUDIENCE = 'visionnaire-api'
@@ -32,6 +35,7 @@ def _claims(**overrides: object) -> dict[str, object]:
     now = datetime.now(timezone.utc)
     claims: dict[str, object] = {
         'iss': _ISSUER,
+        'typ': 'Bearer',
         'sub': 'keycloak-user-id',
         'aud': _AUDIENCE,
         'iat': now,
@@ -101,6 +105,77 @@ class TestOidcTokenVerifier(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(InvalidTokenError):
             await self.verifier.decode_access_token(token)
 
+    async def test_websocket_uses_oidc_mapping_and_revocation(self) -> None:
+        """Signed WS tokens use the real shared verifier and local mapping."""
+        bearer = PyJWTBearer(
+            oidc_verifier=self.verifier,
+        )
+        db = AsyncMock()
+        db.scalar.return_value = SimpleNamespace(user_id=7)
+        db.get.return_value = SimpleNamespace(
+            id=7, username='alice', role='user', status='active',
+            tenant_id=_DEPLOYMENT.tenant_id, group_id=None,
+        )
+        redis = AsyncMock()
+        redis.exists.return_value = False
+        ws = SimpleNamespace(
+            headers={'authorization': f'Bearer {self._token()}'},
+            query_params={}, close=AsyncMock(),
+            scope={
+                'type': 'websocket', 'scheme': 'wss', 'path': '/ws/detect',
+                'query_string': b'',
+                'headers': [(b'host', b'api.example.com')],
+                'server': ('api.example.com', 443),
+                'client': ('192.0.2.1', 1234),
+            },
+        )
+        with (
+            patch.object(ws_auth, 'jwt_access', bearer),
+            patch('examples.auth.jwt_config.AsyncSessionLocal') as sessions,
+            patch(
+                'examples.auth.jwt_config.resolve_request_deployment',
+                AsyncMock(return_value=_DEPLOYMENT),
+            ),
+        ):
+            sessions.return_value.__aenter__.return_value = db
+            username, jti, payload = await ws_auth.authenticate_websocket(
+                ws, redis,
+            )
+            self.assertEqual(username, 'alice')
+            self.assertEqual(jti, f'oidc:{_ISSUER}:keycloak-token-id')
+            subject = payload['subject']
+            assert isinstance(subject, dict)
+            self.assertEqual(subject['user_id'], 7)
+            redis.exists.assert_awaited_once()
+            redis.set.assert_not_awaited()
+            for failure in (
+                'revoked', 'audience', 'expired',
+                'unlinked', 'id_token',
+            ):
+                with self.subTest(failure=failure):
+                    redis.exists.return_value = failure == 'revoked'
+                    db.scalar.return_value = (
+                        None if failure == 'unlinked'
+                        else SimpleNamespace(user_id=7)
+                    )
+                    overrides: dict[str, object] = {}
+                    if failure == 'audience':
+                        overrides['aud'] = 'another-api'
+                    if failure == 'id_token':
+                        overrides['typ'] = 'ID'
+                    if failure == 'expired':
+                        overrides['exp'] = datetime.now(timezone.utc) - (
+                            timedelta(minutes=1)
+                        )
+                    ws.headers = {
+                        'authorization': f'Bearer {self._token(**overrides)}',
+                    }
+                    with self.assertRaises(SystemExit):
+                        await ws_auth.authenticate_websocket(
+                            ws, redis,
+                        )
+                    self.assertEqual(ws.close.await_args.kwargs['code'], 1008)
+
 
 class TestOidcIdentityMapping(unittest.IsolatedAsyncioTestCase):
     """Ensure OIDC authentication retains local authorisation boundaries."""
@@ -154,3 +229,24 @@ class TestOidcIdentityMapping(unittest.IsolatedAsyncioTestCase):
                 provider='keycloak',
                 binding=_DEPLOYMENT,
             )
+
+    async def test_inactive_linked_accounts_remain_rejected(self) -> None:
+        """Retiring local verification never activates an inactive account."""
+        for status in (
+            'email_unverified', 'pending_admin_approval',
+            'suspended', 'rejected',
+        ):
+            with self.subTest(status=status):
+                self.db.get.return_value.status = status
+                with self.assertRaisesRegex(
+                    InvalidTokenError, 'not an active local user',
+                ):
+                    await subject_from_oidc_identity(
+                        self.db,
+                        _claims(),
+                        provider='keycloak',
+                        binding=_DEPLOYMENT,
+                    )
+                self.assertEqual(self.db.get.return_value.status, status)
+        self.db.execute.assert_not_awaited()
+        self.db.commit.assert_not_awaited()

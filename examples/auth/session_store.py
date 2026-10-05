@@ -15,10 +15,6 @@ import jwt
 from cryptography.fernet import Fernet
 from redis.asyncio import Redis
 
-from examples.auth.config import Settings
-
-settings = Settings()
-
 AUTH_PREFIX = 'bff:session'
 OIDC_LOGOUT_STATE_PREFIX = 'bff:oidc:logout'
 MEDIA_PREFIX = 'media:session'
@@ -70,10 +66,9 @@ def _fernet() -> Fernet:
     Returns:
         The callable result.
     """
-    secret = (
-        os.getenv('BFF_TOKEN_ENCRYPTION_KEY', '').strip()
-        or settings.authjwt_secret_key
-    )
+    secret = os.getenv('BFF_TOKEN_ENCRYPTION_KEY', '').strip()
+    if not secret:
+        raise RuntimeError('BFF_TOKEN_ENCRYPTION_KEY is required')
     key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
     return Fernet(key)
 
@@ -149,9 +144,7 @@ async def create_auth_session(
     key = auth_session_key(session_id)
     now = int(time.time())
     data: dict[str, Any] = {
-        # ``legacy`` tokens are issued by Visionnaire; ``oidc`` tokens are
-        # refreshed only against the configured identity provider.
-        'auth_provider': str(token_pair.get('auth_provider') or 'legacy'),
+        'auth_provider': 'oidc',
         'session_id_hash': key.rsplit(':', 1)[-1],
         'user': dict(user),
         'feature_names': feature_names,
@@ -164,8 +157,7 @@ async def create_auth_session(
         'updated_at': now,
         'revoked': False,
     }
-    if data['auth_provider'] == 'oidc':
-        data['oidc_session_mode'] = OIDC_ONLINE_SSO_SESSION_MODE
+    data['oidc_session_mode'] = OIDC_ONLINE_SSO_SESSION_MODE
     # BFF sessions retain the same non-secret deployment contract as their
     # tokens.  It is checked before reuse and refresh, so deployment changes
     # force a fresh browser sign-in as well.
@@ -200,7 +192,7 @@ async def get_auth_session(
     if raw is None:
         return None
     data = json.loads(raw)
-    if data['revoked']:
+    if data['revoked'] or data.get('auth_provider') != 'oidc':
         return None
     return data
 

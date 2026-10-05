@@ -15,14 +15,12 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
     startup and shutdown logic is executed correctly."""
 
     @patch('examples.auth.lifespan.engine')
-    @patch('examples.auth.lifespan.start_jwt_scheduler')
     @patch('examples.auth.lifespan.RedisClient')
     @patch('examples.auth.lifespan.drain_site_media_cleanup_jobs')
     async def test_global_lifespan(
         self,
         mock_drain_cleanup: AsyncMock,
         mock_redis_client_cls: MagicMock,
-        mock_start_scheduler: MagicMock,
         mock_engine_obj: MagicMock,
     ) -> None:
         """Test the global_lifespan async context manager.
@@ -33,8 +31,6 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
                 avoid real scheduling.
         """
         # (A) Mock the returned scheduler from start_jwt_scheduler.
-        mock_scheduler: MagicMock = MagicMock()
-        mock_start_scheduler.return_value = mock_scheduler
 
         # (B) Mock the RedisClient class/methods.
         mock_redis_client: MagicMock = MagicMock()
@@ -68,17 +64,14 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
 
             # The scheduler should not be shut down
             # while we are in the context.
-            mock_scheduler.shutdown.assert_not_called()
 
             mock_conn.run_sync.assert_not_awaited()
             mock_drain_cleanup.assert_awaited_once()
         # Once we exit the context => "shutdown" logic runs.
-        mock_scheduler.shutdown.assert_called_once()
         mock_redis_client.close.assert_awaited_once()
         mock_engine_obj.dispose.assert_awaited_once()
 
     @patch('examples.auth.lifespan.engine')
-    @patch('examples.auth.lifespan.start_jwt_scheduler')
     @patch('examples.auth.lifespan.RedisClient')
     @patch('examples.auth.lifespan.rate_limiter_service')
     @patch('examples.auth.lifespan.drain_site_media_cleanup_jobs')
@@ -87,7 +80,6 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
         mock_drain_cleanup: AsyncMock,
         mock_rate_limiter_service: MagicMock,
         mock_redis_client_cls: MagicMock,
-        mock_start_scheduler: MagicMock,
         mock_engine_obj: MagicMock,
     ) -> None:
         """Ensure we cover the exception branch during preload_script.
@@ -102,8 +94,6 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
         )
 
         # Scheduler mock
-        mock_scheduler: MagicMock = MagicMock()
-        mock_start_scheduler.return_value = mock_scheduler
 
         # Redis client mocks
         mock_redis_client: MagicMock = MagicMock()
@@ -127,7 +117,6 @@ class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
             mock_drain_cleanup.assert_awaited_once()
 
         # Shutdown still occurs
-        mock_scheduler.shutdown.assert_called_once()
         mock_redis_client.close.assert_awaited_once()
         mock_engine_obj.dispose.assert_awaited_once()
 

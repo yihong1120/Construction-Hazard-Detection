@@ -49,8 +49,6 @@ class Settings(BaseSettings):
     """Configuration settings for the application.
 
     Attributes:
-        authjwt_secret_key (str): The secret key for signing JWT tokens.
-            Defaults to the value of the JWT_SECRET_KEY environment variable.
         sqlalchemy_database_uri (str): The database connection URI (async).
             Defaults to the value of the DATABASE_URL environment variable
             or 'postgresql+asyncpg://user:password@localhost/dbname' if
@@ -59,11 +57,9 @@ class Settings(BaseSettings):
             should track modifications. Defaults to False.
     """
 
-    authjwt_secret_key: str = os.getenv('JWT_SECRET_KEY', '')
     # OIDC resource-server settings. They are deliberately generic so the
     # application can use a standards-compliant provider, while the deployment
-    # guide supplies Keycloak values. Existing application JWTs remain enabled
-    # during the migration.
+    # guide supplies Keycloak values. Only provider-issued tokens are accepted.
     oidc_enabled: bool = _env_bool('OIDC_ENABLED', False)
     oidc_issuer_url: str = os.getenv('OIDC_ISSUER_URL', '').strip().rstrip('/')
     oidc_jwks_url: str = os.getenv('OIDC_JWKS_URL', '').strip()
@@ -113,10 +109,6 @@ class Settings(BaseSettings):
         '',
     ).strip()
     oidc_account_url: str = os.getenv('OIDC_ACCOUNT_URL', '').strip()
-    oidc_passwords_managed_externally: bool = _env_bool(
-        'OIDC_PASSWORDS_MANAGED_EXTERNALLY',
-        False,
-    )
     # Native Google / Apple credentials are never exchanged through
     # Keycloak's deprecated external token-exchange grant.  Instead the API
     # validates the provider assertion, creates a one-use proof bound to
@@ -150,21 +142,6 @@ class Settings(BaseSettings):
             int(os.getenv('NATIVE_SOCIAL_LINK_MAX_AUTH_AGE_SECONDS', '300')),
         ),
     )
-    # A short-lived, one-time bridge for existing Visionnaire Argon2
-    # credentials. Keycloak verifies its own password first; this is only a
-    # temporary fallback that upgrades a successfully proved legacy password
-    # into Keycloak's credential store.
-    legacy_password_migration_enabled: bool = _env_bool(
-        'LEGACY_PASSWORD_MIGRATION_ENABLED',
-        False,
-    )
-    legacy_password_migration_ttl_seconds: int = max(
-        15,
-        min(
-            120,
-            int(os.getenv('LEGACY_PASSWORD_MIGRATION_TTL_SECONDS', '30')),
-        ),
-    )
     keycloak_admin_base_url: str = os.getenv(
         'KEYCLOAK_ADMIN_BASE_URL',
         '',
@@ -182,70 +159,9 @@ class Settings(BaseSettings):
         60,
         min(600, int(os.getenv('OIDC_STATE_TTL_SECONDS', '300'))),
     )
-    hcaptcha_enabled: bool = _env_bool('HCAPTCHA_ENABLED', True)
-    hcaptcha_secret_key: str = os.getenv('HCAPTCHA_SECRET_KEY', '')
-    hcaptcha_site_key: str = os.getenv('HCAPTCHA_SITE_KEY', '')
-    hcaptcha_bypass_key: str = os.getenv('HCAPTCHA_BYPASS_KEY', '')
-    web_refresh_cookie_name: str = os.getenv(
-        'WEB_REFRESH_COOKIE_NAME',
-        'refresh_session',
-    )
-    web_refresh_cookie_path: str = os.getenv(
-        'WEB_REFRESH_COOKIE_PATH',
-        '/hazard/api/db_management',
-    )
-    web_refresh_cookie_domain: str = os.getenv(
-        'WEB_REFRESH_COOKIE_DOMAIN',
-        '',
-    )
-    web_refresh_cookie_secure: bool = _env_bool(
-        'WEB_REFRESH_COOKIE_SECURE',
-        True,
-    )
-    web_refresh_cookie_samesite: str = os.getenv(
-        'WEB_REFRESH_COOKIE_SAMESITE',
-        'lax',
-    ).lower()
-    web_refresh_cookie_max_age_seconds: int = int(
-        os.getenv('WEB_REFRESH_COOKIE_MAX_AGE_SECONDS', str(30 * 24 * 3600)),
-    )
     fcm_token_encryption_key: str = os.getenv(
         'FCM_TOKEN_ENCRYPTION_KEY',
         '',
-    )
-    brevo_api_key: str = os.getenv('BREVO_API_KEY', '')
-    mail_from: str = os.getenv('MAIL_FROM', '')
-    mail_from_name: str = os.getenv('MAIL_FROM_NAME', 'Visionnaire')
-    app_public_url: str = os.getenv(
-        'APP_PUBLIC_URL',
-        'https://changdar-server.mooo.com',
-    )
-    password_reset_token_ttl_seconds: int = int(
-        os.getenv('PASSWORD_RESET_TOKEN_TTL_SECONDS', '1800'),
-    )
-    password_reset_email_rate_limit_seconds: int = int(
-        os.getenv('PASSWORD_RESET_EMAIL_RATE_LIMIT_SECONDS', '60'),
-    )
-    password_reset_ip_rate_limit_window_seconds: int = int(
-        os.getenv('PASSWORD_RESET_IP_RATE_LIMIT_WINDOW_SECONDS', '600'),
-    )
-    password_reset_ip_rate_limit_max: int = int(
-        os.getenv('PASSWORD_RESET_IP_RATE_LIMIT_MAX', '5'),
-    )
-    email_verification_token_ttl_seconds: int = int(
-        os.getenv('EMAIL_VERIFICATION_TOKEN_TTL_SECONDS', '86400'),
-    )
-    email_verification_resend_rate_limit_seconds: int = int(
-        os.getenv('EMAIL_VERIFICATION_RESEND_RATE_LIMIT_SECONDS', '60'),
-    )
-    email_verification_daily_limit: int = int(
-        os.getenv('EMAIL_VERIFICATION_DAILY_LIMIT', '5'),
-    )
-    email_verification_daily_limit_window_seconds: int = int(
-        os.getenv('EMAIL_VERIFICATION_DAILY_LIMIT_WINDOW_SECONDS', '86400'),
-    )
-    brevo_email_verification_template_id: int = int(
-        os.getenv('BREVO_EMAIL_VERIFICATION_TEMPLATE_ID', '0') or '0',
     )
     login_failure_window_seconds: int = int(
         os.getenv('LOGIN_FAILURE_WINDOW_SECONDS', '1800'),
@@ -362,20 +278,9 @@ class Settings(BaseSettings):
     )
     sqlalchemy_track_modifications: bool = False
 
-    ALGORITHM: str = 'HS256'
-
     def __init__(self) -> None:
         """Construct the Settings object."""
         super().__init__()
-        if not self.authjwt_secret_key:
-            raise RuntimeError('JWT_SECRET_KEY is required')
-        if (
-            self.oidc_passwords_managed_externally
-            and not self.oidc_enabled
-        ):
-            raise RuntimeError(
-                'OIDC_ENABLED is required when Keycloak manages passwords',
-            )
         if self.oidc_enabled:
             missing = [
                 name
@@ -397,8 +302,7 @@ class Settings(BaseSettings):
                     'OIDC_IDENTITY_PROVIDER must be at most 20 characters',
                 )
             if (
-                self.oidc_passwords_managed_externally
-                and not self.oidc_account_url
+                not self.oidc_account_url
             ):
                 raise RuntimeError(
                     'OIDC_ACCOUNT_URL is required when Keycloak manages '
@@ -438,17 +342,6 @@ class Settings(BaseSettings):
             # allow-list at the unauthenticated exchange endpoint.
             _ = self.native_social_allowed_clients
             _ = self.resolved_keycloak_admin_base_url
-        if self.legacy_password_migration_enabled:
-            if not self.oidc_passwords_managed_externally:
-                raise RuntimeError(
-                    'OIDC_PASSWORDS_MANAGED_EXTERNALLY is required for '
-                    'legacy password migration',
-                )
-            if len(self.native_social_exchange_shared_secret) < 32:
-                raise RuntimeError(
-                    'NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET must be at least '
-                    '32 characters when legacy password migration is enabled',
-                )
 
     @property
     def oidc_audiences(self) -> tuple[str, ...]:

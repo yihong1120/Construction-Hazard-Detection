@@ -3,15 +3,11 @@ from __future__ import annotations
 import unittest
 from collections.abc import Set as AbstractSet
 from datetime import timedelta
-from functools import partial
-from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 import jwt
 
 from examples.auth import session_store as store
-from examples.auth.jwt_config import jwt_access
-from examples.auth.jwt_config import jwt_refresh
 from examples.auth.session_store import auth_session_key
 from examples.auth.session_store import AUTH_SESSION_TTL_SECONDS
 from examples.auth.session_store import auth_tokens
@@ -30,10 +26,10 @@ from examples.auth.session_store import OIDC_ONLINE_SSO_SESSION_MODE
 from examples.auth.session_store import renew_media_session
 from examples.auth.session_store import touch_auth_session
 from examples.bff.proxy import resolve_upstream
-from examples.db_management.services import auth_services
 from examples.streaming_web.playback_hls import (
     opaque_media_session_allows_path,
 )
+from tests.oidc_fixtures import fixture_token
 
 
 def _access_subject() -> dict[str, object]:
@@ -228,11 +224,11 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Test bff session is opaque and tokens are encrypted."""
-        access = jwt_access.create_access_token(
+        access = fixture_token(
             _access_subject(),
             timedelta(minutes=15),
         )
-        refresh = jwt_refresh.create_access_token(
+        refresh = fixture_token(
             _refresh_subject(),
             timedelta(days=30),
         )
@@ -265,8 +261,8 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_touch_auth_session_renews_idle_ttl(self) -> None:
         """Active BFF sessions receive a full rolling idle lifetime."""
-        access = jwt_access.create_access_token(_access_subject())
-        refresh = jwt_refresh.create_access_token(_refresh_subject())
+        access = fixture_token(_access_subject())
+        refresh = fixture_token(_refresh_subject())
         session_id, _ = await create_auth_session(
             self.redis,  # type: ignore[arg-type]
             {
@@ -291,8 +287,8 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_oidc_session_records_the_online_sso_mode(self) -> None:
         """Browser OIDC sessions must not be represented by offline tokens."""
-        access = jwt_access.create_access_token(_access_subject())
-        refresh = jwt_refresh.create_access_token(_refresh_subject())
+        access = fixture_token(_access_subject())
+        refresh = fixture_token(_refresh_subject())
 
         _, session = await create_auth_session(
             self.redis,  # type: ignore[arg-type]
@@ -335,8 +331,8 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Test parent logout revokes media without revoking auth early."""
-        access = jwt_access.create_access_token(_access_subject())
-        refresh = jwt_refresh.create_access_token(_refresh_subject())
+        access = fixture_token(_access_subject())
+        refresh = fixture_token(_refresh_subject())
         session_id, _ = await create_auth_session(
             self.redis,  # type: ignore[arg-type]
             {
@@ -515,50 +511,6 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             session['playback_sessions']['stream-session-1']['stream_name'],
             'Cam 1',
-        )
-
-    async def test_refresh_state_detects_reuse_and_revokes_family(
-        self,
-    ) -> None:
-        """Test refresh state detects reuse and revokes family."""
-        family = 'family-1'
-        await auth_services.register_refresh_token_state(
-            self.redis,  # type: ignore[arg-type]
-            'refresh-token',
-            'alice',
-            family,
-            refresh_ttl=auth_services.REFRESH_TTL,
-        )
-        await auth_services.consume_refresh_token_state(
-            self.redis,  # type: ignore[arg-type]
-            'refresh-token',
-            family,
-            'alice',
-            refresh_ttl=auth_services.REFRESH_TTL,
-            revoke_refresh_family_fn=partial(
-                auth_services.revoke_refresh_family,
-                refresh_ttl=auth_services.REFRESH_TTL,
-            ),
-            revoke_user_access_tokens_fn=AsyncMock(),
-        )
-        with self.assertRaisesRegex(Exception, 'Refresh token reused'):
-            await auth_services.consume_refresh_token_state(
-                self.redis,  # type: ignore[arg-type]
-                'refresh-token',
-                family,
-                'alice',
-                refresh_ttl=auth_services.REFRESH_TTL,
-                revoke_refresh_family_fn=partial(
-                    auth_services.revoke_refresh_family,
-                    refresh_ttl=auth_services.REFRESH_TTL,
-                ),
-                revoke_user_access_tokens_fn=AsyncMock(),
-            )
-        self.assertEqual(
-            await self.redis.get(
-                auth_services._refresh_family_revoked_key(family),
-            ),
-            b'1',
         )
 
     def test_media_scope_is_exact(self) -> None:
@@ -893,3 +845,17 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestOidcSessionBoundary(unittest.IsolatedAsyncioTestCase):
+    async def test_old_provider_sessions_cannot_be_reused(self):
+        import json
+        redis = FakeRedis()
+        for provider in ('legacy', None):
+            record = {'revoked': False}
+            if provider is not None:
+                record['auth_provider'] = provider
+            await redis.set(
+                auth_session_key('session'), json.dumps(record).encode(),
+            )
+            self.assertIsNone(await get_auth_session(redis, 'session'))

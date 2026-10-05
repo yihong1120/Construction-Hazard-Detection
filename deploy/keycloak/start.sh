@@ -225,6 +225,19 @@ configure_required_actions() {
         >/dev/null
 }
 
+configure_session_lifetimes() {
+    # Browser applications must not retain a login longer than the OIDC
+    # session that authorizes their delegated API calls. Keep one workday of
+    # idle time and a hard ten-hour ceiling; access tokens remain short-lived.
+    "$kcadm" update "realms/${realm}" \
+        -s 'ssoSessionIdleTimeout=28800' \
+        -s 'ssoSessionMaxLifespan=36000' \
+        -s 'clientSessionIdleTimeout=28800' \
+        -s 'clientSessionMaxLifespan=36000' \
+        -s 'accessTokenLifespan=300' \
+        >/dev/null
+}
+
 configure_visionnaire_browser_flow() {
     if ! "$kcadm" get authentication/flows --target-realm "$realm" \
         | grep -Fq "\"alias\" : \"${browser_flow}\""; then
@@ -292,31 +305,26 @@ configure_visionnaire_browser_flow() {
     set_execution_priority \
         "$browser_flow" "$forms_execution_id" ALTERNATIVE 3
 
-    # Replace Keycloak's stock form with a Keycloak-first compatibility form.
-    # It only proves a Visionnaire Argon2 password after the normal Keycloak
-    # credential check fails, then immediately upgrades the credential and
-    # disables the old verifier through a one-use loopback acknowledgement.
-    ensure_execution "$browser_forms_flow" visionnaire-legacy-password REQUIRED
-    local legacy_password_execution_id stock_password_execution_id
-    legacy_password_execution_id=$(execution_id_for_provider \
-        "$browser_forms_flow" visionnaire-legacy-password)
+    # Restore the standard Keycloak form on both new and existing flows.
+    ensure_execution "$browser_forms_flow" auth-username-password-form REQUIRED
+    local stock_password_execution_id
     stock_password_execution_id=$(execution_id_for_provider \
         "$browser_forms_flow" auth-username-password-form)
-    if [[ -z "$legacy_password_execution_id" ]]; then
-        echo 'Unable to resolve the legacy password migration execution' >&2
+    if [[ -z "$stock_password_execution_id" ]]; then
+        echo 'Unable to resolve the Keycloak password form execution' >&2
         return 1
     fi
     set_execution_priority \
-        "$browser_forms_flow" "$legacy_password_execution_id" REQUIRED 0
-    if [[ -n "$stock_password_execution_id" ]]; then
-        set_execution_requirement \
-            "$browser_forms_flow" "$stock_password_execution_id" DISABLED
+        "$browser_forms_flow" "$stock_password_execution_id" REQUIRED 0
+    # Existing realms can retain the removed provider in their persisted flow.
+    local retired_execution_id
+    retired_execution_id=$(execution_id_for_provider \
+        "$browser_forms_flow" visionnaire-legacy-password)
+    if [[ -n "$retired_execution_id" ]]; then
+        "$kcadm" delete "authentication/executions/${retired_execution_id}" -r "$realm"
     fi
     ensure_execution "$browser_forms_flow" visionnaire-hcaptcha REQUIRED
 
-    # Match Visionnaire's pre-OIDC minimum while legacy passwords are
-    # migrated. Raising this before the migration window ends would lock out
-    # valid existing accounts whose passwords were accepted at 8–13 chars.
     "$kcadm" update "realms/${realm}" \
         -s "browserFlow=${browser_flow}" \
         -s 'loginTheme=visionnaire' \
@@ -327,7 +335,7 @@ configure_visionnaire_browser_flow() {
         -s 'maxFailureWaitSeconds=900' \
         -s 'maxDeltaTimeSeconds=43200' \
         -s "browserSecurityHeaders.contentSecurityPolicy=frame-src 'self' https://hcaptcha.com https://*.hcaptcha.com; frame-ancestors 'self'; object-src 'none';" \
-        -s 'passwordPolicy=length(8) and notUsername(undefined) and passwordHistory(5)' \
+        -s 'passwordPolicy=length(8) and notUsername(undefined) and passwordHistory(5) and forceExpiredPasswordChange(180)' \
         >/dev/null
 }
 
@@ -435,6 +443,7 @@ for _ in $(seq 1 60); do
         configure_user_linker_service_account
         configure_social_identity_providers
         configure_required_actions
+        configure_session_lifetimes
         wait "$keycloak_pid"
         exit $?
     fi

@@ -27,6 +27,13 @@ from examples.bff.proxy import resolve_upstream
 class BffServicesTest(unittest.TestCase):
     """Provide BffServicesTest."""
 
+    def test_detection_models_route_is_allowlisted(self) -> None:
+        """Discovery and inference use the same upstream service prefix."""
+        base, suffix = resolve_upstream('detection/models')
+        detect_base, _ = resolve_upstream('detection/detect')
+        self.assertEqual(base, detect_base)
+        self.assertEqual(suffix, 'models')
+
     def test_db_management_service_is_allowlisted(self) -> None:
         """The Web client can reach db_management routes through the BFF."""
         base, suffix = resolve_upstream('db_management/list_sites')
@@ -571,7 +578,7 @@ def test_get_proxy_access_token_refreshes_and_releases_lock(
     monkeypatch.setattr(proxy, 'save_auth_tokens', save)
     monkeypatch.setattr(
         proxy,
-        'refresh_tokens',
+        'refresh_oidc_tokens',
         AsyncMock(
             return_value={
                 'access_token': 'refreshed',
@@ -622,7 +629,7 @@ def test_get_proxy_access_token_invalidates_terminal_refresh_error(
     monkeypatch.setattr(proxy, 'release_refresh_lock', release)
     monkeypatch.setattr(
         proxy,
-        'refresh_tokens',
+        'refresh_oidc_tokens',
         AsyncMock(side_effect=HTTPException(401, 'refresh token expired')),
     )
 
@@ -709,7 +716,7 @@ def test_get_proxy_access_token_reraises_nonterminal_refresh_error(
     monkeypatch.setattr(proxy, 'release_refresh_lock', release)
     monkeypatch.setattr(
         proxy,
-        'refresh_tokens',
+        'refresh_oidc_tokens',
         AsyncMock(side_effect=HTTPException(503, 'upstream unavailable')),
     )
 

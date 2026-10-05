@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any
 from typing import cast
 from unittest.mock import AsyncMock
@@ -40,146 +41,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
         self.db.rollback = AsyncMock()
         self.db.execute = AsyncMock()
         self.db.get = AsyncMock()
-
-    async def test_create_user_success(self) -> None:
-        """Ensure a user and accompanying profile are created successfully."""
-        # Arrange
-        self.db.flush = AsyncMock()
-        self.db.commit = AsyncMock()
-        self.db.refresh = AsyncMock()
-        self.db.add = MagicMock()
-
-        with patch(
-            'examples.db_management.services.user_services.User',
-        ) as MockUser:
-            mock_user: MagicMock = MagicMock()
-            mock_user.id = 1
-            mock_user.set_password = MagicMock()
-            MockUser.return_value = mock_user
-
-            with patch(
-                'examples.db_management.services.user_services.UserProfile',
-            ) as MockProfile:
-                MockProfile.return_value = MagicMock()
-
-                # Act
-                result = await user_services.create_user(
-                    'user',
-                    'password',
-                    'admin',
-                    1,
-                    self.db,
-                    profile=self.profile_data,
-                )
-
-                # Assert
-                self.assertEqual(result, mock_user)
-                mock_user.set_password.assert_called_once_with('password')
-                self.db.add.assert_any_call(mock_user)
-                self.db.commit.assert_awaited()
-                self.db.refresh.assert_awaited()
-
-    async def test_create_user_rejects_short_password(self) -> None:
-        """Reject user creation before any database writes for short
-        password."""
-        with self.assertRaises(HTTPException) as cm:
-            await user_services.create_user(
-                'user',
-                'short',
-                'admin',
-                1,
-                self.db,
-            )
-
-        self.assertEqual(cm.exception.status_code, 400)
-        self.assertEqual(
-            cm.exception.detail,
-            {
-                'code': 'password_too_short',
-                'message': 'Password is too short.',
-                'min_length': 8,
-            },
-        )
-        self.db.add.assert_not_called()
-
-    async def test_create_user_inactive_success(self) -> None:
-        """Allow creating a pending account with pending status."""
-        self.db.flush = AsyncMock()
-        self.db.commit = AsyncMock()
-        self.db.refresh = AsyncMock()
-        self.db.add = MagicMock()
-
-        with patch(
-            'examples.db_management.services.user_services.User',
-        ) as MockUser:
-            mock_user: MagicMock = MagicMock()
-            mock_user.id = 2
-            mock_user.set_password = MagicMock()
-            MockUser.return_value = mock_user
-
-            await user_services.create_user(
-                'pending',
-                'password',
-                'user',
-                None,
-                self.db,
-                profile=self.profile_data,
-                status='pending',
-            )
-
-            self.assertEqual(MockUser.call_args.kwargs['status'], 'pending')
-
-    async def test_create_user_integrity_error(self) -> None:
-        """Return *400 Bad Request* when attempting to save a duplicate
-        user."""
-        self.db.flush = AsyncMock(
-            side_effect=IntegrityError('a', 'b', Exception('c')),
-        )
-        self.db.rollback = AsyncMock()
-
-        with patch(
-            'examples.db_management.services.user_services.User',
-        ) as MockUser:
-            mock_user: MagicMock = MagicMock()
-            mock_user.set_password = MagicMock()
-            MockUser.return_value = mock_user
-
-            with self.assertRaises(HTTPException) as cm:
-                await user_services.create_user(
-                    'user',
-                    'password',
-                    'admin',
-                    1,
-                    self.db,
-                )
-
-            self.assertEqual(cm.exception.status_code, 400)
-            self.db.rollback.assert_awaited()
-
-    async def test_create_user_general_exception(self) -> None:
-        """Return *500 Internal Server Error* for an unexpected save
-        failure."""
-        self.db.flush = AsyncMock(side_effect=Exception('fail'))
-        self.db.rollback = AsyncMock()
-
-        with patch(
-            'examples.db_management.services.user_services.User',
-        ) as MockUser:
-            mock_user: MagicMock = MagicMock()
-            mock_user.set_password = MagicMock()
-            MockUser.return_value = mock_user
-
-            with self.assertRaises(HTTPException) as cm:
-                await user_services.create_user(
-                    'user',
-                    'password',
-                    'admin',
-                    1,
-                    self.db,
-                )
-
-            self.assertEqual(cm.exception.status_code, 500)
-            self.db.rollback.assert_awaited()
 
     async def test_list_users(self) -> None:
         """Fetch all users, ensuring the underlying query is executed."""
@@ -290,53 +151,6 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cm.exception.status_code, 500)
         self.db.rollback.assert_awaited()
-
-    async def test_update_password_success(self) -> None:
-        """Set a new password and commit the change."""
-        db = cast(Any, self.db)
-        user = cast(Any, self.user)
-        db.commit = AsyncMock()
-        user.set_password = MagicMock()
-
-        await user_services.update_password(self.user, 'password', self.db)
-
-        user.set_password.assert_called_once_with('password')
-        db.commit.assert_awaited()
-
-    async def test_update_password_rejects_short_password(self) -> None:
-        """Reject short replacement passwords without committing."""
-        db = cast(Any, self.db)
-        user = cast(Any, self.user)
-        user.set_password = MagicMock()
-
-        with self.assertRaises(HTTPException) as cm:
-            await user_services.update_password(self.user, 'short', self.db)
-
-        self.assertEqual(cm.exception.status_code, 400)
-        self.assertEqual(
-            cm.exception.detail,
-            {
-                'code': 'password_too_short',
-                'message': 'Password is too short.',
-                'min_length': 8,
-            },
-        )
-        user.set_password.assert_not_called()
-        db.commit.assert_not_awaited()
-
-    async def test_update_password_exception(self) -> None:
-        """Return *500 Internal Server Error* when committing fails."""
-        db = cast(Any, self.db)
-        user = cast(Any, self.user)
-        db.commit = AsyncMock(side_effect=Exception('fail'))
-        db.rollback = AsyncMock()
-        user.set_password = MagicMock()
-
-        with self.assertRaises(HTTPException) as cm:
-            await user_services.update_password(self.user, 'password', self.db)
-
-        self.assertEqual(cm.exception.status_code, 500)
-        db.rollback.assert_awaited()
 
     async def test_set_user_status_success(self) -> None:
         """Update the status field and commit."""
@@ -473,3 +287,30 @@ class TestUserServices(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestOidcAccountStorage(unittest.IsolatedAsyncioTestCase):
+    async def test_subject_must_already_be_linked(self):
+        db = AsyncMock()
+        user = SimpleNamespace(id=1, username='alice')
+        with patch.object(
+            user_services,
+            'keycloak_subject_for_user',
+            AsyncMock(return_value=None),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await user_services.ensure_keycloak_subject_for_user(user, db)
+            self.assertEqual(
+                raised.exception.detail,
+                'keycloak_identity_not_linked',
+            )
+        with patch.object(
+            user_services,
+            'keycloak_subject_for_user',
+            AsyncMock(return_value='subject'),
+        ):
+            self.assertEqual(
+                await user_services.ensure_keycloak_subject_for_user(user, db),
+                'subject',
+            )
+        self.assertNotIn('password_hash', User.__table__.columns)

@@ -1,3 +1,2 @@
 com.visionnaire.keycloak.hcaptcha.HCaptchaAuthenticatorFactory
-com.visionnaire.keycloak.legacypassword.LegacyPasswordMigrationAuthenticatorFactory
 com.visionnaire.keycloak.nativesocial.NativeSocialExchangeAuthenticatorFactory

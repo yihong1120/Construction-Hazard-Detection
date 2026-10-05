@@ -1,322 +1,137 @@
 from __future__ import annotations
 
 import unittest
-from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
+from uuid import UUID
 
 from fastapi import HTTPException
+from fastapi import Request
 from jwt.exceptions import InvalidTokenError
 from redis.exceptions import RedisError
 
-from examples.auth.config import Settings
-from examples.auth.jwt_config import jwt_access
-from examples.auth.jwt_config import jwt_refresh
+from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.jwt_config import PyJWTBearer
-from examples.auth.jwt_config import settings as jwt_settings
-from examples.db_management.schemas.auth import AccessTokenSubject
 
 
-def _access_subject(
-    username: str = 'alice',
-    user_id: int = 1,
-) -> AccessTokenSubject:
-    """Perform access subject.
-
-    Args:
-        username: Value used by this callable.
-        user_id: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
-    return {
-        'username': username,
-        'user_id': user_id,
-        'role': 'user',
-        'jti': 'access-jti',
-        'features': [],
-    }
-
-
-def _refresh_subject(username: str = 'alice') -> dict[str, str]:
-    """Perform refresh subject.
-
-    Args:
-        username: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
-    return {
-        'username': username,
-        'family_id': 'refresh-family',
-        'token_id': 'refresh-token-id',
-    }
-
-
-class TestJwtConfig(unittest.TestCase):
-    """Test suite for ensuring jwt_access and jwt_refresh in jwt_config.py are
-    instantiated correctly and are able to produce valid tokens."""
-
-    def setUp(self) -> None:
-        """Set up the Settings object for reference in tests."""
-        self.settings: Settings = Settings()
-
-    def test_jwt_access_initialized(self) -> None:
-        """Verify that jwt_access is initialised correctly with the expected
-        secret key."""
-        self.assertIsNotNone(jwt_access, 'jwt_access should not be None.')
-        self.assertEqual(
-            jwt_access.secret_key,
-            self.settings.authjwt_secret_key,
-            'jwt_access should use the same secret key as Settings.',
+class TestOidcBearer(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.binding = DeploymentBinding(
+            tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
+            deployment_id=UUID('00000000-0000-0000-0000-000000000002'),
+            api_base_url='https://api.example.com', config_revision=1,
         )
-
-        token: str = jwt_access.create_access_token(
-            subject=_access_subject('access-user'),
-        )
-        self.assertIsInstance(
-            token,
-            str,
-            'The created access token must be a string.',
-        )
-        self.assertGreater(
-            len(token),
-            0,
-            'The token string should not be empty.',
-        )
-
-    def test_jwt_refresh_initialized(self) -> None:
-        """Verify that jwt_refresh is initialised correctly with the expected
-        secret key."""
-        self.assertIsNotNone(jwt_refresh, 'jwt_refresh should not be None.')
-        self.assertEqual(
-            jwt_refresh.secret_key,
-            self.settings.authjwt_secret_key,
-            'jwt_refresh should use the same secret key as Settings.',
-        )
-
-        token: str = jwt_refresh.create_access_token(
-            subject=_refresh_subject('refresh-user'),
-        )
-        self.assertIsInstance(
-            token,
-            str,
-            'The created refresh token must be a string.',
-        )
-        self.assertGreater(
-            len(token),
-            0,
-            'The token string should not be empty.',
-        )
-
-    def test_credentials_support_existing_mapping_access(self) -> None:
-        """Existing handlers can read JWT claims as a mapping."""
-        credentials = JwtAuthorizationCredentials(_access_subject())
-
-        self.assertEqual(credentials['username'], 'alice')
-        self.assertEqual(credentials.get('role'), 'user')
-        self.assertEqual(credentials.get('role', 'viewer'), 'user')
-
-
-if __name__ == '__main__':
-    unittest.main()
-
-
-class TestPyJwtBearerAuthorization(unittest.IsolatedAsyncioTestCase):
-    """Exercise JWT authorization subjects and invalid credential handling."""
-
-    def setUp(self) -> None:
-        """Perform setUp."""
-        self._external_passwords = patch.object(
-            jwt_settings,
-            'oidc_passwords_managed_externally',
-            False,
-        )
-        self._external_passwords.start()
-        self.addCleanup(self._external_passwords.stop)
-        self.bearer = PyJWTBearer('test-secret-key-with-at-least-32-bytes')
-        self.request = MagicMock()
-
-    async def test_bearer_returns_full_subject(
-        self,
-    ) -> None:
-        """Valid tokens expose their full subject payload."""
-        with (
-            patch.object(
-                self.bearer,
-                'oauth2_scheme',
-                new=AsyncMock(return_value='current-token'),
+        self.subject = {
+            'username': 'alice',
+            'user_id': 1,
+            'role': 'user',
+            'jti': 'oidc:test:jti',
+            'features': [],
+            'tenant_id': str(
+                self.binding.tenant_id,
             ),
-            patch.object(
-                self.bearer,
-                'decode_token',
-                new=MagicMock(
-                    return_value={
-                        'subject': {
-                            **_access_subject(),
-                            'role': 'admin',
-                        },
-                        'jti': 'access-jti',
-                    },
-                ),
+            'deployment_id': str(
+                self.binding.deployment_id,
             ),
-            patch(
-                'examples.auth.jwt_config.is_access_token_revoked',
-                new=AsyncMock(return_value=False),
-            ),
-        ):
-            credentials = await self.bearer(self.request)
-
-        self.assertEqual(
-            credentials.subject,
-            {
-                'username': 'alice',
-                'role': 'admin',
-                'user_id': 1,
-                'jti': 'access-jti',
-                'features': [],
-            },
+            'config_revision': 1,
+        }
+        self.verifier = MagicMock()
+        self.verifier.matches_configured_issuer.return_value = True
+        self.verifier.decode_access_token = AsyncMock(
+            return_value={'typ': 'Bearer'},
         )
-        self.assertEqual(credentials.token, 'current-token')
+        self.bearer = PyJWTBearer(oidc_verifier=self.verifier)
 
-    async def test_bearer_rejects_missing_invalid_or_subjectless_tokens(
-        self,
-    ) -> None:
-        """Every malformed credential path returns the same 401 contract."""
-        for token, decoded in [
-            (None, None),
-            ('invalid-token', InvalidTokenError('signature failed')),
-            ('subjectless-token', {'subject': {}}),
-        ]:
-            if isinstance(decoded, Exception):
-                decode_token = MagicMock(side_effect=decoded)
-            else:
-                decode_token = MagicMock(return_value=decoded)
+    async def test_only_oidc_issuer_is_accepted(self):
+        self.verifier.matches_configured_issuer.return_value = False
+        with self.assertRaises(InvalidTokenError):
+            await self.bearer.decode_access_token_for_deployment(
+                'local-token', AsyncMock(), self.binding,
+            )
+        self.verifier.decode_access_token.assert_not_awaited()
 
-            with (
-                patch.object(
-                    self.bearer,
-                    'oauth2_scheme',
-                    new=AsyncMock(return_value=token),
-                ),
-                patch.object(
-                    self.bearer,
-                    'decode_token',
-                    new=decode_token,
-                ),
-                self.assertRaises(HTTPException) as error,
-            ):
-                await self.bearer(self.request)
+    async def test_missing_provider_fails_closed(self):
+        with self.assertRaises(HTTPException) as raised:
+            await PyJWTBearer().decode_access_token_for_deployment(
+                'token', AsyncMock(), self.binding,
+            )
+        self.assertEqual(raised.exception.status_code, 503)
 
-            self.assertEqual(error.exception.status_code, 401)
-            self.assertEqual(
-                error.exception.headers,
-                {'WWW-Authenticate': 'Bearer'},
+    async def test_id_token_is_not_an_api_access_token(self):
+        self.verifier.decode_access_token.return_value = {'typ': 'ID'}
+        with self.assertRaises(InvalidTokenError):
+            await self.bearer.decode_access_token_for_deployment(
+                'token', AsyncMock(), self.binding,
             )
 
-    async def test_bearer_round_trips_a_signed_access_token(self) -> None:
-        """PyJWT decoding validates tokens created with the configured
-        secret."""
-        token = self.bearer.create_access_token(
-            _access_subject(),
-            expires_delta=timedelta(minutes=1),
+    async def test_identity_mapping_requires_current_deployment(self):
+        with patch(
+            'examples.auth.jwt_config.subject_from_oidc_identity',
+            AsyncMock(return_value=self.subject),
+        ):
+            result = await self.bearer.decode_access_token_for_deployment(
+                'token', AsyncMock(), self.binding,
+            )
+            self.assertTrue(result.is_oidc)
+            self.assertEqual(result['username'], 'alice')
+            self.assertEqual(result.get('role'), 'user')
+            self.subject['config_revision'] = 2
+            with self.assertRaises(HTTPException) as raised:
+                await self.bearer.decode_access_token_for_deployment(
+                    'token', AsyncMock(), self.binding,
+                )
+            self.assertEqual(raised.exception.status_code, 409)
+
+    async def test_http_bearer_checks_revocation_and_availability(self):
+        request = Request({
+            'type': 'http', 'method': 'GET', 'scheme': 'https',
+            'path': '/', 'query_string': b'', 'headers': [],
+        })
+        request.scope['app'] = SimpleNamespace(
+            state=SimpleNamespace(
+                redis_client=SimpleNamespace(client=AsyncMock()),
+            ),
         )
-
-        payload = self.bearer.decode_token(token)
-
-        self.assertEqual(payload['sub'], 'alice')
-        self.assertEqual(payload['subject']['username'], 'alice')
-        self.assertIsInstance(payload['subject']['jti'], str)
-
-    def test_decode_rejects_token_for_another_use(self) -> None:
-        """A refresh payload cannot be accepted by the access bearer."""
-        with (
-            patch(
-                'examples.auth.jwt_config.jwt.decode',
-                return_value={'token_use': 'refresh'},
-            ),
-            self.assertRaises(InvalidTokenError),
-        ):
-            self.bearer.decode_token('refresh-token')
-
-    async def test_bearer_reports_unavailable_revocation_service(self) -> None:
-        """Access tokens fail closed when their revocation store is absent."""
-        self.request.app.state.redis_client = None
+        verified = JwtAuthorizationCredentials(subject=self.subject)
         with (
             patch.object(
                 self.bearer,
-                'oauth2_scheme',
-                new=AsyncMock(return_value='access-token'),
-            ),
-            patch.object(
-                self.bearer,
-                'decode_token',
-                new=MagicMock(
-                    return_value={
-                        'subject': _access_subject(),
-                        'jti': 'access-jti',
-                    },
+                'bearer_scheme',
+                AsyncMock(
+                    return_value=SimpleNamespace(credentials='token'),
                 ),
             ),
-            self.assertRaises(HTTPException) as error,
-        ):
-            await self.bearer(self.request)
-
-        self.assertEqual(error.exception.status_code, 503)
-
-    async def test_bearer_reports_revocation_store_errors(self) -> None:
-        """Redis failures have the same service-unavailable response."""
-        self.request.app.state.redis_client.client = MagicMock()
-        with (
-            patch.object(
-                self.bearer,
-                'oauth2_scheme',
-                new=AsyncMock(return_value='access-token'),
+            patch('examples.auth.jwt_config.AsyncSessionLocal'),
+            patch(
+                'examples.auth.jwt_config.resolve_request_deployment',
+                AsyncMock(return_value=self.binding),
             ),
             patch.object(
                 self.bearer,
-                'decode_token',
-                new=MagicMock(
-                    return_value={
-                        'subject': _access_subject(),
-                        'jti': 'access-jti',
-                    },
+                'decode_access_token_for_deployment',
+                AsyncMock(
+                    return_value=verified,
                 ),
             ),
             patch(
                 'examples.auth.jwt_config.is_access_token_revoked',
-                new=AsyncMock(side_effect=RedisError('offline')),
-            ),
-            self.assertRaises(HTTPException) as error,
+                AsyncMock(
+                    side_effect=[False, True, RedisError('unavailable')],
+                ),
+            ) as revoked,
         ):
-            await self.bearer(self.request)
-
-        self.assertEqual(error.exception.status_code, 503)
-
-    async def test_bearer_rejects_non_mapping_subject(self) -> None:
-        """A non-mapping subject cannot become an authenticated user."""
-        self.request.app.state.redis_client.client = MagicMock()
-        with (
-            patch.object(
-                self.bearer,
-                'oauth2_scheme',
-                new=AsyncMock(return_value='access-token'),
-            ),
-            patch.object(
-                self.bearer,
-                'decode_token',
-                new=MagicMock(return_value={'subject': 'alice'}),
-            ),
-            patch(
-                'examples.auth.jwt_config.is_access_token_revoked',
-                new=AsyncMock(return_value=False),
-            ),
-            self.assertRaises(HTTPException) as error,
+            self.assertTrue((await self.bearer(request)).is_oidc)
+            for expected in (401, 503):
+                with self.assertRaises(HTTPException) as raised:
+                    await self.bearer(request)
+                self.assertEqual(raised.exception.status_code, expected)
+            self.assertEqual(revoked.await_count, 3)
+        with patch.object(
+            self.bearer, 'bearer_scheme', AsyncMock(return_value=None),
         ):
-            await self.bearer(self.request)
-
-        self.assertEqual(error.exception.status_code, 401)
+            with self.assertRaises(HTTPException) as raised:
+                await self.bearer(request)
+            self.assertEqual(raised.exception.status_code, 401)

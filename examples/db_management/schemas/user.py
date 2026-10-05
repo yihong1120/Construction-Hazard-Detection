@@ -104,32 +104,6 @@ class UserDelete(BaseModel):
     user_id: int
 
 
-class UserSignup(BaseModel):
-    """Define a public account-registration request.
-
-    Attributes:
-        username: Requested account username.
-        password: Requested account password.
-        profile: Required personal profile for the new account.
-        accepted_terms: Whether the general terms were accepted.
-        terms_version: Version of the general terms accepted.
-        privacy_version: Version of the privacy notice accepted.
-        notification_consent: Whether notifications were accepted.
-        ai_terms_accepted: Whether AI-specific terms were accepted.
-        ai_terms_version: Version of the AI-specific terms accepted.
-    """
-
-    username: str
-    password: str
-    profile: UserProfileBase
-    accepted_terms: bool = False
-    terms_version: str | None = None
-    privacy_version: str | None = None
-    notification_consent: bool = False
-    ai_terms_accepted: bool = False
-    ai_terms_version: str | None = None
-
-
 class ApproveUserSignup(BaseModel):
     """Define an administrator approval of a pending signup.
 
@@ -288,18 +262,6 @@ class UpdatePasswordById(BaseModel):
     """
 
     user_id: int
-    new_password: str
-
-
-class UpdateMyPassword(BaseModel):
-    """Define a self-service password change.
-
-    Attributes:
-        old_password: Current password required to authorise the change.
-        new_password: Replacement account password.
-    """
-
-    old_password: str
     new_password: str
 
 

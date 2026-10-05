@@ -72,16 +72,11 @@ class AppIntegrationTest(unittest.TestCase):
             '/list_groups',
             '/list_pending_users',
             '/list_sites',
-            '/list_stream_configs',
             '/list_users',
             '/admin/users',
             '/sites/{site_id}/stream-config',
             '/approve_user_signup',
-            '/signup',
-            '/password/forgot',
-            '/password/reset',
-            '/auth/google',
-            '/auth/apple',
+            '/me',
             '/legal/documents',
         ]
         for p in expected_paths:
@@ -100,7 +95,7 @@ class AppIntegrationTest(unittest.TestCase):
     def test_cors_preflight_allows_web_credentials(self) -> None:
         """Browser preflight should be handled before auth routes."""
         resp = self.client.options(
-            '/login',
+            '/bff/auth/oidc/login',
             headers={
                 'Origin': 'https://changdar-server.mooo.com',
                 'Access-Control-Request-Method': 'POST',
@@ -133,7 +128,6 @@ class AppIntegrationTest(unittest.TestCase):
             for tag in operation.get('tags', [])
         }
         expected: set[str] = {
-            'auth',
             'user-mgmt',
             'site-mgmt',
             'feature-mgmt',
@@ -219,3 +213,20 @@ class AppIntegrationTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_retired_authentication_routes_are_absent():
+    paths = app_module.app.openapi()['paths']
+    for path in (
+        '/login', '/refresh', '/logout', '/signup',
+        '/auth/verify-email', '/auth/resend-verification',
+        '/list_stream_configs',
+        '/auth/google', '/auth/apple', '/auth/identities',
+        '/password/forgot', '/password/reset', '/update_my_password',
+        '/oauth/authorize', '/oauth/token', '/oauth/revoke',
+        '/auth/legacy-password/keycloak/verify',
+        '/auth/legacy-password/keycloak/complete', '/bff/auth/login',
+    ):
+        assert path not in paths
+    security = app_module.app.openapi()['components']['securitySchemes']
+    assert security['HTTPBearer']['scheme'] == 'bearer'

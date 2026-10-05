@@ -1,39 +1,15 @@
 from __future__ import annotations
 
-import time
-from typing import TypeAlias
-
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import lazyload
 from sqlalchemy.orm import load_only
-from sqlalchemy.orm import selectinload
 
 from examples.auth.models import Site
 from examples.auth.models import site_groups_table
 from examples.auth.models import User
 from examples.auth.models import user_sites_table
-
-# A cache entry stores: (list of site names, cached-at epoch seconds).
-CacheEntry: TypeAlias = tuple[list[str], float]
-
-# Process-local cache for storing user site information.
-_user_sites_cache: dict[str, CacheEntry] = {}
-
-# Cache time-to-live in seconds (5 minutes).
-_cache_ttl: int = 300
-
-
-def invalidate_effective_site_cache(
-    usernames: list[str] | None = None,
-) -> None:
-    """Invalidate cached effective site-name lookups for one or more users."""
-    if usernames is None:
-        _user_sites_cache.clear()
-        return
-
-    for username in usernames:
-        _user_sites_cache.pop(username, None)
 
 
 async def _load_user_by_username(
@@ -46,11 +22,10 @@ async def _load_user_by_username(
     stmt_user = (
         select(User)
         .options(
-            selectinload(User.group),
-            selectinload(User.profile),
-            selectinload(User.sites),
+            lazyload('*'),
         )
         .where(User.username == username)
+        .execution_options(populate_existing=True)
     )
     user_obj: User | None = (
         (await db.execute(stmt_user)).unique().scalars().one_or_none()
@@ -69,7 +44,7 @@ async def list_effective_sites_for_user(
         return list(
             (
                 await db.execute(
-                    select(Site).order_by(Site.id),
+                    select(Site).options(lazyload('*')).order_by(Site.id),
                 )
             )
             .scalars()
@@ -82,6 +57,7 @@ async def list_effective_sites_for_user(
 
     stmt_sites = (
         select(Site)
+        .options(lazyload('*'))
         .join(user_sites_table, user_sites_table.c.site_id == Site.id)
         .join(site_groups_table, site_groups_table.c.site_id == Site.id)
         .where(
@@ -144,35 +120,19 @@ async def load_user_with_effective_sites(
     return user, sites
 
 
-async def get_cached_effective_site_names(
+async def get_effective_site_names(
     username: str,
     db: AsyncSession,
 ) -> list[str]:
-    """Return site names the user may access, with simple in-memory caching.
+    """Read current grants on every request, including after remote revocation.
 
-    Args:
-        username: The unique username to resolve.
-        db: An asynchronous SQLAlchemy session used for the lookup.
-
-    Returns:
-        A list of site names that the user may access. The list order follows
-        the ORM relationship ordering as returned by the database.
-
-    Raises:
-        HTTPException: With status code 404 if the user is not found.
+    Permission decisions must not depend on process-local state. Narrow user
+    and site projections keep this lookup cheap across API workers.
     """
-    current_time: float = time.time()
-
-    if username in _user_sites_cache:
-        # Fast path: honour TTL and return cached site names when still fresh.
-        cached_names, cached_time = _user_sites_cache[username]
-        if current_time - cached_time < _cache_ttl:
-            return cached_names
-
-    _, sites = await load_user_with_effective_sites(username, db)
-    site_names: list[str] = [site.name for site in sites]
-    _user_sites_cache[username] = (site_names, current_time)
-    return site_names
+    user = await _load_user_by_username(
+        username, db, status_code=404, detail='User not found',
+    )
+    return await list_effective_site_names_for_user(user, db)
 
 
 async def load_user_access_context(
@@ -200,6 +160,7 @@ async def load_user_access_context(
     stmt_user = (
         select(User)
         .options(
+            lazyload('*'),
             load_only(
                 User.id,
                 User.status,
@@ -208,6 +169,7 @@ async def load_user_access_context(
             ),
         )
         .where(User.username == username)
+        .execution_options(populate_existing=True)
     )
     user: User | None = (
         (await db.execute(stmt_user)).unique().scalars().one_or_none()

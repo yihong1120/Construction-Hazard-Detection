@@ -13,13 +13,10 @@ class TestSettings(unittest.TestCase):
 
     def setUp(self) -> None:
         """Backup environment variables."""
-        self.original_jwt_secret_key = os.getenv('JWT_SECRET_KEY')
         self.original_database_url = os.getenv('DATABASE_URL')
 
     def tearDown(self) -> None:
         """Restore environment variables after each test."""
-        if self.original_jwt_secret_key is not None:
-            os.environ['JWT_SECRET_KEY'] = self.original_jwt_secret_key
         if self.original_database_url is not None:
             os.environ['DATABASE_URL'] = self.original_database_url
 
@@ -29,7 +26,6 @@ class TestSettings(unittest.TestCase):
         settings = Settings()
 
         # Assert that the settings are correctly loaded
-        self.assertIsNotNone(settings.authjwt_secret_key)
         self.assertIsNotNone(settings.sqlalchemy_database_uri)
 
         # Assert that the database URL uses asyncpg driver
@@ -52,7 +48,6 @@ class TestSettings(unittest.TestCase):
         # Assert that the settings are correctly loaded
         # The values will come from environment variables,
         # possibly from the .env file.
-        self.assertIsNotNone(settings.authjwt_secret_key)
         self.assertIsNotNone(settings.sqlalchemy_database_uri)
 
         # Assert that the database URL contains asyncpg driver
@@ -74,20 +69,6 @@ class TestSettings(unittest.TestCase):
             clear=False,
         ):
             self.assertTrue(_env_bool('CONFIG_TEST_BOOLEAN_SWITCH'))
-
-    def test_settings_requires_non_empty_jwt_secret(self) -> None:
-        """An explicitly empty JWT secret prevents an unsafe application
-        start."""
-        field = Settings.model_fields['authjwt_secret_key']
-        original_default = field.default
-        try:
-            field.default = ''
-            Settings.model_rebuild(force=True)
-            with self.assertRaisesRegex(RuntimeError, 'JWT_SECRET_KEY'):
-                Settings()
-        finally:
-            field.default = original_default
-            Settings.model_rebuild(force=True)
 
 
 if __name__ == '__main__':

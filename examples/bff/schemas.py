@@ -5,7 +5,6 @@ from pydantic import ConfigDict
 from pydantic import Field
 
 from examples.db_management.schemas.auth import DeploymentInfo
-from examples.db_management.schemas.auth import UserLogin
 
 
 class UserSummary(BaseModel):
@@ -60,13 +59,6 @@ class CsrfResponse(BaseModel):
 
 
 class BffLogoutResponse(BaseModel):
-    """Return the optional one-use URL for Keycloak browser logout."""
+    """Return the one-use URL for Keycloak browser logout."""
 
-    global_logout_url: str | None = None
-
-
-class BffLoginRequest(UserLogin):
-    """Define browser login credentials for a token-private BFF session.
-
-    Tokens are retained server-side and are never included in the response.
-    """
+    global_logout_url: str

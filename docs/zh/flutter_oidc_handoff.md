@@ -206,4 +206,4 @@ hCaptcha token 只能由 Keycloak Provider 在伺服器端驗證，並會驗證 
 - Native Google／Apple network log 不會出現 Flutter 對舊 `/auth/google`、`/auth/apple` 的請求；只允許新的 nonce-bound `/auth/native-social/*` API。
 - API access token 的 `iss` 為上述 issuer，`aud` 包含 `visionnaire-api`。
 - 在 Keycloak Account Console 改密碼後，三個平台都以新密碼登入；Web Account Console 與 Visionnaire 在同一個 online SSO session 期間不應重複詢問帳密。
-- 舊 Visionnaire 密碼登入 API 與 `/bff/auth/login` 帳密 POST 一律收到 `409 login_managed_by_identity_provider`。
+- 舊 Visionnaire 密碼登入 API 與 `/bff/auth/login` 帳密 POST 已移除，不可再呼叫。

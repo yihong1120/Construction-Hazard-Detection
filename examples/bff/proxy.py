@@ -28,8 +28,6 @@ from examples.auth.session_store import OIDC_ONLINE_SSO_SESSION_MODE
 from examples.auth.session_store import release_refresh_lock
 from examples.auth.session_store import save_auth_tokens
 from examples.bff.oidc_services import refresh_oidc_tokens
-from examples.db_management.schemas.auth import RefreshRequest
-from examples.db_management.services.auth_services import refresh_tokens
 from src.http_client_pool import HttpClientPool
 
 # Uvicorn configures this logger at INFO level in the deployed tmux services.
@@ -63,6 +61,10 @@ _STREAMING_UPSTREAM = os.getenv(
     'BFF_STREAMING_API_URL',
     'http://127.0.0.1:8800',
 )
+_AI_USAGE_UPSTREAM = os.getenv(
+    'BFF_AI_USAGE_API_URL',
+    'http://127.0.0.1:8012',
+)
 
 BFF_UPSTREAMS = {
     'chat': _CHAT_UPSTREAM,
@@ -70,10 +72,12 @@ BFF_UPSTREAMS = {
     'detection': _DETECTION_UPSTREAM,
     'fcm': _FCM_UPSTREAM,
     'files': _FILES_UPSTREAM,
+    'file_manage': _FILES_UPSTREAM,
     'streaming': _STREAMING_UPSTREAM,
     # The deployed web client addresses the streaming API by this public name.
     'streaming_web': _STREAMING_UPSTREAM,
     'violations': _VIOLATIONS_UPSTREAM,
+    'ai_usage': _AI_USAGE_UPSTREAM,
 }
 REFRESH_BEFORE_SECONDS = int(os.getenv('BFF_REFRESH_BEFORE_SECONDS', '30'))
 UPSTREAM_TIMEOUT_SECONDS = float(
@@ -472,17 +476,7 @@ async def _refresh_proxy_session(
         return latest_access, latest
     result: Mapping[str, object]
     try:
-        if latest.get('auth_provider', 'legacy') == 'oidc':
-            result = await refresh_oidc_tokens(
-                latest_refresh or refresh_token,
-            )
-        else:
-            result = await refresh_tokens(
-                RefreshRequest(refresh_token=latest_refresh or refresh_token),
-                redis,
-                hash_refresh_token=True,
-                deployment=deployment,
-            )
+        result = await refresh_oidc_tokens(latest_refresh or refresh_token)
     except HTTPException as exc:
         if _is_terminal_refresh_error(exc):
             await delete_auth_session(redis, session_id)
@@ -493,20 +487,13 @@ async def _refresh_proxy_session(
         raise
     new_access = str(result['access_token'])
     new_refresh = str(result['refresh_token'])
-    returned_features = result.get('feature_names')
-    feature_names = (
-        [str(feature) for feature in returned_features]
-        if isinstance(returned_features, list)
-        and latest.get('auth_provider', 'legacy') == 'legacy'
-        else None
-    )
     await save_auth_tokens(
         redis,
         session_id,
         latest,
         new_access,
         new_refresh,
-        feature_names,
+        None,
     )
     return new_access, latest
 

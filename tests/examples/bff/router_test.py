@@ -14,14 +14,14 @@ from fastapi.testclient import TestClient
 
 from examples.auth.database import get_db
 from examples.auth.deployment_context import DeploymentBinding
-from examples.auth.jwt_config import jwt_access
-from examples.auth.jwt_config import jwt_refresh
 from examples.auth.redis_pool import get_redis_pool
 from examples.auth.session_store import AUTH_SESSION_TTL_SECONDS
 from examples.auth.session_store import create_auth_session
 from examples.bff import router as bff
 from examples.bff import session_services
+from examples.bff.user_summary import load_user_summary
 from tests.examples.auth.session_store_test import FakeRedis
+from tests.oidc_fixtures import fixture_token
 
 _DEPLOYMENT = DeploymentBinding(
     tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
@@ -94,69 +94,14 @@ class BffRouterTest(unittest.TestCase):
         deployment_resolver.start()
         self.addCleanup(deployment_resolver.stop)
 
-    @patch('examples.bff.session_services.login_user')
-    def test_login_and_session_never_expose_tokens(
-        self,
-        login_user: AsyncMock,
-    ) -> None:
-        """Test login and session never expose tokens.
-
-        Args:
-            login_user: Value used by this callable.
-        """
-        access = jwt_access.create_access_token(
-            _access_subject(),
-            issuer=_DEPLOYMENT.issuer,
-            audience=_DEPLOYMENT.audience,
-        )
-        refresh = jwt_refresh.create_access_token(
-            _refresh_subject(),
-            issuer=_DEPLOYMENT.issuer,
-            audience=_DEPLOYMENT.audience,
-        )
-        login_user.return_value = {
-            'access_token': access,
-            'refresh_token': refresh,
-            'user_id': 1,
-            'feature_names': ['stream'],
-            'deployment': _DEPLOYMENT.as_response(),
-        }
-        response = self.client.post(
-            '/bff/auth/login',
-            headers={'Origin': self.origin},
-            json={
-                'identifier': 'alice',
-                'password': 'secret',
-                'hcaptcha_token': 'captcha',
-            },
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertNotIn('access_token', response.text)
-        self.assertNotIn('refresh_token', response.text)
-        self.assertEqual(response.json()['user']['display_name'], 'Alice Chen')
-        self.assertIn('HttpOnly', response.headers['set-cookie'])
-        self.assertIn('Secure', response.headers['set-cookie'])
-        session_id = response.cookies[session_services.SESSION_COOKIE]
-
-        session = self.client.get(
-            '/bff/auth/session',
-            cookies={session_services.SESSION_COOKIE: session_id},
-        )
-        self.assertEqual(session.status_code, 200)
-        self.assertEqual(session.json()['feature_names'], ['stream'])
-        self.assertNotIn('token', session.text.lower())
-        self.assertIn('HttpOnly', session.headers['set-cookie'])
-        self.assertIn('Secure', session.headers['set-cookie'])
-
     def test_session_refreshes_server_token_and_rolls_cookie(self) -> None:
         """An active web session refreshes server-side credentials only."""
-        access = jwt_access.create_access_token(
+        access = fixture_token(
             _access_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
         )
-        refresh = jwt_refresh.create_access_token(
+        refresh = fixture_token(
             _refresh_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
@@ -203,69 +148,14 @@ class BffRouterTest(unittest.TestCase):
             AUTH_SESSION_TTL_SECONDS,
         )
 
-    @patch('examples.bff.session_services.login_user')
-    def test_csrf_and_origin_protect_logout(
-        self,
-        login_user: AsyncMock,
-    ) -> None:
-        """Test csrf and origin protect logout.
-
-        Args:
-            login_user: Value used by this callable.
-        """
-        login_user.return_value = {
-            'access_token': jwt_access.create_access_token(
-                _access_subject(),
-                issuer=_DEPLOYMENT.issuer,
-                audience=_DEPLOYMENT.audience,
-            ),
-            'refresh_token': jwt_refresh.create_access_token(
-                _refresh_subject(),
-                issuer=_DEPLOYMENT.issuer,
-                audience=_DEPLOYMENT.audience,
-            ),
-            'user_id': 1,
-            'feature_names': [],
-            'deployment': _DEPLOYMENT.as_response(),
-        }
-        login = self.client.post(
-            '/bff/auth/login',
-            headers={'Origin': self.origin},
-            json={'identifier': 'alice', 'password': 'secret'},
-        )
-        session_id = login.cookies[session_services.SESSION_COOKIE]
-        cookies = {session_services.SESSION_COOKIE: session_id}
-
-        denied = self.client.post('/bff/auth/logout', cookies=cookies)
-        self.assertEqual(denied.status_code, 403)
-
-        csrf = self.client.get(
-            '/bff/auth/csrf',
-            cookies=cookies,
-        ).json()['csrf_token']
-        with patch(
-            'examples.bff.session_services.logout_user',
-            new_callable=AsyncMock,
-        ):
-            logged_out = self.client.post(
-                '/bff/auth/logout',
-                cookies=cookies,
-                headers={
-                    'Origin': self.origin,
-                    'X-CSRF-Token': csrf,
-                },
-            )
-        self.assertEqual(logged_out.status_code, 200)
-        self.assertEqual(logged_out.json(), {'global_logout_url': None})
-
     def test_oidc_logout_returns_an_opaque_global_logout_url(self) -> None:
         """An OIDC BFF logout clears local state before browser navigation."""
-        access = jwt_access.create_access_token(
+        access = fixture_token(
             _access_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
         )
-        refresh = jwt_refresh.create_access_token(
+        refresh = fixture_token(
             _refresh_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
@@ -308,14 +198,56 @@ class BffRouterTest(unittest.TestCase):
         )
         self.assertNotIn('token', response.text.lower())
 
-    def test_service_proxy_path_does_not_repeat_api(self) -> None:
-        """Test service proxy path does not repeat api."""
-        access = jwt_access.create_access_token(
+    def test_detection_catalog_uses_authenticated_session(self) -> None:
+        """Web model discovery uses an authenticated BFF session."""
+        access = fixture_token(
             _access_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
         )
-        refresh = jwt_refresh.create_access_token(
+        refresh = fixture_token(
+            _refresh_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
+        )
+        session_id, _ = asyncio.run(
+            create_auth_session(
+                self.redis,  # type: ignore[arg-type]
+                {
+                    'access_token': access,
+                    'refresh_token': refresh,
+                    'feature_names': [],
+                    'deployment': _DEPLOYMENT.as_response(),
+                },
+                {'id': 1, 'username': 'alice'},
+            ),
+        )
+        cookies = {session_services.SESSION_COOKIE: session_id}
+
+        with patch(
+            'examples.bff.session_services.proxy_request',
+            new_callable=AsyncMock,
+            return_value=Response(status_code=204),
+        ) as proxy_request:
+            response = self.client.get(
+                '/bff/detection/models',
+                cookies=cookies,
+            )
+
+        self.assertEqual(response.status_code, 204)
+        assert proxy_request.await_args is not None
+        self.assertEqual(proxy_request.await_args.args[3], 'detection/models')
+        self.db.close.assert_awaited_once()
+        self.assertIn('HttpOnly', response.headers['set-cookie'])
+
+    def test_service_proxy_path_does_not_repeat_api(self) -> None:
+        """Test service proxy path does not repeat api."""
+        access = fixture_token(
+            _access_subject(),
+            issuer=_DEPLOYMENT.issuer,
+            audience=_DEPLOYMENT.audience,
+        )
+        refresh = fixture_token(
             _refresh_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
@@ -374,7 +306,7 @@ class BffRouterTest(unittest.TestCase):
 
         self.db.scalar.return_value = None
         with self.assertRaises(HTTPException) as missing_user:
-            asyncio.run(session_services._user_summary(self.db, 999))
+            asyncio.run(load_user_summary(self.db, 999))
         self.assertEqual(missing_user.exception.detail, 'user_not_found')
 
     def test_user_summary_uses_username_when_profile_is_absent(self) -> None:
@@ -388,7 +320,7 @@ class BffRouterTest(unittest.TestCase):
             profile=None,
         )
 
-        summary = asyncio.run(session_services._user_summary(self.db, 1))
+        summary = asyncio.run(load_user_summary(self.db, 1))
 
         self.assertEqual(summary.display_name, 'service-account')
 
@@ -430,12 +362,12 @@ class BffRouterTest(unittest.TestCase):
 
     def test_proxy_post_requires_csrf_token(self) -> None:
         """Mutating BFF proxy requests always pass through CSRF enforcement."""
-        access = jwt_access.create_access_token(
+        access = fixture_token(
             _access_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
         )
-        refresh = jwt_refresh.create_access_token(
+        refresh = fixture_token(
             _refresh_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
@@ -463,12 +395,12 @@ class BffRouterTest(unittest.TestCase):
 
     def test_device_invitation_proxy_uses_session_and_csrf(self) -> None:
         """The browser reaches invitation management only through the BFF."""
-        access = jwt_access.create_access_token(
+        access = fixture_token(
             _access_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
         )
-        refresh = jwt_refresh.create_access_token(
+        refresh = fixture_token(
             _refresh_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
@@ -509,12 +441,12 @@ class BffRouterTest(unittest.TestCase):
 
     def test_web_playback_proxy_uses_db_management_and_csrf(self) -> None:
         """The browser sends playback controls through the BFF allowlist."""
-        access = jwt_access.create_access_token(
+        access = fixture_token(
             _access_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
         )
-        refresh = jwt_refresh.create_access_token(
+        refresh = fixture_token(
             _refresh_subject(),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,

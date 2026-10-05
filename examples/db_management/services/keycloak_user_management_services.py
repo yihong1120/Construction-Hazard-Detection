@@ -7,16 +7,25 @@ routes.  Flutter clients never receive its service-account credentials.
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from collections.abc import Mapping
+from contextlib import asynccontextmanager
 from urllib.parse import quote
 from urllib.parse import urlsplit
+from weakref import WeakKeyDictionary
 
 import httpx
 from fastapi import HTTPException
 
+from examples.auth.client_credentials import ClientCredentialsTokenCache
 from examples.auth.config import Settings
+from src.http_client_pool import get_application_http_client
 
 settings = Settings()
+_token_caches: WeakKeyDictionary[
+    httpx.AsyncClient,
+    ClientCredentialsTokenCache,
+] = (WeakKeyDictionary())
 
 
 def _identity_service_unavailable() -> HTTPException:
@@ -31,7 +40,6 @@ def _require_keycloak_admin_configuration() -> None:
     """Fail closed without the server-held Keycloak Admin API credential."""
     if (
         not settings.oidc_enabled
-        or not settings.oidc_passwords_managed_externally
         or not settings.keycloak_realm
         or not settings.keycloak_user_linker_client_id
         or not settings.keycloak_user_linker_client_secret
@@ -39,60 +47,69 @@ def _require_keycloak_admin_configuration() -> None:
         raise _identity_service_unavailable()
 
 
-async def _keycloak_service_access_token() -> str:
-    """Acquire one short-lived Keycloak Admin API access token."""
+@asynccontextmanager
+async def _keycloak_http_client() -> AsyncIterator[httpx.AsyncClient]:
+    """Use the lifespan-owned pool, closing clients created outside an app."""
+    client = await get_application_http_client('keycloak-admin', timeout=5.0)
+    if client is not None:
+        yield client
+    else:
+        async with httpx.AsyncClient(timeout=5.0) as ephemeral:
+            yield ephemeral
+
+
+async def _keycloak_service_access_token(client: httpx.AsyncClient) -> str:
+    """Reuse a provider token within this HTTP client's lifetime."""
     _require_keycloak_admin_configuration()
     token_url = (
         f'{settings.resolved_keycloak_admin_base_url}/realms/'
         f'{quote(settings.keycloak_realm, safe="")}/'
         'protocol/openid-connect/token'
     )
+    cache = _token_caches.get(client)
+    if cache is None:
+        cache = ClientCredentialsTokenCache()
+        _token_caches[client] = cache
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                token_url,
-                data={
-                    'grant_type': 'client_credentials',
-                    'client_id': settings.keycloak_user_linker_client_id,
-                    'client_secret': (
-                        settings.keycloak_user_linker_client_secret
-                    ),
-                },
-            )
-    except httpx.HTTPError as exc:
+        return await cache.get(
+            client,
+            token_url=token_url,
+            client_id=settings.keycloak_user_linker_client_id,
+            client_secret=settings.keycloak_user_linker_client_secret,
+        )
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
         raise _identity_service_unavailable() from exc
-
-    if response.status_code != 200:
-        raise _identity_service_unavailable()
-    try:
-        token = response.json().get('access_token')
-    except ValueError as exc:
-        raise _identity_service_unavailable() from exc
-    if not isinstance(token, str) or not token:
-        raise _identity_service_unavailable()
-    return token
 
 
 async def keycloak_admin_request(
     method: str,
     path: str,
     *,
-    json_body: Mapping[str, object] | None = None,
+    json_body: Mapping[str, object] | list[Mapping[str, object]] | None = None,
 ) -> httpx.Response:
-    """Perform one authenticated, realm-scoped Keycloak Admin API request."""
-    token = await _keycloak_service_access_token()
+    """Call the realm-scoped API, retrying one rejected service token."""
+    _require_keycloak_admin_configuration()
     url = (
         f'{settings.resolved_keycloak_admin_base_url}/admin/realms/'
         f'{quote(settings.keycloak_realm, safe="")}{path}'
     )
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            return await client.request(
-                method,
-                url,
+        async with _keycloak_http_client() as client:
+            token = await _keycloak_service_access_token(client)
+            response = await client.request(
+                method, url,
                 headers={'Authorization': f'Bearer {token}'},
                 json=json_body,
             )
+            if response.status_code == 401:
+                _token_caches[client].invalidate(token)
+                token = await _keycloak_service_access_token(client)
+                response = await client.request(
+                    method, url,
+                    headers={'Authorization': f'Bearer {token}'},
+                    json=json_body,
+                )
+            return response
     except httpx.HTTPError as exc:
         raise _identity_service_unavailable() from exc
 
@@ -120,7 +137,7 @@ async def provision_keycloak_user(
     """Create a Keycloak account and set its initial password.
 
     Passwords are passed only to Keycloak over the server-to-server request;
-    Visionnaire stores a disabled local-password marker for this account.
+    Visionnaire stores only the immutable provider identity link.
     """
     response = await keycloak_admin_request(
         'POST',
@@ -174,6 +191,22 @@ async def reset_keycloak_password(
     )
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail='keycloak_user_not_found')
+    if response.status_code == 400:
+        raise HTTPException(
+            status_code=400,
+            detail='keycloak_password_policy_rejected',
+        )
+    if response.status_code != 204:
+        raise _identity_service_unavailable()
+
+
+async def logout_keycloak_user(subject: str) -> None:
+    """Revoke every active Keycloak session after a credential change."""
+    response = await keycloak_admin_request(
+        'POST', f'/users/{quote(subject, safe="")}/logout',
+    )
+    if response.status_code == 404:
+        raise HTTPException(status_code=404, detail='keycloak_user_not_found')
     if response.status_code != 204:
         raise _identity_service_unavailable()
 
@@ -181,6 +214,71 @@ async def reset_keycloak_password(
 async def set_keycloak_user_enabled(subject: str, *, enabled: bool) -> None:
     """Enable or disable a Keycloak identity before changing local status."""
     await update_keycloak_user(subject, enabled=enabled)
+
+
+async def assign_keycloak_client_role(
+    subject: str,
+    *,
+    client_id: str,
+    role_name: str,
+) -> None:
+    """Assign one explicit application role to a provisioned identity."""
+    clients = await keycloak_admin_request(
+        'GET',
+        f'/clients?clientId={quote(client_id, safe="")}',
+    )
+    if clients.status_code != 200:
+        raise _identity_service_unavailable()
+    matches = clients.json()
+    if len(matches) != 1:
+        raise _identity_service_unavailable()
+    internal_id = matches[0]['id']
+    role = await keycloak_admin_request(
+        'GET',
+        f'/clients/{quote(internal_id, safe="")}/roles/'
+        f'{quote(role_name, safe="")}',
+    )
+    if role.status_code != 200:
+        raise _identity_service_unavailable()
+    assigned = await keycloak_admin_request(
+        'POST',
+        f'/users/{quote(subject, safe="")}/role-mappings/clients/'
+        f'{quote(internal_id, safe="")}',
+        json_body=[role.json()],
+    )
+    if assigned.status_code != 204:
+        raise _identity_service_unavailable()
+
+
+async def remove_keycloak_client_role(
+    subject: str,
+    *,
+    client_id: str,
+    role_name: str,
+) -> None:
+    """Remove one application role without changing the identity itself."""
+    clients = await keycloak_admin_request(
+        'GET',
+        f'/clients?clientId={quote(client_id, safe="")}',
+    )
+    if clients.status_code != 200 or len(clients.json()) != 1:
+        raise _identity_service_unavailable()
+    internal_id = clients.json()[0]['id']
+    role = await keycloak_admin_request(
+        'GET',
+        f'/clients/{quote(internal_id, safe="")}/roles/'
+        f'{quote(role_name, safe="")}',
+    )
+    if role.status_code != 200:
+        raise _identity_service_unavailable()
+    removed = await keycloak_admin_request(
+        'DELETE',
+        f'/users/{quote(subject, safe="")}/role-mappings/clients/'
+        f'{quote(internal_id, safe="")}',
+        json_body=[role.json()],
+    )
+    if removed.status_code != 204:
+        raise _identity_service_unavailable()
 
 
 async def update_keycloak_user(

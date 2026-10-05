@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from typing import cast
 
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,10 +20,14 @@ from examples.db_management.deps import _site_permission
 from examples.db_management.deps import get_current_user
 from examples.db_management.deps import is_super_admin
 from examples.db_management.deps import require_admin
+from examples.db_management.schemas.resource_options import Option
+from examples.db_management.schemas.resource_options import resource_options
+from examples.db_management.schemas.resource_options import ResourceOptions
 from examples.db_management.schemas.stream_config import SiteStreamConfigUpsert
 from examples.db_management.schemas.stream_config import StreamConfigCreate
 from examples.db_management.schemas.stream_config import StreamConfigRead
 from examples.db_management.schemas.stream_config import StreamConfigUpdate
+from examples.db_management.services.site_access import require_site
 from examples.db_management.services.stream_config_services import (
     _get_site_or_404,
 )
@@ -46,30 +52,37 @@ from examples.db_management.services.stream_config_services import (
 from examples.db_management.services.stream_config_services import (
     update_stream_config,
 )
+from examples.YOLO_server_api.model_registry import load_registry
+from examples.YOLO_server_api.model_registry import require_model
+from examples.YOLO_server_api.model_registry import revision_for
 
 router = APIRouter(tags=['stream-config'])
 
 
-@router.get('/list_stream_configs', response_model=list[StreamConfigRead])
-async def endpoint_list_stream_configs(
+@router.get('/sites/{site_id}/stream-models', response_model=ResourceOptions)
+async def get_stream_models(
     site_id: int,
-    db: AsyncSession = Depends(get_db),
+    response: Response,
     me: User = Depends(get_current_user),
-) -> list[StreamConfigRead]:
-    """List all stream configurations for a given site.
-
-    Args:
-        site_id (int): The identifier of the site.
-        db (AsyncSession): The database session.
-        me (User): The currently authenticated user.
-
-    Returns:
-        List[StreamConfigRead]: A list of stream configuration details.
-
-    Raises:
-        HTTPException: If the site does not exist or the user lacks permission.
-    """
-    return await _list_site_stream_config_reads(site_id, db, me)
+    db: AsyncSession = Depends(get_db),
+) -> ResourceOptions:
+    options = []
+    require_admin(me)
+    await require_site(db, me, site_id)
+    registry = await asyncio.to_thread(load_registry)
+    source_revision = revision_for(registry.model_dump())
+    for model in registry.models:
+        if model.allowed(str(me.tenant_id), me.role, 'stream', site_id):
+            options.append(Option(id=model.id, label=model.display_name))
+    default = (
+        registry.default_id
+        if registry.default_id in {o.id for o in options}
+        else None
+    )
+    response.headers['Cache-Control'] = 'private, no-store'
+    return resource_options(
+        me, site_id, options, default, source=source_revision,
+    )
 
 
 @router.get(
@@ -124,6 +137,7 @@ async def endpoint_create_stream_config(
     site = await _get_site_or_404(payload.site_id, db)
 
     _site_permission(me, site=site)
+    await require_site(db, me, site.id)
     group_id = _resolve_stream_group_id(
         site,
         me,
@@ -137,6 +151,15 @@ async def endpoint_create_stream_config(
             detail='Stream limit reached for group.',
         )
 
+    await asyncio.to_thread(
+        require_model,
+        payload.model_key,
+        None,
+        str(me.tenant_id),
+        me.role,
+        'stream',
+        site.id,
+    )
     payload_with_group = payload.model_copy(update={'group_id': group_id})
     cfg = await create_stream_config(payload_with_group, db)
 
@@ -174,8 +197,20 @@ async def endpoint_put_site_stream_config(
     """
     site = await _get_site_or_404(site_id, db)
     _site_permission(me, site=site)
+    await require_site(db, me, site.id)
     group_id = _resolve_stream_group_id(site, me)
     visible_group_id = None if is_super_admin(cast(Any, me)) else group_id
+
+    for item in payload.streams:
+        await asyncio.to_thread(
+            require_model,
+            item.model_key,
+            None,
+            str(me.tenant_id),
+            me.role,
+            'stream',
+            site.id,
+        )
 
     # Validate the complete replacement before creating or changing any row.
     stream_names = [item.stream_name for item in payload.streams]
@@ -312,6 +347,16 @@ async def endpoint_update_stream_config(
                 detail='Stream name already exists in site.',
             )
 
+    await require_site(db, me, cfg.site_id)
+    await asyncio.to_thread(
+        require_model,
+        payload.model_key or cfg.model_key,
+        None,
+        str(me.tenant_id),
+        me.role,
+        'stream',
+        cfg.site_id,
+    )
     await update_stream_config(cfg, payload, db)
 
     return {'message': 'Stream configuration updated successfully.'}
