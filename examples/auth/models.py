@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 from datetime import timezone
 from uuid import UUID
 from uuid import uuid4
 
-from pwdlib import PasswordHash
-from pwdlib.exceptions import UnknownHashError
 from sqlalchemy import BigInteger
 from sqlalchemy import Boolean
 from sqlalchemy import CheckConstraint
@@ -327,7 +324,6 @@ site_groups_table: Table = Table(
 # -------------------------------------------------------
 #  Site Model
 # -------------------------------------------------------
-password_hash = PasswordHash.recommended()
 
 # -------------------------------------------------------
 #  Feature Model
@@ -593,7 +589,6 @@ class User(Base):
     Attributes:
         id (int): Primary key.
         username (str): Unique login identifier.
-        password_hash (str): Hashed user password.
         role (str): Access level (e.g., admin, user, guest).
         status (str): Account lifecycle status.
         created_at (datetime): Timestamp of creation.
@@ -609,7 +604,6 @@ class User(Base):
         unique=True,
         nullable=False,
     )
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(
         String(20),
         default='user',
@@ -708,34 +702,6 @@ class User(Base):
         back_populates='user',
         cascade='all, delete-orphan',
     )
-
-    def set_password(self, password: str) -> None:
-        """Hash and store the user's password securely.
-
-        Args:
-            password (str): The plain-text password to be hashed.
-        """
-        self.password_hash = password_hash.hash(password)
-
-    async def check_password(self, password: str) -> bool:
-        """Verify whether a given password matches the stored hash.
-
-        This is executed in a thread-safe, asynchronous manner.
-
-        Args:
-            password (str): The plain-text password to verify.
-
-        Returns:
-            bool: True if the password matches, otherwise False.
-        """
-        try:
-            return await asyncio.to_thread(
-                password_hash.verify,
-                password,
-                str(self.password_hash),
-            )
-        except UnknownHashError:
-            return False
 
     def to_dict(self) -> dict:
         """Convert user attributes to a dictionary (e.g., for Redis caching).
@@ -1338,6 +1304,14 @@ class Violation(Base):
     )
     image_path: Mapped[str] = mapped_column(String(255), nullable=False)
 
+    model_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    model_version: Mapped[str | None] = mapped_column(
+        String(120), nullable=True,
+    )
+    model_classes: Mapped[list[dict] | None] = mapped_column(
+        JSON, nullable=True,
+    )
+
     # Optional JSON fields for detection and warning results
     detections_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     cone_polygon_json: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1423,6 +1397,38 @@ class Violation(Base):
             detection_time.desc(),
             id.desc(),
         ),
+        Index('idx_vio_detection_id', detection_time.desc(), id.desc()),
+        Index(
+            'idx_vio_review_queue',
+            'review_status',
+            flagged_at.asc().nullslast(),
+            detection_time.asc(),
+            id.asc(),
+            postgresql_where=text('is_flagged IS TRUE'),
+        ).ddl_if(dialect='postgresql'),
+        Index(
+            'idx_vio_site_review_queue',
+            'site',
+            'review_status',
+            flagged_at.asc().nullslast(),
+            detection_time.asc(),
+            id.asc(),
+            postgresql_where=text('is_flagged IS TRUE'),
+        ).ddl_if(dialect='postgresql'),
+        # pg_trgm is installed by the PostgreSQL baseline/migration before
+        # metadata DDL. Keep these extension indexes out of SQLite tests.
+        Index(
+            'idx_vio_stream_name_trgm',
+            'stream_name',
+            postgresql_using='gin',
+            postgresql_ops={'stream_name': 'gin_trgm_ops'},
+        ).ddl_if(dialect='postgresql'),
+        Index(
+            'idx_vio_warnings_trgm',
+            'warnings_json',
+            postgresql_using='gin',
+            postgresql_ops={'warnings_json': 'gin_trgm_ops'},
+        ).ddl_if(dialect='postgresql'),
         Index('idx_vio_flagged_status', 'is_flagged', 'review_status'),
         Index('idx_vio_reviewed_at', 'reviewed_at'),
     )
@@ -1598,4 +1604,24 @@ class ViolationReviewAuditLog(Base):
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
+    )
+
+
+class DetectionModelCatalog(Base):
+    """Published model metadata; weights live on Hugging Face."""
+
+    __tablename__ = 'detection_model_catalog'
+    model_key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    definition: Mapped[dict] = mapped_column(JSON, nullable=False)
+    display_order: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False,
+    )
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+    )
+    __table_args__ = (
+        Index(
+            'detection_model_catalog_one_default', 'is_default', unique=True,
+            postgresql_where=text('is_default'),
+        ),
     )

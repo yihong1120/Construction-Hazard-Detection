@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import unittest
 from uuid import uuid4
 
@@ -37,29 +36,6 @@ class TestUserModel(unittest.TestCase):
         """Clean up the database after each test."""
         self.session.close()
 
-    def test_set_password(self) -> None:
-        """Test password hashing in the User model."""
-        user = User(username='testuser')
-        user.set_password('secure_password')
-        # Ensure password hash does not store the actual password
-        self.assertNotEqual(user.password_hash, 'secure_password')
-        # Check password validation
-        self.assertTrue(asyncio.run(user.check_password('secure_password')))
-
-    def test_check_password(self) -> None:
-        """Test password verification in the User model."""
-        user = User(username='testuser')
-        user.set_password('secure_password')
-        # Confirm correct and incorrect passwords
-        self.assertTrue(asyncio.run(user.check_password('secure_password')))
-        self.assertFalse(asyncio.run(user.check_password('wrong_password')))
-
-    def test_check_password_unknown_hash_returns_false(self) -> None:
-        """Test unsupported hashes fail authentication without 500s."""
-        user = User(username='testuser')
-        user.password_hash = 'scrypt:32768:8:1$salt$hash'
-        self.assertFalse(asyncio.run(user.check_password('secure_password')))
-
     def test_to_dict(self) -> None:
         """Test the to_dict method of the User model."""
         user = User(
@@ -68,7 +44,6 @@ class TestUserModel(unittest.TestCase):
             status='active',
             tenant_id=self.tenant.id,
         )
-        user.set_password('secure_password')
         self.session.add(user)
         self.session.commit()
 
