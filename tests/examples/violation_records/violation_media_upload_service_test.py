@@ -22,6 +22,8 @@ from examples.violation_records import violation_upload_service
 from examples.violation_records.violation_manager import (
     EmptyViolationImageError,
 )
+from examples.YOLO_server_api.model_registry import ModelClass
+from tests.model_fixtures import CLASSES
 
 
 def _credentials(username: str = 'reviewer') -> JwtAuthorizationCredentials:
@@ -42,6 +44,7 @@ def _credentials(username: str = 'reviewer') -> JwtAuthorizationCredentials:
                 'role': 'admin',
                 'jti': 'violation-media-test',
                 'features': [],
+                'tenant_id': 'tenant',
             },
         ),
     )
@@ -70,7 +73,7 @@ class TestViolationMediaService(unittest.IsolatedAsyncioTestCase):
                 ),
                 patch.object(
                     violation_media_service.user_service,
-                    'get_cached_effective_site_names',
+                    'get_effective_site_names',
                     new=AsyncMock(return_value=['Site A']),
                 ),
             ):
@@ -148,18 +151,45 @@ class TestViolationMediaService(unittest.IsolatedAsyncioTestCase):
 class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
     """Verify upload authorisation and manager error translation."""
 
+    def setUp(self):
+        entry = SimpleNamespace(
+            id='model', version='v1', classes=[
+                ModelClass.model_validate(c) for c in CLASSES
+            ],
+        )
+        for name, mock in (
+            (
+                'require_model', patch.object(
+                violation_upload_service, 'require_model', return_value=entry,
+                ),
+            ),
+            (
+                'require_site', patch.object(
+                violation_upload_service, 'require_site', AsyncMock(),
+                ),
+            ),
+        ):
+            mock.start()
+            self.addCleanup(mock.stop)
+
     async def test_upload_persists_an_authorised_violation(self) -> None:
         """Authorised uploads return the manager's persisted record ID."""
         image = UploadFile(
             filename='evidence.jpg',
             file=BytesIO(b'image'),
         )
-        db = SimpleNamespace()
+        db = SimpleNamespace(
+            get=AsyncMock(
+                return_value=SimpleNamespace(
+                    tenant_id='tenant', role='admin',
+                ),
+            ), scalar=AsyncMock(return_value=1),
+        )
 
         with (
             patch.object(
                 violation_upload_service.user_service,
-                'get_cached_effective_site_names',
+                'get_effective_site_names',
                 new=AsyncMock(return_value=['Site A']),
             ),
             patch.object(
@@ -179,6 +209,7 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
                 image=image,
                 db=cast(AsyncSession, db),
                 credentials=_credentials(),
+                model_id='model', model_version='v1',
             )
 
         self.assertEqual(response.violation_id, 37)
@@ -189,11 +220,17 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Unauthorised sites and unreadable images become client errors."""
         image = UploadFile(filename='evidence.jpg', file=BytesIO(b'image'))
-        db = SimpleNamespace()
+        db = SimpleNamespace(
+            get=AsyncMock(
+                return_value=SimpleNamespace(
+                    tenant_id='tenant', role='admin',
+                ),
+            ), scalar=AsyncMock(return_value=1),
+        )
 
         with patch.object(
             violation_upload_service.user_service,
-            'get_cached_effective_site_names',
+            'get_effective_site_names',
             new=AsyncMock(return_value=[]),
         ):
             with self.assertRaises(HTTPException) as denied:
@@ -208,13 +245,14 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
                     image=image,
                     db=cast(AsyncSession, db),
                     credentials=_credentials(),
+                    model_id='model', model_version='v1',
                 )
         self.assertEqual(denied.exception.status_code, 403)
 
         with (
             patch.object(
                 violation_upload_service.user_service,
-                'get_cached_effective_site_names',
+                'get_effective_site_names',
                 new=AsyncMock(return_value=['Site A']),
             ),
             patch.object(
@@ -235,6 +273,7 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
                     image=image,
                     db=cast(AsyncSession, db),
                     credentials=_credentials(),
+                    model_id='model', model_version='v1',
                 )
         self.assertEqual(invalid_image.exception.status_code, 400)
 

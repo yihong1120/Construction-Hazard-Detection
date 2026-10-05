@@ -17,7 +17,15 @@ from examples.auth.models import User
 from examples.auth.models import Violation
 from examples.auth.models import ViolationFeedback
 from examples.auth.models import ViolationReviewAuditLog
+from examples.violation_records.feedback_policy import validate_feedback_label
 from examples.violation_records.media_service import image_size_for_violation
+from examples.violation_records.overlay_geometry import stored_regions
+from examples.violation_records.record_policy import (
+    authorize_violation,
+)
+from examples.violation_records.record_policy import review_actions
+from examples.violation_records.schemas import OverlayImageSize
+from examples.violation_records.schemas import OverlayRegion
 from examples.violation_records.schemas import ViolationFeedbackCreate
 from examples.violation_records.schemas import ViolationFeedbackResponse
 from examples.violation_records.schemas import ViolationItem
@@ -111,7 +119,8 @@ async def get_violation_review_audit_log(
     )
     if record_id is None:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
     return await _load_review_audit_logs(db, violation_id)
 
@@ -130,10 +139,22 @@ async def _detail_response(
     )
     item = _violation_to_detail_item(violation, request, feedback_note)
     item.feedbacks = feedbacks
+    image_size = await image_size_for_violation(
+        violation.image_path, STATIC_DIR,
+    )
+    if image_size:
+        item.image_size = OverlayImageSize(
+            width=image_size[0], height=image_size[1],
+        )
+    regions, item.region_status = stored_regions(
+        violation, image_size, item.overlay_style,
+    )
+    item.overlay_regions = [OverlayRegion.model_validate(r) for r in regions]
     item.overlay_objects = _overlay_objects_from_feedback(
         item.detections,
         feedbacks,
-        await image_size_for_violation(violation.image_path, STATIC_DIR),
+        image_size,
+        class_metadata=item.class_metadata,
     )
     if include_audit and violation.is_flagged:
         item.review_audit_logs = await _load_review_audit_logs(
@@ -150,7 +171,7 @@ async def get_single_violation(
     credentials: JwtAuthorizationCredentials,
 ) -> ViolationItem:
     """Return full evidence and feedback for one authorised violation."""
-    site_names = await user_service.get_cached_effective_site_names(
+    site_names = await user_service.get_effective_site_names(
         credentials.subject['username'],
         db,
     )
@@ -162,7 +183,8 @@ async def get_single_violation(
     )
     if violation is None:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
     return await _detail_response(violation, request, db, include_audit=True)
 
@@ -175,20 +197,33 @@ async def submit_violation_feedback(
 ) -> ViolationFeedbackResponse:
     """Create pending feedback and mark the matching violation as flagged."""
     username = credentials.subject['username']
-    site_names = await user_service.get_cached_effective_site_names(
+    site_names = await user_service.get_effective_site_names(
         username,
         db,
     )
     violation = await db.scalar(
-        select(Violation).where(
+        select(Violation)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+        .where(
             Violation.id == violation_id,
             Violation.site.in_(site_names),
         ),
     )
     if violation is None:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
+
+    user = await db.get(User, credentials.subject['user_id'])
+    if user is None or str(user.tenant_id) != credentials.subject.get(
+        'tenant_id',
+    ):
+        raise HTTPException(403, detail='Invalid account scope')
+    await authorize_violation(db, user, violation)
+    # Recheck the locked record snapshot on every submission.
+    validate_feedback_label(payload, violation)
 
     detection_ids = _feedback_detection_ids_from_json(
         violation.detections_json,
@@ -222,7 +257,6 @@ async def submit_violation_feedback(
         corrected_label=payload.corrected_label,
         original_bbox=payload.original_bbox,
         corrected_bbox=payload.corrected_bbox,
-        model_version=payload.model_version,
         confidence=payload.confidence,
         note=payload.note,
         status='pending',
@@ -254,18 +288,31 @@ async def review_violation(
         db,
     )
     violation = await db.scalar(
-        select(Violation).where(
+        select(Violation)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+        .where(
             Violation.id == violation_id,
             Violation.site.in_(site_names),
         ),
     )
     if violation is None:
         raise HTTPException(
-            status_code=403, detail='No access to this violation',
+            status_code=403,
+            detail='No access to this violation',
         )
     if not violation.is_flagged:
         raise HTTPException(
-            status_code=404, detail='Flagged violation not found',
+            status_code=404,
+            detail='Flagged violation not found',
+        )
+
+    if str(reviewer.tenant_id) != credentials.subject.get('tenant_id'):
+        raise HTTPException(403, detail='Invalid account scope')
+    await authorize_violation(db, reviewer, violation)
+    if payload.review_status not in review_actions(reviewer, violation):
+        raise HTTPException(
+            403, detail='Review transition is not currently allowed',
         )
 
     reviewed_at = datetime.now(timezone.utc)

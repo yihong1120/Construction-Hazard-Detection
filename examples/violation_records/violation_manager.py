@@ -71,6 +71,9 @@ class ViolationManager:
         cone_polygon_json: str | None = None,
         pole_polygon_json: str | None = None,
         chunk_size: int = _upload_chunk_size,
+        model_id: str | None = None,
+        model_version: str | None = None,
+        model_classes: list[dict] | None = None,
     ) -> int:
         """Save a violation record to the database and store the associated
         image.
@@ -127,6 +130,9 @@ class ViolationManager:
                 detections_json=detections_json,
                 cone_polygon_json=cone_polygon_json,
                 pole_polygon_json=pole_polygon_json,
+                model_id=model_id,
+                model_version=model_version,
+                model_classes=model_classes,
             )
 
             return new_violation.id
@@ -153,7 +159,7 @@ class ViolationManager:
         day_dir: Path = self.base_dir / date_folder
         day_dir.mkdir(parents=True, exist_ok=True)
 
-        filename: str = sanitize_filename(f"{uuid.uuid4()}.png")
+        filename: str = sanitize_filename(f'{uuid.uuid4()}.png')
         return day_dir / filename
 
     async def _write_upload_file(
@@ -204,6 +210,9 @@ class ViolationManager:
         detections_json: str | None,
         cone_polygon_json: str | None,
         pole_polygon_json: str | None,
+        model_id: str | None = None,
+        model_version: str | None = None,
+        model_classes: list[dict] | None = None,
     ) -> Violation:
         """Insert the database row after its evidence image is persisted.
 
@@ -228,6 +237,9 @@ class ViolationManager:
             stream_name,
         )
         new_violation = Violation(
+            model_id=model_id,
+            model_version=model_version,
+            model_classes=model_classes,
             site=site,
             stream_name=stream_name,
             stream_config_id=stream_config_id,
@@ -250,7 +262,7 @@ class ViolationManager:
         site: str,
         stream_name: str,
     ) -> int | None:
-        """Resolve a stable camera identifier while retaining legacy uploads.
+        """Resolve the current camera configuration identifier.
 
         Args:
             db: Database session used to find the configured camera.
@@ -258,8 +270,7 @@ class ViolationManager:
             stream_name: Camera name associated with the upload.
 
         Returns:
-            Stable stream configuration identifier, or ``None`` for a legacy
-            upload with no configured camera.
+            Stable stream configuration identifier when the camera exists.
         """
         statement = (
             select(StreamConfig.id)

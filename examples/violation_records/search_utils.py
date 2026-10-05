@@ -1,21 +1,21 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections import defaultdict
 from collections.abc import Iterable
 from functools import lru_cache
-
-from ckip_transformers.nlp import CkipWordSegmenter
 
 # ---------------------------
 # Synonyms mapping
 # ---------------------------
 SYNONYMS_MAP = {
     # Hardhat-related search terms.
-    '帽': ['hardhat', 'no_hardhat'],
-    '帽子': ['hardhat', 'no_hardhat'],
-    'hat': ['hardhat', 'no_hardhat'],
-    'helmet': ['hardhat', 'no_hardhat'],
-    'casque': ['hardhat', 'no_hardhat'],
+    '帽': ['helmet', 'no_helmet', 'warning_no_hardhat'],
+    '帽子': ['helmet', 'no_helmet', 'warning_no_hardhat'],
+    'hat': ['helmet', 'no_helmet', 'warning_no_hardhat'],
+    'helmet': ['helmet', 'no_helmet', 'warning_no_hardhat'],
+    'casque': ['helmet', 'no_helmet', 'warning_no_hardhat'],
     '無安全帽': ['warning_no_hardhat'],
     '未戴帽': ['warning_no_hardhat'],
     '未戴安全帽': ['warning_no_hardhat'],
@@ -53,15 +53,20 @@ SYNONYMS_MAP = {
     'vehicle': ['vehicle'],
     'voiture': ['vehicle'],
     # Safety-cone-related search terms.
-    '錐': ['cone'],
-    '安全錐': ['cone'],
-    'cone': ['cone'],
+    '錐': ['safety_cone'],
+    '安全錐': ['safety_cone'],
+    'cone': ['safety_cone'],
     # Face-mask-related search terms.
     '口罩': ['mask'],
     'mask': ['mask'],
     '無口罩': ['no_mask'],
     'no mask': ['no_mask'],
     'nomask': ['no_mask'],
+    # Canonical detector/filter codes map to persisted warning keys.
+    'no_helmet': ['warning_no_hardhat'],
+    'no_safety_helmet': ['warning_no_hardhat'],
+    'no_safety_vest': ['warning_no_safety_vest'],
+    'no_mask': ['warning_no_mask'],
     # === Warning: people entering controlled area ===
     '受控': ['warning_people_in_controlled_area'],
     '受控區': ['warning_people_in_controlled_area'],
@@ -116,19 +121,7 @@ CHINESE_STOP_WORDS = {'的', '了', '在', '是', '和'}
 class SearchUtils:
     """Expand multilingual violation-search terms into detector labels."""
 
-    def __init__(self, device: int = -1) -> None:
-        """Initialise the CKIP word segmenter.
-
-        Args:
-            device (int): If using CPU, set device to -1.
-            Otherwise, specify the GPU device number.
-        """
-        import logging
-
-        # Suppress logging from transformers to avoid confusing warnings
-        logging.getLogger('transformers').setLevel(logging.ERROR)
-
-        self.ws_driver = CkipWordSegmenter(device=device)
+    def __init__(self) -> None:
         self.synonyms_map = SYNONYMS_MAP
         self.english_stop_words = ENGLISH_STOP_WORDS
         self.chinese_stop_words = CHINESE_STOP_WORDS
@@ -164,57 +157,45 @@ class SearchUtils:
 
     @lru_cache(maxsize=512)
     def _tokenize_cached(self, user_input: str) -> tuple[str, ...]:
-        """Tokenise input once and cache an immutable token tuple.
-
-        Args:
-            user_input: Raw user-provided search text.
-
-        Returns:
-            Lower-cased meaningful tokens with stop words removed.
-        """
-        tokens = self.ws_driver([user_input])[0]
-        filtered_tokens: list[str] = []
-        for token in tokens:
-            stripped = token.strip()
-            lowered = stripped.lower()
-            if (
-                lowered not in self.english_stop_words
-                and stripped not in self.chinese_stop_words
-            ):
-                filtered_tokens.append(lowered)
-        return tuple(filtered_tokens)
+        """Keep literal Unicode words and canonical detector codes."""
+        return tuple(
+            token for token in re.findall(r'\w+', user_input)
+            if token not in self.english_stop_words
+            and token not in self.chinese_stop_words
+        )
 
     def expand_synonyms(self, user_input: str) -> list[str]:
-        """Expand the input text by replacing tokens with their synonyms.
+        """Expand known multilingual phrases while keeping literal searches.
 
-        Args:
-            user_input (str): The raw text from the user.
-
-        Returns:
-            list[str]: A list of unique tokens and their associated synonyms.
+        Match phrases before individual words, so ``no safety vest`` and
+        continuous Chinese input do not require a statistical segmenter.
+        English keys respect word boundaries to avoid matching ``hat`` inside
+        ``what``. Longer phrases take precedence over overlapping short keys.
         """
-        return list(self._expand_synonyms_cached(user_input))
+        normalized = unicodedata.normalize('NFKC', user_input).casefold()
+        return list(self._expand_synonyms_cached(normalized))
 
     @lru_cache(maxsize=512)
-    def _expand_synonyms_cached(self, user_input: str) -> tuple[str, ...]:
-        """Expand synonyms and cache repeated query terms.
-
-        Args:
-            user_input: Raw user-provided search text.
-
-        Returns:
-            Immutable set-derived token and synonym expansion sequence.
-        """
-        tokens = self._tokenize_cached(user_input)
-        results: set[str] = set()
-        for token in tokens:
-            for first_char in frozenset(token):
-                synonym_items = self._synonym_index.get(first_char, ())
-                for key, vlist in synonym_items:
-                    # Substring matching supports compound CJK search terms.
-                    if key in token:
-                        results.update(vlist)
-            # Keep the literal token so exact detector labels remain
-            # searchable.
-            results.add(token)
-        return tuple(results)
+    def _expand_synonyms_cached(self, text: str) -> tuple[str, ...]:
+        results = set(self._tokenize_cached(text))
+        candidates: list[tuple[int, int, tuple[str, ...]]] = []
+        for first_char in frozenset(text):
+            for key, values in self._synonym_index.get(first_char, ()):
+                pattern = re.escape(key)
+                if key[0].isascii() and key[0].isalnum():
+                    pattern = r'(?<!\w)' + pattern
+                if key[-1].isascii() and key[-1].isalnum():
+                    pattern += r'(?!\w)'
+                candidates.extend(
+                    (match.start(), match.end(), values)
+                    for match in re.finditer(pattern, text)
+                )
+        covered: set[int] = set()
+        for start, end, values in sorted(
+            candidates, key=lambda item: (-(item[1] - item[0]), item[0]),
+        ):
+            positions = set(range(start, end))
+            if positions.isdisjoint(covered):
+                results.update(values)
+                covered.update(positions)
+        return tuple(sorted(results))

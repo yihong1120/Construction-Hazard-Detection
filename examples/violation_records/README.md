@@ -22,7 +22,8 @@ metadata here when the stream processor confirms a warning event.
 - `schemas.py`: Pydantic request and response models.
 - `violation_manager.py`: database and image-storage logic.
 - `path_utils.py`: safe static-path validation.
-- `search_utils.py`: multilingual search helpers.
+- `search_utils.py`: dictionary-based multilingual search; no NLP model download.
+- `violation_analytics.py`: aggregate SQL and chart response assembly.
 - `settings.py`: static-directory settings.
 
 ## Run
@@ -42,7 +43,11 @@ but the project runtime uses port `8002`.
 ```dotenv
 VIOLATION_RECORD_API_URL=http://127.0.0.1:8002
 DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazard_detection
-JWT_SECRET_KEY=replace-with-a-long-random-secret
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=https://sso.example.com/realms/visionnaire
+OIDC_JWKS_URL=https://sso.example.com/realms/visionnaire/protocol/openid-connect/certs
+OIDC_AUDIENCE=visionnaire-api
+OIDC_ACCOUNT_URL=https://sso.example.com/realms/visionnaire/account
 ```
 
 ## Endpoints
@@ -50,8 +55,7 @@ JWT_SECRET_KEY=replace-with-a-long-random-secret
 - `GET /my_sites`: sites visible to the authenticated user.
 - `GET /violations/filter-options?site_id=...`: authorized cameras and fixed
   violation types for one site. Omitting `site_id` returns cameras across all
-  authorized sites. The deployed Web client may also use the compatible
-  `GET /filter-options` path. `stream_id` is the numeric camera config ID, not
+  authorized sites. `stream_id` is the numeric camera config ID, not
   a camera name.
 - `GET /violations`: filtered and paginated violation list with optional
   `site_id`, `stream_id`, `violation_type`, and time-range filters. Admin

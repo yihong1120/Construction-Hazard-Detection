@@ -33,7 +33,7 @@ async def _authorise_media_access(
     if not full_path.exists():
         raise HTTPException(status_code=404, detail='Image not found')
 
-    site_names = await user_service.get_cached_effective_site_names(
+    site_names = await user_service.get_effective_site_names(
         username,
         db,
     )

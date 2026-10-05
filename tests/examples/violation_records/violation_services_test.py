@@ -595,6 +595,9 @@ class TestViolationServiceRemainingBranches(unittest.IsolatedAsyncioTestCase):
                 True,
                 'pending',
                 'Needs review',
+                None,
+                None,
+                None,
             ),
             _Request(),
         )
@@ -672,7 +675,7 @@ class TestViolationServiceRemainingBranches(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             violation_services._user_service,
-            'get_cached_effective_site_names',
+            'get_effective_site_names',
             new=AsyncMock(return_value=['Site A']),
         ):
             site_names = await violation_services._violation_site_names(

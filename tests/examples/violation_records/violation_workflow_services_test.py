@@ -37,6 +37,7 @@ def _credentials() -> JwtAuthorizationCredentials:
                 'username': 'reviewer',
                 'user_id': 8,
                 'role': 'admin',
+                'tenant_id': 'tenant-test',
                 'jti': 'violation-workflow-test',
                 'features': [],
             },
@@ -163,12 +164,26 @@ class TestViolationQueryService(unittest.IsolatedAsyncioTestCase):
         result = SimpleNamespace(
             all=lambda: [
                 (
-                    5, 'Site A', 'Camera A', timestamp, '5.jpg', None, False,
-                    None, None,
+                    5,
+                    'Site A',
+                    'Camera A',
+                    timestamp,
+                    '5.jpg',
+                    None,
+                    False,
+                    None,
+                    None,
                 ),
                 (
-                    4, 'Site A', 'Camera A', timestamp, '4.jpg', None, False,
-                    None, None,
+                    4,
+                    'Site A',
+                    'Camera A',
+                    timestamp,
+                    '4.jpg',
+                    None,
+                    False,
+                    None,
+                    None,
                 ),
             ],
         )
@@ -207,6 +222,13 @@ class TestViolationQueryService(unittest.IsolatedAsyncioTestCase):
 class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
     """Verify feedback and review state changes use one transaction."""
 
+    def setUp(self) -> None:
+        scope = patch.object(
+            violation_review_service, 'authorize_violation', AsyncMock(),
+        )
+        scope.start()
+        self.addCleanup(scope.stop)
+
     async def test_submit_feedback_flags_the_violation_and_returns_response(
         self,
     ) -> None:
@@ -215,6 +237,11 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
             id=4,
             site='Site A',
             detections_json='[[1, 2, 3, 4, 0.8, 1, 9]]',
+            model_id='ppe-v1',
+            model_version='v1',
+            model_classes=[
+                {'id': 1, 'code': 'person', 'display_name': 'Person'},
+            ],
             is_flagged=False,
             flag_reason=None,
             flagged_by=None,
@@ -222,6 +249,9 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
             review_status=None,
         )
         db = SimpleNamespace(
+            get=AsyncMock(
+                return_value=SimpleNamespace(id=8, tenant_id='tenant-test'),
+            ),
             scalar=AsyncMock(side_effect=[violation, 8]),
             add=MagicMock(),
             commit=AsyncMock(),
@@ -233,13 +263,13 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
         payload = ViolationFeedbackCreate(
             type='wrong_class',
             target_detection_id='det_0',
-            corrected_label='worker',
+            corrected_label='person',
             note='Detector label needs correction',
         )
 
         with patch.object(
             violation_review_service.user_service,
-            'get_cached_effective_site_names',
+            'get_effective_site_names',
             new=AsyncMock(return_value=['Site A']),
         ):
             response = (
@@ -272,8 +302,11 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
             flagged_at=datetime(2026, 8, 23, tzinfo=timezone.utc),
             detection_time=datetime(2026, 8, 23, tzinfo=timezone.utc),
         )
-        reviewer = SimpleNamespace(id=8, role='admin')
+        reviewer = SimpleNamespace(id=8, role='admin', tenant_id='tenant-test')
         db = SimpleNamespace(
+            get=AsyncMock(
+                return_value=SimpleNamespace(id=8, tenant_id='tenant-test'),
+            ),
             scalar=AsyncMock(return_value=violation),
             add=MagicMock(),
             commit=AsyncMock(),
@@ -333,7 +366,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
             image_path='evidence.jpg',
             is_flagged=True,
         )
-        reviewer = SimpleNamespace(id=8, role='admin')
+        reviewer = SimpleNamespace(id=8, role='admin', tenant_id='tenant-test')
         db = SimpleNamespace(scalar=AsyncMock(side_effect=[4, violation]))
         detail = _detail_item()
 
@@ -370,7 +403,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 violation_review_service.user_service,
-                'get_cached_effective_site_names',
+                'get_effective_site_names',
                 new=AsyncMock(return_value=['Site A']),
             ),
         ):
@@ -403,7 +436,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Review rejects unflagged records and rolls back failed commits."""
-        reviewer = SimpleNamespace(id=8, role='admin')
+        reviewer = SimpleNamespace(id=8, role='admin', tenant_id='tenant-test')
         unflagged = SimpleNamespace(id=4, site='Site A', is_flagged=False)
         failing = SimpleNamespace(
             id=5,
@@ -416,6 +449,9 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
             flag_reason='wrong_class',
         )
         db = SimpleNamespace(
+            get=AsyncMock(
+                return_value=SimpleNamespace(id=8, tenant_id='tenant-test'),
+            ),
             scalar=AsyncMock(side_effect=[unflagged, failing]),
             add=MagicMock(),
             commit=AsyncMock(side_effect=SQLAlchemyError('database offline')),
@@ -453,7 +489,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
     async def test_review_rejects_missing_or_unflagged_records(self) -> None:
         """Review denies records outside scope and unflagged records."""
         db = SimpleNamespace(scalar=AsyncMock(return_value=None))
-        reviewer = SimpleNamespace(id=8, role='admin')
+        reviewer = SimpleNamespace(id=8, role='admin', tenant_id='tenant-test')
 
         with patch.object(
             violation_review_service,
@@ -475,17 +511,27 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Read and feedback workflows fail safely for invalid record state."""
-        reviewer = SimpleNamespace(id=8, role='admin')
+        reviewer = SimpleNamespace(id=8, role='admin', tenant_id='tenant-test')
         violation = SimpleNamespace(
             id=4,
             site='Site A',
             detections_json='[[1, 2, 3, 4, 0.8, 1, 9]]',
+            model_id='ppe-v1',
+            model_version='v1',
+            model_classes=[
+                {'id': 1, 'code': 'person', 'display_name': 'Person'},
+            ],
         )
-        db = SimpleNamespace(scalar=AsyncMock())
+        db = SimpleNamespace(
+            scalar=AsyncMock(),
+            get=AsyncMock(
+                return_value=SimpleNamespace(id=8, tenant_id='tenant-test'),
+            ),
+        )
         payload = ViolationFeedbackCreate(
             type='wrong_class',
             target_detection_id='det_0',
-            corrected_label='worker',
+            corrected_label='person',
         )
 
         with patch.object(
@@ -535,7 +581,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             violation_review_service.user_service,
-            'get_cached_effective_site_names',
+            'get_effective_site_names',
             new=AsyncMock(return_value=['Site A']),
         ):
             db.scalar = AsyncMock(return_value=None)
@@ -559,11 +605,11 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
         invalid_target = ViolationFeedbackCreate(
             type='wrong_class',
             target_detection_id='det_99',
-            corrected_label='worker',
+            corrected_label='person',
         )
         with patch.object(
             violation_review_service.user_service,
-            'get_cached_effective_site_names',
+            'get_effective_site_names',
             new=AsyncMock(return_value=['Site A']),
         ):
             db.scalar = AsyncMock(return_value=violation)

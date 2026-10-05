@@ -12,6 +12,16 @@ from pydantic import model_validator
 from pydantic import RootModel
 from pydantic import StrictInt
 
+from examples.shared import overlay_schemas
+from examples.shared.class_colors import overlay_style
+from examples.shared.overlay_schemas import NormalizedBBox  # noqa: F401
+from examples.shared.overlay_schemas import OverlayImageSize  # noqa: F401
+from examples.shared.overlay_schemas import OverlayPayload
+from examples.shared.overlay_schemas import OverlayRegion  # noqa: F401
+
+ViolationOverlayObject = overlay_schemas.ViolationOverlayObject
+
+
 FeedbackType = Literal[
     'false_positive',
     'false_negative',
@@ -57,62 +67,6 @@ class FeedbackDetectionItem(BaseModel):
     bbox: list[float] | None = None
 
 
-class NormalizedBBox(BaseModel):
-    """Represent an image-relative bounding box using 0..1 co-ordinates.
-
-    Attributes:
-        x: Left edge ratio.
-        y: Top edge ratio.
-        w: Width ratio.
-        h: Height ratio.
-    """
-
-    x: float
-    y: float
-    w: float
-    h: float
-
-    @field_validator('x', 'y', 'w', 'h')
-    @classmethod
-    def validate_ratio(cls, value: float) -> float:
-        """Validate an image-relative co-ordinate ratio.
-
-        Args:
-            value: Candidate ratio.
-
-        Returns:
-            Ratio constrained to the inclusive 0..1 range.
-
-        Raises:
-            ValueError: If the ratio falls outside the accepted range.
-        """
-        if value < 0 or value > 1:
-            raise ValueError('bbox ratio must be between 0 and 1')
-        return value
-
-
-class ViolationOverlayObject(BaseModel):
-    """Represent one frontend overlay object for a violation image.
-
-    Attributes:
-        object_id: Stable detection identifier.
-        label: Optional detected class label.
-        confidence: Optional detector confidence.
-        bbox: Image-relative bounding box.
-        is_flagged: Whether feedback flagged this object.
-        flag_reason: Optional reason for the flag.
-        flag_note: Optional reviewer or feedback note.
-    """
-
-    object_id: str
-    label: str | None = None
-    confidence: float | None = None
-    bbox: NormalizedBBox
-    is_flagged: bool = False
-    flag_reason: str | None = None
-    flag_note: str | None = None
-
-
 class ViolationFeedbackCreate(BaseModel):
     """Define structured feedback submitted against a violation record.
 
@@ -124,7 +78,6 @@ class ViolationFeedbackCreate(BaseModel):
         corrected_label: Optional reviewer-supplied replacement label.
         original_bbox: Optional detector bounding box.
         corrected_bbox: Optional reviewer-supplied bounding box.
-        model_version: Optional detector model version.
         confidence: Optional detector confidence.
         note: Optional reviewer explanation.
     """
@@ -136,7 +89,6 @@ class ViolationFeedbackCreate(BaseModel):
     corrected_label: str | None = Field(default=None, max_length=120)
     original_bbox: list[float] | None = None
     corrected_bbox: list[float] | None = None
-    model_version: str | None = Field(default=None, max_length=120)
     confidence: float | None = None
     note: str | None = Field(default=None, max_length=1000)
 
@@ -188,7 +140,7 @@ class ViolationFeedbackCreate(BaseModel):
         """
         if value is None:
             return None
-        if value < 0 or value > 1:
+        if not math.isfinite(value) or value < 0 or value > 1:
             raise ValueError('confidence must be between 0 and 1')
         return value
 
@@ -236,7 +188,6 @@ class ViolationFeedbackResponse(BaseModel):
         corrected_label: Optional reviewer correction.
         original_bbox: Optional detector bounding box.
         corrected_bbox: Optional reviewer bounding box.
-        model_version: Optional detector model version.
         confidence: Optional detector confidence.
         note: Optional reviewer explanation.
         status: Feedback review status.
@@ -251,7 +202,6 @@ class ViolationFeedbackResponse(BaseModel):
     corrected_label: str | None = None
     original_bbox: list[float] | None = None
     corrected_bbox: list[float] | None = None
-    model_version: str | None = None
     confidence: float | None = None
     note: str | None = None
     status: FeedbackStatus
@@ -270,7 +220,6 @@ class ViolationFeedbackItem(BaseModel):
         corrected_label: Optional reviewer correction.
         original_bbox: Optional detector bounding box.
         corrected_bbox: Optional reviewer bounding box.
-        model_version: Optional detector model version.
         confidence: Optional detector confidence.
         status: Feedback review status.
         submitted_by: Optional user identifier of the submitter.
@@ -285,7 +234,6 @@ class ViolationFeedbackItem(BaseModel):
     corrected_label: str | None = None
     original_bbox: list[float] | None = None
     corrected_bbox: list[float] | None = None
-    model_version: str | None = None
     confidence: float | None = None
     status: FeedbackStatus
     submitted_by: int | None = None
@@ -397,6 +345,9 @@ class ViolationListItem(BaseModel):
         feedback_note: Latest non-empty feedback note.
     """
 
+    class_metadata: list[dict] | None = None
+    overlay_style: dict = Field(default_factory=overlay_style)
+    model_version: str | None = None
     id: int
     site_name: str
     stream_name: str
@@ -408,7 +359,7 @@ class ViolationListItem(BaseModel):
     feedback_note: str | None = None
 
 
-class ViolationItem(BaseModel):
+class ViolationItem(OverlayPayload):
     """Represent full violation evidence, feedback, and review detail.
 
     Args:
@@ -424,6 +375,10 @@ class ViolationItem(BaseModel):
         pole_polygons (str | None): Polygons representing poles, if applicable.
     """
 
+    model_id: str | None = None
+    model_version: str | None = None
+    model_classes: list[dict] | None = None
+
     id: int
     site_name: str
     stream_name: str
@@ -438,7 +393,6 @@ class ViolationItem(BaseModel):
     cone_polygons: str | None = None
     pole_polygons: str | None = None
     detections: list[FeedbackDetectionItem] | None = None
-    overlay_objects: list[ViolationOverlayObject] | None = None
     feedbacks: list[ViolationFeedbackItem] | None = None
     is_flagged: bool = False
     flag_reason: str | None = None

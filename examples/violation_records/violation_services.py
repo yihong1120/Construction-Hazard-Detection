@@ -4,9 +4,9 @@ import base64
 import binascii
 import json
 from datetime import datetime
-from datetime import timedelta
 from datetime import timezone
 from functools import lru_cache
+from types import SimpleNamespace
 from typing import cast as type_cast
 from typing import Literal
 from typing import Protocol
@@ -15,15 +15,10 @@ from urllib.parse import urlencode
 from fastapi import HTTPException
 from fastapi import Request
 from sqlalchemy import and_
-from sqlalchemy import case
 from sqlalchemy import cast
-from sqlalchemy import func
-from sqlalchemy import Integer
-from sqlalchemy import literal
 from sqlalchemy import or_
 from sqlalchemy import select
-from sqlalchemy import String
-from sqlalchemy import union_all
+from sqlalchemy import tuple_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -36,18 +31,16 @@ from examples.auth.models import User
 from examples.auth.models import Violation
 from examples.auth.models import ViolationFeedback
 from examples.auth.models import ViolationReviewAuditLog
+from examples.shared.class_colors import normalize_color
+from examples.shared.class_colors import overlay_style
+from examples.shared.overlay_visibility import object_visibility
+from examples.violation_records.record_policy import historical_classes
 from examples.violation_records.schemas import FeedbackDetectionItem
 from examples.violation_records.schemas import FeedbackStatus
 from examples.violation_records.schemas import FeedbackType
 from examples.violation_records.schemas import NormalizedBBox
-from examples.violation_records.schemas import ViolationAnalyticsHourItem
 from examples.violation_records.schemas import ViolationAnalyticsResponse
-from examples.violation_records.schemas import ViolationAnalyticsSiteItem
 from examples.violation_records.schemas import ViolationAnalyticsSummary
-from examples.violation_records.schemas import ViolationAnalyticsTopSite
-from examples.violation_records.schemas import ViolationAnalyticsTopType
-from examples.violation_records.schemas import ViolationAnalyticsTrendItem
-from examples.violation_records.schemas import ViolationAnalyticsTypeItem
 from examples.violation_records.schemas import ViolationDetectionRows
 from examples.violation_records.schemas import ViolationFeedbackItem
 from examples.violation_records.schemas import ViolationFeedbackResponse
@@ -57,10 +50,11 @@ from examples.violation_records.schemas import ViolationOverlayObject
 from examples.violation_records.schemas import ViolationReviewAuditItem
 from examples.violation_records.schemas import ViolationReviewStatus
 from examples.violation_records.search_utils import SearchUtils
-from examples.violation_records.violation_types import normalise_violation_type
-from examples.violation_records.violation_types import (
-    VIOLATION_TYPE_BY_CODE,
+from examples.violation_records.violation_analytics import analytics_response
+from examples.violation_records.violation_analytics import (
+    build_analytics_query,
 )
+from examples.violation_records.violation_types import normalise_violation_type
 from examples.violation_records.violation_types import (
     VIOLATION_TYPE_DEFINITIONS,
 )
@@ -94,6 +88,9 @@ _violation_list_columns = (
     Violation.is_flagged.label('is_flagged'),
     Violation.review_status.label('review_status'),
     _latest_feedback_note,
+    Violation.model_version,
+    Violation.model_classes,
+    Violation.model_id,
 )
 
 ViolationListRow = tuple[
@@ -105,6 +102,9 @@ ViolationListRow = tuple[
     str | None,
     bool,
     ViolationReviewStatus | None,
+    str | None,
+    str | None,
+    list[dict] | None,
     str | None,
 ]
 
@@ -123,12 +123,12 @@ class _StreamScopeUser(Protocol):
 
 @lru_cache(maxsize=1)
 def _search_util() -> SearchUtils:
-    """Load the keyword segmenter only when a search requires it.
+    """Create the lightweight multilingual keyword expander.
 
     Returns:
-        Cached CPU-backed multilingual search utility.
+        Cached dictionary-backed multilingual search utility.
     """
-    return SearchUtils(device=-1)
+    return SearchUtils()
 
 
 def _decode_detection_items(value: str | None) -> list[list[float]] | None:
@@ -158,7 +158,7 @@ def _warning_text_from_json(value: str | None) -> str | None:
         return None
     payload = WARNING_PAYLOAD_ADAPTER.validate_json(value)
     parts = [
-        f"{key}: {warning.count}"
+        f'{key}: {warning.count}'
         for key, warning in payload.items()
         if warning.count > 0
     ]
@@ -181,12 +181,13 @@ def _media_endpoint_url(
         Protected media URL containing the encoded image path.
     """
     query = urlencode({'image_path': image_path})
-    return f"{request.url_for(endpoint_name)}?{query}"
+    return f'{request.url_for(endpoint_name)}?{query}'
 
 
 def _feedback_detection_from_item(
     item: list[float],
     index: int,
+    class_codes: dict[int, str] | None = None,
 ) -> FeedbackDetectionItem:
     """Build a compact frontend-selectable detection item.
 
@@ -198,8 +199,8 @@ def _feedback_detection_from_item(
         Public feedback detection item.
     """
     return FeedbackDetectionItem(
-        id=f"det_{index}",
-        label=f"class-{int(item[5])}",
+        id=f'det_{index}',
+        label=(class_codes or {}).get(int(item[5]), f'class-{int(item[5])}'),
         confidence=item[4],
         bbox=item[:4],
     )
@@ -217,12 +218,8 @@ def _feedback_detection_ids_from_json(value: str | None) -> set[str] | None:
     items = _decode_detection_items(value)
     if items is None:
         return None
-    ids = {f"det_{index}" for index in range(len(items))}
-    ids.update(
-        str(int(item[6]))
-        for item in items
-        if int(item[6]) != -1
-    )
+    ids = {f'det_{index}' for index in range(len(items))}
+    ids.update(str(int(item[6])) for item in items if int(item[6]) != -1)
     return ids
 
 
@@ -304,6 +301,7 @@ def _overlay_objects_from_feedback(
     detections: list[FeedbackDetectionItem] | None,
     feedbacks: list[ViolationFeedbackItem],
     image_size: tuple[int, int] | None,
+    class_metadata: list[dict] | None = None,
 ) -> list[ViolationOverlayObject]:
     """Build structured overlay rows for the frontend painter.
 
@@ -368,7 +366,7 @@ def _overlay_objects_from_feedback(
             continue
         overlay_objects.append(
             ViolationOverlayObject(
-                object_id=f"feedback_{feedback.id}",
+                object_id=f'feedback_{feedback.id}',
                 label=feedback.corrected_label,
                 confidence=None,
                 bbox=bbox,
@@ -378,6 +376,23 @@ def _overlay_objects_from_feedback(
             ),
         )
 
+    style = overlay_style()
+    colors = dict(style['class_colors'])
+    names = {}
+    codes = {}
+    for item in class_metadata or []:
+        color = normalize_color(item.get('color'))
+        if color:
+            for key in (item['code'], str(item['id']), str(float(item['id']))):
+                colors[key] = color
+                names[key] = item.get('display_name', item['code'])
+                codes[key] = item['code']
+    for overlay in overlay_objects:
+        overlay.code = codes.get(overlay.label)
+        overlay.display_name = names.get(overlay.label, overlay.label)
+        overlay.color = colors.get(overlay.label, style['unknown_class_color'])
+        for field, value in object_visibility(overlay.code).items():
+            setattr(overlay, field, value)
     return overlay_objects
 
 
@@ -396,16 +411,23 @@ def _violation_to_detail_item(
     Returns:
         Public detailed violation response item.
     """
+    snapshot = historical_classes(violation)
+    class_codes = {c.id: c.code for c in snapshot}
     rows = _decode_detection_items(violation.detections_json)
     detections = (
         [
-            _feedback_detection_from_item(item, index)
+            _feedback_detection_from_item(item, index, class_codes)
             for index, item in enumerate(rows)
         ]
         if rows is not None
         else None
     )
     return ViolationItem(
+        model_id=getattr(violation, 'model_id', None),
+        model_version=getattr(violation, 'model_version', None),
+        model_classes=getattr(violation, 'model_classes', None),
+        class_metadata=[c.model_dump(exclude_none=True) for c in snapshot],
+        overlay_style=overlay_style([c.model_dump() for c in snapshot]),
         id=violation.id,
         site_name=violation.site,
         stream_name=violation.stream_name,
@@ -443,17 +465,7 @@ def _violation_to_detail_item(
 
 
 def _violation_to_list_item(
-    row: tuple[
-        int,
-        str,
-        str,
-        datetime,
-        str,
-        str | None,
-        bool,
-        ViolationReviewStatus | None,
-        str | None,
-    ],
+    row: ViolationListRow,
     request: Request,
 ) -> ViolationListItem:
     """Convert a compact list projection into a list response item."""
@@ -467,8 +479,18 @@ def _violation_to_list_item(
         is_flagged,
         review_status,
         feedback_note,
-    ) = row
+    ) = row[:9]
+    version, classes = row[9:11] if len(row) > 9 else (None, None)
+    model_id = row[11] if len(row) > 11 else None
+    snapshot = historical_classes(
+        SimpleNamespace(
+            model_classes=classes, model_version=version, model_id=model_id,
+        ),
+    )
     return ViolationListItem(
+        model_version=version,
+        class_metadata=[c.model_dump(exclude_none=True) for c in snapshot],
+        overlay_style=overlay_style([c.model_dump() for c in snapshot]),
         id=violation_id,
         site_name=site,
         stream_name=stream_name,
@@ -503,7 +525,6 @@ def _feedback_to_item(feedback: ViolationFeedback) -> ViolationFeedbackItem:
         corrected_label=feedback.corrected_label,
         original_bbox=feedback.original_bbox,
         corrected_bbox=feedback.corrected_bbox,
-        model_version=feedback.model_version,
         confidence=feedback.confidence,
         status=type_cast(FeedbackStatus, feedback.status),
         submitted_by=feedback.user_id,
@@ -531,7 +552,6 @@ def _feedback_to_response(
         corrected_label=feedback.corrected_label,
         original_bbox=feedback.original_bbox,
         corrected_bbox=feedback.corrected_bbox,
-        model_version=feedback.model_version,
         confidence=feedback.confidence,
         note=feedback.note,
         status=type_cast(FeedbackStatus, feedback.status),
@@ -556,8 +576,8 @@ def _review_audit_to_item(
         actor_user_id=audit_log.reviewed_by,
         action=audit_log.action,
         old_status=type_cast(
-            ViolationReviewStatus |
-            None, audit_log.old_status,
+            ViolationReviewStatus | None,
+            audit_log.old_status,
         ),
         new_status=type_cast(ViolationReviewStatus, audit_log.new_status),
         note=audit_log.review_note,
@@ -767,7 +787,7 @@ async def _violation_site_names(
     if flagged is True or review_status is not None:
         _, site_names = await _load_review_scope(username, db)
         return site_names
-    return await _user_service.get_cached_effective_site_names(username, db)
+    return await _user_service.get_effective_site_names(username, db)
 
 
 async def _build_violation_conditions(
@@ -927,8 +947,7 @@ def _optional_violation_conditions(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    'Unsupported violation_type. Expected one of: '
-                    f'{valid}'
+                    f'Unsupported violation_type. Expected one of: {valid}'
                 ),
             )
         conditions.append(
@@ -967,8 +986,8 @@ def _violation_keyword_condition(
         condition
         for synonym in dict.fromkeys(synonyms)
         for condition in (
-            Violation.stream_name.ilike(f"%{synonym}%"),
-            Violation.warnings_json.ilike(f"%{synonym}%"),
+            Violation.stream_name.ilike(f'%{synonym}%'),
+            Violation.warnings_json.ilike(f'%{synonym}%'),
         )
     ]
     return or_(*matches) if matches else None
@@ -984,12 +1003,10 @@ def _violation_cursor_condition(cursor: str) -> ColumnElement[bool]:
         SQL predicate for records after the cursor's ordering key.
     """
     cursor_time, cursor_id = _decode_violation_cursor(cursor)
-    return or_(
-        Violation.detection_time < cursor_time,
-        and_(
-            Violation.detection_time == cursor_time,
-            Violation.id < cursor_id,
-        ),
+    # Both keys are NOT NULL. A row comparison preserves timestamp ties and
+    # lets PostgreSQL seek directly into the composite pagination index.
+    return tuple_(Violation.detection_time, Violation.id) < tuple_(
+        cursor_time, cursor_id,
     )
 
 
@@ -1096,8 +1113,7 @@ async def get_violation_analytics(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    'Unsupported violation_type. Expected one of: '
-                    f'{valid}'
+                    f'Unsupported violation_type. Expected one of: {valid}'
                 ),
             )
         conditions.append(
@@ -1107,191 +1123,9 @@ async def get_violation_analytics(
         )
 
     where_clause = and_(*conditions)
-    now_utc = datetime.now(timezone.utc)
-    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
-    type_names = (
-        [canonical_type]
-        if canonical_type is not None
-        else [definition.code for definition in VIOLATION_TYPE_DEFINITIONS]
-    )
-
-    # One materialised CTE keeps dashboard aggregation to one database trip.
-    filtered = (
-        select(
-            Violation.site.label('site'),
-            Violation.detection_time.label('detection_time'),
-            Violation.violation_type_codes.label('violation_type_codes'),
-        )
-        .where(where_clause)
-        .cte('filtered_violations')
-        .prefix_with('MATERIALIZED')
-    )
-
-    empty_text = cast(literal(None), String)
-    zero = literal(0)
-    bucket_format = {
-        'hour': 'YYYY-MM-DD"T"HH24:00:00"Z"',
-        'day': 'YYYY-MM-DD',
-        'week': 'IYYY-"W"IW',
-    }[bucket]
-    bucket_expr = func.to_char(filtered.c.detection_time, bucket_format)
-    hour_expr = cast(func.extract('hour', filtered.c.detection_time), Integer)
-    aggregate_queries = [
-        select(
-            literal('summary').label('kind'),
-            empty_text.label('value'),
-            empty_text.label('label'),
-            func.count().label('count'),
-            cast(
-                func.coalesce(
-                    func.sum(
-                        case(
-                            (
-                                and_(
-                                    filtered.c.detection_time >= today_start,
-                                    filtered.c.detection_time < today_end,
-                                ),
-                                1,
-                            ),
-                            else_=0,
-                        ),
-                    ),
-                    0,
-                ),
-                Integer,
-            ).label('today'),
-        ).select_from(filtered),
-        select(
-            literal('trend').label('kind'),
-            cast(bucket_expr, String).label('value'),
-            empty_text.label('label'),
-            func.count().label('count'),
-            zero.label('today'),
-        )
-        .select_from(filtered)
-        .group_by(bucket_expr),
-        select(
-            literal('site').label('kind'),
-            cast(Site.id, String).label('value'),
-            Site.name.label('label'),
-            func.count().label('count'),
-            zero.label('today'),
-        )
-        .select_from(filtered.join(Site, filtered.c.site == Site.name))
-        .group_by(Site.id, Site.name),
-        select(
-            literal('hour').label('kind'),
-            cast(hour_expr, String).label('value'),
-            empty_text.label('label'),
-            func.count().label('count'),
-            zero.label('today'),
-        )
-        .select_from(filtered)
-        .group_by(hour_expr),
-    ]
-    aggregate_queries.extend(
-        select(
-            literal('type').label('kind'),
-            literal(type_name).label('value'),
-            literal(VIOLATION_TYPE_BY_CODE[type_name].label).label('label'),
-            cast(
-                func.coalesce(
-                    func.sum(
-                        case(
-                            (
-                                cast(
-                                    filtered.c.violation_type_codes,
-                                    JSONB,
-                                ).contains(
-                                    [type_name],
-                                ),
-                                1,
-                            ),
-                            else_=0,
-                        ),
-                    ),
-                    0,
-                ),
-                Integer,
-            ).label('count'),
-            zero.label('today'),
-        ).select_from(filtered)
-        for type_name in type_names
-    )
-
-    aggregate_rows = (await db.execute(union_all(*aggregate_queries))).all()
-    total = 0
-    today = 0
-    trend: list[ViolationAnalyticsTrendItem] = []
-    by_site: list[ViolationAnalyticsSiteItem] = []
-    by_hour: list[ViolationAnalyticsHourItem] = []
-    by_type: list[ViolationAnalyticsTypeItem] = []
-    for kind, value, label, count, row_today in aggregate_rows:
-        count_value = int(count or 0)
-        if kind == 'summary':
-            total = count_value
-            today = int(row_today or 0)
-        elif kind == 'trend':
-            trend.append(
-                ViolationAnalyticsTrendItem(
-                    bucket=str(value),
-                    count=count_value,
-                ),
-            )
-        elif kind == 'site':
-            by_site.append(
-                ViolationAnalyticsSiteItem(
-                    site_id=int(value),
-                    site_name=str(label),
-                    count=count_value,
-                ),
-            )
-        elif kind == 'hour':
-            by_hour.append(
-                ViolationAnalyticsHourItem(
-                    hour=int(value),
-                    count=count_value,
-                ),
-            )
-        elif kind == 'type' and count_value:
-            by_type.append(
-                ViolationAnalyticsTypeItem(
-                    type=str(value),
-                    label=str(label),
-                    count=count_value,
-                ),
-            )
-
-    if total == 0:
-        return ViolationAnalyticsResponse(
-            summary=ViolationAnalyticsSummary(total=0, today=0),
-        )
-
-    trend.sort(key=lambda item: item.bucket)
-    by_site.sort(key=lambda item: (-item.count, item.site_id))
-    by_hour.sort(key=lambda item: item.hour)
-    by_type.sort(key=lambda item: (-item.count, item.type))
-    top_site = (
-        ViolationAnalyticsTopSite(**by_site[0].model_dump())
-        if by_site
-        else None
-    )
-    top_type = (
-        ViolationAnalyticsTopType(**by_type[0].model_dump())
-        if by_type
-        else None
-    )
-
-    return ViolationAnalyticsResponse(
-        summary=ViolationAnalyticsSummary(
-            total=total,
-            today=today,
-            top_site=top_site,
-            top_type=top_type,
+    aggregate_rows = await db.execute(
+        build_analytics_query(
+            where_clause, canonical_type, bucket, datetime.now(timezone.utc),
         ),
-        trend=trend,
-        by_type=by_type,
-        by_site=by_site,
-        by_hour=by_hour,
     )
+    return analytics_response(aggregate_rows.all())

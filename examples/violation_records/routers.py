@@ -9,6 +9,7 @@ from fastapi import File
 from fastapi import Form
 from fastapi import Query
 from fastapi import Request
+from fastapi import Response
 from fastapi import Security
 from fastapi import UploadFile
 from fastapi.responses import FileResponse
@@ -22,6 +23,9 @@ from examples.violation_records import violation_query_service
 from examples.violation_records import violation_review_service
 from examples.violation_records import violation_services
 from examples.violation_records import violation_upload_service
+from examples.violation_records.record_policy import (
+    authenticated_record_options,
+)
 from examples.violation_records.schemas import SiteOut
 from examples.violation_records.schemas import UploadViolationResponse
 from examples.violation_records.schemas import ViolationAnalyticsResponse
@@ -63,12 +67,6 @@ async def get_my_sites(
     '/violations/filter-options',
     response_model=ViolationFilterOptions,
     summary='Get authorized camera and violation type filter options',
-)
-@router.get(
-    '/filter-options',
-    response_model=ViolationFilterOptions,
-    include_in_schema=False,
-    deprecated=True,
 )
 async def get_violation_filter_options(
     site_id: int | None = Query(None, gt=0),
@@ -315,6 +313,42 @@ async def get_single_violation(
     )
 
 
+@router.get('/violations/{violation_id}/feedback-options')
+async def get_violation_feedback_options(
+    violation_id: int,
+    response: Response,
+    locale: str = 'zh-TW',
+    db: AsyncSession = Depends(get_db),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
+) -> dict:
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await authenticated_record_options(
+        db,
+        credentials,
+        violation_id,
+        'feedback',
+        locale,
+    )
+
+
+@router.get('/violations/{violation_id}/review-options')
+async def get_violation_review_options(
+    violation_id: int,
+    response: Response,
+    locale: str = 'zh-TW',
+    db: AsyncSession = Depends(get_db),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
+) -> dict:
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await authenticated_record_options(
+        db,
+        credentials,
+        violation_id,
+        'review',
+        locale,
+    )
+
+
 @router.post(
     '/violations/{violation_id}/feedback',
     response_model=ViolationFeedbackResponse,
@@ -449,6 +483,8 @@ async def upload_violation(
     detections_json: str | None = Form(None),
     cone_polygon_json: str | None = Form(None),
     pole_polygon_json: str | None = Form(None),
+    model_id: str = Form(...),
+    model_version: str = Form(...),
     image: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
@@ -481,4 +517,6 @@ async def upload_violation(
         image,
         db,
         credentials,
+        model_id=model_id,
+        model_version=model_version,
     )
