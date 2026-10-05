@@ -81,35 +81,9 @@ class EnvVarHelpersTests(unittest.TestCase):
     # get_env_float
     # ------------------------------------------------------------------
 
-    def test_get_env_float_parses_valid_float(self) -> None:
-        """get_env_float should correctly parse float strings."""
-        os.environ['TEST_FLOAT'] = '3.1415'
-        self.assertAlmostEqual(cfg.get_env_float('TEST_FLOAT'), 3.1415)
-
-    def test_get_env_float_returns_default_on_invalid(self) -> None:
-        """get_env_float should fall back to default for invalid input."""
-        os.environ['TEST_FLOAT'] = 'abc'
-        self.assertEqual(cfg.get_env_float('TEST_FLOAT', 2.0), 2.0)
-
     # ------------------------------------------------------------------
     # get_env_list
     # ------------------------------------------------------------------
-
-    def test_get_env_list_splits_and_trims_values(self) -> None:
-        """get_env_list should split values by separator and trim
-        whitespace."""
-        os.environ['TEST_LIST'] = ' a , b ,c '
-        result = cfg.get_env_list('TEST_LIST')
-        self.assertEqual(result, ['a', 'b', 'c'])
-
-    def test_get_env_list_returns_default_when_unset(self) -> None:
-        """get_env_list should return default list when variable unset."""
-        result = cfg.get_env_list('NO_LIST', default=['x'])
-        self.assertEqual(result, ['x'])
-
-    def test_get_env_list_returns_empty_when_unset_no_default(self) -> None:
-        """get_env_list should return empty list when unset and no default."""
-        self.assertEqual(cfg.get_env_list('MISSING_LIST'), [])
 
 
 class TransportConfigTests(unittest.TestCase):
@@ -131,7 +105,7 @@ class TransportConfigTests(unittest.TestCase):
         """When no variables set, defaults should match DEFAULT_ENV."""
         cfg_obj = cfg.get_transport_config()
         self.assertEqual(cfg_obj['transport'], 'streamable-http')
-        self.assertEqual(cfg_obj['host'], '0.0.0.0')
+        self.assertEqual(cfg_obj['host'], '127.0.0.1')
         self.assertEqual(cfg_obj['port'], 8092)
         self.assertEqual(cfg_obj['path'], '/mcp')
         self.assertEqual(cfg_obj['sse_path'], '/sse')
@@ -157,7 +131,7 @@ class TransportConfigTests(unittest.TestCase):
         self.assertEqual(cfg_obj['sse_path'], '/events')
         self.assertTrue(cfg_obj['debug'])
 
-    @patch('builtins.print')
+    @patch('examples.mcp_server.config.logging.getLogger')
     def test_invalid_transport_falls_back_to_stdio(
         self,
         mock_print: Mock,
@@ -166,11 +140,7 @@ class TransportConfigTests(unittest.TestCase):
         os.environ['MCP_TRANSPORT'] = 'invalid'
         result = cfg.get_transport_config()
         self.assertEqual(result['transport'], 'stdio')
-        mock_print.assert_called_once()
-        self.assertIn(
-            'Invalid transport',
-            mock_print.call_args[0][0],
-        )
+        mock_print.return_value.warning.assert_called_once()
 
     def test_debug_false_for_falsey_values(self) -> None:
         """False-like debug strings should evaluate as False."""

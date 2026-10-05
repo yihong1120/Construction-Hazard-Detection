@@ -1,304 +1,144 @@
 from __future__ import annotations
 
-import asyncio
-import inspect
+import base64
+import binascii
 import logging
-import os
 from datetime import datetime
-from pathlib import Path
+from typing import Any
 
+from pydantic import BaseModel
+from pydantic import ConfigDict
+from pydantic import Field
+from pydantic import ValidationError
+
+from examples.mcp_server.config import get_env_int
+from examples.violation_records.schemas import ViolationDetectionRow
 from src.violation_sender import ViolationSender
+
+_MAX_IMAGE_BYTES = max(
+    1, get_env_int(
+        'MCP_MAX_REMOTE_IMAGE_BYTES', 10 * 1024**2,
+    ),
+)
+
+
+class ViolationUpload(BaseModel):
+    """Required model snapshot and source identity for a real upload."""
+
+    model_config = ConfigDict(extra='forbid')
+    image_base64: str = Field(min_length=1)
+    detections: list[ViolationDetectionRow]
+    warnings: dict[str, dict[str, Any]]
+    site: str = Field(min_length=1)
+    stream_name: str = Field(min_length=1)
+    model_id: str = Field(min_length=1)
+    model_version: str = Field(min_length=1)
+    timestamp: datetime | None = None
+    cone_polygon: list | None = None
+    pole_polygon: list | None = None
 
 
 class RecordTools:
-    """Tools for managing violation records and data persistence."""
+    """Upload real records through the pooled, authenticated backend client."""
 
     def __init__(self) -> None:
-        """Initialise lazy violation record resources."""
         self.logger = logging.getLogger(__name__)
         self._violation_sender: ViolationSender | None = None
 
     async def send_violation(
         self,
         image_base64: str,
-        detections: list[dict],
-        warning_message: str,
-        timestamp: str | None = None,
-        site_id: str | None = None,
-        metadata: dict | None = None,
+        detections: list[ViolationDetectionRow],
+        warnings: dict[str, dict[str, Any]],
+        site: str,
+        stream_name: str,
+        model_id: str,
+        model_version: str,
+        timestamp: str | datetime | None = None,
+        cone_polygon: list | None = None,
+        pole_polygon: list | None = None,
     ) -> dict:
-        """Send a violation record to the database/API.
-
-        Args:
-            image_base64: Base64-encoded violation image.
-            detections: List of detection objects with bbox, class, confidence.
-            warning_message: Violation warning message.
-            timestamp: ISO timestamp (auto-generated if not provided).
-            site_id: Construction site identifier.
-            metadata: Additional metadata for the violation.
-
-        Returns:
-            dict[str, Any]: Upload status and record ID.
-        """
+        """Validate all inputs before authentication or an upload begins."""
         try:
-            sender = await self._ensure_violation_sender()
-
-            # Convert base64 to bytes
-            import base64
-
-            if ',' in image_base64:
-                image_base64 = image_base64.split(',', 1)[1]
-            image_bytes = base64.b64decode(image_base64)
-
-            # Demo mode: save locally and return mock success
-            if str(os.getenv('MCP_DEMO_MODE', '')).lower() in {
-                '1',
-                'true',
-                'yes',
-            }:
-                out_dir = Path('static') / datetime.now().strftime('%Y-%m-%d')
-                out_dir.mkdir(parents=True, exist_ok=True)
-                import uuid
-
-                fname = f"{uuid.uuid4()}.jpg"
-                fpath = out_dir / fname
-                fpath.write_bytes(image_bytes)
-                mock_id = fname
-                return {
-                    'success': True,
-                    'record_id': mock_id,
-                    'image_path': str(fpath.as_posix()),
-                    'message': (
-                        'Demo mode enabled: saved locally and returning '
-                        'mock violation ID'
-                    ),
-                }
-
-            # Map parameters to ViolationSender.send_violation signature
-            site = (metadata or {}).get('site') or site_id or 'default-site'
-            stream_name = (metadata or {}).get(
-                'stream_name',
-            ) or 'default-stream'
-
-            dt: datetime | None = None
-            if timestamp:
-                try:
-                    dt = datetime.fromisoformat(timestamp)
-                except Exception:
-                    dt = None
-
-            # Call existing async API
-            violation_id = await sender.send_violation(
-                site=site,
-                stream_name=stream_name,
-                image_bytes=image_bytes,
-                detection_time=dt,
-                warnings={'message': warning_message},
-                detections=detections,
-                cone_polygon=None,
-                pole_polygon=None,
+            upload = ViolationUpload(
+                image_base64=image_base64, detections=detections,
+                warnings=warnings, site=site, stream_name=stream_name,
+                model_id=model_id, model_version=model_version,
+                timestamp=timestamp, cone_polygon=cone_polygon,
+                pole_polygon=pole_polygon,
             )
-
-            success = violation_id is not None
-            return {
-                'success': success,
-                'record_id': violation_id,
-                'message': (
-                    f"Violation record saved with ID: {violation_id}"
-                    if success
-                    else 'Failed to save violation record'
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to send violation record: {e}")
+            encoded = upload.image_base64
+            if encoded.startswith('data:'):
+                encoded = encoded.split(',', 1)[1]
+            if len(encoded) > ((_MAX_IMAGE_BYTES + 2) // 3) * 4:
+                raise ValueError('Image exceeds size limit')
+            image_bytes = base64.b64decode(encoded, validate=True)
+            if not image_bytes or len(image_bytes) > _MAX_IMAGE_BYTES:
+                raise ValueError('Empty or oversized image')
+        except (ValidationError, ValueError, binascii.Error, IndexError):
             return {
                 'success': False,
                 'record_id': None,
-                'message': str(e),
+                'message': (
+                    'Invalid upload: check image, source, '
+                    'model snapshot and timestamp'
+                ),
             }
 
-    async def batch_send_violations(
-        self,
-        violations: list[dict],
-    ) -> dict:
-        """Send multiple violation records in a batch.
-
-        Args:
-            violations: List of violation objects each containing
-                ``image_base64``, ``detections``, ``warning_message``, etc.
-
-        Returns:
-            dict[str, Any]: Batch upload status and record IDs.
-        """
         try:
-            results = []
-
-            for violation in violations:
-                result = await self.send_violation(**violation)
-                results.append(result)
-
-            success_count = sum(
-                1 for r in results if bool(r.get('success', False))
+            if self._violation_sender is None:
+                self._violation_sender = ViolationSender()
+            record_id = await self._violation_sender.send_violation(
+                site=upload.site,
+                stream_name=upload.stream_name,
+                image_bytes=image_bytes,
+                detection_time=upload.timestamp,
+                warnings=upload.warnings,
+                detections=upload.detections,
+                cone_polygon=upload.cone_polygon,
+                pole_polygon=upload.pole_polygon,
+                model_id=upload.model_id,
+                model_version=upload.model_version,
             )
-
-            return {
-                'success': success_count == len(violations),
-                'total': len(violations),
-                'successful': success_count,
-                'failed': len(violations) - success_count,
-                'results': results,
-                'message': (
-                    f"Batch upload completed: {success_count}/"
-                    f"{len(violations)} successful"
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to batch send violations: {e}")
-            raise
-
-    async def backup_local_records(
-        self,
-        backup_path: str | None = None,
-    ) -> dict:
-        """Back up violation records to local storage.
-
-        Args:
-            backup_path: Path for the backup file (uses a default when
-                omitted).
-
-        Returns:
-            dict[str, Any]: Backup status and file path.
-        """
-        try:
-            sender = await self._ensure_violation_sender()
-
-            # Use default backup path if not provided
-            if backup_path is None:  # pragma: no cover
-                backup_path = (
-                    self._compute_default_backup_path()
-                )  # pragma: no cover
-
-            backup_method = getattr(sender, 'backup_to_local', None)
-            if not callable(backup_method):
-                return {
-                    'success': False,
-                    'backup_path': backup_path,
-                    'records_count': 0,
-                    'message': (
-                        'Backup is not supported by current ViolationSender '
-                        'implementation'
-                    ),
-                }
-            backup_result = backup_method(backup_path)
-            if inspect.isawaitable(backup_result):
-                success, backed_up_count = await backup_result
-            else:
-                success, backed_up_count = backup_result
-
-            return {
-                'success': success,
-                'backup_path': backup_path,
-                'records_count': backed_up_count,
-                'message': (
-                    f"Backed up {backed_up_count} records to {backup_path}"
-                    if success
-                    else 'Backup failed'
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to backup records: {e}")
-            raise
-
-    @staticmethod
-    def _compute_default_backup_path() -> str:
-        """Compute the default path used for backing up violations.
-
-        Separated for testability and to avoid long multi-line coverage gaps.
-        """
-        import os
-
-        return os.path.join(
-            os.path.dirname(__file__),
-            '../../../static',
-            (f"violations_backup_{int(asyncio.get_event_loop().time())}.json"),
-        )  # pragma: no cover
-
-    async def sync_pending_records(self) -> dict:
-        """Synchronise pending violation records from local cache to server.
-
-        Returns:
-            dict[str, Any]: Sync status and statistics.
-        """
-        try:
-            await self._ensure_violation_sender()
-
+            return {'success': record_id is not None, 'record_id': record_id}
+        except Exception as exc:
+            self.logger.error(
+                'Violation upload failed (%s)',
+                type(exc).__name__,
+            )
             return {
                 'success': False,
-                'synced_count': 0,
-                'failed_count': 0,
+                'record_id': None,
                 'message': (
-                    'Sync not supported by current ViolationSender '
-                    'implementation'
+                    'Violation upload failed; '
+                    'check backend permissions and configuration'
                 ),
             }
 
-        except Exception as e:
-            self.logger.error(f"Failed to sync pending records: {e}")
-            raise
+    async def batch_send_violations(self, violations: list[dict]) -> dict:
+        """Send up to 100 records, preserving individual failures and order."""
+        if not 1 <= len(violations) <= 100:
+            raise ValueError('A batch must contain 1 to 100 records')
+        results = []
+        for violation in violations:
+            try:
+                upload = ViolationUpload.model_validate(violation)
+            except ValidationError:
+                results.append({
+                    'success': False, 'record_id': None,
+                    'message': 'Invalid violation upload fields',
+                })
+                continue
+            results.append(await self.send_violation(**upload.model_dump()))
+        successful = sum(bool(result['success']) for result in results)
+        return {
+            'success': successful == len(results), 'total': len(results),
+            'successful': successful, 'failed': len(results) - successful,
+            'results': results,
+        }
 
-    async def get_upload_statistics(self) -> dict:
-        """Get upload statistics and queue status.
-
-        Returns:
-            dict[str, Any]: Upload statistics and queue details.
-        """
-        try:
-            await self._ensure_violation_sender()
-
-            return {
-                'success': True,
-                'statistics': {
-                    'pending': 0,
-                    'sent': 0,
-                    'failed': 0,
-                },
-                'message': (
-                    'Statistics not available; using default placeholders'
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to get upload statistics: {e}")
-            raise
-
-    async def clear_local_cache(self) -> dict:
-        """Clear the local violation record cache.
-
-        Returns:
-            dict[str, Any]: Clear operation status.
-        """
-        try:
-            await self._ensure_violation_sender()
-
-            return {
-                'success': False,
-                'cleared_count': 0,
-                'message': (
-                    'Cache clearing not supported by current '
-                    'ViolationSender implementation'
-                ),
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to clear cache: {e}")
-            raise
-
-    async def _ensure_violation_sender(self) -> ViolationSender:
-        """Ensure the violation sender is initialised and return it."""
-        if self._violation_sender is None:
-            self._violation_sender = ViolationSender()
-            self.logger.info('Initialised violation sender')
-        return self._violation_sender
+    async def close(self) -> None:
+        """Release the upload connection pool at MCP shutdown."""
+        if self._violation_sender is not None:
+            await self._violation_sender.close()
+            self._violation_sender = None

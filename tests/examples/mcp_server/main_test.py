@@ -87,42 +87,15 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         self.assertIn('sites', res)
 
     # === notify ===
-    async def test_notify_line_push(self) -> None:
-        """Exercise this test."""
-        self.notify_tools.line_push.return_value = {'msg': 'ok'}
-        res = await main.notify_line_push('r', 'm')
-        self.assertEqual(res['msg'], 'ok')
-
-    async def test_notify_broadcast_send(self) -> None:
-        """Exercise this test."""
-        self.notify_tools.broadcast_send.return_value = {'sent': True}
-        res = await main.notify_broadcast_send('m')
-        self.assertTrue(res['sent'])
-
-    async def test_notify_messenger_and_wechat_send(self) -> None:
-        """Expose optional Messenger and WeChat Work feature handlers."""
-        self.notify_tools.messenger_send.return_value = {'messenger': True}
-        self.notify_tools.wechat_send.return_value = {'wechat': True}
-        self.assertTrue(
-            (await main.notify_messenger_send('recipient', 'message'))[
-                'messenger'
-            ],
-        )
-        self.assertTrue(
-            (await main.notify_wechat_send('user', 'message'))['wechat'],
-        )
-
-    async def test_notify_telegram_send(self) -> None:
-        """Exercise this test."""
-        self.notify_tools.telegram_send.return_value = {'t': 1}
-        res = await main.notify_telegram_send('id', 'm')
-        self.assertEqual(res['t'], 1)
 
     # === record ===
+
     async def test_record_send_violation(self) -> None:
         """Exercise this test."""
         self.record_tools.send_violation.return_value = {'ok': True}
-        res = await main.record_send_violation('img', [], 'warn')
+        res = await main.record_send_violation(
+            'img', [], {}, 'site', 'stream', 'model', 'v1',
+        )
         self.assertTrue(res['ok'])
 
     async def test_record_batch_send(self) -> None:
@@ -131,43 +104,31 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         res = await main.record_batch_send_violations([])
         self.assertEqual(res['count'], 1)
 
-    async def test_record_sync_pending(self) -> None:
-        """Exercise this test."""
-        self.record_tools.sync_pending_records.return_value = {'done': 1}
-        res = await main.record_sync_pending()
-        self.assertIn('done', res)
-
-    async def test_record_get_statistics(self) -> None:
-        """Exercise this test."""
-        self.record_tools.get_upload_statistics.return_value = {'stats': True}
-        res = await main.record_get_statistics()
-        self.assertTrue(res['stats'])
-
     # === streaming ===
-    async def test_streaming_start_stop_status_capture(self) -> None:
-        """Exercise this test."""
-        self.streaming_tools.start_detection_stream.return_value = {
-            'started': True,
-        }
-        self.streaming_tools.stop_detection_stream.return_value = {
-            'stopped': True,
-        }
-        self.streaming_tools.get_stream_status.return_value = {'status': 'ok'}
+
+    async def test_streaming_capture(self) -> None:
         self.streaming_tools.capture_frame.return_value = {'frame': 'ok'}
+        self.assertIn('frame', await main.streaming_capture_frame('url'))
+
+    async def test_notify_fcm(self) -> None:
+        self.notify_tools.fcm_send.return_value = {'success': True}
         self.assertTrue(
-            (await main.streaming_start_detection('url'))['started'],
+            (await main.notify_fcm_send('site', 'stream', {'no_helmet': {}}))[
+                'success'
+            ],
         )
-        self.assertTrue(
-            (await main.streaming_stop_detection('id'))['stopped'],
-        )
-        self.assertEqual(
-            (await main.streaming_get_status())['status'],
-            'ok',
-        )
-        self.assertIn(
-            'frame',
-            (await main.streaming_capture_frame('url')),
-        )
+
+    async def test_lifespan_closes_all_owned_resources_after_failure(
+        self,
+    ) -> None:
+        self.inference_tools.close.side_effect = RuntimeError('shutdown')
+        async with main._mcp_lifespan(main.mcp):
+            pass
+        for tool in (
+            self.inference_tools, self.violations_tools,
+            self.notify_tools, self.record_tools,
+        ):
+            tool.close.assert_awaited_once()
 
     # === model ===
     async def test_model_all(self) -> None:
@@ -198,6 +159,37 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             main.utils_validate_detections([], 1, 1)['is_valid'],
         )
+
+    async def test_notify_line_push(self) -> None:
+        """Exercise this test."""
+        self.notify_tools.line_push.return_value = {'msg': 'ok'}
+        res = await main.notify_line_push('r', 'm')
+        self.assertEqual(res['msg'], 'ok')
+
+    async def test_notify_broadcast_send(self) -> None:
+        """Exercise this test."""
+        self.notify_tools.broadcast_send.return_value = {'sent': True}
+        res = await main.notify_broadcast_send('m')
+        self.assertTrue(res['sent'])
+
+    async def test_notify_messenger_and_wechat_send(self) -> None:
+        """Expose optional Messenger and WeChat Work feature handlers."""
+        self.notify_tools.messenger_send.return_value = {'messenger': True}
+        self.notify_tools.wechat_send.return_value = {'wechat': True}
+        self.assertTrue(
+            (await main.notify_messenger_send('recipient', 'message'))[
+                'messenger'
+            ],
+        )
+        self.assertTrue(
+            (await main.notify_wechat_send('user', 'message'))['wechat'],
+        )
+
+    async def test_notify_telegram_send(self) -> None:
+        """Exercise this test."""
+        self.notify_tools.telegram_send.return_value = {'t': 1}
+        res = await main.notify_telegram_send('id', 'm')
+        self.assertEqual(res['t'], 1)
 
 
 class TestRunServer(unittest.IsolatedAsyncioTestCase):

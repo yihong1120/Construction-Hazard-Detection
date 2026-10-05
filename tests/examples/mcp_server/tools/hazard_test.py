@@ -4,6 +4,8 @@ import unittest
 from typing import cast
 from unittest.mock import patch
 
+import pytest
+
 from examples.mcp_server.tools.hazard import HazardTools
 
 
@@ -21,7 +23,7 @@ class DetectViolationsListInputTests(unittest.IsolatedAsyncioTestCase):
         fake_poles: list[list[list[float]]] = [[[2.0, 2.0], [3.0, 3.0]]]
 
         with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
+            'src.danger_detector.DangerDetector',
         ) as mock_dd:
             inst = mock_dd.return_value
             inst.detect_danger.return_value = (
@@ -62,7 +64,7 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
         expected: list[list[float]] = [[1.0, 2.0, 3.0, 4.0, 0.95, 5.0]]
 
         with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
+            'src.danger_detector.DangerDetector',
         ) as mock_dd:
             inst = mock_dd.return_value
             inst.detect_danger.return_value = ({}, [], [])
@@ -87,84 +89,20 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
         expected: list[list[float]] = [[10.0, 20.0, 30.0, 40.0, 0.88, 7.0]]
 
         with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
+            'src.danger_detector.DangerDetector',
         ) as mock_dd:
             inst = mock_dd.return_value
             inst.detect_danger.return_value = ({}, [], [])
             tool = HazardTools()
             await tool.detect_violations(detections=cast(list, detections))
             inst.detect_danger.assert_called_once_with(expected)
-
-    async def test_detect_violations_skips_invalid_bbox(self) -> None:
-        """Entries with invalid bbox should be skipped silently."""
-        detections = [
-            {'bbox': [1, 2, 3]},  # fewer than 4 coords -> invalid
-            {'bbox': 'not-a-list'},  # wrong type
-            {'box': [0, 0, 0, 0], 'confidence': 0.9, 'class_': 1},
-        ]
-        expected: list[list[float]] = []
-
-        with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
-        ) as mock_dd:
-            inst = mock_dd.return_value
-            inst.detect_danger.return_value = ({}, [], [])
-            tool = HazardTools()
-            await tool.detect_violations(detections=cast(list, detections))
-            inst.detect_danger.assert_called_once_with(expected)
-
-    async def test_detect_violations_non_numeric_values(self) -> None:
-        """Non-numeric confidence/class_ types should normalise to zeros."""
-        detections = [
-            {
-                'bbox': [0, 0, 1, 1],
-                'confidence': {'x': 1},
-                'class_': {'y': 2},
-            },
-        ]
-        expected: list[list[float]] = [[0.0, 0.0, 1.0, 1.0, 0.0, 0.0]]
-
-        with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
-        ) as mock_dd:
-            inst = mock_dd.return_value
-            inst.detect_danger.return_value = ({}, [], [])
-
-            tool = HazardTools()
-            await tool.detect_violations(detections=cast(list, detections))
-
-            inst.detect_danger.assert_called_once_with(expected)
-
-    async def test_detect_violations_invalid_numeric_strings_fall_back_to_zero(
-        self,
-    ) -> None:
-        """Unparseable string confidence and class values are harmless."""
-        detections = [
-            {'bbox': [0, 0, 1, 1]},
-            {
-                'bbox': [0, 0, 1, 1],
-                'confidence': 'not-a-number',
-                'class_': 'not-a-class',
-            },
-        ]
-        with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
-        ) as mock_dd:
-            detector = mock_dd.return_value
-            detector.detect_danger.return_value = ({}, [], [])
-            tool = HazardTools()
-            await tool.detect_violations(detections=cast(list, detections))
-
-        detector.detect_danger.assert_called_once_with(
-            [[0.0, 0.0, 1.0, 1.0, 0.0, 0.0]],
-        )
 
     async def test_detect_violations_propagates_detector_exception(
         self,
     ) -> None:
         """If underlying detector fails, the exception should propagate."""
         with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
+            'src.danger_detector.DangerDetector',
         ) as mock_dd:
             inst = mock_dd.return_value
             inst.detect_danger.side_effect = RuntimeError('boom')
@@ -181,7 +119,7 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
     async def test_init_detector_default_items(self) -> None:
         """When no detection_items provided, defaults should be used."""
         with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
+            'src.danger_detector.DangerDetector',
         ) as mock_dd:
             tool = HazardTools()
             await tool._init_detector(None)
@@ -205,7 +143,7 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
         """Detector should be created with user-provided detection_items."""
         custom = {'detect_in_restricted_area': False, 'custom_flag': True}
         with patch(
-            'examples.mcp_server.tools.hazard.DangerDetector',
+            'src.danger_detector.DangerDetector',
         ) as mock_dd:
             tool = HazardTools()
             await tool._init_detector(custom)
@@ -214,3 +152,38 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@pytest.mark.parametrize(
+    'detections', [
+        [{'bbox': [0, 1, 2]}], [{'bbox': 'bad'}],
+        [{'bbox': [0, 0, 1, 1]}],
+        [{'bbox': [0, 0, 1, 1], 'confidence': {'bad': 1}, 'class_': 0}],
+        [[0, 0, 1]], [[0, 0, 1, 1, float('nan'), 0]],
+        [[0, 0, 1, 1, 2, 0]], [[0, 0, 1, 1, .9, .5]],
+    ],
+)
+def test_malformed_detections_never_become_fake_class_zero(detections):
+    with pytest.raises(ValueError):
+        HazardTools._normalise_detections(detections)
+
+
+def test_dictionary_aliases_and_tracked_rows():
+    assert HazardTools._normalise_detections([
+        {'box': [0, 0, 1, 1], 'conf': .9, 'cls': 2},
+        [0, 0, 1, 1, .8, 1, 42],
+    ]) == [[0., 0., 1., 1., .9, 2.], [0., 0., 1., 1., .8, 1.]]
+
+
+@pytest.mark.anyio
+async def test_changed_hazard_flags_rebuild_detector():
+    with patch('src.danger_detector.DangerDetector') as factory:
+        factory.return_value.detect_danger.return_value = ({}, [], [])
+        tool = HazardTools()
+        await tool.detect_violations([], {'detect_in_restricted_area': True})
+        await tool.detect_violations([], {'detect_in_restricted_area': True})
+        await tool.detect_violations([], {'detect_in_restricted_area': False})
+        assert factory.call_count == 2
+        assert factory.call_args.args[0] == {
+            'detect_in_restricted_area': False,
+        }

@@ -14,7 +14,14 @@ class ModelTools:
         Args:
             fetcher: Value used by this callable.
         """
-        self._fetcher = fetcher or ModelFetcher()
+        self._fetcher = fetcher
+
+    @property
+    def fetcher(self) -> ModelFetcher:
+        """Create the model repository client only when used."""
+        if self._fetcher is None:
+            self._fetcher = ModelFetcher()
+        return self._fetcher
 
     async def sync_model(
         self,
@@ -23,14 +30,14 @@ class ModelTools:
         force_download: bool = False,
     ) -> dict:
         """Fetch a newer model and atomically install it when one exists."""
-        last_update_time = self._fetcher.get_last_update_time(model_name)
+        last_update_time = self.fetcher.get_last_update_time(model_name)
         updated = await asyncio.to_thread(
-            self._fetcher.request_new_model,
+            self.fetcher.request_new_model,
             model_name,
             last_update_time,
             force_download=force_download,
         )
-        model_path = self._fetcher.local_dir / f"best_{model_name}.pt"
+        model_path = self.fetcher.local_dir / f"best_{model_name}.pt"
         return {
             'success': updated or model_path.is_file(),
             'updated': updated,
@@ -40,7 +47,7 @@ class ModelTools:
 
     async def list_available_models(self) -> dict:
         """List the model identifiers configured for the download client."""
-        models = list(self._fetcher.models)
+        models = list(self.fetcher.models)
         return {
             'success': True,
             'available_models': models,
@@ -52,8 +59,8 @@ class ModelTools:
         scan."""
         models = [
             str(path)
-            for name in self._fetcher.models
-            if (path := self._fetcher.local_dir / f"best_{name}.pt").is_file()
+            for name in self.fetcher.models
+            if (path := self.fetcher.local_dir / f"best_{name}.pt").is_file()
         ]
         return {
             'success': True,

@@ -5,7 +5,9 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
+from typing import Literal
 
+import anyio
 from mcp.server.fastmcp import FastMCP
 
 from examples.mcp_server.config import get_transport_config
@@ -24,6 +26,7 @@ from examples.mcp_server.tools.utils import calculate_polygon_area
 from examples.mcp_server.tools.utils import point_in_polygon
 from examples.mcp_server.tools.utils import validate_detection_data
 from examples.mcp_server.tools.violations import ViolationsTools
+from examples.violation_records.schemas import ViolationDetectionRow
 
 # Configure logging for predictable, structured output across tools
 logging.basicConfig(
@@ -48,12 +51,23 @@ async def _mcp_lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     try:
         yield {}
     finally:
-        await asyncio.gather(
-            inference_tools.close(),
-            violations_tools.close(),
-            notify_tools.close(),
-            return_exceptions=True,
-        )
+        # Transport shutdown cancels its task group; still finish closing
+        # pools.
+        with anyio.CancelScope(shield=True):
+            results = await asyncio.gather(
+                inference_tools.close(),
+                violations_tools.close(),
+                notify_tools.close(),
+                record_tools.close(),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        'MCP resource cleanup failed (%s)', type(
+                            result,
+                        ).__name__,
+                    )
 
 
 mcp = FastMCP('construction-hazard-detection', lifespan=_mcp_lifespan)
@@ -67,6 +81,9 @@ mcp = FastMCP('construction-hazard-detection', lifespan=_mcp_lifespan)
 )
 async def inference_detect_frame(
     image_base64: str,
+    model_key: str = 'yolo26n',
+    use_ultralytics: bool = True,
+    movement_thr: float = 40.0,
 ) -> InferenceResponse:
     """Detect objects in an image using a YOLO model.
 
@@ -77,6 +94,9 @@ async def inference_detect_frame(
     """
     return await inference_tools.detect_frame(
         image_base64=image_base64,
+        model_key=model_key,
+        use_ultralytics=use_ultralytics,
+        movement_thr=movement_thr,
     )
 
 
@@ -89,6 +109,7 @@ async def inference_detect_frame(
 )
 async def hazard_detect_violations(
     detections: list[DetectionLikeDict] | list[list[float]],
+    detection_items: dict[str, bool] | None = None,
 ) -> HazardResponse:
     """Analyse detections for safety violations.
 
@@ -99,6 +120,7 @@ async def hazard_detect_violations(
     """
     return await hazard_tools.detect_violations(
         detections=detections,
+        detection_items=detection_items,
     )
 
 
@@ -112,7 +134,7 @@ async def violations_search(
     start_time: str | None = None,
     end_time: str | None = None,
     limit: int = 20,
-) -> dict:
+) -> dict[str, Any]:
     """Search violation records with filters."""
     return await violations_tools.search(
         site_id=site_id,
@@ -126,7 +148,7 @@ async def violations_search(
 @mcp.tool(name='violations_get', description='Violations Get')
 async def violations_get(
     violation_id: int,
-) -> dict:
+) -> dict[str, Any]:
     """Get specific violation record by ID."""
     return await violations_tools.get(violation_id=violation_id)
 
@@ -135,7 +157,7 @@ async def violations_get(
 async def violations_get_image(
     image_path: str,
     as_base64: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Get violation image by ID."""
     return await violations_tools.get_image(
         image_path=image_path,
@@ -144,7 +166,7 @@ async def violations_get_image(
 
 
 @mcp.tool(name='violations_my_sites', description='Violations My Sites')
-async def violations_my_sites() -> dict:
+async def violations_my_sites() -> dict[str, Any]:
     """Get user's accessible construction sites."""
     sites = await violations_tools.my_sites()
     return {'sites': sites}
@@ -153,12 +175,29 @@ async def violations_my_sites() -> dict:
 # === NOTIFICATION TOOLS ===
 
 
+@mcp.tool(
+    name='notify_fcm_send',
+    description='Send a safety notification via FCM',
+)
+async def notify_fcm_send(
+    site: str,
+    stream_name: str,
+    warnings: dict[str, dict[str, Any]],
+    image_path: str | None = None,
+    violation_id: int | None = None,
+) -> dict[str, Any]:
+    """Notify registered devices through the authenticated FCM backend."""
+    return await notify_tools.fcm_send(
+        site, stream_name, warnings, image_path, violation_id,
+    )
+
+
 @mcp.tool(name='notify_line_push', description='Notify Line Push')
 async def notify_line_push(
     recipient_id: str,
     message: str,
     image_base64: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Send notification via LINE Messaging API."""
     return await notify_tools.line_push(
         recipient_id=recipient_id,
@@ -171,7 +210,7 @@ async def notify_line_push(
 async def notify_broadcast_send(
     message: str,
     broadcast_url: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Send broadcast notification."""
     return await notify_tools.broadcast_send(
         message=message,
@@ -186,7 +225,7 @@ async def notify_messenger_send(
     recipient_id: str,
     message: str,
     image_base64: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Send a notification via Facebook Messenger."""
     return await notify_tools.messenger_send(
         recipient_id=recipient_id,
@@ -200,7 +239,7 @@ async def notify_wechat_send(
     user_id: str,
     message: str,
     image_base64: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Send a notification via WeChat Work."""
     return await notify_tools.wechat_send(
         user_id=user_id,
@@ -214,7 +253,7 @@ async def notify_telegram_send(
     chat_id: str,
     message: str,
     image_base64: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Send notification via Telegram Bot API."""
     return await notify_tools.telegram_send(
         chat_id=chat_id,
@@ -226,23 +265,30 @@ async def notify_telegram_send(
 # === RECORD MANAGEMENT TOOLS ===
 
 
-@mcp.tool(name='record_send_violation', description='Record Send Violation')
+@mcp.tool(
+    name='record_send_violation',
+    description='Upload a violation and model snapshot',
+)
 async def record_send_violation(
     image_base64: str,
-    detections: list[dict],
-    warning_message: str,
+    detections: list[ViolationDetectionRow],
+    warnings: dict[str, dict[str, Any]],
+    site: str,
+    stream_name: str,
+    model_id: str,
+    model_version: str,
     timestamp: str | None = None,
-    site_id: str | None = None,
-    metadata: dict | None = None,
-) -> dict:
-    """Send violation record to database/API."""
+    cone_polygon: list | None = None,
+    pole_polygon: list | None = None,
+) -> dict[str, Any]:
+    """Upload an authenticated record with explicit site, stream and model
+    identity.
+    """
     return await record_tools.send_violation(
-        image_base64=image_base64,
-        detections=detections,
-        warning_message=warning_message,
-        timestamp=timestamp,
-        site_id=site_id,
-        metadata=metadata,
+        image_base64=image_base64, detections=detections, warnings=warnings,
+        site=site, stream_name=stream_name, model_id=model_id,
+        model_version=model_version, timestamp=timestamp,
+        cone_polygon=cone_polygon, pole_polygon=pole_polygon,
     )
 
 
@@ -252,62 +298,12 @@ async def record_send_violation(
 )
 async def record_batch_send_violations(
     violations: list[dict],
-) -> dict:
+) -> dict[str, Any]:
     """Send multiple violation records in batch."""
     return await record_tools.batch_send_violations(violations=violations)
 
 
-@mcp.tool()
-async def record_sync_pending() -> dict:
-    """Synchronize pending violation records."""
-    return await record_tools.sync_pending_records()
-
-
-@mcp.tool()
-async def record_get_statistics() -> dict:
-    """Get upload statistics and queue status."""
-    return await record_tools.get_upload_statistics()
-
-
 # === STREAMING TOOLS ===
-
-
-@mcp.tool(
-    name='streaming_start_detection',
-    description='Streaming Start Detection',
-)
-async def streaming_start_detection(
-    stream_url: str,
-    stream_id: str | None = None,
-    detection_interval: float = 1.0,
-    save_detections: bool = True,
-) -> dict:
-    """Start continuous detection on video stream."""
-    return await streaming_tools.start_detection_stream(
-        stream_url=stream_url,
-        stream_id=stream_id,
-        detection_interval=detection_interval,
-        save_detections=save_detections,
-    )
-
-
-@mcp.tool(
-    name='streaming_stop_detection',
-    description='Streaming Stop Detection',
-)
-async def streaming_stop_detection(
-    stream_id: str,
-) -> dict:
-    """Stop continuous detection on stream."""
-    return await streaming_tools.stop_detection_stream(stream_id=stream_id)
-
-
-@mcp.tool()
-async def streaming_get_status(
-    stream_id: str | None = None,
-) -> dict:
-    """Get status of detection streams."""
-    return await streaming_tools.get_stream_status(stream_id=stream_id)
 
 
 @mcp.tool(
@@ -316,8 +312,8 @@ async def streaming_get_status(
 )
 async def streaming_capture_frame(
     stream_url: str,
-    frame_format: str = 'base64',
-) -> dict:
+    frame_format: Literal['base64', 'array'] = 'base64',
+) -> dict[str, Any]:
     """Capture single frame from video stream."""
     return await streaming_tools.capture_frame(
         stream_url=stream_url,
@@ -335,7 +331,7 @@ async def streaming_capture_frame(
 async def model_sync(
     model_name: str,
     force_download: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Synchronise a model from the authenticated model distributor."""
     return await model_tools.sync_model(
         model_name=model_name,
@@ -344,13 +340,13 @@ async def model_sync(
 
 
 @mcp.tool()
-async def model_list_available() -> dict:
+async def model_list_available() -> dict[str, Any]:
     """List available models from repository."""
     return await model_tools.list_available_models()
 
 
 @mcp.tool()
-async def model_get_local() -> dict:
+async def model_get_local() -> dict[str, Any]:
     """Get list of locally cached models."""
     return await model_tools.get_local_models()
 
@@ -364,7 +360,7 @@ async def model_get_local() -> dict:
 )
 def utils_calculate_polygon_area(
     polygon_points: list[list[float]],
-) -> dict:
+) -> dict[str, Any]:
     """Calculate area of a polygon."""
     return calculate_polygon_area(polygon_points)
 
@@ -376,7 +372,7 @@ def utils_calculate_polygon_area(
 def utils_point_in_polygon(
     point: list[float],
     polygon_points: list[list[float]],
-) -> dict:
+) -> dict[str, Any]:
     """Check if point is inside polygon."""
     return point_in_polygon(point, polygon_points)
 
@@ -388,7 +384,7 @@ def utils_point_in_polygon(
 def utils_bbox_intersection(
     bbox1: list[float],
     bbox2: list[float],
-) -> dict:
+) -> dict[str, Any]:
     """Calculate intersection of two bounding boxes."""
     return bbox_intersection(bbox1, bbox2)
 
@@ -398,7 +394,7 @@ def utils_validate_detections(
     detections: list[dict],
     image_width: int,
     image_height: int,
-) -> dict:
+) -> dict[str, Any]:
     """Validate detection data format and coordinates."""
     return validate_detection_data(detections, image_width, image_height)
 

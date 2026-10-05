@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import cast
+import math
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from examples.mcp_server.schemas import DetectionLikeDict
 from examples.mcp_server.schemas import HazardResponse
-from src.danger_detector import DangerDetector
+if TYPE_CHECKING:
+    from src.danger_detector import DangerDetector
 
 
 class HazardTools:
@@ -16,6 +20,8 @@ class HazardTools:
         """Initialise lazy hazard detection resources."""
         self.logger = logging.getLogger(__name__)
         self._detector: DangerDetector | None = None
+        self._detection_items: dict[str, bool] | None = None
+        self._lock = asyncio.Lock()
 
     async def detect_violations(
         self,
@@ -35,18 +41,23 @@ class HazardTools:
                 and ``pole_polygons``.
         """
         try:
-            # Initialise detector if needed
-            if self._detector is None:
-                await self._init_detector(detection_items)
-            detector = self._detector
-            assert detector is not None
-
-            norm_detections = self._normalise_detections(detections)
-
-            # Perform violation detection
-            result = detector.detect_danger(
-                norm_detections,
-            )
+            async with self._lock:
+                if (
+                    self._detector is None
+                    or detection_items != self._detection_items
+                ):
+                    await self._init_detector(detection_items)
+                    self._detection_items = (
+                        dict(detection_items)
+                        if detection_items is not None
+                        else None
+                    )
+                detector = self._detector
+                assert detector is not None
+                norm_detections = self._normalise_detections(detections)
+                result = await asyncio.to_thread(
+                    detector.detect_danger, norm_detections,
+                )
             warnings, cone_polygons, pole_polygons = result
 
             return {
@@ -63,55 +74,45 @@ class HazardTools:
     def _normalise_detections(
         detections: list[list[float]] | list[DetectionLikeDict],
     ) -> list[list[float]]:
-        """Convert dictionary detections to the detector's row format."""
-        if not detections or not isinstance(detections[0], dict):
-            return cast(list[list[float]], detections)
-        return [
-            normalized
-            for detection in cast(list[DetectionLikeDict], detections)
-            if (normalized := HazardTools._normalise_detection(detection))
-            is not None
-        ]
-
-    @staticmethod
-    def _normalise_detection(
-        detection: DetectionLikeDict,
-    ) -> list[float] | None:
-        """Return one normalized detection or skip an incomplete object."""
-        bbox = detection['bbox'] if 'bbox' in detection else None
-        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
-            return None
-        if 'confidence' not in detection or 'class_' not in detection:
-            return None
-        x1, y1, x2, y2 = bbox[:4]
-        return [
-            float(x1),
-            float(y1),
-            float(x2),
-            float(y2),
-            HazardTools._coerce_float(detection['confidence']),
-            float(HazardTools._coerce_int(detection['class_'])),
-        ]
-
-    @staticmethod
-    def _coerce_float(value: object) -> float:
-        """Convert supported numeric input with the legacy zero fallback."""
-        if not isinstance(value, (int, float, str)):
-            return 0.0
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return 0.0
-
-    @staticmethod
-    def _coerce_int(value: object) -> int:
-        """Convert supported class input with the legacy zero fallback."""
-        if not isinstance(value, (int, float, str)):
-            return 0
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return 0
+        """Reject malformed rows instead of fabricating class zero
+        detections.
+        """
+        normalized = []
+        for detection in detections:
+            row: Sequence[float | None]
+            if isinstance(detection, dict):
+                bbox = detection.get('bbox', detection.get('box'))
+                confidence = detection.get('confidence', detection.get('conf'))
+                class_id = detection.get('class_', detection.get('cls'))
+                if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                    raise ValueError(
+                        'Detection bbox must contain four coordinates',
+                    )
+                row = [*bbox, confidence, class_id]
+            else:
+                row = detection
+            if not isinstance(row, (list, tuple)) or len(row) < 6:
+                raise ValueError(
+                    'Detection row must contain at least six values',
+                )
+            try:
+                values = []
+                for value in row[:6]:
+                    if value is None:
+                        raise ValueError('Detection values must be numeric')
+                    values.append(float(value))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError('Detection values must be numeric') from exc
+            if not all(math.isfinite(value) for value in values):
+                raise ValueError('Detection values must be finite')
+            if (
+                not 0 <= values[4] <= 1
+                or values[5] < 0
+                or not values[5].is_integer()
+            ):
+                raise ValueError('Invalid detection confidence or class ID')
+            normalized.append(values)
+        return normalized
 
     async def _init_detector(
         self,
@@ -127,6 +128,8 @@ class HazardTools:
                 'detect_in_utility_pole_restricted_area': True,
                 'detect_machinery_close_to_pole': True,
             }
+
+        from src.danger_detector import DangerDetector
 
         self._detector = DangerDetector(detection_items)
         self.logger.info('Initialized danger detector')

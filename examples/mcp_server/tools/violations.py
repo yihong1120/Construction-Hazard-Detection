@@ -157,9 +157,11 @@ class ViolationsTools:
             else:
                 # Return URL for direct access
                 return {
-                    'url': (
-                        f"{self._base_url}/get_violation_image?"
-                        f"image_path={image_path}"
+                    'url': str(
+                        httpx.URL(
+                            f"{self._base_url}/get_violation_image",
+                            params={'image_path': image_path},
+                        ),
                     ),
                 }
 
@@ -216,7 +218,7 @@ class ViolationsTools:
         """Ensure the HTTP client and token manager are initialised."""
         if self._client is None:
             self._base_url = get_env_var(
-                'VIOLATION_RECORD_API_URL',
+                'VIOLATION_RECORD_API_URL', 'http://127.0.0.1:8002',
             ).rstrip('/')
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(
@@ -231,17 +233,11 @@ class ViolationsTools:
                 http2=True,
             )
         if self._token_manager is None:
-            self._token_manager = TokenManager(
-                api_url=get_env_var('DB_MANAGEMENT_API_URL'),
-            )
+            self._token_manager = TokenManager()
 
     async def _get_auth_headers(self) -> dict[str, str]:
         """Build authorisation headers for authenticated requests."""
         try:
-            # Optional no-auth or static bearer overrides
-            allow_no_auth = str(
-                os.getenv('MCP_ALLOW_NO_AUTH', ''),
-            ).lower() in {'1', 'true', 'yes'}
             static_bearer = os.getenv('MCP_STATIC_BEARER', '').strip()
             headers = {
                 'User-Agent': 'ConstructionHazardDetection-MCP/1.0',
@@ -249,10 +245,10 @@ class ViolationsTools:
             if static_bearer:
                 headers['Authorization'] = f"Bearer {static_bearer}"
                 return headers
-            if allow_no_auth:
-                return headers
             assert self._token_manager is not None
             access_token = await self._token_manager.get_valid_token()
+            if not access_token:
+                raise RuntimeError('No OIDC access token available')
             headers['Authorization'] = f"Bearer {access_token}"
             return headers
         except Exception as e:

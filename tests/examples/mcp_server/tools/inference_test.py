@@ -73,6 +73,7 @@ class DetectFrameTests(unittest.IsolatedAsyncioTestCase):
                 fake_trk,
             )
             tool._detector = detector_mock
+            tool._detector_config = ('yolo26n', True, 40.0)
 
             res = await tool.detect_frame(image_base64=b64_str)
 
@@ -262,7 +263,7 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
         """Should create LocalYoloDetector with expected parameters."""
         with (
             patch(
-                'examples.mcp_server.tools.inference.LocalYoloDetector',
+                'src.local_yolo_detector.LocalYoloDetector',
             ) as mock_lsd,
             patch(
                 'examples.mcp_server.tools.inference.get_env_int',
@@ -305,3 +306,68 @@ class CloseTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DetectorConfigurationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_same_configuration_reuses_detector_and_switch_closes_old(
+        self,
+    ):
+        tool = InferenceTools()
+        detectors = []
+
+        async def init(*config):
+            detector = AsyncMock()
+            detector.generate_detections.return_value = ([], [])
+            detectors.append(detector)
+            tool._detector = detector
+
+        with (
+            patch.object(
+                tool,
+                '_load_image',
+                AsyncMock(return_value=np.zeros((2, 3, 3))),
+            ),
+            patch.object(
+                tool, '_init_detector', side_effect=init,
+            ) as initialize,
+        ):
+            await tool.detect_frame('image', model_key='first')
+            await tool.detect_frame('image', model_key='first')
+            assert initialize.await_count == 1
+            result = await tool.detect_frame(
+                'image', model_key='second', use_ultralytics=False,
+            )
+            assert result['meta']['model_key'] == 'second'
+            assert result['meta']['engine'] == 'sahi'
+            assert initialize.await_count == 2
+            detectors[0].close.assert_awaited_once()
+        await tool.close()
+        detectors[1].close.assert_awaited_once()
+
+    async def test_concurrent_first_requests_initialize_one_detector(self):
+        import asyncio
+        tool = InferenceTools()
+        detector = AsyncMock()
+        detector.generate_detections.return_value = ([], [])
+        active = 0
+
+        async def init(*config):
+            nonlocal active
+            active += 1
+            await asyncio.sleep(0)
+            tool._detector = detector
+
+        with (
+            patch.object(
+                tool,
+                '_load_image',
+                AsyncMock(return_value=np.zeros((2, 2, 3))),
+            ),
+            patch.object(tool, '_init_detector', side_effect=init),
+        ):
+            await asyncio.gather(
+                tool.detect_frame('image'), tool.detect_frame('image'),
+            )
+        assert active == 1
+        assert detector.generate_detections.await_count == 2
+        await tool.close()

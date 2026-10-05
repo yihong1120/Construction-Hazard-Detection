@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -16,7 +17,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 DEFAULT_ENV: dict[str, str] = {
     'MCP_TRANSPORT': 'streamable-http',
-    'MCP_HOST': '0.0.0.0',
+    'MCP_HOST': '127.0.0.1',
     'MCP_PORT': '8092',
     'MCP_PATH': '/mcp',
     'MCP_SSE_PATH': '/sse',
@@ -49,26 +50,6 @@ def get_env_int(key: str, default: int = 0) -> int:
     )
 
 
-def get_env_float(key: str, default: float = 0.0) -> float:
-    """Interpret an environment variable as a floating point number."""
-    try:
-        return float(get_env_var(key, str(default)))
-    except ValueError:
-        return default
-
-
-def get_env_list(
-    key: str,
-    sep: str = ',',
-    default: list[str] | None = None,
-) -> list[str]:
-    """Interpret an environment variable as a delimited list of strings."""
-    value = get_env_var(key)
-    if not value:
-        return default or []
-    return [x.strip() for x in value.split(sep) if x.strip()]
-
-
 # ---------------------------------------------------------------------------
 # Transport configuration builder
 # ---------------------------------------------------------------------------
@@ -82,9 +63,8 @@ def get_transport_config() -> TransportConfig:
         DEFAULT_ENV['MCP_TRANSPORT'],
     ).lower()
     if transport not in valid_transports:
-        print(
-            f"Warning: Invalid transport '{transport}', "
-            "falling back to 'stdio'.",
+        logging.getLogger(__name__).warning(
+            'Invalid transport %r, falling back to stdio', transport,
         )
         transport = 'stdio'
 

@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import base64
 import logging
+from typing import TYPE_CHECKING
 
 import aiohttp
-import cv2
 import httpx
-import numpy as np
+
+if TYPE_CHECKING:
+    import numpy as np
+    from src.notifiers.line_notifier_message_api import LineMessenger
+    from src.notifiers.messenger_notifier import MessengerNotifier
+    from src.notifiers.telegram_notifier import TelegramNotifier
+    from src.notifiers.wechat_notifier import WeChatNotifier
 
 from examples.mcp_server.config import get_env_var
 from src.notifiers.broadcast_notifier import BroadcastNotifier
-from src.notifiers.line_notifier_message_api import LineMessenger
-from src.notifiers.messenger_notifier import MessengerNotifier
-from src.notifiers.telegram_notifier import TelegramNotifier
-from src.notifiers.wechat_notifier import WeChatNotifier
+from src.notifiers.fcm_notifier import FCMSender
+from src.warning_types import Warnings
 
 _broadcast_timeout = httpx.Timeout(10.0, connect=5.0)
 
@@ -24,12 +28,30 @@ class NotifyTools:
     def __init__(self) -> None:
         """Initialise lazy notification clients."""
         self.logger = logging.getLogger(__name__)
+        self._sender: FCMSender | None = None
         self._line_messenger: LineMessenger | None = None
         self._line_session: aiohttp.ClientSession | None = None
         self._http_client: httpx.AsyncClient | None = None
         self._messenger_notifier: MessengerNotifier | None = None
         self._telegram_notifier: TelegramNotifier | None = None
         self._wechat_notifier: WeChatNotifier | None = None
+
+    async def fcm_send(
+        self,
+        site: str,
+        stream_name: str,
+        warnings: Warnings,
+        image_path: str | None = None,
+        violation_id: int | None = None,
+    ) -> dict:
+        if not site.strip() or not stream_name.strip() or not warnings:
+            raise ValueError('Site, stream name and warnings are required')
+        if self._sender is None:
+            self._sender = FCMSender()
+        success = await self._sender.send_fcm_message_to_site(
+            site, stream_name, warnings, image_path, violation_id,
+        )
+        return {'success': success}
 
     async def line_push(
         self,
@@ -201,6 +223,8 @@ class NotifyTools:
 
     async def _ensure_line_messenger(self) -> None:
         """Ensure the LINE messenger is initialised."""
+        from src.notifiers.line_notifier_message_api import LineMessenger
+
         if self._line_messenger is None:
             self._line_session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=10),
@@ -223,12 +247,16 @@ class NotifyTools:
 
     async def _ensure_telegram_notifier(self) -> None:
         """Ensure the Telegram notifier is initialised."""
+        from src.notifiers.telegram_notifier import TelegramNotifier
+
         if self._telegram_notifier is None:
             self._telegram_notifier = TelegramNotifier()
             self.logger.info('Initialised Telegram notifier')
 
     async def _ensure_messenger_notifier(self) -> None:
         """Ensure the Messenger feature shares the MCP HTTP transport."""
+        from src.notifiers.messenger_notifier import MessengerNotifier
+
         if self._messenger_notifier is None:
             self._messenger_notifier = MessengerNotifier(
                 client=self._broadcast_http_client(),
@@ -236,6 +264,8 @@ class NotifyTools:
 
     async def _ensure_wechat_notifier(self) -> None:
         """Ensure the WeChat Work feature shares the MCP HTTP transport."""
+        from src.notifiers.wechat_notifier import WeChatNotifier
+
         if self._wechat_notifier is None:
             self._wechat_notifier = WeChatNotifier(
                 client=self._broadcast_http_client(),
@@ -252,6 +282,9 @@ class NotifyTools:
         self._line_messenger = None
         self._messenger_notifier = None
         self._wechat_notifier = None
+        if self._sender is not None:
+            await self._sender.close()
+            self._sender = None
 
 
 def _decode_optional_image(image_base64: str | None) -> bytes | None:
@@ -259,13 +292,16 @@ def _decode_optional_image(image_base64: str | None) -> bytes | None:
     if not image_base64:
         return None
     encoded = image_base64.split(',', 1)[-1]
-    return base64.b64decode(encoded)
+    return base64.b64decode(encoded, validate=True)
 
 
 def _decode_rgb_image(image_bytes: bytes | None) -> np.ndarray | None:
     """Decode optional image bytes to the RGB NumPy format notifiers expect."""
     if not image_bytes:
         return None
+    import cv2
+    import numpy as np
+
     bgr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     if bgr is None:
         return None

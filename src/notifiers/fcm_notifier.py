@@ -49,8 +49,6 @@ class FCMSender(AsyncHttpClientOwner):
         self.api_url = api_url
         self.shared_token: dict[str, str | bool] = {
             'access_token': '',
-            'refresh_token': '',
-            'is_refreshing': False,
         }
         self.max_retries = max_retries
         self.logger = logging.getLogger(__name__)

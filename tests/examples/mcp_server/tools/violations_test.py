@@ -66,11 +66,12 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
             'true' if k == 'MCP_ALLOW_NO_AUTH' else ''
         ),
     )
-    async def test_get_auth_headers_no_auth(self, _: Any) -> None:
+    async def test_get_auth_headers_cannot_bypass_auth(self, _: Any) -> None:
         """Exercise this test."""
-        self.tool._token_manager = MagicMock()
+        self.tool._token_manager = AsyncMock()
+        self.tool._token_manager.get_valid_token.return_value = 'TOKEN'
         headers = await self.tool._get_auth_headers()
-        self.assertNotIn('Authorization', headers)
+        self.assertEqual(headers['Authorization'], 'Bearer TOKEN')
 
     @patch('examples.mcp_server.tools.violations.os.getenv', return_value='')
     async def test_get_auth_headers_valid_token(self, _: Any) -> None:

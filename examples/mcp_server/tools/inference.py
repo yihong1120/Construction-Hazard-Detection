@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from typing import TYPE_CHECKING
 
-import cv2
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
+    from src.local_yolo_detector import LocalYoloDetector
 
 from examples.mcp_server.config import get_env_int
 from examples.mcp_server.schemas import InferenceResponse
 from src.async_http_client import AsyncHttpClientOwner
-from src.local_yolo_detector import LocalYoloDetector
 
 _REMOTE_IMAGE_TIMEOUT_SECONDS = max(
     1,
@@ -33,6 +34,8 @@ class InferenceTools:
         """Initialise lazy inference resources."""
         self.logger = logging.getLogger(__name__)
         self._detector: LocalYoloDetector | None = None
+        self._detector_config: tuple[str, bool, float] | None = None
+        self._detector_lock = asyncio.Lock()
         self._http_client = AsyncHttpClientOwner(
             timeout=_REMOTE_IMAGE_TIMEOUT_SECONDS,
         )
@@ -69,16 +72,17 @@ class InferenceTools:
         if frame is None:
             raise ValueError('Failed to load image')
 
-        if self._detector is None:
-            await self._init_detector(
-                model_key,
-                use_ultralytics,
-                movement_thr,
-            )
-        detector = self._detector
-        assert detector is not None
-
-        detections, tracked = await detector.generate_detections(frame)
+        config = (model_key, use_ultralytics, movement_thr)
+        async with self._detector_lock:
+            if self._detector is None or self._detector_config != config:
+                if self._detector is not None:
+                    await self._detector.close()
+                    self._detector = None
+                await self._init_detector(*config)
+                self._detector_config = config
+            detector = self._detector
+            assert detector is not None
+            detections, tracked = await detector.generate_detections(frame)
 
         return {
             'detections': detections,
@@ -109,6 +113,9 @@ class InferenceTools:
         Returns:
             A decoded OpenCV image (BGR), or ``None`` when decoding fails.
         """
+        import cv2
+        import numpy as np
+
         try:
             if image_base64:
                 # Decode base64 image
@@ -181,7 +188,10 @@ class InferenceTools:
         costs for users who only interact with configuration or non-inference
         tools.
         """
-        self._detector = LocalYoloDetector(
+        from src.local_yolo_detector import LocalYoloDetector
+
+        self._detector = await asyncio.to_thread(
+            LocalYoloDetector,
             model_key=model_key,
             use_ultralytics=use_ultralytics,
             movement_thr=movement_thr,
@@ -199,7 +209,11 @@ class InferenceTools:
 
         Ensures that any underlying async resources are closed correctly.
         """
-        if self._detector:
-            await self._detector.close()
-            self._detector = None
-        await self._http_client.close()
+        async with self._detector_lock:
+            try:
+                if self._detector is not None:
+                    await self._detector.close()
+            finally:
+                self._detector = None
+                self._detector_config = None
+                await self._http_client.close()

@@ -57,7 +57,11 @@ DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazar
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=password
-JWT_SECRET_KEY=replace-with-a-long-random-secret
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=https://sso.example.com/realms/visionnaire
+OIDC_JWKS_URL=https://sso.example.com/realms/visionnaire/protocol/openid-connect/certs
+OIDC_AUDIENCE=visionnaire-api
+OIDC_ACCOUNT_URL=https://sso.example.com/realms/visionnaire/account
 FCM_TOKEN_ENCRYPTION_KEY=replace-with-a-fernet-key
 ```
 
