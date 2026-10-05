@@ -50,3 +50,14 @@ examples/streaming_web/frontend/dist/
 
 # Runtime credentials must never enter a Docker build context.
 examples/local_notification_server/*firebase-adminsdk*.json
+
+# Local credentials and editor history are not runtime source.
+.env
+.env.*
+!.env.example
+.history/
+.coverage*
+config/secrets/
+config/model_registry.json
+config/invitation_policy.json
+*.p8

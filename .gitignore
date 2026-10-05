@@ -13,6 +13,8 @@
 .env.*
 !.env.example
 config/secrets/
+config/model_registry.json
+config/invitation_policy.json
 *.p8
 examples/local_notification_server/*firebase-adminsdk*.json
 config/configuration copy.*
@@ -57,17 +59,39 @@ examples/YOLO_data_augmentation/visualised_image.jpg
 predictions.json
 /dummy.json
 
-# Local operations and maintenance tooling.  Compose and CI retain only the
-# base Dockerfiles and the PostgreSQL bootstrap schema below this directory.
+# Local operations and migration tooling. Keep the PostgreSQL bootstrap schema,
+# shared deployment tools, CI scripts and Dockerfiles versioned.
 scripts/apply_postgres_migrations.py
 scripts/cleanup_local_artifacts.py
 scripts/create_deployment_enrollment_code.py
 scripts/init.sql
 scripts/migrations/
+/scripts/**/migrate_*.sql
+/scripts/**/migrate_*.py
 scripts/normalise_python_conventions.py
 scripts/rebuild_single_engine.py
 scripts/rebuild_tensorrt_engines.py
 scripts/send_test_fcm_notification.py
+scripts/tune_local_postgresql18.sh
+scripts/upgrade_system_cudnn.sh
+
+# Personal scripts and database exports. Shared .py/.sql files stay visible.
+/scripts/local/
+/scripts/**/*.local.py
+/scripts/**/*.local.sql
+/scripts/**/local_*.py
+/scripts/**/local_*.sql
+/scripts/backups/
+/scripts/dumps/
+/scripts/**/*.dump
+/scripts/**/*.sql.gz
+/scripts/**/*.sql.bak
+
+# Local implementation reports and operator notes.
+/docs/repository-optimization.md
+/docs/postgresql-query-optimization.md
+/docs/local/
+*.local.md
 
 # Build artifacts
 build/
