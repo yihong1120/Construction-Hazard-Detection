@@ -940,6 +940,7 @@ def test_vaapi_device_failure_selects_software_on_next_start(
     )
     asyncio.run(stream._drain_stderr(process))
     assert stream._vaapi_unavailable
+    monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
     monkeypatch.setattr(publisher, '_select_encoder', lambda _: 'h264_vaapi')
     commands = []
 
