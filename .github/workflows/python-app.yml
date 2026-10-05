@@ -34,6 +34,11 @@ jobs:
     env:
       BFF_TOKEN_ENCRYPTION_KEY: ci-test-encryption-secret-not-for-production
       DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/construction_hazard_detection_test
+      OIDC_ENABLED: "true"
+      OIDC_ISSUER_URL: https://oidc.example.test/realms/ci
+      OIDC_JWKS_URL: https://oidc.example.test/realms/ci/protocol/openid-connect/certs
+      OIDC_AUDIENCE: ci-test-api
+      OIDC_ACCOUNT_URL: https://oidc.example.test/realms/ci/account
 
     steps:
     - uses: actions/checkout@v7
