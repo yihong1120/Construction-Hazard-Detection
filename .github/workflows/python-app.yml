@@ -13,11 +13,26 @@ permissions:
   contents: read
 
 jobs:
+  runtime-images:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Build base and API images
+      run: |
+        docker build -f scripts/base.Dockerfile -t construction-smoke-base .
+        docker build --build-arg BASE_IMAGE=construction-smoke-base -f examples/db_management/Dockerfile -t construction-smoke-management .
+        docker build --build-arg BASE_IMAGE=construction-smoke-base -f examples/violation_records/Dockerfile -t construction-smoke-violation .
+    - name: Start images without source mounts
+      run: |
+        python3 scripts/smoke_api_images.py \
+          --management-image construction-smoke-management \
+          --violation-image construction-smoke-violation
+
   build:
 
     runs-on: ubuntu-latest
     env:
-      JWT_SECRET_KEY: ci-test-jwt-secret-not-for-production
+      BFF_TOKEN_ENCRYPTION_KEY: ci-test-encryption-secret-not-for-production
       DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/construction_hazard_detection_test
 
     steps:
@@ -30,7 +45,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip "uv==0.9.9"
         # Exercise every source module, but exclude the CUDA/TensorRT-only
-        # deployment extra.  Tests use CPU-compatible ONNX Runtime.
+        # deployment extra. Include model-development and notification tools.
         uv sync --frozen --all-extras --no-extra yolo-gpu
     - name: Verify lockfile
       run: uv lock --check

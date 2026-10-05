@@ -1,5 +1,6 @@
 # YOLO inference is the only API that requires the GPU extension.
-FROM base-gpu:latest
+ARG BASE_IMAGE=base-gpu:latest
+FROM ${BASE_IMAGE}
 
 # Set working directory
 WORKDIR /app
@@ -21,7 +22,9 @@ USER appuser
 # Copy only the service and its shared runtime packages. Models are mounted at
 # runtime so image builds stay deterministic and do not duplicate multi-GB data.
 COPY --chown=appuser:appuser examples/auth /app/examples/auth
+COPY --chown=appuser:appuser examples/deployment_registry /app/examples/deployment_registry
 COPY --chown=appuser:appuser examples/shared /app/examples/shared
+COPY --chown=appuser:appuser examples/db_management /app/examples/db_management
 COPY --chown=appuser:appuser examples/YOLO_server_api /app/examples/YOLO_server_api
 COPY --chown=appuser:appuser src /app/src
 

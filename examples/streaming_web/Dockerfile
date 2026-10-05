@@ -1,5 +1,6 @@
 # Use the shared base image
-FROM base:latest
+ARG BASE_IMAGE=base:latest
+FROM ${BASE_IMAGE}
 
 # Set the working directory within the container
 WORKDIR /app
@@ -26,8 +27,11 @@ USER appuser
 # Copy only runtime packages. The Docker Compose development bind mount may
 # still replace these paths, while standalone images remain runnable.
 COPY --chown=appuser:appuser examples/auth /app/examples/auth
+COPY --chown=appuser:appuser examples/deployment_registry /app/examples/deployment_registry
 COPY --chown=appuser:appuser examples/local_notification_server /app/examples/local_notification_server
 COPY --chown=appuser:appuser examples/shared /app/examples/shared
+COPY --chown=appuser:appuser examples/db_management /app/examples/db_management
+COPY --chown=appuser:appuser examples/YOLO_server_api/__init__.py examples/YOLO_server_api/model_registry.py /app/examples/YOLO_server_api/
 COPY --chown=appuser:appuser examples/streaming_web /app/examples/streaming_web
 COPY --chown=appuser:appuser src /app/src
 

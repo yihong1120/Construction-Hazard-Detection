@@ -1,5 +1,6 @@
 # Build this image from the repository root so shared packages can be copied.
-FROM base:latest
+ARG BASE_IMAGE=base:latest
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
@@ -18,6 +19,7 @@ USER appuser
 
 # Copy only runtime packages required by the notification application.
 COPY --chown=appuser:appuser examples/auth /app/examples/auth
+COPY --chown=appuser:appuser examples/deployment_registry /app/examples/deployment_registry
 COPY --chown=appuser:appuser examples/db_management /app/examples/db_management
 COPY --chown=appuser:appuser \
     examples/local_notification_server \
