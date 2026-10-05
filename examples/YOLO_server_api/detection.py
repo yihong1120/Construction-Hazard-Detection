@@ -248,36 +248,6 @@ def get_category_indices(
     return indices
 
 
-async def _calc_and_filter(
-    idxs1: list[int],
-    idxs2: list[int],
-    datas: list[list[float | int]],
-    fn: Callable,
-) -> set[int]:
-    """Apply filtering function to calculate conflicting detection indices.
-
-    Helper function that applies a conflict detection function between two sets
-    of detection indices and accumulates the results.
-
-    Args:
-        idxs1: Indices of the first detection category.
-        idxs2: Indices of the second detection category.
-        datas: Complete detection data list.
-        fn: Filtering function to apply (e.g., find_overlaps, find_contained).
-
-    Returns:
-        Set of detection indices that should be removed due to conflicts.
-
-    Note:
-        This function enables efficient batch processing of conflict detection
-        between different category pairs.
-    """
-    bad: set[int] = set()
-    for idx1 in idxs1:
-        bad.update(await fn(idx1, idxs2, datas))
-    return bad
-
-
 def _add_overlaps(
     bad: set[int],
     i1: int,
@@ -363,68 +333,6 @@ async def remove_overlapping_labels(
     )
 
     return _without_indices(datas, bad)
-
-
-async def find_overlaps(
-    i1: int,
-    idxs2: list[int],
-    datas: list[list[float | int]],
-    thr: float = 0.5,
-) -> set[int]:
-    """Find detections that overlap with a reference detection above threshold.
-
-    Compares a reference detection against a list of candidate detections to
-    identify those with overlap ratios exceeding the specified threshold.
-
-    Args:
-        i1: Index of the reference detection.
-        idxs2: List of candidate detection indices to compare against.
-        datas: Complete detection data list.
-        thr: Overlap ratio threshold (default 0.5, meaning 50% overlap).
-
-    Returns:
-        Set of detection indices that overlap significantly with the reference.
-
-    Note:
-        Uses intersection over union (IoU) calculation
-            for overlap determination.
-    """
-    bad: set[int] = set()
-    _add_overlaps(bad, i1, idxs2, datas, thr)
-    return bad
-
-
-def overlap_ratio(
-    b1: Sequence[float | int],
-    b2: Sequence[float | int],
-) -> float:
-    """Calculate intersection over union (IoU) ratio between two bounding
-    boxes.
-
-    Args:
-        b1: First bounding box as [x1, y1, x2, y2].
-        b2: Second bounding box as [x1, y1, x2, y2].
-
-    Returns:
-        IoU ratio as float between 0.0 (no overlap) and 1.0 (complete overlap).
-
-    Note:
-        Uses the intersection area divided by union area formula.
-        Handles edge cases where boxes don't overlap (returns 0.0).
-    """
-    return _overlap_ratio_values(b1, b2)
-
-
-def _overlap_ratio_values(
-    b1: Sequence[float | int],
-    b2: Sequence[float | int],
-) -> float:
-    """Calculate IoU without allocating sliced box lists."""
-    return _overlap_ratio_with_area(
-        b1,
-        b2,
-        area(b1[0], b1[1], b1[2], b1[3]),
-    )
 
 
 def _overlap_ratio_with_area(
@@ -521,32 +429,6 @@ async def remove_completely_contained_labels(
     )
 
     return _without_indices(datas, bad)
-
-
-async def find_contained(
-    i1: int,
-    idxs2: list[int],
-    datas: list[list[float | int]],
-) -> set[int]:
-    """Find detections that have containment relationships with a reference
-    detection.
-
-    Args:
-        i1: Index of the reference detection.
-        idxs2: List of candidate detection indices to compare against.
-        datas: Complete detection data list.
-
-    Returns:
-        Set of detection indices that have containment relationships (either
-        direction) with the reference detection.
-
-    Note:
-        Checks both directions: reference contained in candidate, and candidate
-        contained in reference, to identify all containment conflicts.
-    """
-    bad: set[int] = set()
-    _add_contained(bad, i1, idxs2, datas)
-    return bad
 
 
 def contained(

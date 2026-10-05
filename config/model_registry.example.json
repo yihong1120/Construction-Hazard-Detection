@@ -1,0 +1,22 @@
+{
+  "revision": "registry-example-1",
+  "default_id": null,
+  "models": [
+    {
+      "id": "ppe-stream-v3",
+      "display_name": "工安即時辨識 v3",
+      "version": "replace-with-immutable-version",
+      "artifact": "../models/pt/best_ppe-stream-v3.pt",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "enabled": false,
+      "capabilities": ["image", "stream"],
+      "tenant_ids": [],
+      "site_ids": [],
+      "roles": ["admin", "user"],
+      "classes": [
+        {"id": 0, "code": "helmet", "display_name": "安全帽"},
+        {"id": 7, "code": "vehicle", "display_name": "車輛"}
+      ]
+    }
+  ]
+}

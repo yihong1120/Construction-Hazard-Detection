@@ -64,7 +64,7 @@ class ModelFetcher:
         Returns:
             str: The last modification time in ISO format.
         """
-        local_file_path = self.local_dir / f"best_{model}.pt"
+        local_file_path = self.local_dir / f'best_{model}.pt'
         if local_file_path.exists():
             last_mod_time = datetime.datetime.fromtimestamp(
                 local_file_path.stat().st_mtime,
@@ -94,6 +94,15 @@ class ModelFetcher:
         requested_timestamp = (
             '1970-01-01T00:00:00' if force_download else last_update_time
         )
+        headers = {'Authorization': f'Bearer {self.bearer_token}'}
+        current = self.local_dir / f'best_{model}.pt'
+        if current.is_file() and not force_download:
+            with current.open('rb') as source:
+                headers['If-None-Match'] = (
+                    '"'
+                    + hashlib.file_digest(source, 'sha256').hexdigest()
+                    + '"'
+                )
         try:
             response = requests.post(
                 self.api_url,
@@ -101,11 +110,11 @@ class ModelFetcher:
                     'model': model,
                     'last_update_time': requested_timestamp,
                 },
-                headers={'Authorization': f"Bearer {self.bearer_token}"},
+                headers=headers,
                 timeout=(5, 120),
                 stream=True,
             )
-            if response.status_code == 204:
+            if response.status_code in {204, 304}:
                 logger.info('Model %s is already up to date.', model)
                 response.close()
                 return False
@@ -139,8 +148,8 @@ class ModelFetcher:
         response: requests.Response,
     ) -> None:
         """Write a response to a temporary file and atomically install it."""
-        destination = self.local_dir / f"best_{model}.pt"
-        temporary = destination.with_suffix(f"{destination.suffix}.part")
+        destination = self.local_dir / f'best_{model}.pt'
+        temporary = destination.with_suffix(f'{destination.suffix}.part')
         self.local_dir.mkdir(parents=True, exist_ok=True)
         written = 0
         digest = hashlib.sha256()

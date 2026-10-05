@@ -469,6 +469,7 @@ class TestDetectionModelManager(unittest.TestCase):
         """Test _safe_load exception handling."""
         manager = DetectionModelManager.__new__(DetectionModelManager)
         manager.model_names = ['test_model']
+        manager._failed_model_versions = {}
         manager.base_model_path = Path('models/pt/')
         manager.extension = '.pt'
         manager.models = {'test_model': None}

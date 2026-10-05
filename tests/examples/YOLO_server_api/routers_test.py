@@ -43,6 +43,19 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     app: ClassVar[FastAPI]
     client: ClassVar[TestClient]
 
+    def setUp(self):
+        self.app.dependency_overrides[jwt_access] = (
+            self._override_jwt_role_factory('admin')
+        )
+        patcher = patch(
+            'examples.YOLO_server_api.routers.require_model',
+            return_value=SimpleNamespace(
+                id='yolo26n', version='commit', sha256='a' * 64,
+            ),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @classmethod
     def setUpClass(cls) -> None:
         """Initialise shared FastAPI app and client for the test suite."""
@@ -76,7 +89,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         return _override
 
-    @patch.object(model_loader, 'get_model')
+    @patch.object(model_loader, 'get_registry_model')
     @patch(
         'examples.YOLO_server_api.routers.run_detection_from_bytes',
         new_callable=AsyncMock,
@@ -102,61 +115,40 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         files = {'image': ('test.jpg', b'123', 'image/jpeg')}
         data = {'model': 'yolo26n'}
         # Exercise endpoint
-        resp = self.client.post('/api/detect', files=files, data=data)
+        with patch.object(
+            model_loader,
+            'is_model_selectable',
+            return_value=True,
+        ):
+            resp = self.client.post('/api/detect', files=files, data=data)
         # Verify response and delegation
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), [[1, 2, 3, 4, 0.9, 0]])
         mock_run_det.assert_awaited_once()
 
-    @patch.object(model_loader, 'get_model', return_value=None)
-    def test_detect_endpoint_model_not_found(self, _: MagicMock) -> None:
-        """Verify 404 is returned when the named model cannot be found."""
-        files = {'image': ('test.jpg', b'123', 'image/jpeg')}
-        data = {'model': 'nope'}
-        resp = self.client.post('/api/detect', files=files, data=data)
-        self.assertEqual(resp.status_code, 404)
-        self.assertIn('Model not found', resp.text)
+    def test_detect_endpoint_model_not_found(self):
+        from fastapi import HTTPException
 
-    @patch(
-        'examples.YOLO_server_api.routers.update_model_file',
-        new_callable=AsyncMock,
-    )
-    @patch('examples.YOLO_server_api.routers.logger')
-    def test_model_file_update_success(
-        self,
-        mock_logger: MagicMock,
-        mock_update_file: AsyncMock,
-    ) -> None:
-        """Verify POST /api/model_file_update accepts admin role and logs.
-
-        Args:
-            mock_logger: Mocked logger instance.
-            mock_update_file: Mocked update model file function.
-        """
-        # Ensure privileged role
-        self.app.dependency_overrides[jwt_access] = (
-            self._override_jwt_role_factory('admin')
-        )
-        # Prepare upload payload
-        files = {
-            'file': (
-                'model.pt',
-                b'model content',
-                'application/octet-stream',
+        with patch(
+            'examples.YOLO_server_api.routers.require_model',
+            side_effect=HTTPException(
+                409, detail={'code': 'MODEL_UNAVAILABLE'},
             ),
-        }
-        data = {'model': 'yolo26n'}
-        # Exercise endpoint
-        resp = self.client.post(
+        ):
+            response = self.client.post(
+                '/api/detect',
+                data={'model': 'nope'},
+                files={'image': ('x.jpg', b'image')},
+            )
+        self.assertEqual(response.status_code, 409)
+
+    def test_model_file_update_requires_huggingface_publication(self):
+        response = self.client.post(
             '/api/model_file_update',
-            data=data,
-            files=files,
+            data={'model': 'yolo26n'},
+            files={'file': ('model.pt', b'model')},
         )
-        # Verify outcome and side effects
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn('updated successfully', resp.text)
-        mock_update_file.assert_awaited()
-        mock_logger.info.assert_called()
+        self.assertEqual(response.status_code, 409)
 
     def test_model_file_update_forbidden_role(self) -> None:
         """Verify non-privileged role gets 403 for model update."""
@@ -185,74 +177,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.YOLO_server_api.routers.update_model_file',
-        side_effect=ValueError('Invalid model'),
-    )
-    @patch('examples.YOLO_server_api.routers.logger')
-    def test_model_file_update_value_error(
-        self,
-        mock_logger: MagicMock,
-        _patch_update: MagicMock,
-    ) -> None:
-        """Verify ValueError becomes 400 with an error log entry.
-
-        Args:
-            mock_logger: Mocked logger instance.
-            _patch_update: Mocked update model file function.
-        """
-        files = {
-            'file': (
-                'bad.pt',
-                b'xxx',
-                'application/octet-stream',
-            ),
-        }
-        data = {'model': 'bad'}
-        resp = self.client.post(
-            '/api/model_file_update',
-            data=data,
-            files=files,
-        )
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn('Invalid model', resp.text)
-        mock_logger.warning.assert_called()
-
-    @patch(
-        'examples.YOLO_server_api.routers.update_model_file',
-        side_effect=OSError('Disk error'),
-    )
-    @patch('examples.YOLO_server_api.routers.logger')
-    def test_model_file_update_os_error(
-        self,
-        mock_logger: MagicMock,
-        _patch_update: MagicMock,
-    ) -> None:
-        """Verify OSError becomes 500 with an error log entry.
-
-        Args:
-            mock_logger: Mocked logger instance.
-            _patch_update: Mocked update model file function.
-        """
-        files = {
-            'file': (
-                'model.pt',
-                b'xxx',
-                'application/octet-stream',
-            ),
-        }
-        data = {'model': 'yolo26n'}
-        resp = self.client.post(
-            '/api/model_file_update',
-            data=data,
-            files=files,
-        )
-        self.assertEqual(resp.status_code, 500)
-        self.assertIn('Disk error', resp.text)
-        mock_logger.error.assert_called()
-
-    @patch(
-        'examples.YOLO_server_api.routers.get_new_model_path',
-        new_callable=AsyncMock,
+        'examples.YOLO_server_api.routers.verify_artifact',
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_get_new_model_updated(
@@ -281,8 +206,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         mock_logger.info.assert_called()
 
     @patch(
-        'examples.YOLO_server_api.routers.get_new_model_path',
-        new_callable=AsyncMock,
+        'examples.YOLO_server_api.routers.verify_artifact',
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_get_new_model_up_to_date(
@@ -296,13 +220,22 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             _mock_logger: Mocked logger instance.
             mock_get_file: Mocked get new model file function.
         """
-        mock_get_file.return_value = None
+        mock_get_file.return_value = Path(__file__)
         payload = {
             'model': 'yolo26n',
             'last_update_time': '2023-10-01T12:30:00',
         }
-        resp = self.client.post('/api/get_new_model', json=payload)
-        self.assertEqual(resp.status_code, 204)
+        from examples.YOLO_server_api.model_files import model_file_checksum
+
+        etag = '"' + model_file_checksum(Path(__file__)) + '"'
+        resp = self.client.post(
+            '/api/get_new_model',
+            json=payload,
+            headers={
+                'If-None-Match': etag,
+            },
+        )
+        self.assertEqual(resp.status_code, 304)
         self.assertEqual(resp.content, b'')
 
     def test_get_new_model_invalid_datetime(self) -> None:
@@ -312,7 +245,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 400)
 
     @patch(
-        'examples.YOLO_server_api.routers.get_new_model_path',
+        'examples.YOLO_server_api.routers.verify_artifact',
         side_effect=Exception('Some error'),
     )
     @patch('examples.YOLO_server_api.routers.logger')

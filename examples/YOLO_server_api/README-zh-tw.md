@@ -1,5 +1,7 @@
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
+模型清單、預設模型與 Flutter 聯調契約：[模型 API 文件](DETECTION_MODEL_API.md)。
+
 # YOLO Server API
 
 可選的 FastAPI detector service，用於 HTTP/WebSocket 測試、遠端 detector 部署與模型檔案
@@ -28,7 +30,7 @@ detection 結果格式：
 - `websocket_handlers.py`：可選 WebSocket detection path。
 - `detection.py`：image decode、inference 與 bounding-box post-processing。
 - `models.py`：model manager 與 file watcher。
-- `model_files.py`：model upload 與 retrieval helper。
+- `model_files.py`：模型傳輸使用的串流 SHA-256 checksum；檔案路徑與上傳由 `routers.py` 的 registry 流程處理。
 - `config.py`：runtime settings，包含 device selection。
 - `schemas.py`：request 與 response models。
 
@@ -67,12 +69,20 @@ models/pt/best_<model_key>.pt
 
 ## 驗證
 
-routes 使用 `examples.auth` 的共用 JWT dependency。請先透過 database management API
-登入，再帶入：
+HTTP routes 與需登入的 WebSocket 共用 `examples.auth.jwt_config.jwt_access`
+驗證核心，與通知、違規紀錄 API 使用相同的 OIDC、部署及撤銷檢查。啟用
+Keycloak 時，請使用登入取得的 access token：
 
 ```text
 Authorization: Bearer <access-token>
 ```
+
+`/detect` 的限流只處理配額，不再要求舊登入系統的 Redis `jti_list`。
+WebSocket 不再自動登錄 jti，驗證流程與 HTTP API 共用。
+WSS 的公開來源會以 HTTPS 對應到已登錄的 deployment；反向代理需保留正確
+Host 與外部 scheme。不同 WSS 網域需先有對應的部署設定。
+既有同機管線的 `YOLO_WS_ALLOW_LOCALHOST_BYPASS` 選項仍保留；若所有連線都
+必須驗證，請設為 `false`。
 
 模型上傳 endpoint 需要模型管理權限。
 

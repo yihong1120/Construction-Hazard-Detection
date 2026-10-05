@@ -15,16 +15,12 @@ import pytest
 from PIL import Image
 
 from examples.YOLO_server_api import detection
-from examples.YOLO_server_api.detection import _calc_and_filter
 from examples.YOLO_server_api.detection import area
 from examples.YOLO_server_api.detection import compile_detection_data
 from examples.YOLO_server_api.detection import contained
 from examples.YOLO_server_api.detection import convert_to_image
-from examples.YOLO_server_api.detection import find_contained
-from examples.YOLO_server_api.detection import find_overlaps
 from examples.YOLO_server_api.detection import get_category_indices
 from examples.YOLO_server_api.detection import get_prediction_result
-from examples.YOLO_server_api.detection import overlap_ratio
 from examples.YOLO_server_api.detection import process_labels
 from examples.YOLO_server_api.detection import (
     remove_completely_contained_labels,
@@ -192,7 +188,9 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """Tests calculation of overlap ratio between two bounding boxes."""
         bbox1: list[float] = [0, 0, 50, 50]
         bbox2: list[float] = [25, 25, 75, 75]
-        overlap = overlap_ratio(bbox1, bbox2)
+        overlap = detection._overlap_ratio_with_area(
+            bbox1, bbox2, area(*bbox1),
+        )
         self.assertGreater(overlap, 0)
         self.assertLessEqual(overlap, 1)
 
@@ -200,7 +198,9 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """Tests overlap ratio with no overlapping boxes."""
         bbox1: list[float] = [0, 0, 50, 50]
         bbox2: list[float] = [100, 100, 150, 150]
-        overlap = overlap_ratio(bbox1, bbox2)
+        overlap = detection._overlap_ratio_with_area(
+            bbox1, bbox2, area(*bbox1),
+        )
         self.assertEqual(overlap, 0)
 
     def test_contained_true(self) -> None:
@@ -217,7 +217,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         result = contained(inner_bbox, outer_bbox)
         self.assertFalse(result)
 
-    async def test_find_overlaps(self) -> None:
+    def test_add_overlaps(self) -> None:
         """Tests identification of overlapping bounding boxes."""
         i1 = 0
         idxs2 = [1, 2]
@@ -226,22 +226,24 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
             [10, 10, 60, 60, 0.85, 2],  # significant overlap with i1
             [100, 100, 150, 150, 0.8, 3],  # no overlap with i1
         ]
-        result = await find_overlaps(i1, idxs2, datas, 0.3)
+        result: set[int] = set()
+        detection._add_overlaps(result, i1, idxs2, datas, 0.3)
         self.assertIsInstance(result, set)
         self.assertIn(1, result)  # should find overlap with index 1
 
-    async def test_find_overlaps_no_overlap(self) -> None:
-        """Tests find_overlaps when there are no overlaps."""
+    def test_add_overlaps_no_overlap(self) -> None:
+        """Tests overlap accumulation when there are no overlaps."""
         i1 = 0
         idxs2 = [1]
         datas = [
             [0, 0, 50, 50, 0.9, 1],
             [100, 100, 150, 150, 0.85, 2],  # no overlap
         ]
-        result = await find_overlaps(i1, idxs2, datas, 0.5)
+        result: set[int] = set()
+        detection._add_overlaps(result, i1, idxs2, datas, 0.5)
         self.assertEqual(result, set())
 
-    async def test_find_contained(self) -> None:
+    def test_add_contained(self) -> None:
         """Tests identification of contained bounding boxes."""
         i1 = 0
         idxs2 = [1, 2]
@@ -250,34 +252,25 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
             [10, 10, 40, 40, 0.85, 2],  # contained in i1
             [100, 100, 150, 150, 0.8, 3],  # not contained
         ]
-        result = await find_contained(i1, idxs2, datas)
+        result: set[int] = set()
+        detection._add_contained(result, i1, idxs2, datas)
         self.assertIsInstance(result, set)
         self.assertIn(1, result)  # should find contained box at index 1
 
-    async def test_find_contained_both_directions(self) -> None:
-        """Tests find_contained when i1 is contained in one of idxs2."""
+    def test_add_contained_both_directions(self) -> None:
+        """Tests containment accumulation when i1 is contained in one of
+        idxs2.
+        """
         i1 = 0
         idxs2 = [1]
         datas = [
             [10, 10, 40, 40, 0.9, 1],  # i1 - smaller box
             [0, 0, 50, 50, 0.85, 2],  # larger box that contains i1
         ]
-        result = await find_contained(i1, idxs2, datas)
+        result: set[int] = set()
+        detection._add_contained(result, i1, idxs2, datas)
         self.assertIsInstance(result, set)
         self.assertIn(0, result)  # should find i1 is contained
-
-    async def test_calc_and_filter(self) -> None:
-        """Tests the _calc_and_filter helper function."""
-        idxs1 = [0]
-        idxs2 = [1, 2]
-        datas = [
-            [0, 0, 50, 50, 0.9, 1],
-            [25, 25, 75, 75, 0.85, 2],
-            [100, 100, 150, 150, 0.8, 3],
-        ]
-
-        result = await _calc_and_filter(idxs1, idxs2, datas, find_overlaps)
-        self.assertIsInstance(result, set)
 
     async def test_remove_overlapping_labels_hardhat_pair(self) -> None:
         """Tests removal of overlapping hardhat vs no_hardhat labels."""
@@ -361,7 +354,9 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """Tests overlap ratio with identical bounding boxes."""
         bbox1: list[float] = [0, 0, 50, 50]
         bbox2: list[float] = [0, 0, 50, 50]
-        overlap = overlap_ratio(bbox1, bbox2)
+        overlap = detection._overlap_ratio_with_area(
+            bbox1, bbox2, area(*bbox1),
+        )
         self.assertEqual(overlap, 1.0)  # Should be 100% overlap
 
     def test_contained_edge_cases(self) -> None:
@@ -378,8 +373,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         result = contained(bbox1, bbox2)
         self.assertFalse(result)
 
-    async def test_find_contained_no_containment(self) -> None:
-        """Tests find_contained when no boxes are contained."""
+    def test_add_contained_no_containment(self) -> None:
+        """Tests containment accumulation when no boxes are contained."""
         i1 = 0
         idxs2 = [1, 2]
         datas = [
@@ -387,7 +382,8 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
             [60, 60, 110, 110, 0.85, 2],  # not contained
             [120, 120, 170, 170, 0.8, 3],  # not contained
         ]
-        result = await find_contained(i1, idxs2, datas)
+        result: set[int] = set()
+        detection._add_contained(result, i1, idxs2, datas)
         self.assertEqual(result, set())  # should find no contained boxes
 
 

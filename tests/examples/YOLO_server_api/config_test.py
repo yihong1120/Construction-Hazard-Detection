@@ -82,36 +82,6 @@ class TestConfig(unittest.TestCase):
         self.assertTrue(hasattr(config, 'EXPLICIT_CUDA_CLEANUP'))
         self.assertIsInstance(config.EXPLICIT_CUDA_CLEANUP, bool)
 
-    def test_get_model_variants_function(self) -> None:
-        """Test the get_model_variants function."""
-        variants = config.get_model_variants()
-        self.assertIsInstance(variants, list)
-        self.assertEqual(variants, config.MODEL_VARIANTS)
-
-    def test_is_lazy_loading_enabled_function(self) -> None:
-        """Test the is_lazy_loading_enabled function."""
-        result = config.is_lazy_loading_enabled()
-        self.assertIsInstance(result, bool)
-        self.assertEqual(result, config.LAZY_LOAD_MODELS)
-
-    def test_get_max_loaded_models_function(self) -> None:
-        """Test the get_max_loaded_models function."""
-        result = config.get_max_loaded_models()
-        self.assertIsInstance(result, int)
-        self.assertEqual(result, config.MAX_LOADED_MODELS)
-
-    def test_should_preload_smallest_model_function(self) -> None:
-        """Test the should_preload_smallest_model function."""
-        result = config.should_preload_smallest_model()
-        self.assertIsInstance(result, bool)
-        self.assertEqual(result, config.PRELOAD_SMALLEST)
-
-    def test_should_cleanup_cuda_cache_function(self) -> None:
-        """Test the should_cleanup_cuda_cache function."""
-        result = config.should_cleanup_cuda_cache()
-        self.assertIsInstance(result, bool)
-        self.assertEqual(result, config.EXPLICIT_CUDA_CLEANUP)
-
     def test_model_variants_empty_input(self) -> None:
         """Test that empty MODEL_VARIANTS input stays empty."""
         empty_env_value = ''

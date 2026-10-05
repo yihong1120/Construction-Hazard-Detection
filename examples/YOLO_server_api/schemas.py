@@ -1,11 +1,45 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
+from typing import Literal
 
 from fastapi import File
 from fastapi import Form
 from fastapi import UploadFile
 from pydantic import BaseModel
+from pydantic import model_validator
+
+from examples.shared.overlay_schemas import OverlayPayload
+from examples.YOLO_server_api.model_registry import ModelClass
+from examples.YOLO_server_api.model_registry import Text
+
+
+class DetectionModelInfo(BaseModel):
+    """Public model identity, independent of its cache residency."""
+
+    id: Text
+    display_name: Text
+    version: Text | None = None
+    classes: list[ModelClass] | None = None
+
+    @model_validator(mode='after')
+    def validate_class_metadata(self):
+        if self.classes is not None:
+            if self.version is None:
+                raise ValueError('Model classes require an immutable version')
+            if len({c.id for c in self.classes}) != len(self.classes):
+                raise ValueError('Duplicate class IDs')
+            if len({c.code for c in self.classes}) != len(self.classes):
+                raise ValueError('Duplicate class codes')
+        return self
+
+
+class DetectionModelList(BaseModel):
+    """Selectable models and a default drawn from that same list."""
+
+    default_model_id: str | None
+    models: list[DetectionModelInfo]
 
 
 class DetectionRequest(BaseModel):
@@ -13,15 +47,17 @@ class DetectionRequest(BaseModel):
 
     model: str
     image: UploadFile
+    model_version: str | None = None
 
     @classmethod
     def as_form(
         cls,
         model: str = Form(...),
         image: UploadFile = File(...),
+        model_version: Annotated[str | None, Form()] = None,
     ) -> DetectionRequest:
         """Build a detection request from multipart form fields."""
-        return cls(model=model, image=image)
+        return cls(model=model, image=image, model_version=model_version)
 
 
 class ModelFileUpdate(BaseModel):
@@ -77,3 +113,9 @@ class UpdateModelRequest(BaseModel):
             return datetime.fromisoformat(self.last_update_time)
         except ValueError:
             return None
+
+
+class DetectionOverlayResponse(OverlayPayload):
+    model_id: str
+    model_version: str
+    view: Literal['objects', 'regions']

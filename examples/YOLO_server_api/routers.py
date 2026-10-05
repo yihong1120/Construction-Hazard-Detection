@@ -7,12 +7,14 @@ import os
 import time
 from pathlib import Path
 from typing import Final
+from typing import Literal
 
 import aiofiles  # type: ignore[import-untyped]
 import redis.asyncio as redis
 from fastapi import APIRouter
 from fastapi import Body
 from fastapi import Depends
+from fastapi import Form
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi import Security
@@ -27,13 +29,17 @@ from examples.auth.config import Settings
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.redis_pool import get_redis_pool_ws
-from examples.shared.filename_utils import sanitize_filename
 from examples.YOLO_server_api.detection import INFERENCE_SEMAPHORE
 from examples.YOLO_server_api.detection import run_detection_from_bytes
-from examples.YOLO_server_api.model_files import get_new_model_path
 from examples.YOLO_server_api.model_files import model_file_checksum
-from examples.YOLO_server_api.model_files import update_model_file
+from examples.YOLO_server_api.model_registry import load_registry
+from examples.YOLO_server_api.model_registry import require_model
+from examples.YOLO_server_api.model_registry import verify_artifact
 from examples.YOLO_server_api.models import DetectionModelManager
+from examples.YOLO_server_api.overlay_response import build_overlay_response
+from examples.YOLO_server_api.schemas import DetectionModelInfo
+from examples.YOLO_server_api.schemas import DetectionModelList
+from examples.YOLO_server_api.schemas import DetectionOverlayResponse
 from examples.YOLO_server_api.schemas import DetectionRequest
 from examples.YOLO_server_api.schemas import ModelFileUpdate
 from examples.YOLO_server_api.schemas import UpdateModelRequest
@@ -81,7 +87,7 @@ async def _read_limited_upload(
         if total > max_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"Upload exceeds the {max_bytes}-byte limit",
+                detail=f'Upload exceeds the {max_bytes}-byte limit',
             )
         chunks.append(chunk)
     if not chunks:
@@ -108,12 +114,52 @@ async def _stream_upload_to_path(
             if total > max_bytes:
                 raise HTTPException(
                     status_code=413,
-                    detail=f"Upload exceeds the {max_bytes}-byte limit",
+                    detail=f'Upload exceeds the {max_bytes}-byte limit',
                 )
             wrote_any = True
             await f.write(chunk)
     if not wrote_any:
         raise ValueError('Empty upload file')
+
+
+@detection_router.get(
+    '/models',
+    response_model=DetectionModelList,
+    response_model_exclude_unset=True,
+)
+def list_detection_models(
+    response: Response,
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
+) -> DetectionModelList:
+    """List models using the same JWT access policy as image detection."""
+    registry = load_registry()
+    entries = [
+        entry
+        for entry in registry.models
+        if entry.allowed(
+            str(credentials.subject.get('tenant_id', '')),
+            credentials.subject['role'],
+            'image',
+        )
+    ]
+    default = (
+        registry.default_id
+        if registry.default_id in {e.id for e in entries}
+        else None
+    )
+    response.headers['Cache-Control'] = 'private, no-store'
+    return DetectionModelList(
+        default_model_id=default,
+        models=[
+            DetectionModelInfo(
+                id=e.id,
+                display_name=e.display_name,
+                version=e.version,
+                classes=e.classes,
+            )
+            for e in entries
+        ],
+    )
 
 
 @detection_router.post('/detect', response_class=JSONResponse)
@@ -144,6 +190,15 @@ async def detect(
         This endpoint uses semaphore-based concurrency control to prevent
         GPU memory overflow during simultaneous inference operations.
     """
+    datas, _, _ = await _run_detection_request(
+        detection_request, credentials, remaining_requests,
+    )
+    return datas
+
+
+async def _run_detection_request(
+    detection_request, credentials, remaining_requests,
+):
     # Record the start time for performance monitoring
     start_time: float = time.time()
 
@@ -162,10 +217,17 @@ async def detect(
         len(img_bytes),
     )
 
-    # Retrieve the requested model instance
-    model_instance = model_loader.get_model(detection_request.model)
-    if model_instance is None:
-        raise HTTPException(status_code=404, detail='Model not found')
+    entry = await asyncio.to_thread(
+        require_model,
+        detection_request.model,
+        detection_request.model_version,
+        str(credentials.subject.get('tenant_id', '')),
+        credentials.subject['role'],
+        'image',
+    )
+    model_instance = await asyncio.to_thread(
+        model_loader.get_registry_model, entry,
+    )
 
     # Unified pipeline with concurrency control
     datas, timing = await run_detection_from_bytes(
@@ -188,7 +250,7 @@ async def detect(
         total_time,
     )
 
-    return datas
+    return datas, entry, img_bytes
 
 
 @detection_router.websocket('/ws/detect')
@@ -241,32 +303,15 @@ async def model_file_update(
             detail="Permission denied. Need 'admin' or 'model_manage' role.",
         )
 
-    # Secure the uploaded filename to prevent directory traversal attacks
-    filename: str = data.file.filename or 'default_model_name'
-    safe_filename = sanitize_filename(filename) or 'default_model_name'
-    tmp_path: Path = Path('/tmp') / f"{time.time_ns()}_{safe_filename}"
-
-    try:
-        # Write the uploaded file to a temporary location
-        await _stream_upload_to_path(data.file, tmp_path)
-
-        # Process the model file update
-        await update_model_file(data.model, tmp_path)
-        logger.info('Model updated model=%s', data.model)
-        return {'message': f"Model {data.model} updated successfully."}
-
-    except ValueError as e:
-        # Handle validation errors (e.g., invalid model format)
-        logger.warning('Model update validation error: %s', e)
-        raise HTTPException(status_code=400, detail=str(e))
-    except OSError as e:
-        # Handle I/O errors (e.g., disk space, permissions)
-        logger.error('Model update I/O error: %s', e)
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # Ensure temporary file is cleaned up regardless of outcome
-        if tmp_path.exists():
-            tmp_path.unlink()
+    raise HTTPException(
+        409,
+        detail={
+            'code': 'IMMUTABLE_MODEL_REGISTRY',
+            'message': (
+                'Publish to Hugging Face and synchronize the catalog key.'
+            ),
+        },
+    )
 
 
 @model_management_router.post('/get_new_model')
@@ -312,18 +357,19 @@ async def get_new_model(
 
     try:
         # Parse the client's last update timestamp
-        user_last_update: datetime.datetime = datetime.datetime.fromisoformat(
+        datetime.datetime.fromisoformat(
             update_request.last_update_time,
         )
 
-        # Check for newer model file on the server
-        model_path = await get_new_model_path(
+        entry = await asyncio.to_thread(
+            require_model,
             update_request.model,
-            user_last_update,
+            None,
+            str(credentials.subject.get('tenant_id', '')),
+            role,
+            'image',
         )
-
-        if model_path is None:
-            return Response(status_code=204)
+        model_path = await asyncio.to_thread(verify_artifact, entry)
 
         checksum = await asyncio.to_thread(model_file_checksum, model_path)
         etag = f'"{checksum}"'
@@ -339,9 +385,13 @@ async def get_new_model(
                 'Cache-Control': 'private, no-store',
                 'ETag': etag,
                 'X-Model-SHA256': checksum,
+                'X-Model-Version': entry.version,
+                'X-Model-Id': entry.id,
             },
         )
 
+    except HTTPException:
+        raise
     except ValueError as e:
         # Handle invalid timestamp format or validation errors
         logger.warning('Model fetch validation error: %s', e)
@@ -352,4 +402,33 @@ async def get_new_model(
         raise HTTPException(
             status_code=500,
             detail='Failed to retrieve model.',
+        )
+
+
+_overlay_semaphore = asyncio.Semaphore(2)
+
+
+@detection_router.post('/v2/detect', response_model=DetectionOverlayResponse)
+async def detect_v2(
+    detection_request: DetectionRequest = Depends(DetectionRequest.as_form),
+    compute_regions: bool = Form(True),
+    view: Literal['objects', 'regions'] = Form('regions'),
+    credentials: JwtAuthorizationCredentials = Security(jwt_access),
+    remaining_requests: int = Depends(rate_limiter_service),
+) -> DetectionOverlayResponse:
+    if view == 'regions' and not compute_regions:
+        raise HTTPException(
+            422, detail='Region view requires compute_regions=true',
+        )
+    datas, entry, img_bytes = await _run_detection_request(
+        detection_request, credentials, remaining_requests,
+    )
+    async with _overlay_semaphore:
+        return await asyncio.to_thread(
+            build_overlay_response,
+            datas,
+            entry,
+            img_bytes,
+            compute_regions,
+            view,
         )

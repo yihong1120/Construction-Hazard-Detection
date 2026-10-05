@@ -81,6 +81,8 @@ class DetectionModelManager:
 
     def __init__(self) -> None:
         """Initialise the model manager, paths, caches, and file watcher."""
+        self._registry_lock = threading.RLock()
+        self._registry_models: dict[tuple[str, str, str], ModelType] = {}
         # 1) Model names from configuration (order affects LRU priority)
         self.model_names: list[str] = MODEL_VARIANTS
 
@@ -97,6 +99,7 @@ class DetectionModelManager:
             name: None for name in self.model_names
         }
         self._lru_order: list[str] = []  # LRU usage order (oldest at index 0)
+        self._failed_model_versions: dict[str, tuple[int, int] | None] = {}
 
         # 4) Pre-load strategy
         if not LAZY_LOAD_MODELS:
@@ -149,9 +152,9 @@ class DetectionModelManager:
                     'SAHI mode is enabled but the sahi package is not '
                     'installed.',
                 ) from exc
-            model_path = self.base_model_path / f"best_{safe_name}.pt"
+            model_path = self.base_model_path / f'best_{safe_name}.pt'
             if not model_path.exists():
-                raise FileNotFoundError(f"Model file not found: {model_path}")
+                raise FileNotFoundError(f'Model file not found: {model_path}')
             return AutoDetectionModel.from_pretrained(
                 'yolo26',
                 model_path=str(model_path),
@@ -160,15 +163,15 @@ class DetectionModelManager:
 
         if USE_TENSORRT:
             # TensorRT mode: Use .engine files with YOLO
-            model_path = self.base_model_path / f"best_{safe_name}.engine"
+            model_path = self.base_model_path / f'best_{safe_name}.engine'
             if not model_path.exists():
-                raise FileNotFoundError(f"Model file not found: {model_path}")
+                raise FileNotFoundError(f'Model file not found: {model_path}')
             return YOLO(str(model_path))
 
         # Standard mode: Use .pt files with YOLO
-        model_path = self.base_model_path / f"best_{safe_name}.pt"
+        model_path = self.base_model_path / f'best_{safe_name}.pt'
         if not model_path.exists():
-            raise FileNotFoundError(f"Model file not found: {model_path}")
+            raise FileNotFoundError(f'Model file not found: {model_path}')
         return YOLO(str(model_path))
 
     def _safe_load(self, name: str) -> None:
@@ -189,11 +192,13 @@ class DetectionModelManager:
             return
         try:
             self.models[name] = self.load_single_model(name)
+            self._failed_model_versions.pop(name, None)
             self._touch_lru(name)
             logger.info('YOLO model loaded model=%s', name)
             self._enforce_lru_limit()
         except Exception:
             self.models[name] = None
+            self._failed_model_versions[name] = self._model_file_version(name)
             logger.exception('YOLO model load failed model=%s', name)
 
     def _touch_lru(self, name: str) -> None:
@@ -249,6 +254,43 @@ class DetectionModelManager:
         return sum(model is not None for model in self.models.values())
 
     # =============== Public API ==================
+    def is_model_registered(self, name: str) -> bool:
+        """Accept exact configured IDs only; never normalise client input."""
+        return (
+            name in self.model_names
+            and name in self.models
+            and name == sanitize_filename(name)
+        )
+
+    def _model_file_version(self, name: str) -> tuple[int, int] | None:
+        """Identify a readable artifact without loading GPU weights."""
+        path = self.base_model_path / f'best_{name}{self.extension}'
+        try:
+            if not path.is_file() or not os.access(path, os.R_OK):
+                return None
+            stat = path.stat()
+            return stat.st_mtime_ns, stat.st_size
+        except OSError:
+            return None
+
+    def is_model_selectable(self, name: str) -> bool:
+        """Exclude missing artifacts and versions known to fail loading."""
+        if not self.is_model_registered(name):
+            return False
+        version = self._model_file_version(name)
+        return version is not None and (
+            name not in self._failed_model_versions
+            or self._failed_model_versions[name] != version
+        )
+
+    def get_selectable_models(self) -> list[str]:
+        """List deployed candidates, including models awaiting lazy loading."""
+        return [
+            name
+            for name in dict.fromkeys(self.model_names)
+            if self.is_model_selectable(name)
+        ]
+
     def get_model(self, key: str) -> ModelType | None:
         """Retrieve a loaded model by its variant name.
 
@@ -272,6 +314,56 @@ class DetectionModelManager:
         else:
             self._touch_lru(safe_key)
         return self.models.get(safe_key)
+
+    def get_registry_model(self, entry):
+        """Keep immutable versions in a separate bounded model cache."""
+        key = (entry.id, entry.version, entry.sha256)
+        with self._registry_lock:
+            if key not in self._registry_models:
+                self._registry_models[key] = self._load_registry_model(entry)
+                while len(self._registry_models) > max(1, MAX_LOADED_MODELS):
+                    del self._registry_models[
+                        next(iter(self._registry_models))
+                    ]
+            return self._registry_models[key]
+
+    def _load_registry_model(self, entry):
+        """Load a verified immutable artifact copy."""
+        import hashlib
+        import tempfile
+        from fastapi import HTTPException
+        from examples.YOLO_server_api.model_registry import artifact_path
+
+        # A fresh model reference binds this request to the selected version.
+        # Temporary artifacts survive inference (TensorRT may load lazily).
+        path = artifact_path(entry)
+        temporary = tempfile.TemporaryDirectory(prefix='visionnaire-model-')
+        copied = Path(temporary.name) / ('model' + path.suffix)
+        try:
+            digest = hashlib.sha256()
+            with path.open('rb') as source, copied.open('wb') as target:
+                for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                    digest.update(chunk)
+                    target.write(chunk)
+            if digest.hexdigest() != entry.sha256:
+                raise ValueError('Artifact version mismatch')
+            if USE_SAHI:
+                from sahi.predict import AutoDetectionModel
+
+                model = AutoDetectionModel.from_pretrained(
+                    'yolo26',
+                    model_path=str(copied),
+                    device=get_inference_device(),
+                )
+            else:
+                model = YOLO(str(copied))
+            model._registry_artifact_directory = temporary
+            return model
+        except Exception as exc:
+            temporary.cleanup()
+            raise HTTPException(
+                409, detail={'code': 'MODEL_UNAVAILABLE'},
+            ) from exc
 
     def get_available_models(self) -> list[str]:
         """Return the list of currently loaded model names.
@@ -310,6 +402,7 @@ class DetectionModelManager:
         # Force reload regardless of cache state
         try:
             self.models[safe_name] = self.load_single_model(safe_name)
+            self._failed_model_versions.pop(safe_name, None)
             self._touch_lru(safe_name)
             self._enforce_lru_limit()
             logger.info(

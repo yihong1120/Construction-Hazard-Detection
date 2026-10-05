@@ -23,6 +23,7 @@ class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
     async def test_header_model_key(self) -> None:
         """Header value is preferred when present."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         ws.headers = {'x-model-key': 'modelA'}
         ws.query_params = {}
         result = await ws_mod._get_model_key_from_ws(ws, '1.2.3.4', 'alice')
@@ -31,6 +32,7 @@ class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
     async def test_first_message_model_key(self) -> None:
         """First message JSON is used when header and query are absent."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         ws.headers = {}
         ws.query_params = {}
         ws.receive_text = AsyncMock(return_value='{"model_key": "modelC"}')
@@ -40,6 +42,7 @@ class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
     async def test_first_message_missing_key_closes(self) -> None:
         """Missing key in first message causes policy close (1008)."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         ws.headers = {}
         ws.query_params = {}
         ws.receive_text = AsyncMock(return_value='{"foo": "bar"}')
@@ -53,6 +56,7 @@ class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
     async def test_first_message_invalid_json(self) -> None:
         """Invalid JSON in first message results in policy close (1008)."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         ws.headers = {}
         ws.query_params = {}
         ws.receive_text = AsyncMock(side_effect=ValueError('bad json'))
@@ -84,6 +88,7 @@ class TestSendReadyConfig(unittest.IsolatedAsyncioTestCase):
     async def test_send_ready_config_success(self) -> None:
         """Sends 'ready' payload and reports True on success."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         with patch.object(
             ws_mod,
             '_safe_websocket_send_json',
@@ -107,6 +112,7 @@ class TestSendReadyConfig(unittest.IsolatedAsyncioTestCase):
     async def test_send_ready_config_failure(self) -> None:
         """Reports False when sending the ready payload fails."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         with patch.object(
             ws_mod,
             '_safe_websocket_send_json',
@@ -127,6 +133,7 @@ class TestProcessFrameAndRespond(unittest.IsolatedAsyncioTestCase):
     async def test_process_and_send_success(self) -> None:
         """Successful detection sends response and returns True."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         img = b'bytes'
         datas = {'result': 1}
         with (
@@ -162,6 +169,7 @@ class TestProcessFrameAndRespond(unittest.IsolatedAsyncioTestCase):
     async def test_process_and_send_failure(self) -> None:
         """When send fails, method returns False to stop the loop."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         img = b'bytes'
         with (
             patch.object(
@@ -186,11 +194,20 @@ class TestProcessFrameAndRespond(unittest.IsolatedAsyncioTestCase):
 
 
 class TestPrepareModelAndNotify(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        async def load(websocket, key, client_ip, loader):
+            return loader.get_model(key)
+
+        patcher = patch.object(ws_mod, '_load_session_model', side_effect=load)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     """Tests for model preparation and readiness notification."""
 
     async def test_no_model_key(self) -> None:
         """If no model key, returns None immediately."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         loader: MagicMock = MagicMock()
         with patch.object(
             ws_mod,
@@ -208,6 +225,7 @@ class TestPrepareModelAndNotify(unittest.IsolatedAsyncioTestCase):
     async def test_model_not_found(self) -> None:
         """If model cannot be loaded, close with code 1003 and return None."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         ws.close = AsyncMock()
         loader: MagicMock = MagicMock()
         loader.get_model.return_value = None
@@ -230,6 +248,7 @@ class TestPrepareModelAndNotify(unittest.IsolatedAsyncioTestCase):
     async def test_send_ready_config_failed(self) -> None:
         """If ready notification fails, return None without raising."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         loader: MagicMock = MagicMock()
         model_obj: object = object()
         loader.get_model.return_value = model_obj
@@ -256,6 +275,7 @@ class TestPrepareModelAndNotify(unittest.IsolatedAsyncioTestCase):
     async def test_success(self) -> None:
         """Happy path returns the loaded model object."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         loader: MagicMock = MagicMock()
         model_obj: object = object()
         loader.get_model.return_value = model_obj
@@ -286,6 +306,7 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
     async def test_timeout_immediately(self) -> None:
         """If timed out immediately, returns count 0 and stops."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         with patch.object(
             ws_mod,
             'check_and_maybe_close_on_timeout',
@@ -303,6 +324,7 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
     async def test_receive_none_breaks(self) -> None:
         """Loop stops when no more frames are received."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         with (
             patch.object(
                 ws_mod,
@@ -327,6 +349,7 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
     async def test_process_two_frames_then_none(self) -> None:
         """Processes two frames successfully, then stops on None."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         timeouts = [False, False, False, True]
         with (
             patch.object(
@@ -357,6 +380,7 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
     async def test_process_frame_failure_breaks(self) -> None:
         """Stops the loop when processing a frame fails."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         with (
             patch.object(
                 ws_mod,
@@ -390,6 +414,7 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
     def _make_ws(self) -> WebSocket:
         """Create a mock WebSocket with accept/close and client host."""
         ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
         ws.accept = AsyncMock()
         ws.close = AsyncMock()
         ws.client = SimpleNamespace(host='9.9.9.9')
@@ -439,7 +464,18 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 ws_mod,
                 'authenticate_ws_or_none',
-                new=AsyncMock(return_value=('alice', 'jti')),
+                new=AsyncMock(
+                    return_value=(
+                        'alice',
+                        {
+                            'subject': {
+                                'username': 'alice',
+                                'role': 'user',
+                                'tenant_id': 't1',
+                            },
+                        },
+                    ),
+                ),
             ) as auth_mock,
             patch.object(
                 ws_mod,
@@ -469,7 +505,18 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 ws_mod,
                 'authenticate_ws_or_none',
-                new=AsyncMock(return_value=('alice', 'jti')),
+                new=AsyncMock(
+                    return_value=(
+                        'alice',
+                        {
+                            'subject': {
+                                'username': 'alice',
+                                'role': 'user',
+                                'tenant_id': 't1',
+                            },
+                        },
+                    ),
+                ),
             ),
             patch.object(
                 ws_mod,
@@ -497,7 +544,18 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 ws_mod,
                 'authenticate_ws_or_none',
-                new=AsyncMock(return_value=('bob', 'jti')),
+                new=AsyncMock(
+                    return_value=(
+                        'bob',
+                        {
+                            'subject': {
+                                'username': 'bob',
+                                'role': 'user',
+                                'tenant_id': 't1',
+                            },
+                        },
+                    ),
+                ),
             ),
             patch.object(
                 ws_mod,
@@ -523,7 +581,18 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 ws_mod,
                 'authenticate_ws_or_none',
-                new=AsyncMock(return_value=('carol', 'jti')),
+                new=AsyncMock(
+                    return_value=(
+                        'carol',
+                        {
+                            'subject': {
+                                'username': 'carol',
+                                'role': 'user',
+                                'tenant_id': 't1',
+                            },
+                        },
+                    ),
+                ),
             ),
             patch.object(
                 ws_mod,
@@ -549,7 +618,18 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 ws_mod,
                 'authenticate_ws_or_none',
-                new=AsyncMock(return_value=('dave', 'jti')),
+                new=AsyncMock(
+                    return_value=(
+                        'dave',
+                        {
+                            'subject': {
+                                'username': 'dave',
+                                'role': 'user',
+                                'tenant_id': 't1',
+                            },
+                        },
+                    ),
+                ),
             ),
             patch.object(
                 ws_mod,
@@ -578,7 +658,18 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 ws_mod,
                 'authenticate_ws_or_none',
-                new=AsyncMock(return_value=('erin', 'jti')),
+                new=AsyncMock(
+                    return_value=(
+                        'erin',
+                        {
+                            'subject': {
+                                'username': 'erin',
+                                'role': 'user',
+                                'tenant_id': 't1',
+                            },
+                        },
+                    ),
+                ),
             ),
             patch.object(
                 ws_mod,
@@ -597,3 +688,37 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestCatalogSessionModel(unittest.IsolatedAsyncioTestCase):
+    async def test_session_model_uses_verified_scope_and_pinned_version(self):
+        from types import SimpleNamespace
+
+        ws = SimpleNamespace(
+            scope={'_catalog_subject': {'tenant_id': 't1', 'role': 'user'}},
+            headers={'x-model-version': 'commit'},
+        )
+        loader = MagicMock()
+        entry = object()
+        with patch.object(
+            ws_mod, 'require_model', return_value=entry,
+        ) as require:
+            result = await ws_mod._load_session_model(
+                ws, 'custom', '1.2.3.4', loader,
+            )
+        require.assert_called_once_with(
+            'custom', 'commit', 't1', 'user', 'image',
+        )
+        loader.get_registry_model.assert_called_once_with(entry)
+        self.assertIs(result, loader.get_registry_model.return_value)
+
+    async def test_remote_session_cannot_use_missing_scope(self):
+        from fastapi import HTTPException
+        from types import SimpleNamespace
+
+        ws = SimpleNamespace(scope={}, headers={})
+        with self.assertRaises(HTTPException) as raised:
+            await ws_mod._load_session_model(
+                ws, 'custom', '1.2.3.4', MagicMock(),
+            )
+        self.assertEqual(raised.exception.status_code, 403)

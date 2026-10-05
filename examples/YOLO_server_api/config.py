@@ -21,6 +21,7 @@ MODEL_VARIANTS_ENV: str = os.getenv(
 MODEL_VARIANTS: list[str] = [
     v.strip() for v in MODEL_VARIANTS_ENV.split(',') if v.strip()
 ]
+DEFAULT_MODEL_ID: str = os.getenv('DEFAULT_MODEL_ID', 'yolo26n').strip()
 
 # Whether to enable lazy loading of models:
 # True means models are loaded only when first used
@@ -108,51 +109,3 @@ _CONFIG_INFO: str = f"""
 def log_configuration() -> None:
     """Emit the active non-sensitive YOLO configuration at app startup."""
     logger.info('%s', _CONFIG_INFO)
-
-
-# Type hints and docstrings added for clarity and maintainability
-
-
-def get_model_variants() -> list[str]:
-    """Retrieve the list of model variants from the environment variable.
-
-    Returns:
-        list[str]: A list of model variant names.
-    """
-    return MODEL_VARIANTS
-
-
-def is_lazy_loading_enabled() -> bool:
-    """Check if lazy loading of models is enabled.
-
-    Returns:
-        bool: True if lazy loading is enabled, False otherwise.
-    """
-    return LAZY_LOAD_MODELS
-
-
-def get_max_loaded_models() -> int:
-    """Get the maximum number of models allowed in memory simultaneously.
-
-    Returns:
-        int: The maximum number of models.
-    """
-    return MAX_LOADED_MODELS
-
-
-def should_preload_smallest_model() -> bool:
-    """Determine if the smallest model should be preloaded at startup.
-
-    Returns:
-        bool: True if the smallest model should be preloaded, False otherwise.
-    """
-    return PRELOAD_SMALLEST
-
-
-def should_cleanup_cuda_cache() -> bool:
-    """Check if explicit CUDA cache cleanup is enabled.
-
-    Returns:
-        bool: True if CUDA cache cleanup is enabled, False otherwise.
-    """
-    return EXPLICIT_CUDA_CLEANUP

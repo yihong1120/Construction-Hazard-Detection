@@ -1,5 +1,7 @@
 🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
 
+Model discovery, defaults, and the Flutter integration contract: [Model API](DETECTION_MODEL_API.md) (Traditional Chinese).
+
 # YOLO Server API
 
 Optional FastAPI detector service for HTTP/WebSocket testing, remote detector
@@ -30,7 +32,7 @@ Detection results are lists in this shape:
 - `websocket_handlers.py`: optional WebSocket detection path.
 - `detection.py`: image decode, inference, and bounding-box post-processing.
 - `models.py`: model manager and file watcher.
-- `model_files.py`: model upload and retrieval helpers.
+- `model_files.py`: streaming SHA-256 checksums for model delivery; artifact paths and uploads use the registry in `routers.py`.
 - `config.py`: runtime settings, including device selection.
 - `schemas.py`: request and response models.
 
@@ -69,12 +71,22 @@ For example, `model=yolo26n` loads `models/pt/best_yolo26n.pt`.
 
 ## Authentication
 
-Routes use the shared JWT dependencies from `examples.auth`. Use the database
-management API to log in and pass the access token as:
+HTTP routes and authenticated WebSockets share the `jwt_access` verification
+core from `examples.auth.jwt_config`, including OIDC, deployment and revocation
+checks used by notification and violation APIs. With Keycloak enabled, pass
+the access token obtained at login:
 
 ```text
 Authorization: Bearer <access-token>
 ```
+
+The `/detect` rate limiter only enforces quotas; it no longer requires the
+legacy Redis login `jti_list`. WebSockets never auto-register token IDs.
+The public WSS origin maps to
+HTTPS for deployment lookup, so proxies must preserve the external host and
+scheme. A separate WSS domain needs a corresponding deployment configuration.
+The existing same-host pipeline option `YOLO_WS_ALLOW_LOCALHOST_BYPASS` remains
+available; set it to `false` to require authentication on all connections.
 
 Model upload endpoints require model-management privileges.
 
