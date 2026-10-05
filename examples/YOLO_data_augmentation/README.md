@@ -12,6 +12,12 @@ dataset/
     labels/
 ```
 
+## Dependencies
+
+From the repository root, run `uv sync --extra training`. Add `--extra yolo-gpu`
+for TensorRT export. Commands below use `uv run --no-sync python` to preserve
+the installed optional dependencies.
+
 ## Scripts
 
 - `data_augmentation_albumentations.py`: creates augmented images and matching
@@ -24,7 +30,7 @@ dataset/
 Run from the repository root:
 
 ```bash
-python examples/YOLO_data_augmentation/data_augmentation_albumentations.py \
+uv run --no-sync python examples/YOLO_data_augmentation/data_augmentation_albumentations.py \
   --train_path dataset/train \
   --num_augmentations 30
 ```
@@ -36,7 +42,7 @@ final training dataset.
 ## Check Labels Visually
 
 ```bash
-python examples/YOLO_data_augmentation/visualise_bounding_boxes.py \
+uv run --no-sync python examples/YOLO_data_augmentation/visualise_bounding_boxes.py \
   --image dataset/train/images/example.jpg \
   --label dataset/train/labels/example.txt \
   --save \

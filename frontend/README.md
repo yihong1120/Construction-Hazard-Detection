@@ -32,3 +32,19 @@ Build and deploy a Flutter revision that uses the current backend contract:
 
 Deploy the frontend artifact and this backend revision together whenever one
 of these public paths or the Registry document contract changes.
+
+## Feature retirement release
+
+Stream configuration reads now use `GET /sites/{site_id}/stream-config`
+through the appropriate BFF or signed native deployment API prefix. The old
+`GET /list_stream_configs?site_id=...` alias is removed. Both responses previously
+used the same site/group permission service and returned the same array schema.
+
+Local `/auth/verify-email` and `/auth/resend-verification` routes are also
+removed. Account authentication and any email-verification UI use Keycloak.
+Existing inactive local accounts remain inactive until an administrator handles
+them explicitly; retiring routes never treats an email as verified.
+
+The currently deployed ignored Web artifact still contains the old stream-list
+route. Rebuild and release Flutter source with the canonical route before
+reloading this backend revision. Do not patch `main.dart.js` by hand.

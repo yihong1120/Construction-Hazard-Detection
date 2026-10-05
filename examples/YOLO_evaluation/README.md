@@ -6,6 +6,12 @@ Evaluation helpers for trained YOLO construction-hazard models. Use these
 scripts after training to compare model checkpoints and check whether a new
 model is good enough to copy into `models/pt/`.
 
+## Dependencies
+
+From the repository root, run `uv sync --extra training`. Add `--extra yolo-gpu`
+for TensorRT export. Commands below use `uv run --no-sync python` to preserve
+the installed optional dependencies.
+
 ## Scripts
 
 - `convert_yolo_to_coco.py`: converts YOLO label files into COCO JSON.
@@ -15,7 +21,7 @@ model is good enough to copy into `models/pt/`.
 ## Convert YOLO Labels To COCO
 
 ```bash
-python examples/YOLO_evaluation/convert_yolo_to_coco.py \
+uv run --no-sync python examples/YOLO_evaluation/convert_yolo_to_coco.py \
   --labels_dir dataset/valid/labels \
   --images_dir dataset/valid/images \
   --output dataset/coco_annotations.json
@@ -24,7 +30,7 @@ python examples/YOLO_evaluation/convert_yolo_to_coco.py \
 ## Evaluate With Ultralytics
 
 ```bash
-python examples/YOLO_evaluation/evaluate_yolo.py \
+uv run --no-sync python examples/YOLO_evaluation/evaluate_yolo.py \
   --model_path models/pt/best_yolo26n.pt \
   --data_path dataset/data.yaml
 ```
@@ -32,7 +38,7 @@ python examples/YOLO_evaluation/evaluate_yolo.py \
 ## Evaluate With SAHI
 
 ```bash
-python examples/YOLO_evaluation/evaluate_sahi_yolo.py \
+uv run --no-sync python examples/YOLO_evaluation/evaluate_sahi_yolo.py \
   --model_path models/pt/best_yolo26n.pt \
   --coco_json dataset/coco_annotations.json \
   --image_dir dataset/valid/images

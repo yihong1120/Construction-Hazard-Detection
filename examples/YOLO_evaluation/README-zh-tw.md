@@ -5,6 +5,12 @@
 用於評估訓練後 YOLO 工地危害模型的工具。建議在將新模型複製到 `models/pt/` 前，先用
 這些腳本比較 checkpoint 表現。
 
+## 安裝依賴
+
+在 repo 根目錄執行 `uv sync --extra training`。需要 TensorRT 匯出時，
+再加入 `--extra yolo-gpu`。以下命令使用 `uv run --no-sync python`，
+確保使用已安裝選用依賴的環境。
+
 ## 腳本
 
 - `convert_yolo_to_coco.py`：將 YOLO label 轉成 COCO JSON。
@@ -14,7 +20,7 @@
 ## YOLO Label 轉 COCO
 
 ```bash
-python examples/YOLO_evaluation/convert_yolo_to_coco.py \
+uv run --no-sync python examples/YOLO_evaluation/convert_yolo_to_coco.py \
   --labels_dir dataset/valid/labels \
   --images_dir dataset/valid/images \
   --output dataset/coco_annotations.json
@@ -23,7 +29,7 @@ python examples/YOLO_evaluation/convert_yolo_to_coco.py \
 ## 使用 Ultralytics 評估
 
 ```bash
-python examples/YOLO_evaluation/evaluate_yolo.py \
+uv run --no-sync python examples/YOLO_evaluation/evaluate_yolo.py \
   --model_path models/pt/best_yolo26n.pt \
   --data_path dataset/data.yaml
 ```
@@ -31,7 +37,7 @@ python examples/YOLO_evaluation/evaluate_yolo.py \
 ## 使用 SAHI 評估
 
 ```bash
-python examples/YOLO_evaluation/evaluate_sahi_yolo.py \
+uv run --no-sync python examples/YOLO_evaluation/evaluate_sahi_yolo.py \
   --model_path models/pt/best_yolo26n.pt \
   --coco_json dataset/coco_annotations.json \
   --image_dir dataset/valid/images

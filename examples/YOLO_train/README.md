@@ -6,6 +6,12 @@ Training and export utilities for construction-hazard YOLO models. This folder
 is separate from the live runtime: `main.py` only consumes exported `.pt` model
 files through the YOLO worker path.
 
+## Dependencies
+
+From the repository root, run `uv sync --extra training`. Add `--extra yolo-gpu`
+for TensorRT export. Commands below use `uv run --no-sync python` to preserve
+the installed optional dependencies.
+
 ## Main Scripts
 
 - `train.py`: trains, validates, predicts, and exports Ultralytics models.
@@ -16,7 +22,7 @@ files through the YOLO worker path.
 ## Train A Model
 
 ```bash
-python examples/YOLO_train/train.py \
+uv run --no-sync python examples/YOLO_train/train.py \
   --model_name yolo11n.pt \
   --epochs 100 \
   --data_config dataset/data.yaml
@@ -28,7 +34,7 @@ size that fits GPU memory.
 ## Validate Or Predict
 
 ```bash
-python examples/YOLO_train/train.py \
+uv run --no-sync python examples/YOLO_train/train.py \
   --model_name runs/detect/train/weights/best.pt \
   --predict_image dataset/valid/images/example.jpg
 ```
@@ -36,7 +42,7 @@ python examples/YOLO_train/train.py \
 ## Export
 
 ```bash
-python examples/YOLO_train/train.py \
+uv run --no-sync python examples/YOLO_train/train.py \
   --model_name runs/detect/train/weights/best.pt \
   --export_format onnx
 ```
@@ -47,7 +53,7 @@ By default this uses `examples/YOLO_train/cv_dataset/data.yaml` for INT8
 calibration and writes outputs to `models/int8_engine`:
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n
 ```
 
 If `cv_dataset` uses the flat `images/` and `labels/` layout, the script
@@ -63,7 +69,7 @@ dataset. Large datasets will substantially increase export time.
 You can also pass a filename or path:
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py \
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py \
   models/pt/best_yolo26n.pt
 ```
 
@@ -71,27 +77,27 @@ For a single model, you can choose the output filename. A bare filename is
 written under `models/int8_engine`:
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n \
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n \
   -o yolo26n_int8.engine
 ```
 
 You can also pass a full output path:
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n \
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n \
   -o models/int8_engine/custom_yolo26n.engine
 ```
 
 Export multiple models in one run:
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n yolo26s yolo26m
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n yolo26s yolo26m
 ```
 
 Common options:
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n \
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n \
   --data examples/YOLO_train/cv_dataset \
   --device 0 \
   --imgsz 640 \

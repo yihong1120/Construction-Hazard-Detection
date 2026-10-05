@@ -160,7 +160,7 @@ server block（HTTPS location 必須在通用 `/hazard/api/` fallback 前）。�
 ## 本機開發直連
 
 正式環境必須透過註冊的 HTTPS API root。僅在本機需要直接呼叫
-`http://127.0.0.1:8005/login` 或 `/refresh` 時，才可在受保護的本機 `.env` 設定：
+`http://127.0.0.1:8005/me` 等需要 OIDC 認證的 API 時，才可在受保護的本機 `.env` 設定：
 
 ```dotenv
 LOCAL_DEVELOPMENT_AUTH_ENABLED=true

@@ -6,13 +6,13 @@
 
 <div align="center">
    <a href="examples/YOLO_server_api">Server API</a> |
-   <a href="examples/mcp_server">MCP Server</a> |
    <a href="examples/local_notification_server">FCM Notification Server</a> |
    <a href="examples/violation_records">Violation Records Server</a> |
    <a href="examples/bff">Web BFF</a> |
    <a href="https://github.com/yihong1120/visionnaire-flutter">Flutter App</a> |
    <a href="examples/db_management">Data Management Server</a> |
    <a href="examples/streaming_web">Streaming Web</a> |
+   <a href="examples/mcp_server">MCP Server</a> |
    <a href="examples/YOLO_data_augmentation">Data Augmentation</a> |
    <a href="examples/YOLO_evaluation">Evaluation</a> |
    <a href="examples/YOLO_train">Train</a>
@@ -32,9 +32,6 @@
    </a>
    <a href="https://fastapi.tiangolo.com/">
       <img src="https://img.shields.io/badge/FastAPI-0.128.0-blue?logo=fastapi" alt="FastAPI 0.128.0">
-   </a>
-   <a href="https://pypi.org/project/mcp/1.25.0/">
-      <img src="https://img.shields.io/badge/MCP%20SDK-1.25.0-purple" alt="MCP Python SDK 1.25.0">
    </a>
    <a href="https://redis.io/">
       <img src="https://img.shields.io/badge/redis--py-7.1.0-red?logo=redis" alt="redis-py 7.1.0">
@@ -111,10 +108,11 @@ FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready 
   media session 授權與 WebRTC ICE 設定。
 - `examples/violation_records/`：違規紀錄與圖片 API。
 - `examples/YOLO_server_api/`：可選的獨立 YOLO API。
-- `examples/mcp_server/`：提供給 agent 使用的 FastMCP tools。
-- `examples/YOLO_train/`、`examples/YOLO_evaluation/`、
-  `examples/YOLO_data_augmentation/`：模型開發工具。
+- `examples/mcp_server/`：AI 偵測、違規、模型與多平台通知工具入口；[設定說明](examples/mcp_server/README-zh-tw.md)。
 - `scripts/`：資料庫初始化與 TensorRT 重建工具。
+
+通知支援 FCM、LINE Messaging API、Messenger、Telegram、WeChat 與 HTTP broadcast。
+模型開發工具保留於 repo，按需要安裝其選用依賴。
 
 ## Flutter 前端
 
@@ -150,8 +148,11 @@ uv sync --locked --all-extras --no-extra yolo-gpu
 預設只安裝共用 API runtime 相依。Docker image 會各自安裝 `streaming`、
 `violation`、`notification` 或 `yolo` extra；只有 CUDA/TensorRT 主機才需要
 額外加入 `--extra yolo-gpu`。
-若只要使用 HTTP broadcast、Messenger 或 WeChat Work 等可選通知渠道，可執行
-`uv sync --extra social-notifications`。
+
+
+多平台通知工具使用 `uv sync --extra social-notifications`；搭配 MCP 時使用
+`uv sync --extra mcp --extra social-notifications`。訓練、評估與資料增強使用
+`uv sync --extra training`，TensorRT 匯出再加入 `--extra yolo-gpu`。
 
 ### 2. 下載模型
 
@@ -176,7 +177,11 @@ REDIS_HOST='127.0.0.1'
 REDIS_PORT=6379
 REDIS_PASSWORD='set-a-strong-password'
 
-JWT_SECRET_KEY='replace-with-a-long-random-secret'
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=https://sso.example.com/realms/visionnaire
+OIDC_JWKS_URL=https://sso.example.com/realms/visionnaire/protocol/openid-connect/certs
+OIDC_AUDIENCE=visionnaire-api
+OIDC_ACCOUNT_URL=https://sso.example.com/realms/visionnaire/account
 
 DB_MANAGEMENT_API_URL='http://127.0.0.1:8005'
 FCM_API_URL='http://127.0.0.1:8003'
@@ -207,7 +212,7 @@ MEDIA_PUBLISH_CLEAN_STREAM=true
 MEDIA_PUBLISH_ANNOTATED_STREAM=true
 ```
 
-正式部署請使用穩定且高熵的 `JWT_SECRET_KEY`，不要提交真正的 secret。
+各 API service 共用同一組 OIDC issuer、JWKS URL 與 API audience 設定。
 
 ### 4. 啟動基礎服務
 

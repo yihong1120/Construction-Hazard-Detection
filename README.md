@@ -6,13 +6,13 @@
 
 <div align="center">
    <a href="examples/YOLO_server_api">Server API</a> |
-   <a href="examples/mcp_server">MCP Server</a> |
    <a href="examples/local_notification_server">FCM Notification Server</a> |
    <a href="examples/violation_records">Violation Records Server</a> |
    <a href="examples/bff">Web BFF</a> |
    <a href="https://github.com/yihong1120/visionnaire-flutter">Flutter App</a> |
    <a href="examples/db_management">Data Management Server</a> |
    <a href="examples/streaming_web">Streaming Web</a> |
+   <a href="examples/mcp_server">MCP Server</a> |
    <a href="examples/YOLO_data_augmentation">Data Augmentation</a> |
    <a href="examples/YOLO_evaluation">Evaluation</a> |
    <a href="examples/YOLO_train">Train</a>
@@ -32,9 +32,6 @@
    </a>
    <a href="https://fastapi.tiangolo.com/">
       <img src="https://img.shields.io/badge/FastAPI-0.128.0-blue?logo=fastapi" alt="FastAPI 0.128.0">
-   </a>
-   <a href="https://pypi.org/project/mcp/1.25.0/">
-      <img src="https://img.shields.io/badge/MCP%20SDK-1.25.0-purple" alt="MCP Python SDK 1.25.0">
    </a>
    <a href="https://redis.io/">
       <img src="https://img.shields.io/badge/redis--py-7.1.0-red?logo=redis" alt="redis-py 7.1.0">
@@ -115,10 +112,13 @@ warning metadata, overlay demand keys, and overlay ready keys.
   media-session auth, and WebRTC ICE settings.
 - `examples/violation_records/`: violation record and image API.
 - `examples/YOLO_server_api/`: optional standalone YOLO API.
-- `examples/mcp_server/`: FastMCP tools for agents.
+- `examples/mcp_server/`: optional AI tools for detection, records, models and multi-platform notifications; [setup](examples/mcp_server/README.md).
 - `examples/YOLO_train/`, `examples/YOLO_evaluation/`,
-  `examples/YOLO_data_augmentation/`: model development utilities.
+  `examples/YOLO_data_augmentation/`: training, export, evaluation and augmentation tools.
 - `scripts/`: database initialisation and TensorRT rebuild helpers.
+
+Notifications support FCM, LINE Messaging API, Messenger, Telegram, WeChat
+and HTTP broadcast. Model-development tools remain in this repository with optional dependencies.
 
 ## Flutter Frontend
 
@@ -157,8 +157,12 @@ uv sync --locked --all-extras --no-extra yolo-gpu
 The default dependency set contains only shared API runtime packages.  Docker
 images install their own `streaming`, `violation`, `notification`, or `yolo`
 extra; use `--extra yolo-gpu` only on CUDA/TensorRT hosts.
-For the optional HTTP broadcast, Messenger, and WeChat Work channels without
-the MCP server, install `uv sync --extra social-notifications`.
+
+
+Use `uv sync --extra social-notifications` for multi-platform notifications,
+or `uv sync --extra mcp --extra social-notifications` with MCP. Install
+`uv sync --extra training` for training, evaluation and augmentation; add
+`--extra yolo-gpu` for TensorRT export.
 
 ### 2. Download Models
 
@@ -185,7 +189,11 @@ REDIS_HOST='127.0.0.1'
 REDIS_PORT=6379
 REDIS_PASSWORD='set-a-strong-password'
 
-JWT_SECRET_KEY='replace-with-a-long-random-secret'
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=https://sso.example.com/realms/visionnaire
+OIDC_JWKS_URL=https://sso.example.com/realms/visionnaire/protocol/openid-connect/certs
+OIDC_AUDIENCE=visionnaire-api
+OIDC_ACCOUNT_URL=https://sso.example.com/realms/visionnaire/account
 
 DB_MANAGEMENT_API_URL='http://127.0.0.1:8005'
 FCM_API_URL='http://127.0.0.1:8003'
@@ -226,8 +234,7 @@ MEDIA_PUBLISH_VAAPI_DEVICE=/dev/dri/renderD128
 MEDIA_DEMAND_CACHE_SECONDS=0.5
 ```
 
-Use one stable, high-entropy `JWT_SECRET_KEY` for a deployment. Do not commit
-real secrets.
+API services share the configured OIDC issuer, JWKS URL and API audience.
 
 ### 4. Start Infrastructure
 

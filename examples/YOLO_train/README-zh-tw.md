@@ -5,6 +5,12 @@
 工地危害 YOLO 模型的訓練與匯出工具。此目錄和直播 runtime 分離；`main.py` 只會透過
 YOLO worker 使用已匯出的 `.pt` 模型。
 
+## 安裝依賴
+
+在 repo 根目錄執行 `uv sync --extra training`。需要 TensorRT 匯出時，
+再加入 `--extra yolo-gpu`。以下命令使用 `uv run --no-sync python`，
+確保使用已安裝選用依賴的環境。
+
 ## 主要腳本
 
 - `train.py`：訓練、驗證、預測與匯出 Ultralytics 模型。
@@ -14,7 +20,7 @@ YOLO worker 使用已匯出的 `.pt` 模型。
 ## 訓練模型
 
 ```bash
-python examples/YOLO_train/train.py \
+uv run --no-sync python examples/YOLO_train/train.py \
   --model_name yolo11n.pt \
   --epochs 100 \
   --data_config dataset/data.yaml
@@ -25,7 +31,7 @@ python examples/YOLO_train/train.py \
 ## 驗證或預測
 
 ```bash
-python examples/YOLO_train/train.py \
+uv run --no-sync python examples/YOLO_train/train.py \
   --model_name runs/detect/train/weights/best.pt \
   --predict_image dataset/valid/images/example.jpg
 ```
@@ -33,7 +39,7 @@ python examples/YOLO_train/train.py \
 ## 匯出
 
 ```bash
-python examples/YOLO_train/train.py \
+uv run --no-sync python examples/YOLO_train/train.py \
   --model_name runs/detect/train/weights/best.pt \
   --export_format onnx
 ```
@@ -44,7 +50,7 @@ python examples/YOLO_train/train.py \
 資料，輸出到 `models/int8_engine`：
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n
 ```
 
 如果 `cv_dataset` 是 `images/`、`labels/` 的扁平結構，腳本會自動產生暫時
@@ -58,34 +64,34 @@ TensorRT 不需要額外的 `val/images` 目錄。
 也可以直接指定檔名或路徑：
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py \
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py \
   models/pt/best_yolo26n.pt
 ```
 
 單一模型可指定輸出檔名；只給檔名時會輸出到 `models/int8_engine`：
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n \
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n \
   -o yolo26n_int8.engine
 ```
 
 也可以指定完整輸出路徑：
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n \
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n \
   -o models/int8_engine/custom_yolo26n.engine
 ```
 
 一次匯出多個模型：
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n yolo26s yolo26m
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n yolo26s yolo26m
 ```
 
 常用參數：
 
 ```bash
-python examples/YOLO_train/export_int8_engine.py yolo26n \
+uv run --no-sync python examples/YOLO_train/export_int8_engine.py yolo26n \
   --data examples/YOLO_train/cv_dataset \
   --device 0 \
   --imgsz 640 \
