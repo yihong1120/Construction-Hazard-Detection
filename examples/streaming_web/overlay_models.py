@@ -34,6 +34,8 @@ class DetectionOverlay:
     bbox: tuple[int, int, int, int]
     track_id: str | None = None
     is_warning: bool = False
+    display_name: str | None = None
+    color: str | None = None
 
 
 @dataclass(frozen=True)

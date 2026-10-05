@@ -1,302 +1,56 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from functools import lru_cache
 
 import cv2
 import numpy as np
 
+from examples.shared.class_colors import normalize_color
+from examples.shared.overlay_visibility import object_visibility
+from examples.streaming_web.overlay_detection import (
+    _parse_tracking_detection as _parse_tracking_detection,
+)
+from examples.streaming_web.overlay_detection import (
+    _warning_classes as _warning_classes,
+)
+from examples.streaming_web.overlay_detection import (
+    _warning_count as _warning_count,
+)
+from examples.streaming_web.overlay_detection import (
+    _warning_targets as _warning_targets,
+)
+from examples.streaming_web.overlay_detection import has_warning as has_warning
+from examples.streaming_web.overlay_labels import (
+    _color_for_class as _color_for_class,
+)
+from examples.streaming_web.overlay_labels import (
+    _format_label as _format_label,
+)
+from examples.streaming_web.overlay_labels import _rgb_to_bgr as _rgb_to_bgr
+from examples.streaming_web.overlay_labels import (
+    DETECTION_WARNING_KEYS as DETECTION_WARNING_KEYS,
+)
+from examples.streaming_web.overlay_labels import (
+    normalise_label_language as normalise_label_language,
+)
+from examples.streaming_web.overlay_labels import (
+    SUPPORTED_LABEL_LANGUAGES as SUPPORTED_LABEL_LANGUAGES,
+)
+from examples.streaming_web.overlay_labels import (
+    WARNING_LABELS as WARNING_LABELS,
+)
+from examples.streaming_web.overlay_labels import WARNING_RGB as WARNING_RGB
 from examples.streaming_web.overlay_models import DetectionOverlay
 from examples.streaming_web.overlay_models import PolygonCollection
 from examples.streaming_web.overlay_models import PolygonCoordinates
-from examples.streaming_web.overlay_models import TrackingDetection
 from examples.streaming_web.overlay_models import TrackingDetections
-from examples.streaming_web.overlay_models import WarningBoundingBox
-from examples.streaming_web.overlay_models import WarningDetails
 from examples.streaming_web.overlay_models import WarningPayload
 from examples.streaming_web.overlay_text import _draw_label_text
 from examples.streaming_web.overlay_text import _measure_label_text
-
-CLASS_NAMES: dict[int, str] = {
-    0: 'hardhat',
-    1: 'mask',
-    2: 'no-hardhat',
-    3: 'no-mask',
-    4: 'no-safety-vest',
-    5: 'person',
-    6: 'safety-cone',
-    7: 'safety-vest',
-    8: 'machinery',
-    9: 'utility-pole',
-    10: 'vehicle',
-}
-
-CLASS_COLORS_RGB: dict[str, tuple[int, int, int]] = {
-    'hardhat': (76, 175, 80),
-    'helmet': (76, 175, 80),
-    'safety-vest': (76, 175, 80),
-    'vest': (76, 175, 80),
-    'no-hardhat': (244, 67, 54),
-    'no_hardhat': (244, 67, 54),
-    'no-safety-vest': (244, 67, 54),
-    'no_vest': (244, 67, 54),
-    'person': (255, 152, 0),
-    'machinery': (255, 171, 64),
-    'vehicle': (255, 255, 0),
-    'car': (255, 255, 0),
-    'utility-pole': (33, 150, 243),
-    'utility_pole': (33, 150, 243),
-    'safety-cone': (33, 150, 243),
-    'cone': (33, 150, 243),
-}
-WARNING_RGB: tuple[int, int, int] = (244, 67, 54)
-
-CLASS_LABELS: dict[str, dict[str, str]] = {
-    'en': {
-        'hardhat': 'hardhat',
-        'mask': 'mask',
-        'no-hardhat': 'no hardhat',
-        'no-mask': 'no mask',
-        'no-safety-vest': 'no safety vest',
-        'person': 'person',
-        'safety-cone': 'safety cone',
-        'safety-vest': 'safety vest',
-        'machinery': 'machinery',
-        'utility-pole': 'utility pole',
-        'vehicle': 'vehicle',
-        'danger': 'danger',
-        'unknown': 'unknown',
-    },
-    'zh-TW': {
-        'hardhat': '安全帽',
-        'mask': '口罩',
-        'no-hardhat': '未戴安全帽',
-        'no-mask': '未戴口罩',
-        'no-safety-vest': '未穿安全背心',
-        'person': '人員',
-        'safety-cone': '交通錐',
-        'safety-vest': '安全背心',
-        'machinery': '機具',
-        'utility-pole': '電桿',
-        'vehicle': '車輛',
-        'danger': '危險',
-        'unknown': '未知',
-    },
-    'zh-CN': {
-        'hardhat': '安全帽',
-        'mask': '口罩',
-        'no-hardhat': '未戴安全帽',
-        'no-mask': '未戴口罩',
-        'no-safety-vest': '未穿安全背心',
-        'person': '人员',
-        'safety-cone': '交通锥',
-        'safety-vest': '安全背心',
-        'machinery': '机具',
-        'utility-pole': '电杆',
-        'vehicle': '车辆',
-        'danger': '危险',
-        'unknown': '未知',
-    },
-    'ja': {
-        'hardhat': 'ヘルメット',
-        'mask': 'マスク',
-        'no-hardhat': 'ヘルメットなし',
-        'no-mask': 'マスクなし',
-        'no-safety-vest': '安全ベストなし',
-        'person': '作業員',
-        'safety-cone': 'カラーコーン',
-        'safety-vest': '安全ベスト',
-        'machinery': '重機',
-        'utility-pole': '電柱',
-        'vehicle': '車両',
-        'danger': '危険',
-        'unknown': '不明',
-    },
-    'vi': {
-        'hardhat': 'mu bao ho',
-        'mask': 'khau trang',
-        'no-hardhat': 'khong mu bao ho',
-        'no-mask': 'khong khau trang',
-        'no-safety-vest': 'khong ao bao ho',
-        'person': 'nguoi',
-        'safety-cone': 'coc an toan',
-        'safety-vest': 'ao bao ho',
-        'machinery': 'may moc',
-        'utility-pole': 'cot dien',
-        'vehicle': 'xe',
-        'danger': 'nguy hiem',
-        'unknown': 'khong ro',
-    },
-    'id': {
-        'hardhat': 'helm',
-        'mask': 'masker',
-        'no-hardhat': 'tanpa helm',
-        'no-mask': 'tanpa masker',
-        'no-safety-vest': 'tanpa rompi',
-        'person': 'orang',
-        'safety-cone': 'kerucut',
-        'safety-vest': 'rompi',
-        'machinery': 'mesin',
-        'utility-pole': 'tiang listrik',
-        'vehicle': 'kendaraan',
-        'danger': 'bahaya',
-        'unknown': 'tidak dikenal',
-    },
-    'fr': {
-        'hardhat': 'casque',
-        'mask': 'masque',
-        'no-hardhat': 'sans casque',
-        'no-mask': 'sans masque',
-        'no-safety-vest': 'sans gilet',
-        'person': 'personne',
-        'safety-cone': 'cone',
-        'safety-vest': 'gilet',
-        'machinery': 'machine',
-        'utility-pole': 'poteau',
-        'vehicle': 'vehicule',
-        'danger': 'danger',
-        'unknown': 'inconnu',
-    },
-    'th': {
-        'hardhat': 'หมวกนิรภัย',
-        'mask': 'หน้ากาก',
-        'no-hardhat': 'ไม่สวมหมวก',
-        'no-mask': 'ไม่สวมหน้ากาก',
-        'no-safety-vest': 'ไม่สวมเสื้อสะท้อนแสง',
-        'person': 'คนงาน',
-        'safety-cone': 'กรวยจราจร',
-        'safety-vest': 'เสื้อสะท้อนแสง',
-        'machinery': 'เครื่องจักร',
-        'utility-pole': 'เสาไฟ',
-        'vehicle': 'ยานพาหนะ',
-        'danger': 'อันตราย',
-        'unknown': 'ไม่ทราบ',
-    },
-}
-SUPPORTED_LABEL_LANGUAGES: tuple[str, ...] = tuple(CLASS_LABELS.keys())
-
-WARNING_LABELS: dict[str, dict[str, str]] = {
-    'en': {
-        'warning_no_hardhat': 'No hardhat',
-        'warning_no_mask': 'No mask',
-        'warning_no_safety_vest': 'No safety vest',
-        'warning_close_to_machinery': 'Too close to machinery',
-        'warning_close_to_vehicle': 'Too close to vehicle',
-        'warning_people_in_controlled_area': 'In restricted area',
-        'warning_people_in_utility_pole_controlled_area': 'In pole area',
-        'detect_machinery_close_to_pole': 'Machinery near pole',
-    },
-    'zh-TW': {
-        'warning_no_hardhat': '未戴安全帽',
-        'warning_no_mask': '未戴口罩',
-        'warning_no_safety_vest': '未穿安全背心',
-        'warning_close_to_machinery': '靠近機具',
-        'warning_close_to_vehicle': '靠近車輛',
-        'warning_people_in_controlled_area': '進入管制區',
-        'warning_people_in_utility_pole_controlled_area': '進入電桿管制區',
-        'detect_machinery_close_to_pole': '機具靠近電桿',
-    },
-    'zh-CN': {
-        'warning_no_hardhat': '未戴安全帽',
-        'warning_no_mask': '未戴口罩',
-        'warning_no_safety_vest': '未穿安全背心',
-        'warning_close_to_machinery': '靠近机具',
-        'warning_close_to_vehicle': '靠近车辆',
-        'warning_people_in_controlled_area': '进入管制区',
-        'warning_people_in_utility_pole_controlled_area': '进入电杆管制区',
-        'detect_machinery_close_to_pole': '机具靠近电杆',
-    },
-    'ja': {
-        'warning_no_hardhat': 'ヘルメットなし',
-        'warning_no_mask': 'マスクなし',
-        'warning_no_safety_vest': '安全ベストなし',
-        'warning_close_to_machinery': '重機に接近',
-        'warning_close_to_vehicle': '車両に接近',
-        'warning_people_in_controlled_area': '立入禁止区域内',
-        'warning_people_in_utility_pole_controlled_area': '電柱区域内',
-        'detect_machinery_close_to_pole': '重機が電柱に接近',
-    },
-    'vi': {
-        'warning_no_hardhat': 'Không đội mũ bảo hộ',
-        'warning_no_mask': 'Không đeo khẩu trang',
-        'warning_no_safety_vest': 'Không mặc áo bảo hộ',
-        'warning_close_to_machinery': 'Quá gần máy móc',
-        'warning_close_to_vehicle': 'Quá gần xe',
-        'warning_people_in_controlled_area': 'Trong khu vực hạn chế',
-        'warning_people_in_utility_pole_controlled_area': (
-            'Trong khu vực cột điện'
-        ),
-        'detect_machinery_close_to_pole': 'Máy móc gần cột điện',
-    },
-    'id': {
-        'warning_no_hardhat': 'Tanpa helm',
-        'warning_no_mask': 'Tanpa masker',
-        'warning_no_safety_vest': 'Tanpa rompi',
-        'warning_close_to_machinery': 'Terlalu dekat mesin',
-        'warning_close_to_vehicle': 'Terlalu dekat kendaraan',
-        'warning_people_in_controlled_area': 'Di area terbatas',
-        'warning_people_in_utility_pole_controlled_area': (
-            'Di area tiang listrik'
-        ),
-        'detect_machinery_close_to_pole': 'Mesin dekat tiang listrik',
-    },
-    'fr': {
-        'warning_no_hardhat': 'Sans casque',
-        'warning_no_mask': 'Sans masque',
-        'warning_no_safety_vest': 'Sans gilet',
-        'warning_close_to_machinery': 'Trop près de la machine',
-        'warning_close_to_vehicle': 'Trop près du véhicule',
-        'warning_people_in_controlled_area': 'Zone restreinte',
-        'warning_people_in_utility_pole_controlled_area': 'Zone du poteau',
-        'detect_machinery_close_to_pole': 'Machine près du poteau',
-    },
-    'th': {
-        'warning_no_hardhat': 'ไม่สวมหมวกนิรภัย',
-        'warning_no_mask': 'ไม่สวมหน้ากาก',
-        'warning_no_safety_vest': 'ไม่สวมเสื้อสะท้อนแสง',
-        'warning_close_to_machinery': 'ใกล้เครื่องจักรเกินไป',
-        'warning_close_to_vehicle': 'ใกล้ยานพาหนะเกินไป',
-        'warning_people_in_controlled_area': 'อยู่ในพื้นที่ควบคุม',
-        'warning_people_in_utility_pole_controlled_area': 'อยู่ในพื้นที่เสาไฟ',
-        'detect_machinery_close_to_pole': 'เครื่องจักรใกล้เสาไฟ',
-    },
-}
-
-LANGUAGE_ALIASES: dict[str, str] = {
-    'en-gb': 'en',
-    'en-us': 'en',
-    'zh': 'zh-TW',
-    'zh-hant': 'zh-TW',
-    'zh-tw': 'zh-TW',
-    'zh-hk': 'zh-TW',
-    'zh-mo': 'zh-TW',
-    'zh-hans': 'zh-CN',
-    'zh-cn': 'zh-CN',
-    'zh-sg': 'zh-CN',
-    'jp': 'ja',
-    'ja-jp': 'ja',
-    'vi-vn': 'vi',
-    'id-id': 'id',
-    'fr-fr': 'fr',
-    'fr-ca': 'fr',
-    'th-th': 'th',
-}
-
-DETECTION_WARNING_KEYS: dict[str, str] = {
-    'no-hardhat': 'warning_no_hardhat',
-    'no_hardhat': 'warning_no_hardhat',
-    'no-helmet': 'warning_no_hardhat',
-    'no_helmet': 'warning_no_hardhat',
-    'no-mask': 'warning_no_mask',
-    'no_mask': 'warning_no_mask',
-    'no-safety-vest': 'warning_no_safety_vest',
-    'no_safety_vest': 'warning_no_safety_vest',
-    'no-vest': 'warning_no_safety_vest',
-    'no_vest': 'warning_no_safety_vest',
-}
 
 _overlay_parse_cache_size = max(
     16,
@@ -351,27 +105,6 @@ def normalise_overlay_mode(value: str | None) -> str:
     return 'none'
 
 
-def normalise_label_language(value: str | None) -> str:
-    """Normalise an overlay label language for live rendering.
-
-    Args:
-        value: Optional language code or recognised language alias.
-
-    Returns:
-        Supported canonical language code, defaulting to English.
-    """
-    language = (value or 'en').strip().replace('_', '-')
-    if language in CLASS_LABELS:
-        return language
-    alias = LANGUAGE_ALIASES.get(language.lower())
-    if alias in CLASS_LABELS:
-        return alias
-    base_language = language.split('-', 1)[0].lower()
-    if base_language in CLASS_LABELS:
-        return base_language
-    return 'en'
-
-
 def render_overlay_array(
     frame: np.ndarray,
     detection_items: TrackingDetections,
@@ -382,6 +115,7 @@ def render_overlay_array(
     label_language: str = 'en',
     min_confidence: float = 0.4,
     box_thickness: int = 2,
+    class_metadata: list[dict] | None = None,
 ) -> np.ndarray:
     """Draw backend overlays directly on a BGR frame.
 
@@ -423,6 +157,7 @@ def render_overlay_array(
         warnings=warnings,
         label_language=label_language,
         box_thickness=box_thickness,
+        class_metadata=class_metadata,
     )
     if _overlay_draw_warning_summary:
         _draw_warning_summary(
@@ -455,6 +190,7 @@ def _draw_detections_from_data(
     warnings: WarningPayload,
     label_language: str,
     box_thickness: int,
+    class_metadata: list[dict] | None = None,
 ) -> dict[str, int]:
     """Draw decoded detections and return inferred warning counts.
 
@@ -483,6 +219,7 @@ def _draw_detections_from_data(
         warning_classes=warning_classes,
         warning_targets=warning_targets,
         min_confidence=min_confidence,
+        class_metadata=class_metadata,
     ):
         label_count = _draw_detection_and_update_counts(
             frame,
@@ -494,6 +231,19 @@ def _draw_detections_from_data(
         )
 
     for detection in _warning_target_overlays(warning_targets):
+        metadata = next(
+            (
+                c
+                for c in (class_metadata or [])
+                if c.get('code') == detection.class_name
+            ),
+            {},
+        )
+        detection = replace(
+            detection,
+            display_name=metadata.get('display_name'),
+            color=normalize_color(metadata.get('color')),
+        )
         label_count = _draw_detection_and_update_counts(
             frame,
             detection,
@@ -568,6 +318,7 @@ def _iter_detections_from_data(
     warning_classes: set[str],
     warning_targets: set[tuple[int, int, int, int]],
     min_confidence: float,
+    class_metadata: list[dict] | None = None,
 ) -> Iterator[DetectionOverlay]:
     """Yield valid detections above the configured confidence threshold.
 
@@ -589,285 +340,11 @@ def _iter_detections_from_data(
             frame_height=frame_height,
             warning_classes=warning_classes,
             warning_targets=warning_targets,
+            class_metadata=class_metadata,
         )
         if detection is None or detection.confidence < min_confidence:
             continue
         yield detection
-
-
-def _parse_tracking_detection(
-    item: TrackingDetection,
-    frame_width: int,
-    frame_height: int,
-    warning_classes: set[str],
-    warning_targets: set[tuple[int, int, int, int]],
-) -> DetectionOverlay | None:
-    """Parse one tracked YOLO row into clipped overlay coordinates.
-
-    Args:
-        item: Trusted tracking row with geometry, confidence, class, and ID.
-        frame_width: Frame width in pixels.
-        frame_height: Frame height in pixels.
-        warning_classes: Classes that should receive warning presentation.
-        warning_targets: Explicit person boxes associated with warnings.
-
-    Returns:
-        Normalised detection, or ``None`` for a degenerate bounding box.
-    """
-    x1, y1, x2, y2 = (float(item[i]) for i in range(4))
-    confidence = float(item[4])
-    class_id = int(float(item[5]))
-    class_name = CLASS_NAMES.get(class_id, f"class-{class_id}")
-    if _looks_normalized([x1, y1, x2, y2]):
-        x1 *= frame_width
-        x2 *= frame_width
-        y1 *= frame_height
-        y2 *= frame_height
-    bbox = _clip_bbox(
-        int(round(x1)),
-        int(round(y1)),
-        int(round(x2)),
-        int(round(y2)),
-        frame_width,
-        frame_height,
-    )
-    if bbox is None:
-        return None
-    track_id = int(item[6])
-    return DetectionOverlay(
-        class_name=class_name,
-        confidence=confidence,
-        bbox=bbox,
-        track_id=str(track_id) if track_id >= 0 else None,
-        is_warning=(
-            class_name in warning_classes
-            or _is_warning_target(class_name, bbox, warning_targets)
-        ),
-    )
-
-
-def _clip_bbox(
-    x1: int,
-    y1: int,
-    x2: int,
-    y2: int,
-    frame_width: int,
-    frame_height: int,
-) -> tuple[int, int, int, int] | None:
-    """Clip a bounding box to frame bounds.
-
-    Args:
-        x1: First horizontal coordinate.
-        y1: First vertical coordinate.
-        x2: Second horizontal coordinate.
-        y2: Second vertical coordinate.
-        frame_width: Frame width in pixels.
-        frame_height: Frame height in pixels.
-
-    Returns:
-        Ordered clipped pixel box, or ``None`` when it has no area.
-    """
-    left = max(0, min(x1, x2, frame_width - 1))
-    top = max(0, min(y1, y2, frame_height - 1))
-    right = max(0, min(max(x1, x2), frame_width - 1))
-    bottom = max(0, min(max(y1, y2), frame_height - 1))
-    if right <= left or bottom <= top:
-        return None
-    return left, top, right, bottom
-
-
-def _looks_normalized(values: list[float]) -> bool:
-    """Determine whether all coordinates appear normalised to zero through one.
-
-    Args:
-        values: Coordinates to inspect.
-
-    Returns:
-        ``True`` when every value is within the inclusive unit interval.
-    """
-    return all(0.0 <= value <= 1.0 for value in values)
-
-
-def _warning_targets(
-    warnings: WarningPayload,
-    frame_width: int,
-    frame_height: int,
-) -> set[tuple[int, int, int, int]]:
-    """Return person boxes that should be highlighted as warning targets.
-
-    Args:
-        warnings: Decoded detector-warning payload.
-        frame_width: Frame width in pixels.
-        frame_height: Frame height in pixels.
-
-    Returns:
-        Clipped explicit person boxes for active proximity warnings.
-    """
-    targets: set[tuple[int, int, int, int]] = set()
-    proximity_keys = (
-        ('warning_close_to_machinery', 'machinery'),
-        ('warning_close_to_vehicle', 'vehicle'),
-    )
-    for key, _ in proximity_keys:
-        warning = warnings.get(key)
-        if warning is None or _warning_count(warning) <= 0:
-            continue
-        targets.update(
-            _explicit_person_warning_bboxes(
-                warning,
-                frame_width,
-                frame_height,
-            ),
-        )
-
-    return targets
-
-
-def _explicit_person_warning_bboxes(
-    warning: WarningDetails,
-    frame_width: int,
-    frame_height: int,
-) -> set[tuple[int, int, int, int]]:
-    """Extract explicit person boxes from one warning payload.
-
-    Args:
-        warning: Warning details containing optional person boxes.
-        frame_width: Frame width in pixels.
-        frame_height: Frame height in pixels.
-
-    Returns:
-        Set of clipped valid person boxes.
-    """
-    targets = set()
-    for bbox_raw in warning.get('person_bboxes', []):
-        bbox = _normalise_warning_bbox(bbox_raw, frame_width, frame_height)
-        if bbox is not None:
-            targets.add(bbox)
-    return targets
-
-
-def _normalise_warning_bbox(
-    bbox_raw: WarningBoundingBox,
-    frame_width: int,
-    frame_height: int,
-) -> tuple[int, int, int, int] | None:
-    """Normalise a warning box to clipped pixel coordinates.
-
-    Args:
-        bbox_raw: Detector box in normalised or pixel coordinates.
-        frame_width: Frame width in pixels.
-        frame_height: Frame height in pixels.
-
-    Returns:
-        Ordered clipped pixel box, or ``None`` when it has no area.
-    """
-    x1, y1, x2, y2 = (float(bbox_raw[i]) for i in range(4))
-    if _looks_normalized([x1, y1, x2, y2]):
-        x1 *= frame_width
-        x2 *= frame_width
-        y1 *= frame_height
-        y2 *= frame_height
-    return _clip_bbox(
-        int(round(x1)),
-        int(round(y1)),
-        int(round(x2)),
-        int(round(y2)),
-        frame_width,
-        frame_height,
-    )
-
-
-def _is_warning_target(
-    class_name: str,
-    bbox: tuple[int, int, int, int],
-    warning_targets: set[tuple[int, int, int, int]],
-) -> bool:
-    """Determine whether a detection matches an explicit warning target.
-
-    Args:
-        class_name: Canonical detection class name.
-        bbox: Clipped pixel bounding box for the detection.
-        warning_targets: Explicit warning person boxes.
-
-    Returns:
-        ``True`` when a person overlaps a warning target sufficiently.
-    """
-    if class_name != 'person':
-        return False
-    return any(_bbox_iou(bbox, target) >= 0.85 for target in warning_targets)
-
-
-def _bbox_iou(
-    first: tuple[int, int, int, int],
-    second: tuple[int, int, int, int],
-) -> float:
-    """Calculate intersection over union for two pixel boxes.
-
-    Args:
-        first: First left, top, right, bottom pixel box.
-        second: Second left, top, right, bottom pixel box.
-
-    Returns:
-        Intersection-over-union score between zero and one.
-    """
-    left = max(first[0], second[0])
-    top = max(first[1], second[1])
-    right = min(first[2], second[2])
-    bottom = min(first[3], second[3])
-    if right <= left or bottom <= top:
-        return 0.0
-    intersection = (right - left) * (bottom - top)
-    first_area = (first[2] - first[0]) * (first[3] - first[1])
-    second_area = (second[2] - second[0]) * (second[3] - second[1])
-    union = first_area + second_area - intersection
-    return intersection / union if union > 0 else 0.0
-
-
-def _warning_classes(warnings: WarningPayload) -> set[str]:
-    """Return detection classes that should receive warning presentation.
-
-    Args:
-        warnings: Decoded detector-warning payload.
-
-    Returns:
-        Canonical classes implicated by active warning types.
-    """
-    classes: set[str] = set()
-    if 'warning_no_hardhat' in warnings:
-        classes.add('no-hardhat')
-    if 'warning_no_safety_vest' in warnings:
-        classes.add('no-safety-vest')
-    if 'warning_people_in_controlled_area' in warnings:
-        classes.add('person')
-    if 'warning_people_in_utility_pole_controlled_area' in warnings:
-        classes.add('person')
-    if 'detect_machinery_close_to_pole' in warnings:
-        classes.update({'machinery', 'vehicle'})
-    return classes
-
-
-def has_warning(warnings: WarningPayload) -> bool:
-    """Determine whether warning metadata contains an active warning.
-
-    Args:
-        warnings: Decoded detector-warning payload.
-
-    Returns:
-        ``True`` when any warning count is positive.
-    """
-    return any(_warning_count(value) > 0 for value in warnings.values())
-
-
-def _warning_count(value: WarningDetails) -> int:
-    """Extract the active warning count from warning details.
-
-    Args:
-        value: Typed warning details.
-
-    Returns:
-        Active warning count.
-    """
-    return value['count']
 
 
 def _warning_summary_lines(
@@ -1058,8 +535,8 @@ def _format_warning_summary_line(
         Localised label with a count suffix when greater than one.
     """
     label = labels.get(key) or key
-    suffix = f" x{count}" if count > 1 else ''
-    return f"{label}{suffix}"
+    suffix = f' x{count}' if count > 1 else ''
+    return f'{label}{suffix}'
 
 
 def _should_draw_label(detection: DetectionOverlay, label_count: int) -> bool:
@@ -1072,6 +549,8 @@ def _should_draw_label(detection: DetectionOverlay, label_count: int) -> bool:
     Returns:
         ``True`` when label configuration permits another label.
     """
+    if not object_visibility(detection.class_name)['show_label']:
+        return False
     if not _overlay_draw_labels:
         return False
     if _overlay_label_warnings_only and not detection.is_warning:
@@ -1095,7 +574,7 @@ def _draw_detection(
         box_thickness: Requested bounding-box line thickness.
         draw_label: Whether a label badge should be drawn.
     """
-    if detection.class_name in {'safety-cone', 'cone'}:
+    if not object_visibility(detection.class_name)['show_box']:
         return
 
     x1, y1, x2, y2 = detection.bbox
@@ -1106,6 +585,10 @@ def _draw_detection(
             detection.class_name,
         )
     )
+    color = normalize_color(detection.color)
+    if color:
+        red, green, blue = bytes.fromhex(color[1:])
+        rgb = (red, green, blue)
     bgr = _rgb_to_bgr(rgb)
     thickness = max(1, int(box_thickness))
 
@@ -1404,62 +887,6 @@ def _points_look_normalized(points: list[tuple[float, float]]) -> bool:
     return all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in points)
 
 
-def _format_label(
-    detection: DetectionOverlay,
-    label_language: str,
-) -> str:
-    """Format a localised detection label for display.
-
-    Args:
-        detection: Normalised detection to label.
-        label_language: Requested label language.
-
-    Returns:
-        Localised display label for the detection class.
-    """
-    return _translate_class_name(
-        detection.class_name,
-        label_language,
-    )
-
-
-def _translate_class_name(class_name: str, label_language: str) -> str:
-    """Translate a detection class name for the selected language.
-
-    Args:
-        class_name: Canonical or alias detector class name.
-        label_language: Requested label language.
-
-    Returns:
-        Localised class label with English as a final fallback.
-    """
-    language = normalise_label_language(label_language)
-    key = class_name.lower()
-    labels = CLASS_LABELS.get(language, CLASS_LABELS['en'])
-    return labels.get(key) or CLASS_LABELS['en'].get(key) or class_name
-
-
-def _color_for_class(class_name: str) -> tuple[int, int, int]:
-    """Return a stable RGB colour for a detection class.
-
-    Args:
-        class_name: Canonical or alias detector class name.
-
-    Returns:
-        Configured semantic colour or deterministic vivid fallback colour.
-    """
-    key = class_name.lower()
-    if key in CLASS_COLORS_RGB:
-        return CLASS_COLORS_RGB[key]
-
-    digest = hashlib.md5(key.encode('utf-8')).digest()
-    return (
-        80 + digest[0] % 176,
-        80 + digest[1] % 176,
-        80 + digest[2] % 176,
-    )
-
-
 def _line_thickness(frame: np.ndarray) -> int:
     """Calculate box line thickness for a frame size.
 
@@ -1486,28 +913,13 @@ def _font_scale(frame: np.ndarray) -> float:
     return max(0.45, min(0.75, min_side / 1000))
 
 
-def _is_bright(rgb: tuple[int, int, int]) -> bool:
-    """Determine whether an RGB colour is visually bright.
-
-    Args:
-        rgb: Colour in red, green, blue order.
-
-    Returns:
-        ``True`` when luminance exceeds the legibility threshold.
-    """
-    r, g, b = rgb
-    luminance = 0.299 * r + 0.587 * g + 0.114 * b
-    return luminance > 150
-
-
-def _rgb_to_bgr(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
-    """Convert an RGB colour tuple to OpenCV BGR order.
-
-    Args:
-        rgb: Colour in red, green, blue order.
-
-    Returns:
-        Same colour in blue, green, red order for OpenCV.
-    """
-    r, g, b = rgb
-    return b, g, r
+__all__ = [
+    'render_overlay_array',
+    'normalise_overlay_mode',
+    'normalise_label_language',
+    'SUPPORTED_LABEL_LANGUAGES',
+    'has_warning',
+    'PolygonCollection',
+    'TrackingDetections',
+    'WarningPayload',
+]

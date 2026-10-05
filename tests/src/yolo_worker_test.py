@@ -5,6 +5,7 @@ import queue
 import sys
 from collections.abc import Iterable
 from types import ModuleType
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -394,8 +395,9 @@ def test_shared_frame_ring_reuses_one_allocation() -> None:
     asyncio.run(run())
 
     assert len(request_queue.requests) == 2
-    assert request_queue.requests[0]['shm_name'] == (
-        request_queue.requests[1]['shm_name']
+    assert (
+        request_queue.requests[0]['shm_name']
+        == (request_queue.requests[1]['shm_name'])
     )
     assert {request['slot'] for request in request_queue.requests} == {0, 1}
 
@@ -796,12 +798,19 @@ def test_get_model_returns_cached_model() -> None:
     assert worker._get_model('yolo26n') is model
 
 
-def test_get_model_raises_when_model_missing(tmp_path: Any) -> None:
+def test_get_model_raises_when_model_missing(
+    tmp_path: Any, monkeypatch: Any,
+) -> None:
     """Exercise this test."""
     worker = yolo_worker.YoloWorker(None)
     worker.model_dir = tmp_path
 
-    with pytest.raises(FileNotFoundError, match='not found'):
+    from examples.YOLO_server_api import model_registry
+
+    monkeypatch.setattr(
+        model_registry, 'load_registry', lambda: SimpleNamespace(models=[]),
+    )
+    with pytest.raises(FileNotFoundError, match='Unpublished'):
         worker._get_model('missing')
 
 
@@ -816,6 +825,8 @@ def test_get_model_loads_and_caches_model(
     class FakeYOLO:
         """Tests for FakeYOLO."""
 
+        _catalog_metadata: dict[str, object]
+
         def __init__(self, path: str, task: str) -> None:
             """Support __init__."""
             loaded_paths.append(path)
@@ -825,14 +836,47 @@ def test_get_model_loads_and_caches_model(
     monkeypatch.setitem(sys.modules, 'ultralytics', module)
     worker = yolo_worker.YoloWorker(None)
     worker.model_dir = tmp_path
-    model_path = tmp_path / f"best_yolo26n{worker.model_suffix}"
+    model_path = tmp_path / f'best_yolo26n{worker.model_suffix}'
     model_path.write_text('model')
+    from examples.YOLO_server_api import model_registry
+
+    entry = SimpleNamespace(
+        id='yolo26n',
+        version='actual-commit',
+        classes=[
+            model_registry.ModelClass(
+                id=0, code='forklift', display_name='堆高機', color='#AB47BC',
+            ),
+        ],
+        enabled=True,
+        capabilities=['stream'],
+    )
+    monkeypatch.setattr(
+        model_registry,
+        'load_registry',
+        lambda: SimpleNamespace(models=[entry]),
+    )
+    monkeypatch.setattr(
+        model_registry, 'verify_artifact', lambda _: model_path,
+    )
 
     model = worker._get_model('yolo26n')
 
     assert isinstance(model, FakeYOLO)
     assert loaded_paths == [str(model_path)]
     assert worker.model_cache['yolo26n'] is model
+    assert model._catalog_metadata == {
+        'model_id': 'yolo26n',
+        'model_version': 'actual-commit',
+        'class_metadata': [
+            {
+                'id': 0,
+                'code': 'forklift',
+                'display_name': '堆高機',
+                'color': '#AB47BC',
+            },
+        ],
+    }
 
 
 def test_record_batch_metrics_logs_and_resets_counters(

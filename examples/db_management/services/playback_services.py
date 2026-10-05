@@ -49,7 +49,7 @@ from examples.streaming_web.media_paths import build_clean_demand_key
 from examples.streaming_web.media_paths import build_media_path
 from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_preview_media_path
-from examples.streaming_web.overlay_renderer import normalise_label_language
+from examples.streaming_web.overlay_labels import normalise_label_language
 from src.http_client_pool import HttpClientPool
 
 _STREAMING_RESPONSE = TypeAdapter(dict[str, object])

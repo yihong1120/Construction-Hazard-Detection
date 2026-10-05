@@ -16,7 +16,7 @@ from examples.streaming_web.media_paths import build_media_path
 from examples.streaming_web.media_paths import build_media_webrtc_url
 from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_preview_media_path
-from examples.streaming_web.overlay_renderer import normalise_label_language
+from examples.streaming_web.overlay_labels import normalise_label_language
 from examples.streaming_web.overlay_renderer import normalise_overlay_mode
 from examples.streaming_web.playback_demand import active_overlay_languages
 from examples.streaming_web.playback_hls import authorise_label_access

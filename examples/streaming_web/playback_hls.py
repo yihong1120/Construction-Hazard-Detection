@@ -221,6 +221,14 @@ async def fetch_internal_hls_playlist(
             status_code=502,
             detail='media_playlist_unavailable',
         ) from exc
+    if response.status_code == 404:
+        # The application session exists, but its on-demand producer is not
+        # available yet. Keep missing application sessions as genuine 404s.
+        raise HTTPException(
+            status_code=503,
+            detail='media_playlist_not_ready',
+            headers={'Retry-After': '2', 'Cache-Control': 'no-store'},
+        )
     if response.status_code >= 400:
         raise HTTPException(
             status_code=response.status_code,

@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 
 from examples.local_notification_server.lang_config import LANGUAGES
-from examples.streaming_web.overlay_renderer import CLASS_LABELS
-from examples.streaming_web.overlay_renderer import LANGUAGE_ALIASES
-from examples.streaming_web.overlay_renderer import SUPPORTED_LABEL_LANGUAGES
-from examples.streaming_web.overlay_renderer import WARNING_LABELS
+from examples.streaming_web.overlay_labels import CLASS_LABELS
+from examples.streaming_web.overlay_labels import LANGUAGE_ALIASES
+from examples.streaming_web.overlay_labels import SUPPORTED_LABEL_LANGUAGES
+from examples.streaming_web.overlay_labels import WARNING_LABELS
 from examples.streaming_web.schemas import OverlayLanguageInfo
 
 

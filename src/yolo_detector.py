@@ -66,10 +66,15 @@ class YoloDetector:
             raise RuntimeError(
                 'Shared YOLO worker is required for server detection mode',
             )
-        return await self.worker_client.detect(
+        detections = await self.worker_client.detect(
             frame,
             model_key=self.model_key,
         )
+
+        self.model_metadata = getattr(
+            self.worker_client, 'last_model_metadata', None,
+        )
+        return detections
 
     def track_detections(
         self,

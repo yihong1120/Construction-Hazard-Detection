@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Awaitable
+from pathlib import Path
 from typing import Final
 from typing import Protocol
 
@@ -21,7 +22,6 @@ _default_preset: Final[str] = 'veryfast'
 _default_encoder: Final[str] = 'libx264'
 _default_nvenc_preset: Final[str] = 'p1'
 _default_nvenc_cq: Final[int] = 30
-_default_vaapi_device: Final[str] = '/dev/dri/renderD128'
 _default_vaapi_bitrate: Final[str] = '4M'
 _default_vaapi_maxrate: Final[str] = '8M'
 _default_vaapi_bufsize: Final[str] = '16M'
@@ -149,6 +149,8 @@ class MediaStreamPublisher:
         self._started = False
         self._uses_nvenc = False
         self._nvenc_unavailable = False
+        self._uses_vaapi = False
+        self._vaapi_unavailable = False
         self.last_error: str | None = None
         self._state_lock = asyncio.Lock()
 
@@ -310,7 +312,15 @@ class MediaStreamPublisher:
 
         encoder = _select_encoder(ffmpeg_binary)
         if encoder == 'h264_vaapi':
-            _ensure_vaapi_device_access()
+            if self._vaapi_unavailable:
+                encoder = 'libx264'
+            else:
+                try:
+                    _ensure_vaapi_device_access()
+                except RuntimeError:
+                    self._vaapi_unavailable = True
+                    encoder = 'libx264'
+        self._uses_vaapi = encoder == 'h264_vaapi'
         if encoder == 'h264_nvenc' and self._nvenc_unavailable:
             encoder = 'libx264'
         elif encoder == 'h264_nvenc' and not try_acquire_nvenc_session():
@@ -365,6 +375,12 @@ class MediaStreamPublisher:
                 self.last_error = line[-1000:]
                 if self._uses_nvenc and _is_nvenc_unavailable_error(line):
                     self._nvenc_unavailable = True
+                if self._uses_vaapi and _is_vaapi_unavailable_error(line):
+                    self._vaapi_unavailable = True
+                    logger.warning(
+                        'VAAPI initialization failed; '
+                        'next publish uses libx264',
+                    )
                 logger.info(
                     f"[media:{self.publish_url}] ffmpeg: {self.last_error}",
                 )
@@ -682,9 +698,29 @@ def _build_vaapi_options(
 
 def _vaapi_device() -> str:
     """Return the Intel render node used for VAAPI encoding."""
-    return os.getenv(
-        'MEDIA_PUBLISH_VAAPI_DEVICE',
-        _default_vaapi_device,
+    configured = os.getenv('MEDIA_PUBLISH_VAAPI_DEVICE', '').strip()
+    if configured and configured != 'auto':
+        return configured
+    return _find_intel_vaapi_device()
+
+
+def _find_intel_vaapi_device(
+    sysfs_root: Path = Path('/sys/class/drm'),
+) -> str:
+    """Select Intel hardware by PCI vendor rather than unstable node
+    numbers.
+    """
+    for node in sorted(sysfs_root.glob('renderD*')):
+        try:
+            vendor = (node / 'device/vendor').read_text().strip().lower()
+        except OSError:
+            continue
+        if vendor == '0x8086':
+            return f'/dev/dri/{node.name}'
+    raise RuntimeError(
+        'Intel VAAPI render device is not visible. Enable integrated graphics '
+        'in BIOS and install the Intel media VAAPI driver, or configure an '
+        'explicit supported MEDIA_PUBLISH_VAAPI_DEVICE.',
     )
 
 
@@ -763,5 +799,15 @@ def _is_nvenc_unavailable_error(line: str) -> bool:
             'No capable devices found',
             'OpenEncodeSessionEx failed',
             'Cannot load libcuda',
+        )
+    )
+
+
+def _is_vaapi_unavailable_error(line: str) -> bool:
+    """Recognise device failures so a restarted publisher can use software."""
+    return any(
+        marker in line for marker in (
+            'Failed to initialise VAAPI', 'Device creation failed',
+            'No VA display found', 'Failed to open /dev/dri',
         )
     )

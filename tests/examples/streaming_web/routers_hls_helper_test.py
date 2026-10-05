@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from datetime import datetime
 from datetime import timezone
@@ -950,3 +951,27 @@ class TestStreamingRouterHlsHelpers(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_upstream_missing_playlist_is_retryable_startup():
+    """A missing MediaMTX path must not look like a lost application
+    session.
+    """
+
+    async def check():
+        client = SimpleNamespace(
+            get=AsyncMock(
+                return_value=SimpleNamespace(status_code=404),
+            ),
+        )
+        try:
+            await playback_hls.fetch_internal_hls_playlist(
+                'hazard_test', '', client,
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 503
+            assert exc.detail == 'media_playlist_not_ready'
+            assert exc.headers['Retry-After'] == '2'
+        else:
+            raise AssertionError('Expected retryable startup response')
+    asyncio.run(check())

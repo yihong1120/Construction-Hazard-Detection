@@ -47,8 +47,6 @@ class ViolationSender(AsyncHttpClientOwner):
         self.base_url: str = api_url.rstrip('/')
         self.shared_token: dict[str, str | bool] = {
             'access_token': '',
-            'refresh_token': '',
-            'is_refreshing': False,
         }
         self.max_retries: int = max_retries
         super().__init__(timeout)
@@ -69,6 +67,8 @@ class ViolationSender(AsyncHttpClientOwner):
         detections: object | None = None,
         cone_polygon: object | None = None,
         pole_polygon: object | None = None,
+        model_id: str | None = None,
+        model_version: str | None = None,
     ) -> str | None:
         """Send a violation image and associated metadata to the backend API.
 
@@ -104,6 +104,14 @@ class ViolationSender(AsyncHttpClientOwner):
             pole_polygon_json=json.dumps(pole_polygon),
         )
 
+        if model_id is not None or model_version is not None:
+            if not model_id or not model_version:
+                raise ValueError(
+                    'Model ID and inference version must be provided together',
+                )
+            data['model_id'] = model_id
+            data['model_version'] = model_version
+
         # Use shared client connection pool
         client = await self._get_client()
 
@@ -124,7 +132,7 @@ class ViolationSender(AsyncHttpClientOwner):
 
             except httpx.ConnectTimeout as exc:
                 logging.warning(
-                    f"[send_violation] Attempt {attempt + 1}: "
+                    f'[send_violation] Attempt {attempt + 1}: '
                     'Connection timeout, retry...',
                 )
                 backoff_delay = await self._retry_or_raise(
@@ -143,7 +151,7 @@ class ViolationSender(AsyncHttpClientOwner):
                 raise
 
             except Exception as exc:
-                logging.error(f"[send_violation] Unexpected error: {exc}")
+                logging.error(f'[send_violation] Unexpected error: {exc}')
                 backoff_delay = await self._retry_or_raise(
                     attempt,
                     backoff_delay,
@@ -193,7 +201,7 @@ class ViolationSender(AsyncHttpClientOwner):
         """
         headers: dict[str, str] = {}
         if access_token:
-            headers['Authorization'] = f"Bearer {access_token}"
+            headers['Authorization'] = f'Bearer {access_token}'
         files: dict[str, tuple[str, bytes, str]] = {
             'image': ('violation.jpg', image_bytes, 'image/jpeg'),
         }
@@ -252,6 +260,6 @@ class ViolationSender(AsyncHttpClientOwner):
             )
             await self.token_manager.refresh_token()
             new_token = await self.token_manager.get_valid_token()
-            headers['Authorization'] = f"Bearer {new_token}"
+            headers['Authorization'] = f'Bearer {new_token}'
             return attempt < self.max_retries - 1
         return False

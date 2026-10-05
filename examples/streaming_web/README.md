@@ -83,11 +83,14 @@ DATABASE_URL=postgresql+asyncpg://username:password@127.0.0.1/construction_hazar
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=password
-JWT_SECRET_KEY=replace-with-a-long-random-secret
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=https://sso.example.com/realms/visionnaire
+OIDC_JWKS_URL=https://sso.example.com/realms/visionnaire/protocol/openid-connect/certs
+OIDC_AUDIENCE=visionnaire-api
+OIDC_ACCOUNT_URL=https://sso.example.com/realms/visionnaire/account
 ```
 
-The same `JWT_SECRET_KEY` must be shared with the database-management and
-violation-record services.
+API services share the configured OIDC issuer, JWKS URL and API audience.
 
 ## Live Video Path
 

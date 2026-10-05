@@ -19,8 +19,9 @@ stream_capture.py
 
 ## 主要模組
 
-- `stream_processor.py`：單一攝影機的執行 loop，負責擷取節奏、偵測呼叫、警示處理、
-  overlay 發布、metadata 清理與關閉流程。
+- `stream_processor.py`：攝影機 task 編排、按觀看需求發布媒體、metadata 清理與關閉流程。
+- `stream_detection.py`：影像擷取／推論 loop、警示事件與通知。
+- `stream_overlay_frames.py`：不可變 frame 與各語言 overlay 快取。
 - `stream_capture.py`：讀取 RTSP、HTTP 或本機檔案影像，避免無限制 buffering，並將
   重連邏輯集中在影像來源附近。
 - `yolo_worker.py`：multiprocessing worker 與 client。frame 會複製到 POSIX
@@ -40,14 +41,17 @@ stream_capture.py
 - `warning_types.py`：警示 payload type aliases。
 - `model_fetcher.py`：模型下載與更新 helper。
 - `monitor_logger.py`：logging 設定。
-- `net/net_client.py`：具驗證能力的 HTTP 與 WebSocket client helper。
 - `stream_viewer.py`：手動 OpenCV stream viewer，用於診斷。
 
 ## 通知 Adapter
 
-`notifiers/` 包含 FCM、LINE Message API、Messenger、Telegram、WeChat 與 broadcast
-adapter。adapter 應保持薄層，只負責格式化與發送訊息；偵測與違規判斷應留在
-`stream_processor.py`。
+`notifiers/` 保留 FCM、LINE Messaging API、Messenger、Telegram、WeChat 與
+HTTP broadcast adapter。FCM 使用具 OIDC 驗證機制的 backend，其他平台使用各自憑證；
+偵測與違規判斷留在 `stream_detection.py`。
+
+多平台通知安裝 `uv sync --extra social-notifications`。可直接呼叫 adapter，
+或透過 MCP 的通知工具使用；目前攝影機 worker 的既有通知流程使用 FCM。
+LINE 的設定請參閱[Messaging API 指南](../docs/zh/line_notify_guide_zh.md)。
 
 ## 執行注意事項
 

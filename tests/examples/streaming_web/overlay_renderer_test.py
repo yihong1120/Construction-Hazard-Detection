@@ -8,13 +8,13 @@ from unittest import mock
 import cv2
 import numpy as np
 
+from examples.streaming_web import overlay_detection
+from examples.streaming_web import overlay_labels
 from examples.streaming_web import overlay_renderer as renderer
 from examples.streaming_web import overlay_text
+from examples.streaming_web.overlay_labels import normalise_label_language
 from examples.streaming_web.overlay_renderer import (
     has_warning,
-)
-from examples.streaming_web.overlay_renderer import (
-    normalise_label_language,
 )
 from examples.streaming_web.overlay_renderer import (
     normalise_overlay_mode,
@@ -22,6 +22,7 @@ from examples.streaming_web.overlay_renderer import (
 from examples.streaming_web.overlay_renderer import (
     render_overlay_array,
 )
+from tests.model_fixtures import CLASSES
 
 
 class OverlayRendererTest(unittest.TestCase):
@@ -83,6 +84,7 @@ class OverlayRendererTest(unittest.TestCase):
                 cone_polygons=[],
                 pole_polygons=[],
                 overlay_mode='none',
+                class_metadata=CLASSES,
             ),
             frame,
         )
@@ -94,6 +96,7 @@ class OverlayRendererTest(unittest.TestCase):
                 cone_polygons=[],
                 pole_polygons=[],
                 overlay_mode='backend',
+                class_metadata=CLASSES,
             ),
             frame,
         )
@@ -111,6 +114,7 @@ class OverlayRendererTest(unittest.TestCase):
             pole_polygons=[],
             overlay_mode='backend',
             label_language='zh-TW',
+            class_metadata=CLASSES,
         )
         self.assertEqual(rendered.shape[:2], (240, 320))
         self.assertFalse(np.array_equal(rendered, frame))
@@ -128,6 +132,7 @@ class OverlayRendererTest(unittest.TestCase):
             pole_polygons=[],
             overlay_mode='backend',
             label_language='zh-TW',
+            class_metadata=CLASSES,
         )
 
         self.assertEqual(rendered.shape[:2], (240, 320))
@@ -146,6 +151,7 @@ class OverlayRendererTest(unittest.TestCase):
             pole_polygons=[],
             overlay_mode='backend',
             label_language='en',
+            class_metadata=CLASSES,
         )
 
         bottom_right = rendered[170:238, 180:318]
@@ -169,6 +175,7 @@ class OverlayRendererTest(unittest.TestCase):
             overlay_mode='backend',
             label_language='en',
             box_thickness=3,
+            class_metadata=CLASSES,
         )
 
         person_border_bgr = rendered[100, 100]
@@ -199,6 +206,7 @@ class OverlayRendererTest(unittest.TestCase):
             overlay_mode='backend',
             label_language='en',
             box_thickness=3,
+            class_metadata=CLASSES,
         )
 
         person_border_bgr = rendered[40, 40]
@@ -228,6 +236,7 @@ class OverlayRendererTest(unittest.TestCase):
             overlay_mode='backend',
             label_language='en',
             box_thickness=3,
+            class_metadata=CLASSES,
         )
 
         target_border_bgr = rendered[40, 40]
@@ -247,6 +256,7 @@ class OverlayRendererTest(unittest.TestCase):
             pole_polygons=[],
             overlay_mode='backend',
             label_language='en',
+            class_metadata=CLASSES,
         )
 
         bottom_right = rendered[170:238, 180:318]
@@ -269,6 +279,7 @@ class OverlayRendererTest(unittest.TestCase):
             overlay_mode='backend',
             label_language='en',
             box_thickness=3,
+            class_metadata=CLASSES,
         )
 
         self.assertFalse(np.array_equal(rendered[20, 10], frame[20, 10]))
@@ -289,6 +300,7 @@ class OverlayRendererTest(unittest.TestCase):
             pole_polygons=[],
             overlay_mode='backend',
             label_language='en',
+            class_metadata=CLASSES,
         )
 
         points = np.array(polygon, dtype=np.int32)
@@ -349,8 +361,8 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertEqual(
             renderer._warning_classes(warnings),
             {
-                'no-hardhat',
-                'no-safety-vest',
+                'no_helmet',
+                'no_safety_vest',
                 'person',
                 'machinery',
                 'vehicle',
@@ -358,15 +370,15 @@ class OverlayRendererTest(unittest.TestCase):
         )
         self.assertEqual(renderer._warning_count({'count': 3}), 3)
         self.assertEqual(
-            renderer._bbox_iou((0, 0, 1, 1), (2, 2, 3, 3)),
+            overlay_detection._bbox_iou((0, 0, 1, 1), (2, 2, 3, 3)),
             0.0,
         )
 
     def test_warning_summary_lines_limit_and_inferred_counts(self) -> None:
         """Exercise this test."""
         detections = (
-            renderer.DetectionOverlay('no-hardhat', 0.9, (1, 1, 5, 5)),
-            renderer.DetectionOverlay('no-hardhat', 0.8, (6, 1, 9, 5)),
+            renderer.DetectionOverlay('no_helmet', 0.9, (1, 1, 5, 5)),
+            renderer.DetectionOverlay('no_helmet', 0.8, (6, 1, 9, 5)),
         )
 
         lines = renderer._warning_summary_lines(
@@ -410,12 +422,12 @@ class OverlayRendererTest(unittest.TestCase):
                     'en',
                     detections=(
                         renderer.DetectionOverlay(
-                            'no-hardhat',
+                            'no_helmet',
                             0.9,
                             (1, 1, 2, 2),
                         ),
                         renderer.DetectionOverlay(
-                            'no-safety-vest',
+                            'no_safety_vest',
                             0.9,
                             (3, 3, 4, 4),
                         ),
@@ -474,9 +486,15 @@ class OverlayRendererTest(unittest.TestCase):
             True,
         ):
             self.assertFalse(renderer._should_draw_label(detection, 0))
-        self.assertEqual(renderer._color_for_class('person'), (255, 152, 0))
-        self.assertEqual(len(renderer._color_for_class('unknown-class')), 3)
-        self.assertTrue(renderer._is_bright((255, 255, 255)))
+        self.assertEqual(
+            overlay_labels._color_for_class(
+                'person',
+            ), (255, 152, 0),
+        )
+        self.assertEqual(
+            len(overlay_labels._color_for_class('unknown-class')), 3,
+        )
+        self.assertTrue(overlay_labels._is_bright((255, 255, 255)))
 
     def test_polygon_helpers_normalise_detector_coordinates(self) -> None:
         """Polygon payloads use the detector's list-of-coordinate format."""

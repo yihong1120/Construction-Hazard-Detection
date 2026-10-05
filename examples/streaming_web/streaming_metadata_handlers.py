@@ -17,7 +17,6 @@ from examples.auth.config import Settings
 from examples.auth.user_service import load_user_access_context
 from examples.shared.ws_helpers import authenticate_ws_or_none
 from examples.shared.ws_helpers import check_and_maybe_close_on_timeout
-from examples.shared.ws_helpers import get_auto_register_jti
 from examples.shared.ws_helpers import log_every_n
 from examples.shared.ws_helpers import start_session_timer
 from examples.shared.ws_utils import _is_websocket_connected
@@ -33,7 +32,6 @@ from examples.streaming_web.metadata_keys import get_metadata_site_generation
 from examples.streaming_web.redis_service import fetch_latest_metadata_for_key
 from examples.streaming_web.schemas import FrameOutData
 
-AUTO_REGISTER_JTI: Final[bool] = get_auto_register_jti()
 _json_compact_separators: Final[tuple[str, str]] = (',', ':')
 _metadata_client_tick_seconds: Final[float] = 1.0
 _metadata_heartbeat_seconds: Final[float] = 15.0
@@ -621,8 +619,6 @@ async def handle_metadata_ws(
     username, _ = await authenticate_ws_or_none(
         websocket,
         rds,
-        settings,
-        auto_register_jti=AUTO_REGISTER_JTI,
         client_tag=f"[WebSocket-Metadata] {client_ip}",
     )
     if not username:

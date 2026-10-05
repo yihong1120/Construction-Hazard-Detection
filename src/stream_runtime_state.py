@@ -54,6 +54,7 @@ class LatestDetectionState:
     cone_polys: PolygonCollection = field(default_factory=list)
     pole_polys: PolygonCollection = field(default_factory=list)
     track_data: TrackingDetections | None = None
+    class_metadata: list[dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class OverlaySnapshot:
     cone_polys: PolygonCollection = field(default_factory=list)
     pole_polys: PolygonCollection = field(default_factory=list)
     track_data: TrackingDetections | None = None
+    class_metadata: list[dict] | None = None
 
 
 @dataclass

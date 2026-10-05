@@ -16,14 +16,10 @@ import httpx
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from jwt.exceptions import InvalidTokenError
 
 from examples.auth.database import get_db
 from examples.auth.deployment_context import DeploymentBinding
-from examples.auth.jwt_config import jwt_access
-from examples.auth.jwt_config import jwt_refresh
 from examples.auth.jwt_config import JwtAuthorizationCredentials
-from examples.auth.jwt_config import settings as jwt_settings
 from examples.auth.redis_pool import get_redis_pool
 from examples.auth.session_store import auth_session_key
 from examples.auth.session_store import create_auth_session
@@ -35,6 +31,7 @@ from examples.db_management.schemas.playback import PlaybackRenewRequest
 from examples.db_management.schemas.playback import PlaybackWallRequest
 from examples.db_management.services import playback_services as playback
 from tests.examples.auth.session_store_test import FakeRedis
+from tests.oidc_fixtures import fixture_token
 
 _DEPLOYMENT = DeploymentBinding(
     tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
@@ -47,7 +44,7 @@ _DEPLOYMENT = DeploymentBinding(
 def _access_subject(
     username: str = 'alice',
     user_id: int = 1,
-) -> dict[str, object]:
+) -> AccessTokenSubject:
     """Perform access subject.
 
     Args:
@@ -93,13 +90,6 @@ class PlaybackRouterTest(unittest.TestCase):
 
     def setUp(self) -> None:
         """Perform setUp."""
-        self._external_passwords = patch.object(
-            jwt_settings,
-            'oidc_passwords_managed_externally',
-            False,
-        )
-        self._external_passwords.start()
-        self.addCleanup(self._external_passwords.stop)
         app = FastAPI()
         app.include_router(playback_router.router)
         self.redis = FakeRedis()
@@ -114,12 +104,22 @@ class PlaybackRouterTest(unittest.TestCase):
         )
         deployment_resolver.start()
         self.addCleanup(deployment_resolver.stop)
-        self.access_token = jwt_access.create_access_token(
+        self.access_token = fixture_token(
             _access_subject('ChangDar'),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
         )
         self.headers = {'Authorization': f"Bearer {self.access_token}"}
+        decode = patch.object(
+            playback.jwt_access, 'decode_access_token_for_deployment',
+            AsyncMock(
+                return_value=JwtAuthorizationCredentials(
+                    subject=_access_subject('ChangDar'),
+                ),
+            ),
+        )
+        decode.start()
+        self.addCleanup(decode.stop)
 
     def test_native_single_playback_returns_signed_detail_url(self) -> None:
         """Test native single playback returns signed detail url."""
@@ -300,13 +300,13 @@ class PlaybackRouterTest(unittest.TestCase):
 
     def test_web_bff_session_uses_same_playback_endpoint(self) -> None:
         """Test web bff session uses same playback endpoint."""
-        access = jwt_access.create_access_token(
+        access = fixture_token(
             _access_subject(user_id=2),
             timedelta(minutes=15),
             issuer=_DEPLOYMENT.issuer,
             audience=_DEPLOYMENT.audience,
         )
-        refresh = jwt_refresh.create_access_token(
+        refresh = fixture_token(
             _refresh_subject(),
             timedelta(days=30),
             issuer=_DEPLOYMENT.issuer,
@@ -472,13 +472,6 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         """Perform setUp."""
-        self._external_passwords = patch.object(
-            jwt_settings,
-            'oidc_passwords_managed_externally',
-            False,
-        )
-        self._external_passwords.start()
-        self.addCleanup(self._external_passwords.stop)
         self.db = MagicMock()
         self.db.scalar = AsyncMock()
         self.redis = MagicMock()
@@ -498,73 +491,6 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             access_token='access-token',
         )
 
-    async def test_bearer_decode_and_subject_helpers(self) -> None:
-        """Test bearer decode and subject helpers."""
-        self.assertEqual(
-            playback._bearer_token(
-                _request('Bearer token'),
-            ),
-            'token',
-        )
-        self.assertIsNone(playback._bearer_token(_request('Basic token')))
-        with patch.object(
-            playback.jwt_access,
-            'decode_token',
-            side_effect=InvalidTokenError('bad token'),
-        ):
-            with self.assertRaises(HTTPException) as invalid:
-                await playback._decode_access_token(
-                    'bad',
-                    self.redis,
-                    self.db,
-                    self.binding,
-                )
-        self.assertEqual(invalid.exception.status_code, 401)
-
-        with (
-            patch.object(
-                playback.jwt_access,
-                'decode_token',
-                return_value={
-                    'subject': _access_subject(),
-                    'jti': 'access-jti',
-                },
-            ),
-            patch.object(
-                playback,
-                'is_access_token_revoked',
-                new=AsyncMock(return_value=False),
-            ),
-        ):
-            credentials = await playback._decode_access_token(
-                'token',
-                self.redis,
-                self.db,
-                self.binding,
-            )
-        self.assertEqual(credentials.subject, _access_subject())
-
-        with (
-            patch.object(
-                playback.jwt_access,
-                'decode_token',
-                return_value={'subject': 'alice'},
-            ),
-            patch.object(
-                playback,
-                'is_access_token_revoked',
-                new=AsyncMock(return_value=False),
-            ),
-        ):
-            with self.assertRaises(HTTPException) as empty_subject:
-                await playback._decode_access_token(
-                    'token',
-                    self.redis,
-                    self.db,
-                    self.binding,
-                )
-        self.assertEqual(empty_subject.exception.status_code, 401)
-
     async def test_bearer_decode_accepts_mapped_oidc_credentials(
         self,
     ) -> None:
@@ -574,6 +500,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         verifier.decode_access_token = AsyncMock(
             return_value={
                 'sub': 'keycloak-subject',
+                'typ': 'Bearer',
                 'iss': 'https://sso.example.com/realms/visionnaire',
                 'jti': 'keycloak-jti',
             },
@@ -609,14 +536,11 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Playback tokens fail closed when revocation cannot be verified."""
-        payload = {
-            'subject': _access_subject(),
-            'jti': 'access-jti',
-        }
+        payload = JwtAuthorizationCredentials(subject=_access_subject())
         with (
             patch.object(
                 playback.jwt_access,
-                'decode_token',
+                'decode_access_token_for_deployment',
                 return_value=payload,
             ),
             patch.object(
@@ -634,7 +558,7 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 playback.jwt_access,
-                'decode_token',
+                'decode_access_token_for_deployment',
                 return_value=payload,
             ),
             patch.object(

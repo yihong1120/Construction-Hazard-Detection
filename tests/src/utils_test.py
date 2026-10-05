@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-import os
 import time
 import unittest
 from datetime import datetime
 from datetime import timedelta
-from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -19,7 +16,6 @@ from sklearn.cluster import HDBSCAN
 
 import src.geometry as utils
 from src.auth_tokens import TokenManager
-from src.config_watcher import FileEventHandler
 from src.redis_client import RedisManager
 from src.runtime_utils import is_expired
 from src.runtime_utils import should_notify
@@ -117,95 +113,9 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         }
         # Create a new TokenManager instance
         self.tm = TokenManager(
-            api_url='http://example.com/api',
             shared_token=self.shared_token,
         )
 
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
-    @patch('aiohttp.ClientSession')
-    async def test_refresh_token_changed_before_post(
-        self,
-        m_sess: AsyncMock,
-    ) -> None:
-        """Verify early return if refresh_token changes before HTTP POST
-        (covers concurrency line 134)."""
-        post_mock = AsyncMock()
-        m_sess.return_value.__aenter__.return_value.post = post_mock
-
-        # Create a MockSharedToken and patch it using patch.object
-        mock_shared_token = MockSharedToken()
-
-        with patch.object(self.tm, 'shared_token', mock_shared_token):
-            await self.tm.refresh_token()
-
-        post_mock.assert_not_awaited()
-        self.assertEqual(
-            mock_shared_token['access_token'],
-            'OLD',
-        )
-
-    @patch.dict(
-        os.environ,
-        {
-            'API_USERNAME': 'test_user',
-            'API_PASSWORD': 'test_pass',
-            'HCAPTCHA_BYPASS_KEY': 'server-only-key',
-        },
-    )
-    @patch('aiohttp.ClientSession')
-    async def test_authenticate_success(self, m_session: AsyncMock) -> None:
-        """Verify successful authentication sets correct tokens."""
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json.return_value = {
-            'access_token': 'A',
-            'refresh_token': 'B',
-        }
-
-        mock_sessinst = AsyncMock()
-        mock_sessinst.post.return_value = mock_resp
-        m_session.return_value.__aenter__.return_value = mock_sessinst
-
-        await self.tm.authenticate(force=True)
-        self.assertEqual(self.shared_token['access_token'], 'A')
-        self.assertEqual(
-            self.shared_token['refresh_token'],
-            'B',
-        )
-        mock_sessinst.post.assert_awaited_once_with(
-            'http://example.com/api/login',
-            json={'identifier': 'test_user', 'password': 'test_pass'},
-            headers={'X-HCaptcha-Bypass-Key': 'server-only-key'},
-        )
-
-    @patch.dict(
-        os.environ,
-        {'API_USERNAME': 'test_user', 'API_PASSWORD': 'test_pass'},
-    )
-    @patch('aiohttp.ClientSession')
-    async def test_authenticate_fail(self, m_session: AsyncMock) -> None:
-        """Test authentication failure results in RuntimeError."""
-        mock_resp = AsyncMock()
-        mock_resp.status = 401
-        mock_sessinst = AsyncMock()
-        mock_sessinst.post.return_value = mock_resp
-        m_session.return_value.__aenter__.return_value = mock_sessinst
-
-        with self.assertRaises(RuntimeError):
-            await self.tm.authenticate(force=True)
-
-    @patch('aiohttp.ClientSession')
-    async def test_authenticate_missing_env(
-        self,
-        m_session: AsyncMock,
-    ) -> None:
-        """Test that missing environment variables raises ValueError."""
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaises(ValueError):
-                await self.tm.authenticate(force=True)
-        m_session.assert_not_called()
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_authenticate_no_force_noop(self) -> None:
         """Test authenticate is skipped when force is False and access_token
         exists."""
@@ -214,173 +124,6 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             await self.tm.authenticate(force=False)
             mock_sess.assert_not_called()
 
-    @patch.dict(
-        os.environ,
-        {'API_USERNAME': 'test_user', 'API_PASSWORD': 'test_pass'},
-    )
-    @patch('aiohttp.ClientSession')
-    async def test_authenticate_network_error(
-        self,
-        m_session: AsyncMock,
-    ) -> None:
-        """Test authentication with network error."""
-        # Mock aiohttp.ClientError
-        import aiohttp
-
-        session_manager = AsyncMock()
-        session_manager.post.side_effect = aiohttp.ClientError('Network error')
-        m_session.return_value.__aenter__.return_value = session_manager
-
-        with self.assertRaises(RuntimeError) as ctx:
-            await self.tm.authenticate()
-
-        self.assertIn(
-            'Authentication failed due to network error',
-            str(ctx.exception),
-        )
-
-    @patch.dict(
-        os.environ,
-        {'API_USERNAME': 'test_user', 'API_PASSWORD': 'test_pass'},
-    )
-    @patch('aiohttp.ClientSession')
-    async def test_authenticate_general_exception(
-        self,
-        m_session: AsyncMock,
-    ) -> None:
-        """Test authentication with general exception."""
-        session_manager = AsyncMock()
-        session_manager.post.side_effect = Exception('General error')
-        m_session.return_value.__aenter__.return_value = session_manager
-
-        with self.assertRaises(Exception) as ctx:
-            await self.tm.authenticate()
-
-        self.assertIn('General error', str(ctx.exception))
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
-    async def test_refresh_token_no_refresh_token(self) -> None:
-        """Test that no refresh_token triggers authenticate."""
-        self.shared_token['refresh_token'] = ''
-        with patch.object(
-            self.tm,
-            'authenticate',
-            new_callable=AsyncMock,
-        ) as m_auth:
-            await self.tm.refresh_token()
-            m_auth.assert_awaited_once()
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
-    @patch('aiohttp.ClientSession')
-    async def test_refresh_token_already_refreshing(
-        self,
-        m_sess: AsyncMock,
-    ) -> None:
-        """Test that refresh_token exits early if already refreshing."""
-        self.shared_token['is_refreshing'] = True
-        await self.tm.refresh_token()
-        m_sess.assert_not_called()
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
-    @patch('aiohttp.ClientSession')
-    async def test_refresh_token_changed_refresh_token_midway(
-        self,
-        m_sess: AsyncMock,
-    ) -> None:
-        """Test refresh_token behaviour when refresh_token changes during
-        POST."""
-        self.shared_token['refresh_token'] = 'X'
-        self.shared_token['access_token'] = 'OLD'
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json.return_value = {
-            'access_token': 'NEW',
-            'refresh_token': 'NEWREF',
-        }
-
-        async def side_effect(*_: Any, **__: Any) -> Any:
-            """Support side_effect."""
-            await asyncio.sleep(0.01)
-            self.shared_token['refresh_token'] = 'Y'
-            return mock_resp
-
-        mock_sessinst = AsyncMock()
-        mock_sessinst.post.side_effect = side_effect
-        m_sess.return_value.__aenter__.return_value = mock_sessinst
-
-        await self.tm.refresh_token()
-        self.assertEqual(
-            self.shared_token['access_token'],
-            'NEW',
-        )
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
-    @patch('aiohttp.ClientSession')
-    async def test_refresh_token_200_ok(self, m_sess: AsyncMock) -> None:
-        """Verify token update on HTTP 200 OK response."""
-        self.shared_token['access_token'] = 'OLD'
-        self.shared_token['refresh_token'] = 'RRR'
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json.return_value = {
-            'access_token': 'NNN',
-            'refresh_token': 'RRR2',
-        }
-
-        mock_sessinst = AsyncMock()
-        mock_sessinst.post.return_value = mock_resp
-        m_sess.return_value.__aenter__.return_value = mock_sessinst
-
-        await self.tm.refresh_token()
-        self.assertEqual(self.shared_token['access_token'], 'NNN')
-        self.assertEqual(
-            self.shared_token['refresh_token'],
-            'RRR2',
-        )
-        self.assertFalse(self.shared_token['is_refreshing'])
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
-    @patch('aiohttp.ClientSession')
-    async def test_refresh_token_fail_401(self, m_sess: AsyncMock) -> None:
-        """Trigger retry to authenticate on 401 response."""
-        self.shared_token['access_token'] = 'OLD'
-        self.shared_token['refresh_token'] = 'RRR'
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 401
-
-        mock_sessinst = AsyncMock()
-        mock_sessinst.post.return_value = mock_resp
-        m_sess.return_value.__aenter__.return_value = mock_sessinst
-
-        with patch.object(
-            self.tm,
-            'authenticate',
-            new_callable=AsyncMock,
-        ) as m_auth:
-            await self.tm.refresh_token()
-            m_auth.assert_awaited_once()
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
-    @patch('aiohttp.ClientSession')
-    async def test_refresh_token_fail_other(self, m_sess: AsyncMock) -> None:
-        """Raise RuntimeError on non-401 HTTP errors."""
-        self.shared_token['access_token'] = 'X'
-        self.shared_token['refresh_token'] = 'Y'
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 500
-
-        mock_sessinst = AsyncMock()
-        mock_sessinst.post.return_value = mock_resp
-        m_sess.return_value.__aenter__.return_value = mock_sessinst
-
-        with self.assertRaises(RuntimeError):
-            await self.tm.refresh_token()
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_ensure_token_valid_no_token(self) -> None:
         """Trigger authenticate if access_token is missing."""
         self.shared_token['access_token'] = ''
@@ -392,7 +135,6 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             await self.tm.ensure_token_valid()
             m_auth.assert_awaited_once()
 
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_ensure_token_valid_has_token(self) -> None:
         """Skip authentication if access_token exists and is not expired."""
         self.shared_token['access_token'] = 'EXIST'
@@ -427,26 +169,6 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         ) as m_auth:
             await self.tm.handle_401(retry_count=0)
             m_auth.assert_awaited_once()
-
-    @patch('asyncio.sleep', new_callable=AsyncMock)
-    async def test_refresh_token_wait_timeout(
-        self,
-        mock_sleep: AsyncMock,
-    ) -> None:
-        """Ensure refresh_token exits after timeout if is_refreshing remains
-        True."""
-        counter = 0.0
-
-        async def fake_sleep(duration: float) -> None:
-            """Support fake_sleep."""
-            nonlocal counter
-            counter += duration
-
-        mock_sleep.side_effect = fake_sleep
-        self.shared_token['is_refreshing'] = True
-
-        await self.tm.refresh_token()
-        self.assertGreaterEqual(counter, 10)
 
     async def test_ensure_token_valid_over_retries(self) -> None:
         """Raise RuntimeError if ensure_token_valid exceeds retry limit."""
@@ -508,7 +230,6 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         self.shared_token['access_token'] = token
         self.assertFalse(self.tm.is_token_expired())
 
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_get_valid_token_success(self) -> None:
         """Test get_valid_token returns token when valid."""
         # Create a valid JWT token
@@ -534,7 +255,6 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
                 str(ctx.exception),
             )
 
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     @patch('aiohttp.ClientSession')
     async def test_get_valid_token_retry_authenticate(
         self,
@@ -569,102 +289,26 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
             result = await self.tm.get_valid_token()
             self.assertEqual(result, 'authenticated_token')
 
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_ensure_token_valid_exception_retry(self) -> None:
-        """Test ensure_token_valid retries on exception."""
-        self.shared_token['access_token'] = ''
-        self.shared_token['refresh_token'] = 'test_refresh'
-
         with patch.object(
             self.tm,
-            'refresh_token',
-            new_callable=AsyncMock,
-        ) as mock_refresh:
-            # First call fails, second call succeeds
-            mock_refresh.side_effect = [Exception('First attempt fails'), None]
-            with patch.object(self.tm, 'authenticate', new_callable=AsyncMock):
-                await self.tm.ensure_token_valid()
-                # Should have been called only once,
-                # then recursive call happens
-                self.assertEqual(mock_refresh.call_count, 2)
+            'authenticate',
+            AsyncMock(
+                side_effect=[RuntimeError('transient provider failure'), None],
+            ),
+        ) as acquire:
+            await self.tm.ensure_token_valid()
+        self.assertEqual(acquire.await_count, 2)
 
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
     async def test_ensure_token_valid_exception_max_retries(self) -> None:
-        """Test ensure_token_valid raises exception when max retries
-        reached."""
-        self.shared_token['access_token'] = ''
-        self.shared_token['refresh_token'] = 'test_refresh'
-
         with patch.object(
             self.tm,
-            'refresh_token',
-            new_callable=AsyncMock,
-        ) as mock_refresh:
-            # Always fail
-            mock_refresh.side_effect = Exception('Always fails')
-            with patch.object(
-                self.tm,
-                'authenticate',
-                new_callable=AsyncMock,
-            ) as mock_auth:
-                mock_auth.side_effect = Exception('Auth also fails')
-
-                with self.assertRaises(Exception) as ctx:
-                    await self.tm.ensure_token_valid()
-
-                self.assertIn('Always fails', str(ctx.exception))
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
-    @patch('aiohttp.ClientSession')
-    async def test_refresh_token_changed_refresh_token_immediately(
-        self,
-        m_sess: AsyncMock,
-    ) -> None:
-        """Handle token change just before post is executed."""
-        self.shared_token['refresh_token'] = 'X'
-        self.shared_token['access_token'] = 'OLD'
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json.return_value = {
-            'access_token': 'NEW',
-            'refresh_token': 'NEWREF',
-        }
-
-        mock_sessinst = AsyncMock()
-        mock_sessinst.post.return_value = mock_resp
-        m_sess.return_value.__aenter__.return_value = mock_sessinst
-
-        async def change_token_side_effect(*_: Any, **__: Any) -> Any:
-            """Support change_token_side_effect."""
-            self.shared_token['refresh_token'] = 'CHANGED'
-            return mock_resp
-
-        mock_sessinst.post = AsyncMock(side_effect=change_token_side_effect)
-
-        await self.tm.refresh_token()
-        self.assertEqual(
-            self.shared_token['access_token'],
-            'NEW',
-        )
-        self.assertEqual(
-            self.shared_token['refresh_token'],
-            'NEWREF',
-        )
-
-    @patch.dict(os.environ, {'API_USERNAME': 'dummy', 'API_PASSWORD': 'dummy'})
-    async def test_refresh_token_exit_while(self) -> None:
-        """Test loop exits once is_refreshing becomes False within timeout."""
-        self.shared_token['is_refreshing'] = True
-
-        async def stop_refresh() -> None:
-            """Support stop_refresh."""
-            await asyncio.sleep(0.5)
-            self.shared_token['is_refreshing'] = False
-
-        asyncio.create_task(stop_refresh())
-        await self.tm.refresh_token()
-        self.assertFalse(self.shared_token['is_refreshing'])
+            'authenticate',
+            AsyncMock(side_effect=RuntimeError('provider unavailable')),
+        ) as acquire:
+            with self.assertRaisesRegex(RuntimeError, 'provider unavailable'):
+                await self.tm.ensure_token_valid()
+        self.assertEqual(acquire.await_count, self.tm.max_retries + 1)
 
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):
@@ -675,48 +319,6 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
     methods, including error handling, boundary conditions, and various data
     scenarios.
     """
-
-    def test_file_event_handler_init_and_on_modified(self) -> None:
-        """Test FileEventHandler initialisation and on_modified method branches
-        for coverage.
-
-        # Verifies that the FileEventHandler correctly processes file #
-        modification events and handles both matching and non-matching # file
-        paths appropriately.
-        """
-        called: list[str] = []
-
-        async def callback() -> None:
-            """Mock callback function to track invocations."""
-            called.append('called')
-
-        loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
-        handler: FileEventHandler = FileEventHandler(
-            '/tmp/testfile',
-            callback,
-            loop,
-        )
-
-        # Simulate event with matching path using a precise event type
-        class _DummyEvent:
-            """Tests for _DummyEvent."""
-
-            src_path: str
-
-        event: _DummyEvent = _DummyEvent()
-        event.src_path = '/tmp/testfile'
-
-        # Patch asyncio.run_coroutine_threadsafe to avoid actual scheduling
-        with patch('asyncio.run_coroutine_threadsafe') as mock_run:
-            handler.on_modified(event)
-            mock_run.assert_called()
-            mock_run.call_args.args[0].close()
-
-        # Simulate event with non-matching path
-        event.src_path = '/tmp/otherfile'
-        with patch('asyncio.run_coroutine_threadsafe') as mock_run:
-            handler.on_modified(event)
-            mock_run.assert_not_called()
 
     def test_normalise_bbox_extra_fields(self) -> None:
         """Test normalise_bbox with more than 4 fields (should preserve extra

@@ -326,7 +326,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             languages['zh-TW']['notification_templates'],
         )
         self.assertIn(
-            'no-hardhat',
+            'no_helmet',
             languages['zh-TW']['class_labels'],
         )
 

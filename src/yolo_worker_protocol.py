@@ -48,8 +48,8 @@ def _parse_worker_precision(
     except KeyError as exc:
         supported = ', '.join(sorted(set(_WORKER_PRECISION_ALIASES)))
         raise ValueError(
-            f"Unsupported YOLO_WORKER_PRECISION: {raw_value!r}. "
-            f"Use f32, f16, or int8. Supported aliases: {supported}.",
+            f'Unsupported YOLO_WORKER_PRECISION: {raw_value!r}. '
+            f'Use f32, f16, or int8. Supported aliases: {supported}.',
         ) from exc
 
 
@@ -65,7 +65,7 @@ def _worker_precision_config(
         # TensorRT engine precision is baked into the .engine file. These
         # engines are dynamic batch only and require fixed square 640 inputs.
         return Path('models/int8_engine'), '.engine', {'rect': False}
-    raise AssertionError(f"unhandled YOLO worker precision mode: {mode}")
+    raise AssertionError(f'unhandled YOLO worker precision mode: {mode}')
 
 
 class WorkerRequestPayload(TypedDict):
@@ -88,6 +88,7 @@ class WorkerResult(TypedDict, total=False):
     detections: list[Detection]
     error: str
     skipped: bool
+    model_metadata: dict[str, object] | None
 
 
 class WorkerRequestSender(Protocol):

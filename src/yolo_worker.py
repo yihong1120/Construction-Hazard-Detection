@@ -256,6 +256,7 @@ class YoloWorkerClient:
             if result.get('id') != request_id:
                 continue
             if result.get('ok'):
+                self.last_model_metadata = result.get('model_metadata')
                 return result.get('detections', [])
             raise RuntimeError(
                 str(result.get('error', 'YOLO worker request failed')),
@@ -510,6 +511,15 @@ class YoloWorker:
                         'id': request.id,
                         'ok': True,
                         'detections': detections,
+                        **(
+                            {
+                                'model_metadata': getattr(
+                                    model, '_catalog_metadata',
+                                ),
+                            }
+                            if getattr(model, '_catalog_metadata', None)
+                            else {}
+                        ),
                     },
                 )
         except Exception as exc:
@@ -685,16 +695,39 @@ class YoloWorker:
         model = self.model_cache.get(model_key)
         if model is not None:
             return model
-        model_path = self.model_dir / f"best_{model_key}{self.model_suffix}"
-        if not model_path.exists():
-            raise FileNotFoundError(
-                f"YOLO worker model not found: {model_path}",
-            )
+        from examples.YOLO_server_api.model_registry import (
+            load_registry,
+            verify_artifact,
+        )
+
+        registry = load_registry()
+        entry = next(
+            (
+                m
+                for m in registry.models
+                if m.id == model_key
+                and m.enabled
+                and 'stream' in m.capabilities
+            ),
+            None,
+        )
+        if entry is None:
+            raise FileNotFoundError(f'Unpublished stream model: {model_key}')
+        model_path = verify_artifact(entry)
         from ultralytics import YOLO
 
-        # TensorRT engines do not carry enough task metadata for every
-        # Ultralytics release to infer detection reliably.
         model = cast(YoloModelLike, YOLO(str(model_path), task='detect'))
+        setattr(
+            model,
+            '_catalog_metadata',
+            {
+                'model_id': entry.id,
+                'model_version': entry.version,
+                'class_metadata': [
+                    c.model_dump(exclude_none=True) for c in entry.classes
+                ],
+            },
+        )
         self.model_cache[model_key] = model
         self.logger.info('[YOLO-Worker] loaded %s', model_key)
         return model

@@ -20,9 +20,10 @@ stream_capture.py
 
 ## Key Modules
 
-- `stream_processor.py`: one-camera runtime loop. It owns capture pacing,
-  detection calls, warning handling, overlay publishing, metadata cleanup, and
-  shutdown.
+- `stream_processor.py`: one-camera task orchestration, demand-driven media
+  publishing, metadata cleanup, and shutdown.
+- `stream_detection.py`: capture/inference loops, warning events and alerts.
+- `stream_overlay_frames.py`: immutable frames and per-language overlay caches.
 - `stream_capture.py`: reads frames from RTSP, HTTP, or local files. It avoids
   unbounded buffering and keeps reconnect logic close to the capture source.
 - `yolo_worker.py`: multiprocessing worker and client. Frames are copied into
@@ -46,14 +47,17 @@ stream_capture.py
 - `warning_types.py`: warning payload type aliases.
 - `model_fetcher.py`: model download/update helpers.
 - `monitor_logger.py`: logging setup.
-- `net/net_client.py`: authenticated HTTP and WebSocket client helpers.
 - `stream_viewer.py`: manual OpenCV stream viewer for diagnostics.
 
 ## Notification Adapters
 
-`notifiers/` contains FCM, LINE Message API, Messenger, Telegram, WeChat, and
-broadcast adapters. Keep adapters thin: they should format and send messages,
-while detection and violation decisions stay in `stream_processor.py`.
+`notifiers/` supports FCM, LINE Messaging API, Messenger, Telegram, WeChat and
+HTTP broadcast. FCM uses the OIDC-authenticated backend; other platforms use
+their own credentials. Detection and violation decisions stay in `stream_detection.py`.
+
+Install `uv sync --extra social-notifications` for optional adapters. Call them
+directly or through MCP notification tools; the existing camera worker uses FCM.
+See the [LINE Messaging API guide](../docs/en/line_notify_guide_en.md).
 
 ## Runtime Notes
 
@@ -64,3 +68,33 @@ while detection and violation decisions stay in `stream_processor.py`.
   is full, the caller times out or skips stale work rather than growing memory
   without bound.
 - Keep frame copies near capture, shared memory, and ffmpeg boundaries only.
+
+## Background worker authentication
+
+`main.py` checks Redis before starting camera and GPU processes. Set
+`REDIS_PASSWORD` to the server password. Authentication occurs when a connection
+is established; reads and writes reuse the connection.
+
+Workers use `WORKER_OIDC_CLIENT_ID` and `WORKER_OIDC_CLIENT_SECRET`.
+Set `WORKER_OIDC_TOKEN_ENDPOINT` to the realm token URL, or provide
+`OIDC_ISSUER_URL`. HTTPS is required except for loopback development URLs.
+Tokens are acquired and renewed with the client-credentials grant.
+
+Provision a separate confidential Keycloak client for each worker tenant with
+client authentication and service accounts enabled, browser/direct password
+flows disabled, and an audience mapper including the configured API audience
+(normally `visionnaire-api`). Do not reuse the BFF or user-linker client.
+
+Link the service account's Keycloak user ID (the token `sub`) through the existing
+`UserIdentity` table using the configured provider (normally `keycloak`) and a
+dedicated active local worker user. Assign that local user its intended tenant,
+site access, group and necessary features. Existing API checks remain authoritative;
+an unlinked service account is rejected. No realm administration roles are needed.
+The client secret alone does not grant local API permissions. Existing realms
+must provision this client explicitly; restarting a realm import does not update
+existing clients. Keep secrets in the local environment, not source control.
+
+Token acquisition at startup validates the client configuration, but does not
+prove API permissions: verify a request to the intended API after linking the
+identity. Redis failures and missing worker credentials stop startup before
+camera processes are spawned.

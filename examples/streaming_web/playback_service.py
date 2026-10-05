@@ -22,7 +22,7 @@ from examples.streaming_web.media_paths import build_preview_media_path
 from examples.streaming_web.media_paths import encode_media_segment
 from examples.streaming_web.media_paths import parse_annotated_media_path
 from examples.streaming_web.metadata_keys import encode_stream_id
-from examples.streaming_web.overlay_renderer import normalise_label_language
+from examples.streaming_web.overlay_labels import normalise_label_language
 from examples.streaming_web.playback_demand import overlay_is_ready
 from examples.streaming_web.playback_demand import touch_clean_demand
 from examples.streaming_web.playback_demand import touch_overlay_demand

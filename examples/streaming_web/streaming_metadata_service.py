@@ -20,7 +20,7 @@ from examples.streaming_web.metadata_keys import (
     build_metadata_key_from_stream_id,
 )
 from examples.streaming_web.metadata_keys import get_metadata_site_generation
-from examples.streaming_web.overlay_renderer import normalise_label_language
+from examples.streaming_web.overlay_labels import normalise_label_language
 from examples.streaming_web.overlay_renderer import normalise_overlay_mode
 from examples.streaming_web.playback_hls import authorise_label_access
 from examples.streaming_web.streaming_metadata_handlers import (

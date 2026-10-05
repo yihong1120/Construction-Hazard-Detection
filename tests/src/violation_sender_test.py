@@ -45,7 +45,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         """Clean up resources after each test."""
         await self.sender.close()
 
-    async def _call(self, inst: ViolationSender) -> str | None:
+    async def _call(self, inst: ViolationSender, **metadata) -> str | None:
         """Helper to call send_violation with shared parameters.
 
         Args:
@@ -63,6 +63,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
             detections=self.det,
             cone_polygon=self.cone,
             pole_polygon=self.pole,
+            **metadata,
         )
 
     @patch.object(ViolationSender, '_get_client', new_callable=AsyncMock)
@@ -82,8 +83,19 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         mock_cli.post = AsyncMock(return_value=ok_resp)
         mock_get_client.return_value = mock_cli
 
-        result: str | None = await self._call(self.sender)
+        result: str | None = await self._call(
+            self.sender,
+            model_id='yolo26m',
+            model_version='actual-inference-commit',
+        )
         self.assertEqual(result, '123')
+        self.assertEqual(
+            mock_cli.post.call_args.kwargs['data']['model_id'], 'yolo26m',
+        )
+        self.assertEqual(
+            mock_cli.post.call_args.kwargs['data']['model_version'],
+            'actual-inference-commit',
+        )
         mock_cli.post.assert_awaited_once()
         self.assertEqual(
             mock_cli.post.call_args.args[0],
@@ -261,7 +273,12 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
 
     def test_constructor_with_none_api_url(self) -> None:
         """Test constructor uses environment variable when api_url is None."""
-        with patch('os.getenv', return_value='http://env-url'):
+        with patch(
+            'os.getenv', side_effect=lambda key, default=None: (
+                'http://env-url' if key == 'VIOLATION_RECORD_API_URL'
+                or key == 'DB_MANAGEMENT_API_URL' else default
+            ),
+        ):
             sender = ViolationSender(api_url=None)
             self.assertEqual(sender.base_url, 'http://env-url')
 

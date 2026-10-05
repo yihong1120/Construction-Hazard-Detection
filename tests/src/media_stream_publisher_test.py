@@ -891,6 +891,7 @@ def test_start_covers_hardware_encoder_edge_cases(monkeypatch: Any) -> None:
             lambda _path: 'h264_vaapi',
         )
         context.setattr(publisher, '_ensure_vaapi_device_access', lambda: None)
+        context.setenv('MEDIA_PUBLISH_VAAPI_DEVICE', '/dev/dri/test-intel')
         asyncio.run(vaapi._start(320, 240))
     asyncio.run(vaapi.close())
     assert '-vaapi_device' in commands[0]
@@ -924,3 +925,45 @@ def test_select_encoder_accepts_available_vaapi(monkeypatch: Any) -> None:
     monkeypatch.setattr(publisher, '_ffmpeg_has_encoder', lambda *_args: True)
 
     assert publisher._select_encoder('/bin/ffmpeg') == 'h264_vaapi'
+
+
+def test_vaapi_device_failure_selects_software_on_next_start(
+    monkeypatch: Any,
+) -> None:
+    """A driver failure is remembered and does not loop on broken hardware."""
+    stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
+    stream._uses_vaapi = True
+    process = SimpleNamespace(
+        stderr=_FakeStderr([
+            b'Failed to initialise VAAPI connection: -1\n', b'',
+        ]),
+    )
+    asyncio.run(stream._drain_stderr(process))
+    assert stream._vaapi_unavailable
+    monkeypatch.setattr(publisher, '_select_encoder', lambda _: 'h264_vaapi')
+    commands = []
+
+    async def launch(*command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(stderr=None)
+
+    monkeypatch.setattr(publisher.asyncio, 'create_subprocess_exec', launch)
+    asyncio.run(stream._start(640, 360))
+    assert 'libx264' in commands[0]
+    assert 'h264_vaapi' not in commands[0]
+
+
+def test_vaapi_auto_selects_intel_instead_of_nvidia(
+    tmp_path, monkeypatch: Any,
+) -> None:
+    """Render-node numbering can change when integrated graphics is enabled."""
+    for name, vendor in [('renderD128', '0x10de'), ('renderD129', '0x8086')]:
+        device = tmp_path / name / 'device'
+        device.mkdir(parents=True)
+        (device / 'vendor').write_text(vendor)
+    assert publisher._find_intel_vaapi_device(
+        tmp_path,
+    ) == '/dev/dri/renderD129'
+    (tmp_path / 'renderD129/device/vendor').write_text('0x10de')
+    with pytest.raises(RuntimeError, match='Enable integrated graphics'):
+        publisher._find_intel_vaapi_device(tmp_path)

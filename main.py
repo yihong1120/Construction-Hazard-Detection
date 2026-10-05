@@ -18,7 +18,9 @@ from asyncpg.pool import Pool  # type: ignore[import-untyped]
 from dotenv import load_dotenv
 from sqlalchemy.engine.url import make_url
 
+from src.auth_tokens import TokenManager
 from src.monitor_logger import LoggerConfig
+from src.redis_client import RedisManager
 from src.runtime_utils import is_expired
 from src.stream_processor import delete_stream_live_metadata
 from src.stream_processor import process_single_stream
@@ -75,9 +77,11 @@ class MainApp:
                     'DATABASE_URL environment variable is required',
                 )
             url = make_url(database_url)
+            if url.get_backend_name() != 'postgresql':
+                raise RuntimeError(
+                    'DATABASE_URL must use PostgreSQL',
+                )
             port = url.port
-            if url.drivername.startswith('mysql') and port == 3306:
-                port = 5432
             self.logger.info(
                 '[database] Connecting to stream configuration database '
                 '%s:%s/%s',
@@ -832,6 +836,20 @@ class MainApp:
             await self.cleanup_resources()
 
 
+async def validate_runtime_dependencies() -> None:
+    """Fail before starting workers when shared dependencies are
+    unavailable.
+    """
+    # Check shared dependencies once before spawning camera/GPU processes.
+    redis_manager = RedisManager()
+    try:
+        await redis_manager.redis.ping()
+    finally:
+        await redis_manager.redis.aclose()
+    token_manager = TokenManager()
+    await token_manager.get_valid_token()
+
+
 async def main() -> None:
     """Parse command-line arguments and run the MainApp."""
     parser = argparse.ArgumentParser(
@@ -849,6 +867,8 @@ async def main() -> None:
         help='Path to JSON config file for stream configs',
     )
     args = parser.parse_args()
+
+    await validate_runtime_dependencies()
 
     if args.config:
         # Load configs from JSON file
