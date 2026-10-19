@@ -30,7 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = [
-  "mcp==1.28.1",
+  "mcp==1.30.0",
   "requests==2.33.0",
 ]
 notification = [
