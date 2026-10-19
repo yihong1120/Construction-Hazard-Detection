@@ -4,6 +4,7 @@ import time
 import unittest
 from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -402,6 +403,59 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         """
         # Test with None (should return False)
         self.assertFalse(is_expired(None))
+
+    def test_is_expired_with_utc_aware_date(self) -> None:
+        """Test is_expired method with UTC offset-aware ISO 8601 strings.
+
+        # The ``stream_configs.expire_date`` column is ``TIMESTAMP WITH TIME #
+        # ZONE``, so the ISO 8601 string built by ``fetch_stream_configs`` #
+        # carries a UTC offset.  Such a value must not raise.
+        """
+        past_utc: str = (
+            datetime.now(timezone.utc) - timedelta(days=1)
+        ).isoformat()
+        self.assertTrue(past_utc.endswith('+00:00'))
+        self.assertTrue(is_expired(past_utc))
+
+        future_utc: str = (
+            datetime.now(timezone.utc) + timedelta(days=1)
+        ).isoformat()
+        self.assertFalse(is_expired(future_utc))
+
+    def test_is_expired_with_non_utc_aware_date(self) -> None:
+        """Test is_expired method with a non-UTC offset-aware ISO 8601 string.
+
+        # An offset-aware value denotes an absolute instant, so the same #
+        # instant expressed in a different offset must yield the same #
+        # result.
+        """
+        past_instant = datetime.now(timezone.utc) - timedelta(days=1)
+        self.assertTrue(
+            is_expired(past_instant.astimezone(timezone(timedelta(hours=8))).isoformat()),
+        )
+
+        future_instant = datetime.now(timezone.utc) + timedelta(days=1)
+        self.assertFalse(
+            is_expired(
+                future_instant.astimezone(timezone(timedelta(hours=-5))).isoformat(),
+            ),
+        )
+
+    def test_is_expired_with_zulu_suffix(self) -> None:
+        """Test is_expired method with a 'Z' suffixed ISO 8601 string.
+
+        # ``datetime.fromisoformat`` accepts the 'Z' suffix, which denotes #
+        # UTC and therefore produces an offset-aware value.
+        """
+        past_zulu: str = (
+            datetime.now(timezone.utc) - timedelta(days=1)
+        ).isoformat().replace('+00:00', 'Z')
+        self.assertTrue(is_expired(past_zulu))
+
+        future_zulu: str = (
+            datetime.now(timezone.utc) + timedelta(days=1)
+        ).isoformat().replace('+00:00', 'Z')
+        self.assertFalse(is_expired(future_zulu))
 
     def test_should_notify_true(self) -> None:
         """Test should_notify returning True when cooldown period has passed.
