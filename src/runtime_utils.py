@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from datetime import timezone
 
 
 def is_expired(expire_date_str: str | None) -> bool:
@@ -8,9 +9,15 @@ def is_expired(expire_date_str: str | None) -> bool:
     if not expire_date_str:
         return False
     try:
-        return datetime.now() > datetime.fromisoformat(expire_date_str)
+        expiry = datetime.fromisoformat(expire_date_str)
     except ValueError:
         return False
+    if expiry.tzinfo is None:
+        # Naive timestamps keep the local-time interpretation.
+        return datetime.now() > expiry
+    # Offset-aware timestamps denote an absolute instant, so they are
+    # compared against the current UTC time.
+    return datetime.now(timezone.utc) > expiry
 
 
 def should_notify(
