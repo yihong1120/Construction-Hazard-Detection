@@ -46,7 +46,7 @@ cachecontrol==0.14.4 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via firebase-admin
 cachetools==6.2.4 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via google-auth
-certifi==2025.11.12 ; platform_machine == 'x86_64' and sys_platform == 'linux'
+certifi==2026.10.19 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via
     #   cloudinary
     #   httpcore
