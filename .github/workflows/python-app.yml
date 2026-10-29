@@ -54,6 +54,16 @@ jobs:
         uv sync --frozen --all-extras --no-extra yolo-gpu
     - name: Verify lockfile
       run: uv lock --check
+    - name: Audit dependency vulnerabilities
+      run: |
+        audit_requirements="$(mktemp)"
+        trap 'rm -f "$audit_requirements"' EXIT
+        # Audit every locked extra, including GPU packages, without installing
+        # those packages or resolving a different set of dependency versions.
+        uv export --locked --all-extras --no-emit-project \
+          --output-file "$audit_requirements" > /dev/null
+        uvx --from pip-audit==2.10.1 pip-audit --disable-pip --require-hashes \
+          --strict --progress-spinner off --requirement "$audit_requirements"
     - name: Lint with flake8
       run: |
         # Lint the full project, excluding local dependency and history trees.

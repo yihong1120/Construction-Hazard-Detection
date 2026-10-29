@@ -1,12 +1,13 @@
 """Generate the short-lived JWT Apple accepts as a Keycloak OIDC secret.
 
-The generated value is a credential. It is written only to stdout so an
-operator can place it directly in the deployment secret store or local .env;
+The generated credential is written to a new, owner-only file for transfer
+into the deployment secret store. It is never printed to terminal logs, and
 the private Apple .p8 key is never copied into the Keycloak container.
 """
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -25,6 +26,12 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--key-id', required=True)
     parser.add_argument('--client-id', required=True)
     parser.add_argument('--private-key-file', type=Path, required=True)
+    parser.add_argument(
+        '--output-file',
+        type=Path,
+        required=True,
+        help='New secret file to create with owner-only permissions.',
+    )
     parser.add_argument(
         '--expires-in-days',
         type=int,
@@ -76,14 +83,30 @@ def _apple_client_secret(args: argparse.Namespace) -> str:
     )
 
 
-def main() -> int:
-    """Print the generated secret without accidentally logging it elsewhere."""
+def _write_client_secret(path: Path, secret: str) -> None:
+    """Create a private file without overwriting files or following links."""
+    path = path.expanduser()
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        print(_apple_client_secret(_arguments()))
-    except ValueError as exc:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as output:
+            output.write(secret + '\n')
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def main() -> int:
+    """Save the credential privately and report only a non-sensitive status."""
+    args = _arguments()
+    try:
+        secret = _apple_client_secret(args)
+        _write_client_secret(args.output_file, secret)
+    except (OSError, ValueError, jwt.PyJWTError):
         raise SystemExit(
-            f'Apple client-secret generation failed: {exc}',
-        ) from exc
+            'Apple client-secret generation failed; check the configuration, '
+            'private key, and that the output path is new and writable.',
+        ) from None
+    print('Apple client secret saved to the requested file.')
     return 0
 
 

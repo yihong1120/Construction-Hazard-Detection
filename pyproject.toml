@@ -101,7 +101,7 @@ dev = [
   "pytest-xdist==3.8.0",
   "types-aiofiles",
   "types-requests",
-  "virtualenv==21.14.11",
+  "virtualenv==21.14.13",
 ]
 
 [tool.uv]
