@@ -602,7 +602,7 @@ uvicorn==0.40.0 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via
     #   construction-hazard-detection
     #   mcp
-virtualenv==21.14.11 ; platform_machine == 'x86_64' and sys_platform == 'linux'
+virtualenv==21.14.13 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via
     #   construction-hazard-detection
     #   pre-commit

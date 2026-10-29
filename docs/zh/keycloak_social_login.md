@@ -60,10 +60,14 @@ uv run python scripts/generate_apple_client_secret.py \
   --team-id "$APPLE_TEAM_ID" \
   --key-id "$APPLE_KEY_ID" \
   --client-id 'com.changdar.visionnaire.signin' \
-  --private-key-file config/secrets/apple/AuthKey_NGC4QBS7ZY.p8
+  --private-key-file config/secrets/apple/AuthKey_NGC4QBS7ZY.p8 \
+  --output-file config/secrets/apple/client-secret.jwt
 ```
 
-把輸出存入部署 secret／`.env`，然後啟用 provider：
+工具只會將 JWT 寫入指定的新檔案（權限 `0600`），終端只顯示完成狀態，
+不輸出密鑰。既有檔案與符號連結都不會被覆寫；輪替時請使用新的檔名。
+將檔案內容透過部署端的秘密管理機制匯入 secret／`.env`，避免用 `cat`、
+`echo` 或終端輸出來搬移密鑰，然後啟用 provider：
 
 ```dotenv
 KEYCLOAK_APPLE_ENABLED=true
