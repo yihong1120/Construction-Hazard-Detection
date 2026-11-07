@@ -1,0 +1,30 @@
+{
+  "E1": {
+    "path": "static/2025-05-10/9463a14a-681d-499e-8516-b6ffc89230f1.png",
+    "capture_time_visible": "2025-05-10 08:16:03",
+    "description": "同機位取樣：人員中心在管制區外",
+    "camera_group": "tower_overview_20250510",
+    "time_verification": "manually read from original image overlay"
+  },
+  "E2": {
+    "path": "static/2025-05-10/556feec3-55eb-47e7-a961-1805a8af30ce.png",
+    "capture_time_visible": "2025-05-10 08:21:23",
+    "description": "同機位取樣：人員中心在管制區內",
+    "camera_group": "tower_overview_20250510",
+    "time_verification": "manually read from original image overlay"
+  },
+  "E3": {
+    "path": "static/2025-05-10/45b96856-2a67-49a3-bd95-2af3b6d0ef69.png",
+    "capture_time_visible": "2025-05-10 09:09:40",
+    "description": "同機位取樣：人員中心在管制區外",
+    "camera_group": "tower_overview_20250510",
+    "time_verification": "manually read from original image overlay"
+  },
+  "E4": {
+    "path": "static/2025-05-10/038b32af-ec49-4431-888a-e2777f3ae7af.png",
+    "capture_time_visible": "2025-05-10 09:37:21",
+    "description": "同一畫面：管制區內與外人員",
+    "camera_group": "tower_overview_20250510",
+    "time_verification": "manually read from original image overlay"
+  }
+}

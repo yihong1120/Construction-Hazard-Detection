@@ -1,0 +1,22 @@
+{
+  "A": {
+    "path": "examples/YOLO_train/cv_dataset/images/11322198-e961-4d66-b2a6-07f88dd0742f.jpg",
+    "description": "橋下人員與兩組錐筒；禁區內、禁區外及人車接近案例",
+    "inside_person": "P1",
+    "outside_person": "P2",
+    "proximity_person": "P3",
+    "proximity_object": "M1"
+  },
+  "B": {
+    "path": "examples/YOLO_train/cv_dataset/images/1aad7a30-78f6-4bd0-8e59-71340038cfb1.jpg",
+    "description": "兩組錐筒所形成之禁區及其間人員",
+    "between_person": "P3"
+  },
+  "C": {
+    "path": "examples/YOLO_train/cv_dataset/images/4d2d0be6-2713-4a0f-9b16-1dbc01775578.jpg",
+    "description": "吊車操作室內與車外人員同框",
+    "occupant_person": "P2",
+    "exterior_person": "P1",
+    "occupant_object": "M1"
+  }
+}
