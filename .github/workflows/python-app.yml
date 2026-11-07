@@ -64,7 +64,8 @@ jobs:
       env:
         DEPLOY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
       run: >-
-        uvx --python 3.15 --from flake8==7.4.1 --with pydantic==2.14.1
+        uvx --python 3.15 --from flake8==7.4.1
+        --with pydantic==2.14.1 --with pydantic-settings==2.16.1
         python -m deploy.checks --base "$DEPLOY_BASE"
 
   dependency-audit:
