@@ -3,24 +3,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import numpy as np
-    from src.local_yolo_detector import LocalYoloDetector
+lazy import cv2
+lazy import numpy as np
 
-from examples.mcp_server.config import get_env_int
 from examples.mcp_server.schemas import InferenceResponse
+from examples.mcp_server.settings import McpImageSettings
 from src.async_http_client import AsyncHttpClientOwner
-
-_REMOTE_IMAGE_TIMEOUT_SECONDS = max(
-    1,
-    get_env_int('MCP_REMOTE_IMAGE_TIMEOUT_SECONDS', 20),
-)
-_MAX_REMOTE_IMAGE_BYTES = max(
-    1,
-    get_env_int('MCP_MAX_REMOTE_IMAGE_BYTES', 10 * 1024 * 1024),
-)
+lazy from src.local_yolo_detector import LocalYoloDetector
 
 
 class InferenceTools:
@@ -33,11 +23,12 @@ class InferenceTools:
     def __init__(self) -> None:
         """Initialise lazy inference resources."""
         self.logger = logging.getLogger(__name__)
+        self.settings = McpImageSettings()
         self._detector: LocalYoloDetector | None = None
         self._detector_config: tuple[str, bool, float] | None = None
         self._detector_lock = asyncio.Lock()
         self._http_client = AsyncHttpClientOwner(
-            timeout=_REMOTE_IMAGE_TIMEOUT_SECONDS,
+            timeout=self.settings.remote_image_timeout_seconds,
         )
 
     async def detect_frame(
@@ -113,8 +104,6 @@ class InferenceTools:
         Returns:
             A decoded OpenCV image (BGR), or ``None`` when decoding fails.
         """
-        import cv2
-        import numpy as np
 
         try:
             if image_base64:
@@ -129,7 +118,7 @@ class InferenceTools:
 
                 if (
                     len(image_base64)
-                    > ((_MAX_REMOTE_IMAGE_BYTES + 2) // 3) * 4
+                    > ((self.settings.max_remote_image_bytes + 2) // 3) * 4
                 ):
                     raise ValueError('Base64 image exceeds size limit')
                 image_bytes = base64.b64decode(image_base64, validate=True)
@@ -147,14 +136,15 @@ class InferenceTools:
                     content_length = response.headers.get('content-length')
                     if (
                         content_length is not None
-                        and int(content_length) > _MAX_REMOTE_IMAGE_BYTES
+                        and int(content_length)
+                        > self.settings.max_remote_image_bytes
                     ):
                         raise ValueError('Remote image exceeds size limit')
                     chunks: list[bytes] = []
                     total_bytes = 0
                     async for chunk in response.aiter_bytes():
                         total_bytes += len(chunk)
-                        if total_bytes > _MAX_REMOTE_IMAGE_BYTES:
+                        if total_bytes > self.settings.max_remote_image_bytes:
                             raise ValueError('Remote image exceeds size limit')
                         chunks.append(chunk)
                 nparr = np.frombuffer(b''.join(chunks), np.uint8)
@@ -188,15 +178,14 @@ class InferenceTools:
         costs for users who only interact with configuration or non-inference
         tools.
         """
-        from src.local_yolo_detector import LocalYoloDetector
 
         self._detector = await asyncio.to_thread(
             LocalYoloDetector,
             model_key=model_key,
             use_ultralytics=use_ultralytics,
             movement_thr=movement_thr,
-            fps=get_env_int('TARGET_FPS', 1),
-            max_id_keep=get_env_int('MAX_ID_KEEP', 10),
+            fps=self.settings.target_fps,
+            max_id_keep=self.settings.max_id_keep,
         )
 
         self.logger.info(

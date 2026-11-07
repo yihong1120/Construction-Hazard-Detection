@@ -27,7 +27,6 @@ class TestDeploymentContract(unittest.IsolatedAsyncioTestCase):
     """Exercise deployment-origin canonicalisation and token binding."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.binding = DeploymentBinding(
             tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
             deployment_id=UUID('00000000-0000-0000-0000-000000000002'),

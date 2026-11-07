@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 import redis.asyncio as redis
+from pydantic import Field
 
 from examples.streaming_web.metadata_keys import metadata_key_stream_id
 from examples.streaming_web.metadata_keys import metadata_key_stream_name
 from examples.streaming_web.schemas import FrameOutData
+from src.settings.base import EnvironmentSettings
+
+
+class MetadataReadSettings(EnvironmentSettings):
+    model_config = {'env_prefix': 'STREAMING_METADATA_'}
+    read_batch_size: int = Field(64, ge=1, le=1024)
+
+
+read_settings = MetadataReadSettings()
 
 
 def _extract_stream_id(redis_key: str) -> str:
@@ -74,7 +84,7 @@ async def fetch_latest_metadata_for_key(
     """
     messages = await rds.xread(
         {redis_key: last_id},
-        count=1,
+        count=read_settings.read_batch_size,
         block=block_ms,
     )
     if not messages:
@@ -84,7 +94,15 @@ async def fetch_latest_metadata_for_key(
     if not stream_messages:
         return None
 
-    message_id, data = stream_messages[0]
+    # Metadata is a replaceable live snapshot, not an event delivery log.
+    # Resolve the newest entry after XREAD wakes, including any backlog beyond
+    # its bounded batch. This keeps recovery O(1) in the number of old entries.
+    newest = (
+        (await rds.xrevrange(redis_key, count=1))
+        if len(stream_messages) >= read_settings.read_batch_size
+        else []
+    )
+    message_id, data = newest[0] if newest else stream_messages[-1]
     message_id_str = message_id.decode('utf-8')
     if message_id_str == last_id:
         return None

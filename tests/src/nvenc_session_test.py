@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from src import nvenc_session
 
 
@@ -35,10 +37,11 @@ def test_release_nvenc_session_never_makes_active_count_negative() -> None:
         nvenc_session._active_sessions = previous_sessions
 
 
-def test_nvenc_session_invalid_environment_uses_default(
+def test_nvenc_session_rejects_invalid_budget(
     monkeypatch: Any,
 ) -> None:
-    """An invalid process budget does not break media publishing."""
+    """Invalid budgets are rejected before a publisher reserves a session."""
     monkeypatch.setenv('MEDIA_NVENC_MAX_SESSIONS', 'not-a-number')
 
-    assert nvenc_session._max_sessions() == nvenc_session._default_max_sessions
+    with pytest.raises(ValueError):
+        nvenc_session._max_sessions()

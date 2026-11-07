@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -14,6 +15,86 @@ from examples.auth.user_service import list_effective_site_names_for_user
 from examples.auth.user_service import list_effective_sites_for_user
 from examples.auth.user_service import load_user_access_context
 from examples.auth.user_service import load_user_with_effective_sites
+
+
+def _asyncSetUp_make_simplenamespace(value):
+    _callbacks = _AsyncSetUpCallbackCallbacks()
+    _callbacks.value = value
+    return SimpleNamespace(
+        scalar=partial(_asyncSetUp_scalar, _callbacks.value),
+        scalar_one_or_none=partial(_asyncSetUp_scalar, _callbacks.value),
+        unique=_callbacks._call_make_simplenamespace,
+    )
+
+
+def _asyncSetUp_scalar(value, /):
+    return value
+
+
+def _asyncSetUp_make_simplenamespace2(values):
+    _callbacks = _AsyncSetUpCallbackCallbacks4()
+    _callbacks.values = values
+    return SimpleNamespace(
+        scalars=_callbacks._call_make_simplenamespace,
+    )
+
+
+class _AsyncSetUpCallbackCallbacks:
+    value: Any
+
+    def _call_make_simplenamespace(self):
+        _callbacks = _AsyncSetUpCallbackCallbacks2()
+        _callbacks.parent = self
+        return SimpleNamespace(
+            scalars=_callbacks._call_make_simplenamespace,
+        )
+
+
+class _AsyncSetUpCallbackCallbacks2:
+    parent: _AsyncSetUpCallbackCallbacks
+
+    def _call_make_simplenamespace(self):
+        _callbacks = _AsyncSetUpCallbackCallbacks3()
+        _callbacks.parent = self
+        return SimpleNamespace(one_or_none=_callbacks._call_one_or_none)
+
+
+class _AsyncSetUpCallbackCallbacks3:
+    parent: _AsyncSetUpCallbackCallbacks2
+
+    def _call_one_or_none(self):
+        return self.parent.parent.value
+
+
+class _AsyncSetUpCallbackCallbacks4:
+    values: Any
+
+    def _call_make_simplenamespace(self):
+        _callbacks = _AsyncSetUpCallbackCallbacks5()
+        _callbacks.parent = self
+        return SimpleNamespace(
+            all=_callbacks._call_all,
+            unique=_callbacks._call_make_simplenamespace,
+        )
+
+
+class _AsyncSetUpCallbackCallbacks5:
+    parent: _AsyncSetUpCallbackCallbacks4
+
+    def _call_all(self):
+        return self.parent.values
+
+    def _call_make_simplenamespace(self):
+        _callbacks = _AsyncSetUpCallbackCallbacks6()
+        _callbacks.parent = self
+        return SimpleNamespace(all=_callbacks._call_all)
+
+
+class _AsyncSetUpCallbackCallbacks6:
+    parent: _AsyncSetUpCallbackCallbacks5
+
+    def _call_all(self):
+        return self.parent.parent.values
 
 
 class TestCurrentUserSites(unittest.IsolatedAsyncioTestCase):
@@ -34,22 +115,11 @@ class TestCurrentUserSites(unittest.IsolatedAsyncioTestCase):
         # Supports: .scalar_one_or_none()
         #       and .unique().scalars().one_or_none()
         #       (new _load_user_by_username)
-        self.scalar_result = lambda value: SimpleNamespace(
-            scalar=lambda: value,
-            scalar_one_or_none=lambda: value,
-            unique=lambda: SimpleNamespace(
-                scalars=lambda: SimpleNamespace(one_or_none=lambda: value),
-            ),
-        )
+        self.scalar_result = _asyncSetUp_make_simplenamespace
         # Supports: .scalars().all()
         #       and .scalars().unique().all()
         #       (new list_effective_sites_for_user)
-        self.scalars_all_result = lambda values: SimpleNamespace(
-            scalars=lambda: SimpleNamespace(
-                all=lambda: values,
-                unique=lambda: SimpleNamespace(all=lambda: values),
-            ),
-        )
+        self.scalars_all_result = _asyncSetUp_make_simplenamespace2
 
     async def test_user_not_found_raises_404(self) -> None:
         """When the user cannot be found, raise ``HTTPException`` 404.

@@ -9,11 +9,6 @@ class ModelTools:
     """Expose only real model repository operations to MCP handlers."""
 
     def __init__(self, fetcher: ModelFetcher | None = None) -> None:
-        """Perform init.
-
-        Args:
-            fetcher: Value used by this callable.
-        """
         self._fetcher = fetcher
 
     @property

@@ -1,41 +1,39 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Callable
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
-import cv2
 import numpy as np
-from sahi.predict import get_sliced_prediction
+lazy from sahi.predict import get_sliced_prediction
 
 from examples.YOLO_server_api.config import get_inference_device
 from examples.YOLO_server_api.config import USE_SAHI
 from examples.YOLO_server_api.config import USE_TENSORRT
 
 
-def convert_to_image(data: bytes) -> np.ndarray:
-    """Convert raw bytes data to OpenCV BGR image array.
+@dataclass(frozen=True)
+class DetectionPolicy:
+    conflicts: tuple[tuple[int, int], ...] = ()
 
-    Args:
-        data: Raw image bytes data to be decoded.
-
-    Returns:
-        Decoded image as OpenCV BGR numpy array.
-
-    Raises:
-        cv2.error: If the image data cannot be decoded.
-    """
-    # Convert bytes to numpy array for image decoding
-    npimg = np.frombuffer(data, np.uint8)
-    image = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
-    if image is None:
-        raise cv2.error('Unable to decode image bytes')
-    return image
+    @classmethod
+    def from_classes(cls, classes) -> DetectionPolicy:
+        ids = {item.code: item.id for item in classes}
+        return cls(
+            tuple(
+                (ids[positive], ids[negative])
+                for positive, negative in (
+                    ('helmet', 'no_helmet'),
+                    ('safety_vest', 'no_safety_vest'),
+                )
+                if positive in ids and negative in ids
+            ),
+        )
 
 
-async def get_prediction_result(img: np.ndarray, model: Any) -> Any:
+def get_prediction_result(img: np.ndarray, model: Any) -> Any:
     """Generate prediction results using TensorRT, SAHI, or standard YOLO
     inference.
 
@@ -140,112 +138,32 @@ def _compile_ultralytics_detection_data(
     ]
 
 
-async def process_labels(
+def process_labels(
     datas: list[list[float | int]],
+    policy: DetectionPolicy = DetectionPolicy(),
 ) -> list[list[float | int]]:
-    """Process detection labels by removing overlapping and contained
-    detections.
-
-    Applies a multi-stage filtering process to clean up detection results:
-    1. Remove overlapping labels (e.g., hardhat vs no_hardhat conflicts)
-    2. Remove completely contained labels (nested detections)
-    3. Re-run overlap removal to catch any new conflicts
-
-    Args:
-        datas: List of detection data in format [x1, y1, x2, y2, conf, label].
-
-    Returns:
-        Cleaned detection data with conflicts resolved.
-
-    Note:
-        The double overlap removal ensures that removing contained labels
-        doesn't create new overlapping conflicts.
-    """
-    datas = await remove_overlapping_labels(datas)
-    return await remove_completely_contained_labels(datas)
+    """Resolve only semantic conflicts declared by the selected model."""
+    datas = remove_overlapping_labels(datas, policy)
+    return remove_completely_contained_labels(datas, policy)
 
 
-# Global semaphore for controlling concurrency in inference
-INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(4)
-
-
-async def run_detection_from_bytes(
-    img_bytes: bytes,
+def run_detection(
+    img: np.ndarray,
     model_instance: Any,
-    semaphore: asyncio.Semaphore | None = None,
+    policy: DetectionPolicy = DetectionPolicy(),
 ) -> tuple[list[list[float | int]], dict[str, float]]:
-    """Run detection on image bytes with concurrency control.
+    """Infer and filter a validated frame within its model lease."""
 
-    Args:
-        img_bytes: The raw image bytes.
-        model_instance: The loaded model instance.
-        semaphore:
-            The concurrency limit (optional).
-            If not provided, use INFERENCE_SEMAPHORE.
+    inference_start = time.monotonic()
+    result = get_prediction_result(img, model_instance)
+    inference_time = time.monotonic() - inference_start
 
-        Returns:
-                A tuple containing:
-                - A list of detection results in the format
-                    [x1, y1, x2, y2, conf, label].
-                - A dictionary with timing information for 'inference'
-                    and 'post' processing.
-    """
-    img = convert_to_image(img_bytes)
-
-    # Concurrency limit: use HTTP's limit by default, WS can pass its own
-    sem = semaphore or INFERENCE_SEMAPHORE
-
-    inference_start = time.time()
-    async with sem:
-        result = await get_prediction_result(img, model_instance)
-    inference_time = time.time() - inference_start
-
-    post_start = time.time()
+    post_start = time.monotonic()
     datas = compile_detection_data(result)
-    datas = await process_labels(datas)
-    post_time = time.time() - post_start
+    datas = process_labels(datas, policy)
+    post_time = time.monotonic() - post_start
 
     return datas, {'inference': inference_time, 'post': post_time}
-
-
-def get_category_indices(
-    datas: list[list[float | int]],
-) -> dict[str, list[int]]:
-    """Generate category indices for safety equipment detection filtering.
-
-    Creates index mappings for different safety equipment categories to enable
-    efficient conflict resolution between positive and negative detections.
-
-    Args:
-        datas: List of detection data in format [x1, y1, x2, y2, conf, label].
-
-    Returns:
-        Dictionary mapping category names to lists of detection indices:
-        - 'hardhat': Indices of hard hat detections (label 0)
-        - 'no_hardhat': Indices of no hard hat detections (label 2)
-        - 'safety_vest': Indices of safety vest detections (label 7)
-        - 'no_safety_vest': Indices of no safety vest detections (label 4)
-
-    Note:
-        Label IDs are based on the trained model's class definitions.
-    """
-    indices: dict[str, list[int]] = {
-        'hardhat': [],
-        'no_hardhat': [],
-        'safety_vest': [],
-        'no_safety_vest': [],
-    }
-    label_to_key = {
-        0: 'hardhat',
-        2: 'no_hardhat',
-        7: 'safety_vest',
-        4: 'no_safety_vest',
-    }
-    for i, detection in enumerate(datas):
-        key = label_to_key.get(int(detection[5]))
-        if key is not None:
-            indices[key].append(i)
-    return indices
 
 
 def _add_overlaps(
@@ -296,41 +214,26 @@ def _add_conflicting_pair_indices(
         add_fn(bad, idx1, idxs2, datas)
 
 
-async def remove_overlapping_labels(
+def remove_overlapping_labels(
     datas: list[list[float | int]],
+    policy: DetectionPolicy = DetectionPolicy(),
 ) -> list[list[float | int]]:
-    """Remove overlapping detections between conflicting safety equipment
-    categories.
-
-    Args:
-        datas: List of detection data in format [x1, y1, x2, y2, conf, label].
-
-    Returns:
-        Filtered detection data with overlapping conflicts removed.
-
-    Note:
-        Uses intersection over union (IoU) threshold to determine overlaps.
-        Memory cleanup with gc.collect() is performed after removal operations.
-    """
-    ci = get_category_indices(datas)
+    """Remove overlapping negative labels only for declared conflicts."""
     bad: set[int] = set()
-
-    # Find overlaps between hardhat and no_hardhat detections
-    _add_conflicting_pair_indices(
-        bad,
-        ci['hardhat'],
-        ci['no_hardhat'],
-        datas,
-        _add_overlaps,
-    )
-    # Find overlaps between safety_vest and no_safety_vest detections
-    _add_conflicting_pair_indices(
-        bad,
-        ci['safety_vest'],
-        ci['no_safety_vest'],
-        datas,
-        _add_overlaps,
-    )
+    for positive, negative in policy.conflicts:
+        positives = [
+            index for index, row in enumerate(datas) if int(row[5]) == positive
+        ]
+        negatives = [
+            index for index, row in enumerate(datas) if int(row[5]) == negative
+        ]
+        _add_conflicting_pair_indices(
+            bad,
+            positives,
+            negatives,
+            datas,
+            _add_overlaps,
+        )
 
     return _without_indices(datas, bad)
 
@@ -391,42 +294,26 @@ def area(
     return int(width * height)
 
 
-async def remove_completely_contained_labels(
+def remove_completely_contained_labels(
     datas: list[list[float | int]],
+    policy: DetectionPolicy = DetectionPolicy(),
 ) -> list[list[float | int]]:
-    """Remove detections that are completely contained within other detections.
-
-    Args:
-        datas: List of detection data in format [x1, y1, x2, y2, conf, label].
-
-    Returns:
-        Filtered detection data with contained detections removed.
-
-    Note:
-        Processes conflicting categories (hardhat vs no_hardhat, safety_vest vs
-        no_safety_vest) to resolve containment conflicts between positive and
-        negative detections.
-    """
-    ci = get_category_indices(datas)
+    """Resolve contained boxes only for declared conflicting classes."""
     bad: set[int] = set()
-
-    # Find contained detections between hardhat and no_hardhat categories
-    _add_conflicting_pair_indices(
-        bad,
-        ci['hardhat'],
-        ci['no_hardhat'],
-        datas,
-        _add_contained,
-    )
-    # Find contained detections between safety_vest
-    # and no_safety_vest categories
-    _add_conflicting_pair_indices(
-        bad,
-        ci['safety_vest'],
-        ci['no_safety_vest'],
-        datas,
-        _add_contained,
-    )
+    for positive, negative in policy.conflicts:
+        positives = [
+            index for index, row in enumerate(datas) if int(row[5]) == positive
+        ]
+        negatives = [
+            index for index, row in enumerate(datas) if int(row[5]) == negative
+        ]
+        _add_conflicting_pair_indices(
+            bad,
+            positives,
+            negatives,
+            datas,
+            _add_contained,
+        )
 
     return _without_indices(datas, bad)
 

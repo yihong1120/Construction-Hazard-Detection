@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import base64
-import os
 from urllib.parse import quote
+
+from src.settings.media import MediaGatewaySettings
 
 CLEAN_DEMAND_PREFIX = 'media_clean_demand'
 OVERLAY_DEMAND_PREFIX = 'media_overlay_demand'
@@ -153,11 +154,7 @@ def build_media_hls_url(path: str, base_url: str | None = None) -> str:
     Returns:
         Escaped HLS playlist URL.
     """
-    base = (
-        base_url
-        or os.getenv('MEDIA_PUBLIC_HLS_BASE_URL', '')
-        or '/hazard/media'
-    ).rstrip('/')
+    base = (base_url or MediaGatewaySettings().public_hls_base_url).rstrip('/')
     return f"{base}/{quote(path, safe='')}/index.m3u8"
 
 
@@ -171,9 +168,7 @@ def build_media_webrtc_url(path: str, base_url: str | None = None) -> str:
     Returns:
         Escaped WHEP endpoint URL.
     """
-    base = (
-        base_url
-        or os.getenv('MEDIA_PUBLIC_WEBRTC_BASE_URL', '')
-        or '/hazard/media/webrtc'
-    ).rstrip('/')
+    base = (base_url or MediaGatewaySettings().public_webrtc_base_url).rstrip(
+        '/',
+    )
     return f"{base}/{quote(path, safe='')}/whep"

@@ -1,6 +1,3 @@
-"""Token-shaped fixtures for storage tests; OIDC verifier tests use RSA
-keys.
-"""
 from __future__ import annotations
 
 from datetime import datetime

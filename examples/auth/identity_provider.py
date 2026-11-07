@@ -1,4 +1,3 @@
-"""Identity-provider-owned account-management boundaries."""
 from __future__ import annotations
 
 from fastapi import HTTPException

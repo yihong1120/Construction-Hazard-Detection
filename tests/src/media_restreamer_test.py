@@ -1,12 +1,140 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
 from src import media_restreamer as restreamer
+from src.media_encoding import EncoderOptions
+
+
+def _return_none(_name):
+    return None
+
+
+def _find_ffmpeg_uses_path_lookup_callback(_name):
+    return '/bin/ffmpeg'
+
+
+async def _start_creates_monitor_task_run_case() -> (
+    restreamer.MediaSourceRestreamer
+):
+    """Support run_case."""
+    stream = restreamer.MediaSourceRestreamer(
+        'rtsp://camera/stream',
+        'rtsp://127.0.0.1:8554/out',
+    )
+    await stream.start()
+    first_task = stream._monitor_task
+    await stream.start()
+    assert stream._monitor_task is first_task
+    await stream.close()
+    return stream
+
+
+def _monitor_loop_runs_one_process_callback(*_args):
+    return '/bin/ffmpeg'
+
+
+def _monitor_loop_runs_one_process_callback2(*_args):
+    return 'copy'
+
+
+async def _monitor_loop_sleeps_before_restart_fake_create_subprocess_exec(
+    *_args: Any,
+    **_kwargs: Any,
+) -> Any:
+    """Support fake_create_subprocess_exec."""
+    return _OneShotProcess()
+
+
+def _monitor_loop_releases_reserved_nvenc_callback(*_args):
+    return 'nvenc'
+
+
+def _return_true(*_args):
+    return True
+
+
+def _monitor_loop_releases_reserved_nvenc_append(releases, /, *_args):
+    return releases.append(True)
+
+
+def _monitor_loop_falls_back_when_callback(*_args):
+    return 'h264_nvenc'
+
+
+def _return_false(*_args):
+    return False
+
+
+async def _close_cancels_monitor_task_run_case() -> (
+    restreamer.MediaSourceRestreamer
+):
+    """Support run_case."""
+    stream = restreamer.MediaSourceRestreamer(
+        'rtsp://camera/stream',
+        'rtsp://127.0.0.1:8554/out',
+    )
+    stream._monitor_task = asyncio.create_task(asyncio.sleep(60))
+    await stream.close()
+    return stream
+
+
+class _MonitorLoopRunsOneProcessCallbacks:
+    calls: list[tuple[object, ...]]
+    stream: Any
+
+    async def _call_fake_create_subprocess_exec(
+        self,
+        *args: Any,
+        **_kwargs: Any,
+    ) -> Any:
+        """Support fake_create_subprocess_exec."""
+        self.calls.append(args)
+        self.stream._closed = True
+        return _OneShotProcess()
+
+
+class _MonitorLoopSleepsBeforeRestartCallbacks:
+    sleeps: list[bool]
+    stream: Any
+
+    async def _call_fake_sleep(self, _delay: float) -> None:
+        """Support fake_sleep."""
+        self.sleeps.append(True)
+        self.stream._closed = True
+
+
+class _MonitorLoopReleasesReservedNvencSessionCallbacks:
+    commands: list[tuple[object, ...]]
+    stream: Any
+
+    async def _call_fake_create_subprocess_exec(
+        self,
+        *args: Any,
+        **_kwargs: Any,
+    ) -> Any:
+        self.commands.append(args)
+        self.stream._closed = True
+        return _OneShotProcess()
+
+
+class _MonitorLoopFallsBackWhenNvencBudgetCallbacks:
+    commands: list[tuple[object, ...]]
+    stream: Any
+
+    async def _call_fake_create_subprocess_exec(
+        self,
+        *args: Any,
+        **_kwargs: Any,
+    ) -> Any:
+        self.commands.append(args)
+        self.stream._closed = True
+        return _OneShotProcess()
 
 
 class _FakeProcess:
@@ -66,38 +194,45 @@ class _OneShotProcess(_FakeProcess):
 
 
 def test_find_ffmpeg_prefers_environment(monkeypatch: Any) -> None:
-    """Exercise this test."""
     monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
 
-    assert restreamer._find_ffmpeg() == '/custom/ffmpeg'
+    assert (
+        restreamer.SourceCommandBuilder(
+            EncoderOptions(),
+        ).find_ffmpeg()
+        == '/custom/ffmpeg'
+    )
 
 
 def test_find_ffmpeg_raises_when_missing(monkeypatch: Any) -> None:
-    """Exercise this test."""
     monkeypatch.delenv('MEDIA_FFMPEG_PATH', raising=False)
-    monkeypatch.setattr(restreamer.shutil, 'which', lambda _name: None)
+    monkeypatch.setattr(restreamer.shutil, 'which', _return_none)
 
     with pytest.raises(RuntimeError, match='ffmpeg'):
-        restreamer._find_ffmpeg()
+        restreamer.SourceCommandBuilder(EncoderOptions()).find_ffmpeg()
 
 
 def test_find_ffmpeg_uses_path_lookup(monkeypatch: Any) -> None:
-    """Exercise this test."""
     monkeypatch.delenv('MEDIA_FFMPEG_PATH', raising=False)
     monkeypatch.setattr(
         restreamer.shutil,
         'which',
-        lambda _name: '/bin/ffmpeg',
+        _find_ffmpeg_uses_path_lookup_callback,
     )
 
-    assert restreamer._find_ffmpeg() == '/bin/ffmpeg'
+    assert (
+        restreamer.SourceCommandBuilder(
+            EncoderOptions(),
+        ).find_ffmpeg()
+        == '/bin/ffmpeg'
+    )
 
 
 def test_build_command_uses_rtsp_tcp_for_rtsp_source(monkeypatch: Any) -> None:
-    """Exercise this test."""
     monkeypatch.setenv('MEDIA_PUBLISH_CLEAN_FPS', '12')
+    monkeypatch.setenv('MEDIA_PUBLISH_KEYFRAME_INTERVAL_SECONDS', '2')
 
-    command = restreamer._build_command(
+    command = restreamer.SourceCommandBuilder(EncoderOptions()).build_command(
         '/bin/ffmpeg',
         'rtsp://camera/stream',
         'rtsp://127.0.0.1:8554/out',
@@ -113,10 +248,10 @@ def test_build_command_uses_rtsp_tcp_for_rtsp_source(monkeypatch: Any) -> None:
 def test_build_command_adds_timing_for_encoded_stream(
     monkeypatch: Any,
 ) -> None:
-    """Exercise this test."""
     monkeypatch.setenv('MEDIA_PUBLISH_CLEAN_FPS', '12')
+    monkeypatch.setenv('MEDIA_PUBLISH_KEYFRAME_INTERVAL_SECONDS', '2')
 
-    command = restreamer._build_command(
+    command = restreamer.SourceCommandBuilder(EncoderOptions()).build_command(
         '/bin/ffmpeg',
         'https://example.test/stream.m3u8',
         'rtsp://127.0.0.1:8554/out',
@@ -130,8 +265,7 @@ def test_build_command_adds_timing_for_encoded_stream(
 
 
 def test_build_command_uses_nvenc_options() -> None:
-    """Exercise this test."""
-    command = restreamer._build_command(
+    command = restreamer.SourceCommandBuilder(EncoderOptions()).build_command(
         '/bin/ffmpeg',
         'https://example.test/stream.m3u8',
         'rtsp://127.0.0.1:8554/out',
@@ -143,23 +277,30 @@ def test_build_command_uses_nvenc_options() -> None:
 
 
 def test_get_encoder_prefers_clean_encoder(monkeypatch: Any) -> None:
-    """Exercise this test."""
     monkeypatch.setenv('MEDIA_RESTREAM_ENCODER', 'copy')
     monkeypatch.setenv('MEDIA_PUBLISH_CLEAN_ENCODER', 'libx264')
 
-    assert restreamer._get_encoder() == 'libx264'
+    assert (
+        restreamer.SourceCommandBuilder(
+            EncoderOptions(),
+        ).get_encoder()
+        == 'libx264'
+    )
 
 
 def test_get_encoder_uses_restream_encoder(monkeypatch: Any) -> None:
-    """Exercise this test."""
     monkeypatch.delenv('MEDIA_PUBLISH_CLEAN_ENCODER', raising=False)
     monkeypatch.setenv('MEDIA_RESTREAM_ENCODER', 'copy')
 
-    assert restreamer._get_encoder() == 'copy'
+    assert (
+        restreamer.SourceCommandBuilder(
+            EncoderOptions(),
+        ).get_encoder()
+        == 'copy'
+    )
 
 
 def test_stop_process_terminates_live_process() -> None:
-    """Exercise this test."""
     stream = restreamer.MediaSourceRestreamer(
         'rtsp://camera/stream',
         'rtsp://127.0.0.1:8554/out',
@@ -175,7 +316,6 @@ def test_stop_process_terminates_live_process() -> None:
 
 
 def test_stop_process_kills_after_timeout() -> None:
-    """Exercise this test."""
     stream = restreamer.MediaSourceRestreamer(
         'rtsp://camera/stream',
         'rtsp://127.0.0.1:8554/out',
@@ -222,20 +362,8 @@ def test_restart_ignores_closed_restreamer() -> None:
 
 
 def test_start_creates_monitor_task() -> None:
-    """Exercise this test."""
 
-    async def run_case() -> restreamer.MediaSourceRestreamer:
-        """Support run_case."""
-        stream = restreamer.MediaSourceRestreamer(
-            'rtsp://camera/stream',
-            'rtsp://127.0.0.1:8554/out',
-        )
-        await stream.start()
-        first_task = stream._monitor_task
-        await stream.start()
-        assert stream._monitor_task is first_task
-        await stream.close()
-        return stream
+    run_case = _start_creates_monitor_task_run_case
 
     stream = asyncio.run(run_case())
 
@@ -243,52 +371,61 @@ def test_start_creates_monitor_task() -> None:
 
 
 def test_monitor_loop_runs_one_process(monkeypatch: Any) -> None:
-    """Exercise this test."""
 
-    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
-        """Support fake_create_subprocess_exec."""
-        calls.append(args)
-        stream._closed = True
-        return _OneShotProcess()
+    _callbacks = _MonitorLoopRunsOneProcessCallbacks()
+    fake_create_subprocess_exec = _callbacks._call_fake_create_subprocess_exec
 
-    calls: list[tuple[object, ...]] = []
-    stream = restreamer.MediaSourceRestreamer(
+    _callbacks.calls = []
+    _callbacks.stream = restreamer.MediaSourceRestreamer(
         'rtsp://camera/stream',
         'rtsp://127.0.0.1:8554/out',
     )
-    monkeypatch.setattr(restreamer, '_find_ffmpeg', lambda: '/bin/ffmpeg')
-    monkeypatch.setattr(restreamer, '_get_encoder', lambda: 'copy')
+    monkeypatch.setattr(
+        restreamer.SourceCommandBuilder,
+        'find_ffmpeg',
+        _monitor_loop_runs_one_process_callback,
+    )
+    monkeypatch.setattr(
+        restreamer.SourceCommandBuilder,
+        'get_encoder',
+        _monitor_loop_runs_one_process_callback2,
+    )
     monkeypatch.setattr(
         restreamer.asyncio,
         'create_subprocess_exec',
         fake_create_subprocess_exec,
     )
 
-    asyncio.run(stream._monitor_loop())
+    asyncio.run(_callbacks.stream._monitor_loop())
 
-    assert calls
-    assert calls[0][0] == '/bin/ffmpeg'
+    assert _callbacks.calls
+    assert _callbacks.calls[0][0] == '/bin/ffmpeg'
 
 
 def test_monitor_loop_sleeps_before_restart(monkeypatch: Any) -> None:
-    """Exercise this test."""
 
-    async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> Any:
-        """Support fake_create_subprocess_exec."""
-        return _OneShotProcess()
+    _callbacks = _MonitorLoopSleepsBeforeRestartCallbacks()
+    fake_create_subprocess_exec = (
+        _monitor_loop_sleeps_before_restart_fake_create_subprocess_exec
+    )
 
-    async def fake_sleep(_delay: float) -> None:
-        """Support fake_sleep."""
-        sleeps.append(True)
-        stream._closed = True
+    fake_sleep = _callbacks._call_fake_sleep
 
-    sleeps: list[bool] = []
-    stream = restreamer.MediaSourceRestreamer(
+    _callbacks.sleeps = []
+    _callbacks.stream = restreamer.MediaSourceRestreamer(
         'rtsp://camera/stream',
         'rtsp://127.0.0.1:8554/out',
     )
-    monkeypatch.setattr(restreamer, '_find_ffmpeg', lambda: '/bin/ffmpeg')
-    monkeypatch.setattr(restreamer, '_get_encoder', lambda: 'copy')
+    monkeypatch.setattr(
+        restreamer.SourceCommandBuilder,
+        'find_ffmpeg',
+        _monitor_loop_runs_one_process_callback,
+    )
+    monkeypatch.setattr(
+        restreamer.SourceCommandBuilder,
+        'get_encoder',
+        _monitor_loop_runs_one_process_callback2,
+    )
     monkeypatch.setattr(
         restreamer.asyncio,
         'create_subprocess_exec',
@@ -296,43 +433,44 @@ def test_monitor_loop_sleeps_before_restart(monkeypatch: Any) -> None:
     )
     monkeypatch.setattr(restreamer.asyncio, 'sleep', fake_sleep)
 
-    asyncio.run(stream._monitor_loop())
+    asyncio.run(_callbacks.stream._monitor_loop())
 
-    assert sleeps == [True]
+    assert _callbacks.sleeps == [True]
 
 
 def test_monitor_loop_releases_reserved_nvenc_session(
     monkeypatch: Any,
 ) -> None:
     """NVENC reservations are released after the ffmpeg process exits."""
+    _callbacks = _MonitorLoopReleasesReservedNvencSessionCallbacks()
 
-    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
-        """Perform fake create subprocess exec.
+    fake_create_subprocess_exec = _callbacks._call_fake_create_subprocess_exec
 
-        Args:
-            *args: Value used by this callable.
-            **_kwargs: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        commands.append(args)
-        stream._closed = True
-        return _OneShotProcess()
-
-    commands: list[tuple[object, ...]] = []
+    _callbacks.commands = []
     releases: list[bool] = []
-    stream = restreamer.MediaSourceRestreamer(
+    _callbacks.stream = restreamer.MediaSourceRestreamer(
         'rtsp://camera/stream',
         'rtsp://127.0.0.1:8554/out',
     )
-    monkeypatch.setattr(restreamer, '_find_ffmpeg', lambda: '/bin/ffmpeg')
-    monkeypatch.setattr(restreamer, '_get_encoder', lambda: 'nvenc')
-    monkeypatch.setattr(restreamer, 'try_acquire_nvenc_session', lambda: True)
+    monkeypatch.setattr(
+        restreamer.SourceCommandBuilder,
+        'find_ffmpeg',
+        _monitor_loop_runs_one_process_callback,
+    )
+    monkeypatch.setattr(
+        restreamer.SourceCommandBuilder,
+        'get_encoder',
+        _monitor_loop_releases_reserved_nvenc_callback,
+    )
+    monkeypatch.setattr(
+        restreamer,
+        'try_acquire_nvenc_session',
+        _return_true,
+    )
     monkeypatch.setattr(
         restreamer,
         'release_nvenc_session',
-        lambda: releases.append(True),
+        partial(_monitor_loop_releases_reserved_nvenc_append, releases),
     )
     monkeypatch.setattr(
         restreamer.asyncio,
@@ -340,9 +478,9 @@ def test_monitor_loop_releases_reserved_nvenc_session(
         fake_create_subprocess_exec,
     )
 
-    asyncio.run(stream._monitor_loop())
+    asyncio.run(_callbacks.stream._monitor_loop())
 
-    assert 'h264_nvenc' in commands[0]
+    assert 'h264_nvenc' in _callbacks.commands[0]
     assert releases == [True]
 
 
@@ -350,52 +488,44 @@ def test_monitor_loop_falls_back_when_nvenc_budget_is_full(
     monkeypatch: Any,
 ) -> None:
     """A full local NVENC budget uses the software encoder for this stream."""
+    _callbacks = _MonitorLoopFallsBackWhenNvencBudgetCallbacks()
 
-    async def fake_create_subprocess_exec(*args: Any, **_kwargs: Any) -> Any:
-        """Perform fake create subprocess exec.
+    fake_create_subprocess_exec = _callbacks._call_fake_create_subprocess_exec
 
-        Args:
-            *args: Value used by this callable.
-            **_kwargs: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        commands.append(args)
-        stream._closed = True
-        return _OneShotProcess()
-
-    commands: list[tuple[object, ...]] = []
-    stream = restreamer.MediaSourceRestreamer(
+    _callbacks.commands = []
+    _callbacks.stream = restreamer.MediaSourceRestreamer(
         'rtsp://camera/stream',
         'rtsp://127.0.0.1:8554/out',
     )
-    monkeypatch.setattr(restreamer, '_find_ffmpeg', lambda: '/bin/ffmpeg')
-    monkeypatch.setattr(restreamer, '_get_encoder', lambda: 'h264_nvenc')
-    monkeypatch.setattr(restreamer, 'try_acquire_nvenc_session', lambda: False)
+    monkeypatch.setattr(
+        restreamer.SourceCommandBuilder,
+        'find_ffmpeg',
+        _monitor_loop_runs_one_process_callback,
+    )
+    monkeypatch.setattr(
+        restreamer.SourceCommandBuilder,
+        'get_encoder',
+        _monitor_loop_falls_back_when_callback,
+    )
+    monkeypatch.setattr(
+        restreamer,
+        'try_acquire_nvenc_session',
+        _return_false,
+    )
     monkeypatch.setattr(
         restreamer.asyncio,
         'create_subprocess_exec',
         fake_create_subprocess_exec,
     )
 
-    asyncio.run(stream._monitor_loop())
+    asyncio.run(_callbacks.stream._monitor_loop())
 
-    assert 'libx264' in commands[0]
+    assert 'libx264' in _callbacks.commands[0]
 
 
 def test_close_cancels_monitor_task() -> None:
-    """Exercise this test."""
 
-    async def run_case() -> restreamer.MediaSourceRestreamer:
-        """Support run_case."""
-        stream = restreamer.MediaSourceRestreamer(
-            'rtsp://camera/stream',
-            'rtsp://127.0.0.1:8554/out',
-        )
-        stream._monitor_task = asyncio.create_task(asyncio.sleep(60))
-        await stream.close()
-        return stream
+    run_case = _close_cancels_monitor_task_run_case
 
     stream = asyncio.run(run_case())
 

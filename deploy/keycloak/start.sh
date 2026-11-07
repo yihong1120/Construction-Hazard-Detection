@@ -4,6 +4,8 @@ set -euo pipefail
 template=/opt/keycloak/data/visionnaire-realm.template.json
 realm_file=/opt/keycloak/data/import/visionnaire-realm.json
 realm=visionnaire
+# Generated from the canonical policy during the image build.
+source /opt/keycloak/data/session-policy.env
 browser_flow=visionnaire-browser
 browser_forms_flow=visionnaire-browser-forms
 kcadm=/opt/keycloak/bin/kcadm.sh
@@ -226,16 +228,51 @@ configure_required_actions() {
 }
 
 configure_session_lifetimes() {
-    # Browser applications must not retain a login longer than the OIDC
-    # session that authorizes their delegated API calls. Keep one workday of
-    # idle time and a hard ten-hour ceiling; access tokens remain short-lived.
-    "$kcadm" update "realms/${realm}" \
-        -s 'ssoSessionIdleTimeout=28800' \
-        -s 'ssoSessionMaxLifespan=36000' \
-        -s 'clientSessionIdleTimeout=28800' \
-        -s 'clientSessionMaxLifespan=36000' \
-        -s 'accessTokenLifespan=300' \
-        >/dev/null
+    local key name value json client_id optional
+    local -a settings=()
+    for key in "${!SESSION_POLICY_REALM[@]}"; do
+        settings+=(-s "$key=${SESSION_POLICY_REALM[$key]}")
+    done
+    "$kcadm" update "realms/${realm}" "${settings[@]}" >/dev/null
+    json=$("$kcadm" get "realms/${realm}")
+    for key in "${!SESSION_POLICY_REALM[@]}"; do
+        value=${SESSION_POLICY_REALM[$key]}
+        if ! grep -Eq "\"$key\"[[:space:]]*:[[:space:]]*$value([,}[:space:]]|$)" <<< "$json"; then
+            echo "Realm session policy readback failed: $key" >&2
+            return 1
+        fi
+    done
+    for name in "${SESSION_POLICY_CLIENTS[@]}"; do
+        json=$("$kcadm" get clients --target-realm "$realm" \
+            --query "clientId=$name" --fields id)
+        if [[ $json =~ \"id\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+            client_id=${BASH_REMATCH[1]}
+        else
+            optional=false
+            for value in "${SESSION_POLICY_OPTIONAL_CLIENTS[@]}"; do
+                if [[ $name == "$value" ]]; then optional=true; fi
+            done
+            if "$optional"; then continue; fi
+            echo "Session policy client not found: $name" >&2
+            return 1
+        fi
+        settings=()
+        for key in "${!SESSION_POLICY_ATTRIBUTES[@]}"; do
+            value=${SESSION_POLICY_ATTRIBUTES[$key]}
+            settings+=(-s "attributes.\"$key\"=\"$value\"")
+        done
+        "$kcadm" update "clients/$client_id" --target-realm "$realm" \
+            "${settings[@]}" >/dev/null
+        json=$("$kcadm" get "clients/$client_id" --target-realm "$realm")
+        for key in "${!SESSION_POLICY_ATTRIBUTES[@]}"; do
+            value=${SESSION_POLICY_ATTRIBUTES[$key]}
+            key=${key//./\\.}
+            if ! grep -Eq "\"$key\"[[:space:]]*:[[:space:]]*\"$value\"" <<< "$json"; then
+                echo "Client session policy readback failed: $name ($key)" >&2
+                return 1
+            fi
+        done
+    done
 }
 
 configure_visionnaire_browser_flow() {
@@ -385,7 +422,7 @@ configure_mobile_client() {
         -s 'directAccessGrantsEnabled=false' \
         -s 'serviceAccountsEnabled=false' \
         -s 'redirectUris=["com.changdar.visionnaire:/oauthredirect"]' \
-        -s 'attributes={"pkce.code.challenge.method":"S256","post.logout.redirect.uris":"com.changdar.visionnaire:/oauthredirect"}' \
+        -s "attributes={\"pkce.code.challenge.method\":\"S256\",\"post.logout.redirect.uris\":\"com.changdar.visionnaire:/oauthredirect\",\"client.session.idle.timeout\":\"${SSO_SESSION_IDLE_SECONDS}\",\"client.session.max.lifespan\":\"${SSO_SESSION_MAX_SECONDS}\",\"access.token.lifespan\":\"${ACCESS_TOKEN_SECONDS}\"}" \
         >/dev/null
 
     if ! "$kcadm" get "clients/${client_id}/protocol-mappers/models" \

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from typing import Any
+from dataclasses import replace
+from typing import Literal
 from urllib.parse import parse_qsl
 from urllib.parse import urlencode
 from urllib.parse import urlsplit
@@ -24,16 +24,20 @@ from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.deployment_context import resolve_request_deployment
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.auth.media_session_request import MediaSessionOwner
+from examples.auth.media_session_request import MediaSessionRequest
 from examples.auth.session_store import auth_session_key
 from examples.auth.session_store import create_media_session
 from examples.auth.session_store import delete_media_session
 from examples.auth.session_store import get_auth_session
+from examples.auth.session_store import media_parent_generation
 from examples.auth.session_store import MEDIA_SESSION_TTL_SECONDS
 from examples.auth.session_store import renew_media_session
 from examples.auth.token_revocation import is_access_token_revoked
 from examples.bff.proxy import get_proxy_access_token
 from examples.bff.security import check_csrf
 from examples.bff.security import SESSION_COOKIE
+from examples.db_management.schemas.playback import PlaybackMediaSession
 from examples.db_management.schemas.playback import PlaybackProfile
 from examples.db_management.schemas.playback import PlaybackRenewRequest
 from examples.db_management.schemas.playback import PlaybackSessionRequest
@@ -51,16 +55,13 @@ from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_preview_media_path
 from examples.streaming_web.overlay_labels import normalise_label_language
 from src.http_client_pool import HttpClientPool
+from src.settings.connections import PlaybackTransportSettings
 
 _STREAMING_RESPONSE = TypeAdapter(dict[str, object])
-STREAMING_PLAYBACK_API_URL = os.getenv(
-    'PLAYBACK_STREAMING_API_URL',
-    'http://127.0.0.1:8800',
-).rstrip('/')
+playback_transport = PlaybackTransportSettings()
+STREAMING_PLAYBACK_API_URL = playback_transport.api_url
 PLAYBACK_PUBLIC_BASE_PATH = '/hazard/api/db_management/api/playback'
-PLAYBACK_UPSTREAM_TIMEOUT_SECONDS = float(
-    os.getenv('PLAYBACK_UPSTREAM_TIMEOUT_SECONDS', '20'),
-)
+PLAYBACK_UPSTREAM_TIMEOUT_SECONDS = playback_transport.timeout_seconds
 
 
 async def _request_http_client(
@@ -77,7 +78,7 @@ async def _request_http_client(
 
 
 @dataclass(frozen=True)
-class PlaybackPrincipal:
+class PlaybackPrincipal(MediaSessionOwner):
     """Represent an authenticated identity authorised for playback.
 
     Attributes:
@@ -89,10 +90,6 @@ class PlaybackPrincipal:
             service.
     """
 
-    username: str
-    user_id: int
-    parent: str
-    platform: str
     access_token: str
 
 
@@ -186,7 +183,14 @@ async def _resolve_playback_principal(
             deployment,
         )
         user_id = credentials.subject['user_id']
+        generation = await media_parent_generation(
+            redis,
+            f'native:user:{user_id}',
+        )
+        if await is_access_token_revoked(redis, credentials.subject):
+            raise HTTPException(401, 'Invalid access token')
         return PlaybackPrincipal(
+            generation=generation,
             username=credentials.subject['username'],
             user_id=user_id,
             parent=f"native:user:{user_id}",
@@ -213,6 +217,10 @@ async def _resolve_playback_principal(
         username=credentials.subject['username'],
         user_id=credentials.subject['user_id'],
         parent=auth_session_key(session_id),
+        generation=await media_parent_generation(
+            redis,
+            auth_session_key(session_id),
+        ),
         platform='web',
         access_token=access_token,
     )
@@ -347,33 +355,19 @@ def _with_media_token(url: object, media_token: str) -> str:
 
 
 def _signed_stream_item(
-    item: dict[str, object],
+    item: StreamingPlaybackItem,
     media_token: str,
-) -> dict[str, object]:
-    """Add the scoped media token to HLS and playback URLs.
-
-    Args:
-        item: Upstream stream item containing media URLs.
-        media_token: Scoped token authorising access to the media session.
-
-    Returns:
-        Copy of the stream item with signed HLS and playback URLs.
-    """
-    signed = dict(item)
-    media_hls_url = _with_media_token(
-        item.get('media_hls_url', ''),
-        media_token,
+) -> StreamingPlaybackItem:
+    hls = _with_media_token(item.media_hls_url, media_token)
+    playback = (
+        _with_media_token(item.playback_url, media_token)
+        if item.playback_url
+        else None
     )
-    signed['media_hls_url'] = media_hls_url
-    if item.get('playback_url'):
-        signed['playback_url'] = _with_media_token(
-            item['playback_url'],
-            media_token,
-        )
-        signed['hls_url'] = signed['playback_url']
-    else:
-        signed['hls_url'] = media_hls_url
-    return signed
+    updates = {'media_hls_url': hls, 'hls_url': playback or hls}
+    if playback is not None:
+        updates['playback_url'] = playback
+    return item.model_copy(update=updates)
 
 
 def _playback_endpoints() -> dict[str, str]:
@@ -450,148 +444,83 @@ def _playback_demand_keys(
 
 async def _create_scoped_media_session(
     redis: Redis,
-    *,
-    principal: PlaybackPrincipal,
-    site: str,
-    cameras: list[str],
-    profile: str,
-    quality: str,
-    language: str | None,
-    playback_sessions: dict[str, dict[str, object]],
-) -> tuple[str, dict[str, Any]]:
-    """Create a media session scoped to validated playback streams.
-
-    Args:
-        redis: Redis connection used to store the media session.
-        principal: Authenticated caller that owns the media session.
-        site: Site containing the authorised cameras.
-        cameras: Camera keys authorised by the upstream response.
-        profile: Normalised clean or overlay render profile.
-        quality: Detail or preview rendition quality.
-        language: Optional label language for overlay rendering.
-        playback_sessions: Trusted upstream sessions bound to this capability.
-
-    Returns:
-        Scoped media token and the persisted media-session record.
-    """
-    kwargs: dict[str, Any] = {
-        'user_id': principal.user_id,
-        'username': principal.username,
-        'site': site,
-        'profile': profile,
-        'parent': principal.parent,
-        'platform': principal.platform,
-        'language': language,
-        'quality': quality,
-        'purpose': 'playback',
-        'demand_keys': _playback_demand_keys(
-            site=site,
-            cameras=cameras,
-            profile=profile,
-            quality=quality,
-            language=language,
+    request: MediaSessionRequest,
+) -> tuple[str, PlaybackMediaSession]:
+    token, data = await create_media_session(
+        redis,
+        replace(
+            request,
+            batch=len(request.cameras) > 1,
+            purpose='playback',
+            demand_keys=_playback_demand_keys(
+                site=request.site,
+                cameras=list(request.cameras),
+                profile=request.profile,
+                quality=request.quality or 'detail',
+                language=request.language,
+            ),
         ),
-        'playback_sessions': playback_sessions,
-    }
-    if len(cameras) == 1:
-        kwargs['camera'] = cameras[0]
-    else:
-        kwargs['cameras'] = cameras
-    return await create_media_session(redis, **kwargs)
+    )
+    return token, PlaybackMediaSession.model_validate(data)
 
 
-def _single_response_body(
-    *,
-    media_session: dict[str, object],
-    stream_item: dict[str, object],
-    media_token: str,
-    site: str,
-    camera: str,
-) -> dict[str, object]:
-    """Build the public response body for one playback stream.
+@dataclass(frozen=True)
+class PlaybackResult:
+    session: PlaybackMediaSession
+    streams: tuple[StreamingPlaybackItem, ...]
+    token: str
+    kind: Literal['single', 'wall'] = 'single'
+    max_streams: int | None = None
 
-    Args:
-        media_session: Persisted scoped media session.
-        stream_item: Validated upstream stream item.
-        media_token: Scoped token used to sign media URLs.
-        site: Requested site label.
-        camera: Resolved camera key.
-
-    Returns:
-        Single-camera playback response body.
-    """
-    signed = _signed_stream_item(stream_item, media_token)
-    return {
-        **_playback_endpoints(),
-        **signed,
-        'id': str(media_session['id']),
-        'mode': 'single',
-        'site': site,
-        'camera': camera,
-        'title': camera,
-        'quality': 'detail',
-        'token_transport': 'query',
-        'expires_in': MEDIA_SESSION_TTL_SECONDS,
-    }
-
-
-def _wall_response_body(
-    *,
-    media_session: dict[str, object],
-    stream_items: list[dict[str, object]],
-    media_token: str,
-    site: str,
-    profile: str,
-    max_streams: int | None,
-) -> dict[str, object]:
-    """Build the public response body for a multi-camera playback wall.
-
-    Args:
-        media_session: Persisted scoped media session.
-        stream_items: Validated upstream stream items.
-        media_token: Scoped token used to sign media URLs.
-        site: Requested site label.
-        profile: Normalised render profile.
-        max_streams: Upstream maximum concurrent streams.
-
-    Returns:
-        Responsive multi-camera playback response body.
-    """
-    items: list[dict[str, object]] = []
-    for item in stream_items:
-        signed = _signed_stream_item(item, media_token)
-        camera = str(signed.get('key') or '')
-        items.append(
-            {
-                'camera': camera,
-                'title': camera,
-                'detail_camera': camera,
-                'stream_id': signed.get('stream_id'),
-                'session_id': signed.get('session_id'),
-                'status': signed.get('status'),
-                'state': signed.get('state'),
-                'profile': signed.get('profile'),
-                'language': signed.get('language'),
-                'overlay_ready': signed.get('overlay_ready'),
-                'preview_hls_url': signed['hls_url'],
-                'hls_url': signed['hls_url'],
-                'playback_url': signed.get('playback_url'),
-            },
+    def serialize(self) -> dict[str, object]:
+        signed = tuple(
+            _signed_stream_item(item, self.token) for item in self.streams
         )
-    return {
-        **_playback_endpoints(),
-        'id': str(media_session['id']),
-        'mode': 'multi_stream',
-        'layout': 'responsive',
-        'site': site,
-        'quality': 'preview',
-        'profile': profile,
-        'token_transport': 'query',
-        'expires_in': MEDIA_SESSION_TTL_SECONDS,
-        'count': len(items),
-        'max_streams': max_streams,
-        'items': items,
-    }
+        common: dict[str, object] = {
+            **_playback_endpoints(),
+            'id': self.session.id,
+            'site': self.session.site,
+            'token_transport': 'query',
+            'expires_in': MEDIA_SESSION_TTL_SECONDS,
+        }
+        if self.kind == 'single':
+            item = signed[0]
+            return {
+                **item.model_dump(exclude_unset=True),
+                **common,
+                'id': self.session.id,
+                'mode': 'single',
+                'camera': item.key,
+                'title': item.key,
+                'quality': 'detail',
+            }
+        return {
+            **common,
+            'mode': 'multi_stream',
+            'layout': 'responsive',
+            'quality': 'preview',
+            'profile': self.session.profile,
+            'count': len(signed),
+            'max_streams': self.max_streams,
+            'items': [
+                dict(
+                    camera=item.key,
+                    title=item.key,
+                    detail_camera=item.key,
+                    stream_id=item.stream_id,
+                    session_id=item.session_id,
+                    status=item.status,
+                    state=item.state,
+                    profile=item.profile,
+                    language=item.language,
+                    overlay_ready=item.overlay_ready,
+                    preview_hls_url=item.hls_url,
+                    hls_url=item.hls_url,
+                    playback_url=item.playback_url,
+                )
+                for item in signed
+            ],
+        }
 
 
 async def _create_single_playback(
@@ -599,7 +528,7 @@ async def _create_single_playback(
     principal: PlaybackPrincipal,
     redis: Redis,
     http_client: httpx.AsyncClient | None = None,
-) -> tuple[dict[str, object], int]:
+) -> tuple[PlaybackResult, int]:
     """Create one detail-quality playback media capability.
 
     Args:
@@ -637,24 +566,14 @@ async def _create_single_playback(
         ) from exc
     token, session = await _create_scoped_media_session(
         redis,
-        principal=principal,
-        site=payload.site,
-        cameras=[stream.key],
-        profile=profile,
-        quality='detail',
-        language=stream.language or payload.language,
-        playback_sessions=_streaming_session_descriptors([stream]),
-    )
-    return (
-        _single_response_body(
-            media_session=session,
-            stream_item=stream.model_dump(),
-            media_token=token,
-            site=payload.site,
-            camera=stream.key,
+        MediaSessionRequest(
+            owner=principal, site=payload.site,
+            cameras=[stream.key], profile=profile, quality='detail',
+            language=stream.language or payload.language,
+            playback_sessions=_streaming_session_descriptors([stream]),
         ),
-        status_code,
     )
+    return PlaybackResult(session, (stream,), token), status_code
 
 
 def _wall_upstream_payload(
@@ -698,7 +617,7 @@ async def _create_wall_playback(
     principal: PlaybackPrincipal,
     redis: Redis,
     http_client: httpx.AsyncClient | None = None,
-) -> tuple[dict[str, object], int]:
+) -> tuple[PlaybackResult, int]:
     """Create a preview-quality media capability for a camera wall.
 
     Args:
@@ -732,29 +651,24 @@ async def _create_wall_playback(
     if not cameras:
         raise HTTPException(status_code=404, detail='cameras_not_found')
     token, session = await _create_scoped_media_session(
-        redis,
-        principal=principal,
-        site=payload.site,
-        cameras=cameras,
-        profile=profile,
-        quality='preview',
-        language=next(
-            (
-                stream.language
-                for stream in streams
-                if stream.language is not None
-            ),
-            payload.language,
+        redis, MediaSessionRequest(
+            owner=principal, site=payload.site, cameras=cameras,
+            profile=profile, quality='preview', language=next(
+                (
+                    stream.language
+                    for stream in streams
+                    if stream.language is not None
+                ),
+                payload.language,
+            ), playback_sessions=_streaming_session_descriptors(streams),
         ),
-        playback_sessions=_streaming_session_descriptors(streams),
     )
     return (
-        _wall_response_body(
-            media_session=session,
-            stream_items=[stream.model_dump() for stream in streams],
-            media_token=token,
-            site=payload.site,
-            profile=profile,
+        PlaybackResult(
+            session,
+            tuple(streams),
+            token,
+            kind='wall',
             max_streams=batch.max_streams,
         ),
         status_code,
@@ -785,7 +699,7 @@ async def playback_session_response(
         await _request_http_client(request),
     )
     return JSONResponse(
-        body,
+        body.serialize(),
         status_code=status_code,
         headers={'Cache-Control': 'no-store'},
     )
@@ -815,7 +729,7 @@ async def playback_wall_response(
         await _request_http_client(request),
     )
     return JSONResponse(
-        body,
+        body.serialize(),
         status_code=status_code,
         headers={'Cache-Control': 'no-store'},
     )
@@ -842,16 +756,17 @@ async def renew_playback_response(
     """
     principal = await _resolve_playback_principal(request, redis, db)
     current = await renew_media_session(
-        redis, payload.id, owner=principal.parent,
+        redis,
+        payload.id,
+        owner=principal.parent,
     )
     if current is None:
         raise HTTPException(status_code=401, detail='expired_media_session')
+    session = PlaybackMediaSession.model_validate(current)
     return JSONResponse(
         {
-            'id': str(current['id']),
-            'mode': (
-                'multi_stream' if current.get('scope') == 'batch' else 'single'
-            ),
+            'id': session.id,
+            'mode': ('multi_stream' if session.scope == 'batch' else 'single'),
             'renew_endpoint': _playback_endpoints()['renew_endpoint'],
             'expires_in': MEDIA_SESSION_TTL_SECONDS,
             'renewed': True,
@@ -883,7 +798,9 @@ async def delete_playback_response(
     """
     principal = await _resolve_playback_principal(request, redis, db)
     if not await delete_media_session(
-        redis, session_id, owner=principal.parent,
+        redis,
+        session_id,
+        owner=principal.parent,
     ):
         raise HTTPException(status_code=404, detail='session_not_found')
     return Response(status_code=204, headers={'Cache-Control': 'no-store'})

@@ -1,9 +1,3 @@
-"""Generate the short-lived JWT Apple accepts as a Keycloak OIDC secret.
-
-The generated credential is written to a new, owner-only file for transfer
-into the deployment secret store. It is never printed to terminal logs, and
-the private Apple .p8 key is never copied into the Keycloak container.
-"""
 from __future__ import annotations
 
 import argparse
@@ -21,7 +15,7 @@ APPLE_MAX_CLIENT_SECRET_DAYS = 180
 
 def _arguments() -> argparse.Namespace:
     """Parse the Apple developer identifiers and private-key location."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser()
     parser.add_argument('--team-id', required=True)
     parser.add_argument('--key-id', required=True)
     parser.add_argument('--client-id', required=True)

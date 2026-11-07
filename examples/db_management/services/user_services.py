@@ -15,64 +15,44 @@ from examples.auth.models import USER_STATUS_ACTIVE
 from examples.auth.models import USER_STATUS_VALUES
 from examples.auth.models import UserIdentity
 from examples.auth.models import UserProfile
+from examples.db_management.schemas.user import UserCreate
 
 settings = Settings()
 
 
 async def create_oidc_managed_user(
-    *,
-    username: str,
-    role: str,
-    group_id: int | None,
+    payload: UserCreate,
     tenant_id: UUID,
     keycloak_subject: str,
-    profile: dict[str, Any],
     db: AsyncSession,
 ) -> User:
-    """Persist one Keycloak-managed identity and Visionnaire permissions.
-
-    The caller must provision Keycloak first and compensates by deleting that
-    identity when this transaction fails.  No clear-text or reusable local
-    password exists for these accounts.
-    """
-    try:
-        new_user = User(
-            username=username,
-            role=role,
-            group_id=group_id,
-            tenant_id=tenant_id,
-            status=USER_STATUS_ACTIVE,
-        )
-        db.add(new_user)
-        await db.flush()
-        db.add(UserProfile(user_id=new_user.id, **profile))
-        db.add(
-            UserIdentity(
-                user_id=new_user.id,
-                provider=settings.oidc_identity_provider,
-                provider_user_id=keycloak_subject,
-                email=profile['email'],
-                email_verified=True,
-                display_name=(
-                    f"{profile['family_name']} {profile['given_name']}"
-                ).strip(),
-            ),
-        )
-        await db.commit()
-        await db.refresh(new_user, attribute_names=['profile', 'group'])
-        return new_user
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail='username_or_email_already_exists',
-        ) from exc
-    except Exception as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail='user_identity_persistence_failed',
-        ) from exc
+    if payload.profile is None:
+        raise HTTPException(400, 'A profile is required for Keycloak.')
+    profile = payload.profile.model_dump()
+    user = User(
+        username=payload.username,
+        role=payload.role,
+        group_id=payload.group_id,
+        tenant_id=tenant_id,
+        status=USER_STATUS_ACTIVE,
+    )
+    db.add(user)
+    await db.flush()
+    db.add(UserProfile(user_id=user.id, **profile))
+    db.add(
+        UserIdentity(
+            user_id=user.id,
+            provider=settings.oidc_identity_provider,
+            provider_user_id=keycloak_subject,
+            email=profile['email'],
+            email_verified=True,
+            display_name=(
+                f"{profile['family_name']} {profile['given_name']}"
+            ).strip(),
+        ),
+    )
+    await db.flush()
+    return user
 
 
 async def keycloak_subject_for_user(

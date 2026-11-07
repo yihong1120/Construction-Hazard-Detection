@@ -1,11 +1,57 @@
 from __future__ import annotations
 
 import unittest
+from functools import partial
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 from examples.shared import ws_helpers as wh
+
+
+async def _init_close(
+    testcase: TestTimeoutBehaviour,
+    /,
+    code: int,
+    reason: str,
+) -> None:
+    """Simulate closing the WebSocket connection."""
+    testcase.ws.closed_calls.append((code, reason))
+
+
+async def _init_close2(
+    testcase: TestAuthenticateWsOrNone,
+    /,
+    code: int,
+    reason: str,
+) -> None:
+    """Simulate closing the WebSocket connection."""
+    testcase.ws.closed_calls.append((code, reason))
+
+
+async def _authenticate_success_fake_auth(
+    rds: object,
+    ws: Any,
+    /,
+    websocket: object,
+    rds_arg: object,
+    client_tag: str,
+) -> tuple[str, str, dict[str, str]]:
+    """Simulate successful authentication."""
+    # Validate the wrapper forwards parameters verbatim.
+    assert websocket is ws
+    assert rds_arg is rds
+    assert client_tag == 'TAG'
+    return 'alice', 'jti-1', {'role': 'user'}
+
+
+async def _authenticate_failure_returns_none_tuple_fake_auth_raise(
+    *args: object,
+    **kwargs: object,
+) -> object:
+    """Simulate authentication failure."""
+    raise SystemExit('invalid_token')
 
 
 class TestTimerAndPayload(unittest.TestCase):
@@ -27,7 +73,7 @@ class TestTimerAndPayload(unittest.TestCase):
             {
                 'status': 'closing',
                 'reason': 'session_timeout',
-                'message': 'WebSocket session reached 5-minute limit.',
+                'message': 'WebSocket session reached 1800-second limit.',
             },
         )
 
@@ -43,9 +89,7 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
         # Holds a history of (code, reason) tuples for assertions.
         self.ws.closed_calls = []
 
-        async def _close(code: int, reason: str) -> None:
-            """Simulate closing the WebSocket connection."""
-            self.ws.closed_calls.append((code, reason))
+        _close = partial(_init_close, self)
 
         # Attach the async close to our substitute.
         self.ws.close = _close
@@ -75,7 +119,7 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             ws.closed_calls,
             [
-                (1000, 'Session timeout (5 minutes)'),
+                (1000, 'Session timeout'),
             ],
         )
         mock_send_json.assert_awaited_once()
@@ -111,7 +155,7 @@ class TestTimeoutBehaviour(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             ws.closed_calls,
             [
-                (1000, 'Session timeout (5 minutes)'),
+                (1000, 'Session timeout'),
             ],
         )
         mock_send_text.assert_awaited_once()
@@ -182,9 +226,7 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
         # Holds a history of (code, reason) tuples for assertions.
         self.ws.closed_calls = []
 
-        async def _close(code: int, reason: str) -> None:
-            """Simulate closing the WebSocket connection."""
-            self.ws.closed_calls.append((code, reason))
+        _close = partial(_init_close2, self)
 
         self.ws.close = _close
 
@@ -193,17 +235,7 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
         ws = self.ws
         rds: object = object()
 
-        async def fake_auth(
-            websocket: object,
-            rds_arg: object,
-            client_tag: str,
-        ) -> tuple[str, str, dict[str, str]]:
-            """Simulate successful authentication."""
-            # Validate the wrapper forwards parameters verbatim.
-            assert websocket is ws
-            assert rds_arg is rds
-            assert client_tag == 'TAG'
-            return 'alice', 'jti-1', {'role': 'user'}
+        fake_auth = partial(_authenticate_success_fake_auth, rds, ws)
 
         with patch(
             'examples.shared.ws_helpers.authenticate_websocket',
@@ -221,9 +253,9 @@ class TestAuthenticateWsOrNone(unittest.IsolatedAsyncioTestCase):
         ws = self.ws
         rds: object = object()
 
-        async def fake_auth_raise(*args: object, **kwargs: object) -> object:
-            """Simulate authentication failure."""
-            raise SystemExit('invalid_token')
+        fake_auth_raise = (
+            _authenticate_failure_returns_none_tuple_fake_auth_raise
+        )
 
         with patch(
             'examples.shared.ws_helpers.authenticate_websocket',

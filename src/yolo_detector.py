@@ -4,22 +4,9 @@ from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
+lazy from scipy.optimize import linear_sum_assignment
 
 from src.yolo_worker import YoloWorkerClient
-
-
-def linear_sum_assignment(*args: Any, **kwargs: Any) -> Any:
-    """Run SciPy linear assignment, importing SciPy lazily."""
-    from scipy.optimize import (
-        linear_sum_assignment as _assignment,
-    )
-
-    return _assignment(*args, **kwargs)
-
-
-def _linear_sum_assignment() -> Any:
-    """Return SciPy's Hungarian assignment function, importing it lazily."""
-    return linear_sum_assignment
 
 
 class YoloDetector:
@@ -514,7 +501,7 @@ class YoloDetector:
                 component_cost,
                 blocked_cost,
             )
-            row_ind, col_ind = _linear_sum_assignment()(solver_cost)
+            row_ind, col_ind = linear_sum_assignment(solver_cost)
             for row, col in zip(row_ind, col_ind, strict=True):
                 r = row_indices[int(row)]
                 c = col_indices[int(col)]

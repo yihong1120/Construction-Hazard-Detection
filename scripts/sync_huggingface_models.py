@@ -1,8 +1,3 @@
-"""Publish model keys from Hugging Face into the database catalog.
-
-Run from the repository: python -m scripts.sync_huggingface_models.
-Weights are never uploaded by this command. Existing grants are preserved.
-"""
 from __future__ import annotations
 
 import argparse
@@ -10,14 +5,19 @@ import asyncio
 import hashlib
 import json
 import re
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 
+from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
 
 from examples.auth.database import AsyncSessionLocal
 from examples.auth.database import engine
 from examples.auth.models import DetectionModelCatalog
+from examples.auth.models import ModelPublicationRecord
 from examples.YOLO_server_api.model_registry import ModelEntry
 
 LABELS = {
@@ -34,6 +34,10 @@ LABELS = {
     'vehicle': ('vehicle', '車輛'),
 }
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class PublicationConflict(RuntimeError):
+    pass
 
 
 def resolve_model(key, repo, revision, filename, previous):
@@ -56,17 +60,11 @@ def resolve_model(key, repo, revision, filename, previous):
     digest = remote.lfs.sha256
     local = ROOT / 'models' / 'pt' / f'best_{key}.pt'
 
-    def matches(path):
-        if not path.is_file():
-            return False
-        with path.open('rb') as f:
-            return hashlib.file_digest(f, 'sha256').hexdigest() == digest
-
-    if matches(local):
+    if _matches_digest(local, digest):
         source = local
     else:
         source = Path(hf_hub_download(repo, filename, revision=info.sha))
-        if not matches(source):
+        if not _matches_digest(source, digest):
             raise ValueError('Hugging Face model hash mismatch')
     # Only inspect the trusted, hash-verified repository artifact.
     names = YOLO(str(source), task='detect').names
@@ -79,7 +77,8 @@ def resolve_model(key, repo, revision, filename, previous):
     classes = []
     for number, name in names.items():
         code, label = LABELS.get(
-            name, (re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_'), name),
+            name,
+            (re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_'), name),
         )
         if not code or code.isdecimal():
             raise ValueError(f'Class {name!r} requires a stable semantic code')
@@ -110,7 +109,9 @@ def resolve_model(key, repo, revision, filename, previous):
     return entry
 
 
-async def synchronize(args):
+async def prepare_models(
+    args: argparse.Namespace,
+) -> list[tuple[ModelEntry, int, bool]]:
     bootstrap = {}
     if args.import_registry:
         bootstrap = {
@@ -119,7 +120,7 @@ async def synchronize(args):
                 'models'
             ]
         }
-    prepared = []
+    prepared: list[tuple[ModelEntry, int, bool]] = []
     async with AsyncSessionLocal() as db:
         for key in args.model_key:
             current = await db.get(DetectionModelCatalog, key)
@@ -149,9 +150,48 @@ async def synchronize(args):
                     current.is_default if current else False,
                 ),
             )
+    return prepared
+
+
+async def apply_models(
+    prepared: list[tuple[ModelEntry, int, bool]],
+    default_id: str | None = None,
+    expected: dict[str, dict] | None = None,
+    publication_id: str | None = None,
+) -> None:
+    async with AsyncSessionLocal() as db:
         # All downloads/metadata validation finish before changing publication.
-        if args.default:
-            if args.default not in args.model_key:
+        if expected is not None:
+            rows = (
+                await db.scalars(
+                    select(DetectionModelCatalog).with_for_update(),
+                )
+            ).all()
+            current = {row.model_key: row for row in rows}
+            for entry, _, _ in prepared:
+                before = expected.get(entry.id)
+                actual = current.get(entry.id)
+                if before is None:
+                    unchanged = actual is None
+                else:
+                    unchanged = actual is not None and (
+                        actual.definition == before['definition']
+                        and actual.display_order == before['display_order']
+                        and actual.is_default == before['is_default']
+                    )
+                if not unchanged:
+                    raise PublicationConflict(
+                        'Catalog changed before publication',
+                    )
+            if default_id and (
+                {key for key, row in current.items() if row.is_default}
+                != {key for key, row in expected.items() if row['is_default']}
+            ):
+                raise PublicationConflict(
+                    'Catalog default changed before publication',
+                )
+        if default_id:
+            if default_id not in {entry.id for entry, _, _ in prepared}:
                 raise ValueError('--default must be a selected key')
             await db.execute(
                 update(DetectionModelCatalog).values(is_default=False),
@@ -161,33 +201,55 @@ async def synchronize(args):
                 model_key=entry.id,
                 definition=entry.model_dump(exclude={'id'}),
                 display_order=order,
-                is_default=(entry.id == args.default)
-                if args.default
-                else default,
+                is_default=(entry.id == default_id) if default_id else default,
             )
             statement = insert(DetectionModelCatalog).values(**values)
             await db.execute(
                 statement.on_conflict_do_update(
-                    index_elements=['model_key'], set_=values,
+                    index_elements=['model_key'],
+                    set_=values,
                 ),
             )
+        await db.execute(
+            text(
+                "SELECT pg_notify('stream_config_changed', 'models')",
+            ),
+        )
+        if publication_id is not None:
+            record = await db.get(ModelPublicationRecord, publication_id)
+            if record is None or record.phase != 'prepared':
+                raise PublicationConflict('Publication journal changed')
+            record.phase = 'applied'
+            record.updated_at = datetime.now(timezone.utc).isoformat()
         await db.commit()
     for entry, _, _ in prepared:
         print(
-            f'{entry.id}: published {entry.hf_revision} '
+            f'{entry.id}: published {entry.version} '
             f'({len(entry.classes)} classes)',
         )
 
 
+async def synchronize(args: argparse.Namespace) -> None:
+    await apply_models(await prepare_models(args), args.default)
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--model-key', action='append', required=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model-key', action='append', default=[])
+    parser.add_argument('--recover', metavar='PUBLICATION_ID')
     parser.add_argument(
-        '--repo', default='yihong1120/Construction-Hazard-Detection',
+        '--restore',
+        action='store_true',
+        help='Restore a pending publication instead of verifying it',
+    )
+    parser.add_argument(
+        '--repo',
+        default='yihong1120/Construction-Hazard-Detection',
     )
     parser.add_argument('--revision', default='main')
     parser.add_argument(
-        '--filename', help='Required for a custom key; use with one key only',
+        '--filename',
+        help='Required for a custom key; use with one key only',
     )
     parser.add_argument('--tenant-id', action='append')
     parser.add_argument('--site-id', action='append', type=int)
@@ -196,17 +258,41 @@ def main():
         '--import-registry',
         help='One-time migration of existing permissions; not used at runtime',
     )
+    parser.add_argument('--verify-timeout', type=float, default=180)
+    parser.add_argument(
+        '--catalog-only',
+        action='store_true',
+        help='Bootstrap a catalog only when no affected stream is active',
+    )
     args = parser.parse_args()
+    if not args.recover and not args.model_key:
+        parser.error('--model-key or --recover is required')
+    if args.restore and not args.recover:
+        parser.error('--restore requires --recover')
+    if args.recover and args.model_key:
+        parser.error('--recover cannot be combined with --model-key')
+    if args.verify_timeout <= 0:
+        parser.error('--verify-timeout must be positive')
     if args.filename and len(args.model_key) != 1:
         parser.error('--filename requires exactly one key')
 
-    async def run():
-        try:
-            await synchronize(args)
-        finally:
-            await engine.dispose()
+    asyncio.run(_publish_models(args))
 
-    asyncio.run(run())
+
+def _matches_digest(path, digest):
+    if not path.is_file():
+        return False
+    with path.open('rb') as f:
+        return hashlib.file_digest(f, 'sha256').hexdigest() == digest
+
+
+async def _publish_models(args):
+    try:
+        from scripts.model_publication import ModelPublication
+
+        await ModelPublication().publish(args)
+    finally:
+        await engine.dispose()
 
 
 if __name__ == '__main__':

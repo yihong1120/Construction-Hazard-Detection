@@ -17,7 +17,6 @@ class ModelFetcherTests(unittest.TestCase):
     """Provide ModelFetcherTests."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.directory = tempfile.TemporaryDirectory()
         self.fetcher = ModelFetcher(
             api_url='http://test-server/get_new_model',
@@ -27,7 +26,6 @@ class ModelFetcherTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        """Perform tearDown."""
         self.directory.cleanup()
 
     @patch('src.model_fetcher.requests.post')
@@ -35,11 +33,7 @@ class ModelFetcherTests(unittest.TestCase):
         self,
         post: MagicMock,
     ) -> None:
-        """Test posts authenticated stream and installs atomically.
-
-        Args:
-            post: Value used by this callable.
-        """
+        """Test posts authenticated stream and installs atomically."""
         content = b'model-content'
         response = MagicMock(status_code=200)
         response.headers = {
@@ -75,11 +69,7 @@ class ModelFetcherTests(unittest.TestCase):
 
     @patch('src.model_fetcher.requests.post')
     def test_no_update_returns_false(self, post: MagicMock) -> None:
-        """Test no update returns false.
-
-        Args:
-            post: Value used by this callable.
-        """
+        """Test no update returns false."""
         post.return_value = MagicMock(status_code=204)
         self.assertFalse(
             self.fetcher.request_new_model('yolo26n', '1970-01-01T00:00:00'),
@@ -89,11 +79,7 @@ class ModelFetcherTests(unittest.TestCase):
     def test_checksum_failure_keeps_existing_model(
         self, post: MagicMock,
     ) -> None:
-        """Test checksum failure keeps existing model.
-
-        Args:
-            post: Value used by this callable.
-        """
+        """Test checksum failure keeps existing model."""
         destination = Path(self.directory.name) / 'best_yolo26n.pt'
         destination.write_bytes(b'old')
         response = MagicMock(status_code=200)

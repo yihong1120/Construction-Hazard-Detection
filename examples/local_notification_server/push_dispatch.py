@@ -12,13 +12,14 @@ from collections.abc import Iterable
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
+from functools import partial
 from typing import Any
 from typing import cast
 from typing import DefaultDict
 from typing import Final
 
 import redis.asyncio as redis
-from sqlalchemy import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.models import Notification
@@ -48,7 +49,7 @@ class PushTokenStats:
     users_with_tokens: int = 0
     token_entries: int = 0
     tokens_by_language: DefaultDict[NotificationLanguage, int] = field(
-        default_factory=lambda: defaultdict(int),
+        default_factory=partial(defaultdict, int),
     )
 
     def add(self, raw_maps: Iterable[Mapping[bytes, bytes]]) -> None:
@@ -207,6 +208,11 @@ async def create_notification_records_for_users(
         values = [
             {
                 'user_id': user_id,
+                'event_key': (
+                    f'violation:{req.violation_id}'
+                    if req.violation_id is not None
+                    else None
+                ),
                 'type': req.notification_type,
                 'title': req.title,
                 'body': record_body,
@@ -217,7 +223,12 @@ async def create_notification_records_for_users(
                 start: start + _notification_insert_chunk_size
             ]
         ]
-        await db.execute(insert(Notification), values)
+        await db.execute(
+            insert(Notification).on_conflict_do_nothing(
+                index_elements=['user_id', 'event_key'],
+            ),
+            values,
+        )
     await db.commit()
     return len(user_ids)
 
@@ -406,7 +417,8 @@ async def _collect_completed_push_tasks(
     for task in done:
         result = await task
         successful_batches += int(
-            result.success_count > 0 and result.failure_count == 0,
+            result.success_count + result.skipped_count > 0
+            and result.failure_count == 0,
         )
         invalid_tokens.update(result.invalid_tokens)
     return len(done), successful_batches, invalid_tokens
@@ -454,6 +466,9 @@ async def _run_streaming_push_task_window(
         # Cancel scheduled work and release the stream's Redis resources.
         for task in pending:
             task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        if hasattr(task_iter, 'aclose'):
+            await task_iter.aclose()
     if invalid_tokens:
         await invalid_token_handler(tuple(sorted(invalid_tokens)))
     return total_batches, successful_batches
@@ -475,7 +490,7 @@ async def _complete_push_task_window(
     try:
         total, successful = await asyncio.wait_for(window, timeout=timeout)
         return True, total, successful, None
-    except asyncio.TimeoutError:
+    except TimeoutError:
         window.close()
         return False, None, None, 'FCM notification sending timed out.'
     except Exception:

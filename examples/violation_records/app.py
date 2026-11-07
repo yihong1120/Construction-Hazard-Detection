@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI
 
 from examples.auth.lifespan import global_lifespan
+from examples.violation_records.evidence_storage import (
+    EvidenceStorageMaintenance,
+)
 from examples.violation_records.response_debug import ViolationResponseDebug
 from examples.violation_records.routers import router as violation_router
 
+
 # Share database and Redis lifecycle management with the other API services.
-app: FastAPI = FastAPI(lifespan=global_lifespan)
+@asynccontextmanager
+async def evidence_lifespan(app: FastAPI):
+    async with global_lifespan(app), EvidenceStorageMaintenance().lifespan():
+        yield
+
+
+app: FastAPI = FastAPI(lifespan=evidence_lifespan)
 
 # Keep endpoint implementation in the router and service modules.
 app.include_router(violation_router)

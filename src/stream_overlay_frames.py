@@ -1,89 +1,54 @@
-"""Build immutable media frames and cache per-language overlay renditions."""
 from __future__ import annotations
-
-import os
 
 import cv2
 import numpy as np
 
-from examples.streaming_web.overlay_labels import normalise_label_language
-from examples.streaming_web.overlay_labels import SUPPORTED_LABEL_LANGUAGES
-from examples.streaming_web.overlay_models import PolygonCollection
-from examples.streaming_web.overlay_models import TrackingDetections
-from examples.streaming_web.overlay_models import WarningPayload
-from examples.streaming_web.overlay_renderer import render_overlay_array
+from examples.streaming_web.overlay_renderer import OverlayRenderer
+from src.settings.media import MediaPublishSettings
+from src.settings.overlay_language import get_overlay_language_policy
 from src.stream_runtime_state import OverlaySnapshot as _OverlaySnapshot
 
 
-def _overlay_publish_frames(
-    snapshot: _OverlaySnapshot,
-    requested_languages: set[str],
-    rendered_overlay_cache: dict[
-        str,
-        tuple[tuple[int, int], np.ndarray],
-    ],
-) -> dict[str, np.ndarray]:
-    """Build at most one immutable overlay frame per requested language."""
-    if snapshot.track_data is None:
-        return {language: snapshot.frame for language in requested_languages}
-    publish_frames: dict[str, np.ndarray] = {}
-    for language in requested_languages:
-        cached = rendered_overlay_cache.get(language)
-        if cached is not None and cached[0] == snapshot.sequence:
-            publish_frames[language] = cached[1]
-            continue
-        publish_frame = _build_media_publish_frame(
-            frame=snapshot.frame,
-            warnings=snapshot.warnings,
-            cone_polys=snapshot.cone_polys,
-            pole_polys=snapshot.pole_polys,
-            track_data=snapshot.track_data,
-            label_language=language,
-            class_metadata=snapshot.class_metadata,
-        )
-        rendered_overlay_cache[language] = (snapshot.sequence, publish_frame)
-        publish_frames[language] = publish_frame
-    return publish_frames
+class OverlayFrameCache:
+    def __init__(self, renderer: OverlayRenderer):
+        self.renderer = renderer
+        self.frames: dict[str, tuple[tuple[int, int], np.ndarray]] = {}
+
+    def prune(self, languages: set[str]) -> None:
+        for language in self.frames.keys() - languages:
+            del self.frames[language]
+
+    def render(
+        self,
+        snapshot: _OverlaySnapshot,
+        languages: set[str],
+    ) -> dict[str, np.ndarray]:
+        self.prune(languages)
+        if snapshot.track_data is None:
+            return {language: snapshot.frame for language in languages}
+        result = {}
+        for language in languages:
+            cached = self.frames.get(language)
+            if cached is None or cached[0] != snapshot.sequence:
+                cached = (
+                    snapshot.sequence,
+                    self.renderer.render(snapshot, language),
+                )
+                self.frames[language] = cached
+            result[language] = cached[1]
+        return result
 
 
-def _build_media_publish_frame(
-    frame: np.ndarray,
-    warnings: WarningPayload,
-    cone_polys: PolygonCollection,
-    pole_polys: PolygonCollection,
-    track_data: TrackingDetections,
-    label_language: str = 'en',
-    class_metadata: list[dict] | None = None,
+def _build_media_startup_frame(
+    site: str,
+    stream_name: str,
+    size: tuple[int, int] | None = None,
 ) -> np.ndarray:
-    """Return the annotated frame published to MediaMTX."""
-    # Overlay rendering draws onto the frame, so copy exactly once here while
-    # the rest of the live pipeline can pass frame references around.
-    return render_overlay_array(
-        frame.copy(),
-        detection_items=track_data,
-        class_metadata=class_metadata,
-        warnings=warnings,
-        cone_polygons=cone_polys,
-        pole_polygons=pole_polys,
-        overlay_mode='backend',
-        label_language=label_language,
-        min_confidence=float(
-            os.getenv(
-                'MEDIA_PUBLISH_OVERLAY_MIN_CONFIDENCE',
-                '0.25',
-            ),
-        ),
-        box_thickness=max(
-            1,
-            int(float(os.getenv('MEDIA_PUBLISH_BOX_THICKNESS', '2'))),
-        ),
-    )
-
-
-def _build_media_startup_frame(site: str, stream_name: str) -> np.ndarray:
     """Return a startup frame for the annotated media path."""
-    width = int(os.getenv('MEDIA_PUBLISH_STARTUP_WIDTH', '1280'))
-    height = int(os.getenv('MEDIA_PUBLISH_STARTUP_HEIGHT', '720'))
+    if size is None:
+        settings = MediaPublishSettings()
+        size = (settings.startup_width, settings.startup_height)
+    width, height = size
     frame = np.zeros((height, width, 3), dtype=np.uint8)
     title = f'{site} / {stream_name}'
     subtitle = 'Starting live analysis...'
@@ -110,35 +75,9 @@ def _build_media_startup_frame(site: str, stream_name: str) -> np.ndarray:
     return frame
 
 
-def _csv_env(name: str, default: str) -> list[str]:
-    """Read a comma-separated environment setting.
-
-    Args:
-        name: Environment variable name.
-        default: Default comma-separated value.
-
-    Returns:
-        Normalised non-empty entries.
-    """
-    value = os.getenv(name, default)
-    return [item.strip() for item in value.split(',') if item.strip()]
-
-
 def _allowed_overlay_languages() -> tuple[str, ...]:
     """Return enabled overlay languages supported by the renderer."""
-    configured = _csv_env(
-        'MEDIA_OVERLAY_ALLOWED_LANGUAGES',
-        ','.join(SUPPORTED_LABEL_LANGUAGES),
-    )
-    allowed = []
-    for language in configured:
-        normalised = normalise_label_language(language)
-        if (
-            normalised in SUPPORTED_LABEL_LANGUAGES
-            and normalised not in allowed
-        ):
-            allowed.append(normalised)
-    return tuple(allowed or ('en',))
+    return get_overlay_language_policy().allowed
 
 
 def _mark_frame_readonly(frame: np.ndarray) -> None:

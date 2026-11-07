@@ -20,6 +20,24 @@ Keycloak HTTP 僅綁定在 `127.0.0.1:8081`。外部流量只能經由現有 Ngi
 PostgreSQL 管理者在初次部署時使用；不需要授予 Keycloak 或 Visionnaire 應用程式額外
 的 superuser 權限。
 
+## 登入期限
+
+Visionnaire Web、開發站與原生 app 採用以下期限：
+
+- 閒置期限：7 天（604800 秒），持續使用時會續期。
+- 單次登入上限：90 天（7776000 秒），持續使用也受此上限限制。
+- Access token：5 分鐘，由一般 refresh token 自動更新，不請求 offline token。
+
+BFF 的 `BFF_SESSION_TTL_SECONDS` 維持 7 天，認證過的請求會更新 Redis
+與瀏覽器 Cookie 的閒置期限；單次登入的 90 天上限由 Keycloak 執行。
+共用 realm 的 SSO 閒置與最長期限分別使用 7 天及 90 天，Visionnaire clients
+透過 `client.session.idle.timeout` 與 `client.session.max.lifespan` 明確設定
+相同期限。其他 clients 保留既有的 realm client 預設：閒置 8 小時、上限 10 小時。
+
+更新既有部署時，需同步套用 Keycloak realm、client 與啟動設定。
+BFF 的閒置期限已是 7 天時，不需因這次上限調整而重啟 BFF。
+僅修改 realm 匯入模板不會更新已存在的 realm。
+
 ## 登入防護
 
 此映像檔包含自訂的 `visionnaire-hcaptcha` Keycloak Authenticator 與
@@ -83,3 +101,28 @@ PKCE-bound one-use proof，最終仍回到標準 Authorization Code + PKCE。完
 Code + PKCE（S256），停用 implicit、password/direct grant 與 client secret，callback
 固定為 `com.changdar.visionnaire:/oauthredirect`；access token 會有
 `visionnaire-api` audience。Flutter app 不得持有 client secret 或 hCaptcha secret。
+
+## 登入政策的單一來源
+
+請修改 `src/settings/session_policy.json`，再執行：
+
+```bash
+python -m deploy.keycloak.session_policy
+python -m deploy.keycloak.session_policy --check
+```
+
+產出的 realm 模板、`session-policy.env` 與 `.env.example` 由 CI 檢查是否一致。
+BFF 預設值與 dev 建立工具直接讀取同一份政策。Keycloak 啟動腳本讀取產出的
+shell 設定，因此重建映像時須包含 `session-policy.env`。啟動時會更新既有 client
+的期限並讀回驗證，保留其他 attributes；未建立的 dev client 可依政策略過。
+
+對既有 realm 先檢查，再明確套用；不會在一般 API 啟動時修改共用 Keycloak：
+
+```bash
+python -m deploy.keycloak.apply_session_policy --server https://HOST/keycloak --realm visionnaire --credentials /private/admin.json
+python -m deploy.keycloak.apply_session_policy --server https://HOST/keycloak --realm visionnaire --credentials /private/admin.json --apply --backup /private/new-session-backup.json
+```
+
+憑證檔可使用 `username`／`password`，或既有的 `KC_BOOTSTRAP_ADMIN_USERNAME`／
+`KC_BOOTSTRAP_ADMIN_PASSWORD`。套用會保留其他 client attributes，先保存私有備份，
+再更新並讀回驗證；中途失敗會復原已變更項目。備份路徑必須是新檔，避免覆寫回復點。

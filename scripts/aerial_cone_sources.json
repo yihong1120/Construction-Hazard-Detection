@@ -1,0 +1,18 @@
+{
+  "A": {
+    "path": "examples/YOLO_train/datasets/train/images/IMG_1092_PNG.rf.b707384bb0b91454c305acd1ba07b3f6.jpg",
+    "description": "橋梁工區俯瞰：兩組錐筒管制區"
+  },
+  "B": {
+    "path": "examples/YOLO_train/datasets/train/images/2024-04-16-103536_0_png.rf.5ea86830fe9c29387398e21c17cbea42.jpg",
+    "description": "工地全景：多組錐筒與作業動線"
+  },
+  "C": {
+    "path": "examples/YOLO_train/datasets/train/images/IMG_1775_PNG.rf.508c1aa5fd4c9c496a858252368e633a.jpg",
+    "description": "模板施工區俯瞰：錐筒邊界"
+  },
+  "D": {
+    "path": "examples/YOLO_train/datasets/train/images/002611_jpg.rf.b6ed2146e4d54a6df937bc0877ce0bb1.jpg",
+    "description": "開挖工區：高角度俯視"
+  }
+}

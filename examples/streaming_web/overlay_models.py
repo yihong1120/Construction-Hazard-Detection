@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 from typing import NotRequired
 from typing import TypeAlias
 from typing import TypedDict
@@ -45,3 +46,16 @@ class RenderedTextBitmap:
     bgra: np.ndarray
     width: int
     height: int
+
+
+@dataclass(frozen=True)
+class OverlaySnapshot:
+    """Source frame and metadata used to render one overlay generation."""
+
+    sequence: tuple[int, int]
+    frame: np.ndarray
+    warnings: WarningPayload = field(default_factory=dict)
+    cone_polys: PolygonCollection = field(default_factory=list)
+    pole_polys: PolygonCollection = field(default_factory=list)
+    track_data: TrackingDetections | None = None
+    class_metadata: list[dict] | None = None

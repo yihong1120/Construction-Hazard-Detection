@@ -3,17 +3,27 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import redis.asyncio as redis
+from pydantic import Field
+from redis.exceptions import TimeoutError as RedisReadTimeout
 
 from examples.streaming_web.redis_service import fetch_latest_metadata_for_key
 from examples.streaming_web.schemas import FrameOutData
+from src.async_tasks import finish_on_cancel
+from src.settings.base import EnvironmentSettings
 
 _subscriber_queue_size = 1
 _retry_delay_seconds = 1.0
 _idle_retry_delay_seconds = 0.05
 _sleep = asyncio.sleep
+
+
+class MetadataFanoutSettings(EnvironmentSettings):
+    model_config = {'env_prefix': 'STREAMING_METADATA_'}
+    read_timeout_seconds: float = Field(5, ge=0.1, allow_inf_nan=False)
 
 
 @dataclass
@@ -38,17 +48,10 @@ class MetadataSubscription:
         redis_key: str,
         queue: asyncio.Queue[FrameOutData | Exception],
     ) -> None:
-        """Perform init.
-
-        Args:
-            fanout: Value used by this callable.
-            redis_key: Value used by this callable.
-            queue: Value used by this callable.
-        """
         self._fanout = fanout
         self._redis_key = redis_key
         self.queue = queue
-        self._closed = False
+        self._close_task: asyncio.Task | None = None
 
     async def get(self) -> FrameOutData | Exception:
         """Wait for the newest metadata event or reader error."""
@@ -56,17 +59,19 @@ class MetadataSubscription:
 
     async def close(self) -> None:
         """Remove this subscriber without affecting other browser clients."""
-        if self._closed:
-            return
-        self._closed = True
-        await self._fanout.unsubscribe(self._redis_key, self.queue)
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(
+                self._fanout.unsubscribe(self._redis_key, self.queue),
+            )
+        await finish_on_cancel(self._close_task)
 
 
 class MetadataFanout:
     """Share one blocking Redis read per metadata key and process."""
 
-    def __init__(self) -> None:
-        """Perform init."""
+    def __init__(self, settings: MetadataFanoutSettings | None = None) -> None:
+        self.settings = settings or MetadataFanoutSettings()
+        self._closed = False
         self._streams: dict[str, _StreamSubscribers] = {}
         self._lock = asyncio.Lock()
 
@@ -85,6 +90,8 @@ class MetadataFanout:
             maxsize=_subscriber_queue_size,
         )
         async with self._lock:
+            if self._closed:
+                raise RuntimeError('Metadata fanout is closed')
             state = self._streams.get(redis_key)
             if state is None:
                 state = _StreamSubscribers(
@@ -103,12 +110,39 @@ class MetadataFanout:
         redis_key: str,
         queue: asyncio.Queue[FrameOutData | Exception],
     ) -> None:
-        """Drop a subscriber and let an idle reader exit after its XREAD."""
+        """Cancel and drain the reader when its last subscriber leaves."""
 
+        task = None
         async with self._lock:
             state = self._streams.get(redis_key)
             if state is not None:
                 state.queues.discard(queue)
+                if not state.queues:
+                    self._streams.pop(redis_key, None)
+                    task = state.task
+                    if task is not None:
+                        task.cancel()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def close(self) -> None:
+        async with self._lock:
+            self._closed = True
+            tasks = [
+                state.task for state in self._streams.values() if state.task
+            ]
+            self._streams.clear()
+            for task in tasks:
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    @asynccontextmanager
+    async def lifespan(self):
+        self._closed = False
+        try:
+            yield self
+        finally:
+            await finish_on_cancel(self.close())
 
     async def _run(self, redis_key: str, state: _StreamSubscribers) -> None:
         """Read one Redis Stream and broadcast only the newest value."""
@@ -120,11 +154,19 @@ class MetadataFanout:
                         self._streams.pop(redis_key, None)
                         return
                 try:
-                    frame_data = await state.fetcher(
-                        state.rds,
-                        redis_key,
-                        last_id,
-                    )
+                    try:
+                        async with asyncio.timeout(
+                            self.settings.read_timeout_seconds,
+                        ):
+                            frame_data = await state.fetcher(
+                                state.rds,
+                                redis_key,
+                                last_id,
+                            )
+                    except TimeoutError as error:
+                        raise RedisReadTimeout(
+                            'Metadata read deadline reached',
+                        ) from error
                 except Exception as exc:
                     await self._publish(state, exc)
                     await _sleep(_retry_delay_seconds)

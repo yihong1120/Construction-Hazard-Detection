@@ -1,8 +1,3 @@
-"""Add missing catalog colors without changing historical record snapshots.
-
-Preview: python -m scripts.publish_class_colors
-Apply:   python -m scripts.publish_class_colors --apply
-"""
 from __future__ import annotations
 
 import argparse
@@ -47,6 +42,6 @@ async def publish(apply=False):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser()
     parser.add_argument('--apply', action='store_true')
     asyncio.run(publish(parser.parse_args().apply))

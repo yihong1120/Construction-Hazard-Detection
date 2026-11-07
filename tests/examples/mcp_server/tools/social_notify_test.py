@@ -21,7 +21,7 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         fake_line.push_message.return_value = 200
         with (
             patch(
-                'src.notifiers.line_notifier_message_api.LineMessenger',
+                'examples.mcp_server.tools.notify.LineMessenger',
                 return_value=fake_line,
             ),
             patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'),
@@ -53,7 +53,7 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         fake_line.push_message.return_value = 400
         with (
             patch(
-                'src.notifiers.line_notifier_message_api.LineMessenger',
+                'examples.mcp_server.tools.notify.LineMessenger',
                 return_value=fake_line,
             ),
             patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'),
@@ -68,7 +68,7 @@ class LinePushTests(unittest.IsolatedAsyncioTestCase):
         """Should log and re-raise on error."""
         with (
             patch(
-                'src.notifiers.line_notifier_message_api.LineMessenger',
+                'examples.mcp_server.tools.notify.LineMessenger',
                 side_effect=RuntimeError('boom'),
             ),
             patch('examples.mcp_server.tools.notify.aiohttp.ClientSession'),
@@ -135,7 +135,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         fake_telegram.send_notification = AsyncMock()
         with (
             patch(
-                'src.notifiers.telegram_notifier.TelegramNotifier',
+                'examples.mcp_server.tools.notify.TelegramNotifier',
                 return_value=fake_telegram,
             ),
             patch(
@@ -160,7 +160,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         fake_telegram.send_notification = AsyncMock()
         with (
             patch(
-                'src.notifiers.telegram_notifier.TelegramNotifier',
+                'examples.mcp_server.tools.notify.TelegramNotifier',
                 return_value=fake_telegram,
             ),
             patch(
@@ -181,7 +181,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch(
-                'src.notifiers.telegram_notifier.TelegramNotifier',
+                'examples.mcp_server.tools.notify.TelegramNotifier',
                 return_value=fake_telegram,
             ),
             patch(
@@ -203,7 +203,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         """Should log and re-raise on outer exception."""
         with (
             patch(
-                'src.notifiers.telegram_notifier.TelegramNotifier',
+                'examples.mcp_server.tools.notify.TelegramNotifier',
                 side_effect=RuntimeError('boom'),
             ),
             patch(
@@ -222,7 +222,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         fake_telegram = AsyncMock()
         fake_telegram.send_notification = AsyncMock()
         with patch(
-            'src.notifiers.telegram_notifier.TelegramNotifier',
+            'examples.mcp_server.tools.notify.TelegramNotifier',
             return_value=fake_telegram,
         ):
             tool = NotifyTools()
@@ -237,7 +237,7 @@ class TelegramSendTests(unittest.IsolatedAsyncioTestCase):
         fake_telegram.send_notification = AsyncMock()
         with (
             patch(
-                'src.notifiers.telegram_notifier.TelegramNotifier',
+                'examples.mcp_server.tools.notify.TelegramNotifier',
                 return_value=fake_telegram,
             ),
             patch(
@@ -265,7 +265,7 @@ class EnsureInitialisationTests(unittest.IsolatedAsyncioTestCase):
         """Should create messenger only once."""
         with (
             patch(
-                'src.notifiers.line_notifier_message_api.LineMessenger',
+                'examples.mcp_server.tools.notify.LineMessenger',
             ) as mock_line,
             patch(
                 'examples.mcp_server.tools.notify.aiohttp.ClientSession',
@@ -288,7 +288,7 @@ class EnsureInitialisationTests(unittest.IsolatedAsyncioTestCase):
     async def test_ensure_telegram_notifier_initialises_once(self) -> None:
         """Should create telegram notifier only once."""
         with patch(
-            'src.notifiers.telegram_notifier.TelegramNotifier',
+            'examples.mcp_server.tools.notify.TelegramNotifier',
         ) as mock_tel:
             tool = NotifyTools()
             await tool._ensure_telegram_notifier()

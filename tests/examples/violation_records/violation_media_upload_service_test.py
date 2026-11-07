@@ -19,11 +19,12 @@ from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.db_management.schemas.auth import AccessTokenSubject
 from examples.violation_records import violation_media_service
 from examples.violation_records import violation_upload_service
+from examples.violation_records.evidence import ViolationEvidence
 from examples.violation_records.violation_manager import (
     EmptyViolationImageError,
 )
 from examples.YOLO_server_api.model_registry import ModelClass
-from tests.model_fixtures import CLASSES
+from tests.model_fixtures_test import CLASSES
 
 
 def _credentials(username: str = 'reviewer') -> JwtAuthorizationCredentials:
@@ -153,19 +154,25 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         entry = SimpleNamespace(
-            id='model', version='v1', classes=[
-                ModelClass.model_validate(c) for c in CLASSES
-            ],
+            id='model',
+            version='v1',
+            classes=[ModelClass.model_validate(c) for c in CLASSES],
         )
         for name, mock in (
             (
-                'require_model', patch.object(
-                violation_upload_service, 'require_model', return_value=entry,
+                'select_model_async',
+                patch.object(
+                    violation_upload_service,
+                    'select_model_async',
+                    return_value=entry,
                 ),
             ),
             (
-                'require_site', patch.object(
-                violation_upload_service, 'require_site', AsyncMock(),
+                'require_site',
+                patch.object(
+                    violation_upload_service,
+                    'require_site',
+                    AsyncMock(),
                 ),
             ),
         ):
@@ -181,9 +188,11 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
         db = SimpleNamespace(
             get=AsyncMock(
                 return_value=SimpleNamespace(
-                    tenant_id='tenant', role='admin',
+                    tenant_id='tenant',
+                    role='admin',
                 ),
-            ), scalar=AsyncMock(return_value=1),
+            ),
+            scalar=AsyncMock(return_value=1),
         )
 
         with (
@@ -199,17 +208,20 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
             ) as save_violation,
         ):
             response = await violation_upload_service.upload_violation(
-                site='Site A',
-                stream_name='Camera A',
-                detection_time=datetime(2026, 8, 23, tzinfo=timezone.utc),
-                warnings_json=None,
-                detections_json=None,
-                cone_polygon_json=None,
-                pole_polygon_json=None,
-                image=image,
-                db=cast(AsyncSession, db),
-                credentials=_credentials(),
-                model_id='model', model_version='v1',
+                ViolationEvidence(
+                    site='Site A',
+                    stream_name='Camera A',
+                    detection_time=datetime(2026, 8, 23, tzinfo=timezone.utc),
+                    warnings_json=None,
+                    detections_json=None,
+                    cone_polygon_json=None,
+                    pole_polygon_json=None,
+                    image_file=image,
+                    model_id='model',
+                    model_version='v1',
+                ),
+                cast(AsyncSession, db),
+                _credentials(),
             )
 
         self.assertEqual(response.violation_id, 37)
@@ -223,9 +235,11 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
         db = SimpleNamespace(
             get=AsyncMock(
                 return_value=SimpleNamespace(
-                    tenant_id='tenant', role='admin',
+                    tenant_id='tenant',
+                    role='admin',
                 ),
-            ), scalar=AsyncMock(return_value=1),
+            ),
+            scalar=AsyncMock(return_value=1),
         )
 
         with patch.object(
@@ -235,17 +249,20 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as denied:
                 await violation_upload_service.upload_violation(
-                    site='Site A',
-                    stream_name='Camera A',
-                    detection_time=None,
-                    warnings_json=None,
-                    detections_json=None,
-                    cone_polygon_json=None,
-                    pole_polygon_json=None,
-                    image=image,
-                    db=cast(AsyncSession, db),
-                    credentials=_credentials(),
-                    model_id='model', model_version='v1',
+                    ViolationEvidence(
+                        site='Site A',
+                        stream_name='Camera A',
+                        detection_time=None,
+                        warnings_json=None,
+                        detections_json=None,
+                        cone_polygon_json=None,
+                        pole_polygon_json=None,
+                        image_file=image,
+                        model_id='model',
+                        model_version='v1',
+                    ),
+                    cast(AsyncSession, db),
+                    _credentials(),
                 )
         self.assertEqual(denied.exception.status_code, 403)
 
@@ -263,17 +280,20 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(HTTPException) as invalid_image:
                 await violation_upload_service.upload_violation(
-                    site='Site A',
-                    stream_name='Camera A',
-                    detection_time=None,
-                    warnings_json=None,
-                    detections_json=None,
-                    cone_polygon_json=None,
-                    pole_polygon_json=None,
-                    image=image,
-                    db=cast(AsyncSession, db),
-                    credentials=_credentials(),
-                    model_id='model', model_version='v1',
+                    ViolationEvidence(
+                        site='Site A',
+                        stream_name='Camera A',
+                        detection_time=None,
+                        warnings_json=None,
+                        detections_json=None,
+                        cone_polygon_json=None,
+                        pole_polygon_json=None,
+                        image_file=image,
+                        model_id='model',
+                        model_version='v1',
+                    ),
+                    cast(AsyncSession, db),
+                    _credentials(),
                 )
         self.assertEqual(invalid_image.exception.status_code, 400)
 
@@ -283,16 +303,18 @@ class TestViolationUploadService(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as invalid_token:
             await violation_upload_service.upload_violation(
-                site='Site A',
-                stream_name='Camera A',
-                detection_time=None,
-                warnings_json=None,
-                detections_json=None,
-                cone_polygon_json=None,
-                pole_polygon_json=None,
-                image=image,
-                db=cast(AsyncSession, SimpleNamespace()),
-                credentials=_credentials(username=''),
+                ViolationEvidence(
+                    site='Site A',
+                    stream_name='Camera A',
+                    detection_time=None,
+                    warnings_json=None,
+                    detections_json=None,
+                    cone_polygon_json=None,
+                    pole_polygon_json=None,
+                    image_file=image,
+                ),
+                cast(AsyncSession, SimpleNamespace()),
+                _credentials(username=''),
             )
 
         self.assertEqual(invalid_token.exception.status_code, 401)

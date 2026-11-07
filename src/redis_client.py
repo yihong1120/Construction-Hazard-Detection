@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import cast
 
 import redis.asyncio as redis
+
+from src.settings.connections import RedisSettings
 
 
 class RedisManager:
@@ -12,9 +13,9 @@ class RedisManager:
 
     def __init__(
         self,
-        redis_host: str = '127.0.0.1',
-        redis_port: int = 6379,
-        redis_password: str = '',
+        redis_host: str | None = None,
+        redis_port: int | None = None,
+        redis_password: str | None = None,
     ) -> None:
         """Initialises RedisManager with Redis configuration details.
 
@@ -23,14 +24,14 @@ class RedisManager:
             redis_port (int): The Redis server port.
             redis_password (str): The Redis password for authentication.
         """
-        self.redis_host: str = os.getenv('REDIS_HOST') or redis_host
-        self.redis_port: int = int(os.getenv('REDIS_PORT') or redis_port)
-        self.redis_password: str = (
-            os.getenv(
-                'REDIS_PASSWORD',
-            )
-            or redis_password
+        self.settings = RedisSettings.from_overrides(
+            host=redis_host,
+            port=redis_port,
+            password=redis_password,
         )
+        self.redis_host = self.settings.host
+        self.redis_port = self.settings.port
+        self.redis_password = self.settings.password.get_secret_value()
 
         # Create Redis connection
         self.redis = redis.Redis(

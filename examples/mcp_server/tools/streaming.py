@@ -4,6 +4,8 @@ import asyncio
 import base64
 from typing import Literal
 
+lazy import cv2
+
 
 class StreamingTools:
     """Capture one frame without creating a viewer or background stream."""
@@ -24,7 +26,6 @@ class StreamingTools:
 
     @staticmethod
     def _capture_frame(stream_url: str, frame_format: str) -> dict:
-        import cv2
 
         cap = cv2.VideoCapture(
             stream_url, cv2.CAP_FFMPEG,

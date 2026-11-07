@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import logging
 from datetime import datetime
 from typing import Any
@@ -9,17 +10,17 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import field_validator
 from pydantic import ValidationError
 
-from examples.mcp_server.config import get_env_int
+from examples.mcp_server.settings import McpImageSettings
+from examples.shared.evidence_metadata import validate_metadata
 from examples.violation_records.schemas import ViolationDetectionRow
+from src.detection_rows import TrackedDetectionRows
+from src.evidence import EvidenceMetadata
 from src.violation_sender import ViolationSender
 
-_MAX_IMAGE_BYTES = max(
-    1, get_env_int(
-        'MCP_MAX_REMOTE_IMAGE_BYTES', 10 * 1024**2,
-    ),
-)
+_MAX_IMAGE_BYTES = McpImageSettings().max_remote_image_bytes
 
 
 class ViolationUpload(BaseModel):
@@ -37,6 +38,45 @@ class ViolationUpload(BaseModel):
     cone_polygon: list | None = None
     pole_polygon: list | None = None
 
+    @field_validator('detections')
+    @classmethod
+    def validate_detections(cls, value):
+        return TrackedDetectionRows.model_validate(value).root
+
+    def image_bytes(self) -> bytes:
+        encoded = self.image_base64
+        if encoded.startswith('data:'):
+            encoded = encoded.split(',', 1)[1]
+        if len(encoded) > ((_MAX_IMAGE_BYTES + 2) // 3) * 4:
+            raise ValueError('Image exceeds size limit')
+        image = base64.b64decode(encoded, validate=True)
+        if not image or len(image) > _MAX_IMAGE_BYTES:
+            raise ValueError('Empty or oversized image')
+        return image
+
+    def evidence_metadata(self) -> EvidenceMetadata:
+        return validate_metadata(
+            EvidenceMetadata(
+                site=self.site,
+                stream_name=self.stream_name,
+                detection_time=self.timestamp,
+                model_id=self.model_id,
+                model_version=self.model_version,
+                warnings_json=json.dumps(self.warnings),
+                detections_json=json.dumps(self.detections),
+                cone_polygon_json=(
+                    json.dumps(self.cone_polygon)
+                    if self.cone_polygon is not None
+                    else None
+                ),
+                pole_polygon_json=(
+                    json.dumps(self.pole_polygon)
+                    if self.pole_polygon is not None
+                    else None
+                ),
+            ),
+        ).source
+
 
 class RecordTools:
     """Upload real records through the pooled, authenticated backend client."""
@@ -45,43 +85,18 @@ class RecordTools:
         self.logger = logging.getLogger(__name__)
         self._violation_sender: ViolationSender | None = None
 
-    async def send_violation(
-        self,
-        image_base64: str,
-        detections: list[ViolationDetectionRow],
-        warnings: dict[str, dict[str, Any]],
-        site: str,
-        stream_name: str,
-        model_id: str,
-        model_version: str,
-        timestamp: str | datetime | None = None,
-        cone_polygon: list | None = None,
-        pole_polygon: list | None = None,
-    ) -> dict:
-        """Validate all inputs before authentication or an upload begins."""
+    async def send_violation(self, upload: ViolationUpload) -> dict:
+        """Decode validated evidence once before authentication or upload."""
         try:
-            upload = ViolationUpload(
-                image_base64=image_base64, detections=detections,
-                warnings=warnings, site=site, stream_name=stream_name,
-                model_id=model_id, model_version=model_version,
-                timestamp=timestamp, cone_polygon=cone_polygon,
-                pole_polygon=pole_polygon,
-            )
-            encoded = upload.image_base64
-            if encoded.startswith('data:'):
-                encoded = encoded.split(',', 1)[1]
-            if len(encoded) > ((_MAX_IMAGE_BYTES + 2) // 3) * 4:
-                raise ValueError('Image exceeds size limit')
-            image_bytes = base64.b64decode(encoded, validate=True)
-            if not image_bytes or len(image_bytes) > _MAX_IMAGE_BYTES:
-                raise ValueError('Empty or oversized image')
-        except (ValidationError, ValueError, binascii.Error, IndexError):
+            metadata = upload.evidence_metadata()
+            image_bytes = upload.image_bytes()
+        except (ValueError, binascii.Error, IndexError):
             return {
                 'success': False,
                 'record_id': None,
                 'message': (
-                    'Invalid upload: check image, source, '
-                    'model snapshot and timestamp'
+                    'Invalid upload: check image, source, model snapshot '
+                    'and timestamp'
                 ),
             }
 
@@ -89,16 +104,8 @@ class RecordTools:
             if self._violation_sender is None:
                 self._violation_sender = ViolationSender()
             record_id = await self._violation_sender.send_violation(
-                site=upload.site,
-                stream_name=upload.stream_name,
-                image_bytes=image_bytes,
-                detection_time=upload.timestamp,
-                warnings=upload.warnings,
-                detections=upload.detections,
-                cone_polygon=upload.cone_polygon,
-                pole_polygon=upload.pole_polygon,
-                model_id=upload.model_id,
-                model_version=upload.model_version,
+                metadata,
+                image_bytes,
             )
             return {'success': record_id is not None, 'record_id': record_id}
         except Exception as exc:
@@ -110,8 +117,8 @@ class RecordTools:
                 'success': False,
                 'record_id': None,
                 'message': (
-                    'Violation upload failed; '
-                    'check backend permissions and configuration'
+                    'Violation upload failed; check backend permissions '
+                    'and configuration'
                 ),
             }
 
@@ -124,16 +131,21 @@ class RecordTools:
             try:
                 upload = ViolationUpload.model_validate(violation)
             except ValidationError:
-                results.append({
-                    'success': False, 'record_id': None,
-                    'message': 'Invalid violation upload fields',
-                })
+                results.append(
+                    {
+                        'success': False,
+                        'record_id': None,
+                        'message': 'Invalid violation upload fields',
+                    },
+                )
                 continue
-            results.append(await self.send_violation(**upload.model_dump()))
+            results.append(await self.send_violation(upload))
         successful = sum(bool(result['success']) for result in results)
         return {
-            'success': successful == len(results), 'total': len(results),
-            'successful': successful, 'failed': len(results) - successful,
+            'success': successful == len(results),
+            'total': len(results),
+            'successful': successful,
+            'failed': len(results) - successful,
             'results': results,
         }
 

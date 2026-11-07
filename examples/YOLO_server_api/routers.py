@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Final
@@ -29,14 +28,12 @@ from examples.auth.config import Settings
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.auth.redis_pool import get_redis_pool_ws
-from examples.YOLO_server_api.detection import INFERENCE_SEMAPHORE
-from examples.YOLO_server_api.detection import run_detection_from_bytes
-from examples.YOLO_server_api.model_files import model_file_checksum
-from examples.YOLO_server_api.model_registry import load_registry
-from examples.YOLO_server_api.model_registry import require_model
-from examples.YOLO_server_api.model_registry import verify_artifact
-from examples.YOLO_server_api.models import DetectionModelManager
-from examples.YOLO_server_api.overlay_response import build_overlay_response
+from examples.YOLO_server_api.inference_runtime import InferenceRuntime
+from examples.YOLO_server_api.model_registry import load_registry_async
+from examples.YOLO_server_api.model_registry import select_model_async
+from examples.YOLO_server_api.model_registry import verified_artifact
+from examples.YOLO_server_api.overlay_runtime import OverlayRuntime
+from examples.YOLO_server_api.overlay_runtime import OverlayWork
 from examples.YOLO_server_api.schemas import DetectionModelInfo
 from examples.YOLO_server_api.schemas import DetectionModelList
 from examples.YOLO_server_api.schemas import DetectionOverlayResponse
@@ -46,28 +43,37 @@ from examples.YOLO_server_api.schemas import UpdateModelRequest
 from examples.YOLO_server_api.websocket_handlers import (
     handle_websocket_detect,
 )
+from src.settings.inference import ModelCatalogSettings
 
 # Router instances for API endpoints
 detection_router: APIRouter = APIRouter()
 model_management_router: APIRouter = APIRouter()
 
 # Global model manager instance for handling YOLO models
-model_loader: DetectionModelManager = DetectionModelManager()
+_inference_runtime: InferenceRuntime | None = None
+_overlay_runtime: OverlayRuntime | None = None
+
+
+def get_overlay_runtime() -> OverlayRuntime:
+    global _overlay_runtime
+    if _overlay_runtime is None or _overlay_runtime._closed:
+        _overlay_runtime = OverlayRuntime()
+    return _overlay_runtime
+
+
+def get_inference_runtime() -> InferenceRuntime:
+    global _inference_runtime
+    if _inference_runtime is None or _inference_runtime._closed:
+        _inference_runtime = InferenceRuntime()
+    return _inference_runtime
+
 
 # Application settings configuration
 settings: Settings = Settings()
 logger = logging.getLogger(__name__)
 
 _upload_chunk_size: Final[int] = 1024 * 1024
-_detect_max_upload_bytes: Final[int] = int(
-    os.getenv('DETECT_MAX_UPLOAD_BYTES', str(20 * 1024 * 1024)),
-)
-_model_upload_max_bytes: Final[int] = int(
-    os.getenv('MODEL_UPLOAD_MAX_BYTES', str(6 * 1024**3)),
-)
-_detection_ingress_semaphore = asyncio.Semaphore(
-    max(1, int(os.getenv('DETECT_INGRESS_CONCURRENCY', '8'))),
-)
+_model_upload_max_bytes: Final[int] = ModelCatalogSettings().upload_max_bytes
 
 
 async def _read_limited_upload(
@@ -127,12 +133,12 @@ async def _stream_upload_to_path(
     response_model=DetectionModelList,
     response_model_exclude_unset=True,
 )
-def list_detection_models(
+async def list_detection_models(
     response: Response,
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
 ) -> DetectionModelList:
     """List models using the same JWT access policy as image detection."""
-    registry = load_registry()
+    registry = await load_registry_async()
     entries = [
         entry
         for entry in registry.models
@@ -187,62 +193,47 @@ async def detect(
         HTTPException: 404 if the specified model is not found.
 
     Note:
-        This endpoint uses semaphore-based concurrency control to prevent
-        GPU memory overflow during simultaneous inference operations.
+        The shared inference runtime bounds queued and running work, including
+        model loading. Capacity exhaustion returns HTTP 503.
     """
     datas, _, _ = await _run_detection_request(
-        detection_request, credentials, remaining_requests,
+        detection_request,
+        credentials,
+        remaining_requests,
     )
     return datas
 
 
 async def _run_detection_request(
-    detection_request, credentials, remaining_requests,
+    detection_request,
+    credentials,
+    remaining_requests,
 ):
-    # Record the start time for performance monitoring
-    start_time: float = time.time()
-
-    # Limit both the memory allocated per image and concurrent upload readers.
-    # Do not log credentials: a JWT subject may contain customer identifiers.
-    async with _detection_ingress_semaphore:
+    start_time = time.monotonic()
+    runtime = get_inference_runtime()
+    async with runtime.admission() as work:
         img_bytes = await _read_limited_upload(
             detection_request.image,
-            max_bytes=_detect_max_upload_bytes,
+            max_bytes=runtime.settings.max_upload_bytes,
         )
-    io_time: float = time.time() - start_time
-    logger.debug(
-        'Detection upload accepted model=%s remaining_requests=%s bytes=%s',
-        detection_request.model,
-        remaining_requests,
-        len(img_bytes),
-    )
-
-    entry = await asyncio.to_thread(
-        require_model,
-        detection_request.model,
-        detection_request.model_version,
-        str(credentials.subject.get('tenant_id', '')),
-        credentials.subject['role'],
-        'image',
-    )
-    model_instance = await asyncio.to_thread(
-        model_loader.get_registry_model, entry,
-    )
-
-    # Unified pipeline with concurrency control
-    datas, timing = await run_detection_from_bytes(
-        img_bytes,
-        model_instance,
-        semaphore=INFERENCE_SEMAPHORE,
-    )
+        io_time = time.monotonic() - start_time
+        entry = await select_model_async(
+            detection_request.model,
+            detection_request.model_version,
+            str(credentials.subject.get('tenant_id', '')),
+            credentials.subject['role'],
+            'image',
+        )
+        result = await work.run(entry, img_bytes)
+        datas, timing = result.rows, result.timing
     inference_time = timing['inference']
     post_time = timing['post']
 
     # Log comprehensive timing information for performance analysis
-    total_time: float = time.time() - start_time
+    total_time: float = time.monotonic() - start_time
     logger.info(
-        'Detection completed model=%s io_seconds=%.3f inference_seconds=%.3f '
-        'post_seconds=%.3f total_seconds=%.3f',
+        'Detection completed model=%s io_seconds=%.3f '
+        'inference_seconds=%.3f post_seconds=%.3f total_seconds=%.3f',
         detection_request.model,
         io_time,
         inference_time,
@@ -250,7 +241,7 @@ async def _run_detection_request(
         total_time,
     )
 
-    return datas, entry, img_bytes
+    return datas, entry, result.image_size
 
 
 @detection_router.websocket('/ws/detect')
@@ -263,7 +254,7 @@ async def websocket_detect(
         websocket=websocket,
         rds=rds,
         settings=settings,
-        model_loader=model_loader,
+        runtime=get_inference_runtime(),
     )
 
 
@@ -361,32 +352,29 @@ async def get_new_model(
             update_request.last_update_time,
         )
 
-        entry = await asyncio.to_thread(
-            require_model,
+        entry = await select_model_async(
             update_request.model,
             None,
             str(credentials.subject.get('tenant_id', '')),
             role,
             'image',
         )
-        model_path = await asyncio.to_thread(verify_artifact, entry)
-
-        checksum = await asyncio.to_thread(model_file_checksum, model_path)
-        etag = f'"{checksum}"'
+        artifact = await asyncio.to_thread(verified_artifact, entry)
+        etag = artifact.etag
         if request.headers.get('if-none-match') == etag:
             return Response(status_code=304, headers={'ETag': etag})
 
         logger.info('Streaming updated model model=%s', update_request.model)
         return FileResponse(
-            model_path,
+            artifact.path,
             media_type='application/octet-stream',
-            filename=model_path.name,
+            filename=artifact.path.name,
             headers={
                 'Cache-Control': 'private, no-store',
                 'ETag': etag,
-                'X-Model-SHA256': checksum,
-                'X-Model-Version': entry.version,
-                'X-Model-Id': entry.id,
+                'X-Model-SHA256': artifact.sha256,
+                'X-Model-Version': artifact.version,
+                'X-Model-Id': artifact.model_id,
             },
         )
 
@@ -405,30 +393,29 @@ async def get_new_model(
         )
 
 
-_overlay_semaphore = asyncio.Semaphore(2)
-
-
 @detection_router.post('/v2/detect', response_model=DetectionOverlayResponse)
 async def detect_v2(
+    request: Request,
     detection_request: DetectionRequest = Depends(DetectionRequest.as_form),
     compute_regions: bool = Form(True),
     view: Literal['objects', 'regions'] = Form('regions'),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
     remaining_requests: int = Depends(rate_limiter_service),
 ) -> DetectionOverlayResponse:
+    # This API defaults to region computation, independently of HTML checkbox
+    # handling that interprets omitted boolean form fields as false.
+    if 'compute_regions' not in await request.form():
+        compute_regions = True
     if view == 'regions' and not compute_regions:
         raise HTTPException(
-            422, detail='Region view requires compute_regions=true',
+            422,
+            detail='Region view requires compute_regions=true',
         )
-    datas, entry, img_bytes = await _run_detection_request(
-        detection_request, credentials, remaining_requests,
+    datas, entry, image_size = await _run_detection_request(
+        detection_request,
+        credentials,
+        remaining_requests,
     )
-    async with _overlay_semaphore:
-        return await asyncio.to_thread(
-            build_overlay_response,
-            datas,
-            entry,
-            img_bytes,
-            compute_regions,
-            view,
-        )
+    return await get_overlay_runtime().render(
+        OverlayWork(datas, entry, image_size, compute_regions, view),
+    )

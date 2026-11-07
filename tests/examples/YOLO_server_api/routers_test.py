@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from collections.abc import Callable
+from functools import partial
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from typing import Any
 from typing import ClassVar
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import Mock
 from unittest.mock import patch
 
+import numpy as np
 from fastapi import FastAPI
 from fastapi import UploadFile
 from fastapi.testclient import TestClient
@@ -19,7 +23,6 @@ from fastapi.testclient import TestClient
 from examples.YOLO_server_api import routers as routers_mod
 from examples.YOLO_server_api.routers import detection_router
 from examples.YOLO_server_api.routers import jwt_access
-from examples.YOLO_server_api.routers import model_loader
 from examples.YOLO_server_api.routers import model_management_router
 from examples.YOLO_server_api.routers import rate_limiter_service
 from examples.YOLO_server_api.routers import websocket_detect
@@ -37,6 +40,22 @@ authorisation, and delegation behaviour.
 """
 
 
+def _setUp_zeros():
+    return np.zeros((2, 2, 3), dtype=np.uint8)
+
+
+def _setUpClass_callback():
+    return 999
+
+
+def _override_jwt_role_factory_override(
+    role: Any,
+    /,
+) -> SimpleNamespace:
+    """Support _override."""
+    return SimpleNamespace(subject={'role': role, 'user': 'tester'})
+
+
 class TestRouters(unittest.IsolatedAsyncioTestCase):
     """Unit tests for ``routers.py`` focused on routing and delegation."""
 
@@ -44,13 +63,25 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     client: ClassVar[TestClient]
 
     def setUp(self):
+        decode = patch(
+            'examples.YOLO_server_api.inference_runtime.prepare_image',
+            return_value=SimpleNamespace(
+                decoded_bytes=12,
+                decode=_setUp_zeros,
+            ),
+        )
+        decode.start()
+        self.addCleanup(decode.stop)
         self.app.dependency_overrides[jwt_access] = (
             self._override_jwt_role_factory('admin')
         )
         patcher = patch(
-            'examples.YOLO_server_api.routers.require_model',
+            'examples.YOLO_server_api.routers.select_model_async',
             return_value=SimpleNamespace(
-                id='yolo26n', version='commit', sha256='a' * 64,
+                id='yolo26n',
+                version='commit',
+                sha256='a' * 64,
+                classes=[],
             ),
         )
         patcher.start()
@@ -64,7 +95,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         cls.app.include_router(detection_router, prefix='/api')
         cls.app.include_router(model_management_router, prefix='/api')
         # Default dependency overrides
-        cls.app.dependency_overrides[rate_limiter_service] = lambda: 999
+        cls.app.dependency_overrides[rate_limiter_service] = (
+            _setUpClass_callback
+        )
         # Default role = admin unless a test overrides it
         cls.app.dependency_overrides[jwt_access] = (
             cls._override_jwt_role_factory('admin')
@@ -83,56 +116,50 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             ``subject`` dict containing the provided role and a fixed user.
         """
 
-        def _override() -> SimpleNamespace:
-            """Support _override."""
-            return SimpleNamespace(subject={'role': role, 'user': 'tester'})
+        _override = partial(_override_jwt_role_factory_override, role)
 
         return _override
 
-    @patch.object(model_loader, 'get_registry_model')
-    @patch(
-        'examples.YOLO_server_api.routers.run_detection_from_bytes',
-        new_callable=AsyncMock,
-    )
-    def test_detect_endpoint_success(
-        self,
-        mock_run_det: AsyncMock,
-        mock_get_model: MagicMock,
-    ) -> None:
-        """Verify POST /api/detect returns detections on success.
-
-        Args:
-            mock_run_det: Mocked async detection function.
-            mock_get_model: Mocked model loader function.
-        """
-        # Prepare mocks
-        mock_get_model.return_value = Mock()
-        mock_run_det.return_value = (
-            [[1, 2, 3, 4, 0.9, 0]],
-            {'inference': 0.01, 'post': 0.005},
+    def test_detect_endpoint_success(self):
+        from examples.YOLO_server_api import (
+            inference_runtime as runtime_module,
         )
-        # Issue request with image file and model name
-        files = {'image': ('test.jpg', b'123', 'image/jpeg')}
-        data = {'model': 'yolo26n'}
-        # Exercise endpoint
+
+        runtime = runtime_module.InferenceRuntime()
         with patch.object(
-            model_loader,
-            'is_model_selectable',
-            return_value=True,
-        ):
-            resp = self.client.post('/api/detect', files=files, data=data)
-        # Verify response and delegation
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), [[1, 2, 3, 4, 0.9, 0]])
-        mock_run_det.assert_awaited_once()
+            routers_mod,
+            'get_inference_runtime',
+            return_value=runtime,
+        ), patch.object(
+            runtime.models,
+            '_load_registry_model',
+            return_value=Mock(),
+        ), patch.object(
+            runtime_module,
+            'run_detection',
+            return_value=(
+                [[1, 2, 3, 4, 0.9, 0]],
+                {'inference': 0.01, 'post': 0.005},
+            ),
+        ) as infer:
+            response = self.client.post(
+                '/api/detect',
+                files={'image': ('test.jpg', b'123')},
+                data={'model': 'yolo26n'},
+            )
+        asyncio.run(runtime.close())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [[1, 2, 3, 4, 0.9, 0]])
+        infer.assert_called_once()
 
     def test_detect_endpoint_model_not_found(self):
         from fastapi import HTTPException
 
         with patch(
-            'examples.YOLO_server_api.routers.require_model',
+            'examples.YOLO_server_api.routers.select_model_async',
             side_effect=HTTPException(
-                409, detail={'code': 'MODEL_UNAVAILABLE'},
+                409,
+                detail={'code': 'MODEL_UNAVAILABLE'},
             ),
         ):
             response = self.client.post(
@@ -177,7 +204,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.YOLO_server_api.routers.verify_artifact',
+        'examples.YOLO_server_api.routers.verified_artifact',
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_get_new_model_updated(
@@ -190,7 +217,15 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.app.dependency_overrides[jwt_access] = (
             self._override_jwt_role_factory('admin')
         )
-        mock_get_file.return_value = Path(__file__)
+        from examples.YOLO_server_api.model_registry import VerifiedArtifact
+        from examples.YOLO_server_api.model_files import model_file_checksum
+
+        mock_get_file.return_value = VerifiedArtifact(
+            Path(__file__),
+            model_file_checksum(Path(__file__)),
+            'yolo26n',
+            'v1',
+        )
         payload = {
             'model': 'yolo26n',
             'last_update_time': '2023-10-01T12:30:00',
@@ -206,7 +241,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         mock_logger.info.assert_called()
 
     @patch(
-        'examples.YOLO_server_api.routers.verify_artifact',
+        'examples.YOLO_server_api.routers.verified_artifact',
     )
     @patch('examples.YOLO_server_api.routers.logger')
     def test_get_new_model_up_to_date(
@@ -220,7 +255,15 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             _mock_logger: Mocked logger instance.
             mock_get_file: Mocked get new model file function.
         """
-        mock_get_file.return_value = Path(__file__)
+        from examples.YOLO_server_api.model_registry import VerifiedArtifact
+        from examples.YOLO_server_api.model_files import model_file_checksum
+
+        mock_get_file.return_value = VerifiedArtifact(
+            Path(__file__),
+            model_file_checksum(Path(__file__)),
+            'yolo26n',
+            'v1',
+        )
         payload = {
             'model': 'yolo26n',
             'last_update_time': '2023-10-01T12:30:00',
@@ -245,7 +288,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status_code, 400)
 
     @patch(
-        'examples.YOLO_server_api.routers.verify_artifact',
+        'examples.YOLO_server_api.routers.verified_artifact',
         side_effect=Exception('Some error'),
     )
     @patch('examples.YOLO_server_api.routers.logger')
@@ -322,8 +365,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(kwargs.get('rds'), mock_rds)
                 self.assertIs(kwargs.get('settings'), routers_mod.settings)
                 self.assertIs(
-                    kwargs.get('model_loader'),
-                    routers_mod.model_loader,
+                    kwargs.get('runtime'),
+                    routers_mod.get_inference_runtime(),
                 )
 
 

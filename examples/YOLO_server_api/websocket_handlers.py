@@ -4,7 +4,6 @@ import asyncio
 import ipaddress
 import json
 import logging
-import os
 from typing import cast
 
 import redis.asyncio as redis
@@ -13,34 +12,26 @@ from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 
 from examples.auth.config import Settings
+from examples.shared.ws_auth import WS_MAX_SESSION_SECONDS
 from examples.shared.ws_helpers import authenticate_ws_or_none
 from examples.shared.ws_helpers import check_and_maybe_close_on_timeout
 from examples.shared.ws_helpers import start_session_timer
 from examples.shared.ws_utils import _safe_websocket_receive_bytes
 from examples.shared.ws_utils import _safe_websocket_send_json
-from examples.YOLO_server_api.detection import run_detection_from_bytes
-from examples.YOLO_server_api.model_registry import load_registry
-from examples.YOLO_server_api.model_registry import require_model
-from examples.YOLO_server_api.model_registry import verify_artifact
-from examples.YOLO_server_api.models import DetectionModelManager
+from examples.YOLO_server_api.inference_runtime import InferenceRuntime
+from examples.YOLO_server_api.inference_runtime import ModelSelection
+from examples.YOLO_server_api.model_registry import select_local_model_async
+from examples.YOLO_server_api.model_registry import select_model_async
+from src.settings.inference import WebSocketSettings
 
 # Limit WebSocket concurrency (consistent with original routers.py)
-WS_INFERENCE_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(8)
 
 logger = logging.getLogger(__name__)
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    """Read a boolean environment setting."""
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
-
-
 def _should_bypass_local_auth(client_ip: str) -> bool:
     """Allow trusted same-host pipeline calls to skip JWT auth."""
-    if not _env_bool('YOLO_WS_ALLOW_LOCALHOST_BYPASS', True):
+    if not WebSocketSettings().allow_localhost_bypass:
         return False
     try:
         return ipaddress.ip_address(client_ip).is_loopback
@@ -138,16 +129,33 @@ async def _send_ready_config(
 async def _process_frame_and_respond(
     websocket: WebSocket,
     img_bytes: bytes,
-    model_instance: object,
+    model_instance: ModelSelection,
     client_ip: str,
     username: str,
 ) -> bool:
     """Run detection for one frame and send the result."""
-    datas, _ = await run_detection_from_bytes(
-        img_bytes,
-        model_instance,
-        semaphore=WS_INFERENCE_SEMAPHORE,
-    )
+    try:
+        result = await model_instance.detect(img_bytes)
+        datas = result.rows
+    except HTTPException as error:
+        detail = error.detail if isinstance(error.detail, dict) else {}
+        await _safe_websocket_send_json(
+            websocket,
+            {
+                'status': 'error',
+                'code': detail.get('code', 'DETECTION_FAILED'),
+                'http_status': error.status_code,
+            },
+            f'{client_ip} ({username})',
+        )
+        await websocket.close(
+            code={400: 1003, 413: 1009, 422: 1003}.get(
+                error.status_code,
+                1013,
+            ),
+            reason=str(detail.get('code', 'Detection unavailable')),
+        )
+        return False
     success = await _safe_websocket_send_json(
         websocket,
         datas,
@@ -163,11 +171,10 @@ async def _process_frame_and_respond(
     return success
 
 
-async def _load_session_model(websocket, model_key, client_ip, model_loader):
+async def _load_session_model(websocket, model_key, client_ip, runtime):
     subject = websocket.scope.get('_catalog_subject')
     if isinstance(subject, dict):
-        entry = await asyncio.to_thread(
-            require_model,
+        entry = await select_model_async(
             model_key,
             websocket.headers.get('x-model-version'),
             str(subject.get('tenant_id', '')),
@@ -175,31 +182,21 @@ async def _load_session_model(websocket, model_key, client_ip, model_loader):
             'image',
         )
     elif _should_bypass_local_auth(client_ip):
-        registry = await asyncio.to_thread(load_registry)
-        entry = next(
-            (
-                m
-                for m in registry.models
-                if m.id == model_key
-                and m.enabled
-                and 'image' in m.capabilities
-            ),
-            None,
+        entry = await select_local_model_async(
+            model_key,
+            websocket.headers.get('x-model-version'),
         )
-        if entry is None:
-            raise HTTPException(409, detail='Model unavailable')
-        await asyncio.to_thread(verify_artifact, entry)
     else:
         raise HTTPException(403, detail='Missing verified model scope')
-    return await asyncio.to_thread(model_loader.get_registry_model, entry)
+    return await runtime.prepare(entry)
 
 
 async def _prepare_model_and_notify(
     websocket: WebSocket,
     client_ip: str,
     username: str,
-    model_loader: DetectionModelManager,
-) -> object | None:
+    runtime: InferenceRuntime,
+) -> ModelSelection | None:
     """Load the requested model and notify the websocket client."""
     model_key: str | None = await _get_model_key_from_ws(
         websocket,
@@ -210,7 +207,10 @@ async def _prepare_model_and_notify(
         return None
     try:
         model_instance = await _load_session_model(
-            websocket, model_key, client_ip, model_loader,
+            websocket,
+            model_key,
+            client_ip,
+            runtime,
         )
     except HTTPException as exc:
         await websocket.close(
@@ -241,7 +241,7 @@ async def _prepare_model_and_notify(
 async def _detect_loop(
     websocket: WebSocket,
     session_start: float,
-    model_instance: object,
+    model_instance: ModelSelection,
     client_ip: str,
     username: str,
 ) -> int:
@@ -283,52 +283,64 @@ async def handle_websocket_detect(
     websocket: WebSocket,
     rds: redis.Redis,
     settings: Settings,
-    model_loader: DetectionModelManager,
+    runtime: InferenceRuntime,
 ) -> None:
     """Handle one YOLO websocket detection session."""
     client_ip: str = websocket.client.host if websocket.client else 'unknown'
     logger.info(f'[YOLO-WebSocket] New connection from {client_ip}')
 
-    await websocket.accept()
-
-    if _should_bypass_local_auth(client_ip):
-        username = os.getenv('YOLO_WS_LOCAL_USERNAME') or 'local-main'
-        logger.info(
-            (f'[YOLO-WebSocket] {client_ip}: Localhost auth bypass enabled'),
-        )
-    else:
-        authenticated_username, payload = await authenticate_ws_or_none(
-            websocket,
-            rds,
-            client_tag=f'[YOLO-WebSocket] {client_ip}',
-        )
-        if not authenticated_username:
-            return
-        username = authenticated_username
-        websocket.scope['_catalog_subject'] = (payload or {}).get('subject')
-        logger.info(
-            f'[YOLO-WebSocket] {client_ip}: Authenticated as {username}',
-        )
-
-    session_start: float = start_session_timer()
-
-    model_instance = await _prepare_model_and_notify(
-        websocket,
-        client_ip,
-        username,
-        model_loader,
-    )
-    if model_instance is None:
-        return
-
+    session_start = start_session_timer()
+    username = 'unauthenticated'
     try:
-        await _detect_loop(
-            websocket,
-            session_start,
-            model_instance,
-            client_ip,
-            username,
-        )
+        async with asyncio.timeout(WS_MAX_SESSION_SECONDS):
+            await websocket.accept()
+
+            if _should_bypass_local_auth(client_ip):
+                username = WebSocketSettings().local_username
+                logger.info(
+                    (
+                        f'[YOLO-WebSocket] {client_ip}: '
+                        'Localhost auth bypass enabled'
+                    ),
+                )
+            else:
+                authenticated_username, payload = (
+                    await authenticate_ws_or_none(
+                        websocket,
+                        rds,
+                        client_tag=f'[YOLO-WebSocket] {client_ip}',
+                    )
+                )
+                if not authenticated_username:
+                    return
+                username = authenticated_username
+                websocket.scope['_catalog_subject'] = (payload or {}).get(
+                    'subject',
+                )
+                logger.info(
+                    f'[YOLO-WebSocket] {client_ip}: '
+                    f'Authenticated as {username}',
+                )
+            model_instance = await _prepare_model_and_notify(
+                websocket,
+                client_ip,
+                username,
+                runtime,
+            )
+            if model_instance is None:
+                return
+            await _detect_loop(
+                websocket,
+                session_start,
+                model_instance,
+                client_ip,
+                username,
+            )
+    except TimeoutError:
+        try:
+            await websocket.close(code=1000, reason='Session timeout')
+        except (WebSocketDisconnect, RuntimeError):
+            pass
     except WebSocketDisconnect:
         logger.info(
             f'[YOLO-WebSocket] {client_ip} ({username}): Client disconnected',

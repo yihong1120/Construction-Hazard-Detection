@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 import unittest
+from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -23,9 +24,30 @@ from examples.db_management.schemas.auth import (
 from examples.db_management.schemas.auth import NativeSocialLinkCompleteRequest
 from examples.db_management.schemas.auth import ProviderClaims
 from examples.db_management.services import (
+    native_social_broker as social_broker,
+)
+from examples.db_management.services import (
     native_social_exchange_services as svc,
 )
+from examples.db_management.services import native_social_links as social_links
+from examples.db_management.services import native_social_proof as social_proof
 from tests.examples.auth.session_store_test import FakeRedis
+
+
+class _RequestCallbacks:
+    body: Any
+    sent: Any
+
+    async def _call_receive(self) -> dict[str, object]:
+
+        if self.sent:
+            return {'type': 'http.request', 'body': b'', 'more_body': False}
+        self.sent = True
+        return {
+            'type': 'http.request',
+            'body': self.body,
+            'more_body': False,
+        }
 
 
 def _request(
@@ -33,14 +55,11 @@ def _request(
     headers: dict[str, str] | None = None,
 ) -> Request:
     """Build a loopback Starlette request with an optional raw body."""
-    sent = False
+    _callbacks = _RequestCallbacks()
+    _callbacks.body = body
+    _callbacks.sent = False
 
-    async def receive() -> dict[str, object]:
-        nonlocal sent
-        if sent:
-            return {'type': 'http.request', 'body': b'', 'more_body': False}
-        sent = True
-        return {'type': 'http.request', 'body': body, 'more_body': False}
+    receive = _callbacks._call_receive
 
     return Request(
         {
@@ -92,8 +111,8 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
         svc.settings.native_social_exchange_enabled = True
         svc.settings.native_social_exchange_shared_secret = 'a' * 64
         svc.settings.native_social_allowed_clients_json = (
-            '{"visionnaire-mobile":['
-            '"com.changdar.visionnaire:/oauthredirect"]}'
+            '{"visionnaire-mobile":["com.changdar.visionnaire'
+            ':/oauthredirect"]}'
         )
         svc.settings.native_social_exchange_ttl_seconds = 90
         svc.settings.native_social_link_ttl_seconds = 120
@@ -122,11 +141,11 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
         begin = await svc.begin_native_social_exchange(
             self._begin_payload(),
             _request(),
-            self.redis,  # type: ignore[arg-type]
+            self.redis,
         )
         claims = ProviderClaims.model_validate({'sub': 'google-stable-sub'})
         with patch.object(
-            svc,
+            social_proof,
             'verify_google_id_token',
             AsyncMock(return_value=claims),
         ) as verify, patch.object(
@@ -139,10 +158,9 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
                     transaction_id=begin.transaction_id,
                     id_token='provider-id-token',
                 ),
-                self.redis,  # type: ignore[arg-type]
+                self.redis,
                 self.db,
             )
-
         verify.assert_awaited_once_with(
             'provider-id-token',
             expected_nonce=begin.nonce,
@@ -150,10 +168,9 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn('native_social_exchange=', completed.authorization_url)
         self.assertIn(
-            'code_challenge=' + ('a' * 43),
+            'code_challenge=' + 'a' * 43,
             completed.authorization_url,
         )
-
         body = json.dumps(
             {
                 'transaction_id': begin.transaction_id,
@@ -166,19 +183,21 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
         timestamp = str(int(time.time()))
         headers = {
             'X-Visionnaire-Timestamp': timestamp,
-            'X-Visionnaire-Signature': svc._hmac_signature(timestamp, body),
+            'X-Visionnaire-Signature': social_broker._hmac_signature(
+                timestamp,
+                body,
+            ),
         }
-        redeemed = await svc.redeem_keycloak_native_social_exchange(
+        redeemed = await social_broker.redeem_keycloak_native_social_exchange(
             _request(body, headers),
-            self.redis,  # type: ignore[arg-type]
+            self.redis,
         )
         self.assertEqual(redeemed['provider'], 'google')
         self.assertIn('provider_subject_b64', redeemed)
-
         with self.assertRaises(HTTPException) as ctx:
-            await svc.redeem_keycloak_native_social_exchange(
+            await social_broker.redeem_keycloak_native_social_exchange(
                 _request(body, headers),
-                self.redis,  # type: ignore[arg-type]
+                self.redis,
             )
         self.assertEqual(ctx.exception.status_code, 401)
 
@@ -186,10 +205,10 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
         begin = await svc.begin_native_social_exchange(
             self._begin_payload(),
             _request(),
-            self.redis,  # type: ignore[arg-type]
+            self.redis,
         )
         with patch.object(
-            svc,
+            social_proof,
             'verify_google_id_token',
             AsyncMock(
                 return_value=ProviderClaims.model_validate({'sub': 'g'}),
@@ -204,7 +223,7 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
                     transaction_id=begin.transaction_id,
                     id_token='id-token',
                 ),
-                self.redis,  # type: ignore[arg-type]
+                self.redis,
                 self.db,
             )
         body = json.dumps(
@@ -219,12 +238,15 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
         timestamp = str(int(time.time()))
         headers = {
             'X-Visionnaire-Timestamp': timestamp,
-            'X-Visionnaire-Signature': svc._hmac_signature(timestamp, body),
+            'X-Visionnaire-Signature': social_broker._hmac_signature(
+                timestamp,
+                body,
+            ),
         }
         with self.assertRaises(HTTPException) as ctx:
-            await svc.redeem_keycloak_native_social_exchange(
+            await social_broker.redeem_keycloak_native_social_exchange(
                 _request(body, headers),
-                self.redis,  # type: ignore[arg-type]
+                self.redis,
             )
         self.assertEqual(ctx.exception.status_code, 401)
 
@@ -250,10 +272,10 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
         started = await svc.begin_native_social_link(
             'apple',
             credentials,
-            self.redis,  # type: ignore[arg-type]
+            self.redis,
         )
         with patch.object(
-            svc,
+            social_proof,
             'verify_apple_identity_token',
             AsyncMock(
                 return_value=ProviderClaims.model_validate(
@@ -261,18 +283,11 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         ) as verify, patch.object(
-            svc,
-            '_link_keycloak_federated_identity',
-            AsyncMock(return_value='linked'),
-        ) as link, patch.object(
-            svc,
-            '_ensure_local_identity_available',
-            AsyncMock(),
-        ), patch.object(
-            svc,
-            '_sync_local_provider_identity',
-            AsyncMock(),
-        ):
+            social_links.NativeIdentityLink,
+            'execute',
+            autospec=True,
+            return_value='linked',
+        ) as link:
             result = await svc.complete_native_social_link(
                 NativeSocialLinkCompleteRequest(
                     transaction_id=started.transaction_id,
@@ -280,7 +295,7 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
                     authorization_code='apple-code',
                 ),
                 credentials,
-                self.redis,  # type: ignore[arg-type]
+                self.redis,
                 self.db,
                 self.user,
             )
@@ -291,9 +306,15 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
             expected_nonce=started.nonce,
         )
         link.assert_awaited_once_with(
-            keycloak_subject='keycloak-user-id',
-            provider='apple',
-            provider_subject='apple-sub',
+            social_links.NativeIdentityLink(
+                user_id=self.user.id,
+                keycloak_subject='keycloak-user-id',
+                identity=social_proof.VerifiedSocialIdentity(
+                    'apple',
+                    'apple-sub',
+                ),
+            ),
+            self.db,
         )
 
     async def test_verified_email_requires_reauthentication_then_links(
@@ -302,7 +323,7 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
         begin = await svc.begin_native_social_exchange(
             self._begin_payload(),
             _request(),
-            self.redis,  # type: ignore[arg-type]
+            self.redis,
         )
         claims = ProviderClaims.model_validate(
             {
@@ -311,12 +332,12 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
                 'email_verified': True,
             },
         )
-        candidate = svc.EmailLinkCandidate(
+        candidate = social_links.EmailLinkCandidate(
             local_user_id=1,
             keycloak_subject='keycloak-user-id',
         )
         with patch.object(
-            svc,
+            social_proof,
             'verify_google_id_token',
             AsyncMock(return_value=claims),
         ), patch.object(
@@ -330,13 +351,12 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
                         transaction_id=begin.transaction_id,
                         id_token='provider-id-token',
                     ),
-                    self.redis,  # type: ignore[arg-type]
+                    self.redis,
                     self.db,
                 )
         self.assertEqual(ctx.exception.status_code, 409)
         detail = ctx.exception.detail
         self.assertEqual(detail['code'], 'account_link_required')
-
         credentials = JwtAuthorizationCredentials(
             subject={
                 'username': 'alice',
@@ -354,32 +374,31 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
             token='keycloak-token',
         )
         with patch.object(
-            svc,
-            '_ensure_local_identity_available',
-            AsyncMock(),
-        ), patch.object(
-            svc,
-            '_link_keycloak_federated_identity',
-            AsyncMock(return_value='linked'),
-        ) as link, patch.object(
-            svc,
-            '_sync_local_provider_identity',
-            AsyncMock(),
-        ):
+            social_links.NativeIdentityLink,
+            'execute',
+            autospec=True,
+            return_value='linked',
+        ) as link:
             result = await svc.confirm_native_social_email_link(
                 NativeSocialEmailLinkConfirmRequest(
                     transaction_id=detail['link_transaction_id'],
                 ),
                 credentials,
-                self.redis,  # type: ignore[arg-type]
+                self.redis,
                 self.db,
                 self.user,
             )
         self.assertEqual(result.status, 'linked')
         link.assert_awaited_once_with(
-            keycloak_subject='keycloak-user-id',
-            provider='google',
-            provider_subject='google-sub',
+            social_links.NativeIdentityLink(
+                user_id=self.user.id,
+                keycloak_subject='keycloak-user-id',
+                identity=social_proof.VerifiedSocialIdentity(
+                    'google',
+                    'google-sub',
+                ),
+            ),
+            self.db,
         )
 
     def test_email_candidate_requires_provider_verified_email(self) -> None:
@@ -398,9 +417,11 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
                 'email_verified': True,
             },
         )
-        self.assertIsNone(svc._normalised_verified_email(unverified))
+        self.assertIsNone(social_proof._normalised_verified_email(unverified))
         self.assertEqual(
-            svc._normalised_verified_email(verified),
+            social_proof._normalised_verified_email(
+                verified,
+            ),
             'alice@example.com',
         )
 
@@ -423,7 +444,7 @@ class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
             await svc.begin_native_social_link(
                 'google',
                 credentials,
-                self.redis,  # type: ignore[arg-type]
+                self.redis,
             )
         self.assertEqual(
             ctx.exception.detail,

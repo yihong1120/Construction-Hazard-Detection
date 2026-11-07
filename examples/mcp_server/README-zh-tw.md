@@ -27,7 +27,8 @@ MCP_TRANSPORT=streamable-http uv run --no-sync python -m examples.mcp_server.mai
 
 預設網址 `http://127.0.0.1:8092/mcp`。另支援 `sse` transport，路徑 `/sse`。
 `MCP_HOST`、`MCP_PORT`、`MCP_PATH`、`MCP_SSE_PATH`、`MCP_DEBUG` 可覆寫設定。
-無效 transport 會退回 stdio，警告寫入 stderr，確保 stdout 僅包含協定訊息。
+Transport、port 與布林設定會在啟動前驗證；無效 transport 會直接報錯。
+stdio client 請明確設定 `MCP_TRANSPORT=stdio`，stdout 維持僅包含協定訊息。
 
 此入口提供配置於伺服器端的帳號能力，適合由可信任操作員透過 stdio 或本機 HTTP 使用。
 HTTP 入口沒有另設使用者登入；若需遠端存取，須先配置有身分驗證的代理並限制連線來源。

@@ -44,6 +44,7 @@ examples/YOLO_data_augmentation/visualised_image.jpg
 
 # Other generated build output
 build/
+wheels/python315/
 frontend/web/
 examples/streaming_web/frontend/node_modules/
 examples/streaming_web/frontend/dist/

@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from dataclasses import dataclass
 from functools import lru_cache
+from functools import partial
 from pathlib import Path
 from typing import Annotated
 from typing import Literal
@@ -15,6 +17,7 @@ from pydantic import Field
 from pydantic import field_validator
 from pydantic import model_validator
 from pydantic import StringConstraints
+lazy from huggingface_hub import hf_hub_download
 
 from examples.shared.class_colors import normalize_color
 from examples.shared.class_colors import published_color
@@ -57,7 +60,9 @@ class ModelEntry(BaseModel):
     tenant_ids: list[str] = Field(default_factory=list)
     site_ids: list[int] = Field(default_factory=list)
     roles: list[str] = Field(
-        default_factory=lambda: ['admin', 'user', 'guest', 'super_admin'],
+        default_factory=partial(
+            list, ('admin', 'user', 'guest', 'super_admin'),
+        ),
     )
     classes: list[ModelClass]
 
@@ -107,57 +112,44 @@ def unavailable(code: str = 'OPTIONS_UNAVAILABLE') -> HTTPException:
 
 
 async def _read_catalog_rows_async():
-    from sqlalchemy import select
-    from sqlalchemy.ext.asyncio import create_async_engine
-    from sqlalchemy.pool import NullPool
-    from examples.auth.config import Settings
-    from examples.auth.models import DetectionModelCatalog
+    from examples.YOLO_server_api.catalog_repository import catalog_repository
 
-    # A short-lived connection belongs to this worker's event loop.
-    engine = create_async_engine(
-        Settings().sqlalchemy_database_uri,
-        poolclass=NullPool,
-        connect_args={'timeout': 5, 'command_timeout': 5},
-    )
-    try:
-        async with engine.connect() as connection:
-            result = await connection.execute(
-                select(
-                    DetectionModelCatalog.model_key,
-                    DetectionModelCatalog.definition,
-                    DetectionModelCatalog.is_default,
-                ).order_by(
-                    DetectionModelCatalog.display_order,
-                    DetectionModelCatalog.model_key,
-                ),
-            )
-            return list(result.mappings())
-    finally:
-        await engine.dispose()
+    return await catalog_repository.rows()
 
 
 def _read_catalog_rows():
-    return asyncio.run(_read_catalog_rows_async())
+    from examples.YOLO_server_api.catalog_repository import synchronous_catalog
+
+    return synchronous_catalog.rows()
+
+
+def _registry_from_rows(rows) -> ModelRegistry:
+    models = [
+        ModelEntry.model_validate(
+            {**r['definition'], 'id': r['model_key']},
+        )
+        for r in rows
+    ]
+    defaults = [r['model_key'] for r in rows if r['is_default']]
+    if len(defaults) > 1:
+        raise ValueError('Multiple default models')
+    return ModelRegistry(
+        revision=revision_for([m.model_dump() for m in models] + defaults),
+        default_id=defaults[0] if defaults else None,
+        models=models,
+    )
 
 
 def load_registry() -> ModelRegistry:
-    """Read the database catalog from a synchronous worker thread."""
     try:
-        rows = _read_catalog_rows()
-        models = [
-            ModelEntry.model_validate(
-                {**r['definition'], 'id': r['model_key']},
-            )
-            for r in rows
-        ]
-        defaults = [r['model_key'] for r in rows if r['is_default']]
-        if len(defaults) > 1:
-            raise ValueError('Multiple default models')
-        return ModelRegistry(
-            revision=revision_for([m.model_dump() for m in models] + defaults),
-            default_id=defaults[0] if defaults else None,
-            models=models,
-        )
+        return _registry_from_rows(_read_catalog_rows())
+    except Exception as exc:
+        raise unavailable('MODEL_REGISTRY_UNAVAILABLE') from exc
+
+
+async def load_registry_async() -> ModelRegistry:
+    try:
+        return _registry_from_rows(await _read_catalog_rows_async())
     except Exception as exc:
         raise unavailable('MODEL_REGISTRY_UNAVAILABLE') from exc
 
@@ -170,7 +162,6 @@ def artifact_path(entry: ModelEntry) -> Path:
     if path.is_file():
         return path
     if entry.hf_repo and entry.hf_filename and entry.hf_revision:
-        from huggingface_hub import hf_hub_download
 
         try:
             return Path(
@@ -191,7 +182,19 @@ def _artifact_digest(path: Path, fingerprint: tuple[int, ...]) -> str:
         return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
-def verify_artifact(entry: ModelEntry) -> Path:
+@dataclass(frozen=True)
+class VerifiedArtifact:
+    path: Path
+    sha256: str
+    model_id: str
+    version: str
+
+    @property
+    def etag(self) -> str:
+        return f'"{self.sha256}"'
+
+
+def verified_artifact(entry: ModelEntry) -> VerifiedArtifact:
     path = artifact_path(entry)
     try:
         stat = path.stat()
@@ -208,7 +211,54 @@ def verify_artifact(entry: ModelEntry) -> Path:
         raise HTTPException(409, detail={'code': 'MODEL_UNAVAILABLE'}) from exc
     if digest != entry.sha256:
         raise HTTPException(409, detail={'code': 'MODEL_UNAVAILABLE'})
-    return path
+    return VerifiedArtifact(path, digest, entry.id, entry.version)
+
+
+def verify_artifact(entry: ModelEntry) -> Path:
+    return verified_artifact(entry).path
+
+
+def _available_model(
+    registry: ModelRegistry,
+    model_id: str,
+    version: str | None,
+) -> ModelEntry:
+    entry = next((m for m in registry.models if m.id == model_id), None)
+    if (
+        entry is None
+        or not entry.enabled
+        or (version is not None and version != entry.version)
+    ):
+        raise HTTPException(409, detail={'code': 'MODEL_UNAVAILABLE'})
+    return entry
+
+
+async def select_local_model_async(
+    model_id: str,
+    version: str | None,
+) -> ModelEntry:
+    entry = _available_model(await load_registry_async(), model_id, version)
+    if 'image' not in entry.capabilities:
+        raise HTTPException(403, detail='Model has no image capability')
+    return entry
+
+
+def _selected_model(
+    registry: ModelRegistry,
+    model_id: str,
+    version: str | None,
+    tenant_id: str,
+    role: str,
+    capability: str,
+    site_id: int | None,
+) -> ModelEntry:
+    entry = _available_model(registry, model_id, version)
+    if not entry.allowed(tenant_id, role, capability, site_id):
+        raise HTTPException(
+            403,
+            detail='Model is not allowed for this resource',
+        )
+    return entry
 
 
 def require_model(
@@ -219,24 +269,96 @@ def require_model(
     capability: str,
     site_id: int | None = None,
 ) -> ModelEntry:
-    registry = load_registry()
-    entry = next((m for m in registry.models if m.id == model_id), None)
-    if (
-        entry is None
-        or not entry.enabled
-        or (version is not None and version != entry.version)
-    ):
-        raise HTTPException(409, detail={'code': 'MODEL_UNAVAILABLE'})
-    if not entry.allowed(tenant_id, role, capability, site_id):
-        raise HTTPException(
-            403, detail='Model is not allowed for this resource',
-        )
+    entry = _selected_model(
+        load_registry(),
+        model_id,
+        version,
+        tenant_id,
+        role,
+        capability,
+        site_id,
+    )
     verify_artifact(entry)
+    return entry
+
+
+async def select_model_async(
+    model_id: str,
+    version: str | None,
+    tenant_id: str,
+    role: str,
+    capability: str,
+    site_id: int | None = None,
+) -> ModelEntry:
+    return _selected_model(
+        await load_registry_async(),
+        model_id,
+        version,
+        tenant_id,
+        role,
+        capability,
+        site_id,
+    )
+
+
+async def require_model_async(
+    model_id: str,
+    version: str | None,
+    tenant_id: str,
+    role: str,
+    capability: str,
+    site_id: int | None = None,
+) -> ModelEntry:
+    entry = await select_model_async(
+        model_id,
+        version,
+        tenant_id,
+        role,
+        capability,
+        site_id,
+    )
+    await asyncio.to_thread(verify_artifact, entry)
     return entry
 
 
 def revision_for(value: object) -> str:
     serialized = json.dumps(
-        value, sort_keys=True, ensure_ascii=False, default=str,
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
     )
     return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+class EvidenceModelVersion(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    id: Text
+    version: Text
+    classes: list[ModelClass]
+
+
+async def resolve_evidence_version(
+    current: ModelEntry,
+    version: str,
+) -> EvidenceModelVersion:
+    """Resolve trusted metadata after checking the current model's access."""
+    if current.version == version:
+        return EvidenceModelVersion(
+            id=current.id,
+            version=version,
+            classes=current.classes,
+        )
+    from examples.YOLO_server_api.catalog_repository import catalog_repository
+
+    try:
+        historical = await catalog_repository.version(current.id, version)
+        if historical is not None:
+            return EvidenceModelVersion(
+                id=historical.model_key,
+                version=historical.version,
+                classes=historical.classes,
+            )
+    except Exception as exc:
+        raise unavailable('MODEL_REGISTRY_UNAVAILABLE') from exc
+    raise HTTPException(409, detail={'code': 'MODEL_VERSION_UNKNOWN'})

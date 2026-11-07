@@ -12,6 +12,10 @@ from examples.YOLO_evaluation.convert_yolo_to_coco import COCOConverter
 from examples.YOLO_evaluation.convert_yolo_to_coco import main
 
 
+def _convert_annotations_endswith(path):
+    return path.endswith('image1.jpg')
+
+
 class TestCOCOConverter(unittest.TestCase):
     """Test suite."""
 
@@ -58,7 +62,7 @@ class TestCOCOConverter(unittest.TestCase):
         # Setup the mocks
         mock_listdir.return_value = ['image1.txt', 'image2.txt']
         # Simulate image1 exists, image2 does not exist
-        mock_exists.side_effect = lambda path: path.endswith('image1.jpg')
+        mock_exists.side_effect = _convert_annotations_endswith
         mock_image = MagicMock()
         mock_image.size = (800, 600)
         mock_image_open.return_value = mock_image

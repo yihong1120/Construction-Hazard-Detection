@@ -10,25 +10,9 @@ class MetadataRedis(Protocol):
     """Minimal Redis operations used by metadata-generation keys."""
 
     async def get(self, key: str) -> bytes | str | None:
-        """Perform get.
-
-        Args:
-            key: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         ...
 
     async def incr(self, key: str) -> int:
-        """Perform incr.
-
-        Args:
-            key: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         ...
 
 

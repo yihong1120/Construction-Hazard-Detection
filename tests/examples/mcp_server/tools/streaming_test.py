@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import threading
+from functools import partial
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -12,6 +13,15 @@ import pytest
 from examples.mcp_server.tools.streaming import StreamingTools
 
 
+def _capture_and_release_off_event_read(
+    frame,
+    main_thread,
+    /,
+):
+    assert threading.get_ident() != main_thread
+    return True, frame
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize('frame_format', ['base64', 'array'])
 async def test_capture_and_release_off_event_loop(frame_format):
@@ -19,14 +29,13 @@ async def test_capture_and_release_off_event_loop(frame_format):
     frame = np.zeros((2, 3, 3), dtype=np.uint8)
     main_thread = threading.get_ident()
 
-    def read():
-        assert threading.get_ident() != main_thread
-        return True, frame
+    read = partial(_capture_and_release_off_event_read, frame, main_thread)
 
     cap.read.side_effect = read
     with patch('cv2.VideoCapture', return_value=cap) as factory:
         result = await StreamingTools().capture_frame(
-            'rtsp://camera', frame_format,
+            'rtsp://camera',
+            frame_format,
         )
     assert result['success']
     cap.release.assert_called_once()
@@ -38,8 +47,10 @@ async def test_capture_and_release_off_event_loop(frame_format):
             np.frombuffer(
                 base64.b64decode(
                     result['frame_data'],
-                ), np.uint8,
-            ), cv2.IMREAD_COLOR,
+                ),
+                np.uint8,
+            ),
+            cv2.IMREAD_COLOR,
         )
         assert decoded.shape == frame.shape
 

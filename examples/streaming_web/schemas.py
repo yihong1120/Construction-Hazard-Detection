@@ -51,6 +51,7 @@ class CleanPlaybackSession(TypedDict):
     """
 
     session_id: str
+    revision: NotRequired[str]
     username: str
     label: str
     stream_name: str
@@ -83,6 +84,7 @@ class OverlayPlaybackSession(TypedDict):
     """
 
     session_id: str
+    revision: NotRequired[str]
     username: str
     label: str
     stream_name: str

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
-from datetime import datetime
 
 import httpx
 from dotenv import load_dotenv
 
 from src.async_http_client import AsyncHttpClientOwner
 from src.auth_tokens import TokenManager
+from src.evidence import EvidenceMetadata
+from src.settings.connections import ViolationTransportSettings
 
 # Load environment variables
 load_dotenv()
@@ -28,6 +27,8 @@ class ViolationSender(AsyncHttpClientOwner):
         api_url: str | None = None,
         max_retries: int = 3,
         timeout: int = 10,
+        *,
+        token_manager: TokenManager | None = None,
     ) -> None:
         """Initialise the ViolationSender.
 
@@ -37,80 +38,45 @@ class ViolationSender(AsyncHttpClientOwner):
             max_retries (int): Maximum number of retry attempts for requests.
             timeout (int): Timeout for HTTP requests in seconds.
         """
-        # Load API URL from environment variable if not provided
-        if api_url is None:
-            api_url = os.getenv(
-                'VIOLATION_RECORD_API_URL',
-                'http://127.0.0.1:8002',
-            )
+        self.settings = ViolationTransportSettings.from_overrides(
+            api_url=api_url,
+        )
+        self.base_url: str = self.settings.api_url
 
-        self.base_url: str = api_url.rstrip('/')
-        self.shared_token: dict[str, str | bool] = {
-            'access_token': '',
-        }
         self.max_retries: int = max_retries
         super().__init__(timeout)
 
         logging.getLogger('httpx').setLevel(logging.WARNING)
 
-        self.token_manager: TokenManager = TokenManager(
-            shared_token=self.shared_token,
-        )
+        self.token_manager = token_manager or TokenManager()
+        self.shared_token = self.token_manager.shared_token
+        self._owns_token_manager = token_manager is None
+
+    async def close(self) -> None:
+        try:
+            await super().close()
+        finally:
+            if self._owns_token_manager:
+                await self.token_manager.close()
 
     async def send_violation(
         self,
-        site: str,
-        stream_name: str,
+        metadata: EvidenceMetadata,
         image_bytes: bytes,
-        detection_time: datetime | None = None,
-        warnings: object | None = None,
-        detections: object | None = None,
-        cone_polygon: object | None = None,
-        pole_polygon: object | None = None,
-        model_id: str | None = None,
-        model_version: str | None = None,
     ) -> str | None:
-        """Send a violation image and associated metadata to the backend API.
-
-        Args:
-            site (str): The site label.
-            stream_name (str): The stream identifier.
-            image_bytes (bytes): The image data in bytes.
-            detection_time (Optional[datetime]): The time of detection.
-
-        Returns:
-            Optional[str]:
-                The violation ID (string) if successful,
-                or None if all attempts fail.
-
-        Raises:
-            RuntimeError:
-                If all retry attempts are exhausted or a critical error occurs.
-        """
-        # Ensure authentication and prepare request payload
+        """Upload one evidence image using the shared metadata contract."""
+        if bool(metadata.model_id) != bool(metadata.model_version):
+            raise ValueError(
+                'Model ID and inference version must be provided together',
+            )
         access_token = await self.token_manager.get_valid_token()
         if not access_token:
             raise RuntimeError('Failed to obtain valid access token')
-
         headers, files, data, upload_url = self._build_upload_payload(
-            access_token=access_token,
-            image_bytes=image_bytes,
-            site=site,
-            stream_name=stream_name,
-            detection_time=detection_time,
-            warnings_json=json.dumps(warnings),
-            detections_json=json.dumps(detections),
-            cone_polygon_json=json.dumps(cone_polygon),
-            pole_polygon_json=json.dumps(pole_polygon),
+            access_token,
+            metadata,
+            image_bytes,
         )
-
-        if model_id is not None or model_version is not None:
-            if not model_id or not model_version:
-                raise ValueError(
-                    'Model ID and inference version must be provided together',
-                )
-            data['model_id'] = model_id
-            data['model_version'] = model_version
 
         # Use shared client connection pool
         client = await self._get_client()
@@ -164,64 +130,27 @@ class ViolationSender(AsyncHttpClientOwner):
     def _build_upload_payload(
         self,
         access_token: str | None,
+        metadata: EvidenceMetadata,
         image_bytes: bytes,
-        site: str,
-        stream_name: str,
-        detection_time: datetime | None,
-        warnings_json: str | None,
-        detections_json: str | None,
-        cone_polygon_json: str | None,
-        pole_polygon_json: str | None,
     ) -> tuple[
         dict[str, str],
         dict[str, tuple[str, bytes, str]],
         dict[str, str],
         str,
     ]:
-        """Build headers, files, form data, and URL for upload request.
-
-        Args:
-            access_token (str): The access token for authentication.
-            image_bytes (bytes): The image bytes to upload.
-            site (str): The site identifier.
-            stream_name (str): The stream name.
-            detection_time (datetime | None): The time of detection.
-            warnings_json (str | None): JSON string of warnings.
-            detections_json (str | None): JSON string of detection items.
-            cone_polygon_json (str | None): JSON string of cone polygons.
-            pole_polygon_json (str | None): JSON string of pole polygons.
-
-        Returns:
-            tuple[
-                dict[str, str],
-                dict[str, tuple[str, bytes, str]],
-                dict[str, str],
-                str,
-            ]: The headers, files, form data, and upload URL.
-        """
-        headers: dict[str, str] = {}
-        if access_token:
-            headers['Authorization'] = f'Bearer {access_token}'
-        files: dict[str, tuple[str, bytes, str]] = {
-            'image': ('violation.jpg', image_bytes, 'image/jpeg'),
-        }
-        data: dict[str, str] = {
-            'site': site,
-            'stream_name': stream_name,
-        }
-        if detection_time:
-            data['detection_time'] = detection_time.astimezone().isoformat()
-        if warnings_json:
-            data['warnings_json'] = warnings_json
-        if detections_json:
-            data['detections_json'] = detections_json
-        if cone_polygon_json:
-            data['cone_polygon_json'] = cone_polygon_json
-        if pole_polygon_json:
-            data['pole_polygon_json'] = pole_polygon_json
-
-        upload_url: str = self.base_url + '/upload'
-        return headers, files, data, upload_url
+        headers = (
+            {
+                'Authorization': f'Bearer {access_token}',
+            }
+            if access_token
+            else {}
+        )
+        return (
+            headers,
+            {'image': ('violation.jpg', image_bytes, 'image/jpeg')},
+            metadata.as_form(),
+            self.base_url + '/upload',
+        )
 
     async def _retry_or_raise(
         self,
@@ -258,7 +187,9 @@ class ViolationSender(AsyncHttpClientOwner):
             logging.warning(
                 '[send_violation] Unauthorized. Attempting token refresh...',
             )
-            await self.token_manager.refresh_token()
+            await self.token_manager.refresh_token(
+                headers['Authorization'].removeprefix('Bearer '),
+            )
             new_token = await self.token_manager.get_valid_token()
             headers['Authorization'] = f'Bearer {new_token}'
             return attempt < self.max_retries - 1

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -28,8 +29,30 @@ from examples.db_management.schemas.user import UserProfileBase
 from examples.db_management.schemas.user import UserProfileUpdate
 from examples.db_management.schemas.user import UserRead
 from examples.db_management.services import (
+    keycloak_user_management_services as provider,
+)
+from examples.db_management.services import user_action_services as actions
+from examples.db_management.services import (
     user_management_services as user_management,
 )
+
+
+def _identity(db, user):
+    return user
+
+
+async def _setUp_provisioning(*args):
+    yield SimpleNamespace(
+        subject='keycloak-subject',
+        adopt=AsyncMock(),
+    )
+
+
+async def _setUp_provisioning2(*args):
+    yield SimpleNamespace(
+        subject='keycloak-subject',
+        adopt=AsyncMock(),
+    )
 
 
 class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
@@ -42,6 +65,27 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         for use in each test case.
         """
         self.db: AsyncMock = AsyncMock(spec=AsyncSession)
+        locking = patch.object(
+            actions,
+            'lock_account',
+            new=AsyncMock(side_effect=_identity),
+        )
+        locking.start()
+        self.addCleanup(locking.stop)
+
+        provisioning = asynccontextmanager(_setUp_provisioning)
+
+        self.lifecycle = MagicMock()
+        self.lifecycle.provisioning = MagicMock(side_effect=provisioning)
+        self.lifecycle.updating = MagicMock(side_effect=provisioning)
+        self.lifecycle.process = AsyncMock(return_value=True)
+        lifecycle_patch = patch.object(
+            actions.AccountLifecycle,
+            'for_session',
+            return_value=self.lifecycle,
+        )
+        lifecycle_patch.start()
+        self.addCleanup(lifecycle_patch.stop)
         self.current_user: MagicMock = MagicMock()
         self.current_user.check_password = AsyncMock(return_value=True)
         self.current_user.username = 'testuser'
@@ -49,16 +93,31 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.current_user.group_id = 10
         for name, result in (
             ('ensure_keycloak_subject_for_user', 'keycloak-subject'),
+            ('keycloak_subject_for_user', 'keycloak-subject'),
             ('delete_keycloak_user', None),
             ('reset_keycloak_password', None),
             ('update_keycloak_user', None),
             ('set_keycloak_user_enabled', None),
+            (
+                'read_keycloak_user',
+                {
+                    'enabled': True,
+                    'username': 'old',
+                    'email': 'old@example.test',
+                    'firstName': 'Test',
+                    'lastName': 'User',
+                },
+            ),
         ):
-            operation = patch.object(
-                users, name, AsyncMock(return_value=result),
-            )
-            operation.start()
-            self.addCleanup(operation.stop)
+            for module in (users, actions):
+                if hasattr(module, name):
+                    operation = patch.object(
+                        module,
+                        name,
+                        AsyncMock(return_value=result),
+                    )
+                    operation.start()
+                    self.addCleanup(operation.stop)
 
     async def test_add_user_provisions_keycloak_identity_when_enabled(
         self,
@@ -81,22 +140,17 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                users,
-                'provision_keycloak_user',
-                AsyncMock(return_value='keycloak-subject'),
-            ) as provision,
-            patch.object(
-                users,
+                actions,
                 'create_oidc_managed_user',
                 AsyncMock(return_value=new_user),
             ) as create_oidc_user,
             patch.object(
-                users,
+                actions,
                 'list_site_ids_for_group',
                 AsyncMock(return_value=[]),
             ),
             patch.object(
-                users,
+                actions,
                 'load_user_read',
                 AsyncMock(return_value=expected),
             ),
@@ -108,13 +162,9 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIs(result, expected)
-        provision.assert_awaited_once_with(
-            username='alice',
-            password='safe-password',
-            email='alice@example.com',
-            given_name='Alice',
-            family_name='Example',
-            force_password_change=True,
+        self.lifecycle.provisioning.assert_called_once_with(
+            payload,
+            self.current_user.tenant_id,
         )
         create_oidc_user.assert_awaited_once()
         call = create_oidc_user.await_args
@@ -135,19 +185,19 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch.object(
-                users,
+                actions,
                 'get_user_by_id',
                 AsyncMock(return_value=target),
             ),
-            patch.object(users, 'ensure_not_super'),
-            patch.object(users, 'ensure_user_management_scope'),
+            patch.object(actions, 'ensure_not_super'),
+            patch.object(actions, 'ensure_user_management_scope'),
             patch.object(
-                users,
+                actions,
                 'ensure_keycloak_subject_for_user',
                 AsyncMock(return_value='keycloak-subject'),
             ),
             patch.object(
-                users,
+                actions,
                 'reset_keycloak_password',
                 AsyncMock(),
             ) as reset_password,
@@ -177,23 +227,22 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         payload = SetUserStatus(user_id=7, status='suspended')
         with (
             patch.object(
-                users,
+                actions,
                 'get_user_by_id',
                 AsyncMock(return_value=target),
             ),
-            patch.object(users, 'ensure_not_super'),
-            patch.object(users, 'ensure_user_management_scope'),
+            patch.object(actions, 'ensure_not_super'),
+            patch.object(actions, 'ensure_user_management_scope'),
             patch.object(
-                users,
+                actions,
                 'ensure_keycloak_subject_for_user',
                 AsyncMock(return_value='keycloak-subject'),
             ),
             patch.object(
-                users,
+                provider,
                 'set_keycloak_user_enabled',
                 AsyncMock(),
-            ) as set_enabled,
-            patch.object(users, 'set_user_status', AsyncMock()),
+            ),
         ):
             await users.update_user_status(
                 payload,
@@ -201,9 +250,10 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
                 self.current_user,
             )
 
-        set_enabled.assert_awaited_once_with(
-            'keycloak-subject',
-            enabled=False,
+        self.assertEqual(target.status, 'suspended')
+        self.lifecycle.updating.assert_called_once_with(
+            target,
+            actions.AccountSyncPlan('status', 'keycloak-subject'),
         )
 
     async def test_management_capabilities_distinguish_super_admin_scope(
@@ -217,6 +267,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(group_admin_capabilities.managed_group_id, 10)
         self.assertFalse(group_admin_capabilities.can_manage_groups)
         self.assertFalse(group_admin_capabilities.can_assign_group_admins)
+        self.assertFalse(group_admin_capabilities.can_manage_website_access)
 
         self.current_user.username = 'changdar'
         super_admin_capabilities = await users.user_management_capabilities(
@@ -226,33 +277,77 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(super_admin_capabilities.managed_group_id)
         self.assertTrue(super_admin_capabilities.can_manage_groups)
         self.assertTrue(super_admin_capabilities.can_assign_group_admins)
+        self.assertTrue(super_admin_capabilities.can_manage_website_access)
 
-    @patch('examples.db_management.routers.users.get_user_by_id')
-    @patch('examples.db_management.routers.users.delete_user')
-    async def test_remove_user(
-        self,
-        mock_delete_user: AsyncMock,
-        mock_get_user_by_id: AsyncMock,
-    ) -> None:
-        """Test remove user.
-
-        Args:
-            mock_delete_user: Value used by this callable.
-            mock_get_user_by_id: Value used by this callable.
-        """
-        mock_user: MagicMock = MagicMock()
-        mock_user.group_id = 10
-        mock_get_user_by_id.return_value = mock_user
-
-        payload = UserDelete(user_id=1)
-        response: dict[str, str] = await users.remove_user(
-            payload,
+    async def test_remove_user_persists_suspension_and_deletion_intent(self):
+        target = SimpleNamespace(
+            id=7,
+            username='member',
+            role='user',
+            group_id=10,
+            tenant_id=None,
+            status='active',
+            deletion_pending=False,
+        )
+        self.db.scalar.side_effect = [target, None]
+        response = await users.remove_user(
+            UserDelete(user_id=7),
             self.db,
             self.current_user,
         )
-
-        mock_delete_user.assert_awaited_with(mock_user, self.db)
+        self.assertTrue(target.deletion_pending)
+        self.assertEqual(target.status, 'suspended')
+        self.db.add.assert_called_once()
+        self.db.commit.assert_awaited_once()
+        self.lifecycle.process.assert_awaited_once()
         self.assertEqual(response['message'], 'User deleted successfully.')
+
+    async def test_pending_deletion_stays_suspended_until_retry_succeeds(
+        self,
+    ):
+        target = SimpleNamespace(
+            id=7,
+            username='member',
+            role='user',
+            group_id=10,
+            tenant_id=None,
+            status='suspended',
+            deletion_pending=True,
+        )
+        self.db.scalar.side_effect = [
+            target,
+            SimpleNamespace(id='operation', phase='pending'),
+        ]
+        self.lifecycle.process.return_value = False
+        with self.assertRaises(HTTPException) as error:
+            await users.remove_user(
+                UserDelete(user_id=7),
+                self.db,
+                self.current_user,
+            )
+        self.assertEqual(error.exception.status_code, 503)
+        self.assertTrue(target.deletion_pending)
+
+    async def test_remove_user_rejects_protected_or_out_of_scope_targets(self):
+        for target in (
+            SimpleNamespace(
+                id=7,
+                username='ChangDar',
+                role='super_admin',
+                group_id=10,
+            ),
+            SimpleNamespace(id=7, username='other', role='user', group_id=99),
+        ):
+            self.db.scalar.side_effect = [target, None]
+            with self.assertRaises(HTTPException) as error:
+                await users.remove_user(
+                    UserDelete(user_id=7),
+                    self.db,
+                    self.current_user,
+                )
+            self.assertEqual(error.exception.status_code, 403)
+        self.db.add.assert_not_called()
+        self.lifecycle.process.assert_not_awaited()
 
     @patch('examples.db_management.routers.users.reset_keycloak_password')
     async def test_admin_update_pwd(
@@ -279,7 +374,9 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         )
 
         mock_update_password.assert_awaited_with(
-            'keycloak-subject', password='newpassword', temporary=True,
+            'keycloak-subject',
+            password='newpassword',
+            temporary=True,
         )
         self.assertEqual(response['message'], 'Password updated successfully.')
 
@@ -299,7 +396,10 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 404)
 
-    @patch('examples.db_management.routers.users.update_username')
+    @patch(
+        'examples.db_management.services.keycloak_user_management_service'
+        's.update_keycloak_user',
+    )
     async def test_change_username(
         self,
         mock_update_username: AsyncMock,
@@ -322,10 +422,14 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             self.current_user,
         )
 
-        mock_update_username.assert_awaited_with(mock_user, 'new', self.db)
+        self.assertEqual(mock_user.username, 'new')
+        self.db.commit.assert_awaited()
         self.assertEqual(response['message'], 'Username updated successfully.')
 
-    @patch('examples.db_management.routers.users.update_username')
+    @patch(
+        'examples.db_management.services.keycloak_user_management_service'
+        's.update_keycloak_user',
+    )
     async def test_change_username_user_not_found(
         self,
         mock_update_username: AsyncMock,
@@ -343,7 +447,10 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 404)
         mock_update_username.assert_not_called()
 
-    @patch('examples.db_management.routers.users.create_or_update_profile')
+    @patch(
+        'examples.db_management.services.keycloak_user_management_service'
+        's.update_keycloak_user',
+    )
     async def test_update_profile(
         self,
         mock_update_profile: AsyncMock,
@@ -353,7 +460,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_user.group_id = 10
 
         with patch(
-            'examples.db_management.routers.users.get_user_by_id',
+            'examples.db_management.services.user_action_services.get_use'
+            'r_by_id',
             AsyncMock(return_value=mock_user),
         ):
             payload: UserProfileUpdate = UserProfileUpdate(
@@ -366,7 +474,7 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
                 self.current_user,
             )
 
-            mock_update_profile.assert_awaited()
+            self.db.commit.assert_awaited()
             self.assertEqual(
                 response['message'],
                 'User profile updated successfully.',
@@ -467,12 +575,12 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.db.execute.assert_awaited_once()
 
     @patch(
-        'examples.db_management.services.user_management_services.'
-        'load_user_read',
+        'examples.db_management.services.user_management_services.load_us'
+        'er_read',
     )
     @patch(
-        'examples.db_management.services.user_management_services.'
-        'get_group_or_404',
+        'examples.db_management.services.user_management_services.get_gro'
+        'up_or_404',
     )
     @patch('examples.db_management.routers.users.get_user_by_id')
     async def test_approve_user_signup_admin_uses_own_group(
@@ -525,8 +633,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.username, 'pending')
 
     @patch(
-        'examples.db_management.services.user_management_services.'
-        'get_group_or_404',
+        'examples.db_management.services.user_management_services.get_gro'
+        'up_or_404',
     )
     @patch('examples.db_management.routers.users.get_user_by_id')
     async def test_approve_user_signup_rejects_other_group(
@@ -558,8 +666,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         mock_get_group.assert_not_called()
 
     @patch(
-        'examples.db_management.services.user_management_services.'
-        'get_group_or_404',
+        'examples.db_management.services.user_management_services.get_gro'
+        'up_or_404',
     )
     @patch('examples.db_management.routers.users.get_user_by_id')
     async def test_approve_user_signup_requires_pending_state(
@@ -588,8 +696,14 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 400)
         mock_get_group.assert_not_called()
 
-    @patch('examples.db_management.routers.users.reset_keycloak_password')
-    @patch('examples.db_management.routers.users.get_user_by_id')
+    @patch(
+        'examples.db_management.services.user_action_services.reset_keycl'
+        'oak_password',
+    )
+    @patch(
+        'examples.db_management.services.user_action_services.get_user_by'
+        '_id',
+    )
     async def test_admin_update_pwd_by_id(
         self,
         mock_get_user_by_id: AsyncMock,
@@ -610,14 +724,19 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         )
         mock_get_user_by_id.assert_awaited_with(1, self.db)
         mock_update_password.assert_awaited_with(
-            'keycloak-subject', password='newpassword', temporary=True,
+            'keycloak-subject',
+            password='newpassword',
+            temporary=True,
         )
         self.assertEqual(
             response['message'],
             'Password updated successfully by user ID.',
         )
 
-    @patch('examples.db_management.routers.users.update_username')
+    @patch(
+        'examples.db_management.services.keycloak_user_management_service'
+        's.update_keycloak_user',
+    )
     @patch('examples.db_management.routers.users.get_user_by_id')
     async def test_change_username_by_id(
         self,
@@ -638,15 +757,18 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             self.current_user,
         )
         mock_get_user_by_id.assert_awaited_with(1, self.db)
-        mock_update_username.assert_awaited_with(
-            mock_user,
-            'newiduser',
-            self.db,
-        )
+        self.assertEqual(mock_user.username, 'newiduser')
+        self.db.commit.assert_awaited()
         self.assertEqual(response['message'], 'Username updated successfully.')
 
-    @patch('examples.db_management.routers.users.set_user_status')
-    @patch('examples.db_management.routers.users.get_user_by_id')
+    @patch(
+        'examples.db_management.services.keycloak_user_management_service'
+        's.set_keycloak_user_enabled',
+    )
+    @patch(
+        'examples.db_management.services.user_action_services.get_user_by'
+        '_id',
+    )
     async def test_update_user_status(
         self,
         mock_get_user_by_id: AsyncMock,
@@ -666,18 +788,21 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             self.current_user,
         )
         mock_get_user_by_id.assert_awaited_with(1, self.db)
-        mock_set_user_status.assert_awaited_with(
-            mock_user,
-            'active',
-            self.db,
-        )
+        self.assertEqual(mock_user.status, 'active')
+        self.db.commit.assert_awaited()
         self.assertEqual(
             response['message'],
             'User status updated successfully.',
         )
 
-    @patch('examples.db_management.routers.users.get_user_by_id')
-    @patch('examples.db_management.routers.users.ensure_not_super')
+    @patch(
+        'examples.db_management.services.user_action_services.get_user_by'
+        '_id',
+    )
+    @patch(
+        'examples.db_management.services.user_action_services.ensure_not_'
+        'super',
+    )
     @patch('examples.db_management.routers.users.is_super_admin')
     async def test_change_role_user_to_user(
         self,
@@ -705,8 +830,14 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_user.role, 'user')
         db.commit.assert_awaited()
 
-    @patch('examples.db_management.routers.users.get_user_by_id')
-    @patch('examples.db_management.routers.users.ensure_not_super')
+    @patch(
+        'examples.db_management.services.user_action_services.get_user_by'
+        '_id',
+    )
+    @patch(
+        'examples.db_management.services.user_action_services.ensure_not_'
+        'super',
+    )
     @patch('examples.db_management.routers.users.is_super_admin')
     async def test_change_role_to_admin_without_super_admin(
         self,
@@ -730,8 +861,14 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 403)
         db.commit.assert_not_awaited()
 
-    @patch('examples.db_management.routers.users.get_user_by_id')
-    @patch('examples.db_management.routers.users.ensure_not_super')
+    @patch(
+        'examples.db_management.services.user_action_services.get_user_by'
+        '_id',
+    )
+    @patch(
+        'examples.db_management.services.user_action_services.ensure_not_'
+        'super',
+    )
     @patch('examples.db_management.routers.users.is_super_admin')
     async def test_change_role_to_admin_with_super_admin(
         self,
@@ -763,8 +900,14 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_user.role, 'admin')
         db.commit.assert_awaited()
 
-    @patch('examples.db_management.routers.users.get_user_by_id')
-    @patch('examples.db_management.routers.users.ensure_not_super')
+    @patch(
+        'examples.db_management.services.user_action_services.get_user_by'
+        '_id',
+    )
+    @patch(
+        'examples.db_management.services.user_action_services.ensure_not_'
+        'super',
+    )
     async def test_change_role_ensure_not_super_raises(
         self,
         mock_ensure_not_super: AsyncMock,
@@ -787,7 +930,10 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 403)
         db.commit.assert_not_awaited()
 
-    @patch('examples.db_management.routers.users.get_user_by_id')
+    @patch(
+        'examples.db_management.services.user_action_services.get_user_by'
+        '_id',
+    )
     async def test_change_group_success(
         self,
         mock_get_user_by_id: AsyncMock,
@@ -800,7 +946,8 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
         me: MagicMock = MagicMock(role='admin', group_id=99, username='admin')
         db: AsyncMock = AsyncMock()
         with patch(
-            'examples.db_management.routers.users.get_group_or_404',
+            'examples.db_management.services.user_action_services.get_gro'
+            'up_or_404',
             AsyncMock(return_value=MagicMock(id=99)),
         ) as mock_get_group:
             response: dict[str, str] = await users.change_group(
@@ -817,7 +964,10 @@ class TestUsersRouter(unittest.IsolatedAsyncioTestCase):
             'User group updated successfully.',
         )
 
-    @patch('examples.db_management.routers.users.get_user_by_id')
+    @patch(
+        'examples.db_management.services.user_action_services.get_user_by'
+        '_id',
+    )
     async def test_change_group_forbidden_for_other_group(
         self,
         mock_get_user_by_id: AsyncMock,
@@ -845,7 +995,6 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
     """Cover the user-management authorization and alias edge cases."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.admin: Any = SimpleNamespace(
             username='admin',
             tenant_id=None,
@@ -853,6 +1002,21 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             role='admin',
         )
         self.db = AsyncMock()
+
+        provisioning = asynccontextmanager(_setUp_provisioning2)
+
+        self.lifecycle = SimpleNamespace(
+            provisioning=MagicMock(side_effect=provisioning),
+            updating=MagicMock(side_effect=provisioning),
+            process=AsyncMock(return_value=True),
+        )
+        lifecycle_patch = patch.object(
+            actions.AccountLifecycle,
+            'for_session',
+            return_value=self.lifecycle,
+        )
+        lifecycle_patch.start()
+        self.addCleanup(lifecycle_patch.stop)
         for name, result in (
             ('ensure_keycloak_subject_for_user', 'keycloak-subject'),
             ('provision_keycloak_user', 'keycloak-subject'),
@@ -860,12 +1024,26 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             ('reset_keycloak_password', None),
             ('update_keycloak_user', None),
             ('set_keycloak_user_enabled', None),
+            (
+                'read_keycloak_user',
+                {
+                    'enabled': True,
+                    'username': 'old',
+                    'email': 'old@example.test',
+                    'firstName': 'Test',
+                    'lastName': 'User',
+                },
+            ),
         ):
-            operation = patch.object(
-                users, name, AsyncMock(return_value=result),
-            )
-            operation.start()
-            self.addCleanup(operation.stop)
+            for module in (users, actions):
+                if hasattr(module, name):
+                    operation = patch.object(
+                        module,
+                        name,
+                        AsyncMock(return_value=result),
+                    )
+                    operation.start()
+                    self.addCleanup(operation.stop)
 
     async def test_group_lookup_and_scope_failures(self) -> None:
         """Missing groups and cross-group actions return their HTTP errors."""
@@ -929,7 +1107,9 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
             password='secret-password',
             group_id=10,
             profile=UserProfileBase(
-                family_name='User', given_name='New', email='new@example.com',
+                family_name='User',
+                given_name='New',
+                email='new@example.com',
             ),
         )
         new_user = SimpleNamespace(id=42)
@@ -938,22 +1118,22 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(users, 'is_super_admin', return_value=False),
             patch.object(
-                users,
+                actions,
                 'create_oidc_managed_user',
                 AsyncMock(return_value=new_user),
             ),
             patch.object(
-                users,
+                actions,
                 'list_site_ids_for_group',
                 AsyncMock(return_value=[7, 8]),
             ) as list_sites,
             patch.object(
-                users,
+                actions,
                 'seed_site_notification_preferences',
                 AsyncMock(),
             ) as seed_preferences,
             patch.object(
-                users,
+                actions,
                 'load_user_read',
                 AsyncMock(return_value=expected),
             ),
@@ -1056,13 +1236,17 @@ class TestUserRouterCoverage(unittest.IsolatedAsyncioTestCase):
         target = SimpleNamespace(id=5, group_id=10)
         with (
             patch.object(
-                users,
+                actions,
                 'get_user_by_id',
                 AsyncMock(return_value=target),
             ),
-            patch.object(users, 'ensure_not_super'),
-            patch.object(users, 'ensure_user_management_scope'),
-            patch.object(users, 'resolve_target_group_id', return_value=None),
+            patch.object(actions, 'ensure_not_super'),
+            patch.object(actions, 'ensure_user_management_scope'),
+            patch.object(
+                actions,
+                'resolve_target_group_id',
+                return_value=None,
+            ),
         ):
             with self.assertRaisesRegex(HTTPException, 'group_id is required'):
                 await users.change_group(

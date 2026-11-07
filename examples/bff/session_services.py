@@ -3,14 +3,17 @@ from __future__ import annotations
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi import Response
+from jwt.exceptions import InvalidTokenError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.deployment_context import resolve_request_deployment
+from examples.auth.jwt_config import jwt_access
 from examples.auth.session_store import delete_auth_session
 from examples.auth.session_store import get_auth_session
 from examples.auth.session_store import touch_auth_session
+from examples.auth.token_revocation import is_access_token_revoked
 from examples.bff.oidc_services import create_oidc_global_logout_url
 from examples.bff.proxy import get_proxy_access_token
 from examples.bff.proxy import proxy_request
@@ -20,6 +23,7 @@ from examples.bff.security import check_csrf
 from examples.bff.security import clear_session_cookie
 from examples.bff.security import SESSION_COOKIE
 from examples.bff.security import set_session_cookie
+from examples.bff.user_summary import load_user_summary
 from examples.db_management.schemas.auth import DeploymentInfo
 
 
@@ -123,14 +127,33 @@ async def current_bff_session(
     """
     session_id, stored = await _session(request, redis)
     deployment = await _require_session_deployment(request, db, stored)
-    _, session = await get_proxy_access_token(
+    access_token, session = await get_proxy_access_token(
         redis,
         session_id,
         deployment=deployment,
     )
+    # Login-time Redis metadata is a snapshot. Resolve current local grants
+    # from the verified immutable OIDC identity on each browser restoration,
+    # just as upstream APIs do. Do not rewrite the session record here: a
+    # concurrent refresh may already have rotated its encrypted credentials.
+    try:
+        credentials = await jwt_access.decode_access_token_for_deployment(
+            access_token, db, deployment,
+        )
+        if await is_access_token_revoked(redis, credentials.subject):
+            raise InvalidTokenError('Access token revoked')
+    except InvalidTokenError as exc:
+        await delete_auth_session(redis, session_id)
+        raise HTTPException(401, detail='app_session_expired') from exc
+    summary = await load_user_summary(db, int(credentials.subject['user_id']))
+    current = dict(
+        session,
+        user=summary.model_dump(),
+        feature_names=credentials.subject['features'],
+    )
     await _roll_session(response, redis, session_id)
     response.headers['Cache-Control'] = 'no-store'
-    return _session_response(session)
+    return _session_response(current)
 
 
 async def csrf_response(

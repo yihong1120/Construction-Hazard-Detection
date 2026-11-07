@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from examples.shared.class_colors import overlay_style
 from examples.violation_records import violation_upload_service as uploads
+from examples.violation_records.evidence import ViolationEvidence
 from examples.violation_records.overlay_geometry import decode_polygons
 from examples.violation_records.overlay_geometry import stored_regions
 from examples.violation_records.schemas import OverlayRegion
@@ -39,7 +40,8 @@ class OverlayGeometryTest(TestCase):
             ('[[[0,0],[1,0],[0,1]]]', None, 'image_unavailable'),
         ):
             record = SimpleNamespace(
-                cone_polygon_json=raw, pole_polygon_json=None,
+                cone_polygon_json=raw,
+                pole_polygon_json=None,
             )
             regions, status = stored_regions(record, size, overlay_style())
             self.assertEqual(status['cone'], expected)
@@ -74,19 +76,23 @@ class ClusterUploadTest(IsolatedAsyncioTestCase):
                 AsyncMock(return_value=['Site']),
             ),
             patch.object(
-                uploads.violation_manager, 'save_violation', AsyncMock(),
+                uploads.violation_manager,
+                'save_violation',
+                AsyncMock(),
             ) as save,
         ):
             with self.assertRaises(HTTPException) as error:
                 await uploads.upload_violation(
-                    'Site',
-                    'Cam',
-                    None,
-                    None,
-                    None,
-                    '[[[0,0],[1,1],[2,2]]]',
-                    '[]',
-                    None,
+                    ViolationEvidence(
+                        site='Site',
+                        stream_name='Cam',
+                        detection_time=None,
+                        warnings_json=None,
+                        detections_json=None,
+                        cone_polygon_json='[[[0,0],[1,1],[2,2]]]',
+                        pole_polygon_json='[]',
+                        image_file=None,
+                    ),
                     AsyncMock(),
                     SimpleNamespace(subject={'username': 'operator'}),
                 )

@@ -1,16 +1,26 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import time
 
 import redis.asyncio as redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from examples.auth.models import Site
 from examples.auth.models import User
+from examples.local_notification_server.event_delivery import FcmEventDelivery
 from examples.local_notification_server.fcm_service import (
     send_fcm_notification_service,
+)
+from examples.local_notification_server.notification_claim import (
+    notification_event_key as _notification_dedupe_key,
+)
+from examples.local_notification_server.notification_claim import (
+    NotificationClaim,
+)
+from examples.local_notification_server.notification_claim import (
+    NotificationLeaseLost,
 )
 from examples.local_notification_server.push_dispatch import (
     create_notification_records_for_users,
@@ -45,76 +55,19 @@ from examples.local_notification_server.services import (
 from examples.local_notification_server.services import (
     load_active_fcm_device_tokens,
 )
-from examples.local_notification_server.services import mark_fcm_tokens_failure
-from examples.local_notification_server.services import mark_fcm_tokens_success
-from examples.local_notification_server.services import (
-    mark_invalid_fcm_tokens_for_users,
-)
 from examples.local_notification_server.services import (
     record_fcm_token_registration,
 )
 from examples.local_notification_server.site_recipient_cache import (
     get_site_notification_user_ids_cached,
 )
+from examples.local_notification_server.token_delivery_state import (
+    FcmDeliveryState,
+)
 
 _dedupe_ttl_with_violation_id = 600
 _dedupe_ttl_without_violation_id = 15
 logger = logging.getLogger(__name__)
-
-
-def _notification_dedupe_key(req: SiteNotifyRequest) -> str:
-    """Build the Redis key used to suppress a duplicate send.
-
-    Args:
-        req: Validated site notification request.
-
-    Returns:
-        Stable Redis deduplication key.
-    """
-    if req.violation_id is not None:
-        return (
-            'fcm_notification_dedupe:'
-            f"{req.site}:{req.stream_name}:{req.violation_id}"
-        )
-    # Events without a durable violation ID deduplicate on their semantic
-    # payload.
-    payload_hash = hashlib.sha256(
-        json.dumps(
-            {
-                'site': req.site,
-                'stream_name': req.stream_name,
-                'body': req.body,
-                'image_path': req.image_path,
-            },
-            sort_keys=True,
-            separators=(',', ':'),
-        ).encode('utf-8'),
-    ).hexdigest()
-    return f"fcm_notification_dedupe:{payload_hash}"
-
-
-async def _claim_notification_send(
-    req: SiteNotifyRequest,
-    rds: redis.Redis,
-) -> bool:
-    """Claim a distributed FCM delivery slot.
-
-    Args:
-        req: Validated site notification request.
-        rds: Redis connection used to claim the deduplication key.
-
-    Returns:
-        Whether this worker owns the delivery slot.
-    """
-    ttl = (
-        _dedupe_ttl_with_violation_id
-        if req.violation_id is not None
-        else _dedupe_ttl_without_violation_id
-    )
-    # NX makes the claim atomic across all Uvicorn workers.
-    return bool(
-        await rds.set(_notification_dedupe_key(req), '1', ex=ttl, nx=True),
-    )
 
 
 async def register_fcm_device(
@@ -168,13 +121,6 @@ async def unregister_fcm_device(
         db,
         rds,
     )
-    token_key = f"fcm_tokens:{user_id}"
-    pipe = rds.pipeline()
-    pipe.hdel(token_key, req.device_token)
-    pipe.hlen(token_key)
-    remaining_tokens = (await pipe.execute())[1]
-    if remaining_tokens == 0:
-        await rds.delete(token_key)
     if not deleted:
         return {'message': 'Token not found.'}
     return {'message': 'Token deleted.'}
@@ -184,6 +130,64 @@ async def send_site_notification(
     req: SiteNotifyRequest,
     db: AsyncSession,
     rds: redis.Redis,
+) -> dict[str, object]:
+    if req.site_id is not None:
+        current_name = await db.scalar(
+            select(Site.name).where(Site.id == req.site_id),
+        )
+        if current_name is None:
+            return {
+                'success': False,
+                'message': 'Notification site not found.',
+                'outcome': 'permanent_failure',
+            }
+        req = req.model_copy(update={'site': current_name})
+    ttl = (
+        _dedupe_ttl_with_violation_id
+        if req.violation_id is not None
+        else _dedupe_ttl_without_violation_id
+    )
+    claim = NotificationClaim(rds, _notification_dedupe_key(req), ttl)
+    try:
+        if not await claim.acquire():
+            if await claim.is_completed():
+                return {
+                    'success': True,
+                    'message': 'Duplicate notification skipped.',
+                    'outcome': 'skipped',
+                }
+            return {
+                'success': False,
+                'message': (
+                    'Notification delivery is in progress; retry later.'
+                ),
+                'outcome': 'retryable',
+            }
+        async with claim:
+            result = await claim.run(
+                _deliver_site_notification(
+                    req,
+                    db,
+                    rds,
+                    claim,
+                ),
+            )
+            if result['success']:
+                await claim.finish()
+            return result
+    except NotificationLeaseLost:
+        return {
+            'success': False,
+            'outcome': 'retryable',
+            'message': 'Notification delivery lease expired.',
+        }
+
+
+async def _deliver_site_notification(
+    req: SiteNotifyRequest,
+    db: AsyncSession,
+    rds: redis.Redis,
+    claim: NotificationClaim,
 ) -> dict[str, object]:
     """Store and deliver a site notification to subscribed recipients.
 
@@ -195,14 +199,17 @@ async def send_site_notification(
     Returns:
         Delivery outcome with batch statistics when execution completed.
     """
-    if not await _claim_notification_send(req, rds):
-        return {'success': True, 'message': 'Duplicate notification skipped.'}
     user_ids = await get_site_notification_user_ids_cached(req.site, db, rds)
     if user_ids is None:
-        return {'success': False, 'message': f"Site '{req.site}' not found."}
-    if not user_ids:
         return {
             'success': False,
+            'outcome': 'permanent_failure',
+            'message': f"Site '{req.site}' not found.",
+        }
+    if not user_ids:
+        return {
+            'success': True,
+            'outcome': 'skipped',
             'message': f"Site '{req.site}' has no subscribed users.",
         }
 
@@ -214,6 +221,9 @@ async def send_site_notification(
         db,
     )
     await ensure_fcm_token_cache_for_users(user_ids, db, rds)
+    delivery_state = FcmDeliveryState(db, rds)
+    await delivery_state.capture(user_ids)
+    event_delivery = FcmEventDelivery(delivery_state, claim)
     preparation_started_at = time.monotonic()
     token_stats = PushTokenStats()
     push_tasks = iter_push_tasks_streaming(
@@ -221,6 +231,7 @@ async def send_site_notification(
         user_ids,
         rds,
         token_stats=token_stats,
+        build_push_task_fn=event_delivery.send_batch,
     )
     preparation_seconds = time.monotonic() - preparation_started_at
     delivery_started_at = time.monotonic()
@@ -232,14 +243,7 @@ async def send_site_notification(
     ) = await execute_push_tasks_bounded_streaming(
         push_tasks,
         timeout=30.0,
-        invalid_token_handler=(
-            lambda invalid_tokens: mark_invalid_fcm_tokens_for_users(
-                user_ids,
-                invalid_tokens,
-                rds,
-                db=db,
-            )
-        ),
+        invalid_token_handler=(delivery_state.invalidate),
     )
     if not ok:
         if (
@@ -252,7 +256,7 @@ async def send_site_notification(
             if error_message == 'FCM notification sending timed out.'
             else 'Failed to send FCM notifications.'
         )
-        return {'success': False, 'message': message}
+        return {'success': False, 'outcome': 'retryable', 'message': message}
 
     assert total_batches is not None
     assert successful_batches is not None
@@ -273,9 +277,17 @@ async def send_site_notification(
             if preflight['unique_tokens'] == 0
             else f"Site '{req.site}' has no sendable device tokens."
         )
-        return {'success': False, 'message': message, 'stats': stats}
+        return {
+            'success': True,
+            'outcome': 'skipped',
+            'message': message,
+            'stats': stats,
+        }
     return {
         'success': total_batches == successful_batches,
+        'outcome': (
+            'completed' if total_batches == successful_batches else 'retryable'
+        ),
         'message': (
             'FCM notification processed. '
             f"{successful_batches}/{total_batches} batches succeeded."
@@ -300,6 +312,8 @@ async def send_test_notification(
         Aggregated test-notification delivery result.
     """
     await ensure_fcm_token_cache_for_users([me.id], db, rds)
+    delivery_state = FcmDeliveryState(db, rds)
+    await delivery_state.capture([me.id])
     device_tokens = await load_active_fcm_device_tokens(me.id, db)
     if not device_tokens:
         return TestNotificationResponse(
@@ -316,22 +330,11 @@ async def send_test_notification(
     invalid_tokens = set(result.invalid_tokens)
     success = result.success_count > 0 and result.failure_count == 0
     if success:
-        await mark_fcm_tokens_success(me.id, device_tokens, rds, db=db)
+        await delivery_state.success(device_tokens)
     elif result.failure_count > 0:
-        await mark_fcm_tokens_failure(
-            me.id,
-            device_tokens,
-            rds,
-            'fcm_error',
-            db=db,
-        )
+        await delivery_state.failure(device_tokens)
     if invalid_tokens:
-        await mark_invalid_fcm_tokens_for_users(
-            [me.id],
-            invalid_tokens,
-            rds,
-            db=db,
-        )
+        await delivery_state.invalidate(invalid_tokens)
     return TestNotificationResponse(
         success=success,
         message=(

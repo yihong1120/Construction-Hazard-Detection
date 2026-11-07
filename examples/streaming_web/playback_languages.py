@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import os
-
 from examples.local_notification_server.lang_config import LANGUAGES
 from examples.streaming_web.overlay_labels import CLASS_LABELS
 from examples.streaming_web.overlay_labels import LANGUAGE_ALIASES
-from examples.streaming_web.overlay_labels import SUPPORTED_LABEL_LANGUAGES
 from examples.streaming_web.overlay_labels import WARNING_LABELS
 from examples.streaming_web.schemas import OverlayLanguageInfo
+from src.settings.overlay_language import get_overlay_language_policy
 
 
 def _allowed_overlay_languages() -> tuple[str, ...]:
@@ -19,21 +17,7 @@ def _allowed_overlay_languages() -> tuple[str, ...]:
     Raises:
         ValueError: If configuration is empty or names unsupported languages.
     """
-    configured = tuple(
-        dict.fromkeys(
-            language.strip()
-            for language in os.getenv(
-                'MEDIA_OVERLAY_ALLOWED_LANGUAGES',
-                ','.join(SUPPORTED_LABEL_LANGUAGES),
-            ).split(',')
-            if language.strip()
-        ),
-    )
-    if not configured or set(configured) - set(SUPPORTED_LABEL_LANGUAGES):
-        raise ValueError(
-            'MEDIA_OVERLAY_ALLOWED_LANGUAGES must contain supported codes',
-        )
-    return configured
+    return get_overlay_language_policy().allowed
 
 
 OVERLAY_LANGUAGE_DETAILS: dict[str, dict[str, str | list[str]]] = {
@@ -99,12 +83,7 @@ def _default_overlay_language() -> str:
     Raises:
         ValueError: If the configured default is not allowed.
     """
-    language = os.getenv('MEDIA_DEFAULT_OVERLAY_LANGUAGE', 'zh-TW')
-    if language not in _allowed_overlay_languages():
-        raise ValueError(
-            'MEDIA_DEFAULT_OVERLAY_LANGUAGE must be an allowed language',
-        )
-    return language
+    return get_overlay_language_policy().default_language()
 
 
 def _language_alias_map() -> dict[str, str]:
@@ -146,6 +125,7 @@ def _overlay_language_options(
         Display, label, and notification details for each allowed language.
     """
     languages: list[OverlayLanguageInfo] = []
+    default = _default_overlay_language()
     codes = (
         _allowed_overlay_languages()
         if allowed_languages is None
@@ -160,7 +140,7 @@ def _overlay_language_options(
                 notification_code=notification_code,
                 display_name=str(details['name']),
                 native_name=str(details['native_name']),
-                is_default=code == _default_overlay_language(),
+                is_default=code == default,
                 class_labels=CLASS_LABELS[code],
                 warning_labels=WARNING_LABELS[code],
                 notification_templates=LANGUAGES[notification_code],

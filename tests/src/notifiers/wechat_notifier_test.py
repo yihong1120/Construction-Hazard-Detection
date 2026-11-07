@@ -1,11 +1,32 @@
 from __future__ import annotations
 
 import unittest
+from functools import partial
 
 import httpx
 import numpy as np
 
 from src.notifiers.wechat_notifier import WeChatNotifier
+
+
+def _token_is_cached_and_image_handler(
+    requests: list[httpx.Request],
+    /,
+    request: httpx.Request,
+) -> httpx.Response:
+    requests.append(request)
+    if request.url.path.endswith('/gettoken'):
+        return httpx.Response(
+            200,
+            json={'access_token': 'token', 'expires_in': 7200},
+        )
+    if request.url.path.endswith('/media/upload'):
+        return httpx.Response(200, json={'media_id': 'media'})
+    return httpx.Response(200, json={'errcode': 0, 'errmsg': 'ok'})
+
+
+def _rejects_a_token_response_without_Response(_request):
+    return httpx.Response(200, json={})
 
 
 class WeChatNotifierTests(unittest.IsolatedAsyncioTestCase):
@@ -15,24 +36,7 @@ class WeChatNotifierTests(unittest.IsolatedAsyncioTestCase):
         """Test token is cached and image is uploaded."""
         requests: list[httpx.Request] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            """Perform handler.
-
-            Args:
-                request: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            requests.append(request)
-            if request.url.path.endswith('/gettoken'):
-                return httpx.Response(
-                    200,
-                    json={'access_token': 'token', 'expires_in': 7200},
-                )
-            if request.url.path.endswith('/media/upload'):
-                return httpx.Response(200, json={'media_id': 'media'})
-            return httpx.Response(200, json={'errcode': 0, 'errmsg': 'ok'})
+        handler = partial(_token_is_cached_and_image_handler, requests)
 
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
@@ -78,12 +82,13 @@ class WeChatNotifierTests(unittest.IsolatedAsyncioTestCase):
 
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(
-                lambda _request: httpx.Response(200, json={}),
+                _rejects_a_token_response_without_Response,
             ),
         ) as client:
             notifier = WeChatNotifier('corp', 'secret', client=client)
             with self.assertRaisesRegex(
-                ValueError, 'did not return an access token',
+                ValueError,
+                'did not return an access token',
             ):
                 await notifier.get_access_token()
 
@@ -101,7 +106,7 @@ class WeChatNotifierTests(unittest.IsolatedAsyncioTestCase):
         """WeChat image uploads fail when the API omits the media ID."""
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(
-                lambda _request: httpx.Response(200, json={}),
+                _rejects_a_token_response_without_Response,
             ),
         ) as client:
             notifier = WeChatNotifier('corp', 'secret', client=client)

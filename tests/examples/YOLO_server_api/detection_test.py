@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import unittest
 from collections.abc import Sequence
 from io import BytesIO
 from unittest.mock import ANY
-from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-import cv2
 import numpy as np
 import pytest
 from PIL import Image
@@ -18,16 +15,20 @@ from examples.YOLO_server_api import detection
 from examples.YOLO_server_api.detection import area
 from examples.YOLO_server_api.detection import compile_detection_data
 from examples.YOLO_server_api.detection import contained
-from examples.YOLO_server_api.detection import convert_to_image
-from examples.YOLO_server_api.detection import get_category_indices
 from examples.YOLO_server_api.detection import get_prediction_result
 from examples.YOLO_server_api.detection import process_labels
 from examples.YOLO_server_api.detection import (
     remove_completely_contained_labels,
 )
-from examples.YOLO_server_api.detection import (
-    remove_overlapping_labels,
-)
+from examples.YOLO_server_api.detection import remove_overlapping_labels
+from examples.YOLO_server_api.image_input import decode_image
+from examples.YOLO_server_api.image_input import DetectionInputError
+
+POLICY = detection.DetectionPolicy(((0, 2), (7, 4)))
+
+
+def _conversion_and_standard_prediction_cover_callback():
+    return 'cpu'
 
 
 class _FakeTensor:
@@ -61,7 +62,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         self.image_data = buf.getvalue()
 
     @patch('examples.YOLO_server_api.detection.np.frombuffer')
-    @patch('examples.YOLO_server_api.detection.cv2.imdecode')
+    @patch('examples.YOLO_server_api.image_input.cv2.imdecode')
     def test_convert_to_image(
         self,
         mock_imdecode: MagicMock,
@@ -70,9 +71,9 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         """Tests the conversion of byte data to an image using mocked numpy and
         OpenCV methods."""
         mock_frombuffer.return_value = MagicMock()
-        mock_imdecode.return_value = MagicMock()
+        mock_imdecode.return_value = np.zeros((1, 1, 3), dtype=np.uint8)
 
-        img = convert_to_image(self.image_data)
+        img = decode_image(self.image_data, 64 * 1024 * 1024)
 
         mock_frombuffer.assert_called_once_with(self.image_data, np.uint8)
         mock_imdecode.assert_called_once()
@@ -86,7 +87,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         model = MagicMock()
         model.predict.return_value = [MagicMock()]
 
-        result = await get_prediction_result(img, model)
+        result = get_prediction_result(img, model)
 
         model.predict.assert_called_once_with(source=img, verbose=False)
         self.assertIsNotNone(result)
@@ -102,7 +103,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         img = MagicMock()
         model = MagicMock()
 
-        result = await get_prediction_result(img, model)
+        result = get_prediction_result(img, model)
 
         mock_get_sliced_prediction.assert_called_once_with(
             img,
@@ -156,23 +157,12 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
     async def test_process_labels(self) -> None:
         """Tests label processing pipeline."""
         datas = [[10, 20, 30, 40, 0.9, 1]]
-        result = await process_labels(datas)
+        result = process_labels(datas, POLICY)
         self.assertIsInstance(result, list)
 
-    def test_get_category_indices(self) -> None:
-        """Tests retrieval of category indices for different labels."""
-        datas = [
-            [10, 20, 30, 40, 0.9, 0],  # hardhat
-            [50, 60, 70, 80, 0.85, 2],  # no_hardhat
-            [90, 100, 110, 120, 0.8, 7],  # safety_vest
-            [130, 140, 150, 160, 0.75, 4],  # no_safety_vest
-        ]
-        indices = get_category_indices(datas)
-
-        self.assertEqual(indices['hardhat'], [0])
-        self.assertEqual(indices['no_hardhat'], [1])
-        self.assertEqual(indices['safety_vest'], [2])
-        self.assertEqual(indices['no_safety_vest'], [3])
+    def test_custom_classes_without_conflicts_are_preserved(self):
+        data = [[0, 0, 100, 200, 0.9, 0], [10, 5, 30, 30, 0.9, 2]]
+        self.assertEqual(process_labels(data), data)
 
     def test_area(self) -> None:
         """Tests calculation of area for a bounding box."""
@@ -189,7 +179,9 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         bbox1: list[float] = [0, 0, 50, 50]
         bbox2: list[float] = [25, 25, 75, 75]
         overlap = detection._overlap_ratio_with_area(
-            bbox1, bbox2, area(*bbox1),
+            bbox1,
+            bbox2,
+            area(*bbox1),
         )
         self.assertGreater(overlap, 0)
         self.assertLessEqual(overlap, 1)
@@ -199,7 +191,9 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         bbox1: list[float] = [0, 0, 50, 50]
         bbox2: list[float] = [100, 100, 150, 150]
         overlap = detection._overlap_ratio_with_area(
-            bbox1, bbox2, area(*bbox1),
+            bbox1,
+            bbox2,
+            area(*bbox1),
         )
         self.assertEqual(overlap, 0)
 
@@ -280,7 +274,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
             [200, 200, 300, 300, 0.85, 7],  # safety_vest
             [400, 400, 500, 500, 0.7, 4],  # no_safety_vest (no overlap)
         ]
-        result = await remove_overlapping_labels(datas.copy())
+        result = remove_overlapping_labels(datas.copy(), POLICY)
         self.assertEqual(len(result), 3)  # one should be removed
 
     async def test_remove_overlapping_labels_both_pairs(self) -> None:
@@ -292,7 +286,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
             [200, 200, 300, 300, 0.85, 7],  # safety_vest
             [210, 210, 290, 290, 0.7, 4],  # no_safety_vest (overlaps)
         ]
-        result = await remove_overlapping_labels(datas.copy())
+        result = remove_overlapping_labels(datas.copy(), POLICY)
         self.assertEqual(len(result), 2)  # two should be removed
 
     async def test_remove_completely_contained_labels(self) -> None:
@@ -303,7 +297,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
             [200, 200, 300, 300, 0.85, 7],  # safety_vest
             [210, 210, 290, 290, 0.7, 4],  # no_safety_vest (contained)
         ]
-        result = await remove_completely_contained_labels(datas.copy())
+        result = remove_completely_contained_labels(datas.copy(), POLICY)
         # contained labels should be removed
         self.assertEqual(len(result), 2)
 
@@ -318,7 +312,7 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
             [200, 200, 250, 250, 0.85, 7],  # safety_vest
             [300, 300, 350, 350, 0.7, 4],  # no_safety_vest (not contained)
         ]
-        result = await remove_completely_contained_labels(datas.copy())
+        result = remove_completely_contained_labels(datas.copy(), POLICY)
         self.assertEqual(len(result), 4)  # no labels should be removed
 
     async def test_empty_data_lists(self) -> None:
@@ -326,36 +320,25 @@ class TestDetection(unittest.IsolatedAsyncioTestCase):
         empty_datas: list[list[float]] = []
 
         # Test process_labels with empty data
-        result = await process_labels(empty_datas.copy())
+        result = process_labels(empty_datas.copy(), POLICY)
         self.assertEqual(result, [])
 
         # Test remove_overlapping_labels with empty data
-        result = await remove_overlapping_labels(empty_datas.copy())
+        result = remove_overlapping_labels(empty_datas.copy(), POLICY)
         self.assertEqual(result, [])
 
         # Test remove_completely_contained_labels with empty data
-        result = await remove_completely_contained_labels(empty_datas.copy())
+        result = remove_completely_contained_labels(empty_datas.copy(), POLICY)
         self.assertEqual(result, [])
-
-    def test_get_category_indices_empty(self) -> None:
-        """Tests get_category_indices with empty data."""
-        datas: list[list[float]] = []
-        indices = get_category_indices(datas)
-
-        expected: dict[str, list[int]] = {
-            'hardhat': [],
-            'no_hardhat': [],
-            'safety_vest': [],
-            'no_safety_vest': [],
-        }
-        self.assertEqual(indices, expected)
 
     def test_overlap_ratio_identical_boxes(self) -> None:
         """Tests overlap ratio with identical bounding boxes."""
         bbox1: list[float] = [0, 0, 50, 50]
         bbox2: list[float] = [0, 0, 50, 50]
         overlap = detection._overlap_ratio_with_area(
-            bbox1, bbox2, area(*bbox1),
+            bbox1,
+            bbox2,
+            area(*bbox1),
         )
         self.assertEqual(overlap, 1.0)  # Should be 100% overlap
 
@@ -398,27 +381,12 @@ class Tensor:
         self,
         value: Sequence[Sequence[float]] | Sequence[float],
     ) -> None:
-        """Perform init.
-
-        Args:
-            value: Value used by this callable.
-        """
         self.value = np.asarray(value)
 
     def cpu(self) -> Tensor:
-        """Perform cpu.
-
-        Returns:
-            The callable result.
-        """
         return self
 
     def numpy(self) -> np.ndarray:
-        """Perform numpy.
-
-        Returns:
-            The callable result.
-        """
         return self.value
 
 
@@ -426,19 +394,22 @@ def test_conversion_and_standard_prediction_cover_invalid_and_cpu_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bad image bytes fail clearly and standard inference gets a device."""
-    monkeypatch.setattr(detection.cv2, 'imdecode', lambda *_args: None)
-    with pytest.raises(cv2.error, match='Unable to decode'):
-        detection.convert_to_image(b'not-an-image')
+    with pytest.raises(DetectionInputError):
+        decode_image(b'not-an-image', 64 * 1024 * 1024)
 
     model = MagicMock()
     result = MagicMock()
     model.predict.return_value = [result]
     monkeypatch.setattr(detection, 'USE_SAHI', False)
     monkeypatch.setattr(detection, 'USE_TENSORRT', False)
-    monkeypatch.setattr(detection, 'get_inference_device', lambda: 'cpu')
+    monkeypatch.setattr(
+        detection,
+        'get_inference_device',
+        _conversion_and_standard_prediction_cover_callback,
+    )
     image = np.zeros((1, 1, 3))
 
-    assert asyncio.run(detection.get_prediction_result(image, model)) is result
+    assert detection.get_prediction_result(image, model) is result
     model.predict.assert_called_once_with(
         source=image,
         verbose=False,
@@ -457,11 +428,10 @@ def test_ultralytics_empty_boxes_and_detection_timing_pipeline() -> None:
     compiled = [[1, 2, 3, 4, 0.9, 1]]
     processed = [[1, 2, 3, 4, 0.9, 1]]
     with (
-        patch.object(detection, 'convert_to_image', return_value=image),
         patch.object(
             detection,
             'get_prediction_result',
-            AsyncMock(return_value=prediction),
+            MagicMock(return_value=prediction),
         ) as get_prediction,
         patch.object(
             detection,
@@ -471,19 +441,16 @@ def test_ultralytics_empty_boxes_and_detection_timing_pipeline() -> None:
         patch.object(
             detection,
             'process_labels',
-            AsyncMock(return_value=processed),
+            MagicMock(return_value=processed),
         ),
     ):
-        labels, timing = asyncio.run(
-            detection.run_detection_from_bytes(
-                b'image',
-                MagicMock(),
-                semaphore=asyncio.Semaphore(1),
-            ),
+        labels, timing = detection.run_detection(
+            image,
+            MagicMock(),
         )
 
     assert labels == processed
     assert set(timing) == {'inference', 'post'}
     assert timing['inference'] >= 0
     assert timing['post'] >= 0
-    get_prediction.assert_awaited_once_with(image, ANY)
+    get_prediction.assert_called_once_with(image, ANY)

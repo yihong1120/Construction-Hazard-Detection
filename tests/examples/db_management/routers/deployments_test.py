@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from functools import partial
 from types import SimpleNamespace
+from typing import Any
 from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -19,9 +21,41 @@ from examples.db_management.schemas.deployment import DeploymentUpdate
 from examples.db_management.schemas.deployment import TenantCreate
 from examples.db_management.schemas.deployment import TenantUpdate
 
-
 _TENANT_ID = UUID('11111111-1111-1111-1111-111111111111')
 _DEPLOYMENT_ID = UUID('22222222-2222-2222-2222-222222222222')
+
+
+def _list_and_create_tenant_use_scalars(tenant, /):
+    return [tenant]
+
+
+def _list_and_create_tenant_use_scalars2(deployment, /):
+    return [deployment]
+
+
+def _update_tenant_revisions_all_deployments_scalars(
+    first,
+    second,
+    /,
+):
+    return [first, second]
+
+
+def _create_and_update_deployment_canonicalise_refresh(
+    deployment: Any,
+    /,
+    item: Deployment,
+) -> None:
+    """Populate only the newly created deployment's default fields.
+
+    Args:
+        item: Deployment being refreshed by the session double.
+    """
+    if item is deployment:
+        return
+    item.id = _DEPLOYMENT_ID
+    item.config_revision = 1
+    item.status = 'active'
 
 
 def _tenant() -> Tenant:
@@ -72,8 +106,18 @@ class TestDeploymentManagementRoutes(unittest.IsolatedAsyncioTestCase):
         db = SimpleNamespace(
             execute=AsyncMock(
                 side_effect=[
-                    SimpleNamespace(scalars=lambda: [tenant]),
-                    SimpleNamespace(scalars=lambda: [deployment]),
+                    SimpleNamespace(
+                        scalars=partial(
+                            _list_and_create_tenant_use_scalars,
+                            tenant,
+                        ),
+                    ),
+                    SimpleNamespace(
+                        scalars=partial(
+                            _list_and_create_tenant_use_scalars2,
+                            deployment,
+                        ),
+                    ),
                 ],
             ),
             add=MagicMock(),
@@ -115,7 +159,13 @@ class TestDeploymentManagementRoutes(unittest.IsolatedAsyncioTestCase):
         db = SimpleNamespace(
             get=AsyncMock(return_value=tenant),
             execute=AsyncMock(
-                return_value=SimpleNamespace(scalars=lambda: [first, second]),
+                return_value=SimpleNamespace(
+                    scalars=partial(
+                        _update_tenant_revisions_all_deployments_scalars,
+                        first,
+                        second,
+                    ),
+                ),
             ),
             commit=AsyncMock(),
             refresh=AsyncMock(),
@@ -144,17 +194,10 @@ class TestDeploymentManagementRoutes(unittest.IsolatedAsyncioTestCase):
         tenant = _tenant()
         deployment = _deployment()
 
-        def refresh(item: Deployment) -> None:
-            """Populate only the newly created deployment's default fields.
-
-            Args:
-                item: Deployment being refreshed by the session double.
-            """
-            if item is deployment:
-                return
-            item.id = _DEPLOYMENT_ID
-            item.config_revision = 1
-            item.status = 'active'
+        refresh = partial(
+            _create_and_update_deployment_canonicalise_refresh,
+            deployment,
+        )
 
         db = SimpleNamespace(
             get=AsyncMock(side_effect=[tenant, deployment, tenant]),
@@ -197,8 +240,7 @@ class TestDeploymentManagementRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_missing_records_and_invalid_status_return_client_errors(
         self,
     ) -> None:
-        """Management routes distinguish unknown resources and invalid states.
-        """
+        """Distinguish unknown resources and invalid states."""
         db = SimpleNamespace(get=AsyncMock(return_value=None))
 
         with self.assertRaises(HTTPException) as missing:

@@ -3,66 +3,25 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
-import cv2
-import numpy as np
-import torch
 from dotenv import load_dotenv
+lazy import cv2
+lazy import numpy as np
+lazy import torch
+lazy from sahi import AutoDetectionModel
+lazy from sahi.predict import get_sliced_prediction
+lazy from ultralytics import YOLO
 
+from src.settings.inference import LocalInferenceSettings
 from src.ultralytics_args import parse_quantize_value
 from src.ultralytics_args import precision_kwargs
 
 load_dotenv()
 
-YOLO: Any = None
-
-
-class _LazyAutoDetectionModel:
-    """Import SAHI's model factory only when sliced prediction is used."""
-
-    @staticmethod
-    def from_pretrained(*args: Any, **kwargs: Any) -> Any:
-        """Load SAHI's detection model factory on first use."""
-        from sahi import AutoDetectionModel as detection_model
-
-        return detection_model.from_pretrained(*args, **kwargs)
-
-
-def get_sliced_prediction(*args: Any, **kwargs: Any) -> Any:
-    """Run SAHI sliced prediction, importing SAHI lazily."""
-    from sahi.predict import get_sliced_prediction as prediction
-
-    return prediction(*args, **kwargs)
-
-
-AutoDetectionModel: Any = _LazyAutoDetectionModel
-
-
-def _yolo_class() -> Any:
-    """Return the Ultralytics YOLO class, importing it only when needed."""
-    global YOLO
-    if YOLO is None:
-        from ultralytics import YOLO as yolo_class
-
-        YOLO = yolo_class
-    return YOLO
-
-
-def _sahi_detection_model() -> Any:
-    """Return the SAHI detection model class, importing it lazily."""
-    return AutoDetectionModel
-
-
-def _sahi_sliced_prediction() -> Any:
-    """Return SAHI sliced prediction function, importing it lazily."""
-    return get_sliced_prediction
-
 
 class LocalYoloDetector:
-    """Perform local Ultralytics or SAHI inference for interactive tooling."""
 
     def __init__(
         self,
@@ -77,15 +36,11 @@ class LocalYoloDetector:
         self.model_key = model_key
         self.output_folder = output_folder
         self.use_ultralytics = use_ultralytics
-        self.local_device = os.getenv('DETECT_LOCAL_DEVICE', 'cuda:0')
-        self.local_imgsz = int(os.getenv('DETECT_LOCAL_IMGSZ', '640'))
-        self.local_half = os.getenv(
-            'DETECT_LOCAL_HALF',
-            'true',
-        ).strip().lower() in {'1', 'true', 'yes', 'on'}
-        self.local_quantize = parse_quantize_value(
-            os.getenv('DETECT_LOCAL_QUANTIZE'),
-        )
+        self.settings = LocalInferenceSettings()
+        self.local_device = self.settings.device
+        self.local_imgsz = self.settings.imgsz
+        self.local_half = self.settings.half
+        self.local_quantize = parse_quantize_value(self.settings.quantize)
         self._logger = logging.getLogger(__name__)
         self.movement_thr = movement_thr
         self.movement_thr_sq = movement_thr * movement_thr
@@ -96,11 +51,11 @@ class LocalYoloDetector:
         self.prev_centers_last_seen: dict[int, int] = {}
 
         if use_ultralytics:
-            self.ultralytics_model = _yolo_class()(
+            self.ultralytics_model = YOLO(
                 f"models/pt/best_{model_key}.pt",
             )
         else:
-            self.model = _sahi_detection_model().from_pretrained(
+            self.model = AutoDetectionModel.from_pretrained(
                 'yolo26',
                 model_path=str(Path('models/pt') / f"best_{model_key}.pt"),
                 device=self.local_device,
@@ -120,7 +75,7 @@ class LocalYoloDetector:
                 for index in range(len(boxes))
             ]
 
-        sahi_result: Any = _sahi_sliced_prediction()(
+        sahi_result: Any = get_sliced_prediction(
             frame,
             self.model,
             slice_height=376,

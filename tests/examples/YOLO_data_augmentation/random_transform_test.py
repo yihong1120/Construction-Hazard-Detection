@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -13,6 +14,49 @@ from examples.YOLO_data_augmentation import (
 )
 
 
+def _getattr_factory(
+    name: Any,
+    testcase: AlbumentationsStub,
+    /,
+    *args: object,
+    **kwargs: object,
+) -> StubTransform:
+    transform = StubTransform(name, args, kwargs)
+    testcase.created.append(transform)
+    return transform
+
+
+def _return_none(_path):
+    return None
+
+
+def _reference_image_helpers_handle_empty_callback(rgb, /, _path):
+    return rgb
+
+
+def _identity(value, _code):
+    return value
+
+
+def _mask_dropout_uses_the_post_transform_factory(
+    created: list[StubTransform],
+    /,
+    **kwargs: object,
+) -> StubTransform:
+    transform = StubTransform('MaskDropout', (), kwargs)
+    created.append(transform)
+    return transform
+
+
+def _mask_dropout_uses_the_post_compose_factory(
+    post: Any,
+    /,
+    *_args: object,
+    **_kwargs: object,
+) -> MagicMock:
+    return post
+
+
 class StubTransform:
     """Record a transform construction without running image operations."""
 
@@ -22,13 +66,6 @@ class StubTransform:
         args: tuple[object, ...],
         kwargs: dict[str, object],
     ) -> None:
-        """Perform init.
-
-        Args:
-            name: Value used by this callable.
-            args: Value used by this callable.
-            kwargs: Value used by this callable.
-        """
         self.name = name
         self.args = args
         self.kwargs = kwargs
@@ -38,32 +75,11 @@ class AlbumentationsStub:
     """Expose the flexible transform factory API used by the builder."""
 
     def __init__(self) -> None:
-        """Perform init."""
         self.created: list[StubTransform] = []
 
     def __getattr__(self, name: str) -> Any:
-        """Perform getattr.
 
-        Args:
-            name: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-
-        def factory(*args: object, **kwargs: object) -> StubTransform:
-            """Perform factory.
-
-            Args:
-                *args: Value used by this callable.
-                **kwargs: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            transform = StubTransform(name, args, kwargs)
-            self.created.append(transform)
-            return transform
+        factory = partial(_getattr_factory, name, self)
 
         return factory
 
@@ -147,14 +163,18 @@ def test_reference_image_helpers_handle_empty_and_unreadable_images(
     image = tmp_path / 'images' / 'reference.jpg'
     image.parent.mkdir()
     image.write_bytes(b'not-an-image')
-    monkeypatch.setattr(subject.cv2, 'imread', lambda _path: None)
+    monkeypatch.setattr(subject.cv2, 'imread', _return_none)
     assert augmenter.get_fda_reference_images() == []
     with pytest.raises(ValueError, match='could not be loaded'):
         augmenter.get_random_target_image()
 
     rgb = np.zeros((3, 4, 3), dtype=np.uint8)
-    monkeypatch.setattr(subject.cv2, 'imread', lambda _path: rgb)
-    monkeypatch.setattr(subject.cv2, 'cvtColor', lambda value, _code: value)
+    monkeypatch.setattr(
+        subject.cv2,
+        'imread',
+        partial(_reference_image_helpers_handle_empty_callback, rgb),
+    )
+    monkeypatch.setattr(subject.cv2, 'cvtColor', _identity)
     assert augmenter.get_random_target_image() is rgb
 
 
@@ -183,30 +203,15 @@ def test_mask_dropout_uses_the_post_transform_pipeline(
 
     created: list[StubTransform] = []
 
-    def transform_factory(**kwargs: object) -> StubTransform:
-        """Perform transform factory.
+    transform_factory = partial(
+        _mask_dropout_uses_the_post_transform_factory,
+        created,
+    )
 
-        Args:
-            **kwargs: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        transform = StubTransform('MaskDropout', (), kwargs)
-        created.append(transform)
-        return transform
-
-    def compose_factory(*_args: object, **_kwargs: object) -> MagicMock:
-        """Perform compose factory.
-
-        Args:
-            *_args: Value used by this callable.
-            **_kwargs: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        return post
+    compose_factory = partial(
+        _mask_dropout_uses_the_post_compose_factory,
+        post,
+    )
 
     albumentations = type(
         'MaskAlbumentations',
@@ -245,8 +250,8 @@ def test_mask_dropout_uses_the_post_transform_pipeline(
     assert primary.call_args.kwargs['fda_metadata'] == [image]
     post.assert_called_once()
     mask_dropout = next(item for item in created if item.name == 'MaskDropout')
-    assert mask_dropout.kwargs['max_objects'] == (1, 3)
-    assert 'max_objects_range' not in mask_dropout.kwargs
+    assert mask_dropout.kwargs['max_objects_range'] == (1, 3)
+    assert 'max_objects' not in mask_dropout.kwargs
 
 
 def test_generate_mask_and_flip_transforms_cover_all_shape_variants(

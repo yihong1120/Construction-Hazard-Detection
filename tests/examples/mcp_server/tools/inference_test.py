@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import os
 import unittest
+from functools import partial
 from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -13,6 +15,58 @@ import numpy as np
 from examples.mcp_server.tools.inference import InferenceTools
 
 
+async def _install_streaming_image_client_aiter_bytes(
+    content: Any,
+    /,
+) -> object:
+    yield content
+
+
+async def _same_configuration_reuses_detector_and_init(
+    detectors,
+    tool,
+    /,
+    *config,
+):
+    detector = AsyncMock()
+    detector.generate_detections.return_value = ([], [])
+    detectors.append(detector)
+    tool._detector = detector
+
+
+class _DetectFrameCallsInitWhenDetectorMissingCallbacks:
+    fake_dets: Any
+    fake_trk: list[list[int]]
+    tool: Any
+
+    async def _call_init_side_effect(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        # Install a detector after init is called
+        """Support init_side_effect."""
+        detector = AsyncMock()
+        detector.generate_detections.return_value = (
+            self.fake_dets,
+            self.fake_trk,
+        )
+        self.tool._detector = detector
+
+
+class _ConcurrentFirstRequestsInitializeOneDetectorCallbacks:
+    active: Any
+    asyncio: Any
+    detector: Any
+    tool: Any
+
+    async def _call_init(self, *config):
+
+        self.active += 1
+        await self.asyncio.sleep(0)
+        self.tool._detector = self.detector
+
+
 def _install_streaming_image_client(
     tool: InferenceTools,
     content: bytes,
@@ -22,13 +76,7 @@ def _install_streaming_image_client(
     response.headers = {}
     response.raise_for_status = MagicMock()
 
-    async def aiter_bytes() -> object:
-        """Perform aiter bytes.
-
-        Returns:
-            The callable result.
-        """
-        yield content
+    aiter_bytes = partial(_install_streaming_image_client_aiter_bytes, content)
 
     response.aiter_bytes = aiter_bytes
     stream_context = MagicMock()
@@ -96,16 +144,12 @@ class DetectFrameTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_detect_frame_calls_init_when_detector_missing(self) -> None:
         """On first use, detect_frame should initialise the detector."""
+        _callbacks = _DetectFrameCallsInitWhenDetectorMissingCallbacks()
         fake_frame = np.zeros((10, 10, 3), dtype=np.uint8)
-        fake_dets = [[0, 0, 1, 1, 0.5, 0]]
-        fake_trk: list[list[int]] = []
+        _callbacks.fake_dets = [[0, 0, 1, 1, 0.5, 0]]
+        _callbacks.fake_trk = []
 
-        async def init_side_effect(*args: Any, **kwargs: Any) -> None:
-            # Install a detector after init is called
-            """Support init_side_effect."""
-            detector = AsyncMock()
-            detector.generate_detections.return_value = (fake_dets, fake_trk)
-            tool._detector = detector
+        init_side_effect = _callbacks._call_init_side_effect
 
         with (
             patch.object(
@@ -119,14 +163,14 @@ class DetectFrameTests(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(side_effect=init_side_effect),
             ) as mock_init,
         ):
-            tool = InferenceTools()
-            res = await tool.detect_frame(
+            _callbacks.tool = InferenceTools()
+            res = await _callbacks.tool.detect_frame(
                 image_base64='abc==',
                 model_key='yolo11n',
             )
         mock_init.assert_awaited_once()
-        self.assertEqual(res['detections'], fake_dets)
-        self.assertEqual(res['tracked'], fake_trk)
+        self.assertEqual(res['detections'], _callbacks.fake_dets)
+        self.assertEqual(res['tracked'], _callbacks.fake_trk)
         self.assertEqual(res['meta']['engine'], 'ultralytics')
 
     async def test_detect_frame_raises_when_load_image_returns_none(
@@ -265,10 +309,7 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 'src.local_yolo_detector.LocalYoloDetector',
             ) as mock_lsd,
-            patch(
-                'examples.mcp_server.tools.inference.get_env_int',
-                side_effect=[1, 10],
-            ),
+            patch.dict(os.environ, {'TARGET_FPS': '1', 'MAX_ID_KEEP': '10'}),
         ):
             tool = InferenceTools()
             await tool._init_detector(
@@ -315,11 +356,11 @@ class DetectorConfigurationTests(unittest.IsolatedAsyncioTestCase):
         tool = InferenceTools()
         detectors = []
 
-        async def init(*config):
-            detector = AsyncMock()
-            detector.generate_detections.return_value = ([], [])
-            detectors.append(detector)
-            tool._detector = detector
+        init = partial(
+            _same_configuration_reuses_detector_and_init,
+            detectors,
+            tool,
+        )
 
         with (
             patch.object(
@@ -328,14 +369,18 @@ class DetectorConfigurationTests(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=np.zeros((2, 3, 3))),
             ),
             patch.object(
-                tool, '_init_detector', side_effect=init,
+                tool,
+                '_init_detector',
+                side_effect=init,
             ) as initialize,
         ):
             await tool.detect_frame('image', model_key='first')
             await tool.detect_frame('image', model_key='first')
             assert initialize.await_count == 1
             result = await tool.detect_frame(
-                'image', model_key='second', use_ultralytics=False,
+                'image',
+                model_key='second',
+                use_ultralytics=False,
             )
             assert result['meta']['model_key'] == 'second'
             assert result['meta']['engine'] == 'sahi'
@@ -345,29 +390,29 @@ class DetectorConfigurationTests(unittest.IsolatedAsyncioTestCase):
         detectors[1].close.assert_awaited_once()
 
     async def test_concurrent_first_requests_initialize_one_detector(self):
+        _callbacks = _ConcurrentFirstRequestsInitializeOneDetectorCallbacks()
         import asyncio
-        tool = InferenceTools()
-        detector = AsyncMock()
-        detector.generate_detections.return_value = ([], [])
-        active = 0
 
-        async def init(*config):
-            nonlocal active
-            active += 1
-            await asyncio.sleep(0)
-            tool._detector = detector
+        _callbacks.asyncio = asyncio
+        _callbacks.tool = InferenceTools()
+        _callbacks.detector = AsyncMock()
+        _callbacks.detector.generate_detections.return_value = ([], [])
+        _callbacks.active = 0
+
+        init = _callbacks._call_init
 
         with (
             patch.object(
-                tool,
+                _callbacks.tool,
                 '_load_image',
                 AsyncMock(return_value=np.zeros((2, 2, 3))),
             ),
-            patch.object(tool, '_init_detector', side_effect=init),
+            patch.object(_callbacks.tool, '_init_detector', side_effect=init),
         ):
-            await asyncio.gather(
-                tool.detect_frame('image'), tool.detect_frame('image'),
+            await _callbacks.asyncio.gather(
+                _callbacks.tool.detect_frame('image'),
+                _callbacks.tool.detect_frame('image'),
             )
-        assert active == 1
-        assert detector.generate_detections.await_count == 2
-        await tool.close()
+        assert _callbacks.active == 1
+        assert _callbacks.detector.generate_detections.await_count == 2
+        await _callbacks.tool.close()

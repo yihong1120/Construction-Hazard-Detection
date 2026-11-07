@@ -5,9 +5,11 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Final
 
 import redis.asyncio as redis
+from fastapi import HTTPException
 from fastapi import Request
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
@@ -29,6 +31,7 @@ from examples.streaming_web.metadata_keys import (
     build_metadata_key_from_stream_id,
 )
 from examples.streaming_web.metadata_keys import get_metadata_site_generation
+from examples.streaming_web.overlay_admission import OverlayAdmission
 from examples.streaming_web.redis_service import fetch_latest_metadata_for_key
 from examples.streaming_web.schemas import FrameOutData
 
@@ -105,11 +108,15 @@ async def _refresh_overlay_demand(
     """
     if not overlay_demand_key or not overlay_demand_ttl_seconds:
         return
-    await rds.set(
-        overlay_demand_key,
-        b'1',
-        ex=overlay_demand_ttl_seconds,
-    )
+    admission = OverlayAdmission()
+    if admission.add_key(overlay_demand_key, overlay_demand_ttl_seconds):
+        await admission.commit(rds)
+    else:
+        await rds.set(
+            overlay_demand_key,
+            b'1',
+            ex=overlay_demand_ttl_seconds,
+        )
 
 
 async def _overlay_ready_event(
@@ -134,115 +141,126 @@ async def _overlay_ready_event(
     return _encode_sse_event(overlay_ready_payload, event_type='overlay_ready')
 
 
-async def metadata_stream_generator(
-    request: Request,
-    rds: redis.Redis,
-    redis_key: str,
-    overlay_ready_key: str | None = None,
-    overlay_ready_payload: Mapping[str, object] | None = None,
-    overlay_demand_key: str | None = None,
-    overlay_demand_ttl_seconds: int | None = None,
-    overlay_demand_refresh_seconds: float = 30.0,
-) -> AsyncIterator[bytes]:
-    """Yield compact warning metadata for native MediaMTX video viewers.
+@dataclass(frozen=True)
+class MetadataOverlayLease:
+    ready_key: str | None = None
+    ready_payload: Mapping[str, object] | None = None
+    demand_key: str | None = None
+    ttl_seconds: int | None = None
 
-    Args:
-        request: HTTP request used to detect client disconnection.
-        rds: Redis connection used to consume metadata and overlay state.
-        redis_key: Canonical metadata Redis Stream key.
-        overlay_ready_key: Optional overlay readiness marker key.
-        overlay_ready_payload: Optional payload for the first ready event.
-        overlay_demand_key: Optional producer demand lease key.
-        overlay_demand_ttl_seconds: Optional demand lease duration.
-        overlay_demand_refresh_seconds: Minimum interval between lease
-            renewals.
+    @property
+    def refresh_interval(self) -> float:
+        return max(1.0, self.ttl_seconds / 2) if self.ttl_seconds else 30.0
 
-    Yields:
-        Encoded SSE events, heartbeats, and rate-limited Redis-error events.
-    """
-    last_heartbeat = asyncio.get_running_loop().time()
-    last_overlay_demand_refresh = 0.0
-    last_redis_error_event = float('-inf')
-    last_redis_error_log = float('-inf')
-    overlay_ready_sent = False
-    # Tell browsers to retry conservatively before the first Redis read blocks.
-    yield b'retry: 15000\n: connected\n\n'
-    subscription = await metadata_fanout.subscribe(
-        rds,
-        redis_key,
-        fetcher=fetch_latest_metadata_for_key,
-    )
-    try:
-        while not await request.is_disconnected():
-            now = asyncio.get_running_loop().time()
-            try:
-                last_overlay_demand_refresh = (
-                    await _refresh_overlay_demand_if_due(
-                        rds,
-                        overlay_demand_key,
-                        overlay_demand_ttl_seconds,
-                        overlay_demand_refresh_seconds,
-                        last_overlay_demand_refresh,
-                        now,
+
+class MetadataSubscription:
+    """Own one viewer's fanout subscription, demand lease and SSE clocks."""
+
+    def __init__(
+        self, redis: redis.Redis, key: str,
+        overlay: MetadataOverlayLease | None = None,
+    ) -> None:
+        self.redis = redis
+        self.key = key
+        self.overlay = overlay or MetadataOverlayLease()
+
+    async def events(self, request: Request) -> AsyncIterator[bytes]:
+        self.last_heartbeat = asyncio.get_running_loop().time()
+        self.last_overlay_demand_refresh = 0.0
+        self.last_redis_error_event = float('-inf')
+        self.last_redis_error_log = float('-inf')
+        self.overlay_ready_sent = False
+        # Tell browsers to retry conservatively before the first Redis read
+        # blocks.
+        yield b'retry: 15000\n: connected\n\n'
+        subscription = await metadata_fanout.subscribe(
+            self.redis,
+            self.key,
+            fetcher=fetch_latest_metadata_for_key,
+        )
+        try:
+            while not await request.is_disconnected():
+                now = asyncio.get_running_loop().time()
+                try:
+                    self.last_overlay_demand_refresh = (
+                        await _refresh_overlay_demand_if_due(
+                            self.redis,
+                            self.overlay.demand_key,
+                            self.overlay.ttl_seconds,
+                            self.overlay.refresh_interval,
+                            self.last_overlay_demand_refresh,
+                            now,
+                        )
                     )
-                )
-                (
-                    overlay_ready_sent,
-                    overlay_event,
-                ) = await _next_overlay_ready_event(
-                    rds,
-                    overlay_ready_key,
-                    overlay_ready_payload,
-                    overlay_ready_sent,
-                )
-                if overlay_event is not None:
-                    last_heartbeat = now
-                    yield overlay_event
+                    (
+                        self.overlay_ready_sent,
+                        overlay_event,
+                    ) = await _next_overlay_ready_event(
+                        self.redis,
+                        self.overlay.ready_key,
+                        self.overlay.ready_payload,
+                        self.overlay_ready_sent,
+                    )
+                    if overlay_event is not None:
+                        self.last_heartbeat = now
+                        yield overlay_event
+                        continue
+                    frame_data = await asyncio.wait_for(
+                        subscription.get(),
+                        timeout=_metadata_client_tick_seconds,
+                    )
+                    if isinstance(frame_data, Exception):
+                        raise frame_data
+                except TimeoutError:
+                    self.last_heartbeat, heartbeat = _heartbeat_event(
+                        now,
+                        self.last_heartbeat,
+                    )
+                    if heartbeat is not None:
+                        yield heartbeat
                     continue
-                frame_data = await asyncio.wait_for(
-                    subscription.get(),
-                    timeout=_metadata_client_tick_seconds,
-                )
-                if isinstance(frame_data, Exception):
-                    raise frame_data
-            except asyncio.TimeoutError:
-                last_heartbeat, heartbeat = _heartbeat_event(
+                except HTTPException as exc:
+                    yield _encode_sse_event(
+                        {'code': str(exc.detail), 'status': exc.status_code},
+                        event_type='overlay_error',
+                    )
+                    return
+                except Exception as exc:
+                    (
+                        self.last_redis_error_event,
+                        self.last_redis_error_log,
+                        self.last_heartbeat,
+                        event,
+                    ) = _metadata_read_error_event(
+                        self.key,
+                        exc,
+                        now,
+                        self.last_redis_error_event,
+                        self.last_redis_error_log,
+                        self.last_heartbeat,
+                    )
+                    if event is not None:
+                        yield event
+                    await asyncio.sleep(1.0)
+                    continue
+
+                _last_id, self.last_heartbeat, event = _metadata_frame_event(
+                    frame_data,
+                    self.key,
+                    '',
                     now,
-                    last_heartbeat,
-                )
-                if heartbeat is not None:
-                    yield heartbeat
-                continue
-            except Exception as exc:
-                (
-                    last_redis_error_event,
-                    last_redis_error_log,
-                    last_heartbeat,
-                    event,
-                ) = _metadata_read_error_event(
-                    redis_key,
-                    exc,
-                    now,
-                    last_redis_error_event,
-                    last_redis_error_log,
-                    last_heartbeat,
+                    self.last_heartbeat,
                 )
                 if event is not None:
                     yield event
-                await asyncio.sleep(1.0)
-                continue
+        finally:
+            await subscription.close()
 
-            _last_id, last_heartbeat, event = _metadata_frame_event(
-                frame_data,
-                redis_key,
-                '',
-                now,
-                last_heartbeat,
-            )
-            if event is not None:
-                yield event
-    finally:
-        await subscription.close()
+
+def metadata_stream_generator(
+    request: Request, subscription: MetadataSubscription,
+) -> AsyncIterator[bytes]:
+    return subscription.events(request)
 
 
 async def _refresh_overlay_demand_if_due(
@@ -455,7 +473,7 @@ async def metadata_push_loop(
                     subscription.get(),
                     timeout=_metadata_client_tick_seconds,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
             if isinstance(frame_data, Exception):

@@ -1,5 +1,5 @@
-"""Small model snapshots for overlay and feedback contract tests."""
 from __future__ import annotations
+
 CLASSES = [
     {
         'id': 2,

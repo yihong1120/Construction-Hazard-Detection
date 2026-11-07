@@ -45,11 +45,7 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_list_features: AsyncMock,
     ) -> None:
-        """Test endpoint list features super admin.
-
-        Args:
-            mock_list_features: Value used by this callable.
-        """
+        """Test endpoint list features super admin."""
         mock_list_features.return_value = [self.example_feature]
 
         result: list[Feature] = await features.endpoint_list_features(
@@ -78,11 +74,7 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create_feature: AsyncMock,
     ) -> None:
-        """Test endpoint create feature.
-
-        Args:
-            mock_create_feature: Value used by this callable.
-        """
+        """Test endpoint create feature."""
         payload: FeatureCreate = FeatureCreate(
             feature_name='New Feature',
             description='Feature desc',
@@ -106,11 +98,7 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_update_feature: AsyncMock,
     ) -> None:
-        """Test endpoint update feature success.
-
-        Args:
-            mock_update_feature: Value used by this callable.
-        """
+        """Test endpoint update feature success."""
         payload: FeatureUpdate = FeatureUpdate(
             feature_id=1,
             new_name='Updated Feature',
@@ -158,11 +146,7 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_delete_feature: AsyncMock,
     ) -> None:
-        """Test endpoint delete feature success.
-
-        Args:
-            mock_delete_feature: Value used by this callable.
-        """
+        """Test endpoint delete feature success."""
         payload: FeatureDelete = FeatureDelete(feature_id=1)
         execute_result: MagicMock = MagicMock()
         unique_result: MagicMock = MagicMock()
@@ -201,11 +185,7 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_update_group_features: AsyncMock,
     ) -> None:
-        """Test endpoint update group feature success.
-
-        Args:
-            mock_update_group_features: Value used by this callable.
-        """
+        """Test endpoint update group feature success."""
         payload: GroupFeatureUpdate = GroupFeatureUpdate(
             group_id=1,
             feature_ids=[1, 2],
@@ -256,11 +236,7 @@ class TestFeatureRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_list_group_features: AsyncMock,
     ) -> None:
-        """Test endpoint list group features.
-
-        Args:
-            mock_list_group_features: Value used by this callable.
-        """
+        """Test endpoint list group features."""
         mock_list_group_features.return_value = [
             (self.example_group, [1, 2]),
         ]

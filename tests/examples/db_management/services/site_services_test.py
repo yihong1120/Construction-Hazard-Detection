@@ -198,11 +198,7 @@ class TestSiteServices(unittest.IsolatedAsyncioTestCase):
         self,
         enqueue_cleanup: AsyncMock,
     ) -> None:
-        """Test delete site success.
-
-        Args:
-            enqueue_cleanup: Value used by this callable.
-        """
+        """Test delete site success."""
         self.db.delete = AsyncMock()
         self.db.commit = AsyncMock()
 

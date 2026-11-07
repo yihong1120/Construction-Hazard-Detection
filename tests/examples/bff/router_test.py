@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Response
 from fastapi.testclient import TestClient
+from jwt.exceptions import InvalidTokenError
 
 from examples.auth.database import get_db
 from examples.auth.deployment_context import DeploymentBinding
@@ -21,7 +23,7 @@ from examples.bff import router as bff
 from examples.bff import session_services
 from examples.bff.user_summary import load_user_summary
 from tests.examples.auth.session_store_test import FakeRedis
-from tests.oidc_fixtures import fixture_token
+from tests.oidc_fixtures_test import fixture_token
 
 _DEPLOYMENT = DeploymentBinding(
     tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
@@ -31,12 +33,15 @@ _DEPLOYMENT = DeploymentBinding(
 )
 
 
-def _access_subject() -> dict[str, object]:
-    """Perform access subject.
+def _setUp_get_redis(testcase, /):
+    return testcase.redis
 
-    Returns:
-        The callable result.
-    """
+
+def _setUp_get_db(testcase, /):
+    return testcase.db
+
+
+def _access_subject() -> dict[str, object]:
     return {
         'username': 'alice',
         'user_id': 1,
@@ -50,11 +55,6 @@ def _access_subject() -> dict[str, object]:
 
 
 def _refresh_subject() -> dict[str, object]:
-    """Perform refresh subject.
-
-    Returns:
-        The callable result.
-    """
     return {
         'username': 'alice',
         'family_id': 'refresh-family',
@@ -69,7 +69,6 @@ class BffRouterTest(unittest.TestCase):
     """Provide BffRouterTest."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         app = FastAPI()
         app.include_router(bff.router)
         self.redis = FakeRedis()
@@ -82,8 +81,11 @@ class BffRouterTest(unittest.TestCase):
             status='active',
             profile=SimpleNamespace(given_name='Alice', family_name='Chen'),
         )
-        app.dependency_overrides[get_redis_pool] = lambda: self.redis
-        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[get_redis_pool] = partial(
+            _setUp_get_redis,
+            self,
+        )
+        app.dependency_overrides[get_db] = partial(_setUp_get_db, self)
         self.client = TestClient(app)
         self.origin = 'https://changdar-server.mooo.com'
         deployment_resolver = patch.object(
@@ -126,11 +128,27 @@ class BffRouterTest(unittest.TestCase):
             ),
         )
 
-        with patch(
-            'examples.bff.session_services.get_proxy_access_token',
-            new_callable=AsyncMock,
-            return_value=('rotated-access-token', session),
-        ) as get_proxy_access_token:
+        with (
+            patch(
+                'examples.bff.session_services.get_proxy_access_token',
+                new_callable=AsyncMock,
+                return_value=('rotated-access-token', session),
+            ) as get_proxy_access_token,
+            patch.object(
+                session_services.jwt_access,
+                'decode_access_token_for_deployment',
+                new=AsyncMock(
+                    return_value=SimpleNamespace(
+                        subject=_access_subject(),
+                    ),
+                ),
+            ),
+            patch.object(
+                session_services,
+                'is_access_token_revoked',
+                new=AsyncMock(return_value=False),
+            ),
+        ):
             response = self.client.get(
                 '/bff/auth/session',
                 cookies={session_services.SESSION_COOKIE: session_id},
@@ -147,6 +165,167 @@ class BffRouterTest(unittest.TestCase):
             self.redis.ttls[f"bff:session:{session['session_id_hash']}"],
             AUTH_SESSION_TTL_SECONDS,
         )
+
+    def test_session_refreshes_grants_and_profile_without_rewriting_tokens(
+        self,
+    ) -> None:
+        """Both newly granted and revoked features replace login snapshots."""
+        stored = {
+            'user': {
+                'id': 1,
+                'username': 'alice',
+                'display_name': 'Old',
+                'role': 'admin',
+                'group_id': 2,
+                'status': 'active',
+            },
+            'feature_names': ['yolo_api'],
+            'deployment': _DEPLOYMENT.as_response(),
+            'access_token_encrypted': 'original-encrypted-token',
+        }
+        for features in (['yolo_api', 'doc_chat', 'file_manage'], []):
+            with (
+                self.subTest(features=features),
+                patch.object(
+                    session_services,
+                    '_session',
+                    new=AsyncMock(return_value=('session', stored)),
+                ),
+                patch.object(
+                    session_services,
+                    'get_proxy_access_token',
+                    new=AsyncMock(return_value=('verified-token', stored)),
+                ),
+                patch.object(
+                    session_services.jwt_access,
+                    'decode_access_token_for_deployment',
+                    new=AsyncMock(
+                        return_value=SimpleNamespace(
+                            subject={
+                                **_access_subject(),
+                                'features': features,
+                            },
+                        ),
+                    ),
+                ) as verify,
+                patch.object(
+                    session_services,
+                    'is_access_token_revoked',
+                    new=AsyncMock(return_value=False),
+                ),
+            ):
+                response = asyncio.run(
+                    session_services.current_bff_session(
+                        SimpleNamespace(),
+                        Response(),
+                        self.redis,
+                        self.db,
+                    ),
+                )
+                self.assertEqual(response.feature_names, features)
+                self.assertEqual(response.user.role, 'user')
+                self.assertEqual(response.user.display_name, 'Alice Chen')
+                self.assertEqual(stored['feature_names'], ['yolo_api'])
+                self.assertEqual(
+                    stored['access_token_encrypted'],
+                    'original-encrypted-token',
+                )
+                self.assertNotIn(
+                    'access_token_encrypted',
+                    response.model_dump(),
+                )
+                verify.assert_awaited_once_with(
+                    'verified-token',
+                    self.db,
+                    _DEPLOYMENT,
+                )
+
+    def test_session_rejects_unlinked_disabled_or_wrong_tenant_identity(
+        self,
+    ) -> None:
+        """A cookie cannot preserve permissions after local identity
+        rejection.
+        """
+        stored = {'deployment': _DEPLOYMENT.as_response()}
+        with (
+            patch.object(
+                session_services,
+                '_session',
+                new=AsyncMock(return_value=('session', stored)),
+            ),
+            patch.object(
+                session_services,
+                'get_proxy_access_token',
+                new=AsyncMock(return_value=('token', stored)),
+            ),
+            patch.object(
+                session_services.jwt_access,
+                'decode_access_token_for_deployment',
+                new=AsyncMock(
+                    side_effect=InvalidTokenError('Inactive identity'),
+                ),
+            ),
+            patch.object(
+                session_services,
+                'delete_auth_session',
+                new=AsyncMock(),
+            ) as delete,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(
+                    session_services.current_bff_session(
+                        SimpleNamespace(),
+                        Response(),
+                        self.redis,
+                        self.db,
+                    ),
+                )
+            self.assertEqual(caught.exception.status_code, 401)
+            delete.assert_awaited_once_with(self.redis, 'session')
+
+    def test_session_rejects_revoked_access_token(self) -> None:
+        """Session summaries enforce the API access-token revocation check."""
+        stored = {'deployment': _DEPLOYMENT.as_response()}
+        with (
+            patch.object(
+                session_services,
+                '_session',
+                new=AsyncMock(return_value=('session', stored)),
+            ),
+            patch.object(
+                session_services,
+                'get_proxy_access_token',
+                new=AsyncMock(return_value=('token', stored)),
+            ),
+            patch.object(
+                session_services.jwt_access,
+                'decode_access_token_for_deployment',
+                new=AsyncMock(
+                    return_value=SimpleNamespace(subject=_access_subject()),
+                ),
+            ),
+            patch.object(
+                session_services,
+                'is_access_token_revoked',
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                session_services,
+                'delete_auth_session',
+                new=AsyncMock(),
+            ) as delete,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(
+                    session_services.current_bff_session(
+                        SimpleNamespace(),
+                        Response(),
+                        self.redis,
+                        self.db,
+                    ),
+                )
+            self.assertEqual(caught.exception.status_code, 401)
+            delete.assert_awaited_once_with(self.redis, 'session')
 
     def test_oidc_logout_returns_an_opaque_global_logout_url(self) -> None:
         """An OIDC BFF logout clears local state before browser navigation."""

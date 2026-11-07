@@ -1,339 +1,140 @@
 from __future__ import annotations
 
-import logging
-import os
+import hashlib
+import tempfile
 import threading
+from collections import OrderedDict
+from contextlib import contextmanager
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
-from typing import TYPE_CHECKING
-from typing import Union
+from typing import Any
 
-from ultralytics import YOLO
-from watchdog.events import FileSystemEvent
-from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
+from fastapi import HTTPException
+lazy from sahi.predict import AutoDetectionModel
+lazy from ultralytics import YOLO
 
-from examples.shared.filename_utils import sanitize_filename
-from examples.YOLO_server_api.config import EXPLICIT_CUDA_CLEANUP
 from examples.YOLO_server_api.config import get_inference_device
-from examples.YOLO_server_api.config import LAZY_LOAD_MODELS
 from examples.YOLO_server_api.config import MAX_LOADED_MODELS
-from examples.YOLO_server_api.config import MODEL_VARIANTS
-from examples.YOLO_server_api.config import PRELOAD_SMALLEST
 from examples.YOLO_server_api.config import USE_SAHI
-from examples.YOLO_server_api.config import USE_TENSORRT
-
-# YOLO is required in all modes (standard .pt and TensorRT .engine),
-# import unconditionally to simplify control flow.
-
-# For type hints only, avoid importing SAHI at runtime unless needed.
-if TYPE_CHECKING:
-    from sahi.predict import AutoDetectionModel
-
-# Type alias used across the manager
-ModelType = Union['YOLO', 'AutoDetectionModel']
-logger = logging.getLogger(__name__)
+from examples.YOLO_server_api.model_registry import artifact_path
+from examples.YOLO_server_api.model_registry import ModelEntry
 
 
-class ModelFileChangeHandler(FileSystemEventHandler):
-    """File change watcher used to support hot-reloading of models.
-
-    Monitors the model directory for modified files matching the expected model
-    file extension and triggers a reload of the corresponding model.
-    """
-
-    def __init__(self, model_manager: DetectionModelManager) -> None:
-        """Initialise the file change handler.
-
-        Args:
-            model_manager: The parent detection model manager instance.
-        """
-        super().__init__()
-        self.model_manager: DetectionModelManager = model_manager
-
-    def on_modified(self, event: FileSystemEvent) -> None:
-        """Handle a file modification event.
-
-        Reloads the affected model if the modified file matches the
-        manager's model file extension and the model name is recognised.
-
-        Args:
-            event: The file system event data.
-        """
-        if event.is_directory:
-            return
-        event_path = os.fsdecode(event.src_path)
-        if not event_path.endswith(self.model_manager.extension):
-            return
-        # Derive model name from filename and sanitise it to avoid unsafe chars
-        raw_name = Path(event_path).stem.split('best_')[-1]
-        name = sanitize_filename(raw_name)
-        if name in self.model_manager.model_names:
-            self.model_manager._safe_load(name)
-            logger.info(
-                'YOLO model hot-reloaded model=%s source=watcher',
-                name,
-            )
+@dataclass
+class ModelSlot:
+    model: Any = None
+    loading: bool = True
+    error: BaseException | None = None
+    users: int = 0
+    inference_lock: Any = field(default_factory=threading.Lock)
 
 
 class DetectionModelManager:
-    """YOLO detection model manager with lazy load, LRU eviction, and hot
-    reload."""
 
-    def __init__(self) -> None:
-        """Initialise the model manager, paths, caches, and file watcher."""
-        self._registry_lock = threading.RLock()
-        self._registry_models: dict[tuple[str, str, str], ModelType] = {}
-        # 1) Model names from configuration (order affects LRU priority)
-        self.model_names: list[str] = MODEL_VARIANTS
-
-        # 2) Base path and extension - SAHI forces .pt file usage
-        if USE_SAHI or not USE_TENSORRT:
-            self.base_model_path: Path = Path('models/pt')
-            self.extension: str = '.pt'
-        else:  # USE_TENSORRT=True and USE_SAHI=False
-            self.base_model_path = Path('models/int8_engine')
-            self.extension = '.engine'
-
-        # 3) Model cache (None until loaded in lazy mode)
-        self.models: dict[str, ModelType | None] = {
-            name: None for name in self.model_names
-        }
-        self._lru_order: list[str] = []  # LRU usage order (oldest at index 0)
-        self._failed_model_versions: dict[str, tuple[int, int] | None] = {}
-
-        # 4) Pre-load strategy
-        if not LAZY_LOAD_MODELS:
-            for name in self.model_names:
-                self._safe_load(name)
-        elif PRELOAD_SMALLEST and self.model_names:
-            # Pre-load the smallest model (assumed to be the last in the list)
-            self._safe_load(self.model_names[-1])
-
-        # 5) File system monitoring (hot reload)
-        self.event_handler = ModelFileChangeHandler(self)
-        self.observer = Observer()
-        self.observer.schedule(
-            self.event_handler,
-            str(self.base_model_path),
-            recursive=False,
+    def __init__(self, capacity: int = MAX_LOADED_MODELS) -> None:
+        if capacity < 1:
+            raise ValueError('Model capacity must be positive')
+        self.capacity = capacity
+        self._condition = threading.Condition()
+        self._slots: OrderedDict[tuple[str, str, str], ModelSlot] = (
+            OrderedDict()
         )
-        self.observer_thread = threading.Thread(
-            target=self.observer.start,
-            daemon=True,
-        )
-        self.observer_thread.start()
+        self._closed = False
 
-    # =============== Internal ==================
-    def load_single_model(self, name: str) -> ModelType:
-        """Load a single model according to the current configuration.
-
-        Creates and returns either a TensorRT-optimised model, a SAHI
-        ``AutoDetectionModel``, or a standard PyTorch YOLO model.
-
-        Args:
-            name: Model variant name (e.g., 'yolo26x', 'yolo26s').
-
-        Returns:
-            A loaded model instance (YOLO or AutoDetectionModel).
-
-        Raises:
-            FileNotFoundError: If the specified model file does not exist.
-            RuntimeError: If a required dependency (e.g., SAHI) is missing.
-        """
-        # Sanitize the provided model variant name defensively.
-        safe_name = sanitize_filename(name)
-
-        if USE_SAHI:
-            # SAHI mode: Use AutoDetectionModel with .pt files (slicing)
-            try:
-                from sahi.predict import AutoDetectionModel
-            except Exception as exc:
-                raise RuntimeError(
-                    'SAHI mode is enabled but the sahi package is not '
-                    'installed.',
-                ) from exc
-            model_path = self.base_model_path / f'best_{safe_name}.pt'
-            if not model_path.exists():
-                raise FileNotFoundError(f'Model file not found: {model_path}')
-            return AutoDetectionModel.from_pretrained(
-                'yolo26',
-                model_path=str(model_path),
-                device=get_inference_device(),
-            )
-
-        if USE_TENSORRT:
-            # TensorRT mode: Use .engine files with YOLO
-            model_path = self.base_model_path / f'best_{safe_name}.engine'
-            if not model_path.exists():
-                raise FileNotFoundError(f'Model file not found: {model_path}')
-            return YOLO(str(model_path))
-
-        # Standard mode: Use .pt files with YOLO
-        model_path = self.base_model_path / f'best_{safe_name}.pt'
-        if not model_path.exists():
-            raise FileNotFoundError(f'Model file not found: {model_path}')
-        return YOLO(str(model_path))
-
-    def _safe_load(self, name: str) -> None:
-        """Load a model safely and update LRU bookkeeping.
-
-        If the model is already cached, only its LRU position is updated.
-        Otherwise, the model is loaded and inserted into the cache, with
-        LRU limit enforcement applied afterwards.
-
-        Args:
-            name: Model variant name to load.
-        """
-        if name not in self.model_names:
-            return
-        if self.models.get(name) is not None:
-            # Already loaded, update LRU order
-            self._touch_lru(name)
-            return
-        try:
-            self.models[name] = self.load_single_model(name)
-            self._failed_model_versions.pop(name, None)
-            self._touch_lru(name)
-            logger.info('YOLO model loaded model=%s', name)
-            self._enforce_lru_limit()
-        except Exception:
-            self.models[name] = None
-            self._failed_model_versions[name] = self._model_file_version(name)
-            logger.exception('YOLO model load failed model=%s', name)
-
-    def _touch_lru(self, name: str) -> None:
-        """Mark a model as recently used by updating the LRU order.
-
-        Args:
-            name: Model variant name to mark as used.
-        """
-        if name in self._lru_order:
-            self._lru_order.remove(name)
-        self._lru_order.append(name)
-
-    def _enforce_lru_limit(self) -> None:
-        """Ensure loaded models do not exceed the configured limit.
-
-        When lazy loading is enabled and the cache grows beyond
-        ``MAX_LOADED_MODELS``, evict the least recently used model. Optionally
-        perform explicit CUDA cache cleanup when using PyTorch models.
-        """
-        if not LAZY_LOAD_MODELS:
-            return
-
-        loaded_count = self._loaded_model_count()
-        while loaded_count > MAX_LOADED_MODELS:
-            # Remove the least recently used model
-            if not self._lru_order:  # Safety check
-                break
-            evict_name = self._lru_order.pop(0)
-            if self.models.get(evict_name) is not None:
-                try:
-                    # Release reference explicitly
-                    self.models[evict_name] = None
-                    loaded_count -= 1
-                    logger.info(
-                        'YOLO model evicted model=%s policy=lru',
-                        evict_name,
-                    )
-                    # Perform CUDA cache cleanup only for PyTorch (.pt) mode
-                    if not USE_TENSORRT and EXPLICIT_CUDA_CLEANUP:
-                        try:
-                            # Lazy import torch only when needed
-                            import torch
-
-                            torch.cuda.empty_cache()
-                            logger.debug('YOLO CUDA cache cleared')
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-
-    def _loaded_model_count(self) -> int:
-        """Count loaded models without allocating an intermediate list."""
-        return sum(model is not None for model in self.models.values())
-
-    # =============== Public API ==================
-    def is_model_registered(self, name: str) -> bool:
-        """Accept exact configured IDs only; never normalise client input."""
-        return (
-            name in self.model_names
-            and name in self.models
-            and name == sanitize_filename(name)
-        )
-
-    def _model_file_version(self, name: str) -> tuple[int, int] | None:
-        """Identify a readable artifact without loading GPU weights."""
-        path = self.base_model_path / f'best_{name}{self.extension}'
-        try:
-            if not path.is_file() or not os.access(path, os.R_OK):
-                return None
-            stat = path.stat()
-            return stat.st_mtime_ns, stat.st_size
-        except OSError:
-            return None
-
-    def is_model_selectable(self, name: str) -> bool:
-        """Exclude missing artifacts and versions known to fail loading."""
-        if not self.is_model_registered(name):
-            return False
-        version = self._model_file_version(name)
-        return version is not None and (
-            name not in self._failed_model_versions
-            or self._failed_model_versions[name] != version
-        )
-
-    def get_selectable_models(self) -> list[str]:
-        """List deployed candidates, including models awaiting lazy loading."""
-        return [
-            name
-            for name in dict.fromkeys(self.model_names)
-            if self.is_model_selectable(name)
-        ]
-
-    def get_model(self, key: str) -> ModelType | None:
-        """Retrieve a loaded model by its variant name.
-
-        If the model is not yet loaded and lazy loading is enabled, this will
-        load the model on demand.
-
-        Args:
-            key: Model variant name (e.g., 'yolo26x', 'yolo26s', 'yolo26n').
-
-        Returns:
-            The requested model instance if available; otherwise ``None``.
-        """
-        # Lazy load on demand
-        # Sanitize the key defensively before lookup.
-        safe_key = sanitize_filename(key)
-
-        if safe_key not in self.models:
-            return None
-        if self.models[safe_key] is None:
-            self._safe_load(safe_key)
-        else:
-            self._touch_lru(safe_key)
-        return self.models.get(safe_key)
-
-    def get_registry_model(self, entry):
-        """Keep immutable versions in a separate bounded model cache."""
+    @contextmanager
+    def lease(
+        self,
+        entry: ModelEntry,
+        cancelled: threading.Event | None = None,
+    ):
         key = (entry.id, entry.version, entry.sha256)
-        with self._registry_lock:
-            if key not in self._registry_models:
-                self._registry_models[key] = self._load_registry_model(entry)
-                while len(self._registry_models) > max(1, MAX_LOADED_MODELS):
-                    del self._registry_models[
-                        next(iter(self._registry_models))
-                    ]
-            return self._registry_models[key]
+        load = False
+        with self._condition:
+            while True:
+                if self._closed or (
+                    cancelled is not None and cancelled.is_set()
+                ):
+                    raise RuntimeError('Model request cancelled')
+                slot = self._slots.get(key)
+                if slot is not None:
+                    while slot.loading:
+                        self._condition.wait(0.05)
+                        if self._closed or (
+                            cancelled is not None and cancelled.is_set()
+                        ):
+                            raise RuntimeError('Model request cancelled')
+                    if slot.error is not None:
+                        raise slot.error
+                    if self._slots.get(key) is not slot:
+                        continue
+                    slot.users += 1
+                    self._slots.move_to_end(key)
+                    break
+                if len(self._slots) < self.capacity:
+                    slot = ModelSlot(users=1)
+                    self._slots[key] = slot
+                    load = True
+                    break
+                idle = next(
+                    (
+                        item
+                        for item, value in self._slots.items()
+                        if not value.loading and value.users == 0
+                    ),
+                    None,
+                )
+                if idle is not None:
+                    retired = self._slots.pop(idle)
+                    self._dispose(retired.model)
+                    retired.model = None
+                    continue
+                self._condition.wait(0.05)
+        if load:
+            try:
+                model = self._load_registry_model(entry)
+            except BaseException as error:
+                with self._condition:
+                    slot.error = error
+                    slot.loading = False
+                    self._slots.pop(key, None)
+                    self._condition.notify_all()
+                raise
+            with self._condition:
+                slot.model = model
+                slot.loading = False
+                self._condition.notify_all()
+        try:
+            with slot.inference_lock:
+                if cancelled is not None and cancelled.is_set():
+                    raise RuntimeError('Model request cancelled')
+                yield slot.model
+        finally:
+            with self._condition:
+                slot.users -= 1
+                self._slots.move_to_end(key)
+                self._condition.notify_all()
+
+    @staticmethod
+    def _dispose(model) -> None:
+        temporary = getattr(model, '_registry_artifact_directory', None)
+        if temporary is not None:
+            temporary.cleanup()
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+            while any(
+                slot.users or slot.loading for slot in self._slots.values()
+            ):
+                self._condition.wait(0.05)
+            for slot in self._slots.values():
+                self._dispose(slot.model)
+            self._slots.clear()
 
     def _load_registry_model(self, entry):
         """Load a verified immutable artifact copy."""
-        import hashlib
-        import tempfile
-        from fastapi import HTTPException
-        from examples.YOLO_server_api.model_registry import artifact_path
-
         # A fresh model reference binds this request to the selected version.
         # Temporary artifacts survive inference (TensorRT may load lazily).
         path = artifact_path(entry)
@@ -342,14 +143,12 @@ class DetectionModelManager:
         try:
             digest = hashlib.sha256()
             with path.open('rb') as source, copied.open('wb') as target:
-                for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                while chunk := source.read(1024 * 1024):
                     digest.update(chunk)
                     target.write(chunk)
             if digest.hexdigest() != entry.sha256:
                 raise ValueError('Artifact version mismatch')
             if USE_SAHI:
-                from sahi.predict import AutoDetectionModel
-
                 model = AutoDetectionModel.from_pretrained(
                     'yolo26',
                     model_path=str(copied),
@@ -362,70 +161,6 @@ class DetectionModelManager:
         except Exception as exc:
             temporary.cleanup()
             raise HTTPException(
-                409, detail={'code': 'MODEL_UNAVAILABLE'},
+                409,
+                detail={'code': 'MODEL_UNAVAILABLE'},
             ) from exc
-
-    def get_available_models(self) -> list[str]:
-        """Return the list of currently loaded model names.
-
-        Returns:
-            A list of model variant names that are loaded and available for
-            inference at the time of the call.
-        """
-        return [
-            name for name, model in self.models.items() if model is not None
-        ]
-
-    def is_model_loaded(self, name: str) -> bool:
-        """Check if a model variant is loaded and ready for inference.
-
-        Args:
-            name: Model variant name to check.
-
-        Returns:
-            ``True`` if the model is loaded; otherwise ``False``.
-        """
-        return name in self.models and self.models[name] is not None
-
-    def reload_model(self, name: str) -> bool:
-        """Manually reload a specific model variant.
-
-        Args:
-            name: Model variant name to reload.
-
-        Returns:
-            ``True`` if reloading succeeded; otherwise ``False``.
-        """
-        safe_name = sanitize_filename(name)
-        if safe_name not in self.model_names:
-            return False
-        # Force reload regardless of cache state
-        try:
-            self.models[safe_name] = self.load_single_model(safe_name)
-            self._failed_model_versions.pop(safe_name, None)
-            self._touch_lru(safe_name)
-            self._enforce_lru_limit()
-            logger.info(
-                'YOLO model reloaded model=%s source=manual',
-                safe_name,
-            )
-            return True
-        except Exception:
-            logger.exception('YOLO model reload failed model=%s', safe_name)
-            return False
-
-    # =============== Cleanup ==================
-    def __del__(self) -> None:
-        """Clean up resources when the model manager is destroyed.
-
-        Ensures proper shutdown of the file system observer and background
-        monitoring thread to prevent resource leaks. Safe to call multiple
-        times and handles cases where the observer was never initialised.
-        """
-        # Safely stop the file system observer if it exists
-        try:
-            if self.observer is not None:
-                self.observer.stop()
-                self.observer.join()
-        except AttributeError:
-            pass

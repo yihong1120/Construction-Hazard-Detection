@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import os
+from functools import partial
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import HTTPException
 from PIL import Image
 from PIL import ImageFile
 from PIL import UnidentifiedImageError
 
+from examples.shared.image_validation import EvidenceImageSettings
+from examples.shared.image_validation import open_image
+from examples.shared.image_work import run_image_work
 from examples.violation_records.path_utils import normalise_safe_relative_path
 from examples.violation_records.path_utils import resolve_authorised_media_path
 from examples.violation_records.settings import STATIC_DIR
+from src.async_tasks import observe_task_exception
 
 THUMBNAIL_DIR_NAME = '_thumbnails'
 THUMBNAIL_MAX_EDGE = 360
@@ -37,7 +44,12 @@ def _thumbnail_cache_path(
     """Build the cached JPEG thumbnail path for an authorised image."""
     base_dir = Path(static_dir).resolve()
     relative_path = full_path.resolve().relative_to(base_dir)
-    return base_dir / THUMBNAIL_DIR_NAME / relative_path.with_suffix('.jpg')
+    return (
+        base_dir
+        / THUMBNAIL_DIR_NAME
+        / relative_path.parent
+        / (relative_path.name + '.jpg')
+    )
 
 
 def _has_recognized_image_header(source_path: Path) -> bool:
@@ -46,55 +58,97 @@ def _has_recognized_image_header(source_path: Path) -> bool:
         header = source.read(THUMBNAIL_HEADER_SCAN_BYTES)
     if not header:
         return False
-    parser = ImageFile.Parser()
-    parser.feed(header)
-    return parser.image is not None or (
+    if (
         len(header) >= 12
         and header[4:8] == b'ftyp'
         and header[8:12] in _ISOBMFF_IMAGE_BRANDS
-    )
+    ):
+        return True
+    parser = ImageFile.Parser()
+    parser.feed(header)
+    return parser.image is not None
+
+
+def _thumbnail_is_current(source_path: Path, thumbnail_path: Path) -> bool:
+    try:
+        if thumbnail_path.stat().st_mtime_ns < source_path.stat().st_mtime_ns:
+            return False
+        with open_image(thumbnail_path) as image:
+            if image.format != 'JPEG' or max(image.size) > THUMBNAIL_MAX_EDGE:
+                return False
+            image.load()
+        return True
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return False
 
 
 def _generate_thumbnail_sync(source_path: Path, thumbnail_path: Path) -> None:
-    """Generate or refresh a JPEG thumbnail, skipping an up-to-date cache."""
-    if (
-        thumbnail_path.exists()
-        and thumbnail_path.stat().st_mtime >= source_path.stat().st_mtime
-    ):
+    if _thumbnail_is_current(source_path, thumbnail_path):
         return
     thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = thumbnail_path.with_name(
+        '.' + thumbnail_path.name + '.' + uuid4().hex + '.tmp',
+    )
     try:
         if not _has_recognized_image_header(source_path):
             raise UnidentifiedImageError(str(source_path))
-        with Image.open(source_path) as opened_image:
-            image: Image.Image = opened_image
+        with open_image(source_path) as image:
+            if image.width * image.height > EvidenceImageSettings().max_pixels:
+                raise HTTPException(
+                    413,
+                    detail='Image dimensions exceed limit',
+                )
             image.thumbnail((THUMBNAIL_MAX_EDGE, THUMBNAIL_MAX_EDGE))
-            if image.mode not in {'RGB', 'L'}:
-                image = image.convert('RGB')
-            image.save(
-                thumbnail_path,
-                format='JPEG',
-                quality=THUMBNAIL_QUALITY,
-                optimize=True,
+            converted = (
+                image.convert('RGB')
+                if image.mode not in {'RGB', 'L'}
+                else None
             )
-    except (ModuleNotFoundError, OSError) as exc:
-        raise HTTPException(
-            status_code=400,
-            detail='Unsupported image content',
-        ) from exc
+            output = converted or image
+            try:
+                output.save(
+                    temporary,
+                    format='JPEG',
+                    quality=THUMBNAIL_QUALITY,
+                    optimize=True,
+                )
+                os.replace(temporary, thumbnail_path)
+            finally:
+                if converted is not None:
+                    converted.close()
+    except (
+        ModuleNotFoundError,
+        OSError,
+        ValueError,
+        Image.DecompressionBombError,
+    ) as exc:
+        raise HTTPException(400, detail='Unsupported image content') from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+_thumbnail_jobs: dict[
+    tuple[asyncio.AbstractEventLoop, Path],
+    asyncio.Task[None],
+] = {}
 
 
 async def ensure_thumbnail(
     source_path: Path,
     static_dir: str | Path = STATIC_DIR,
 ) -> Path:
-    """Generate a cached thumbnail without blocking an API worker."""
     thumbnail_path = _thumbnail_cache_path(source_path, static_dir)
-    await asyncio.to_thread(
-        _generate_thumbnail_sync,
-        source_path,
-        thumbnail_path,
-    )
+    key = (asyncio.get_running_loop(), thumbnail_path)
+    task = _thumbnail_jobs.get(key)
+    if task is None:
+
+        task = asyncio.create_task(
+            _generate_thumbnail(source_path, thumbnail_path),
+        )
+        _thumbnail_jobs[key] = task
+
+        task.add_done_callback(observe_task_exception)
+    await asyncio.shield(task)
     return thumbnail_path
 
 
@@ -123,3 +177,12 @@ async def image_size_for_violation(
 ) -> tuple[int, int] | None:
     """Read evidence dimensions in a worker thread."""
     return await asyncio.to_thread(_image_size_sync, image_path, static_dir)
+
+
+async def _generate_thumbnail(source_path: Path, thumbnail_path: Path):
+    try:
+        await run_image_work(
+            partial(_generate_thumbnail_sync, source_path, thumbnail_path),
+        )
+    finally:
+        _thumbnail_jobs.pop((asyncio.get_running_loop(), thumbnail_path), None)

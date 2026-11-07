@@ -1,4 +1,3 @@
-"""Normalise detector geometry and identify warning targets."""
 from __future__ import annotations
 
 from examples.shared.class_colors import normalize_color

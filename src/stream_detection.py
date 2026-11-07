@@ -1,34 +1,32 @@
-"""Capture/inference loops and persisted warning events for one camera."""
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime
 from typing import cast
-
-import numpy as np
 
 from examples.streaming_web.overlay_models import PolygonCollection
 from examples.streaming_web.overlay_models import TrackingDetections
 from examples.streaming_web.overlay_models import WarningPayload
-from src.danger_detector import DangerDetector
+from src.evidence import EvidenceMetadata
 from src.image_utils import encode_frame
-from src.notifiers.fcm_notifier import FCMSender
+from src.model_publication_status import report_loaded_model
 from src.redis_client import RedisManager
 from src.runtime_utils import should_notify
+from src.settings.media import MediaPublishSettings
+from src.settings.media import WarningEventSettings
 from src.stream_capture import StreamCapture
 from src.stream_overlay_frames import _mark_frame_readonly
+from src.stream_runtime_state import DetectionResult
 from src.stream_runtime_state import (
     LatestDetectionState as _LatestDetectionState,
 )
 from src.stream_runtime_state import LatestFrameState as _LatestFrameState
-from src.violation_sender import ViolationSender
-from src.yolo_detector import YoloDetector
+from src.stream_runtime_state import StreamRuntime
 
 logger = logging.getLogger(__name__)
-_default_warning_event_throttle_seconds = 30
 
 
 async def _capture_latest_frames(
@@ -37,15 +35,8 @@ async def _capture_latest_frames(
     stop_event: asyncio.Event,
 ) -> None:
     """Continuously capture frames without waiting for YOLO."""
-    capture_interval = 1.0 / max(
-        1.0,
-        float(
-            os.getenv(
-                'MEDIA_PUBLISH_SOURCE_FPS',
-                os.getenv('MEDIA_PUBLISH_FPS', '15.0'),
-            ),
-        ),
-    )
+    source_fps = MediaPublishSettings().source_fps
+    capture_interval = 1.0 / source_fps if source_fps else 0.0
     streaming_capture.update_capture_interval(capture_interval)
     async for frame, ts in streaming_capture.execute_capture():
         if stop_event.is_set():
@@ -77,7 +68,7 @@ async def _synchronise_capture_reconnects(
     while not stop_event.is_set():
         try:
             await asyncio.wait_for(reconnect_event.wait(), timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
         reconnect_event.clear()
         async with latest_frame.lock:
@@ -98,30 +89,16 @@ async def _synchronise_capture_reconnects(
         clean_reconnect_event.set()
 
 
-async def _detect_latest_frames(
-    latest_frame: _LatestFrameState,
-    yolo_detector: YoloDetector,
-    danger_detector: DangerDetector,
-    fcm_sender: FCMSender,
-    violation_sender: ViolationSender,
-    redis_manager: RedisManager,
-    latest_detection: _LatestDetectionState,
-    site: str,
-    stream_name: str,
-    work_start_hour: int,
-    work_end_hour: int,
-    metadata_key: str,
-    stop_event: asyncio.Event,
-) -> None:
-    """Run YOLO and publish overlays on the same frame that was detected."""
+async def _detect_latest_frames(runtime: StreamRuntime) -> None:
+    latest_frame = runtime.latest_frame
+    yolo_detector = runtime.detector
+    stop_event = runtime.stop
+    site, stream_name = runtime.site, runtime.stream_name
     last_sequence = 0
-    last_notification_time = 0
-    last_warning_event_time: int | None = None
-    warning_event_throttle_seconds = _warning_event_throttle_seconds()
     while not stop_event.is_set():
         try:
             await asyncio.wait_for(latest_frame.event.wait(), timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
         async with latest_frame.lock:
@@ -155,28 +132,15 @@ async def _detect_latest_frames(
             ):
                 continue
         try:
-            (
-                last_notification_time,
-                last_warning_event_time,
-            ) = await _record_detection_result(
-                frame=frame,
-                timestamp=ts,
-                sequence=last_sequence,
-                track_data=track_data,
-                model_metadata=getattr(yolo_detector, 'model_metadata', None),
-                danger_detector=danger_detector,
-                fcm_sender=fcm_sender,
-                violation_sender=violation_sender,
-                redis_manager=redis_manager,
-                latest_detection=latest_detection,
-                site=site,
-                stream_name=stream_name,
-                work_start_hour=work_start_hour,
-                work_end_hour=work_end_hour,
-                metadata_key=metadata_key,
-                last_notification_time=last_notification_time,
-                last_warning_event_time=last_warning_event_time,
-                warning_event_throttle_seconds=warning_event_throttle_seconds,
+            await _record_detection_result(
+                runtime=runtime,
+                result=DetectionResult(
+                    frame,
+                    ts,
+                    last_sequence,
+                    track_data,
+                    getattr(yolo_detector, 'model_metadata', None),
+                ),
             )
         except Exception as exc:
             logger.info(
@@ -187,26 +151,30 @@ async def _detect_latest_frames(
 
 
 async def _record_detection_result(
-    frame: np.ndarray,
-    timestamp: float,
-    sequence: int,
-    track_data: object,
-    danger_detector: DangerDetector,
-    fcm_sender: FCMSender,
-    violation_sender: ViolationSender,
-    redis_manager: RedisManager,
-    latest_detection: _LatestDetectionState,
-    site: str,
-    stream_name: str,
-    work_start_hour: int,
-    work_end_hour: int,
-    metadata_key: str,
-    last_notification_time: int,
-    last_warning_event_time: int | None,
-    warning_event_throttle_seconds: int | None = None,
-    model_metadata: dict | None = None,
+    runtime: StreamRuntime,
+    result: DetectionResult,
 ) -> tuple[int, int | None]:
-    """Store tracking, warnings, and notifications for one detected frame."""
+    frame, timestamp, sequence, track_data = (
+        result.frame,
+        result.timestamp,
+        result.sequence,
+        result.track_data,
+    )
+    model_metadata = result.model_metadata
+    if model_metadata:
+        await report_loaded_model(runtime, model_metadata)
+    danger_detector, redis_manager = runtime.danger, runtime.redis
+    latest_detection = runtime.latest_detection
+    work_start_hour, work_end_hour = (
+        runtime.cfg['work_start_hour'],
+        runtime.cfg['work_end_hour'],
+    )
+    metadata_key = runtime.metadata_key
+    last_notification_time = runtime.clock.last_notification_time
+    last_warning_event_time = runtime.clock.last_warning_event_time
+    warning_event_throttle_seconds = (
+        runtime.clock.warning_event_throttle_seconds
+    )
     detection_time = datetime.fromtimestamp(int(timestamp))
     is_working = work_start_hour <= detection_time.hour < work_end_hour
     current_timestamp = int(timestamp)
@@ -252,82 +220,61 @@ async def _record_detection_result(
             warnings=warnings,
         )
         last_warning_event_time = current_timestamp
+        runtime.clock.last_warning_event_time = current_timestamp
     if should_send_violation:
-        last_notification_time = await _send_violation_and_notification(
-            fcm_sender=fcm_sender,
-            violation_sender=violation_sender,
-            model_metadata=model_metadata,
-            site=site,
-            stream_name=stream_name,
-            warnings=warnings,
-            detection_time=detection_time,
-            frame=frame,
-            track_data=track_data,
-            cone_polys=cone_polys,
-            pole_polys=pole_polys,
-            current_timestamp=current_timestamp,
+        await queue_violation_event(
+            runtime=runtime,
+            result=replace(
+                result,
+                warnings=cast(WarningPayload, warnings),
+                cone_polys=cast(PolygonCollection, cone_polys),
+                pole_polys=cast(PolygonCollection, pole_polys),
+            ),
         )
+        last_notification_time = current_timestamp
+    runtime.clock.last_notification_time = last_notification_time
+    runtime.clock.last_warning_event_time = last_warning_event_time
     return last_notification_time, last_warning_event_time
 
 
-async def _send_violation_and_notification(
-    fcm_sender: FCMSender,
-    violation_sender: ViolationSender,
-    site: str,
-    stream_name: str,
-    warnings: object,
-    detection_time: datetime,
-    frame: np.ndarray,
-    track_data: object,
-    cone_polys: object,
-    pole_polys: object,
-    current_timestamp: int,
-    model_metadata: dict | None = None,
+async def queue_violation_event(
+    runtime: StreamRuntime,
+    result: DetectionResult,
 ) -> int:
-    """Persist one violation and notify subscribed site users."""
-    frame_bytes = encode_frame(frame, 'jpeg', 85)
-    violation_id_str = await violation_sender.send_violation(
-        site=site,
-        stream_name=stream_name,
-        warnings=warnings,
-        detection_time=detection_time,
-        image_bytes=frame_bytes,
-        detections=track_data,
-        cone_polygon=cone_polys,
-        pole_polygon=pole_polys,
+    frame_bytes = await asyncio.to_thread(
+        encode_frame,
+        result.frame,
+        'jpeg',
+        85,
+    )
+    payload = {
+        'site': runtime.site,
+        'stream_name': runtime.stream_name,
+        'site_id': runtime.cfg.get('site_id'),
+        'stream_config_id': runtime.cfg.get('stream_id'),
+        'detection_time': datetime.fromtimestamp(int(result.timestamp))
+        .astimezone()
+        .isoformat(),
+        'warnings': result.warnings,
+        'detections': result.track_data,
+        'cone_polygon': result.cone_polys,
+        'pole_polygon': result.pole_polys,
         **{
-            k: v
-            for k, v in (model_metadata or {}).items()
-            if k in {'model_id', 'model_version'}
+            key: value
+            for key, value in (result.model_metadata or {}).items()
+            if key in {'model_id', 'model_version'}
         },
+    }
+    await runtime.delivery.submit(
+        EvidenceMetadata.from_legacy_payload(payload),
+        frame_bytes,
     )
-    try:
-        violation_id: int | None = (
-            int(violation_id_str) if violation_id_str is not None else None
-        )
-    except Exception:
-        violation_id = None
-
-    await fcm_sender.send_fcm_message_to_site(
-        site=site,
-        stream_name=stream_name,
-        message=cast(Mapping[str, Mapping[str, object]], warnings),
-        image_path=None,
-        violation_id=violation_id,
-    )
-    return current_timestamp
+    return int(result.timestamp)
 
 
 def _warning_event_throttle_seconds() -> int:
     """Return the minimum spacing between live warning metadata events."""
-    raw_value = os.getenv(
-        'WARNING_EVENT_THROTTLE_SECONDS',
-        str(_default_warning_event_throttle_seconds),
-    )
-    try:
-        return max(1, int(raw_value))
-    except ValueError:
-        return _default_warning_event_throttle_seconds
+    return WarningEventSettings().throttle_seconds
 
 
 def _warning_event_due(

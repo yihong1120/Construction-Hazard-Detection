@@ -8,6 +8,7 @@ import redis.asyncio as redis
 from examples.streaming_web.media_paths import build_clean_demand_key
 from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.media_paths import build_overlay_ready_key
+from examples.streaming_web.overlay_admission import OverlayAdmission
 
 
 async def active_overlay_languages(
@@ -44,11 +45,9 @@ async def touch_overlay_demand(
     ttl_seconds: int,
 ) -> None:
     """Renew one shared overlay producer lease."""
-    await rds.set(
-        build_overlay_demand_key(media_path, label_language),
-        str(int(time.time())).encode('ascii'),
-        ex=ttl_seconds,
-    )
+    admission = OverlayAdmission()
+    admission.add(media_path, label_language, ttl_seconds)
+    await admission.commit(rds)
 
 
 async def touch_clean_demand(

@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import copy
+import json
 import unittest
 from collections.abc import Set as AbstractSet
 from datetime import timedelta
+from functools import partial
+from functools import partialmethod
+from typing import Any
+from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 import jwt
+from redis.exceptions import WatchError
 
 from examples.auth import session_store as store
+from examples.auth.media_session_request import MediaSessionOwner
+from examples.auth.media_session_request import MediaSessionRequest
 from examples.auth.session_store import auth_session_key
 from examples.auth.session_store import AUTH_SESSION_TTL_SECONDS
 from examples.auth.session_store import auth_tokens
@@ -29,15 +38,29 @@ from examples.bff.proxy import resolve_upstream
 from examples.streaming_web.playback_hls import (
     opaque_media_session_allows_path,
 )
-from tests.oidc_fixtures import fixture_token
+from tests.oidc_fixtures_test import fixture_token
+
+
+async def _retry_media_creation(pipe, *, _scope):
+    _scope.attempts += 1
+    if _scope.attempts == 1:
+        raise WatchError('concurrent write')
+    return await _scope.execute(pipe)
+
+
+def _getattr_command(name, testcase, /, *args, **kwargs):
+    if testcase.queued:
+        testcase.commands.append((name, args, kwargs))
+        return testcase
+    return getattr(testcase.redis, name)(*args, **kwargs)
+
+
+class _MediaCreationRetryKeepsOneIdentityCallbacks:
+    attempts: Any
+    execute: Any
 
 
 def _access_subject() -> dict[str, object]:
-    """Perform access subject.
-
-    Returns:
-        The callable result.
-    """
     return {
         'username': 'alice',
         'user_id': 1,
@@ -48,11 +71,6 @@ def _access_subject() -> dict[str, object]:
 
 
 def _refresh_subject() -> dict[str, str]:
-    """Perform refresh subject.
-
-    Returns:
-        The callable result.
-    """
     return {
         'username': 'alice',
         'family_id': 'refresh-family',
@@ -60,48 +78,78 @@ def _refresh_subject() -> dict[str, str]:
     }
 
 
+class FakePipeline:
+    def __init__(self, redis):
+        self.redis = redis
+        self.commands = []
+        self.watched = {}
+        self.queued = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    def _state(self, key):
+        return copy.deepcopy(
+            (
+                self.redis.data.get(key),
+                self.redis.sets.get(key),
+                self.redis.ttls.get(key),
+                self.redis.zsets.get(key),
+            ),
+        )
+
+    async def watch(self, *keys):
+        self.queued = False
+        self.watched.update({key: self._state(key) for key in keys})
+
+    def multi(self):
+        self.queued = True
+
+    def __getattr__(self, name):
+        command = partial(_getattr_command, name, self)
+
+        return command
+
+    async def execute(self):
+        if any(
+            self._state(key) != value for key, value in self.watched.items()
+        ):
+            raise WatchError('Fixture key changed')
+        values = []
+        for name, args, kwargs in self.commands:
+            values.append(await getattr(self.redis, name)(*args, **kwargs))
+        return values
+
+
 class FakeRedis:
     """Provide FakeRedis."""
 
     def __init__(self) -> None:
-        """Perform init."""
         self.data: dict[str, bytes] = {}
         self.ttls: dict[str, int] = {}
         self.sets: dict[str, set[bytes]] = {}
+        self.zsets: dict[str, dict[str, float]] = {}
+
+    def pipeline(self, transaction=True):
+        pipe = FakePipeline(self)
+        pipe.queued = True
+        return pipe
+
+    async def mget(self, keys):
+        return [self.data.get(key) for key in keys]
 
     async def get(self, key: str) -> bytes | None:
-        """Perform get.
-
-        Args:
-            key: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         return self.data.get(key)
 
     async def getdel(self, key: str) -> bytes | None:
-        """Perform getdel.
-
-        Args:
-            key: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         value = self.data.get(key)
         await self.delete(key)
         return value
 
     async def exists(self, key: str) -> int:
-        """Perform exists.
-
-        Args:
-            key: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         return int(key in self.data or key in self.sets)
 
     async def set(
@@ -111,18 +159,10 @@ class FakeRedis:
         *,
         ex: int | None = None,
         nx: bool = False,
+        xx: bool = False,
     ) -> bool:
-        """Perform set.
-
-        Args:
-            key: Value used by this callable.
-            value: Value used by this callable.
-            ex: Value used by this callable.
-            nx: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
+        if xx and key not in self.data:
+            return False
         if nx and key in self.data:
             return False
         self.data[key] = value
@@ -131,14 +171,6 @@ class FakeRedis:
         return True
 
     async def delete(self, *keys: str) -> int:
-        """Perform delete.
-
-        Args:
-            *keys: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         count = 0
         for key in keys:
             count += int(key in self.data or key in self.sets)
@@ -148,76 +180,63 @@ class FakeRedis:
         return count
 
     async def ttl(self, key: str) -> int:
-        """Perform ttl.
-
-        Args:
-            key: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         return self.ttls.get(key, -1)
 
     async def sadd(self, key: str, *values: bytes) -> int:
-        """Perform sadd.
-
-        Args:
-            key: Value used by this callable.
-            *values: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         target = self.sets.setdefault(key, set())
         before = len(target)
         target.update(values)
         return len(target) - before
 
     async def smembers(self, key: str) -> AbstractSet[bytes]:
-        """Perform smembers.
-
-        Args:
-            key: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         return set(self.sets.get(key, set()))
 
     async def srem(self, key: str, *values: bytes) -> int:
-        """Perform srem.
-
-        Args:
-            key: Value used by this callable.
-            *values: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         target = self.sets.get(key, set())
         before = len(target)
         target.difference_update(values)
         return before - len(target)
 
     async def expire(self, key: str, seconds: int) -> bool:
-        """Perform expire.
-
-        Args:
-            key: Value used by this callable.
-            seconds: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         self.ttls[key] = seconds
         return True
+
+    async def zadd(self, key, mapping):
+        self.zsets.setdefault(key, {}).update(mapping)
+        return len(mapping)
+
+    async def zrem(self, key, *members):
+        target = self.zsets.get(key, {})
+        removed = 0
+        for member in members:
+            removed += int(member in target)
+            target.pop(member, None)
+        return removed
+
+    async def zrangebyscore(self, key, minimum, maximum):
+        return [
+            member.encode() if isinstance(member, str) else member
+            for member, score in self.zsets.get(key, {}).items()
+            if float(minimum) <= score <= float(maximum)
+        ]
+
+    async def zremrangebyscore(self, key, minimum, maximum):
+        target = self.zsets.get(key, {})
+        members = [
+            member
+            for member, score in target.items()
+            if float(minimum) <= score <= float(maximum)
+        ]
+        return await self.zrem(key, *members)
+
+    async def zcard(self, key):
+        return len(self.zsets.get(key, {}))
 
 
 class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
     """Provide SessionStoreTest."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.redis = FakeRedis()
 
     async def test_bff_session_is_opaque_and_tokens_are_encrypted(
@@ -343,14 +362,19 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
             {'id': 1, 'username': 'alice'},
         )
         media_token, _ = await create_media_session(
-            self.redis,  # type: ignore[arg-type]
-            user_id=1,
-            username='alice',
-            site='Site A',
-            camera='Cam 1',
-            profile='clean',
-            parent=auth_session_key(session_id),
-            platform='web',
+            self.redis,
+            MediaSessionRequest(
+                owner=MediaSessionOwner(
+                    username='alice',
+                    user_id=1,
+                    parent=auth_session_key(session_id),
+                    platform='web',
+                ),
+                cameras=('Cam 1',),
+                batch=False,
+                site='Site A',
+                profile='clean',
+            ),
         )
         self.assertIsNotNone(
             await get_media_session(
@@ -373,14 +397,19 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
     async def test_media_session_can_be_loaded_by_public_id(self) -> None:
         """Test media session can be loaded by public id."""
         token, data = await create_media_session(
-            self.redis,  # type: ignore[arg-type]
-            user_id=1,
-            username='alice',
-            site='Site A',
-            camera='Cam 1',
-            profile='clean',
-            parent='parent',
-            platform='web',
+            self.redis,
+            MediaSessionRequest(
+                owner=MediaSessionOwner(
+                    username='alice',
+                    user_id=1,
+                    parent='parent',
+                    platform='web',
+                ),
+                cameras=('Cam 1',),
+                batch=False,
+                site='Site A',
+                profile='clean',
+            ),
         )
 
         loaded = await get_media_session_by_id(
@@ -396,14 +425,19 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
     async def test_media_session_renew_keeps_capability_stable(self) -> None:
         """Renewal extends the original opaque media capability in place."""
         token, data = await create_media_session(
-            self.redis,  # type: ignore[arg-type]
-            user_id=1,
-            username='alice',
-            site='Site A',
-            camera='Cam 1',
-            profile='clean',
-            parent='parent',
-            platform='web',
+            self.redis,
+            MediaSessionRequest(
+                owner=MediaSessionOwner(
+                    username='alice',
+                    user_id=1,
+                    parent='parent',
+                    platform='web',
+                ),
+                cameras=('Cam 1',),
+                batch=False,
+                site='Site A',
+                profile='clean',
+            ),
         )
 
         renewed = await renew_media_session(
@@ -432,16 +466,21 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         """A valid playback lease keeps its exact publisher demand alive."""
         demand_key = 'media_clean_demand:hazard_U2l0ZSBB_Q2FtIDE_preview'
         _, data = await create_media_session(
-            self.redis,  # type: ignore[arg-type]
-            user_id=1,
-            username='alice',
-            site='Site A',
-            camera='Cam 1',
-            profile='clean',
-            parent='parent',
-            platform='web',
-            quality='preview',
-            demand_keys=[demand_key],
+            self.redis,
+            MediaSessionRequest(
+                owner=MediaSessionOwner(
+                    username='alice',
+                    user_id=1,
+                    parent='parent',
+                    platform='web',
+                ),
+                cameras=('Cam 1',),
+                batch=False,
+                site='Site A',
+                profile='clean',
+                quality='preview',
+                demand_keys=[demand_key],
+            ),
         )
         self.assertEqual(
             self.redis.ttls[demand_key],
@@ -464,14 +503,19 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
     async def test_batch_media_session_preserves_bounded_scope(self) -> None:
         """Test batch media session preserves bounded scope."""
         token, data = await create_media_session(
-            self.redis,  # type: ignore[arg-type]
-            user_id=1,
-            username='alice',
-            site='Site A',
-            cameras=['Cam 1', 'Cam 2'],
-            profile='overlay',
-            parent='parent',
-            platform='web',
+            self.redis,
+            MediaSessionRequest(
+                owner=MediaSessionOwner(
+                    username='alice',
+                    user_id=1,
+                    parent='parent',
+                    platform='web',
+                ),
+                cameras=['Cam 1', 'Cam 2'],
+                batch=True,
+                site='Site A',
+                profile='overlay',
+            ),
         )
 
         loaded = await get_media_session(
@@ -489,23 +533,28 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Playback metadata survives media-session renewal and lookup."""
         _, session = await create_media_session(
-            self.redis,  # type: ignore[arg-type]
-            user_id=1,
-            username='alice',
-            site='Site A',
-            camera='Cam 1',
-            profile='clean',
-            parent='parent',
-            platform='web',
-            quality='detail',
-            playback_sessions={
-                'stream-session-1': {
-                    'label': 'Site A',
-                    'stream_name': 'Cam 1',
-                    'profile': 'clean',
-                    'rendition': 'detail',
+            self.redis,
+            MediaSessionRequest(
+                owner=MediaSessionOwner(
+                    username='alice',
+                    user_id=1,
+                    parent='parent',
+                    platform='web',
+                ),
+                cameras=('Cam 1',),
+                batch=False,
+                site='Site A',
+                profile='clean',
+                quality='detail',
+                playback_sessions={
+                    'stream-session-1': {
+                        'label': 'Site A',
+                        'stream_name': 'Cam 1',
+                        'profile': 'clean',
+                        'rendition': 'detail',
+                    },
                 },
-            },
+            ),
         )
 
         self.assertEqual(
@@ -609,7 +658,6 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
     """Provide TestSessionStoreCoverage."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.redis = FakeRedis()
 
     def test_text_crypto_and_jwt_helpers(self) -> None:
@@ -628,6 +676,56 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
         token = jwt.encode({'exp': 1234}, 'test-key' * 8, algorithm='HS256')
         self.assertEqual(store._jwt_exp(token), 1234)
         self.assertEqual(store._jwt_exp('not-a-jwt'), 0)
+
+    def test_cipher_keeps_its_key_until_explicit_reinitialization(self):
+        store._fernet.cache_clear()
+        try:
+            with patch.dict(
+                'os.environ',
+                {'BFF_TOKEN_ENCRYPTION_KEY': 'initial'},
+            ):
+                encrypted = store._encrypt('token')
+                cipher = store._fernet()
+            with patch.dict(
+                'os.environ',
+                {'BFF_TOKEN_ENCRYPTION_KEY': 'changed'},
+            ):
+                self.assertIs(store._fernet(), cipher)
+                self.assertEqual(store._decrypt(encrypted), 'token')
+        finally:
+            store._fernet.cache_clear()
+
+    async def test_media_creation_retry_keeps_one_identity(self):
+        _callbacks = _MediaCreationRetryKeepsOneIdentityCallbacks()
+        _callbacks.execute = FakePipeline.execute
+        _callbacks.attempts = 0
+
+        conflict_once = partialmethod(_retry_media_creation, _scope=_callbacks)
+
+        request = MediaSessionRequest(
+            owner=MediaSessionOwner('alice', 1, 'native:1', 'android'),
+            site='site',
+            cameras=['camera'],
+            profile='clean',
+        )
+        with (
+            patch.object(FakePipeline, 'execute', conflict_once),
+            patch.object(
+                store.secrets,
+                'token_urlsafe',
+                side_effect=['token', 'public'],
+            ) as identity,
+        ):
+            token, data = await store.create_media_session(
+                self.redis,
+                request,
+            )
+        self.assertEqual(_callbacks.attempts, 2)
+        self.assertEqual(identity.call_count, 2)
+        self.assertEqual((token, data['id']), ('token', 'public'))
+        key = store.media_session_key(token)
+        self.assertEqual(json.loads(self.redis.data[key]), data)
+        self.assertEqual(self.redis.data['media:public:public'], key.encode())
 
     async def test_auth_session_token_save(self) -> None:
         """Test auth session token save."""
@@ -648,13 +746,16 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
             {'id': 1, 'username': 'alice'},
         )
         self.assertEqual(session['feature_names'], ['stream'])
-        await store.save_auth_tokens(
+        setattr(self.redis, 'eval', AsyncMock(return_value=1))
+        session = await store.save_auth_tokens(
             self.redis,
-            session_id,
-            session,
-            'next-access',
-            'next-refresh',
-            feature_names=['stream'],
+            store.AuthTokenUpdate(
+                session_id,
+                'owner',
+                session,
+                'next-access',
+                'next-refresh',
+            ),
         )
         self.assertEqual(
             store.auth_tokens(session),
@@ -690,27 +791,38 @@ class TestSessionStoreCoverage(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await store.create_media_session(
                 self.redis,
-                user_id=1,
-                username='alice',
-                site='Site',
-                profile='clean',
-                parent='parent',
-                platform='web',
+                MediaSessionRequest(
+                    owner=MediaSessionOwner(
+                        username='alice',
+                        user_id=1,
+                        parent='parent',
+                        platform='web',
+                    ),
+                    cameras=(),
+                    batch=False,
+                    site='Site',
+                    profile='clean',
+                ),
             )
 
         _, session = await store.create_media_session(
             self.redis,
-            user_id=1,
-            username='alice',
-            site='Site',
-            cameras=['Cam 1', 'Cam 1', 'Cam 2'],
-            profile='clean',
-            parent='parent',
-            platform='web',
-            language='zh-TW',
-            quality='preview',
-            purpose='wall',
-            demand_keys=['demand:one', 'demand:one'],
+            MediaSessionRequest(
+                owner=MediaSessionOwner(
+                    username='alice',
+                    user_id=1,
+                    parent='parent',
+                    platform='web',
+                ),
+                cameras=['Cam 1', 'Cam 1', 'Cam 2'],
+                batch=True,
+                site='Site',
+                profile='clean',
+                language='zh-TW',
+                quality='preview',
+                purpose='wall',
+                demand_keys=['demand:one', 'demand:one'],
+            ),
         )
         self.assertEqual(session['scope'], 'batch')
         self.assertEqual(session['cameras'], ['Cam 1', 'Cam 2'])
@@ -850,12 +962,14 @@ if __name__ == '__main__':
 class TestOidcSessionBoundary(unittest.IsolatedAsyncioTestCase):
     async def test_old_provider_sessions_cannot_be_reused(self):
         import json
+
         redis = FakeRedis()
         for provider in ('legacy', None):
             record = {'revoked': False}
             if provider is not None:
                 record['auth_provider'] = provider
             await redis.set(
-                auth_session_key('session'), json.dumps(record).encode(),
+                auth_session_key('session'),
+                json.dumps(record).encode(),
             )
             self.assertIsNone(await get_auth_session(redis, 'session'))

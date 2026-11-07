@@ -1,25 +1,22 @@
-"""Build image detection overlays without storing violation records."""
 from __future__ import annotations
 
 import json
 import math
 from types import SimpleNamespace
 
+lazy from sklearn.cluster import HDBSCAN
+
 from examples.shared.class_colors import overlay_style
+from examples.shared.overlay_geometry import clip_pixel_bbox
 from examples.shared.overlay_geometry import stored_regions
 from examples.shared.overlay_visibility import object_visibility
-from examples.YOLO_server_api.detection import convert_to_image
 from examples.YOLO_server_api.schemas import DetectionOverlayResponse
+lazy from src.geometry import build_utility_pole_union
+lazy from src.geometry import detect_polygon_from_cones
+lazy from src.geometry import polygons_to_coords
 
 
 def calculate_regions(rows, classes):
-    from sklearn.cluster import HDBSCAN
-    from src.geometry import (
-        detect_polygon_from_cones,
-        build_utility_pole_union,
-        polygons_to_coords,
-    )
-
     # Map model classes to the geometry functions’ internal semantic IDs.
     semantic_ids = {'safety_cone': 6, 'utility_pole': 9}
     id_map = {
@@ -32,9 +29,8 @@ def calculate_regions(rows, classes):
     return cones, poles
 
 
-def build_overlay_response(rows, entry, image_bytes, compute_regions, view):
-    image = convert_to_image(image_bytes)
-    height, width = image.shape[:2]
+def build_overlay_response(rows, entry, image_size, compute_regions, view):
+    width, height = image_size
     metadata = [c.model_dump() for c in entry.classes]
     classes = {c.id: c for c in entry.classes}
     style = overlay_style(metadata)
@@ -43,10 +39,10 @@ def build_overlay_response(rows, entry, image_bytes, compute_regions, view):
         if len(row) < 6 or not all(math.isfinite(v) for v in row[:6]):
             continue
         x1, y1, x2, y2, confidence, class_id = row[:6]
-        x1, x2 = max(0, min(width, x1)), max(0, min(width, x2))
-        y1, y2 = max(0, min(height, y1)), max(0, min(height, y2))
-        if x2 <= x1 or y2 <= y1:
+        clipped = clip_pixel_bbox((x1, y1, x2, y2), image_size)
+        if clipped is None:
             continue
+        x1, y1, x2, y2 = clipped
         c = classes.get(class_id)
         code = c.code if c else None
         label = code or f'class-{class_id:g}'

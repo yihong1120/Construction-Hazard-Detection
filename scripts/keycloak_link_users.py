@@ -1,10 +1,3 @@
-"""Link already-provisioned Keycloak users to Visionnaire accounts safely.
-
-This tool intentionally does not read or migrate password hashes. Keycloak is
-the password authority; the script only records the immutable Keycloak user
-UUID (the OIDC ``sub`` claim) in ``user_identities`` after administrators have
-provisioned the corresponding Keycloak accounts.
-"""
 from __future__ import annotations
 
 import argparse
@@ -35,7 +28,7 @@ class KeycloakUser:
 
 def _arguments() -> argparse.Namespace:
     """Parse explicit Keycloak administration credentials and dry-run mode."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser()
     parser.add_argument('--server-url', required=True)
     parser.add_argument('--realm', required=True)
     parser.add_argument('--client-id', required=True)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 
 import cv2
@@ -10,11 +9,10 @@ from PIL import ImageDraw
 from PIL import ImageFont
 
 from examples.streaming_web.overlay_models import RenderedTextBitmap
+from src.settings.media import OverlayTextSettings
 
-_text_bitmap_cache_size = max(
-    128,
-    int(os.getenv('STREAMING_OVERLAY_TEXT_BITMAP_CACHE_SIZE', '4096')),
-)
+text_settings = OverlayTextSettings()
+_text_bitmap_cache_size = text_settings.text_bitmap_cache_size
 
 
 def _measure_label_text(
@@ -145,7 +143,7 @@ def _load_overlay_font(
     Returns:
         First usable configured or system font, or ``None`` when unavailable.
     """
-    configured = os.getenv('STREAMING_OVERLAY_FONT_PATH', '').strip()
+    configured = text_settings.font_path
     candidates = [
         configured,
         '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',

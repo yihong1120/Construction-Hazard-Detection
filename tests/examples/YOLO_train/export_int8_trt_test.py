@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 import runpy
 import sys
+import textwrap
+from functools import partial
 from pathlib import Path
-from types import ModuleType
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -16,15 +18,132 @@ import yaml
 from examples.YOLO_train import export_int8_trt as subject
 
 
+def _calibration_reader_reads_all_batches_callback(
+    progress,
+    /,
+    **_kwargs,
+):
+    return progress
+
+
+def _modelopt_quantize_int8_uses_all_callback(reader, /, *_):
+    return reader
+
+
+def _set_calibration_batch_size_restores_upstream(
+    seen_batches: list[int],
+    /,
+    exporter: Any,
+    _prefix: str,
+) -> str:
+    seen_batches.append(exporter.args.batch)
+    return 'dataloader'
+
+
+def _main_rejects_invalid_batch_combinations_callback(args, /):
+    return args
+
+
+def _main_exports_and_moves_engine_callback(
+    source,
+    _workdir,
+    _limit,
+    _seed,
+    _split,
+):
+    return (source, 4096)
+
+
+def _main_exports_and_moves_engine_make_path(value):
+    return Path(value)
+
+
+def _calibration_helpers_reject_invalid_input_callback(
+    invalid_yaml,
+    /,
+    *_args,
+):
+    return invalid_yaml
+
+
+def _calibration_helpers_reject_invalid_input_callback2(
+    split_yaml,
+    /,
+    *_args,
+):
+    return split_yaml
+
+
+def _calibration_helpers_reject_invalid_input_callback3(
+    missing_layout,
+    /,
+    *_args,
+):
+    return missing_layout
+
+
+def _calibration_helpers_reject_invalid_input_callback4(
+    empty_yaml,
+    /,
+    *_args,
+):
+    return empty_yaml
+
+
+def _return_none(*_args):
+    return None
+
+
+def _exporter_patch_reports_unexpected_upstream_callback(
+    gate,
+    /,
+    _tree,
+):
+    return [gate]
+
+
+def _exporter_patch_reports_unexpected_upstream_callback2(*_args):
+    return 'onnx_file = modelopt_quantize_onnx()'
+
+
+def _main_adds_detect_head_exclusion_callback(source, *_args):
+    return (source, 0)
+
+
+class _MainExportsAndMovesEngineFakeYolo:
+    """Provide FakeYolo."""
+
+    def __init__(
+        self,
+        model_path: str,
+        *,
+        _test_calls,
+        _test_exported,
+    ) -> None:
+        self._test_calls = _test_calls
+        self._test_exported = _test_exported
+        self.model_path = model_path
+
+    def export(self, **kwargs: object) -> str:
+        self._test_calls.append(kwargs)
+        return str(self._test_exported)
+
+
+class _MainAddsDetectHeadExclusionFakeYolo:
+    """Provide FakeYolo."""
+
+    def __init__(self, _path: str, *, _test_args) -> None:
+        self._test_args = _test_args
+        pass
+
+    def export(self, **_kwargs: object) -> str:
+        return str(self._test_args.output)
+
+
 class ResettableDataLoader:
     """Small dataloader stand-in that exposes the exporter contract."""
 
     def __init__(self, batches: list[dict[str, torch.Tensor]]) -> None:
-        """Perform init.
-
-        Args:
-            batches: Value used by this callable.
-        """
         self.batches = batches
         self.dataset = list(
             range(sum(batch['img'].shape[0] for batch in batches)),
@@ -33,23 +152,12 @@ class ResettableDataLoader:
         self.reset_count = 0
 
     def __iter__(self) -> Any:
-        """Perform iter.
-
-        Returns:
-            The callable result.
-        """
         return iter(self.batches)
 
     def __len__(self) -> int:
-        """Perform len.
-
-        Returns:
-            The callable result.
-        """
         return len(self.batches)
 
     def reset(self) -> None:
-        """Perform reset."""
         self.reset_count += 1
 
 
@@ -57,18 +165,8 @@ def _install_modelopt(
     monkeypatch: pytest.MonkeyPatch,
     quantize: MagicMock,
 ) -> None:
-    """Install the minimal nested module structure imported by the exporter."""
-    modelopt = ModuleType('modelopt')
-    modelopt_onnx = ModuleType('modelopt.onnx')
-    modelopt_quantization = ModuleType('modelopt.onnx.quantization')
-    setattr(modelopt_quantization, 'quantize', quantize)
-    monkeypatch.setitem(sys.modules, 'modelopt', modelopt)
-    monkeypatch.setitem(sys.modules, 'modelopt.onnx', modelopt_onnx)
-    monkeypatch.setitem(
-        sys.modules,
-        'modelopt.onnx.quantization',
-        modelopt_quantization,
-    )
+    """Replace the exporter binding without loading the optional SDK."""
+    monkeypatch.setitem(subject.__dict__, 'modelopt_quantize', quantize)
 
 
 def _export_args(
@@ -111,7 +209,11 @@ def test_calibration_reader_reads_all_batches_and_rewinds(
         ],
     )
     progress = MagicMock()
-    monkeypatch.setattr(subject, 'tqdm', lambda **_kwargs: progress)
+    monkeypatch.setattr(
+        subject,
+        'tqdm',
+        partial(_calibration_reader_reads_all_batches_callback, progress),
+    )
 
     reader = subject.AllImagesCalibrationReader('images', dataloader)
 
@@ -193,7 +295,7 @@ def test_modelopt_quantize_int8_uses_all_calibration_images(
     monkeypatch.setattr(
         subject,
         'AllImagesCalibrationReader',
-        lambda *_: reader,
+        partial(_modelopt_quantize_int8_uses_all_callback, reader),
     )
     monkeypatch.setattr(subject, 'check_requirements', MagicMock())
     monkeypatch.setattr(
@@ -235,7 +337,7 @@ def test_modelopt_quantize_int8_keeps_excluded_nodes_high_precision(
     monkeypatch.setattr(
         subject,
         'AllImagesCalibrationReader',
-        lambda *_: reader,
+        partial(_modelopt_quantize_int8_uses_all_callback, reader),
     )
     monkeypatch.setattr(subject, 'check_requirements', MagicMock())
     monkeypatch.setattr(
@@ -275,6 +377,59 @@ def test_patched_onnx2engine_uses_batch_only_explicit_qdq() -> None:
     assert 'if force_explicit_int8:' in patched
     assert 'use_int8 = False' in patched
     assert 'use_fp16 = True' in patched
+    function = ast.parse(patched).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    # The flag must be assigned outside the preceding optional DLA branch.
+    assert any(
+        isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == 'force_explicit_int8'
+            for target in statement.targets
+        )
+        for statement in function.body
+    )
+
+
+@pytest.mark.parametrize('batch_dimension,minimum_batch', [(-1, 1), (4, 4)])
+def test_batch_profile_preserves_static_input_dimensions(
+    batch_dimension: int,
+    minimum_batch: int,
+) -> None:
+    """Batch ranges retain fixed input sizes and avoid spatial expansion."""
+    profile = MagicMock()
+    builder = MagicMock()
+    builder.create_optimization_profile.return_value = profile
+    namespace = {
+        'dynamic': True,
+        'builder': builder,
+        'config': MagicMock(),
+        'shape': (4, 3, 640, 640),
+        'inputs': [
+            SimpleNamespace(
+                name='images',
+                shape=(
+                    batch_dimension,
+                    3,
+                    640,
+                    640,
+                ),
+            ),
+        ],
+        'LOGGER': MagicMock(),
+        'prefix': '',
+    }
+
+    exec(
+        textwrap.dedent(subject._batch_only_dynamic_profile_source()),
+        namespace,
+    )
+
+    profile.set_shape.assert_called_once_with(
+        'images',
+        min=(minimum_batch, 3, 640, 640),
+        opt=(4, 3, 640, 640),
+        max=(4, 3, 640, 640),
+    )
 
 
 def test_modelopt_export_api_is_available() -> None:
@@ -302,13 +457,13 @@ def test_patched_onnx2engine_accepts_compatible_modelopt_gate() -> None:
     original_condition = '    if is_trt11 and (use_fp16 or use_int8):'
     original_call = (
         '        onnx_file = modelopt_quantize_onnx('
-        'onnx_file, quantize, dataset, shape, dynamic, prefix)'
+        'onnx_file, 16 if qdq else quantize, dataset, shape, dynamic, prefix)'
     )
     multiline_call = '\n'.join(
         [
             '        onnx_file = modelopt_quantize_onnx(',
             '            onnx_file,',
-            '            quantize,',
+            '            16 if qdq else quantize,',
             '            dataset,',
             '            shape,',
             '            dynamic,',
@@ -339,18 +494,10 @@ def test_set_calibration_batch_size_restores_export_batch(
     """Calibration changes only the temporary dataloader batch value."""
     seen_batches: list[int] = []
 
-    def upstream(exporter: Any, _prefix: str) -> str:
-        """Perform upstream.
-
-        Args:
-            exporter: Value used by this callable.
-            _prefix: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        seen_batches.append(exporter.args.batch)
-        return 'dataloader'
+    upstream = partial(
+        _set_calibration_batch_size_restores_upstream,
+        seen_batches,
+    )
 
     monkeypatch.setattr(
         subject,
@@ -454,7 +601,11 @@ def test_main_rejects_invalid_batch_combinations(
 ) -> None:
     """Invalid dynamic and calibration batches stop before export."""
     args = _export_args(tmp_path, batch=batch, calib_batch=calib_batch)
-    monkeypatch.setattr(subject, 'parse_args', lambda: args)
+    monkeypatch.setattr(
+        subject,
+        'parse_args',
+        partial(_main_rejects_invalid_batch_combinations_callback, args),
+    )
 
     with pytest.raises(SystemExit, match=message):
         subject.main()
@@ -477,31 +628,18 @@ def test_main_exports_and_moves_engine(
     exported.write_text('engine')
     calls: list[dict[str, object]] = []
 
-    class FakeYolo:
-        """Provide FakeYolo."""
-
-        def __init__(self, model_path: str) -> None:
-            """Perform init.
-
-            Args:
-                model_path: Value used by this callable.
-            """
-            self.model_path = model_path
-
-        def export(self, **kwargs: object) -> str:
-            """Perform export.
-
-            Args:
-                **kwargs: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            calls.append(kwargs)
-            return str(exported)
+    FakeYolo = partial(
+        _MainExportsAndMovesEngineFakeYolo,
+        _test_calls=calls,
+        _test_exported=exported,
+    )
 
     move = MagicMock()
-    monkeypatch.setattr(subject, 'parse_args', lambda: args)
+    monkeypatch.setattr(
+        subject,
+        'parse_args',
+        partial(_main_rejects_invalid_batch_combinations_callback, args),
+    )
     monkeypatch.setattr(subject, 'set_calibration_batch_size', MagicMock())
     monkeypatch.setattr(subject, 'set_calibration_method', MagicMock())
     set_node_exclusions = MagicMock()
@@ -509,12 +647,12 @@ def test_main_exports_and_moves_engine(
     monkeypatch.setattr(
         subject,
         'prepare_calibration_data',
-        lambda source, _workdir, _limit, _seed, _split: (source, 4096),
+        _main_exports_and_moves_engine_callback,
     )
     monkeypatch.setattr(
         subject,
         'build_data_yaml',
-        lambda value: Path(value),
+        _main_exports_and_moves_engine_make_path,
     )
     monkeypatch.setattr(subject, 'YOLO', FakeYolo)
     monkeypatch.setattr(subject.shutil, 'move', move)
@@ -647,7 +785,10 @@ def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
     monkeypatch.setattr(
         subject,
         'build_calibration_yaml',
-        lambda *_args: invalid_yaml,
+        partial(
+            _calibration_helpers_reject_invalid_input_callback,
+            invalid_yaml,
+        ),
     )
     with pytest.raises(ValueError, match='must be a mapping'):
         subject.prepare_calibration_data(invalid_yaml, tmp_path / 'work', 1, 1)
@@ -657,7 +798,10 @@ def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
     monkeypatch.setattr(
         subject,
         'build_calibration_yaml',
-        lambda *_args: split_yaml,
+        partial(
+            _calibration_helpers_reject_invalid_input_callback2,
+            split_yaml,
+        ),
     )
     with pytest.raises(ValueError, match='must point to one images directory'):
         subject.prepare_calibration_data(split_yaml, tmp_path / 'work', 1, 1)
@@ -667,7 +811,10 @@ def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
     monkeypatch.setattr(
         subject,
         'build_calibration_yaml',
-        lambda *_args: missing_layout,
+        partial(
+            _calibration_helpers_reject_invalid_input_callback3,
+            missing_layout,
+        ),
     )
     assert subject.prepare_calibration_data(
         missing_layout,
@@ -684,7 +831,10 @@ def test_calibration_helpers_reject_invalid_input_and_skip_duplicates(
     monkeypatch.setattr(
         subject,
         'build_calibration_yaml',
-        lambda *_args: empty_yaml,
+        partial(
+            _calibration_helpers_reject_invalid_input_callback4,
+            empty_yaml,
+        ),
     )
     with pytest.raises(FileNotFoundError, match='No calibration images'):
         subject.prepare_calibration_data(empty_yaml, tmp_path / 'work', 1, 1)
@@ -702,7 +852,11 @@ def test_export_configuration_setters_and_negative_image_limit(
 
     args = _export_args(tmp_path)
     args.calib_images = -1
-    monkeypatch.setattr(subject, 'parse_args', lambda: args)
+    monkeypatch.setattr(
+        subject,
+        'parse_args',
+        partial(_main_rejects_invalid_batch_combinations_callback, args),
+    )
     with pytest.raises(SystemExit, match='calib-images'):
         subject.main()
 
@@ -720,8 +874,8 @@ def test_exporter_patch_reports_unexpected_upstream_shapes(
     with pytest.raises(RuntimeError, match='ModelOpt INT8 gate'):
         subject._patched_onnx2engine_source(without_gate)
 
-    with (monkeypatch.context() as context):
-        context.setattr(subject.ast, 'get_source_segment', lambda *_args: None)
+    with monkeypatch.context() as context:
+        context.setattr(subject.ast, 'get_source_segment', _return_none)
         with pytest.raises(RuntimeError, match='INT8 call'):
             subject._patched_onnx2engine_source(source)
 
@@ -747,11 +901,18 @@ def test_exporter_patch_reports_unexpected_upstream_shapes(
     call.end_lineno = None
     call.end_col_offset = None
     with monkeypatch.context() as context:
-        context.setattr(subject.ast, 'walk', lambda _tree: [gate])
+        context.setattr(
+            subject.ast,
+            'walk',
+            partial(
+                _exporter_patch_reports_unexpected_upstream_callback,
+                gate,
+            ),
+        )
         context.setattr(
             subject.ast,
             'get_source_segment',
-            lambda *_args: 'onnx_file = modelopt_quantize_onnx()',
+            _exporter_patch_reports_unexpected_upstream_callback2,
         )
         with pytest.raises(RuntimeError, match='call end'):
             subject._patched_onnx2engine_source(source)
@@ -773,7 +934,11 @@ def test_main_adds_detect_head_exclusion_to_mixed_precision_export(
     """The convenience flag is forwarded to the ModelOpt exclusion setter."""
     args = _export_args(tmp_path)
     args.exclude_detect_head = True
-    monkeypatch.setattr(subject, 'parse_args', lambda: args)
+    monkeypatch.setattr(
+        subject,
+        'parse_args',
+        partial(_main_rejects_invalid_batch_combinations_callback, args),
+    )
     monkeypatch.setattr(subject, 'set_calibration_batch_size', MagicMock())
     monkeypatch.setattr(subject, 'set_calibration_method', MagicMock())
     exclusions = MagicMock()
@@ -782,33 +947,46 @@ def test_main_adds_detect_head_exclusion_to_mixed_precision_export(
     monkeypatch.setattr(
         subject,
         'prepare_calibration_data',
-        lambda source, *_args: (source, 0),
+        _main_adds_detect_head_exclusion_callback,
     )
-    monkeypatch.setattr(subject, 'build_data_yaml', lambda value: Path(value))
+    monkeypatch.setattr(
+        subject,
+        'build_data_yaml',
+        _main_exports_and_moves_engine_make_path,
+    )
 
-    class FakeYolo:
-        """Provide FakeYolo."""
-
-        def __init__(self, _path: str) -> None:
-            """Perform init.
-
-            Args:
-                _path: Value used by this callable.
-            """
-            pass
-
-        def export(self, **_kwargs: object) -> str:
-            """Perform export.
-
-            Args:
-                **_kwargs: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            return str(args.output)
+    FakeYolo = partial(_MainAddsDetectHeadExclusionFakeYolo, _test_args=args)
 
     monkeypatch.setattr(subject, 'YOLO', FakeYolo)
     subject.main()
 
     exclusions.assert_called_once_with([subject.detect_head_node_pattern])
+
+
+def test_calibration_patch_binds_instances_and_restores_on_error(monkeypatch):
+    original = vars(subject.Exporter)['get_int8_calibration_dataloader']
+    upstream = MagicMock(side_effect=RuntimeError('calibration failed'))
+    monkeypatch.setattr(
+        subject,
+        'original_get_int8_calibration_dataloader',
+        upstream,
+    )
+    try:
+        subject.set_calibration_batch_size(2)
+        receiver_type = type(
+            'Receiver',
+            (),
+            {
+                'load': vars(subject.Exporter)[
+                    'get_int8_calibration_dataloader'
+                ],
+            },
+        )
+        receiver = receiver_type()
+        receiver.args = SimpleNamespace(batch=8)
+        with pytest.raises(RuntimeError, match='calibration failed'):
+            receiver.load('INT8')
+        upstream.assert_called_once_with(receiver, 'INT8')
+        assert receiver.args.batch == 8
+    finally:
+        subject.Exporter.get_int8_calibration_dataloader = original

@@ -14,6 +14,16 @@ from examples.bff.router import router as bff_router
 from examples.db_management import app as app_module
 
 
+def _return_none(*a, **kw):
+    return None
+
+
+async def _sensitive_playback_responses_disable_caching_call_next(
+    _request: object,
+) -> Response:
+    return Response()
+
+
 class AppIntegrationTest(unittest.TestCase):
     """Integration tests for the FastAPI app in db_management."""
 
@@ -27,22 +37,22 @@ class AppIntegrationTest(unittest.TestCase):
         initialising the app and client."""
         # Store patchers so they can be stopped later
         cls._patchers = [
-            patch('examples.auth.database.get_db', new=lambda *a, **kw: None),
+            patch('examples.auth.database.get_db', new=_return_none),
             patch(
                 'examples.auth.redis_pool.get_redis_pool',
-                new=lambda *a, **kw: None,
+                new=_return_none,
             ),
             patch(
                 'examples.db_management.deps.require_admin',
-                new=lambda *a, **kw: None,
+                new=_return_none,
             ),
             patch(
                 'examples.db_management.deps.require_super_admin',
-                new=lambda *a, **kw: None,
+                new=_return_none,
             ),
             patch(
                 'examples.db_management.deps.get_current_user',
-                new=lambda *a, **kw: None,
+                new=_return_none,
             ),
         ]
         for p in cls._patchers:
@@ -121,11 +131,10 @@ class AppIntegrationTest(unittest.TestCase):
         """
         paths = self.app.openapi()['paths']
         tags = {
-            tag
+            *operation.get('tags', [])
             for operations in paths.values()
             for operation in operations.values()
             if isinstance(operation, dict)
-            for tag in operation.get('tags', [])
         }
         expected: set[str] = {
             'user-mgmt',
@@ -166,16 +175,7 @@ class AppIntegrationTest(unittest.TestCase):
             url=SimpleNamespace(path='/api/playback/walls'),
         )
 
-        async def call_next(_request: object) -> Response:
-            """Perform call next.
-
-            Args:
-                _request: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            return Response()
+        call_next = _sensitive_playback_responses_disable_caching_call_next
 
         response = asyncio.run(
             app_module.prevent_sensitive_response_caching(request, call_next),
@@ -218,14 +218,25 @@ if __name__ == '__main__':
 def test_retired_authentication_routes_are_absent():
     paths = app_module.app.openapi()['paths']
     for path in (
-        '/login', '/refresh', '/logout', '/signup',
-        '/auth/verify-email', '/auth/resend-verification',
+        '/login',
+        '/refresh',
+        '/logout',
+        '/signup',
+        '/auth/verify-email',
+        '/auth/resend-verification',
         '/list_stream_configs',
-        '/auth/google', '/auth/apple', '/auth/identities',
-        '/password/forgot', '/password/reset', '/update_my_password',
-        '/oauth/authorize', '/oauth/token', '/oauth/revoke',
+        '/auth/google',
+        '/auth/apple',
+        '/auth/identities',
+        '/password/forgot',
+        '/password/reset',
+        '/update_my_password',
+        '/oauth/authorize',
+        '/oauth/token',
+        '/oauth/revoke',
         '/auth/legacy-password/keycloak/verify',
-        '/auth/legacy-password/keycloak/complete', '/bff/auth/login',
+        '/auth/legacy-password/keycloak/complete',
+        '/bff/auth/login',
     ):
         assert path not in paths
     security = app_module.app.openapi()['components']['securitySchemes']

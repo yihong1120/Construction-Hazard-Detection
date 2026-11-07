@@ -5,7 +5,6 @@
 
 # Local lint/pre-commit configuration
 .flake8
-.pre-commit-config.yaml
 .pre-commit-hooks.yaml
 
 # Secrets and local configuration
@@ -36,6 +35,7 @@ coverage.xml
 *.out
 logs/
 **/logs/
+/dump.rdb
 static/
 tmp/
 css-data/
@@ -98,8 +98,13 @@ build/
 frontend/web/
 frontend/web_bak/
 *.egg-info/
+/wheels/python315/
 examples/streaming_web/frontend/node_modules/
 examples/streaming_web/frontend/dist/
 
 # Local production deployment configuration; commit an .example variant instead.
 deploy/bff/nginx.changdar-server.complete.conf
+
+outputs
+
+frontend

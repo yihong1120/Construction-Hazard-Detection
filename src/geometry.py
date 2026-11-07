@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from functools import partial
 
 import numpy as np
 from scipy.spatial import Delaunay
@@ -342,7 +343,7 @@ def build_mst_pairs(
     representative_indices: list[int] = []
     duplicate_edges: list[tuple[int, int]] = []
     for indices in centres.values():
-        representative = max(indices, key=lambda index: poles[index][2])
+        representative = max(indices, key=partial(_pole_radius, poles))
         representative_indices.append(representative)
         duplicate_edges.extend(
             (representative, index)
@@ -391,23 +392,12 @@ def build_mst_pairs(
     unique_count = len(unique_poles)
     parents = list(range(unique_count))
 
-    def find(index: int) -> int:
-        """Perform find.
-
-        Args:
-            index: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        while parents[index] != index:
-            parents[index] = parents[parents[index]]
-            index = parents[index]
-        return index
-
     edges: list[tuple[int, int]] = []
     for _weight, left, right in weighted_edges:
-        left_root, right_root = find(left), find(right)
+        left_root, right_root = _find_root(parents, left), _find_root(
+            parents,
+            right,
+        )
         if left_root == right_root:
             continue
         parents[left_root] = right_root
@@ -589,3 +579,14 @@ def polygons_to_coords(polygons: list[Polygon]) -> list[list[list[float]]]:
                         [list(pt) for pt in subpoly.exterior.coords],
                     )
     return coords_list
+
+
+def _find_root(parents: list[int], index: int) -> int:
+    while parents[index] != index:
+        parents[index] = parents[parents[index]]
+        index = parents[index]
+    return index
+
+
+def _pole_radius(poles: list[tuple[float, float, float]], index: int) -> float:
+    return poles[index][2]

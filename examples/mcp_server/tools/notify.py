@@ -2,22 +2,28 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import TYPE_CHECKING
 
 import aiohttp
 import httpx
 
-if TYPE_CHECKING:
-    import numpy as np
-    from src.notifiers.line_notifier_message_api import LineMessenger
-    from src.notifiers.messenger_notifier import MessengerNotifier
-    from src.notifiers.telegram_notifier import TelegramNotifier
-    from src.notifiers.wechat_notifier import WeChatNotifier
-
-from examples.mcp_server.config import get_env_var
+from examples.mcp_server.settings import BroadcastSettings
 from src.notifiers.broadcast_notifier import BroadcastNotifier
 from src.notifiers.fcm_notifier import FCMSender
 from src.warning_types import Warnings
+
+# Keep optional native imports lazy when import tools rewrite this block.
+# noreorder
+lazy from src.notifiers.line_notifier_message_api import LineMessenger
+
+lazy from src.notifiers.messenger_notifier import MessengerNotifier
+
+lazy from src.notifiers.telegram_notifier import TelegramNotifier
+
+lazy from src.notifiers.wechat_notifier import WeChatNotifier
+
+lazy import cv2
+
+lazy import numpy as np
 
 _broadcast_timeout = httpx.Timeout(10.0, connect=5.0)
 
@@ -49,7 +55,11 @@ class NotifyTools:
         if self._sender is None:
             self._sender = FCMSender()
         success = await self._sender.send_fcm_message_to_site(
-            site, stream_name, warnings, image_path, violation_id,
+            site,
+            stream_name,
+            warnings,
+            image_path,
+            violation_id,
         )
         return {'success': success}
 
@@ -111,17 +121,14 @@ class NotifyTools:
             dict[str, Any]: Contains a ``success`` flag and message.
         """
         try:
-            url = broadcast_url or get_env_var(
-                'BROADCAST_URL',
-                'http://localhost:8080/broadcast',
-            )
+            url = BroadcastSettings.from_overrides(url=broadcast_url).url
             success = await BroadcastNotifier(
                 url,
                 client=self._broadcast_http_client(),
             ).broadcast_message(message)
 
             return {
-                'success': success,
+                'success': bool(success),
                 'message': (
                     'Broadcast sent successfully'
                     if success
@@ -209,7 +216,7 @@ class NotifyTools:
                 success = False
 
             return {
-                'success': success,
+                'success': bool(success),
                 'message': (
                     'Telegram message sent successfully'
                     if success
@@ -223,7 +230,6 @@ class NotifyTools:
 
     async def _ensure_line_messenger(self) -> None:
         """Ensure the LINE messenger is initialised."""
-        from src.notifiers.line_notifier_message_api import LineMessenger
 
         if self._line_messenger is None:
             self._line_session = aiohttp.ClientSession(
@@ -247,7 +253,6 @@ class NotifyTools:
 
     async def _ensure_telegram_notifier(self) -> None:
         """Ensure the Telegram notifier is initialised."""
-        from src.notifiers.telegram_notifier import TelegramNotifier
 
         if self._telegram_notifier is None:
             self._telegram_notifier = TelegramNotifier()
@@ -255,7 +260,6 @@ class NotifyTools:
 
     async def _ensure_messenger_notifier(self) -> None:
         """Ensure the Messenger feature shares the MCP HTTP transport."""
-        from src.notifiers.messenger_notifier import MessengerNotifier
 
         if self._messenger_notifier is None:
             self._messenger_notifier = MessengerNotifier(
@@ -264,7 +268,6 @@ class NotifyTools:
 
     async def _ensure_wechat_notifier(self) -> None:
         """Ensure the WeChat Work feature shares the MCP HTTP transport."""
-        from src.notifiers.wechat_notifier import WeChatNotifier
 
         if self._wechat_notifier is None:
             self._wechat_notifier = WeChatNotifier(
@@ -299,8 +302,6 @@ def _decode_rgb_image(image_bytes: bytes | None) -> np.ndarray | None:
     """Decode optional image bytes to the RGB NumPy format notifiers expect."""
     if not image_bytes:
         return None
-    import cv2
-    import numpy as np
 
     bgr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     if bgr is None:

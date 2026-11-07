@@ -2,10 +2,22 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from functools import partial
 from pathlib import Path
 from unittest.mock import MagicMock
 
 from examples.mcp_server.tools.model import ModelTools
+
+
+def _sync_reports_updated_local_model_callback(
+    directory,
+    /,
+    *_args,
+    **_kwargs,
+):
+    return (Path(directory) / 'best_yolo26n.pt').write_bytes(
+        b'model',
+    ) or True
 
 
 class ModelToolsTests(unittest.IsolatedAsyncioTestCase):
@@ -17,9 +29,9 @@ class ModelToolsTests(unittest.IsolatedAsyncioTestCase):
             fetcher = MagicMock()
             fetcher.local_dir = Path(directory)
             fetcher.get_last_update_time.return_value = '1970-01-01T00:00:00'
-            fetcher.request_new_model.side_effect = lambda *_args, **_kwargs: (
-                (Path(directory) / 'best_yolo26n.pt').write_bytes(b'model')
-                or True
+            fetcher.request_new_model.side_effect = partial(
+                _sync_reports_updated_local_model_callback,
+                directory,
             )
             tool = ModelTools(fetcher=fetcher)
 

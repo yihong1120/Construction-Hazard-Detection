@@ -2,88 +2,8 @@ from __future__ import annotations
 
 import os
 import unittest
-from unittest.mock import Mock
-from unittest.mock import patch
 
 from examples.mcp_server import config as cfg
-
-
-class EnvVarHelpersTests(unittest.TestCase):
-    """Unit tests for individual environment helper functions."""
-
-    def setUp(self) -> None:
-        """Clear environment variables before each test for isolation."""
-        self._original_env = os.environ.copy()
-        for key in list(os.environ.keys()):
-            if key.startswith('MCP_') or key.startswith('TEST_'):
-                os.environ.pop(key, None)
-
-    def tearDown(self) -> None:
-        """Restore original environment variables after each test."""
-        os.environ.clear()
-        os.environ.update(self._original_env)
-
-    # ------------------------------------------------------------------
-    # get_env_var
-    # ------------------------------------------------------------------
-
-    def test_get_env_var_returns_value_when_set(self) -> None:
-        """get_env_var should return the variable value if defined."""
-        os.environ['TEST_KEY'] = 'abc'
-        value = cfg.get_env_var('TEST_KEY', 'default')
-        self.assertEqual(value, 'abc')
-
-    def test_get_env_var_returns_default_when_unset(self) -> None:
-        """get_env_var should fall back to default or DEFAULT_ENV."""
-        value = cfg.get_env_var('NON_EXIST', 'xyz')
-        self.assertEqual(value, 'xyz')
-
-    # ------------------------------------------------------------------
-    # get_env_bool
-    # ------------------------------------------------------------------
-
-    def test_get_env_bool_recognises_truthy_values(self) -> None:
-        """get_env_bool should interpret 1/true/yes/on as True."""
-        truthy = ('1', 'true', 'yes', 'on')
-        for val in truthy:
-            with self.subTest(val=val):
-                os.environ['TEST_BOOL'] = val
-                self.assertTrue(cfg.get_env_bool('TEST_BOOL'))
-
-    def test_get_env_bool_defaults_false(self) -> None:
-        """get_env_bool should return False if variable is missing."""
-        self.assertFalse(cfg.get_env_bool('MISSING_BOOL'))
-
-    def test_get_env_bool_respects_default_flag(self) -> None:
-        """get_env_bool should use default=True if not set."""
-        self.assertTrue(cfg.get_env_bool('UNSET_BOOL', default=True))
-
-    # ------------------------------------------------------------------
-    # get_env_int
-    # ------------------------------------------------------------------
-
-    def test_get_env_int_parses_valid_integer(self) -> None:
-        """get_env_int should correctly parse integers."""
-        os.environ['TEST_INT'] = '42'
-        self.assertEqual(cfg.get_env_int('TEST_INT'), 42)
-
-    def test_get_env_int_returns_default_on_invalid(self) -> None:
-        """get_env_int should return default if value cannot be parsed."""
-        os.environ['TEST_INT'] = 'notanint'
-        self.assertEqual(cfg.get_env_int('TEST_INT', 10), 10)
-
-    def test_get_env_int_parses_negative_integer(self) -> None:
-        """get_env_int should handle negative integer strings."""
-        os.environ['TEST_INT'] = '-7'
-        self.assertEqual(cfg.get_env_int('TEST_INT'), -7)
-
-    # ------------------------------------------------------------------
-    # get_env_float
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # get_env_list
-    # ------------------------------------------------------------------
 
 
 class TransportConfigTests(unittest.TestCase):
@@ -131,16 +51,10 @@ class TransportConfigTests(unittest.TestCase):
         self.assertEqual(cfg_obj['sse_path'], '/events')
         self.assertTrue(cfg_obj['debug'])
 
-    @patch('examples.mcp_server.config.logging.getLogger')
-    def test_invalid_transport_falls_back_to_stdio(
-        self,
-        mock_print: Mock,
-    ) -> None:
-        """Invalid MCP_TRANSPORT should fall back to 'stdio' with warning."""
+    def test_invalid_transport_is_rejected(self):
         os.environ['MCP_TRANSPORT'] = 'invalid'
-        result = cfg.get_transport_config()
-        self.assertEqual(result['transport'], 'stdio')
-        mock_print.return_value.warning.assert_called_once()
+        with self.assertRaises(ValueError):
+            cfg.get_transport_config()
 
     def test_debug_false_for_falsey_values(self) -> None:
         """False-like debug strings should evaluate as False."""

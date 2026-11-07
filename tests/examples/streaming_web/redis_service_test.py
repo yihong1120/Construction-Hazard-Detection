@@ -19,7 +19,6 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         self.mock_rds = AsyncMock()
 
     def test_build_metadata_key_uses_encoded_site_and_stream(self) -> None:
-        """Exercise this test."""
         key = build_metadata_key('site-a', 'cam-1')
 
         self.assertEqual(key, 'stream_metadata:c2l0ZS1h|Y2FtLTE=')
@@ -71,7 +70,6 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(metadata_keys.is_metadata_key('not-metadata'))
 
     async def test_fetch_latest_metadata_for_key_no_messages(self) -> None:
-        """Exercise this test."""
         self.mock_rds.xread.return_value = []
 
         result = await fetch_latest_metadata_for_key(
@@ -83,12 +81,11 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         self.mock_rds.xread.assert_awaited_once_with(
             {'stream_metadata:bGFiZWw=|Q2FtMQ==': '$'},
-            count=1,
+            count=64,
             block=2000,
         )
 
     async def test_fetch_latest_metadata_for_key_empty_stream(self) -> None:
-        """Exercise this test."""
         self.mock_rds.xread.return_value = [
             (b'stream_metadata:bGFiZWw=|Q2FtMQ==', []),
         ]
@@ -102,7 +99,6 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
     async def test_fetch_latest_metadata_for_key_without_frame(self) -> None:
-        """Exercise this test."""
         self.mock_rds.xread.return_value = [
             (
                 b'stream_metadata:bGFiZWw=|Q2FtMQ==',

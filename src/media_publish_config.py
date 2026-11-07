@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import os
+import math
 from typing import Any
+from typing import Protocol
 from typing import TypedDict
 
+from src.media_encoding import EncoderOptions
 from src.media_stream_publisher import MediaStreamPublisher
+from src.settings.media import MediaPublishSettings
 
 
 class PreviewPublisherOptions(TypedDict):
-    """Bounded settings for a low-bandwidth media rendition."""
-
     fps: float
     width: int
     height: int
@@ -18,46 +19,62 @@ class PreviewPublisherOptions(TypedDict):
     bufsize: str
 
 
-def env_enabled(name: str, default: bool) -> bool:
-    """Read a boolean environment setting with a predictable default."""
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    return raw_value.strip().lower() in {'1', 'true', 'yes', 'on'}
+class SourceFrameRate(Protocol):
+    @property
+    def source_fps(self) -> float | None: ...
 
 
-def preview_publisher_options() -> PreviewPublisherOptions:
-    """Return the lower-bandwidth encoder budget used by camera walls."""
-    return {
-        'fps': max(
-            1.0,
-            float(
-                os.getenv(
-                    'MEDIA_PREVIEW_FPS',
-                    os.getenv('MEDIA_PUBLISH_FPS', '15'),
-                ),
-            ),
-        ),
-        'width': max(2, int(os.getenv('MEDIA_PREVIEW_WIDTH', '640'))),
-        'height': max(2, int(os.getenv('MEDIA_PREVIEW_HEIGHT', '360'))),
-        'bitrate': os.getenv('MEDIA_PREVIEW_BITRATE', '500k'),
-        'maxrate': os.getenv('MEDIA_PREVIEW_MAXRATE', '700k'),
-        'bufsize': os.getenv('MEDIA_PREVIEW_BUFSIZE', '1400k'),
-    }
+class MediaPublisherFactory:
+    def __init__(
+        self, settings: MediaPublishSettings,
+        source: SourceFrameRate | None = None,
+    ) -> None:
+        self.settings = settings
+        self.encoding = EncoderOptions(settings)
+        self.source = source
 
-
-def create_media_publisher(
-    publish_url: str,
-    *,
-    rendition: str,
-    publisher_type: Any = MediaStreamPublisher,
-) -> MediaStreamPublisher:
-    """Create a detail or preview publisher with the correct encoder budget."""
-    if rendition == 'preview':
-        return publisher_type(
-            publish_url=publish_url,
-            **preview_publisher_options(),
+    def fps(self, rendition: str) -> float:
+        return self.settings.rendition_fps(
+            rendition, self.source.source_fps if self.source else None,
         )
-    if rendition == 'detail':
-        return publisher_type(publish_url=publish_url)
-    raise ValueError(f"unsupported media rendition: {rendition}")
+
+    async def ensure(
+        self, publish_url: str, *, rendition: str,
+        current: MediaStreamPublisher | None,
+    ) -> MediaStreamPublisher:
+        """Recreate an encoder when a reconnected camera reports a new rate."""
+        if current is not None:
+            if math.isclose(current.fps, self.fps(rendition), rel_tol=1e-6):
+                return current
+            await current.close()
+        return self.create(publish_url, rendition=rendition)
+
+    def preview_options(self) -> PreviewPublisherOptions:
+        settings = self.settings
+        return {
+            'fps': self.fps('preview'),
+            'width': settings.preview_width,
+            'height': settings.preview_height,
+            'bitrate': settings.preview_bitrate,
+            'maxrate': settings.preview_maxrate,
+            'bufsize': settings.preview_bufsize,
+        }
+
+    def create(
+        self,
+        publish_url: str,
+        *,
+        rendition: str,
+        publisher_type: Any = MediaStreamPublisher,
+    ) -> MediaStreamPublisher:
+        if rendition == 'preview':
+            return publisher_type(
+                publish_url=publish_url, encoding=self.encoding,
+                **self.preview_options(),
+            )
+        if rendition == 'detail':
+            return publisher_type(
+                publish_url=publish_url, fps=self.fps('detail'),
+                encoding=self.encoding,
+            )
+        raise ValueError(f'unsupported media rendition: {rendition}')

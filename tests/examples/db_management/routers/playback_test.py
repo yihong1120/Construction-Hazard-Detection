@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from datetime import timedelta
+from functools import partial
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
@@ -20,6 +21,8 @@ from fastapi.testclient import TestClient
 from examples.auth.database import get_db
 from examples.auth.deployment_context import DeploymentBinding
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.auth.media_session_request import MediaSessionOwner
+from examples.auth.media_session_request import MediaSessionRequest
 from examples.auth.redis_pool import get_redis_pool
 from examples.auth.session_store import auth_session_key
 from examples.auth.session_store import create_auth_session
@@ -31,7 +34,7 @@ from examples.db_management.schemas.playback import PlaybackRenewRequest
 from examples.db_management.schemas.playback import PlaybackWallRequest
 from examples.db_management.services import playback_services as playback
 from tests.examples.auth.session_store_test import FakeRedis
-from tests.oidc_fixtures import fixture_token
+from tests.oidc_fixtures_test import fixture_token
 
 _DEPLOYMENT = DeploymentBinding(
     tenant_id=UUID('00000000-0000-0000-0000-000000000001'),
@@ -41,19 +44,18 @@ _DEPLOYMENT = DeploymentBinding(
 )
 
 
+def _setUp_get_redis(testcase, /):
+    return testcase.redis
+
+
+def _setUp_get_db(testcase, /):
+    return testcase.db
+
+
 def _access_subject(
     username: str = 'alice',
     user_id: int = 1,
 ) -> AccessTokenSubject:
-    """Perform access subject.
-
-    Args:
-        username: Value used by this callable.
-        user_id: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     return {
         'username': username,
         'user_id': user_id,
@@ -67,14 +69,6 @@ def _access_subject(
 
 
 def _refresh_subject(username: str = 'alice') -> dict[str, object]:
-    """Perform refresh subject.
-
-    Args:
-        username: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     return {
         'username': username,
         'family_id': 'refresh-family',
@@ -89,13 +83,15 @@ class PlaybackRouterTest(unittest.TestCase):
     """Provide PlaybackRouterTest."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         app = FastAPI()
         app.include_router(playback_router.router)
         self.redis = FakeRedis()
         self.db = AsyncMock()
-        app.dependency_overrides[get_redis_pool] = lambda: self.redis
-        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[get_redis_pool] = partial(
+            _setUp_get_redis,
+            self,
+        )
+        app.dependency_overrides[get_db] = partial(_setUp_get_db, self)
         self.client = TestClient(app)
         deployment_resolver = patch.object(
             playback,
@@ -111,7 +107,8 @@ class PlaybackRouterTest(unittest.TestCase):
         )
         self.headers = {'Authorization': f"Bearer {self.access_token}"}
         decode = patch.object(
-            playback.jwt_access, 'decode_access_token_for_deployment',
+            playback.jwt_access,
+            'decode_access_token_for_deployment',
             AsyncMock(
                 return_value=JwtAuthorizationCredentials(
                     subject=_access_subject('ChangDar'),
@@ -383,16 +380,21 @@ class PlaybackRouterTest(unittest.TestCase):
         """Lease renewal keeps every wall HLS URL and media token stable."""
         _, media = asyncio.run(
             create_media_session(
-                self.redis,  # type: ignore[arg-type]
-                user_id=1,
-                username='ChangDar',
-                site='Site A',
-                cameras=['Cam1', 'Cam2'],
-                profile='overlay',
-                parent='native:user:1',
-                platform='native',
-                quality='preview',
-                purpose='playback',
+                self.redis,
+                MediaSessionRequest(
+                    owner=MediaSessionOwner(
+                        username='ChangDar',
+                        user_id=1,
+                        parent='native:user:1',
+                        platform='native',
+                    ),
+                    cameras=['Cam1', 'Cam2'],
+                    batch=True,
+                    site='Site A',
+                    profile='overlay',
+                    quality='preview',
+                    purpose='playback',
+                ),
             ),
         )
 
@@ -429,15 +431,6 @@ def _request(
     authorization: str = '',
     session_id: str | None = None,
 ) -> SimpleNamespace:
-    """Perform request.
-
-    Args:
-        authorization: Value used by this callable.
-        session_id: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     cookies = {}
     if session_id is not None:
         cookies[playback.SESSION_COOKIE] = session_id
@@ -451,14 +444,6 @@ def _request(
 
 
 def _http_context(response: object) -> tuple[MagicMock, MagicMock]:
-    """Perform http context.
-
-    Args:
-        response: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     client = MagicMock()
     client.post = AsyncMock(return_value=response)
     context = MagicMock()
@@ -471,10 +456,11 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
     """Provide TestPlaybackCoverage."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.db = MagicMock()
         self.db.scalar = AsyncMock()
         self.redis = MagicMock()
+        self.redis.get = AsyncMock(return_value=None)
+        self.redis.exists = AsyncMock(return_value=0)
         self.binding = _DEPLOYMENT
         deployment_resolver = patch.object(
             playback,
@@ -551,7 +537,10 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             self.assertRaises(HTTPException) as revoked,
         ):
             await playback._decode_access_token(
-                'token', self.redis, self.db, self.binding,
+                'token',
+                self.redis,
+                self.db,
+                self.binding,
             )
         self.assertEqual(revoked.exception.status_code, 401)
 
@@ -569,7 +558,10 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
             self.assertRaises(HTTPException) as unavailable,
         ):
             await playback._decode_access_token(
-                'token', self.redis, self.db, self.binding,
+                'token',
+                self.redis,
+                self.db,
+                self.binding,
             )
         self.assertEqual(unavailable.exception.status_code, 503)
 
@@ -739,22 +731,38 @@ class TestPlaybackCoverage(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException):
             playback._normalise_profile('unknown')
         signed = playback._signed_stream_item(
-            {
-                'media_hls_url': '/media/index.m3u8?mt=old&keep=value',
-                'playback_url': '/play/index.m3u8?media_token=old',
-            },
+            playback.StreamingPlaybackItem(
+                session_id='sid',
+                key='Cam',
+                label='Site',
+                profile='clean',
+                rendition='detail',
+                language=None,
+                **{
+                    'media_hls_url': '/media/index.m3u8?mt=old&keep=value',
+                    'playback_url': '/play/index.m3u8?media_token=old',
+                },
+            ),
             'new-token',
         )
-        assert isinstance(signed['media_hls_url'], str)
-        assert isinstance(signed['playback_url'], str)
-        self.assertIn('mt=new-token', signed['media_hls_url'])
-        self.assertIn('mt=new-token', signed['playback_url'])
-        self.assertEqual(signed['hls_url'], signed['playback_url'])
+        assert isinstance(signed.media_hls_url, str)
+        assert isinstance(signed.playback_url, str)
+        self.assertIn('mt=new-token', signed.media_hls_url)
+        self.assertIn('mt=new-token', signed.playback_url)
+        self.assertEqual(signed.hls_url, signed.playback_url)
         self.assertEqual(
             playback._signed_stream_item(
-                {'media_hls_url': '/media'},
+                playback.StreamingPlaybackItem(
+                    session_id='sid',
+                    key='Cam',
+                    label='Site',
+                    profile='clean',
+                    rendition='detail',
+                    language=None,
+                    media_hls_url='/media',
+                ),
                 'token',
-            )['hls_url'],
+            ).hls_url,
             '/media?mt=token',
         )
 

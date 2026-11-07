@@ -61,20 +61,8 @@ def bbox_intersection(
 ) -> dict:
     """Calculate intersection area and IoU for two xyxy boxes."""
 
-    def normalise(box: Sequence[float]) -> tuple[float, float, float, float]:
-        """Perform normalise.
-
-        Args:
-            box: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        x1, y1, x2, y2 = box
-        return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
-
-    ax1, ay1, ax2, ay2 = normalise(bbox1)
-    bx1, by1, bx2, by2 = normalise(bbox2)
+    ax1, ay1, ax2, ay2 = _ordered_bbox(bbox1)
+    bx1, by1, bx2, by2 = _ordered_bbox(bbox2)
     width = max(0.0, min(ax2, bx2) - max(ax1, bx1))
     height = max(0.0, min(ay2, by2) - max(ay1, by1))
     intersection_area = width * height
@@ -96,14 +84,6 @@ def bbox_intersection(
 
 
 def _is_number(value: object) -> bool:
-    """Perform is number.
-
-    Args:
-        value: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
@@ -113,17 +93,6 @@ def _validation_errors(
     image_width: int,
     image_height: int,
 ) -> list[str]:
-    """Perform validation errors.
-
-    Args:
-        detection: Value used by this callable.
-        index: Value used by this callable.
-        image_width: Value used by this callable.
-        image_height: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     if not isinstance(detection, dict):
         return [f"[{index}] detection must be an object/dict"]
     bbox = detection.get('bbox', detection.get('box'))
@@ -180,3 +149,8 @@ def validate_detection_data(
             f"{len(errors)} errors found"
         ),
     }
+
+
+def _ordered_bbox(box: Sequence[float]) -> tuple[float, float, float, float]:
+    x1, y1, x2, y2 = box
+    return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)

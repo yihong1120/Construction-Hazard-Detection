@@ -1,4 +1,3 @@
-"""Server-owned class colors and overlay presentation policy."""
 from __future__ import annotations
 
 import hashlib

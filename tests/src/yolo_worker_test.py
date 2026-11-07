@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import queue
-import sys
 from collections.abc import Iterable
-from types import ModuleType
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -13,7 +14,195 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from examples.YOLO_server_api import model_registry
 from src import yolo_worker
+
+
+async def _shared_frame_ring_reuses_one_submit_and_reply(
+    request_queue: Any,
+    result_queue: Any,
+    /,
+    request: yolo_worker.WorkerRequestPayload,
+) -> None:
+    """Echo a completed worker result without creating a new ring."""
+    request_queue.put(request)
+    result_queue.put(
+        {
+            'id': request['id'],
+            'ok': True,
+            'detections': [],
+        },
+    )
+
+
+async def _shared_frame_ring_reuses_one_run(
+    client: Any,
+    submit_and_reply: Any,
+    /,
+) -> None:
+    """Submit two equal-sized frames through the same client."""
+    setattr(client, '_submit_request', submit_and_reply)
+    await client.detect(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        'yolo26n',
+    )
+    await client.detect(
+        np.ones((2, 2, 3), dtype=np.uint8),
+        'yolo26n',
+    )
+    await client.close()
+
+
+def _worker_run_handles_one_batch_append(handled, /, batch):
+    return handled.append([request.id for request in batch])
+
+
+def _handle_batch_returns_when_no_callback(_requests):
+    return ([], [])
+
+
+def _handle_batch_records_model_error_callback(request, /, _requests):
+    return ([np.zeros((2, 2, 3), dtype=np.uint8)], [request])
+
+
+def _handle_batch_records_model_error_throw(_model_key):
+    return (_ for _ in ()).throw(RuntimeError('model bad'))
+
+
+def _handle_batch_converts_yolo_box_callback(
+    frame,
+    request,
+    /,
+    _requests,
+):
+    return ([frame], [request])
+
+
+def _handle_batch_converts_yolo_box_callback2(model, /, _model_key):
+    return model
+
+
+def _handle_batch_serializes_only_first_get_model(
+    model: Any,
+    worker: Any,
+    /,
+    model_key: str,
+) -> _Model:
+    """Cache the test model like the real loader."""
+    worker.model_cache[model_key] = model
+    return model
+
+
+def _read_batch_frames_records_missing_throw(_request):
+    return (_ for _ in ()).throw(FileNotFoundError('missing'))
+
+
+def _read_batch_frames_records_read_throw(_request):
+    return (_ for _ in ()).throw(ValueError('bad frame'))
+
+
+def _read_batch_frames_returns_valid_callback(frame, /, _request):
+    return frame
+
+
+def _get_model_raises_when_model_make_simplenamespace():
+    return SimpleNamespace(models=[])
+
+
+def _get_model_loads_and_caches_make_simplenamespace(entry, /):
+    return SimpleNamespace(models=[entry])
+
+
+def _get_model_loads_and_caches_callback(model_path, /, _):
+    return model_path
+
+
+def _get_model_uses_pinned_engine_verify(
+    source,
+    verified,
+    /,
+    value,
+):
+    verified.append(value)
+    return source
+
+
+def _record_batch_metrics_logs_and_callback():
+    return 2
+
+
+def _read_frame_closes_mapping_when_callback(shared, /, **_kwargs):
+    return shared
+
+
+def _client_handles_close_write_and_callback(new_ring, /, *_args):
+    return new_ring
+
+
+async def _timed_out_slot_is_released_run_case() -> None:
+    ring = MagicMock()
+    client = yolo_worker.YoloWorkerClient(
+        _QueueSpy(),
+        _ResultQueue(),
+        camera_id='cam1',
+    )
+    client.ring_cleanup_delay_seconds = 0
+    client._inflight_slots['request'] = (ring, 0)
+    client._release_slot_later('request')
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    ring.release_slot.assert_called_once_with(0)
+
+
+class _ClientDetectReturnsWorkerResultCallbacks:
+    result_queue: Any
+
+    async def _call_fake_submit(
+        self,
+        request: yolo_worker.WorkerRequestPayload,
+    ) -> None:
+        """Support fake_submit.
+
+        Args:
+            request: Test helper value.
+        """
+        self.result_queue.put(
+            {
+                'id': request['id'],
+                'ok': True,
+                'detections': [[1, 2, 3, 4, 0.9, 1]],
+            },
+        )
+
+
+class _GetModelLoadsAndCachesFakeYOLO:
+    """Tests for FakeYOLO."""
+
+    _catalog_metadata: dict[str, object]
+
+    def __init__(self, path: str, task: str, *, _test_loaded_paths) -> None:
+        """Support __init__."""
+        self._test_loaded_paths = _test_loaded_paths
+        self._test_loaded_paths.append(path)
+        assert task == 'detect'
+
+
+class _GetModelUsesPinnedEngineFakeYOLO:
+    def __init__(self, path: str, task: str, *, _test_loaded):
+        self._test_loaded = _test_loaded
+        self._test_loaded.append(path)
+
+
+class _ReadFrameClosesMappingWhenBrokenSharedMemory:
+    """Provide BrokenSharedMemory."""
+
+    def __init__(self) -> None:
+        self.buf = object()
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _QueueSpy:
@@ -275,7 +464,6 @@ def test_pop_next_batch_groups_by_model_key() -> None:
 
 
 def test_pop_next_batch_respects_batch_size() -> None:
-    """Exercise this test."""
     worker = yolo_worker.YoloWorker(None)
     worker.batch_size = 1
     worker.pending = {
@@ -322,28 +510,14 @@ def test_timeout_request_keeps_ring_slot_until_worker_reads_request(
 
 
 def test_client_detect_returns_worker_result(monkeypatch: Any) -> None:
-    """Exercise this test."""
 
-    async def fake_submit(
-        request: yolo_worker.WorkerRequestPayload,
-    ) -> None:
-        """Support fake_submit.
+    _callbacks = _ClientDetectReturnsWorkerResultCallbacks()
+    fake_submit = _callbacks._call_fake_submit
 
-        Args:
-            request: Test helper value.
-        """
-        result_queue.put(
-            {
-                'id': request['id'],
-                'ok': True,
-                'detections': [[1, 2, 3, 4, 0.9, 1]],
-            },
-        )
-
-    result_queue = _ResultQueue()
+    _callbacks.result_queue = _ResultQueue()
     client = yolo_worker.YoloWorkerClient(
         _QueueSpy(),
-        result_queue,
+        _callbacks.result_queue,
         camera_id='cam1',
     )
     monkeypatch.setattr(client, '_submit_request', fake_submit)
@@ -353,7 +527,7 @@ def test_client_detect_returns_worker_result(monkeypatch: Any) -> None:
     )
 
     assert detections == [[1, 2, 3, 4, 0.9, 1]]
-    assert result_queue.messages == []
+    assert _callbacks.result_queue.messages == []
 
 
 def test_shared_frame_ring_reuses_one_allocation() -> None:
@@ -366,44 +540,24 @@ def test_shared_frame_ring_reuses_one_allocation() -> None:
         camera_id='cam1',
     )
 
-    async def submit_and_reply(
-        request: yolo_worker.WorkerRequestPayload,
-    ) -> None:
-        """Echo a completed worker result without creating a new ring."""
-        request_queue.put(request)
-        result_queue.put(
-            {
-                'id': request['id'],
-                'ok': True,
-                'detections': [],
-            },
-        )
+    submit_and_reply = partial(
+        _shared_frame_ring_reuses_one_submit_and_reply,
+        request_queue,
+        result_queue,
+    )
 
-    async def run() -> None:
-        """Submit two equal-sized frames through the same client."""
-        setattr(client, '_submit_request', submit_and_reply)
-        await client.detect(
-            np.zeros((2, 2, 3), dtype=np.uint8),
-            'yolo26n',
-        )
-        await client.detect(
-            np.ones((2, 2, 3), dtype=np.uint8),
-            'yolo26n',
-        )
-        await client.close()
+    run = partial(_shared_frame_ring_reuses_one_run, client, submit_and_reply)
 
     asyncio.run(run())
 
     assert len(request_queue.requests) == 2
-    assert (
-        request_queue.requests[0]['shm_name']
-        == (request_queue.requests[1]['shm_name'])
+    assert request_queue.requests[0]['shm_name'] == (
+        request_queue.requests[1]['shm_name']
     )
     assert {request['slot'] for request in request_queue.requests} == {0, 1}
 
 
 def test_worker_run_stops_on_stop_message() -> None:
-    """Exercise this test."""
     worker = yolo_worker.YoloWorker(_StopQueue())
 
     worker.run()
@@ -412,7 +566,6 @@ def test_worker_run_stops_on_stop_message() -> None:
 
 
 def test_worker_run_handles_one_batch(monkeypatch: Any) -> None:
-    """Exercise this test."""
     message = {
         'id': '1',
         'camera_id': 'cam1',
@@ -427,7 +580,7 @@ def test_worker_run_handles_one_batch(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         worker,
         '_handle_batch',
-        lambda batch: handled.append([request.id for request in batch]),
+        partial(_worker_run_handles_one_batch_append, handled),
     )
 
     worker.run()
@@ -436,14 +589,12 @@ def test_worker_run_handles_one_batch(monkeypatch: Any) -> None:
 
 
 def test_pop_next_batch_returns_empty_when_no_pending() -> None:
-    """Exercise this test."""
     worker = yolo_worker.YoloWorker(None)
 
     assert worker.pop_next_batch() == []
 
 
 def test_drain_queue_requeues_stop_message() -> None:
-    """Exercise this test."""
     request_queue = _DrainQueue([yolo_worker.YOLO_WORKER_STOP_MESSAGE])
     worker = yolo_worker.YoloWorker(request_queue)
 
@@ -453,7 +604,6 @@ def test_drain_queue_requeues_stop_message() -> None:
 
 
 def test_drain_queue_stores_requests_until_empty() -> None:
-    """Exercise this test."""
     request = {
         'id': '1',
         'camera_id': 'cam1',
@@ -472,7 +622,6 @@ def test_drain_queue_stores_requests_until_empty() -> None:
 
 
 def test_submit_request_raises_when_queue_full() -> None:
-    """Exercise this test."""
     client = yolo_worker.YoloWorkerClient(
         _FullQueue(),
         _ResultQueue(),
@@ -497,7 +646,6 @@ def test_submit_request_raises_when_queue_full() -> None:
 
 
 def test_wait_for_result_returns_detections() -> None:
-    """Exercise this test."""
     result_queue = _ResultQueue()
     client = yolo_worker.YoloWorkerClient(
         _QueueSpy(),
@@ -540,7 +688,6 @@ def test_wait_for_result_discards_stale_camera_response() -> None:
 
 
 def test_wait_for_result_raises_worker_error() -> None:
-    """Exercise this test."""
     result_queue = _ResultQueue()
     client = yolo_worker.YoloWorkerClient(
         _QueueSpy(),
@@ -560,7 +707,6 @@ def test_wait_for_result_raises_worker_error() -> None:
 
 
 def test_wait_for_result_times_out() -> None:
-    """Exercise this test."""
     client = yolo_worker.YoloWorkerClient(
         _QueueSpy(),
         _ResultQueue(),
@@ -573,12 +719,11 @@ def test_wait_for_result_times_out() -> None:
 
 
 def test_handle_batch_returns_when_no_valid_requests(monkeypatch: Any) -> None:
-    """Exercise this test."""
     worker = yolo_worker.YoloWorker(None)
     monkeypatch.setattr(
         worker,
         '_read_batch_frames',
-        lambda _requests: ([], []),
+        _handle_batch_returns_when_no_callback,
     )
 
     worker._handle_batch([_request('1', 'cam1', 'yolo26n')])
@@ -587,7 +732,6 @@ def test_handle_batch_returns_when_no_valid_requests(monkeypatch: Any) -> None:
 
 
 def test_handle_batch_records_model_error(monkeypatch: Any) -> None:
-    """Exercise this test."""
     result_queue = _ResultQueue()
     worker = yolo_worker.YoloWorker(
         None,
@@ -597,12 +741,12 @@ def test_handle_batch_records_model_error(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         worker,
         '_read_batch_frames',
-        lambda _requests: ([np.zeros((2, 2, 3), dtype=np.uint8)], [request]),
+        partial(_handle_batch_records_model_error_callback, request),
     )
     monkeypatch.setattr(
         worker,
         '_get_model',
-        lambda _model_key: (_ for _ in ()).throw(RuntimeError('model bad')),
+        _handle_batch_records_model_error_throw,
     )
 
     worker._handle_batch([request])
@@ -613,7 +757,6 @@ def test_handle_batch_records_model_error(monkeypatch: Any) -> None:
 
 
 def test_handle_batch_converts_yolo_box_data(monkeypatch: Any) -> None:
-    """Exercise this test."""
     result_queue = _ResultQueue()
     worker = yolo_worker.YoloWorker(
         None,
@@ -626,9 +769,13 @@ def test_handle_batch_converts_yolo_box_data(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         worker,
         '_read_batch_frames',
-        lambda _requests: ([frame], [request]),
+        partial(_handle_batch_converts_yolo_box_callback, frame, request),
     )
-    monkeypatch.setattr(worker, '_get_model', lambda _model_key: model)
+    monkeypatch.setattr(
+        worker,
+        '_get_model',
+        partial(_handle_batch_converts_yolo_box_callback2, model),
+    )
     monkeypatch.setattr(worker, 'precision_args', {'quantize': 8})
 
     worker._handle_batch([request])
@@ -654,9 +801,13 @@ def test_handle_batch_returns_result_through_camera_queue(
     monkeypatch.setattr(
         worker,
         '_read_batch_frames',
-        lambda _requests: ([np.zeros((2, 2, 3), dtype=np.uint8)], [request]),
+        partial(_handle_batch_records_model_error_callback, request),
     )
-    monkeypatch.setattr(worker, '_get_model', lambda _model_key: model)
+    monkeypatch.setattr(
+        worker,
+        '_get_model',
+        partial(_handle_batch_converts_yolo_box_callback2, model),
+    )
 
     worker._handle_batch([request])
 
@@ -677,13 +828,14 @@ def test_handle_batch_serializes_only_first_engine_inference(
     monkeypatch.setattr(
         worker,
         '_read_batch_frames',
-        lambda _requests: ([frame], [request]),
+        partial(_handle_batch_converts_yolo_box_callback, frame, request),
     )
 
-    def get_model(model_key: str) -> _Model:
-        """Cache the test model like the real loader."""
-        worker.model_cache[model_key] = model
-        return model
+    get_model = partial(
+        _handle_batch_serializes_only_first_get_model,
+        model,
+        worker,
+    )
 
     monkeypatch.setattr(worker, '_get_model', get_model)
 
@@ -696,7 +848,6 @@ def test_handle_batch_serializes_only_first_engine_inference(
 def test_read_batch_frames_records_missing_shared_memory(
     monkeypatch: Any,
 ) -> None:
-    """Exercise this test."""
     result_queue = _ResultQueue()
     worker = yolo_worker.YoloWorker(
         None,
@@ -706,7 +857,7 @@ def test_read_batch_frames_records_missing_shared_memory(
     monkeypatch.setattr(
         worker,
         '_read_frame',
-        lambda _request: (_ for _ in ()).throw(FileNotFoundError('missing')),
+        _read_batch_frames_records_missing_throw,
     )
 
     frames, valid_requests = worker._read_batch_frames([request])
@@ -719,7 +870,6 @@ def test_read_batch_frames_records_missing_shared_memory(
 
 
 def test_read_batch_frames_records_read_error(monkeypatch: Any) -> None:
-    """Exercise this test."""
     result_queue = _ResultQueue()
     worker = yolo_worker.YoloWorker(
         None,
@@ -729,7 +879,7 @@ def test_read_batch_frames_records_read_error(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         worker,
         '_read_frame',
-        lambda _request: (_ for _ in ()).throw(ValueError('bad frame')),
+        _read_batch_frames_records_read_throw,
     )
 
     frames, valid_requests = worker._read_batch_frames([request])
@@ -742,14 +892,13 @@ def test_read_batch_frames_records_read_error(monkeypatch: Any) -> None:
 
 
 def test_read_batch_frames_returns_valid_frame(monkeypatch: Any) -> None:
-    """Exercise this test."""
     frame = np.arange(12, dtype=np.uint8).reshape(2, 2, 3)
     worker = yolo_worker.YoloWorker(None)
     request = _request('1', 'cam1', 'yolo26n')
     monkeypatch.setattr(
         worker,
         '_read_frame',
-        lambda _request: frame,
+        partial(_read_batch_frames_returns_valid_callback, frame),
     )
 
     frames, valid_requests = worker._read_batch_frames([request])
@@ -790,7 +939,6 @@ def test_read_frame_maps_shared_memory() -> None:
 
 
 def test_get_model_returns_cached_model() -> None:
-    """Exercise this test."""
     worker = yolo_worker.YoloWorker(None)
     model = _Model(np.empty((0, 6), dtype=float))
     worker.model_cache['yolo26n'] = model
@@ -799,16 +947,16 @@ def test_get_model_returns_cached_model() -> None:
 
 
 def test_get_model_raises_when_model_missing(
-    tmp_path: Any, monkeypatch: Any,
+    tmp_path: Any,
+    monkeypatch: Any,
 ) -> None:
-    """Exercise this test."""
     worker = yolo_worker.YoloWorker(None)
     worker.model_dir = tmp_path
 
-    from examples.YOLO_server_api import model_registry
-
     monkeypatch.setattr(
-        model_registry, 'load_registry', lambda: SimpleNamespace(models=[]),
+        yolo_worker,
+        'load_registry',
+        _get_model_raises_when_model_make_simplenamespace,
     )
     with pytest.raises(FileNotFoundError, match='Unpublished'):
         worker._get_model('missing')
@@ -818,56 +966,58 @@ def test_get_model_loads_and_caches_model(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
-    """Exercise this test."""
     loaded_paths: list[str] = []
-    module = ModuleType('ultralytics')
 
-    class FakeYOLO:
-        """Tests for FakeYOLO."""
+    FakeYOLO = partial(
+        _GetModelLoadsAndCachesFakeYOLO,
+        _test_loaded_paths=loaded_paths,
+    )
 
-        _catalog_metadata: dict[str, object]
-
-        def __init__(self, path: str, task: str) -> None:
-            """Support __init__."""
-            loaded_paths.append(path)
-            assert task == 'detect'
-
-    setattr(module, 'YOLO', FakeYOLO)
-    monkeypatch.setitem(sys.modules, 'ultralytics', module)
+    monkeypatch.setattr(yolo_worker, 'YOLO', FakeYOLO)
     worker = yolo_worker.YoloWorker(None)
     worker.model_dir = tmp_path
     model_path = tmp_path / f'best_yolo26n{worker.model_suffix}'
     model_path.write_text('model')
-    from examples.YOLO_server_api import model_registry
-
-    entry = SimpleNamespace(
+    entry = model_registry.ModelEntry(
         id='yolo26n',
+        display_name='Detector',
+        artifact=str(model_path),
+        sha256=hashlib.sha256(model_path.read_bytes()).hexdigest(),
         version='actual-commit',
         classes=[
             model_registry.ModelClass(
-                id=0, code='forklift', display_name='堆高機', color='#AB47BC',
+                id=0,
+                code='forklift',
+                display_name='堆高機',
+                color='#AB47BC',
             ),
         ],
         enabled=True,
         capabilities=['stream'],
     )
     monkeypatch.setattr(
-        model_registry,
+        yolo_worker,
         'load_registry',
-        lambda: SimpleNamespace(models=[entry]),
+        partial(_get_model_loads_and_caches_make_simplenamespace, entry),
     )
     monkeypatch.setattr(
-        model_registry, 'verify_artifact', lambda _: model_path,
+        yolo_worker,
+        'verify_artifact',
+        partial(_get_model_loads_and_caches_callback, model_path),
     )
 
     model = worker._get_model('yolo26n')
 
-    assert isinstance(model, FakeYOLO)
+    assert isinstance(model, _GetModelLoadsAndCachesFakeYOLO)
     assert loaded_paths == [str(model_path)]
     assert worker.model_cache['yolo26n'] is model
     assert model._catalog_metadata == {
         'model_id': 'yolo26n',
         'model_version': 'actual-commit',
+        'catalog_revision': model_registry.revision_for(
+            entry.model_dump(exclude={'id'}),
+        ),
+        'model_sha256': entry.sha256,
         'class_metadata': [
             {
                 'id': 0,
@@ -879,6 +1029,74 @@ def test_get_model_loads_and_caches_model(
     }
 
 
+@pytest.mark.parametrize('precision', ['int8', 'f32'])
+def test_get_model_uses_pinned_engine_only_for_int8(
+    monkeypatch: Any,
+    tmp_path: Any,
+    precision: str,
+) -> None:
+    """A stream variant cannot change the published source or FP32 path."""
+    source = tmp_path / 'model.pt'
+    source.write_bytes(b'published-weights')
+    engine = tmp_path / 'model.engine'
+    engine.write_bytes(b'local-engine')
+    entry = model_registry.ModelEntry(
+        id='yolo26n',
+        display_name='Detector',
+        artifact=str(source),
+        version='v1',
+        enabled=True,
+        capabilities=['stream'],
+        sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        classes=[],
+    )
+    manifest = tmp_path / 'engines.json'
+    manifest.write_text(
+        json.dumps(
+            {
+                'format': 1,
+                'models': {
+                    entry.id: {
+                        'version': entry.version,
+                        'source_sha256': entry.sha256,
+                        'artifact': str(engine),
+                        'sha256': hashlib.sha256(
+                            engine.read_bytes(),
+                        ).hexdigest(),
+                    },
+                },
+            },
+        ),
+    )
+    monkeypatch.setenv('YOLO_WORKER_PRECISION', precision)
+    monkeypatch.setenv('YOLO_WORKER_ARTIFACT_MANIFEST', str(manifest))
+    verified: list[object] = []
+
+    verify = partial(_get_model_uses_pinned_engine_verify, source, verified)
+
+    monkeypatch.setattr(yolo_worker, 'verify_artifact', verify)
+    monkeypatch.setattr(
+        yolo_worker,
+        'load_registry',
+        partial(_get_model_loads_and_caches_make_simplenamespace, entry),
+    )
+    loaded: list[str] = []
+
+    FakeYOLO = partial(_GetModelUsesPinnedEngineFakeYOLO, _test_loaded=loaded)
+
+    monkeypatch.setattr(yolo_worker, 'YOLO', FakeYOLO)
+    worker = yolo_worker.YoloWorker(None)
+    worker._get_model(entry.id)
+    assert verified == [entry]
+    assert loaded == [str(engine if precision == 'int8' else source)]
+    if precision == 'int8':
+        engine.write_bytes(b'changed-after-publication')
+        worker.model_cache.clear()
+        with pytest.raises(ValueError, match='checksum'):
+            worker._get_model(entry.id)
+        assert loaded == [str(engine)]
+
+
 def test_record_batch_metrics_logs_and_resets_counters(
     monkeypatch: Any,
     caplog: pytest.LogCaptureFixture,
@@ -887,7 +1105,11 @@ def test_record_batch_metrics_logs_and_resets_counters(
     worker = yolo_worker.YoloWorker(None)
     worker.metrics_interval_seconds = 1
     worker._metrics_started_at = 0
-    monkeypatch.setattr(yolo_worker.time, 'monotonic', lambda: 2)
+    monkeypatch.setattr(
+        yolo_worker.time,
+        'monotonic',
+        _record_batch_metrics_logs_and_callback,
+    )
 
     with caplog.at_level('INFO'):
         worker._record_batch_metrics('yolo26n', 2, 0.5)
@@ -905,7 +1127,11 @@ def test_record_batch_metrics_accumulates_until_interval_elapsed(
     worker = yolo_worker.YoloWorker(None)
     worker.metrics_interval_seconds = 3
     worker._metrics_started_at = 0
-    monkeypatch.setattr(yolo_worker.time, 'monotonic', lambda: 2)
+    monkeypatch.setattr(
+        yolo_worker.time,
+        'monotonic',
+        _record_batch_metrics_logs_and_callback,
+    )
 
     worker._record_batch_metrics('yolo26n', 2, 0.5)
 
@@ -932,23 +1158,13 @@ def test_read_frame_closes_mapping_when_array_construction_fails(
 ) -> None:
     """A malformed shared-memory request releases its mapped handle."""
 
-    class BrokenSharedMemory:
-        """Provide BrokenSharedMemory."""
-
-        def __init__(self) -> None:
-            """Perform init."""
-            self.buf = object()
-            self.closed = False
-
-        def close(self) -> None:
-            """Perform close."""
-            self.closed = True
+    BrokenSharedMemory = _ReadFrameClosesMappingWhenBrokenSharedMemory
 
     shared = BrokenSharedMemory()
     monkeypatch.setattr(
         yolo_worker.shared_memory,
         'SharedMemory',
-        lambda **_kwargs: shared,
+        partial(_read_frame_closes_mapping_when_callback, shared),
     )
 
     with pytest.raises(TypeError):
@@ -1016,7 +1232,7 @@ def test_client_handles_close_write_and_retired_ring_paths(
     monkeypatch.setattr(
         yolo_worker._SharedFrameRing,
         'create',
-        lambda *_args: new_ring,
+        partial(_client_handles_close_write_and_callback, new_ring),
     )
     asyncio.run(
         client._write_frame(
@@ -1082,20 +1298,6 @@ def test_worker_configuration_and_queue_guard_paths(
 def test_timed_out_slot_is_released_after_cleanup_delay() -> None:
     """Late worker cleanup returns a timed-out ring slot to its owner."""
 
-    async def run_case() -> None:
-        """Perform run case."""
-        ring = MagicMock()
-        client = yolo_worker.YoloWorkerClient(
-            _QueueSpy(),
-            _ResultQueue(),
-            camera_id='cam1',
-        )
-        client.ring_cleanup_delay_seconds = 0
-        client._inflight_slots['request'] = (ring, 0)
-        client._release_slot_later('request')
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-
-        ring.release_slot.assert_called_once_with(0)
+    run_case = _timed_out_slot_is_released_run_case
 
     asyncio.run(run_case())

@@ -4,6 +4,8 @@ import hashlib
 from datetime import datetime
 
 from cryptography.fernet import Fernet
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.models import FcmDeviceToken
 
@@ -35,12 +37,26 @@ def decrypt_token(encrypted_token: str, encryption_key: str) -> str:
     )
 
 
-def disable_undecryptable_token(
+async def disable_undecryptable_token(
+    db: AsyncSession,
     row: FcmDeviceToken,
     occurred_at: datetime,
-) -> None:
-    """Mark a token row unusable when its ciphertext cannot be recovered."""
-    row.disabled_at = occurred_at
-    row.last_failure_at = occurred_at
-    row.failure_reason = 'token_decryption_failed'
-    row.updated_at = occurred_at
+) -> bool:
+    """Disable only the exact registration whose ciphertext failed."""
+    result = await db.execute(
+        update(FcmDeviceToken).where(
+            FcmDeviceToken.id == row.id,
+            FcmDeviceToken.user_id == row.user_id,
+            FcmDeviceToken.last_seen_at == row.last_seen_at,
+            FcmDeviceToken.device_token_encrypted == (
+                row.device_token_encrypted
+            ),
+            FcmDeviceToken.disabled_at.is_(None),
+        ).values(
+            disabled_at=occurred_at, last_failure_at=occurred_at,
+            failure_reason='token_decryption_failed', updated_at=occurred_at,
+        ).execution_options(synchronize_session=False).returning(
+            FcmDeviceToken.id,
+        ),
+    )
+    return result.scalar_one_or_none() is not None

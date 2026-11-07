@@ -8,18 +8,19 @@ from typing import Any
 from typing import Literal
 
 import anyio
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from pydantic import ValidationError
 
 from examples.mcp_server.config import get_transport_config
 from examples.mcp_server.schemas import DetectionLikeDict
 from examples.mcp_server.schemas import HazardResponse
 from examples.mcp_server.schemas import InferenceResponse
-from examples.mcp_server.schemas import TransportConfig
 from examples.mcp_server.tools.hazard import HazardTools
 from examples.mcp_server.tools.inference import InferenceTools
 from examples.mcp_server.tools.model import ModelTools
 from examples.mcp_server.tools.notify import NotifyTools
 from examples.mcp_server.tools.record import RecordTools
+from examples.mcp_server.tools.record import ViolationUpload
 from examples.mcp_server.tools.streaming import StreamingTools
 from examples.mcp_server.tools.utils import bbox_intersection
 from examples.mcp_server.tools.utils import calculate_polygon_area
@@ -46,7 +47,7 @@ model_tools = ModelTools()
 
 
 @asynccontextmanager
-async def _mcp_lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
+async def _mcp_lifespan(_server: MCPServer) -> AsyncIterator[dict[str, Any]]:
     """Close tool-owned network and model resources at server shutdown."""
     try:
         yield {}
@@ -70,7 +71,7 @@ async def _mcp_lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                     )
 
 
-mcp = FastMCP('construction-hazard-detection', lifespan=_mcp_lifespan)
+mcp = MCPServer('construction-hazard-detection', lifespan=_mcp_lifespan)
 
 # === INFERENCE TOOLS ===
 
@@ -284,12 +285,25 @@ async def record_send_violation(
     """Upload an authenticated record with explicit site, stream and model
     identity.
     """
-    return await record_tools.send_violation(
-        image_base64=image_base64, detections=detections, warnings=warnings,
-        site=site, stream_name=stream_name, model_id=model_id,
-        model_version=model_version, timestamp=timestamp,
-        cone_polygon=cone_polygon, pole_polygon=pole_polygon,
-    )
+    try:
+        upload = ViolationUpload(
+            image_base64=image_base64,
+            detections=detections,
+            warnings=warnings,
+            site=site,
+            stream_name=stream_name,
+            model_id=model_id,
+            model_version=model_version,
+            timestamp=timestamp,
+            cone_polygon=cone_polygon,
+            pole_polygon=pole_polygon,
+        )
+    except ValidationError:
+        return {
+            'success': False, 'record_id': None,
+            'message': 'Invalid violation upload fields',
+        }
+    return await record_tools.send_violation(upload)
 
 
 @mcp.tool(
@@ -399,33 +413,29 @@ def utils_validate_detections(
     return validate_detection_data(detections, image_width, image_height)
 
 
-def _configure_mcp_transport(transport_config: TransportConfig) -> None:
-    """Apply runtime transport settings to the registered MCP server."""
-    settings = mcp.settings
-    settings.host = transport_config['host']
-    settings.port = transport_config['port']
-    settings.streamable_http_path = transport_config['path']
-    settings.sse_path = transport_config['sse_path']
-    settings.debug = transport_config['debug']
-    settings.stateless_http = (
-        transport_config['transport'] == 'streamable-http'
-    )
-
-
 async def run_server() -> None:
     """Run the MCP server with configured transport."""
     transport_config = get_transport_config()
 
     logger.info('Starting Construction Hazard Detection MCP Server')
     logger.info(f"Transport: {transport_config['transport']}")
-    _configure_mcp_transport(transport_config)
+    mcp.settings.debug = transport_config['debug']
 
     if transport_config['transport'] == 'stdio':
         await mcp.run_stdio_async()
     elif transport_config['transport'] == 'sse':
-        await mcp.run_sse_async()
+        await mcp.run_sse_async(
+            host=transport_config['host'],
+            port=transport_config['port'],
+            sse_path=transport_config['sse_path'],
+        )
     elif transport_config['transport'] == 'streamable-http':
-        await mcp.run_streamable_http_async()
+        await mcp.run_streamable_http_async(
+            host=transport_config['host'],
+            port=transport_config['port'],
+            streamable_http_path=transport_config['path'],
+            stateless_http=True,
+        )
     else:
         raise ValueError(
             f"Unsupported transport type: {transport_config['transport']}",

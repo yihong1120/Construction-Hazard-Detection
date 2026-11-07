@@ -29,7 +29,10 @@ def session_timeout_payload() -> dict[str, str]:
     return {
         'status': 'closing',
         'reason': 'session_timeout',
-        'message': 'WebSocket session reached 5-minute limit.',
+        'message': (
+            f'WebSocket session reached {WS_MAX_SESSION_SECONDS:g}'
+            '-second limit.'
+        ),
     }
 
 
@@ -75,7 +78,7 @@ async def check_and_maybe_close_on_timeout(
             client_label,
         )
 
-    await websocket.close(code=1000, reason='Session timeout (5 minutes)')
+    await websocket.close(code=1000, reason='Session timeout')
     return True
 
 

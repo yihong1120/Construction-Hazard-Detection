@@ -10,6 +10,13 @@ from fastapi import WebSocketDisconnect
 import examples.shared.ws_utils as ws_utils
 
 
+class _IsWebsocketConnectedExceptionBranchExploding:
+    """Helper that raises on any attribute access."""
+
+    def __getattribute__(self, name: str) -> object:
+        raise RuntimeError('boom')
+
+
 class TestWSUtils(unittest.IsolatedAsyncioTestCase):
     """Tests for the safe WebSocket utilities."""
 
@@ -54,19 +61,7 @@ class TestWSUtils(unittest.IsolatedAsyncioTestCase):
     def test_is_websocket_connected_exception_branch(self) -> None:
         """It should swallow non-AttributeError exceptions and return False."""
 
-        class Exploding:
-            """Helper that raises on any attribute access."""
-
-            def __getattribute__(self, name: str) -> object:
-                """Perform getattribute.
-
-                Args:
-                    name: Value used by this callable.
-
-                Returns:
-                    The callable result.
-                """
-                raise RuntimeError('boom')
+        Exploding = _IsWebsocketConnectedExceptionBranchExploding
 
         # hasattr raises a non-AttributeError; ws_utils catches it and
         # returns False via the exception handler.

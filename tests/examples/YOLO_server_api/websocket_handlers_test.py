@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import unittest
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -11,6 +13,28 @@ from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 
 from examples.YOLO_server_api import websocket_handlers as ws_mod
+from examples.YOLO_server_api.image_input import DetectionInputError
+
+
+async def _setUp_load(websocket, key, client_ip, loader):
+    return loader.get_model(key)
+
+
+async def _idle_receive_is_closed_at_receive(stalled, /, *args):
+    await stalled.wait()
+
+
+async def _model_preparation_is_part_of_prepare(asyncio, /, *args):
+    await asyncio.Event().wait()
+
+
+async def _authentication_is_part_of_the_authenticate(
+    asyncio,
+    /,
+    *args,
+    **kwargs,
+):
+    await asyncio.Event().wait()
 
 
 class TestGetModelKeyFromWs(unittest.IsolatedAsyncioTestCase):
@@ -74,7 +98,7 @@ class TestWebsocketEnvironmentHelpers(unittest.TestCase):
     def test_local_auth_bypass_handles_unset_and_non_ip_clients(self) -> None:
         """Local-only bypass handles absent flags and host names safely."""
         with patch.dict('os.environ', {}, clear=False):
-            self.assertTrue(ws_mod._env_bool('MISSING_WS_SWITCH', True))
+            self.assertTrue(ws_mod.WebSocketSettings().allow_localhost_bypass)
         with patch.dict(
             'os.environ',
             {'YOLO_WS_ALLOW_LOCALHOST_BYPASS': 'true'},
@@ -128,75 +152,58 @@ class TestSendReadyConfig(unittest.IsolatedAsyncioTestCase):
 
 
 class TestProcessFrameAndRespond(unittest.IsolatedAsyncioTestCase):
-    """Tests for processing a single frame and responding via WebSocket."""
 
-    async def test_process_and_send_success(self) -> None:
-        """Successful detection sends response and returns True."""
-        ws = MagicMock(spec=WebSocket)
-        ws.scope = {}
-        img = b'bytes'
-        datas = {'result': 1}
-        with (
-            patch.object(
-                ws_mod,
-                'run_detection_from_bytes',
-                new=AsyncMock(return_value=(datas, None)),
-            ) as detect_mock,
-            patch.object(
+    async def test_invalid_frame_returns_shared_input_code_and_closes_session(
+        self,
+    ):
+        selection = SimpleNamespace(
+            detect=AsyncMock(side_effect=DetectionInputError()),
+        )
+        websocket = AsyncMock()
+        with patch.object(
+            ws_mod,
+            '_safe_websocket_send_json',
+            new=AsyncMock(return_value=True),
+        ) as send:
+            self.assertFalse(
+                await ws_mod._process_frame_and_respond(
+                    websocket,
+                    b'bad',
+                    selection,
+                    'test',
+                    'operator',
+                ),
+            )
+        self.assertEqual(send.await_args.args[1]['code'], 'INVALID_IMAGE')
+        self.assertEqual(send.await_args.args[1]['http_status'], 400)
+        self.assertEqual(websocket.close.await_args.kwargs['code'], 1003)
+
+    async def test_shared_runtime_selection_sends_detection_results(self):
+        for sent in (True, False):
+            selection = SimpleNamespace(
+                detect=AsyncMock(
+                    return_value=SimpleNamespace(rows=[[1, 2, 3, 4, 0.9, 2]]),
+                ),
+            )
+            with patch.object(
                 ws_mod,
                 '_safe_websocket_send_json',
-                new=AsyncMock(return_value=True),
-            ) as send_mock,
-        ):
-            ok = await ws_mod._process_frame_and_respond(
-                ws,
-                img,
-                object(),
-                '1.2.3.4',
-                'eve',
-            )
-            self.assertTrue(ok)
-            detect_mock.assert_awaited_once()
-            call = getattr(detect_mock, 'await_args', None)
-            self.assertIsNotNone(call)
-            if call is not None:
-                self.assertIs(
-                    call.kwargs.get('semaphore'),
-                    ws_mod.WS_INFERENCE_SEMAPHORE,
+                new=AsyncMock(return_value=sent),
+            ):
+                result = await ws_mod._process_frame_and_respond(
+                    MagicMock(),
+                    b'image',
+                    selection,
+                    'test',
+                    'operator',
                 )
-            send_mock.assert_awaited_once()
-
-    async def test_process_and_send_failure(self) -> None:
-        """When send fails, method returns False to stop the loop."""
-        ws = MagicMock(spec=WebSocket)
-        ws.scope = {}
-        img = b'bytes'
-        with (
-            patch.object(
-                ws_mod,
-                'run_detection_from_bytes',
-                new=AsyncMock(return_value=({}, None)),
-            ),
-            patch.object(
-                ws_mod,
-                '_safe_websocket_send_json',
-                new=AsyncMock(return_value=False),
-            ),
-        ):
-            ok = await ws_mod._process_frame_and_respond(
-                ws,
-                img,
-                object(),
-                '1.2.3.4',
-                'eve',
-            )
-            self.assertFalse(ok)
+            self.assertEqual(result, sent)
+            selection.detect.assert_awaited_once_with(b'image')
 
 
 class TestPrepareModelAndNotify(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        async def load(websocket, key, client_ip, loader):
-            return loader.get_model(key)
+        load = _setUp_load
 
         patcher = patch.object(ws_mod, '_load_session_model', side_effect=load)
         patcher.start()
@@ -315,7 +322,7 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
             count = await ws_mod._detect_loop(
                 ws,
                 0.0,
-                object(),
+                MagicMock(spec=ws_mod.ModelSelection),
                 '1.2.3.4',
                 'alice',
             )
@@ -340,7 +347,7 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
             count = await ws_mod._detect_loop(
                 ws,
                 0.0,
-                object(),
+                MagicMock(spec=ws_mod.ModelSelection),
                 '1.2.3.4',
                 'bob',
             )
@@ -371,7 +378,7 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
             count = await ws_mod._detect_loop(
                 ws,
                 0.0,
-                object(),
+                MagicMock(spec=ws_mod.ModelSelection),
                 '1.2.3.4',
                 'carol',
             )
@@ -401,7 +408,7 @@ class TestDetectLoop(unittest.IsolatedAsyncioTestCase):
             count = await ws_mod._detect_loop(
                 ws,
                 0.0,
-                object(),
+                MagicMock(spec=ws_mod.ModelSelection),
                 '1.2.3.4',
                 'dave',
             )
@@ -436,14 +443,14 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
     def test_should_bypass_local_auth(self) -> None:
         """Only loopback clients bypass JWT when explicitly enabled."""
         with patch.dict(
-            ws_mod.os.environ,
+            os.environ,
             {'YOLO_WS_ALLOW_LOCALHOST_BYPASS': 'true'},
         ):
             self.assertTrue(ws_mod._should_bypass_local_auth('127.0.0.1'))
             self.assertTrue(ws_mod._should_bypass_local_auth('::1'))
             self.assertFalse(ws_mod._should_bypass_local_auth('9.9.9.9'))
         with patch.dict(
-            ws_mod.os.environ,
+            os.environ,
             {'YOLO_WS_ALLOW_LOCALHOST_BYPASS': 'false'},
         ):
             self.assertFalse(ws_mod._should_bypass_local_auth('127.0.0.1'))
@@ -458,7 +465,7 @@ class TestHandleWebsocketDetect(unittest.IsolatedAsyncioTestCase):
         model_obj: object = object()
         with (
             patch.dict(
-                ws_mod.os.environ,
+                os.environ,
                 {'YOLO_WS_ALLOW_LOCALHOST_BYPASS': 'true'},
             ),
             patch.object(
@@ -699,18 +706,28 @@ class TestCatalogSessionModel(unittest.IsolatedAsyncioTestCase):
             headers={'x-model-version': 'commit'},
         )
         loader = MagicMock()
+        loader.prepare = AsyncMock()
         entry = object()
         with patch.object(
-            ws_mod, 'require_model', return_value=entry,
+            ws_mod,
+            'select_model_async',
+            return_value=entry,
         ) as require:
             result = await ws_mod._load_session_model(
-                ws, 'custom', '1.2.3.4', loader,
+                ws,
+                'custom',
+                '1.2.3.4',
+                loader,
             )
         require.assert_called_once_with(
-            'custom', 'commit', 't1', 'user', 'image',
+            'custom',
+            'commit',
+            't1',
+            'user',
+            'image',
         )
-        loader.get_registry_model.assert_called_once_with(entry)
-        self.assertIs(result, loader.get_registry_model.return_value)
+        loader.prepare.assert_awaited_once_with(entry)
+        self.assertIs(result, loader.prepare.return_value)
 
     async def test_remote_session_cannot_use_missing_scope(self):
         from fastapi import HTTPException
@@ -719,6 +736,124 @@ class TestCatalogSessionModel(unittest.IsolatedAsyncioTestCase):
         ws = SimpleNamespace(scope={}, headers={})
         with self.assertRaises(HTTPException) as raised:
             await ws_mod._load_session_model(
-                ws, 'custom', '1.2.3.4', MagicMock(),
+                ws,
+                'custom',
+                '1.2.3.4',
+                MagicMock(),
             )
         self.assertEqual(raised.exception.status_code, 403)
+
+
+class WebsocketDeadlineTest(unittest.IsolatedAsyncioTestCase):
+    async def test_idle_receive_is_closed_at_absolute_deadline(self):
+        import asyncio
+
+        ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+        ws.client = SimpleNamespace(host='external')
+        stalled = asyncio.Event()
+
+        receive = partial(_idle_receive_is_closed_at_receive, stalled)
+
+        selection = SimpleNamespace(detect=AsyncMock())
+        with (
+            patch.object(ws_mod, 'WS_MAX_SESSION_SECONDS', 0.03),
+            patch.object(
+                ws_mod,
+                'authenticate_ws_or_none',
+                new=AsyncMock(return_value=('operator', {'subject': {}})),
+            ),
+            patch.object(
+                ws_mod,
+                '_prepare_model_and_notify',
+                new=AsyncMock(return_value=selection),
+            ),
+            patch.object(ws_mod, '_safe_websocket_receive_bytes', receive),
+        ):
+            await asyncio.wait_for(
+                ws_mod.handle_websocket_detect(
+                    ws,
+                    MagicMock(),
+                    MagicMock(),
+                    MagicMock(),
+                ),
+                1,
+            )
+        ws.close.assert_awaited_once_with(code=1000, reason='Session timeout')
+        selection.detect.assert_not_awaited()
+
+    async def test_model_preparation_is_part_of_the_same_deadline(self):
+        import asyncio
+
+        ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+        ws.client = SimpleNamespace(host='external')
+
+        prepare = partial(_model_preparation_is_part_of_prepare, asyncio)
+
+        with (
+            patch.object(ws_mod, 'WS_MAX_SESSION_SECONDS', 0.03),
+            patch.object(
+                ws_mod,
+                'authenticate_ws_or_none',
+                new=AsyncMock(return_value=('operator', {'subject': {}})),
+            ),
+            patch.object(ws_mod, '_prepare_model_and_notify', prepare),
+        ):
+            await asyncio.wait_for(
+                ws_mod.handle_websocket_detect(
+                    ws,
+                    MagicMock(),
+                    MagicMock(),
+                    MagicMock(),
+                ),
+                1,
+            )
+        ws.close.assert_awaited_once_with(code=1000, reason='Session timeout')
+
+    async def test_authentication_is_part_of_the_same_deadline(self):
+        import asyncio
+
+        ws = MagicMock(spec=WebSocket)
+        ws.scope = {}
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+        ws.client = SimpleNamespace(host='external')
+
+        authenticate = partial(
+            _authentication_is_part_of_the_authenticate,
+            asyncio,
+        )
+
+        with (
+            patch.object(ws_mod, 'WS_MAX_SESSION_SECONDS', 0.03),
+            patch.object(ws_mod, 'authenticate_ws_or_none', authenticate),
+        ):
+            await asyncio.wait_for(
+                ws_mod.handle_websocket_detect(
+                    ws,
+                    MagicMock(),
+                    MagicMock(),
+                    MagicMock(),
+                ),
+                1,
+            )
+        ws.close.assert_awaited_once_with(code=1000, reason='Session timeout')
+
+
+class LocalWebsocketVersionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_local_session_still_passes_requested_version(self):
+        ws = SimpleNamespace(scope={}, headers={'x-model-version': 'v1'})
+        runtime = SimpleNamespace(prepare=AsyncMock())
+        with patch.object(
+            ws_mod,
+            'select_local_model_async',
+            new=AsyncMock(),
+        ) as select:
+            await ws_mod._load_session_model(ws, 'model', '127.0.0.1', runtime)
+        select.assert_awaited_once_with('model', 'v1')
+        runtime.prepare.assert_awaited_once_with(select.return_value)

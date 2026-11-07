@@ -16,6 +16,7 @@ from examples.violation_records.path_utils import _determine_media_type
 from examples.violation_records.path_utils import normalise_safe_relative_path
 from examples.violation_records.path_utils import resolve_authorised_media_path
 from examples.violation_records.settings import STATIC_DIR
+from examples.violation_records.site_scope import violation_site_scope
 
 
 async def _authorise_media_access(
@@ -44,7 +45,7 @@ async def _authorise_media_access(
         select(Violation.id)
         .where(
             Violation.image_path == safe_path.as_posix(),
-            Violation.site.in_(site_names),
+            violation_site_scope(site_names),
         )
         .limit(1),
     )

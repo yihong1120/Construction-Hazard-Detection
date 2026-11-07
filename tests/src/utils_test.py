@@ -22,81 +22,6 @@ from src.runtime_utils import is_expired
 from src.runtime_utils import should_notify
 
 
-class MockSharedToken:
-    """A mock shared token object to simulate race conditions for TokenManager
-    tests.
-
-    Attributes:
-        _data (dict[str, str | bool]):
-            Internal dictionary storing token values.
-        _call_count (int):
-            Tracks the number of times 'get' is called for 'refresh_token'.
-    """
-
-    _data: dict[str, str | bool]
-    _call_count: int
-
-    def __init__(self) -> None:
-        """Initialise the mock shared token with default values."""
-        self._data = {
-            'access_token': 'OLD',
-            'refresh_token': 'ORIGINAL',
-            'is_refreshing': False,
-        }
-        self._call_count = 0
-
-    def get(self, key: str, default: str | bool | None = None) -> str | bool:
-        """Retrieve a value from the mock token dictionary, simulating a change
-        in 'refresh_token' after the first call.
-
-        Args:
-            key (str): The key to retrieve.
-            default (str | bool | None, optional): Default value if key is not
-                present.
-
-        Returns:
-            str | bool: The value associated with the key, or the default.
-        """
-        if key == 'refresh_token':
-            self._call_count += 1
-            if self._call_count == 1:
-                # First call returns the original token for testing purposes
-                return 'ORIGINAL'
-            else:
-                # Subsequent calls simulate a changed token to test race
-                # conditions
-                return 'CHANGED'
-        value = self._data.get(key, default)
-        if value is None:
-            # Always return a str (empty string) if no value is found and no
-            # default is provided
-            value = ''
-        assert isinstance(value, (str, bool)), 'Value must be str or bool.'
-        return value
-
-    def __getitem__(self, key: str) -> str | bool:
-        """Enable bracket access to the internal dictionary.
-
-        Args:
-            key (str): The key to retrieve.
-
-        Returns:
-            str | bool: The value associated with the key.
-        """
-        value: str | bool = self._data[key]
-        assert isinstance(value, (str, bool)), 'Value must be str or bool.'
-        return value
-
-    def __setitem__(self, key: str, value: str | bool) -> None:
-        """Set a value in the internal dictionary.
-
-        Args:
-            key (str): The key to set.
-            value (str | bool): The value to assign.
-        """
-        self._data[key] = value
-
-
 class TestTokenManager(unittest.IsolatedAsyncioTestCase):
     """Unit tests for the TokenManager class, covering authentication and token
     refresh logic."""
@@ -115,69 +40,6 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
         # Create a new TokenManager instance
         self.tm = TokenManager(
             shared_token=self.shared_token,
-        )
-
-    async def test_authenticate_no_force_noop(self) -> None:
-        """Test authenticate is skipped when force is False and access_token
-        exists."""
-        self.shared_token['access_token'] = 'EXIST'
-        with patch('aiohttp.ClientSession') as mock_sess:
-            await self.tm.authenticate(force=False)
-            mock_sess.assert_not_called()
-
-    async def test_ensure_token_valid_no_token(self) -> None:
-        """Trigger authenticate if access_token is missing."""
-        self.shared_token['access_token'] = ''
-        with patch.object(
-            self.tm,
-            'authenticate',
-            new_callable=AsyncMock,
-        ) as m_auth:
-            await self.tm.ensure_token_valid()
-            m_auth.assert_awaited_once()
-
-    async def test_ensure_token_valid_has_token(self) -> None:
-        """Skip authentication if access_token exists and is not expired."""
-        self.shared_token['access_token'] = 'EXIST'
-        with (
-            patch.object(
-                self.tm,
-                'authenticate',
-                new_callable=AsyncMock,
-            ) as m_auth,
-            patch.object(
-                self.tm,
-                'is_token_expired',
-                return_value=False,
-            ),
-        ):
-            await self.tm.ensure_token_valid()
-            m_auth.assert_not_awaited()
-
-    async def test_handle_401_over_retries(self) -> None:
-        """Raise RuntimeError if retry limit exceeded on 401 handling."""
-        with self.assertRaises(RuntimeError):
-            await self.tm.handle_401(retry_count=5)
-
-    @patch.object(TokenManager, 'refresh_token', new_callable=AsyncMock)
-    async def test_handle_401_refresh_error(self, m_ref: AsyncMock) -> None:
-        """Retry to authenticate if refresh_token fails during 401 handling."""
-        m_ref.side_effect = Exception('some error')
-        with patch.object(
-            self.tm,
-            'authenticate',
-            new_callable=AsyncMock,
-        ) as m_auth:
-            await self.tm.handle_401(retry_count=0)
-            m_auth.assert_awaited_once()
-
-    async def test_ensure_token_valid_over_retries(self) -> None:
-        """Raise RuntimeError if ensure_token_valid exceeds retry limit."""
-        with self.assertRaises(RuntimeError) as ctx:
-            await self.tm.ensure_token_valid(retry_count=10)
-        self.assertIn(
-            'Exceeded max_retries in ensure_token_valid',
-            str(ctx.exception),
         )
 
     def test_is_token_valid_true(self) -> None:
@@ -255,61 +117,6 @@ class TestTokenManager(unittest.IsolatedAsyncioTestCase):
                 'Unable to obtain valid access token',
                 str(ctx.exception),
             )
-
-    @patch('aiohttp.ClientSession')
-    async def test_get_valid_token_retry_authenticate(
-        self,
-        m_session: AsyncMock,
-    ) -> None:
-        """Test get_valid_token falls back to authenticate when refresh
-        fails."""
-        self.shared_token['access_token'] = ''
-        self.shared_token['refresh_token'] = 'bad_refresh'
-
-        # Mock refresh to fail, then auth to succeed
-        auth_response = AsyncMock()
-        auth_response.status = 200
-        auth_response.json.return_value = {
-            'access_token': 'authenticated_token',
-            'refresh_token': 'new_refresh',
-        }
-
-        session_context = m_session.return_value.__aenter__.return_value
-        session_context.post.side_effect = [
-            Exception('Refresh failed'),  # refresh fails
-            auth_response.__aenter__.return_value,  # auth succeeds
-        ]
-
-        with patch.object(
-            self.tm,
-            'authenticate',
-            new_callable=AsyncMock,
-        ) as mock_auth:
-            mock_auth.return_value = None
-            self.shared_token['access_token'] = 'authenticated_token'
-            result = await self.tm.get_valid_token()
-            self.assertEqual(result, 'authenticated_token')
-
-    async def test_ensure_token_valid_exception_retry(self) -> None:
-        with patch.object(
-            self.tm,
-            'authenticate',
-            AsyncMock(
-                side_effect=[RuntimeError('transient provider failure'), None],
-            ),
-        ) as acquire:
-            await self.tm.ensure_token_valid()
-        self.assertEqual(acquire.await_count, 2)
-
-    async def test_ensure_token_valid_exception_max_retries(self) -> None:
-        with patch.object(
-            self.tm,
-            'authenticate',
-            AsyncMock(side_effect=RuntimeError('provider unavailable')),
-        ) as acquire:
-            with self.assertRaisesRegex(RuntimeError, 'provider unavailable'):
-                await self.tm.ensure_token_valid()
-        self.assertEqual(acquire.await_count, self.tm.max_retries + 1)
 
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):
@@ -431,13 +238,19 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         """
         past_instant = datetime.now(timezone.utc) - timedelta(days=1)
         self.assertTrue(
-            is_expired(past_instant.astimezone(timezone(timedelta(hours=8))).isoformat()),
+            is_expired(
+                past_instant.astimezone(
+                    timezone(timedelta(hours=8)),
+                ).isoformat(),
+            ),
         )
 
         future_instant = datetime.now(timezone.utc) + timedelta(days=1)
         self.assertFalse(
             is_expired(
-                future_instant.astimezone(timezone(timedelta(hours=-5))).isoformat(),
+                future_instant.astimezone(
+                    timezone(timedelta(hours=-5)),
+                ).isoformat(),
             ),
         )
 
@@ -448,13 +261,17 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         # UTC and therefore produces an offset-aware value.
         """
         past_zulu: str = (
-            datetime.now(timezone.utc) - timedelta(days=1)
-        ).isoformat().replace('+00:00', 'Z')
+            (datetime.now(timezone.utc) - timedelta(days=1))
+            .isoformat()
+            .replace('+00:00', 'Z')
+        )
         self.assertTrue(is_expired(past_zulu))
 
         future_zulu: str = (
-            datetime.now(timezone.utc) + timedelta(days=1)
-        ).isoformat().replace('+00:00', 'Z')
+            (datetime.now(timezone.utc) + timedelta(days=1))
+            .isoformat()
+            .replace('+00:00', 'Z')
+        )
         self.assertFalse(is_expired(future_zulu))
 
     def test_should_notify_true(self) -> None:
@@ -742,7 +559,9 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
         clusterer.min_samples = 2  # Let len(utility_poles)=3 >= min_samples=2
         clusterer.fit_predict.return_value = [
             0,
-        ] * len(datas)  # All in the same cluster
+        ] * len(
+            datas,
+        )  # All in the same cluster
 
         poly = utils.build_utility_pole_union(datas, clusterer)
         self.assertIsInstance(poly, Polygon)

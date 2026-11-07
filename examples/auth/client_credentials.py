@@ -1,4 +1,3 @@
-"""Cache a short-lived provider token with one in-flight refresh per client."""
 from __future__ import annotations
 
 import asyncio

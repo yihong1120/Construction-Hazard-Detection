@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import unittest
+from functools import partial
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 import numpy as np
 
 from src.yolo_detector import YoloDetector
+
+
+def _hungarian_assign_splits_disconnected_candidate_assign(
+    testcase: TestYoloDetector,
+    /,
+    component_cost: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the only assignment in a one-edge component."""
+    testcase.assertEqual(component_cost.shape, (1, 1))
+    return np.array([0]), np.array([0])
 
 
 class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
@@ -151,7 +162,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dist, 25.0)
 
     def test_cov_track_remote_dispatch(self) -> None:
-        """Exercise this test."""
         out = self.detector_server._track_remote([])
         self.assertEqual(out, [])
         self.detector_server.remote_tracker = 'hungarian'
@@ -159,7 +169,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out, [])
 
     def test_cov_track_remote_centroid_prune(self) -> None:
-        """Exercise this test."""
         self.detector_server.frame_count = 10
         self.detector_server.max_id_keep = 5
         self.detector_server.remote_tracks = {
@@ -182,7 +191,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertIn(2, self.detector_server.remote_tracks)
 
     def test_cov_hungarian_assign_threshold_rejects_all(self) -> None:
-        """Exercise this test."""
         d = self.detector_server
         cost = np.array([[0.9, 0.8], [0.7, 0.6]])
         matches, ur, uc = d._hungarian_assign(
@@ -194,7 +202,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(uc), {0, 1})
 
     def test_cov_prune_remote_tracks(self) -> None:
-        """Exercise this test."""
         self.detector_server.frame_count = 50
         self.detector_server.max_id_keep = 5
         self.detector_server.remote_tracks = {
@@ -216,7 +223,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertIn(2, self.detector_server.remote_tracks)
 
     def test_cov_build_group_cost_matrix(self) -> None:
-        """Exercise this test."""
         d = self.detector_server
         dets = [
             [1.0, 1.0, 3.0, 3.0, 0.9, 0],
@@ -238,7 +244,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(cost[0, 0], 0.0)
 
     def test_cov_hungarian_assign_zero_extraction(self) -> None:
-        """Exercise this test."""
         d = self.detector_server
         cost = np.array([[0.0, 2.0], [2.0, 0.0]], dtype=float)
         matches, ur, uc = d._hungarian_assign(cost, cost_threshold=10.0)
@@ -259,16 +264,14 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-        def assign(
-            component_cost: np.ndarray,
-        ) -> tuple[np.ndarray, np.ndarray]:
-            """Return the only assignment in a one-edge component."""
-            self.assertEqual(component_cost.shape, (1, 1))
-            return np.array([0]), np.array([0])
+        assign = partial(
+            _hungarian_assign_splits_disconnected_candidate_assign,
+            self,
+        )
 
         with patch(
-            'src.yolo_detector._linear_sum_assignment',
-            return_value=assign,
+            'src.yolo_detector.linear_sum_assignment',
+            side_effect=assign,
         ) as assignment:
             matches, unmatched_rows, unmatched_cols = d._hungarian_assign(
                 cost,
@@ -281,7 +284,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assignment.call_count, 4)
 
     def test_cov_remove_vest_containment_both_directions(self) -> None:
-        """Exercise this test."""
         d = self.detector_server
         datas1 = [[10, 10, 30, 30, 0.9, 7], [12, 12, 20, 20, 0.8, 4]]
         out1 = d.remove_completely_contained_labels(datas1.copy())
@@ -291,14 +293,12 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(row[5] != 7 for row in out2))
 
     def test_cov_remove_hardhat_contained_by_no_hardhat(self) -> None:
-        """Exercise this test."""
         d = self.detector_server
         datas = [[10, 10, 20, 20, 0.9, 0], [5, 5, 30, 30, 0.8, 2]]
         out = d.remove_completely_contained_labels(datas.copy())
         self.assertTrue(all(row[5] != 0 for row in out))
 
     def test_cov_hungarian_assign_empty_matrix(self) -> None:
-        """Exercise this test."""
         d = self.detector_server
         cost = np.empty((0, 2), dtype=float)
         matches, ur, uc = d._hungarian_assign(cost, cost_threshold=10.0)
@@ -307,7 +307,6 @@ class TestYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(uc, [0, 1])
 
     def test_track_remote_hungarian_no_tracks_creates_new(self) -> None:
-        """Exercise this test."""
         d = self.detector_server
         d.remote_tracker = 'hungarian'
         d.remote_tracks.clear()

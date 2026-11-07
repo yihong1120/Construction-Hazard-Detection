@@ -5,6 +5,7 @@ import unittest
 from collections.abc import AsyncIterator
 from datetime import datetime
 from datetime import timezone
+from functools import partial
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import ANY
@@ -18,6 +19,10 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 from starlette.routing import Match
 
+import examples.streaming_web.playback_config as playback_config
+import examples.streaming_web.playback_languages as playback_languages
+import examples.streaming_web.playback_policy as playback_policy
+import examples.streaming_web.playback_session_store as playback_store
 from examples.auth.database import get_db
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
@@ -25,17 +30,102 @@ from examples.auth.redis_pool import get_redis_pool
 from examples.auth.redis_pool import get_redis_pool_ws
 from examples.streaming_web import playback_demand
 from examples.streaming_web import playback_hls
-from examples.streaming_web import playback_service
 from examples.streaming_web import routers
 from examples.streaming_web import stream_catalog_service
 from examples.streaming_web import streaming_api_service
 from examples.streaming_web import streaming_metadata_service
+from examples.streaming_web.media_paths import build_media_path
+from examples.streaming_web.media_paths import build_overlay_demand_key
 from examples.streaming_web.playback_languages import (
     _notification_language_code,
 )
 from examples.streaming_web.routers import router
 from examples.streaming_web.schemas import StreamPlaybackBatchRequest
 from examples.streaming_web.schemas import StreamPlaybackRequest
+from tests.redis_fixtures_test import spy_redis
+
+
+async def _setUp_empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
+    if False:
+        yield b''
+
+
+def _setUp_get_fake_redis(testcase, /):
+    return testcase.fake_redis
+
+
+def _setUp_callback(mock_credentials, /):
+    return mock_credentials
+
+
+def _setUp_get_mock_db_session(testcase, /):
+    return testcase.mock_db_session
+
+
+async def _stream_playback_overlay_registers_shared_empty_scan_iter(
+    **_kwargs: object,
+) -> AsyncIterator[bytes]:
+    """Support empty_scan_iter."""
+    if False:
+        yield b''
+
+
+def _stream_playback_overlay_registers_shared_callback(keys):
+    return [None] * len(keys)
+
+
+async def _stream_playback_preview_overlay_uses_empty_scan_iter(
+    **_kwargs: object,
+) -> AsyncIterator[bytes]:
+    if False:
+        yield b''
+
+
+async def _stream_playback_overlay_ready_returns_empty_scan_iter(
+    **_kwargs: object,
+) -> AsyncIterator[bytes]:
+    """Support empty_scan_iter."""
+    if False:
+        yield b''
+
+
+async def _stream_playback_batch_creates_site_empty_scan_iter(
+    **_kwargs: object,
+) -> AsyncIterator[bytes]:
+    if False:
+        yield b''
+
+
+async def _stream_playback_release_accepts_session_empty_scan_iter(
+    **_kwargs: object,
+) -> AsyncIterator[bytes]:
+    if False:
+        yield b''
+
+
+async def _media_auth_refreshes_playback_session_read_scores(
+    testcase,
+    /,
+    *args,
+    **kwargs,
+):
+    if args[1] == '-inf':
+        return []
+    return await testcase.fake_redis.zrangebyscore(*args, **kwargs)
+
+
+async def _media_auth_refreshes_playback_session_read_many(
+    testcase,
+    /,
+    *args,
+):
+    return await testcase.fake_redis.mget(*args)
+
+
+def _overlay_languages_rejects_missing_subject_make_simplenamespace():
+    return SimpleNamespace(
+        subject={},
+    )
 
 
 class TestRouters(unittest.IsolatedAsyncioTestCase):
@@ -60,41 +150,34 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.app.include_router(router, prefix='/api')
 
         # Override Redis dependencies with an async mock
-        self.fake_redis = AsyncMock()
-        default_pipeline = MagicMock()
-        default_pipeline.__aenter__ = AsyncMock(
-            return_value=default_pipeline,
-        )
-        default_pipeline.__aexit__ = AsyncMock(return_value=None)
-        default_pipeline.execute = AsyncMock()
-        self.fake_redis.pipeline = MagicMock(return_value=default_pipeline)
+        self.fake_redis = spy_redis()
 
-        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
-            """Perform empty scan iter.
-
-            Args:
-                **_kwargs: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            if False:
-                yield b''
+        empty_scan_iter = _setUp_empty_scan_iter
 
         self.fake_redis.scan_iter = empty_scan_iter
-        self.app.dependency_overrides[get_redis_pool] = lambda: self.fake_redis
-        self.app.dependency_overrides[get_redis_pool_ws] = lambda: (
-            self.fake_redis
+        self.app.dependency_overrides[get_redis_pool] = partial(
+            _setUp_get_fake_redis,
+            self,
+        )
+        self.app.dependency_overrides[get_redis_pool_ws] = partial(
+            _setUp_get_fake_redis,
+            self,
         )
 
         # Bypass JWT authentication with a mock credentials object
         mock_credentials = SimpleNamespace(subject={'username': 'testuser'})
-        self.app.dependency_overrides[jwt_access] = lambda: mock_credentials
+        self.app.dependency_overrides[jwt_access] = partial(
+            _setUp_callback,
+            mock_credentials,
+        )
 
         # Mock the database session
         self.mock_db_session = AsyncMock()
         self.mock_db_session.scalar = AsyncMock(return_value='Cam1')
-        self.app.dependency_overrides[get_db] = lambda: self.mock_db_session
+        self.app.dependency_overrides[get_db] = partial(
+            _setUp_get_mock_db_session,
+            self,
+        )
 
         # Set up default mock user and result for database queries
         self.setup_default_db_mocks()
@@ -149,8 +232,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     # Test GET /api/labels
     # -----------------------------
     @patch(
-        'examples.streaming_web.stream_catalog_service.'
-        'load_user_access_context',
+        'examples.streaming_web.stream_catalog_service.load_user_access_c'
+        'ontext',
         new_callable=AsyncMock,
     )
     def test_get_labels_success(
@@ -177,8 +260,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json(), {'labels': ['label1', 'label2']})
 
     @patch(
-        'examples.streaming_web.stream_catalog_service.'
-        'load_user_access_context',
+        'examples.streaming_web.stream_catalog_service.load_user_access_c'
+        'ontext',
         new_callable=AsyncMock,
     )
     def test_get_labels_with_non_admin_user(
@@ -206,8 +289,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.streaming_web.stream_catalog_service.'
-        'load_user_access_context',
+        'examples.streaming_web.stream_catalog_service.load_user_access_c'
+        'ontext',
         new_callable=AsyncMock,
     )
     def test_get_labels_database_error_propagates(
@@ -232,7 +315,10 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         """Test labels endpoint with invalid token."""
         # Override JWT to return invalid credentials
         mock_credentials = SimpleNamespace(subject={})
-        self.app.dependency_overrides[jwt_access] = lambda: mock_credentials
+        self.app.dependency_overrides[jwt_access] = partial(
+            _setUp_callback,
+            mock_credentials,
+        )
 
         response = self.client.get('/api/labels')
 
@@ -390,14 +476,15 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
 
-        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
-            """Support empty_scan_iter."""
-            if False:
-                yield b''
+        empty_scan_iter = (
+            _stream_playback_overlay_registers_shared_empty_scan_iter
+        )
 
         self.fake_redis.scan_iter = empty_scan_iter
         self.fake_redis.exists = AsyncMock(return_value=0)
-        self.fake_redis.mget = AsyncMock(return_value=[None, None])
+        self.fake_redis.mget = AsyncMock(
+            side_effect=_stream_playback_overlay_registers_shared_callback,
+        )
 
         response = self.client.post(
             '/api/stream-playback',
@@ -421,8 +508,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             body['media_hls_url'],
-            '/hazard/media/'
-            'hazard_bGFiZWwx_Q2FtMQ_annotated_emgtVFc/index.m3u8',
+            '/hazard/media/hazard_bGFiZWwx_Q2FtMQ_annotated_emgtVFc/index'
+            '.m3u8',
         )
         self.assertFalse(body['overlay_ready'])
         self.assertGreaterEqual(self.fake_redis.set.await_count, 2)
@@ -443,17 +530,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
 
-        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
-            """Perform empty scan iter.
-
-            Args:
-                **_kwargs: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            if False:
-                yield b''
+        empty_scan_iter = _stream_playback_preview_overlay_uses_empty_scan_iter
 
         self.fake_redis.scan_iter = empty_scan_iter
         self.fake_redis.exists = AsyncMock(return_value=0)
@@ -497,10 +574,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
 
-        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
-            """Support empty_scan_iter."""
-            if False:
-                yield b''
+        empty_scan_iter = (
+            _stream_playback_overlay_ready_returns_empty_scan_iter
+        )
 
         self.fake_redis.scan_iter = empty_scan_iter
         self.fake_redis.exists = AsyncMock(return_value=1)
@@ -527,7 +603,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             body['media_hls_url'],
-            '/hazard/media/hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/index.m3u8',
+            '/hazard/media/hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/index.m3u' '8',
         )
 
     def test_stream_playback_session_playlist_rewrites_fragment_auth(
@@ -549,15 +625,15 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.fake_redis.expire = AsyncMock()
 
         with patch(
-            'examples.streaming_web.streaming_api_service.'
-            'fetch_internal_hls_playlist',
+            'examples.streaming_web.streaming_api_service.fetch_internal_'
+            'hls_playlist',
             new=AsyncMock(
                 return_value=('#EXTM3U\n#EXTINF:2,\nseg0.ts\n', None),
             ),
         ) as fetch_playlist:
             response = self.client.get(
-                '/api/stream-playback/sessions/session-1/index.m3u8'
-                '?mt=opaque-token&_HLS_msn=3',
+                '/api/stream-playback/sessions/session-1/index.m3u8?mt=op'
+                'aque-token&_HLS_msn=3',
             )
 
         self.assertEqual(response.status_code, 200)
@@ -569,7 +645,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             'hazard_bGFiZWwx_Q2FtMQ',
             media_query='_HLS_msn=3',
         )
-        self.assertEqual(self.fake_redis.expire.await_count, 2)
+        self.assertEqual(self.fake_redis.expire.await_count, 3)
 
     def test_stream_playback_session_playlist_forwards_hls_session_cookie(
         self,
@@ -590,8 +666,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.fake_redis.expire = AsyncMock()
 
         with patch(
-            'examples.streaming_web.streaming_api_service.'
-            'fetch_internal_hls_playlist',
+            'examples.streaming_web.streaming_api_service.fetch_internal_'
+            'hls_playlist',
             new=AsyncMock(
                 return_value=(
                     '#EXTM3U\n#EXTINF:2,\nseg0.ts\n',
@@ -603,8 +679,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             response = self.client.get(
-                '/api/stream-playback/sessions/session-1/index.m3u8'
-                '?mt=opaque-token',
+                '/api/stream-playback/sessions/session-1/index.m3u8?mt=op'
+                'aque-token',
             )
 
         self.assertEqual(response.status_code, 200)
@@ -648,8 +724,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             (
                 upstream_response.text,
                 'hlsSession=session-456; '
-                'Path=/hazard/media/hazard_bGFiZWwx_Q2FtMQ/; '
-                'Secure; HttpOnly; SameSite=None; Partitioned',
+                'Path=/hazard/media/hazard_bGFiZWwx_Q2FtMQ/; Secure; '
+                'HttpOnly; SameSite=None; Partitioned',
             ),
         )
         async_client.assert_called_once_with(
@@ -711,23 +787,23 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.streaming_web.playback_service.'
-                'STREAM_PLAYBACK_STARTUP_WAIT_SECONDS',
+                'examples.streaming_web.playback_config.STREAM_PLAYBACK_S'
+                'TARTUP_WAIT_SECONDS',
                 0.25,
             ),
             patch(
-                'examples.streaming_web.playback_service.asyncio.sleep',
+                'asyncio.sleep',
                 new_callable=AsyncMock,
             ) as sleep,
             patch(
-                'examples.streaming_web.streaming_api_service.'
-                'fetch_internal_hls_playlist',
+                'examples.streaming_web.streaming_api_service.fetch_inter'
+                'nal_hls_playlist',
                 new=AsyncMock(return_value=('#EXTM3U\nseg0.ts\n', None)),
             ),
         ):
             response = self.client.get(
-                '/api/stream-playback/sessions/session-1/index.m3u8'
-                '?mt=opaque-token',
+                '/api/stream-playback/sessions/session-1/index.m3u8?mt=op'
+                'aque-token',
             )
 
         self.assertEqual(response.status_code, 200)
@@ -753,21 +829,10 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
 
-        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
-            """Perform empty scan iter.
-
-            Args:
-                **_kwargs: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            if False:
-                yield b''
+        empty_scan_iter = _stream_playback_batch_creates_site_empty_scan_iter
 
         self.fake_redis.scan_iter = empty_scan_iter
         self.fake_redis.exists = AsyncMock(return_value=0)
-        self.fake_redis.mget = AsyncMock(return_value=[None, None])
 
         response = self.client.post(
             '/api/stream-playback/batch',
@@ -912,17 +977,9 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.fake_redis.get = AsyncMock(return_value=json.dumps(session))
         self.fake_redis.zcard = AsyncMock(return_value=0)
 
-        async def empty_scan_iter(**_kwargs: object) -> AsyncIterator[bytes]:
-            """Perform empty scan iter.
-
-            Args:
-                **_kwargs: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            if False:
-                yield b''
+        empty_scan_iter = (
+            _stream_playback_release_accepts_session_empty_scan_iter
+        )
 
         self.fake_redis.scan_iter = empty_scan_iter
 
@@ -995,7 +1052,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.streaming_web.streaming_api_service.get_public_ice_servers',
+        'examples.streaming_web.streaming_api_service.get_public_ice_serv'
+        'ers',
         return_value=[{'urls': ['turn:example.test:3478'], 'username': 'u'}],
     )
     def test_webrtc_ice_servers_requires_auth_and_returns_servers(
@@ -1037,9 +1095,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             '/api/media-auth',
             headers={
                 'X-Original-URI': (
-                    '/hazard/media/'
-                    'hazard_bGFiZWwx_Q2FtMQ_annotated_emgtVFc/segment0.ts'
-                    '?mt=opaque-token'
+                    '/hazard/media/hazard_bGFiZWwx_Q2FtMQ_annotated_emgtV'
+                    'Fc/segment0.ts?mt=opaque-token'
                 ),
             },
         )
@@ -1080,6 +1137,22 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         pipeline.__aenter__ = AsyncMock(return_value=pipeline)
         pipeline.__aexit__ = AsyncMock(return_value=None)
         pipeline.execute = AsyncMock()
+        pipeline.watch = AsyncMock()
+
+        pipeline.get = AsyncMock(return_value=None)
+
+        read_scores = partial(
+            _media_auth_refreshes_playback_session_read_scores,
+            self,
+        )
+
+        read_many = partial(
+            _media_auth_refreshes_playback_session_read_many,
+            self,
+        )
+
+        pipeline.zrangebyscore = AsyncMock(side_effect=read_scores)
+        pipeline.mget = AsyncMock(side_effect=read_many)
         self.fake_redis.pipeline = MagicMock(return_value=pipeline)
         self.fake_redis.set = AsyncMock(return_value=True)
         self.fake_redis.zrangebyscore = AsyncMock(return_value=[b'session-1'])
@@ -1100,7 +1173,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 204)
         pipeline.expire.assert_any_call(
             'stream_playback_session:session-1',
-            playback_service.STREAM_PLAYBACK_SESSION_TTL_SECONDS,
+            playback_config.STREAM_PLAYBACK_SESSION_TTL_SECONDS,
         )
         pipeline.zadd.assert_any_call(
             f"stream_playback_media_session:{media_path}",
@@ -1116,6 +1189,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         mock_get_media_session: AsyncMock,
     ) -> None:
         """Signed playback URLs authorise HLS reads with the mt query token."""
+        renewal = patch(
+            'examples.streaming_web.playback_session_store.refresh_playba'
+            'ck_sessions_for_media_path',
+            new=AsyncMock(),
+        )
+        renewal.start()
+        self.addCleanup(renewal.stop)
         mock_get_media_session.return_value = {
             'id': 'media-session-1',
             'username': 'testuser',
@@ -1130,8 +1210,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             '/api/media-auth',
             headers={
                 'X-Original-URI': (
-                    '/hazard/media/'
-                    'hazard_bGFiZWwx_Q2FtMQ/index.m3u8?mt=opaque-token'
+                    '/hazard/media/hazard_bGFiZWwx_Q2FtMQ/index.m3u8?mt=o'
+                    'paque-token'
                 ),
             },
         )
@@ -1152,8 +1232,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             '/api/media-auth',
             headers={
                 'X-Original-URI': (
-                    '/hazard/media/'
-                    'hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/segment0.ts'
+                    '/hazard/media/hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/s'
+                    'egment0.ts'
                 ),
             },
         )
@@ -1180,9 +1260,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             '/api/media-auth',
             headers={
                 'X-Original-URI': (
-                    '/hazard/media/'
-                    'hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/segment0.ts'
-                    '?mt=expired'
+                    '/hazard/media/hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/s'
+                    'egment0.ts?mt=expired'
                 ),
             },
         )
@@ -1217,9 +1296,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             '/api/media-auth',
             headers={
                 'X-Original-URI': (
-                    '/hazard/media/'
-                    'hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/segment0.ts'
-                    '?mt=opaque-token'
+                    '/hazard/media/hazard_bGFiZWwx_Q2FtMQ_annotated_ZW4/s'
+                    'egment0.ts?mt=opaque-token'
                 ),
             },
         )
@@ -1237,11 +1315,11 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             },
         ):
             self.assertEqual(
-                playback_service._allowed_overlay_languages(),
+                playback_languages._allowed_overlay_languages(),
                 ('fr',),
             )
             with self.assertRaisesRegex(ValueError, 'must be an allowed'):
-                playback_service._default_overlay_language()
+                playback_languages._default_overlay_language()
 
         with patch.dict(
             'os.environ',
@@ -1251,7 +1329,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             },
         ):
             self.assertEqual(
-                playback_service._default_overlay_language(),
+                playback_languages._default_overlay_language(),
                 'fr',
             )
 
@@ -1259,14 +1337,16 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             _notification_language_code('fr'),
             'fr-FR',
         )
-        self.assertEqual(playback_service._language_alias_map()['fr'], 'fr')
+        self.assertEqual(
+            playback_languages._language_alias_map()['fr'],
+            'fr',
+        )
 
     @patch('examples.streaming_web.playback_hls.load_user_access_context')
     async def test_authorise_label_access_rejects_missing_or_denied_user(
         self,
         mock_load_user_access_context: AsyncMock,
     ) -> None:
-        """Exercise this test."""
         credentials = cast(
             JwtAuthorizationCredentials,
             SimpleNamespace(subject={}),
@@ -1331,7 +1411,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_media_path_helpers_cover_invalid_and_webrtc_paths(self) -> None:
-        """Exercise this test."""
         self.assertEqual(
             playback_hls.extract_media_path_from_uri('/hazard/live'),
             '',
@@ -1363,11 +1442,11 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     async def test_touch_overlay_demand_from_media_path_ignores_bad_inputs(
         self,
     ) -> None:
-        """Exercise this test."""
         rds = AsyncMock()
 
-        await playback_service._touch_overlay_demand_from_media_path(
-            rds, 'clean-path',
+        await playback_policy.touch_overlay_demand_from_media_path(
+            rds,
+            'clean-path',
         )
         rds.set.assert_not_called()
 
@@ -1375,7 +1454,7 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
             'os.environ',
             {'MEDIA_OVERLAY_ALLOWED_LANGUAGES': 'en'},
         ):
-            await playback_service._touch_overlay_demand_from_media_path(
+            await playback_policy.touch_overlay_demand_from_media_path(
                 rds,
                 'hazard_site_cam_annotated_emgtVFc',
             )
@@ -1384,22 +1463,20 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     async def test_touch_overlay_demand_from_media_path_propagates_set_error(
         self,
     ) -> None:
-        """Exercise this test."""
-        rds = AsyncMock()
-        rds.set.side_effect = RuntimeError('redis down')
+        rds = spy_redis()
+        rds.pipeline = MagicMock(side_effect=RuntimeError('redis down'))
 
         with self.assertRaisesRegex(RuntimeError, 'redis down'):
-            await playback_service._touch_overlay_demand_from_media_path(
+            await playback_policy.touch_overlay_demand_from_media_path(
                 rds,
                 'hazard_site_cam_annotated_emgtVFc',
             )
 
-        rds.set.assert_awaited_once()
+        rds.pipeline.assert_called_once()
 
     async def test_resolve_configured_stream_name_rejects_missing_and_unknown(
         self,
     ) -> None:
-        """Exercise this test."""
         with self.assertRaises(HTTPException) as missing:
             await stream_catalog_service._resolve_configured_stream_name(
                 self.mock_db_session,
@@ -1420,9 +1497,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unknown.exception.status_code, 404)
 
     def test_overlay_languages_rejects_missing_subject(self) -> None:
-        """Exercise this test."""
-        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
-            subject={},
+        self.app.dependency_overrides[jwt_access] = (
+            _overlay_languages_rejects_missing_subject_make_simplenamespace
         )
 
         response = self.client.get('/api/overlay-languages')
@@ -1434,7 +1510,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_load_user_access_context: AsyncMock,
     ) -> None:
-        """Exercise this test."""
         mock_load_user_access_context.return_value = (
             SimpleNamespace(status='active'),
             ['label1'],
@@ -1480,13 +1555,13 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=session),
             ),
             patch.object(
-                playback_service,
-                '_touch_media_demand_from_media_path',
+                playback_policy,
+                'touch_media_demand_from_media_path',
                 new=AsyncMock(),
             ),
             patch.object(
-                playback_service,
-                '_refresh_playback_sessions_for_media_path',
+                playback_store,
+                'refresh_playback_sessions_for_media_path',
                 new=AsyncMock(),
             ),
         ):
@@ -1494,9 +1569,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 '/api/media-auth',
                 headers={
                     'X-Original-URI': (
-                        '/hazard/media/'
-                        'hazard_U2l0ZSBB_Q2FtIDE_annotated_emgtVFc/'
-                        'index.m3u8?mt=batch-token'
+                        '/hazard/media/hazard_U2l0ZSBB_Q2FtIDE_annotated_'
+                        'emgtVFc/index.m3u8?mt=batch-token'
                     ),
                 },
             )
@@ -1504,9 +1578,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
                 '/api/media-auth',
                 headers={
                     'X-Original-URI': (
-                        '/hazard/media/'
-                        'hazard_U2l0ZSBB_Q2FtIDM_annotated_emgtVFc/'
-                        'index.m3u8?mt=batch-token'
+                        '/hazard/media/hazard_U2l0ZSBB_Q2FtIDM_annotated_'
+                        'emgtVFc/index.m3u8?mt=batch-token'
                     ),
                 },
             )
@@ -1526,7 +1599,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_load_user_access_context: AsyncMock,
     ) -> None:
-        """Exercise this test."""
         mock_load_user_access_context.return_value = (
             SimpleNamespace(status='active'),
             ['label1'],
@@ -1558,7 +1630,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self,
         mock_load_user_access_context: AsyncMock,
     ) -> None:
-        """Exercise this test."""
         mock_load_user_access_context.return_value = (
             SimpleNamespace(status='active'),
             ['label1'],
@@ -1569,10 +1640,17 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.mock_db_session.execute.side_effect = None
         self.mock_db_session.execute.return_value = stream_result
 
-        with patch(
-            'examples.streaming_web.streaming_api_service.'
-            'active_overlay_languages',
-            new=AsyncMock(return_value={'zh-TW', 'ja', 'vi', 'id', 'fr'}),
+        base = build_media_path('label1', 'Cam1')
+        for language in ('zh-TW', 'ja', 'vi', 'id', 'fr'):
+            self.fake_redis.data[
+                build_overlay_demand_key(
+                    base,
+                    language,
+                )
+            ] = b'1'
+        with patch.dict(
+            'os.environ',
+            {'MEDIA_OVERLAY_ALLOWED_LANGUAGES': 'en,zh-TW,ja,vi,id,fr'},
         ):
             response = self.client.post(
                 '/api/stream-playback',
@@ -1587,9 +1665,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 429)
 
     def test_webrtc_ice_servers_rejects_missing_subject(self) -> None:
-        """Exercise this test."""
-        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
-            subject={},
+        self.app.dependency_overrides[jwt_access] = (
+            _overlay_languages_rejects_missing_subject_make_simplenamespace
         )
 
         response = self.client.get('/api/webrtc/ice-servers')
@@ -1597,15 +1674,14 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 401)
 
     @patch(
-        'examples.streaming_web.streaming_metadata_service.'
-        'authorise_label_access',
+        'examples.streaming_web.streaming_metadata_service.authorise_labe'
+        'l_access',
         new_callable=AsyncMock,
     )
     async def test_metadata_stream_id_returns_sse_response(
         self,
         mock_authorise_label_access: AsyncMock,
     ) -> None:
-        """Exercise this test."""
         request = MagicMock()
         credentials = cast(
             JwtAuthorizationCredentials,
@@ -1634,8 +1710,8 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
 
     def test_metadata_stream_id_rejects_missing_subject(self) -> None:
         """Reject SSE clients that do not carry a valid JWT subject."""
-        self.app.dependency_overrides[jwt_access] = lambda: SimpleNamespace(
-            subject={},
+        self.app.dependency_overrides[jwt_access] = (
+            _overlay_languages_rejects_missing_subject_make_simplenamespace
         )
 
         response = self.client.get('/api/metadata/stream-id/label1/Q2FtMQ')
@@ -1664,7 +1740,6 @@ class TestRouters(unittest.IsolatedAsyncioTestCase):
     async def test_websocket_metadata_stream_id_delegates_to_handler(
         self,
     ) -> None:
-        """Exercise this test."""
         with patch.object(
             streaming_metadata_service,
             'metadata_stream_websocket',

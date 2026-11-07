@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
@@ -15,10 +16,21 @@ from examples.violation_records import record_policy
 from examples.violation_records import routers
 
 
+def _native_routes_return_contract_and_get_db(testcase, /):
+    return testcase.db
+
+
+def _native_routes_return_contract_and_get_credentials(testcase, /):
+    return testcase.credentials
+
+
 class RecordOptionsTest(IsolatedAsyncioTestCase):
     def setUp(self):
         self.user = SimpleNamespace(
-            id=1, tenant_id='t1', role='admin', status='active',
+            id=1,
+            tenant_id='t1',
+            role='admin',
+            status='active',
         )
         self.credentials = SimpleNamespace(
             subject={'user_id': 1, 'tenant_id': 't1'},
@@ -43,8 +55,14 @@ class RecordOptionsTest(IsolatedAsyncioTestCase):
     def test_native_routes_return_contract_and_private_cache(self):
         app = FastAPI()
         app.include_router(routers.router)
-        app.dependency_overrides[get_db] = lambda: self.db
-        app.dependency_overrides[jwt_access] = lambda: self.credentials
+        app.dependency_overrides[get_db] = partial(
+            _native_routes_return_contract_and_get_db,
+            self,
+        )
+        app.dependency_overrides[jwt_access] = partial(
+            _native_routes_return_contract_and_get_credentials,
+            self,
+        )
         with patch.object(
             record_policy,
             'require_violation',
@@ -57,7 +75,8 @@ class RecordOptionsTest(IsolatedAsyncioTestCase):
                 review = client.get('/violations/9/review-options?locale=en')
         self.assertEqual(feedback.status_code, 200)
         self.assertEqual(
-            feedback.headers['cache-control'], 'private, no-store',
+            feedback.headers['cache-control'],
+            'private, no-store',
         )
         self.assertEqual(feedback.json()['schema_version'], 1)
         self.assertIn(
@@ -65,7 +84,8 @@ class RecordOptionsTest(IsolatedAsyncioTestCase):
             feedback.json()['options'],
         )
         self.assertNotIn(
-            {'id': 'person', 'label': '人員'}, feedback.json()['options'],
+            {'id': 'person', 'label': '人員'},
+            feedback.json()['options'],
         )
         self.assertIsNone(feedback.json()['default_id'])
         self.assertEqual(review.status_code, 200)
@@ -85,7 +105,11 @@ class RecordOptionsTest(IsolatedAsyncioTestCase):
         ):
             for kind in ('feedback', 'review'):
                 result = await record_policy.authenticated_record_options(
-                    self.db, self.credentials, 9, kind, 'zh-TW',
+                    self.db,
+                    self.credentials,
+                    9,
+                    kind,
+                    'zh-TW',
                 )
                 self.assertEqual(result['options'], [])
                 self.assertIsNone(result['default_id'])
@@ -94,7 +118,11 @@ class RecordOptionsTest(IsolatedAsyncioTestCase):
         self.user.tenant_id = 't2'
         with self.assertRaises(HTTPException) as raised:
             await record_policy.authenticated_record_options(
-                self.db, self.credentials, 9, 'feedback', 'zh-TW',
+                self.db,
+                self.credentials,
+                9,
+                'feedback',
+                'zh-TW',
             )
         self.assertEqual(raised.exception.status_code, 403)
         self.user.tenant_id = 't1'
@@ -106,6 +134,10 @@ class RecordOptionsTest(IsolatedAsyncioTestCase):
             ):
                 with self.assertRaises(HTTPException) as raised:
                     await record_policy.authenticated_record_options(
-                        self.db, self.credentials, 9, 'feedback', 'zh-TW',
+                        self.db,
+                        self.credentials,
+                        9,
+                        'feedback',
+                        'zh-TW',
                     )
                 self.assertEqual(raised.exception.status_code, code)

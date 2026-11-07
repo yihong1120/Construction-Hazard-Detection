@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-import os
 from threading import Lock
 
-_default_max_sessions = 6
+from src.settings.media import NvencSettings
+
 _lock = Lock()
 _active_sessions = 0
+_session_budget = 0
 
 
 def try_acquire_nvenc_session() -> bool:
     """Reserve one local NVENC session without exceeding the safe budget."""
-    global _active_sessions
+    global _active_sessions, _session_budget
     with _lock:
-        if _active_sessions >= _max_sessions():
+        if _active_sessions == 0:
+            _session_budget = _max_sessions()
+        if _active_sessions >= _session_budget:
             return False
         _active_sessions += 1
         return True
@@ -27,15 +30,4 @@ def release_nvenc_session() -> None:
 
 def _max_sessions() -> int:
     """Return a conservative per-process NVENC session budget."""
-    try:
-        return max(
-            1,
-            int(
-                os.getenv(
-                    'MEDIA_NVENC_MAX_SESSIONS',
-                    str(_default_max_sessions),
-                ),
-            ),
-        )
-    except ValueError:
-        return _default_max_sessions
+    return NvencSettings().max_sessions

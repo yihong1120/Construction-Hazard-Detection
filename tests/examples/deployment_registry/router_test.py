@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -52,15 +53,23 @@ _REQUEST_HEADERS = {
 }
 
 
+# type: ignore[no-untyped-def]
+async def _setUp_override_get_db(
+    testcase: TestDeploymentEnrollmentExchangeRouter,
+    /,
+) -> Any:
+    yield testcase.db
+
+
+# type: ignore[no-untyped-def]
+async def _setUp_override_get_redis(
+    testcase: TestDeploymentEnrollmentExchangeRouter,
+    /,
+) -> Any:
+    yield testcase.redis
+
+
 def _base64url_decode(value: str) -> bytes:
-    """Perform base64url decode.
-
-    Args:
-        value: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     return base64.urlsafe_b64decode(value + '=' * (-len(value) % 4))
 
 
@@ -68,28 +77,15 @@ class TestDeploymentEnrollmentExchangeRouter(unittest.TestCase):
     """Ensure exchange never turns into an authentication or profile API."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.app = FastAPI()
         self.app.include_router(router)
         self.client = TestClient(self.app, base_url='https://api.example.com')
         self.db = MagicMock()
         self.redis = AsyncMock()
 
-        async def override_get_db() -> Any:  # type: ignore[no-untyped-def]
-            """Perform override get db.
+        override_get_db = partial(_setUp_override_get_db, self)
 
-            Returns:
-                The callable result.
-            """
-            yield self.db
-
-        async def override_get_redis() -> Any:  # type: ignore[no-untyped-def]
-            """Perform override get redis.
-
-            Returns:
-                The callable result.
-            """
-            yield self.redis
+        override_get_redis = partial(_setUp_override_get_redis, self)
 
         self.app.dependency_overrides[get_db] = override_get_db
         self.app.dependency_overrides[get_redis_pool] = override_get_redis
@@ -102,7 +98,6 @@ class TestDeploymentEnrollmentExchangeRouter(unittest.TestCase):
         self.settings_patch.start()
 
     def tearDown(self) -> None:
-        """Perform tearDown."""
         self.settings_patch.stop()
         self.client.close()
 

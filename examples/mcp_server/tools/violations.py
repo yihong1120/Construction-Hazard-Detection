@@ -2,19 +2,13 @@ from __future__ import annotations
 
 import base64
 import logging
-import os
 from typing import Any
 
 import httpx
 
-from examples.mcp_server.config import get_env_int
-from examples.mcp_server.config import get_env_var
+from examples.mcp_server.settings import McpQuerySettings
 from src.auth_tokens import TokenManager
-
-_UPSTREAM_TIMEOUT_SECONDS = max(
-    1,
-    get_env_int('MCP_UPSTREAM_TIMEOUT_SECONDS', 20),
-)
+from src.settings.connections import ViolationTransportSettings
 
 
 class ViolationsTools:
@@ -26,6 +20,7 @@ class ViolationsTools:
         self._token_manager: TokenManager | None = None
         self._client: httpx.AsyncClient | None = None
         self._base_url: str = ''
+        self.settings: McpQuerySettings | None = None
 
     async def search(
         self,
@@ -217,13 +212,13 @@ class ViolationsTools:
     async def _ensure_client(self) -> None:
         """Ensure the HTTP client and token manager are initialised."""
         if self._client is None:
-            self._base_url = get_env_var(
-                'VIOLATION_RECORD_API_URL', 'http://127.0.0.1:8002',
-            ).rstrip('/')
+            if self.settings is None:
+                self.settings = McpQuerySettings()
+            self._base_url = ViolationTransportSettings().api_url
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(
-                    _UPSTREAM_TIMEOUT_SECONDS,
-                    connect=min(5.0, _UPSTREAM_TIMEOUT_SECONDS),
+                    self.settings.upstream_timeout_seconds,
+                    connect=min(5.0, self.settings.upstream_timeout_seconds),
                 ),
                 limits=httpx.Limits(
                     max_connections=10,
@@ -238,7 +233,9 @@ class ViolationsTools:
     async def _get_auth_headers(self) -> dict[str, str]:
         """Build authorisation headers for authenticated requests."""
         try:
-            static_bearer = os.getenv('MCP_STATIC_BEARER', '').strip()
+            if self.settings is None:
+                self.settings = McpQuerySettings()
+            static_bearer = self.settings.static_bearer.get_secret_value()
             headers = {
                 'User-Agent': 'ConstructionHazardDetection-MCP/1.0',
             }
@@ -257,6 +254,9 @@ class ViolationsTools:
 
     async def close(self) -> None:
         """Clean up resources by closing the underlying HTTP client."""
+        if self._token_manager is not None:
+            await self._token_manager.close()
+            self._token_manager = None
         if self._client:
             await self._client.aclose()
             self._client = None

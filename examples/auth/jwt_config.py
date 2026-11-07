@@ -115,14 +115,6 @@ class PyJWTBearer:
             HTTPAuthorizationCredentials | None, Security(_bearer_scheme),
         ] = None,
     ) -> JwtAuthorizationCredentials:
-        """Perform call.
-
-        Args:
-            request: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         if bearer is None:
             bearer = await self.bearer_scheme(request)
         token = bearer.credentials if bearer is not None else None

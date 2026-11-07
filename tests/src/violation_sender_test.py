@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from datetime import datetime
 from unittest.mock import AsyncMock
@@ -9,6 +10,7 @@ from unittest.mock import patch
 import httpx
 
 from src.auth_tokens import TokenManager
+from src.evidence import EvidenceMetadata
 from src.violation_sender import ViolationSender
 
 
@@ -55,15 +57,19 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
             Optional[str]: Violation ID if successful, else None.
         """
         return await inst.send_violation(
-            site=self.site,
-            stream_name=self.stream,
-            image_bytes=self.img,
-            detection_time=self.ts,
-            warnings=self.warn,
-            detections=self.det,
-            cone_polygon=self.cone,
-            pole_polygon=self.pole,
-            **metadata,
+            EvidenceMetadata.from_legacy_payload(
+                {
+                    'site': self.site,
+                    'stream_name': self.stream,
+                    'detection_time': self.ts,
+                    'warnings': self.warn,
+                    'detections': self.det,
+                    'cone_polygon': self.cone,
+                    'pole_polygon': self.pole,
+                    **metadata,
+                },
+            ),
+            self.img,
         )
 
     @patch.object(ViolationSender, '_get_client', new_callable=AsyncMock)
@@ -90,7 +96,8 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, '123')
         self.assertEqual(
-            mock_cli.post.call_args.kwargs['data']['model_id'], 'yolo26m',
+            mock_cli.post.call_args.kwargs['data']['model_id'],
+            'yolo26m',
         )
         self.assertEqual(
             mock_cli.post.call_args.kwargs['data']['model_version'],
@@ -273,11 +280,9 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
 
     def test_constructor_with_none_api_url(self) -> None:
         """Test constructor uses environment variable when api_url is None."""
-        with patch(
-            'os.getenv', side_effect=lambda key, default=None: (
-                'http://env-url' if key == 'VIOLATION_RECORD_API_URL'
-                or key == 'DB_MANAGEMENT_API_URL' else default
-            ),
+        with patch.dict(
+            os.environ,
+            {'VIOLATION_RECORD_API_URL': 'http://env-url'},
         ):
             sender = ViolationSender(api_url=None)
             self.assertEqual(sender.base_url, 'http://env-url')
@@ -361,9 +366,8 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
 
         # Call with minimal parameters
         result = await self.sender.send_violation(
-            site=self.site,
-            stream_name=self.stream,
-            image_bytes=self.img,
+            EvidenceMetadata(site=self.site, stream_name=self.stream),
+            self.img,
         )
 
         self.assertEqual(result, '789')
@@ -375,7 +379,7 @@ class TestViolationSender(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['site'], self.site)
         self.assertEqual(data['stream_name'], self.stream)
         self.assertNotIn('detection_time', data)
-        self.assertEqual(data['warnings_json'], 'null')
+        self.assertNotIn('warnings_json', data)
 
     @patch.object(ViolationSender, '_get_client', new_callable=AsyncMock)
     @patch.object(TokenManager, 'get_valid_token', new_callable=AsyncMock)

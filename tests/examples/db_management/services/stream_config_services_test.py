@@ -99,12 +99,13 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result, mock_cfg)
             self.db.add.assert_called_with(mock_cfg)
-            self.db.commit.assert_awaited()
-            self.db.refresh.assert_awaited_with(mock_cfg)
+            self.db.flush.assert_awaited()
+            self.db.commit.assert_not_awaited()
+            self.db.refresh.assert_not_awaited()
 
     async def test_create_stream_config_exception(self) -> None:
         """Test create stream config exception."""
-        self.db.commit = AsyncMock(side_effect=Exception('Database failure'))
+        self.db.flush = AsyncMock(side_effect=RuntimeError('Database failure'))
         self.db.rollback = AsyncMock()
         self.db.add = MagicMock()
 
@@ -115,14 +116,13 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
             mock_cfg: MagicMock = MagicMock()
             MockStreamConfig.return_value = mock_cfg
 
-            with self.assertRaises(HTTPException) as context:
+            with self.assertRaises(RuntimeError):
                 await stream_config_services.create_stream_config(
                     payload=self.payload,
                     db=self.db,
                 )
 
-            self.assertEqual(context.exception.status_code, 500)
-            self.db.rollback.assert_awaited()
+            self.db.rollback.assert_not_awaited()
 
     async def test_update_stream_config_success(self) -> None:
         """Test update stream config success."""
@@ -134,7 +134,8 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
             db=self.db,
         )
 
-        self.db.commit.assert_awaited()
+        self.db.flush.assert_awaited()
+        self.db.commit.assert_not_awaited()
         # Verify attributes have been updated correctly
         self.assertEqual(self.cfg.stream_name, 'updated_stream')
         self.assertEqual(self.cfg.video_url, 'http://test/updated')
@@ -151,24 +152,24 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(self.cfg.recognition_enabled)
-        self.db.commit.assert_awaited_once()
+        self.db.flush.assert_awaited_once()
+        self.db.commit.assert_not_awaited()
 
     async def test_update_stream_config_exception(self) -> None:
         """Test update stream config exception."""
-        self.db.commit = AsyncMock(side_effect=Exception('Database failure'))
+        self.db.flush = AsyncMock(side_effect=RuntimeError('Database failure'))
         self.db.rollback = AsyncMock()
 
         updates: StreamConfigUpdate = StreamConfigUpdate(stream_name='fail')
 
-        with self.assertRaises(HTTPException) as context:
+        with self.assertRaises(RuntimeError):
             await stream_config_services.update_stream_config(
                 cfg=self.cfg,
                 updates=updates,
                 db=self.db,
             )
 
-        self.assertEqual(context.exception.status_code, 500)
-        self.db.rollback.assert_awaited()
+        self.db.rollback.assert_not_awaited()
 
     async def test_delete_stream_config_success(self) -> None:
         """Test delete stream config success."""
@@ -181,22 +182,22 @@ class TestStreamConfigServices(unittest.IsolatedAsyncioTestCase):
         )
 
         self.db.delete.assert_awaited_with(self.cfg)
-        self.db.commit.assert_awaited()
+        self.db.flush.assert_awaited()
+        self.db.commit.assert_not_awaited()
 
     async def test_delete_stream_config_exception(self) -> None:
         """Test delete stream config exception."""
         self.db.delete = AsyncMock()
-        self.db.commit = AsyncMock(side_effect=Exception('Database failure'))
+        self.db.flush = AsyncMock(side_effect=RuntimeError('Database failure'))
         self.db.rollback = AsyncMock()
 
-        with self.assertRaises(HTTPException) as context:
+        with self.assertRaises(RuntimeError):
             await stream_config_services.delete_stream_config(
                 cfg=self.cfg,
                 db=self.db,
             )
 
-        self.assertEqual(context.exception.status_code, 500)
-        self.db.rollback.assert_awaited()
+        self.db.rollback.assert_not_awaited()
 
     async def test_get_group_stream_limit_success(self) -> None:
         """Test get group stream limit success."""

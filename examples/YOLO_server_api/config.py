@@ -1,65 +1,24 @@
 from __future__ import annotations
 
 import logging
-import os
 import warnings
+
+lazy import torch
+
+from src.settings.inference import ApiInferenceSettings
 
 # Configuration parameters for YOLO Server API
 logger = logging.getLogger(__name__)
 
-# Whether to use TensorRT for inference
-USE_TENSORRT: bool = os.getenv('USE_TENSORRT', 'false').lower() == 'true'
-
-# Whether to use SAHI for sliced inference (only works with .pt models)
-USE_SAHI: bool = os.getenv('USE_SAHI', 'false').lower() == 'true'
-
-# Base model variants
-MODEL_VARIANTS_ENV: str = os.getenv(
-    'MODEL_VARIANTS',
-    'yolo26x,yolo26l,yolo26m,yolo26s,yolo26n',
-)
-MODEL_VARIANTS: list[str] = [
-    v.strip() for v in MODEL_VARIANTS_ENV.split(',') if v.strip()
-]
-DEFAULT_MODEL_ID: str = os.getenv('DEFAULT_MODEL_ID', 'yolo26n').strip()
-
-# Whether to enable lazy loading of models:
-# True means models are loaded only when first used
-LAZY_LOAD_MODELS: bool = (
-    os.getenv('LAZY_LOAD_MODELS', 'true').lower() == 'true'
-)
-
-# Maximum number of models allowed in memory simultaneously in lazy loading
-# mode (LRU eviction)
-MAX_LOADED_MODELS: int = int(os.getenv('MAX_LOADED_MODELS', '3'))
-
-# Whether to preload the smallest model at startup (only in lazy mode)
-PRELOAD_SMALLEST: bool = (
-    os.getenv('PRELOAD_SMALLEST', 'true').lower() == 'true'
-)
-
-# Whether to explicitly call torch.cuda.empty_cache() when releasing/evicting
-# models
-EXPLICIT_CUDA_CLEANUP: bool = (
-    os.getenv('EXPLICIT_CUDA_CLEANUP', 'true').lower() == 'true'
-)
-
-# Inference device. Use "auto" to prefer CUDA only when PyTorch can initialise
-# it successfully; this avoids reconnect loops on hosts where CUDA reports
-# availability errors such as error 804.
-YOLO_INFERENCE_DEVICE: str = (
-    os.getenv(
-        'YOLO_INFERENCE_DEVICE',
-        os.getenv('YOLO_DEVICE', 'auto'),
-    )
-    .strip()
-    .lower()
-)
+settings = ApiInferenceSettings()
+USE_TENSORRT = settings.use_tensorrt
+USE_SAHI = settings.use_sahi
+MAX_LOADED_MODELS = settings.max_loaded_models
+YOLO_INFERENCE_DEVICE = settings.device
 
 
 def _is_cuda_available() -> bool:
     """Return whether PyTorch can initialise CUDA on this host."""
-    import torch
 
     return torch.cuda.is_available()
 
@@ -102,7 +61,9 @@ _CONFIG_INFO: str = f"""
     else "Standard YOLO"
 }
    • Inference device: {YOLO_INFERENCE_DEVICE}
-   • Model variants: {", ".join(MODEL_VARIANTS)}
+   • Published model capacity: {MAX_LOADED_MODELS}
+   • Inference workers: {settings.concurrency}
+   • Admitted requests: {settings.queue_capacity}
 """
 
 

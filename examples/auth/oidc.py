@@ -1,10 +1,3 @@
-"""Standards-based OIDC access-token verification for API services.
-
-The application accepts an external token only when its unverified issuer is
-the server-configured issuer and its signature, issuer, expiration, and API
-audience subsequently validate against the configured JWKS. This issuer check
-is merely a routing decision; it never grants access before full verification.
-"""
 from __future__ import annotations
 
 import asyncio

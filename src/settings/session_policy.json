@@ -1,0 +1,15 @@
+{
+  "idle_seconds": 604800,
+  "maximum_seconds": 7776000,
+  "access_token_seconds": 300,
+  "other_client_idle_seconds": 28800,
+  "other_client_maximum_seconds": 36000,
+  "clients": [
+    "visionnaire-web",
+    "visionnaire-web-dev",
+    "visionnaire-mobile"
+  ],
+  "optional_clients": [
+    "visionnaire-web-dev"
+  ]
+}

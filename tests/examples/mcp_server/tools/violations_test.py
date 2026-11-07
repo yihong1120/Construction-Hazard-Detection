@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from typing import Any
 from unittest.mock import AsyncMock
@@ -22,10 +23,7 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
     # --- _ensure_client ---
 
-    @patch(
-        'examples.mcp_server.tools.violations.get_env_var',
-        side_effect=['https://api', 'https://db'],
-    )
+    @patch.dict(os.environ, {'VIOLATION_RECORD_API_URL': 'https://api'})
     @patch(
         'examples.mcp_server.tools.violations.httpx.AsyncClient',
         autospec=True,
@@ -38,54 +36,38 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         self,
         mock_token: Any,
         mock_client: Any,
-        mock_env: Any,
     ) -> None:
-        """Exercise this test."""
         await self.tool._ensure_client()
         mock_client.assert_called_once()
         mock_token.assert_called_once()
 
     # --- _get_auth_headers ---
 
-    @patch(
-        'examples.mcp_server.tools.violations.os.getenv',
-        side_effect=lambda k, d=None: (
-            'STATIC_TOKEN' if k == 'MCP_STATIC_BEARER' else ''
-        ),
-    )
-    async def test_get_auth_headers_static_bearer(self, _: Any) -> None:
-        """Exercise this test."""
+    @patch.dict(os.environ, {'MCP_STATIC_BEARER': 'STATIC_TOKEN'})
+    async def test_get_auth_headers_static_bearer(self):
         self.tool._token_manager = MagicMock()
         headers = await self.tool._get_auth_headers()
-        self.assertIn('Authorization', headers)
-        self.assertTrue(headers['Authorization'].startswith('Bearer'))
+        self.assertEqual(headers['Authorization'], 'Bearer STATIC_TOKEN')
 
-    @patch(
-        'examples.mcp_server.tools.violations.os.getenv',
-        side_effect=lambda k, d=None: (
-            'true' if k == 'MCP_ALLOW_NO_AUTH' else ''
-        ),
+    @patch.dict(
+        os.environ,
+        {'MCP_ALLOW_NO_AUTH': 'true', 'MCP_STATIC_BEARER': ''},
     )
-    async def test_get_auth_headers_cannot_bypass_auth(self, _: Any) -> None:
-        """Exercise this test."""
+    async def test_get_auth_headers_cannot_bypass_auth(self):
         self.tool._token_manager = AsyncMock()
         self.tool._token_manager.get_valid_token.return_value = 'TOKEN'
         headers = await self.tool._get_auth_headers()
         self.assertEqual(headers['Authorization'], 'Bearer TOKEN')
 
-    @patch('examples.mcp_server.tools.violations.os.getenv', return_value='')
-    async def test_get_auth_headers_valid_token(self, _: Any) -> None:
-        """Exercise this test."""
-        fake_token = 'XYZ'
-        tm = AsyncMock()
-        tm.get_valid_token.return_value = fake_token
-        self.tool._token_manager = tm
+    @patch.dict(os.environ, {'MCP_STATIC_BEARER': ''})
+    async def test_get_auth_headers_valid_token(self):
+        self.tool._token_manager = AsyncMock()
+        self.tool._token_manager.get_valid_token.return_value = 'XYZ'
         headers = await self.tool._get_auth_headers()
-        self.assertEqual(headers['Authorization'], f"Bearer {fake_token}")
+        self.assertEqual(headers['Authorization'], 'Bearer XYZ')
 
-    @patch('examples.mcp_server.tools.violations.os.getenv', return_value='')
-    async def test_get_auth_headers_exception(self, _: Any) -> None:
-        """Exercise this test."""
+    @patch.dict(os.environ, {'MCP_STATIC_BEARER': ''})
+    async def test_get_auth_headers_exception(self):
         self.tool._token_manager = AsyncMock()
         self.tool._token_manager.get_valid_token.side_effect = RuntimeError(
             'fail',
@@ -103,7 +85,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_search_success(self) -> None:
-        """Exercise this test."""
         mock_response = MagicMock()
         mock_response.json.return_value = {'total': 1, 'items': []}
         mock_response.raise_for_status.return_value = None
@@ -116,7 +97,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_search_exception(self) -> None:
-        """Exercise this test."""
         with patch.object(
             self.tool,
             '_get_auth_headers',
@@ -137,7 +117,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_search_with_start_end_time_params(self) -> None:
         # Ensure start_time/end_time branches are covered
-        """Exercise this test."""
         mock_response = MagicMock()
         mock_response.json.return_value = {'total': 0, 'items': []}
         # non-awaitable path for _maybe_await
@@ -169,7 +148,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_get_success(self) -> None:
-        """Exercise this test."""
         resp = MagicMock()
         resp.json.return_value = {'id': 1}
         resp.raise_for_status.return_value = None
@@ -182,7 +160,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_get_exception(self) -> None:
-        """Exercise this test."""
         with patch.object(
             self.tool,
             '_get_auth_headers',
@@ -204,7 +181,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_get_image_as_base64_success(self) -> None:
-        """Exercise this test."""
         mock_response = MagicMock()
         mock_response.content = b'data'
         mock_response.headers = {'content-type': 'image/png'}
@@ -222,7 +198,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res['media_type'], 'image/png')
 
     async def test_get_image_non_base64(self) -> None:
-        """Exercise this test."""
         self.tool._base_url = 'https://api'
         res = await self.tool.get_image('x.jpg', as_base64=False)
         self.assertIn('url', res)
@@ -234,7 +209,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_get_image_http_error(self) -> None:
-        """Exercise this test."""
         client = AsyncMock()
         response = MagicMock(status_code=404)
         err = httpx.HTTPStatusError('404', request=None, response=response)
@@ -247,7 +221,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_get_image_general_error(self) -> None:
-        """Exercise this test."""
         with patch.object(
             self.tool,
             '_get_auth_headers',
@@ -269,7 +242,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     )
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_my_sites_success(self) -> None:
-        """Exercise this test."""
         resp = MagicMock()
         resp.json.return_value = [{'id': 1}]
         resp.raise_for_status.return_value = None
@@ -282,7 +254,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
 
     @patch.object(ViolationsTools, '_ensure_client', AsyncMock())
     async def test_my_sites_exception(self) -> None:
-        """Exercise this test."""
         with patch.object(
             self.tool,
             '_get_auth_headers',
@@ -298,7 +269,6 @@ class TestViolationsTools(unittest.IsolatedAsyncioTestCase):
     # --- close ---
 
     async def test_close(self) -> None:
-        """Exercise this test."""
         client = AsyncMock()
         self.tool._client = client
         await self.tool.close()

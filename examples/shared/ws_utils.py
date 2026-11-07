@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable
 from collections.abc import Callable
+from functools import partial
+from operator import methodcaller
 from typing import TypeVar
 
 from fastapi import WebSocket
@@ -66,7 +68,7 @@ async def _safe_websocket_send_json(
     """
     sent, _ = await _safe_websocket_operation(
         websocket,
-        lambda: websocket.send_json(data),
+        partial(methodcaller('send_json', data), websocket),
         client_info=client_info,
         disconnected_message='Connection closed, skipping JSON send',
         operation_name='send JSON',
@@ -91,7 +93,7 @@ async def _safe_websocket_send_text(
     """
     sent, _ = await _safe_websocket_operation(
         websocket,
-        lambda: websocket.send_text(text),
+        partial(methodcaller('send_text', text), websocket),
         client_info=client_info,
         disconnected_message='Connection closed, skipping text send',
         operation_name='send text',
@@ -116,7 +118,7 @@ async def _safe_websocket_send_bytes(
     """
     sent, _ = await _safe_websocket_operation(
         websocket,
-        lambda: websocket.send_bytes(data),
+        partial(methodcaller('send_bytes', data), websocket),
         client_info=client_info,
         disconnected_message='Connection closed, skipping bytes send',
         operation_name='send bytes',

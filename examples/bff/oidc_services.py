@@ -1,4 +1,3 @@
-"""OIDC authorization-code + PKCE flow for the browser BFF."""
 from __future__ import annotations
 
 import base64
@@ -200,14 +199,30 @@ async def _post_token_form(form: Mapping[str, str]) -> dict[str, Any]:
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPStatusError as exc:
-        status_code = (
-            401
-            if 400 <= exc.response.status_code < 500
-            else 503
+        response = exc.response
+        try:
+            error = response.json()
+        except ValueError:
+            error = None
+        oauth_error = error.get('error') if isinstance(error, dict) else None
+        # Only an explicit rejection of this grant invalidates the session.
+        # Client configuration errors and throttling cannot revoke a login.
+        terminal = (
+            response.status_code in {400, 401, 403}
+            and oauth_error == 'invalid_grant'
         )
+        status_code = (
+            401 if terminal else (429 if response.status_code == 429 else 503)
+        )
+        retry_after = response.headers.get('retry-after')
         raise HTTPException(
             status_code=status_code,
             detail='oidc_token_exchange_failed',
+            headers=(
+                {'Retry-After': retry_after}
+                if retry_after is not None and not terminal
+                else None
+            ),
         ) from exc
     except (httpx.RequestError, ValueError) as exc:
         raise HTTPException(
@@ -222,7 +237,7 @@ async def _post_token_form(form: Mapping[str, str]) -> dict[str, Any]:
         or not payload['refresh_token']
     ):
         raise HTTPException(
-            status_code=401,
+            status_code=503,
             detail='oidc_token_exchange_failed',
         )
     return payload

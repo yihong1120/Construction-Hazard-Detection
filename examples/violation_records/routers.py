@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -23,6 +24,7 @@ from examples.violation_records import violation_query_service
 from examples.violation_records import violation_review_service
 from examples.violation_records import violation_services
 from examples.violation_records import violation_upload_service
+from examples.violation_records.evidence import ViolationEvidence
 from examples.violation_records.record_policy import (
     authenticated_record_options,
 )
@@ -37,6 +39,7 @@ from examples.violation_records.schemas import ViolationList
 from examples.violation_records.schemas import ViolationReviewAuditItem
 from examples.violation_records.schemas import ViolationReviewStatus
 from examples.violation_records.schemas import ViolationReviewUpdate
+from examples.violation_records.violation_queries import ViolationFilters
 
 router = APIRouter()
 
@@ -153,16 +156,18 @@ async def get_violations(
         request,
         db,
         credentials,
-        site_id=site_id,
-        stream_id=stream_id,
-        violation_type=violation_type,
-        keyword=keyword,
-        start_time=start_time,
-        end_time=end_time,
+        filters=ViolationFilters(
+            site_id=site_id,
+            stream_id=stream_id,
+            violation_type=violation_type,
+            keyword=keyword,
+            start_time=start_time,
+            end_time=end_time,
+            flagged=flagged,
+            review_status=review_status,
+            cursor=cursor,
+        ),
         limit=limit,
-        flagged=flagged,
-        review_status=review_status,
-        cursor=cursor,
     )
 
 
@@ -201,13 +206,15 @@ async def get_violation_analytics(
         Aggregate counts constrained by the user's accessible sites.
     """
     return await violation_services.get_violation_analytics(
-        start,
-        end,
+        ViolationFilters(
+            start_time=start,
+            end_time=end,
+            site_id=site_id,
+            stream_id=stream_id,
+            violation_type=violation_type,
+        ),
         db,
         credentials,
-        site_id=site_id,
-        stream_id=stream_id,
-        violation_type=violation_type,
         bucket=bucket,
     )
 
@@ -485,6 +492,8 @@ async def upload_violation(
     pole_polygon_json: str | None = Form(None),
     model_id: str = Form(...),
     model_version: str = Form(...),
+    event_id: UUID | None = Form(None),
+    site_id: int | None = Form(None, gt=0),
     image: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     credentials: JwtAuthorizationCredentials = Security(jwt_access),
@@ -507,16 +516,20 @@ async def upload_violation(
         Created violation identifier and upload result message.
     """
     return await violation_upload_service.upload_violation(
-        site,
-        stream_name,
-        detection_time,
-        warnings_json,
-        detections_json,
-        cone_polygon_json,
-        pole_polygon_json,
-        image,
+        ViolationEvidence(
+            site=site,
+            stream_name=stream_name,
+            detection_time=detection_time,
+            warnings_json=warnings_json,
+            detections_json=detections_json,
+            cone_polygon_json=cone_polygon_json,
+            pole_polygon_json=pole_polygon_json,
+            image_file=image,
+            model_id=model_id,
+            model_version=model_version,
+            event_id=str(event_id) if event_id is not None else None,
+            site_id=site_id,
+        ),
         db,
         credentials,
-        model_id=model_id,
-        model_version=model_version,
     )

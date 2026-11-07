@@ -4,7 +4,9 @@ import asyncio
 import json
 import unittest
 from collections.abc import Coroutine
+from functools import partial
 from types import SimpleNamespace
+from typing import Any
 from typing import cast
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -15,6 +17,131 @@ from fastapi import WebSocketDisconnect
 from examples.auth.config import Settings
 from examples.streaming_web import streaming_metadata_handlers as handlers
 from examples.streaming_web.schemas import FrameOutData
+from examples.streaming_web.streaming_metadata_handlers import (
+    MetadataOverlayLease,
+)
+from examples.streaming_web.streaming_metadata_handlers import (
+    MetadataSubscription,
+)
+
+
+async def _receive_task_handles_disconnect_invalid_receive(
+    value: str | None,
+) -> str | None:
+    """Return a completed receive value for one helper invocation.
+
+    Args:
+        value: Client text, or ``None`` after a disconnect.
+
+    Returns:
+        The requested completed task value.
+    """
+    return value
+
+
+async def _sse_turns_returned_reader_exceptions_return_reader_error(
+    testcase: TestMetadataTransportFlows,
+    /,
+    awaitable: Coroutine[object, object, object],
+    timeout: float,
+) -> FrameOutData | Exception:
+    """Close the unused subscription awaitable and return an error.
+
+    Args:
+        awaitable: Subscription coroutine passed to ``wait_for``.
+        timeout: Requested metadata read timeout.
+
+    Returns:
+        Reader error passed through the fan-out subscription.
+    """
+    testcase.assertEqual(
+        timeout,
+        handlers._metadata_client_tick_seconds,
+    )
+    awaitable.close()
+    return RuntimeError('redis offline')
+
+
+async def _websocket_push_ignores_reader_errors_get_frame(
+    frames: list[FrameOutData | Exception],
+    /,
+) -> FrameOutData | Exception:
+    """Return the next value published by the fan-out subscription.
+
+    Returns:
+        A metadata frame or reader exception for the push loop.
+    """
+    return frames.pop(0)
+
+
+async def _websocket_push_ignores_reader_errors_wait_for_message(
+    receive_gate: Any,
+    /,
+    *_args: object,
+) -> str | None:
+    """Remain pending until the transport closes its receive task.
+
+    Returns:
+        No value because the task is cancelled during clean-up.
+    """
+    await receive_gate.wait()
+    return None
+
+
+async def _websocket_push_handles_completed_messages_wait_for_result(
+    outcomes: list[FrameOutData | Exception],
+    testcase: TestMetadataTransportFlows,
+    /,
+    awaitable: Coroutine[object, object, object],
+    timeout: float,
+) -> FrameOutData:
+    """Close the mocked awaitable and return the queued result.
+
+    Args:
+        awaitable: Subscription coroutine supplied to ``wait_for``.
+        timeout: Unused timeout selected by the production loop.
+
+    Returns:
+        Next frame from the deterministic queue.
+
+    Raises:
+        Exception: Queued timeout used to exercise the idle path.
+    """
+    testcase.assertEqual(
+        timeout,
+        handlers._metadata_client_tick_seconds,
+    )
+    awaitable.close()
+    outcome = outcomes.pop(0)
+    if isinstance(outcome, Exception):
+        raise outcome
+    return outcome
+
+
+async def _websocket_push_handles_completed_messages_active_after_task_runs(
+    outcomes: list[FrameOutData | Exception],
+    /,
+    *_args: object,
+) -> bool:
+    """Yield once so each receive task completes before inspection.
+
+    Returns:
+        Whether the loop should process another transport iteration.
+    """
+    await asyncio.sleep(0)
+    return len(outcomes) >= 0
+
+
+async def _websocket_push_stops_when_client_active_after_receive(
+    *_args: object,
+) -> bool:
+    """Yield once so the initial receive task completes.
+
+    Returns:
+        Whether the connection is initially active.
+    """
+    await asyncio.sleep(0)
+    return True
 
 
 def _frame() -> FrameOutData:
@@ -144,16 +271,7 @@ class TestMetadataWebSocketHelpers(unittest.IsolatedAsyncioTestCase):
         """Completed client tasks preserve disconnect and ping semantics."""
         websocket = MagicMock()
 
-        async def receive(value: str | None) -> str | None:
-            """Return a completed receive value for one helper invocation.
-
-            Args:
-                value: Client text, or ``None`` after a disconnect.
-
-            Returns:
-                The requested completed task value.
-            """
-            return value
+        receive = _receive_task_handles_disconnect_invalid_receive
 
         disconnected = asyncio.create_task(receive(None))
         await disconnected
@@ -269,7 +387,8 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=subscription),
             ),
             patch.object(
-                handlers.asyncio, 'get_running_loop',
+                handlers.asyncio,
+                'get_running_loop',
                 return_value=event_loop,
             ),
             patch.object(
@@ -287,8 +406,11 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
         ):
             iterator = handlers.metadata_stream_generator(
                 request,
-                MagicMock(),
-                'metadata-key',
+                MetadataSubscription(
+                    MagicMock(),
+                    'metadata-key',
+                    MetadataOverlayLease(),
+                ),
             )
             connected = await anext(iterator)
             heartbeat = await anext(iterator)
@@ -330,7 +452,8 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=subscription),
             ),
             patch.object(
-                handlers.asyncio, 'get_running_loop',
+                handlers.asyncio,
+                'get_running_loop',
                 return_value=event_loop,
             ),
             patch.object(
@@ -338,17 +461,24 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
                 '_next_overlay_ready_event',
                 new=AsyncMock(
                     return_value=(
-                        True, b'event: overlay_ready\n\n',
+                        True,
+                        b'event: overlay_ready\n\n',
                     ),
                 ),
             ),
         ):
             iterator = handlers.metadata_stream_generator(
                 request,
-                rds,
-                'metadata-key',
-                overlay_ready_key='overlay:ready',
-                overlay_ready_payload={'stream_id': '12'},
+                MetadataSubscription(
+                    rds,
+                    'metadata-key',
+                    MetadataOverlayLease(
+                        ready_key='overlay:ready',
+                        ready_payload={
+                            'stream_id': '12',
+                        },
+                    ),
+                ),
             )
             await anext(iterator)
             overlay_event = await anext(iterator)
@@ -372,22 +502,10 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
         event_loop = MagicMock()
         event_loop.time = MagicMock(side_effect=[0.0, 1.0])
 
-        async def return_reader_error(
-            awaitable: Coroutine[object, object, object],
-            timeout: float,
-        ) -> FrameOutData | Exception:
-            """Close the unused subscription awaitable and return an error.
-
-            Args:
-                awaitable: Subscription coroutine passed to ``wait_for``.
-                timeout: Requested metadata read timeout.
-
-            Returns:
-                Reader error passed through the fan-out subscription.
-            """
-            self.assertEqual(timeout, handlers._metadata_client_tick_seconds)
-            awaitable.close()
-            return RuntimeError('redis offline')
+        return_reader_error = partial(
+            _sse_turns_returned_reader_exceptions_return_reader_error,
+            self,
+        )
 
         with (
             patch.object(
@@ -396,19 +514,24 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=subscription),
             ),
             patch.object(
-                handlers.asyncio, 'get_running_loop',
+                handlers.asyncio,
+                'get_running_loop',
                 return_value=event_loop,
             ),
             patch.object(
-                handlers.asyncio, 'wait_for',
+                handlers.asyncio,
+                'wait_for',
                 new=return_reader_error,
             ),
             patch.object(handlers.asyncio, 'sleep', new=AsyncMock()),
         ):
             iterator = handlers.metadata_stream_generator(
                 request,
-                MagicMock(),
-                'metadata-key',
+                MetadataSubscription(
+                    MagicMock(),
+                    'metadata-key',
+                    MetadataOverlayLease(),
+                ),
             )
             await anext(iterator)
             error_event = await anext(iterator)
@@ -431,25 +554,18 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
             _frame(),
         ]
 
-        async def get_frame() -> FrameOutData | Exception:
-            """Return the next value published by the fan-out subscription.
-
-            Returns:
-                A metadata frame or reader exception for the push loop.
-            """
-            return frames.pop(0)
+        get_frame = partial(
+            _websocket_push_ignores_reader_errors_get_frame,
+            frames,
+        )
 
         subscription.get = get_frame
         receive_gate = asyncio.Event()
 
-        async def wait_for_message(*_args: object) -> str | None:
-            """Remain pending until the transport closes its receive task.
-
-            Returns:
-                No value because the task is cancelled during clean-up.
-            """
-            await receive_gate.wait()
-            return None
+        wait_for_message = partial(
+            _websocket_push_ignores_reader_errors_wait_for_message,
+            receive_gate,
+        )
 
         with (
             patch.object(
@@ -463,7 +579,8 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(side_effect=[True, True, False]),
             ),
             patch.object(
-                handlers, '_safe_websocket_receive_text',
+                handlers,
+                '_safe_websocket_receive_text',
                 wait_for_message,
             ),
             patch.object(
@@ -499,37 +616,16 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
             _frame(),
         ]
 
-        async def wait_for_result(
-            awaitable: Coroutine[object, object, object],
-            timeout: float,
-        ) -> FrameOutData:
-            """Close the mocked awaitable and return the queued result.
+        wait_for_result = partial(
+            _websocket_push_handles_completed_messages_wait_for_result,
+            outcomes,
+            self,
+        )
 
-            Args:
-                awaitable: Subscription coroutine supplied to ``wait_for``.
-                timeout: Unused timeout selected by the production loop.
-
-            Returns:
-                Next frame from the deterministic queue.
-
-            Raises:
-                Exception: Queued timeout used to exercise the idle path.
-            """
-            self.assertEqual(timeout, handlers._metadata_client_tick_seconds)
-            awaitable.close()
-            outcome = outcomes.pop(0)
-            if isinstance(outcome, Exception):
-                raise outcome
-            return outcome
-
-        async def active_after_task_runs(*_args: object) -> bool:
-            """Yield once so each receive task completes before inspection.
-
-            Returns:
-                Whether the loop should process another transport iteration.
-            """
-            await asyncio.sleep(0)
-            return len(outcomes) >= 0
+        active_after_task_runs = partial(
+            _websocket_push_handles_completed_messages_active_after_task_runs,
+            outcomes,
+        )
         with (
             patch.object(
                 handlers.metadata_fanout,
@@ -575,14 +671,9 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
         subscription = MagicMock()
         subscription.close = AsyncMock()
 
-        async def active_after_receive(*_args: object) -> bool:
-            """Yield once so the initial receive task completes.
-
-            Returns:
-                Whether the connection is initially active.
-            """
-            await asyncio.sleep(0)
-            return True
+        active_after_receive = (
+            _websocket_push_stops_when_client_active_after_receive
+        )
 
         with (
             patch.object(
@@ -716,7 +807,8 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=9),
             ),
             patch.object(
-                handlers, 'build_metadata_key',
+                handlers,
+                'build_metadata_key',
                 return_value='metadata-key',
             ),
             patch.object(

@@ -19,6 +19,7 @@ from examples.db_management.schemas.stream_config import SiteStreamConfigUpsert
 from examples.db_management.schemas.stream_config import StreamConfigCreate
 from examples.db_management.schemas.stream_config import StreamConfigUpdate
 from examples.db_management.services import stream_config_services
+from examples.db_management.services import stream_management_services
 
 
 class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
@@ -32,9 +33,13 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         """
         for name, replacement in [
             ('require_site', AsyncMock()),
-            ('require_model', MagicMock()),
+            ('require_model_async', AsyncMock()),
         ]:
-            policy = patch.object(streams, name, replacement)
+            policy = patch.object(
+                stream_management_services,
+                name,
+                replacement,
+            )
             policy.start()
             self.addCleanup(policy.stop)
         self.db: AsyncMock = AsyncMock()
@@ -70,13 +75,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_limit: AsyncMock,
         mock_list: AsyncMock,
     ) -> None:
-        """Test endpoint list stream configs.
-
-        Args:
-            mock_is_super_admin: Value used by this callable.
-            mock_limit: Value used by this callable.
-            mock_list: Value used by this callable.
-        """
+        """Test endpoint list stream configs."""
         mock_limit.return_value = (2, 5)
         # Mock a complete stream config object
         mock_config: MagicMock = MagicMock(
@@ -112,10 +111,17 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response[0].recognition_enabled)
         mock_list.assert_awaited_once_with(1, self.db, group_id=1)
 
-    @patch('examples.db_management.routers.streams.create_stream_config')
-    @patch('examples.db_management.routers.streams.get_group_stream_limit')
     @patch(
-        'examples.db_management.routers.streams.is_super_admin',
+        'examples.db_management.services.stream_management_services.'
+        'create_stream_config',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'require_stream_capacity',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'is_super_admin',
         return_value=False,
     )
     async def test_endpoint_create_stream_config(
@@ -124,13 +130,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_limit: AsyncMock,
         mock_create: AsyncMock,
     ) -> None:
-        """Test endpoint create stream config.
-
-        Args:
-            mock_is_super_admin: Value used by this callable.
-            mock_limit: Value used by this callable.
-            mock_create: Value used by this callable.
-        """
+        """Test endpoint create stream config."""
         mock_limit.return_value = (1, 5)
         mock_create.return_value = MagicMock(id=1)
 
@@ -158,8 +158,9 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         self.db.get.return_value = self.site_mock
 
         with patch(
-            'examples.db_management.routers.streams.get_group_stream_limit',
-            AsyncMock(return_value=(5, 5)),
+            'examples.db_management.services.stream_management_services.'
+            'require_stream_capacity',
+            AsyncMock(side_effect=HTTPException(403, 'Stream limit reached')),
         ):
             payload: StreamConfigCreate = StreamConfigCreate(
                 site_id=1,
@@ -175,12 +176,25 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(ctx.exception.status_code, 403)
 
-    @patch('examples.db_management.routers.streams.create_stream_config')
-    @patch('examples.db_management.routers.streams.update_stream_config')
-    @patch('examples.db_management.routers.streams.get_group_stream_limit')
-    @patch('examples.db_management.routers.streams.list_stream_configs')
     @patch(
-        'examples.db_management.routers.streams.is_super_admin',
+        'examples.db_management.services.stream_management_services.'
+        'create_stream_config',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'update_stream_config',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'get_group_stream_limit',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'list_stream_configs',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'is_super_admin',
         return_value=False,
     )
     async def test_endpoint_put_site_stream_config_uses_site_scope(
@@ -238,8 +252,8 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
                 return_value=[existing],
             ),
             patch.object(
-                stream_config_services,
-                'get_group_stream_limit',
+                stream_management_services,
+                'require_stream_capacity',
                 new_callable=AsyncMock,
                 return_value=(2, 5),
             ),
@@ -292,9 +306,13 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 400)
 
-    @patch('examples.db_management.routers.streams.update_stream_config')
     @patch(
-        'examples.db_management.routers.streams.is_super_admin',
+        'examples.db_management.services.stream_management_services.'
+        'update_stream_config',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'is_super_admin',
         return_value=False,
     )
     async def test_endpoint_update_stream_config(
@@ -302,12 +320,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_update: AsyncMock,
     ) -> None:
-        """Test endpoint update stream config.
-
-        Args:
-            mock_is_super_admin: Value used by this callable.
-            mock_update: Value used by this callable.
-        """
+        """Test endpoint update stream config."""
         cfg_mock: MagicMock = MagicMock(site=self.site_mock, stream_name='old')
         cfg_mock.group_id = 1
         self.db.get.return_value = cfg_mock
@@ -328,18 +341,15 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        'examples.db_management.routers.streams.is_super_admin',
+        'examples.db_management.services.stream_management_services.'
+        'is_super_admin',
         return_value=False,
     )
     async def test_endpoint_update_stream_config_name_conflict(
         self,
         mock_is_super_admin: MagicMock,
     ) -> None:
-        """Test endpoint update stream config name conflict.
-
-        Args:
-            mock_is_super_admin: Value used by this callable.
-        """
+        """Test endpoint update stream config name conflict."""
         cfg_mock: MagicMock = MagicMock(site=self.site_mock, stream_name='old')
         cfg_mock.group_id = 1
         self.db.get.return_value = cfg_mock
@@ -359,9 +369,13 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 400)
 
-    @patch('examples.db_management.routers.streams.delete_stream_config')
     @patch(
-        'examples.db_management.routers.streams.is_super_admin',
+        'examples.db_management.services.stream_management_services.'
+        'delete_stream_config',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'is_super_admin',
         return_value=False,
     )
     async def test_endpoint_delete_stream_config(
@@ -369,12 +383,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_delete: AsyncMock,
     ) -> None:
-        """Test endpoint delete stream config.
-
-        Args:
-            mock_is_super_admin: Value used by this callable.
-            mock_delete: Value used by this callable.
-        """
+        """Test endpoint delete stream config."""
         cfg_mock: MagicMock = MagicMock(site=self.site_mock)
         cfg_mock.group_id = 1
         self.db.get.return_value = cfg_mock
@@ -391,9 +400,13 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
             'Stream configuration deleted successfully.',
         )
 
-    @patch('examples.db_management.routers.streams.get_group_stream_limit')
     @patch(
-        'examples.db_management.routers.streams.is_super_admin',
+        'examples.db_management.services.stream_management_services.'
+        'get_group_stream_limit',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'is_super_admin',
         return_value=False,
     )
     async def test_endpoint_group_stream_limit(
@@ -401,12 +414,7 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_limit: AsyncMock,
     ) -> None:
-        """Test endpoint group stream limit.
-
-        Args:
-            mock_is_super_admin: Value used by this callable.
-            mock_limit: Value used by this callable.
-        """
+        """Test endpoint group stream limit."""
         mock_limit.return_value = (3, 10)
         self.current_user.role = 'admin'
         self.current_user.group_id = 1
@@ -523,9 +531,13 @@ class TestStreamsRouter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 403)
 
-    @patch('examples.db_management.routers.streams.get_group_stream_limit')
     @patch(
-        'examples.db_management.routers.streams.is_super_admin',
+        'examples.db_management.services.stream_management_services.'
+        'get_group_stream_limit',
+    )
+    @patch(
+        'examples.db_management.services.stream_management_services.'
+        'is_super_admin',
         return_value=False,
     )
     async def test_group_stream_limit_permission_denied(
@@ -554,14 +566,6 @@ if __name__ == '__main__':
 
 
 def _site(*group_ids: int) -> Site:
-    """Perform site.
-
-    Args:
-        *group_ids: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     site = Site()
     site.groups = [Group(id=group_id) for group_id in group_ids]
     return site
@@ -571,12 +575,15 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
     """Exercise stream ownership and batch upsert guardrails."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         for name, replacement in [
             ('require_site', AsyncMock()),
-            ('require_model', MagicMock()),
+            ('require_model_async', AsyncMock()),
         ]:
-            policy = patch.object(streams, name, replacement)
+            policy = patch.object(
+                stream_management_services,
+                name,
+                replacement,
+            )
             policy.start()
             self.addCleanup(policy.stop)
         self.db = AsyncMock()
@@ -651,7 +658,7 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """The site-scoped GET is a thin alias of the listing helper."""
         with patch(
-            'examples.db_management.routers.streams.'
+            'examples.db_management.services.stream_management_services.'
             '_list_site_stream_config_reads',
             new_callable=AsyncMock,
             return_value=[],
@@ -682,19 +689,21 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.db_management.routers.streams.is_super_admin',
+                'examples.db_management.services.stream_management_services.'
+                'is_super_admin',
                 return_value=False,
             ),
             patch(
-                'examples.db_management.routers.streams.list_stream_configs',
+                'examples.db_management.services.stream_management_services.'
+                'list_stream_configs',
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                'examples.db_management.routers.streams.'
-                'get_group_stream_limit',
+                'examples.db_management.services.stream_management_services.'
+                'require_stream_capacity',
                 new_callable=AsyncMock,
-                return_value=(5, 5),
+                side_effect=HTTPException(403, 'Stream limit reached'),
             ),
         ):
             with self.assertRaisesRegex(HTTPException, 'Stream limit reached'):
@@ -716,11 +725,13 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch(
-                'examples.db_management.routers.streams.is_super_admin',
+                'examples.db_management.services.stream_management_services.'
+                'is_super_admin',
                 return_value=False,
             ),
             patch(
-                'examples.db_management.routers.streams.list_stream_configs',
+                'examples.db_management.services.stream_management_services.'
+                'list_stream_configs',
                 new_callable=AsyncMock,
                 return_value=[],
             ),
@@ -771,16 +782,18 @@ class TestStreamRouterCoverage(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'examples.db_management.routers.streams.is_super_admin',
+                'examples.db_management.services.stream_management_services.'
+                'is_super_admin',
                 return_value=False,
             ),
             patch(
-                'examples.db_management.routers.streams.list_stream_configs',
+                'examples.db_management.services.stream_management_services.'
+                'list_stream_configs',
                 new_callable=AsyncMock,
                 return_value=[existing],
             ),
             patch(
-                'examples.db_management.routers.streams.'
+                'examples.db_management.services.stream_management_services.'
                 '_list_site_stream_config_reads',
                 new_callable=AsyncMock,
                 return_value=[],

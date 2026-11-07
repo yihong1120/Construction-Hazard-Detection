@@ -1,0 +1,43 @@
+[
+  {
+    "file": "20261030_01_evidence_identity.sql",
+    "verify": "SELECT (SELECT count(*) FROM pg_attribute WHERE (attrelid='violations'::regclass AND attname IN ('site_id','event_id')) OR (attrelid='notifications'::regclass AND attname='event_key'))=3 AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='violations'::regclass AND conname='fk_violations_site_id')"
+  },
+  {
+    "file": "20261031_01_legacy_evidence_site_dual_write.sql",
+    "verify": "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='violations'::regclass AND tgname='fill_legacy_evidence_site_id' AND tgenabled='O')"
+  },
+  {
+    "file": "20261030_02_backfill_evidence_sites.sql",
+    "remaining": "SELECT count(*) FROM violations WHERE site_id IS NULL",
+    "verify": "SELECT NOT EXISTS (SELECT 1 FROM violations WHERE site_id IS NULL)"
+  },
+  {
+    "file": "20261030_03_contract_evidence_sites.sql",
+    "verify": "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='violations'::regclass AND conname='fk_violations_site_id' AND convalidated) AND NOT EXISTS (SELECT 1 FROM violations v LEFT JOIN sites s ON s.id=v.site_id WHERE v.site_id IS NULL OR s.id IS NULL) AND (SELECT count(*) FROM pg_index WHERE indexrelid IN (to_regclass('uq_violation_event_id'),to_regclass('uq_notification_user_event'),to_regclass('idx_vio_site_id_detection_id')) AND indisvalid)=3"
+  },
+  {
+    "file": "20261101_01_model_publications.sql",
+    "verify": "SELECT to_regclass('model_publications') IS NOT NULL"
+  },
+  {
+    "file": "20261101_02_notification_delivery.sql",
+    "verify": "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='sites'::regclass AND attname='recipient_revision') AND to_regclass('notification_delivery_receipts') IS NOT NULL AND (SELECT count(*) FROM pg_trigger WHERE tgname='notification_recipients_changed' AND tgenabled='O' AND tgrelid IN ('users'::regclass,'user_sites'::regclass,'site_groups'::regclass,'site_notification_preferences'::regclass))=4"
+  },
+  {
+    "file": "20261102_01_model_versions.sql",
+    "verify": "SELECT to_regclass('detection_model_versions') IS NOT NULL AND (SELECT count(*) FROM pg_trigger WHERE tgenabled='O' AND ((tgrelid='detection_model_catalog'::regclass AND tgname='archive_model_version') OR (tgrelid='detection_model_versions'::regclass AND tgname='protect_model_version')))=2 AND NOT EXISTS (SELECT 1 FROM detection_model_catalog c LEFT JOIN detection_model_versions v ON v.model_key=c.model_key AND v.version=c.definition->>'version' WHERE v.model_key IS NULL OR v.sha256<>c.definition->>'sha256' OR v.classes::jsonb<>(c.definition->'classes')::jsonb)"
+  },
+  {
+    "file": "20261102_02_account_evidence_lifecycle.sql",
+    "verify": "SELECT to_regclass('account_operations') IS NOT NULL AND to_regclass('evidence_write_operations') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='violations'::regclass AND attname='event_fingerprint' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='users'::regclass AND conname='user_pending_deletion_suspended' AND convalidated) AND EXISTS(SELECT 1 FROM pg_index WHERE indexrelid='account_deletion_one_pending'::regclass AND indisvalid AND indisunique)"
+  },
+  {
+    "file": "20261103_01_account_state_evidence_recovery.sql",
+    "verify": "SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='users'::regclass AND attname='state_revision' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='account_operations'::regclass AND attname='target_revision' AND NOT attisdropped) AND (SELECT count(*) FROM pg_attribute WHERE attrelid='evidence_write_operations'::regclass AND attname IN ('attempts','next_attempt','last_error') AND NOT attisdropped)=3 AND EXISTS(SELECT 1 FROM pg_index WHERE indexrelid='evidence_write_due'::regclass AND indisvalid)"
+  },
+  {
+    "file": "20261103_02_sync_progress_retention.sql",
+    "verify": "SELECT to_regclass('account_deletion_receipts') IS NOT NULL AND (SELECT count(*) FROM pg_attribute WHERE attrelid='account_operations'::regclass AND attname IN ('sync_parts','completed_at') AND NOT attisdropped)=2 AND EXISTS(SELECT 1 FROM pg_index WHERE indexrelid='account_operation_due'::regclass AND indisvalid AND indpred IS NOT NULL) AND to_regclass('account_operation_completed') IS NOT NULL"
+  }
+]

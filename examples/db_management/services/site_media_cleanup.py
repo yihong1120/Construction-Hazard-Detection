@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.models import SiteMediaCleanupJob
 from examples.auth.models import Violation
+from examples.violation_records.site_scope import violation_site_scope
 
 logger = logging.getLogger(__name__)
 _cleanup_enqueue_chunk_size: Final[int] = 250
@@ -62,7 +63,10 @@ async def enqueue_site_media_cleanup_for_site(
     """Queue a site's evidence paths inside PostgreSQL without loading them."""
     source_paths = (
         select(Violation.image_path)
-        .where(Violation.site == site_name, Violation.image_path.is_not(None))
+        .where(
+            violation_site_scope([site_name]),
+            Violation.image_path.is_not(None),
+        )
         .distinct()
     )
     await db.execute(
@@ -128,25 +132,9 @@ async def drain_site_media_cleanup_jobs(
         job.lease_expires_at = lease_expires_at
     await db.commit()
 
-    semaphore = asyncio.Semaphore(_cleanup_file_concurrency)
+    deletion = _SiteMediaDeletion()
 
-    async def delete_claimed(job: SiteMediaCleanupJob) -> OSError | None:
-        """Perform delete claimed.
-
-        Args:
-            job: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        try:
-            async with semaphore:
-                await asyncio.to_thread(_delete_file, job.path)
-        except OSError as exc:
-            return exc
-        return None
-
-    errors = await asyncio.gather(*(delete_claimed(job) for job in jobs))
+    errors = await asyncio.gather(*(deletion.delete(job) for job in jobs))
     completed = 0
     finished_at = datetime.now(timezone.utc)
     for job, error in zip(jobs, errors, strict=True):
@@ -172,3 +160,16 @@ async def drain_site_media_cleanup_jobs(
             completed += 1
     await db.commit()
     return completed
+
+
+class _SiteMediaDeletion:
+    def __init__(self):
+        self.capacity = asyncio.Semaphore(_cleanup_file_concurrency)
+
+    async def delete(self, job: SiteMediaCleanupJob) -> OSError | None:
+        try:
+            async with self.capacity:
+                await asyncio.to_thread(_delete_file, job.path)
+        except OSError as exc:
+            return exc
+        return None

@@ -8,12 +8,9 @@ import httpx
 class AsyncHttpClientOwner:
     """Provide one lazily-created, safely closed HTTP client per instance."""
 
-    def __init__(self, timeout: int | float) -> None:
-        """Perform init.
+    trust_env = True
 
-        Args:
-            timeout: Value used by this callable.
-        """
+    def __init__(self, timeout: int | float) -> None:
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
@@ -31,6 +28,7 @@ class AsyncHttpClientOwner:
                         keepalive_expiry=30,
                     ),
                     http2=True,
+                    trust_env=self.trust_env,
                 )
             return self._client
 

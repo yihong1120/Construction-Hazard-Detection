@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ipaddress
-import os
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
@@ -14,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.models import Deployment
 from examples.auth.models import Tenant
+from examples.auth.settings_fields import DeploymentSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +64,8 @@ def trusted_local_development_deployment_id(request: Request) -> UUID | None:
     both the socket peer and Host must be loopback, and the deployment ID is
     supplied only by the backend environment.
     """
-    enabled = os.getenv('LOCAL_DEVELOPMENT_AUTH_ENABLED', '').strip().lower()
-    if enabled not in {'1', 'true', 'yes', 'on'}:
+    config = DeploymentSettings()
+    if not config.local_development_auth_enabled:
         return None
     client = request.client
     if not (
@@ -74,7 +74,7 @@ def trusted_local_development_deployment_id(request: Request) -> UUID | None:
         and _is_loopback_host(request.url.hostname)
     ):
         return None
-    value = os.getenv('LOCAL_DEVELOPMENT_DEPLOYMENT_ID', '').strip()
+    value = config.local_development_deployment_id
     try:
         return UUID(value)
     except ValueError as exc:
@@ -122,14 +122,7 @@ def canonical_api_base_url(value: str) -> str:
         normalised_netloc = f"{normalised_netloc}:{port}"
 
     path = parsed.path.rstrip('/')
-    configured_path = (
-        os.getenv(
-            'DEPLOYMENT_API_BASE_PATH',
-            '/hazard/api',
-        )
-        .strip()
-        .rstrip('/')
-    )
+    configured_path = DeploymentSettings().deployment_api_base_path.rstrip('/')
     path_segments = path.split('/')
     if (
         path in {'', '/'}
@@ -155,7 +148,7 @@ def request_api_base_url(request: Request) -> str:
     removes the public path before forwarding, so it cannot be reconstructed
     from the ASGI request path.
     """
-    api_path = os.getenv('DEPLOYMENT_API_BASE_PATH', '/hazard/api').strip()
+    api_path = DeploymentSettings().deployment_api_base_path
     return canonical_api_base_url(
         f"{request.url.scheme}://{request.url.netloc}{api_path}",
     )

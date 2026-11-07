@@ -10,6 +10,20 @@ from unittest.mock import patch
 import examples.mcp_server.main as main
 
 
+def _module_main_guard_executes_consume(coro: Any) -> Any:
+    # Close the coroutine to avoid 'never awaited' warnings
+    """Support _consume.
+
+    Args:
+        coro: Test helper value.
+    """
+    try:
+        coro.close()
+    except Exception:
+        pass
+    return None
+
+
 def _transport_config(transport: str) -> dict[str, object]:
     """Build the configuration shape returned by get_transport_config."""
     return {
@@ -48,7 +62,6 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
 
     # === inference ===
     async def test_inference_detect_frame(self) -> None:
-        """Exercise this test."""
         self.inference_tools.detect_frame.return_value = {'ok': True}
         res = await main.inference_detect_frame('img')
         self.assertTrue(res['ok'])
@@ -56,32 +69,27 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
 
     # === hazard ===
     async def test_hazard_detect_violations(self) -> None:
-        """Exercise this test."""
         self.hazard_tools.detect_violations.return_value = {'hazard': True}
         res = await main.hazard_detect_violations([])
         self.assertTrue(res['hazard'])
 
     # === violations ===
     async def test_violations_search(self) -> None:
-        """Exercise this test."""
         self.violations_tools.search.return_value = {'total': 1}
         res = await main.violations_search()
         self.assertEqual(res['total'], 1)
 
     async def test_violations_get(self) -> None:
-        """Exercise this test."""
         self.violations_tools.get.return_value = {'id': 1}
         res = await main.violations_get(1)
         self.assertEqual(res['id'], 1)
 
     async def test_violations_get_image(self) -> None:
-        """Exercise this test."""
         self.violations_tools.get_image.return_value = {'url': 'a'}
         res = await main.violations_get_image('a', False)
         self.assertIn('url', res)
 
     async def test_violations_my_sites(self) -> None:
-        """Exercise this test."""
         self.violations_tools.my_sites.return_value = [{'id': 1}]
         res = await main.violations_my_sites()
         self.assertIn('sites', res)
@@ -91,15 +99,19 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
     # === record ===
 
     async def test_record_send_violation(self) -> None:
-        """Exercise this test."""
         self.record_tools.send_violation.return_value = {'ok': True}
         res = await main.record_send_violation(
-            'img', [], {}, 'site', 'stream', 'model', 'v1',
+            'img',
+            [],
+            {},
+            'site',
+            'stream',
+            'model',
+            'v1',
         )
         self.assertTrue(res['ok'])
 
     async def test_record_batch_send(self) -> None:
-        """Exercise this test."""
         self.record_tools.batch_send_violations.return_value = {'count': 1}
         res = await main.record_batch_send_violations([])
         self.assertEqual(res['count'], 1)
@@ -125,14 +137,15 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         async with main._mcp_lifespan(main.mcp):
             pass
         for tool in (
-            self.inference_tools, self.violations_tools,
-            self.notify_tools, self.record_tools,
+            self.inference_tools,
+            self.violations_tools,
+            self.notify_tools,
+            self.record_tools,
         ):
             tool.close.assert_awaited_once()
 
     # === model ===
     async def test_model_all(self) -> None:
-        """Exercise this test."""
         self.model_tools.sync_model.return_value = {'updated': 1}
         self.model_tools.list_available_models.return_value = {'list': []}
         self.model_tools.get_local_models.return_value = {'local': []}
@@ -142,7 +155,6 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
 
     # === utils ===
     async def test_utils_all(self) -> None:
-        """Exercise this test."""
         self.assertEqual(
             main.utils_calculate_polygon_area([])['area'],
             0.0,
@@ -161,13 +173,11 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_notify_line_push(self) -> None:
-        """Exercise this test."""
         self.notify_tools.line_push.return_value = {'msg': 'ok'}
         res = await main.notify_line_push('r', 'm')
         self.assertEqual(res['msg'], 'ok')
 
     async def test_notify_broadcast_send(self) -> None:
-        """Exercise this test."""
         self.notify_tools.broadcast_send.return_value = {'sent': True}
         res = await main.notify_broadcast_send('m')
         self.assertTrue(res['sent'])
@@ -186,7 +196,6 @@ class TestMainTools(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_notify_telegram_send(self) -> None:
-        """Exercise this test."""
         self.notify_tools.telegram_send.return_value = {'t': 1}
         res = await main.notify_telegram_send('id', 'm')
         self.assertEqual(res['t'], 1)
@@ -197,7 +206,6 @@ class TestRunServer(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.mcp_server.main.get_transport_config')
     async def test_run_server_stdio(self, mock_cfg: Any) -> None:
-        """Exercise this test."""
         mock_cfg.return_value = _transport_config('stdio')
         with patch.object(
             main.mcp,
@@ -210,7 +218,6 @@ class TestRunServer(unittest.IsolatedAsyncioTestCase):
 
     @patch('examples.mcp_server.main.get_transport_config')
     async def test_run_server_sse(self, mock_cfg: Any) -> None:
-        """Exercise this test."""
         mock_cfg.return_value = _transport_config('sse')
         with patch.object(
             main.mcp,
@@ -219,11 +226,14 @@ class TestRunServer(unittest.IsolatedAsyncioTestCase):
         ) as run_sse:
             await main.run_server()
 
-        run_sse.assert_awaited_once()
+        run_sse.assert_awaited_once_with(
+            host='h',
+            port=1,
+            sse_path='/sse',
+        )
 
     @patch('examples.mcp_server.main.get_transport_config')
     async def test_run_server_streamable_http(self, mock_cfg: Any) -> None:
-        """Exercise this test."""
         with patch.object(
             main.mcp,
             'run_streamable_http_async',
@@ -232,14 +242,15 @@ class TestRunServer(unittest.IsolatedAsyncioTestCase):
             mock_cfg.return_value = _transport_config('streamable-http')
             await main.run_server()
 
-        run_streamable_http.assert_awaited_once()
-        self.assertEqual(main.mcp.settings.host, 'h')
-        self.assertEqual(main.mcp.settings.port, 1)
-        self.assertTrue(main.mcp.settings.stateless_http)
+        run_streamable_http.assert_awaited_once_with(
+            host='h',
+            port=1,
+            streamable_http_path='/mcp',
+            stateless_http=True,
+        )
 
     @patch('examples.mcp_server.main.get_transport_config')
     async def test_run_server_invalid_transport(self, mock_cfg: Any) -> None:
-        """Exercise this test."""
         mock_cfg.return_value = _transport_config('xyz')
         with self.assertRaises(ValueError):
             await main.run_server()
@@ -249,7 +260,6 @@ class TestRunServer(unittest.IsolatedAsyncioTestCase):
         side_effect=RuntimeError('bad'),
     )
     async def test_run_server_exception(self, _cfg: Any) -> None:
-        """Exercise this test."""
         with self.assertRaises(RuntimeError):
             await main.run_server()
 
@@ -259,20 +269,8 @@ class TestMainEntrypoint(unittest.TestCase):
 
     def test_module_main_guard_executes(self) -> Any:
         # Ensure __main__ guard runs without starting the server
-        """Exercise this test."""
 
-        def _consume(coro: Any) -> Any:
-            # Close the coroutine to avoid 'never awaited' warnings
-            """Support _consume.
-
-            Args:
-                coro: Test helper value.
-            """
-            try:
-                coro.close()
-            except Exception:
-                pass
-            return None
+        _consume = _module_main_guard_executes_consume
 
         with patch('asyncio.run', side_effect=_consume) as mock_run:
             # Remove already-imported module to avoid runpy warning
