@@ -68,7 +68,7 @@ class _SharedFrameRing:
                 self._available_slots.get(),
                 timeout=timeout_seconds,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise TimeoutError(
                 'YOLO worker shared frame ring is full',
             ) from exc

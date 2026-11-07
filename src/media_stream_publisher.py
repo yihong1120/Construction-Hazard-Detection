@@ -7,57 +7,19 @@ import shutil
 import subprocess
 from collections.abc import Awaitable
 from pathlib import Path
-from typing import Final
 from typing import Protocol
 
 import cv2
 import numpy as np
 
+from src.frame_pacer import FramePacer
+from src.media_encoding import EncoderOptions
 from src.nvenc_session import release_nvenc_session
 from src.nvenc_session import try_acquire_nvenc_session
-
-_default_fps: Final[float] = 10.0
-_default_crf: Final[int] = 28
-_default_preset: Final[str] = 'veryfast'
-_default_encoder: Final[str] = 'libx264'
-_default_nvenc_preset: Final[str] = 'p1'
-_default_nvenc_cq: Final[int] = 30
-_default_vaapi_bitrate: Final[str] = '4M'
-_default_vaapi_maxrate: Final[str] = '8M'
-_default_vaapi_bufsize: Final[str] = '16M'
-_default_rtp_packet_size: Final[int] = 1200
+from src.settings.media import EncoderSettings
 
 
 logger = logging.getLogger(__name__)
-
-
-def _keyframe_interval_seconds() -> float:
-    """Return the maximum time between H.264 keyframes."""
-    try:
-        return max(
-            0.1,
-            float(os.getenv('MEDIA_PUBLISH_KEYFRAME_INTERVAL_SECONDS', '2')),
-        )
-    except ValueError:
-        return 2.0
-
-
-def _rtp_packet_size() -> int:
-    """Return an MTU-safe RTP payload size for MediaMTX.
-
-    Returns:
-        Payload size in bytes, bounded below the Ethernet MTU.
-    """
-    try:
-        configured_size = int(
-            os.getenv(
-                'MEDIA_PUBLISH_RTP_PACKET_SIZE',
-                str(_default_rtp_packet_size),
-            ),
-        )
-    except ValueError:
-        return _default_rtp_packet_size
-    return min(1400, max(576, configured_size))
 
 
 class _FfmpegStdin(Protocol):
@@ -119,6 +81,7 @@ class MediaStreamPublisher:
         bitrate: str | None = None,
         maxrate: str | None = None,
         bufsize: str | None = None,
+        encoding: EncoderOptions | None = None,
     ) -> None:
         """Initialise a frame publisher.
 
@@ -131,11 +94,13 @@ class MediaStreamPublisher:
             maxrate: Optional maximum video bitrate for this rendition.
             bufsize: Optional video rate-control buffer for this rendition.
         """
+        self.encoding = encoding if encoding is not None else EncoderOptions()
+        self.settings = self.encoding.settings
         self.publish_url = publish_url
-        self.fps = max(
-            1.0,
-            fps or float(os.getenv('MEDIA_PUBLISH_FPS', str(_default_fps))),
-        )
+        self.fps = fps if fps is not None else self.settings.fps or 30.0
+        if not np.isfinite(self.fps) or self.fps <= 0:
+            raise ValueError('Publisher FPS must be finite and positive')
+        self.pacer = FramePacer(self.fps)
         self.width = width
         self.height = height
         self.bitrate = bitrate
@@ -256,7 +221,7 @@ class MediaStreamPublisher:
         process.terminate()
         try:
             await asyncio.wait_for(process.wait(), timeout=2.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             await process.wait()
 
@@ -304,19 +269,19 @@ class MediaStreamPublisher:
 
     async def _start(self, width: int, height: int) -> None:
         """Start ffmpeg using the first frame's dimensions."""
-        ffmpeg_binary = os.getenv('MEDIA_FFMPEG_PATH', '').strip()
+        ffmpeg_binary = self.settings.ffmpeg_path
         if not ffmpeg_binary:
             ffmpeg_binary = shutil.which('ffmpeg') or ''
         if not ffmpeg_binary:
             raise RuntimeError('Media publishing requires ffmpeg')
 
-        encoder = _select_encoder(ffmpeg_binary)
+        encoder = _select_encoder(ffmpeg_binary, self.settings)
         if encoder == 'h264_vaapi':
             if self._vaapi_unavailable:
                 encoder = 'libx264'
             else:
                 try:
-                    _ensure_vaapi_device_access()
+                    _ensure_vaapi_device_access(self.settings)
                 except RuntimeError:
                     self._vaapi_unavailable = True
                     encoder = 'libx264'
@@ -396,13 +361,15 @@ class MediaStreamPublisher:
             self._started = False
             return False
         try:
+            self.pacer.reset_deadline()
+            self.pacer.begin()
             process.stdin.write(memoryview(frame).cast('B'))
             await asyncio.wait_for(
                 process.stdin.drain(),
                 timeout=max(1.0, (1.0 / self.fps) * 3),
             )
         except (
-            asyncio.TimeoutError,
+            TimeoutError,
             BrokenPipeError,
             ConnectionResetError,
             RuntimeError,
@@ -410,14 +377,15 @@ class MediaStreamPublisher:
             await self._stop_process()
             self._started = False
             return False
+        self.pacer.complete(True)
         return True
 
     async def _writer_loop(self) -> None:
         """Continuously feed ffmpeg so MediaMTX keeps the live path online."""
         frame_interval = 1.0 / self.fps
-        next_write = asyncio.get_running_loop().time()
         try:
             while True:
+                await self.pacer.wait()
                 process = self._process
                 latest_frame = self._latest_frame
                 if not self._can_write_to_process(process):
@@ -425,21 +393,25 @@ class MediaStreamPublisher:
                     return
                 assert process is not None
                 if latest_frame is not None:
-                    if not await self._write_latest_frame(
+                    result = await self._write_latest_frame(
                         process,
                         latest_frame,
                         frame_interval,
-                    ):
+                    )
+                    if result is False:
                         await self._stop_process()
                         self._started = False
                         return
-                next_write = max(
-                    next_write + frame_interval,
-                    asyncio.get_running_loop().time() + frame_interval,
-                )
-                await asyncio.sleep(
-                    max(0.0, next_write - asyncio.get_running_loop().time()),
-                )
+                    self.pacer.complete(result is True)
+                else:
+                    self.pacer.complete(False)
+                if self.pacer.report_due():
+                    logger.info(
+                        'Media cadence target_fps=%s '
+                        'actual_fps=%.3f timing=%s',
+                        self.fps, self.pacer.timing.actual_fps,
+                        self.pacer.timing,
+                    )
         except asyncio.CancelledError:
             raise
 
@@ -457,7 +429,7 @@ class MediaStreamPublisher:
         process: _FfmpegProcess,
         frame: np.ndarray,
         frame_interval: float,
-    ) -> bool:
+    ) -> bool | None:
         """Write one latest frame while applying a bounded pipe backlog."""
         stdin = process.stdin
         if stdin is None:
@@ -471,15 +443,14 @@ class MediaStreamPublisher:
                     low=len(payload),
                 )
                 if transport.get_write_buffer_size() > len(payload):
-                    await asyncio.sleep(frame_interval)
-                    return True
+                    return None
             stdin.write(payload)
             await asyncio.wait_for(
                 stdin.drain(),
                 timeout=max(1.0, frame_interval * 3),
             )
         except (
-            asyncio.TimeoutError,
+            TimeoutError,
             BrokenPipeError,
             ConnectionResetError,
             RuntimeError,
@@ -496,8 +467,10 @@ class MediaStreamPublisher:
         encoder: str | None = None,
     ) -> list[str]:
         """Build an ffmpeg command that publishes H.264 to MediaMTX."""
-        gop_size = max(1, round(self.fps * _keyframe_interval_seconds()))
-        encoder = encoder or _select_encoder(ffmpeg_binary)
+        gop_size = max(
+            1, round(self.fps * self.settings.keyframe_interval_seconds),
+        )
+        encoder = encoder or _select_encoder(ffmpeg_binary, self.settings)
         command = [
             ffmpeg_binary,
         ]
@@ -505,19 +478,16 @@ class MediaStreamPublisher:
             command.extend(
                 [
                     '-vaapi_device',
-                    _vaapi_device(),
+                    _vaapi_device(self.settings),
                 ],
             )
         command.extend(
             [
                 '-hide_banner',
                 '-loglevel',
-                os.getenv('MEDIA_FFMPEG_LOGLEVEL', 'error'),
-                '-re',
+                self.settings.ffmpeg_loglevel,
                 '-fflags',
                 '+genpts+nobuffer',
-                '-use_wallclock_as_timestamps',
-                '1',
                 '-f',
                 'rawvideo',
                 '-pix_fmt',
@@ -525,7 +495,7 @@ class MediaStreamPublisher:
                 '-s:v',
                 f"{width}x{height}",
                 '-framerate',
-                f"{self.fps:g}",
+                f"{self.fps:.12g}",
                 '-i',
                 'pipe:0',
                 '-an',
@@ -533,7 +503,7 @@ class MediaStreamPublisher:
         )
         if encoder == 'h264_nvenc':
             command.extend(
-                _build_nvenc_options(
+                self.encoding.nvenc_options(
                     bitrate=self.bitrate,
                     maxrate=self.maxrate,
                     bufsize=self.bufsize,
@@ -541,7 +511,7 @@ class MediaStreamPublisher:
             )
         elif encoder == 'h264_vaapi':
             command.extend(
-                _build_vaapi_options(
+                self.encoding.vaapi_options(
                     bitrate=self.bitrate,
                     maxrate=self.maxrate,
                     bufsize=self.bufsize,
@@ -549,7 +519,7 @@ class MediaStreamPublisher:
             )
         else:
             command.extend(
-                _build_x264_options(
+                self.encoding.x264_options(
                     bitrate=self.bitrate,
                     maxrate=self.maxrate,
                     bufsize=self.bufsize,
@@ -564,7 +534,7 @@ class MediaStreamPublisher:
                 '-sc_threshold',
                 '0',
                 '-r',
-                f"{self.fps:g}",
+                f"{self.fps:.12g}",
                 '-fps_mode',
                 'cfr',
                 '-f',
@@ -572,7 +542,7 @@ class MediaStreamPublisher:
                 '-rtsp_transport',
                 'tcp',
                 '-pkt_size',
-                str(_rtp_packet_size()),
+                str(self.settings.rtp_packet_size),
                 self.publish_url,
             ],
         )
@@ -585,120 +555,9 @@ class MediaStreamPublisher:
             self._uses_nvenc = False
 
 
-def _build_x264_options(
-    *,
-    bitrate: str | None = None,
-    maxrate: str | None = None,
-    bufsize: str | None = None,
-) -> list[str]:
-    """Return ffmpeg options for CPU H.264 encoding."""
-    options = [
-        '-c:v',
-        'libx264',
-        '-preset',
-        os.getenv('MEDIA_PUBLISH_PRESET', _default_preset),
-        '-tune',
-        'zerolatency',
-        '-pix_fmt',
-        'yuv420p',
-    ]
-    if bitrate:
-        options.extend(
-            [
-                '-b:v',
-                bitrate,
-                '-maxrate',
-                maxrate or bitrate,
-                '-bufsize',
-                bufsize or maxrate or bitrate,
-            ],
-        )
-    else:
-        options.extend(
-            [
-                '-crf',
-                str(int(os.getenv('MEDIA_PUBLISH_CRF', str(_default_crf)))),
-            ],
-        )
-    return options
-
-
-def _build_nvenc_options(
-    *,
-    bitrate: str | None = None,
-    maxrate: str | None = None,
-    bufsize: str | None = None,
-) -> list[str]:
-    """Return ffmpeg options for NVIDIA H.264 encoding."""
-    return [
-        '-c:v',
-        'h264_nvenc',
-        '-preset',
-        os.getenv('MEDIA_PUBLISH_NVENC_PRESET', _default_nvenc_preset),
-        '-tune',
-        'ull',
-        '-rc',
-        os.getenv('MEDIA_PUBLISH_NVENC_RC', 'vbr'),
-        '-cq',
-        str(int(os.getenv('MEDIA_PUBLISH_NVENC_CQ', str(_default_nvenc_cq)))),
-        '-b:v',
-        bitrate or os.getenv('MEDIA_PUBLISH_NVENC_BITRATE', '0') or '0',
-        '-maxrate',
-        maxrate or os.getenv('MEDIA_PUBLISH_NVENC_MAXRATE', '8M') or '8M',
-        '-bufsize',
-        bufsize or os.getenv('MEDIA_PUBLISH_NVENC_BUFSIZE', '16M') or '16M',
-        '-pix_fmt',
-        'yuv420p',
-    ]
-
-
-def _build_vaapi_options(
-    *,
-    bitrate: str | None = None,
-    maxrate: str | None = None,
-    bufsize: str | None = None,
-) -> list[str]:
-    """Return Intel VAAPI H.264 options for low-latency live streams."""
-    target_bitrate = (
-        bitrate
-        or os.getenv('MEDIA_PUBLISH_VAAPI_BITRATE', _default_vaapi_bitrate)
-        or _default_vaapi_bitrate
-    )
-    target_maxrate = (
-        maxrate
-        or os.getenv('MEDIA_PUBLISH_VAAPI_MAXRATE', _default_vaapi_maxrate)
-        or _default_vaapi_maxrate
-    )
-    target_bufsize = (
-        bufsize
-        or os.getenv('MEDIA_PUBLISH_VAAPI_BUFSIZE', _default_vaapi_bufsize)
-        or _default_vaapi_bufsize
-    )
-    return [
-        '-vf',
-        'format=nv12,hwupload',
-        '-c:v',
-        'h264_vaapi',
-        '-rc_mode',
-        os.getenv('MEDIA_PUBLISH_VAAPI_RC_MODE', 'CBR'),
-        '-b:v',
-        target_bitrate,
-        '-maxrate',
-        target_maxrate,
-        '-bufsize',
-        target_bufsize,
-        '-bf',
-        '0',
-        '-async_depth',
-        os.getenv('MEDIA_PUBLISH_VAAPI_ASYNC_DEPTH', '1'),
-        '-profile:v',
-        'high',
-    ]
-
-
-def _vaapi_device() -> str:
+def _vaapi_device(settings: EncoderSettings) -> str:
     """Return the Intel render node used for VAAPI encoding."""
-    configured = os.getenv('MEDIA_PUBLISH_VAAPI_DEVICE', '').strip()
+    configured = settings.vaapi_device
     if configured and configured != 'auto':
         return configured
     return _find_intel_vaapi_device()
@@ -724,9 +583,9 @@ def _find_intel_vaapi_device(
     )
 
 
-def _ensure_vaapi_device_access() -> None:
+def _ensure_vaapi_device_access(settings: EncoderSettings) -> None:
     """Fail clearly when the process cannot use the configured Intel GPU."""
-    device = _vaapi_device()
+    device = _vaapi_device(settings)
     if os.access(device, os.R_OK | os.W_OK):
         return
     raise RuntimeError(
@@ -735,7 +594,9 @@ def _ensure_vaapi_device_access() -> None:
     )
 
 
-def _select_encoder(ffmpeg_binary: str) -> str:
+def _select_encoder(
+    ffmpeg_binary: str, settings: EncoderSettings,
+) -> str:
     """Select an available encoder for ffmpeg.
 
     Args:
@@ -744,14 +605,7 @@ def _select_encoder(ffmpeg_binary: str) -> str:
     Returns:
         Encoder name accepted by ffmpeg.
     """
-    configured = (
-        os.getenv(
-            'MEDIA_PUBLISH_ENCODER',
-            _default_encoder,
-        )
-        .strip()
-        .lower()
-    )
+    configured = settings.encoder.lower()
     if configured in {'nvenc', 'h264_nvenc'}:
         return (
             'h264_nvenc'
@@ -806,8 +660,11 @@ def _is_nvenc_unavailable_error(line: str) -> bool:
 def _is_vaapi_unavailable_error(line: str) -> bool:
     """Recognise device failures so a restarted publisher can use software."""
     return any(
-        marker in line for marker in (
-            'Failed to initialise VAAPI', 'Device creation failed',
-            'No VA display found', 'Failed to open /dev/dri',
+        marker in line
+        for marker in (
+            'Failed to initialise VAAPI',
+            'Device creation failed',
+            'No VA display found',
+            'Failed to open /dev/dri',
         )
     )

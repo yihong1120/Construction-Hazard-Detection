@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import queue
 import time
 import uuid
@@ -14,12 +13,14 @@ from typing import Any
 from typing import cast
 
 import numpy as np
+lazy from ultralytics import YOLO
 
+from src.settings.inference import WorkerSettings
+from src.settings.precision import _parse_worker_precision
 from src.ultralytics_args import parse_quantize_value
 from src.ultralytics_args import precision_kwargs
 from src.yolo_shared_frames import _SharedFrameArray
 from src.yolo_shared_frames import _SharedFrameRing
-from src.yolo_worker_protocol import _parse_worker_precision
 from src.yolo_worker_protocol import _worker_precision_config
 from src.yolo_worker_protocol import _WorkerRequest
 from src.yolo_worker_protocol import Detection
@@ -33,6 +34,10 @@ from src.yolo_worker_protocol import WorkerResultSender
 from src.yolo_worker_protocol import YOLO_WORKER_STOP_MESSAGE
 from src.yolo_worker_protocol import YoloModelLike
 from src.yolo_worker_protocol import YoloResultLike
+lazy from examples.YOLO_server_api.model_registry import load_registry
+lazy from examples.YOLO_server_api.model_registry import revision_for
+lazy from examples.YOLO_server_api.model_registry import verify_artifact
+lazy from src.yolo_runtime_artifacts import stream_engine_path
 
 # Compatibility exports for callers that historically imported all IPC types
 # from this runtime module.
@@ -62,22 +67,15 @@ class YoloWorkerClient:
             timeout_seconds: Maximum time to wait for queue submission and
                 inference result.
         """
+        self.settings = WorkerSettings()
         self.request_queue = request_queue
         self.result_queue = result_queue
         self.camera_id = camera_id
         self.timeout_seconds = timeout_seconds
-        self.ring_slots = max(
-            1,
-            int(os.getenv('YOLO_WORKER_RING_SLOTS', '2')),
-        )
+        self.ring_slots = self.settings.ring_slots
         self.ring_cleanup_delay_seconds = max(
             timeout_seconds,
-            float(
-                os.getenv(
-                    'YOLO_WORKER_RING_SLOT_CLEANUP_SECONDS',
-                    '120.0',
-                ),
-            ),
+            self.settings.ring_slot_cleanup_seconds,
         )
         self._ring: _SharedFrameRing | None = None
         self._retired_rings: list[_SharedFrameRing] = []
@@ -198,12 +196,7 @@ class YoloWorkerClient:
             request_id: Timed-out request whose frame may still be in use.
         """
 
-        async def release_when_safe() -> None:
-            """Perform release when safe."""
-            await asyncio.sleep(self.ring_cleanup_delay_seconds)
-            self._release_slot(request_id)
-
-        asyncio.create_task(release_when_safe())
+        asyncio.create_task(self._release_when_safe(request_id))
 
     async def _submit_request(self, request: WorkerRequestPayload) -> None:
         """Submit one request payload without blocking the event loop.
@@ -262,6 +255,10 @@ class YoloWorkerClient:
                 str(result.get('error', 'YOLO worker request failed')),
             )
 
+    async def _release_when_safe(self, request_id: str) -> None:
+        await asyncio.sleep(self.ring_cleanup_delay_seconds)
+        self._release_slot(request_id)
+
 
 class YoloWorker:
     """Shared-memory YOLO inference worker with latest-frame batching.
@@ -287,30 +284,28 @@ class YoloWorker:
             startup_lock: Cross-process lock used to serialize an engine's
                 first TensorRT inference.
         """
+        self.settings = WorkerSettings()
         self.request_queue = request_queue
         self.device = (
             device
             if isinstance(device, str)
-            else os.getenv('YOLO_WORKER_DEVICE') or 'cuda:0'
+            else self.settings.device or 'cuda:0'
         )
         self.result_queues = dict(result_queues or {})
         self.startup_lock = startup_lock
         self.logger = logging.getLogger(__name__)
         self.model_cache: dict[str, YoloModelLike] = {}
         self.precision_mode = _parse_worker_precision(
-            os.getenv('YOLO_WORKER_PRECISION'),
+            self.settings.precision,
         )
         if self.precision_mode is None:
             self.model_dir = Path(
-                os.getenv('YOLO_WORKER_MODEL_DIR', 'models/pt'),
+                self.settings.model_dir,
             )
-            self.model_suffix = os.getenv('YOLO_WORKER_MODEL_SUFFIX', '.pt')
-            use_half = os.getenv(
-                'YOLO_WORKER_HALF',
-                'true',
-            ).strip().lower() in {'1', 'true', 'yes', 'on'}
+            self.model_suffix = self.settings.model_suffix
+            use_half = self.settings.half
             quantize = parse_quantize_value(
-                os.getenv('YOLO_WORKER_QUANTIZE'),
+                self.settings.quantize,
             )
             self.precision_args = precision_kwargs(use_half, quantize)
             self.precision_label = 'legacy'
@@ -320,27 +315,10 @@ class YoloWorker:
             )
             self.precision_label = self.precision_mode
         self.pending: dict[str, _WorkerRequest] = {}
-        self.batch_size = max(
-            1,
-            int(os.getenv('YOLO_WORKER_BATCH_SIZE', '8')),
-        )
-        self.batch_wait_seconds = max(
-            0.0,
-            int(os.getenv('YOLO_WORKER_BATCH_WAIT_MS', '10')) / 1000.0,
-        )
-        self.imgsz = int(os.getenv('YOLO_WORKER_IMGSZ', '640'))
-        try:
-            self.metrics_interval_seconds = max(
-                0.0,
-                float(
-                    os.getenv(
-                        'YOLO_WORKER_METRICS_INTERVAL_SECONDS',
-                        '0',
-                    ),
-                ),
-            )
-        except ValueError:
-            self.metrics_interval_seconds = 0.0
+        self.batch_size = self.settings.batch_size
+        self.batch_wait_seconds = self.settings.batch_wait_ms / 1000.0
+        self.imgsz = self.settings.imgsz
+        self.metrics_interval_seconds = self.settings.metrics_interval_seconds
         self._metrics_started_at = time.monotonic()
         self._metrics_images = 0
         self._metrics_batches = 0
@@ -514,7 +492,8 @@ class YoloWorker:
                         **(
                             {
                                 'model_metadata': getattr(
-                                    model, '_catalog_metadata',
+                                    model,
+                                    '_catalog_metadata',
                                 ),
                             }
                             if getattr(model, '_catalog_metadata', None)
@@ -695,10 +674,6 @@ class YoloWorker:
         model = self.model_cache.get(model_key)
         if model is not None:
             return model
-        from examples.YOLO_server_api.model_registry import (
-            load_registry,
-            verify_artifact,
-        )
 
         registry = load_registry()
         entry = next(
@@ -714,7 +689,21 @@ class YoloWorker:
         if entry is None:
             raise FileNotFoundError(f'Unpublished stream model: {model_key}')
         model_path = verify_artifact(entry)
-        from ultralytics import YOLO
+        manifest_path = self.settings.artifact_manifest
+        if self.precision_mode == 'int8' and manifest_path:
+
+            model_path = stream_engine_path(
+                Path(manifest_path),
+                entry.id,
+                entry.version,
+                entry.sha256,
+            )
+        elif self.precision_mode == 'int8' and model_path.suffix != '.engine':
+            self.logger.warning(
+                '[YOLO-Worker] INT8 requested but catalog selects %s; '
+                'no stream engine manifest is configured',
+                model_path,
+            )
 
         model = cast(YoloModelLike, YOLO(str(model_path), task='detect'))
         setattr(
@@ -723,11 +712,20 @@ class YoloWorker:
             {
                 'model_id': entry.id,
                 'model_version': entry.version,
+                'catalog_revision': revision_for(
+                    entry.model_dump(exclude={'id'}),
+                ),
+                'model_sha256': entry.sha256,
                 'class_metadata': [
                     c.model_dump(exclude_none=True) for c in entry.classes
                 ],
             },
         )
         self.model_cache[model_key] = model
-        self.logger.info('[YOLO-Worker] loaded %s', model_key)
+        self.logger.info(
+            '[YOLO-Worker] loaded %s artifact=%s backend=%s',
+            model_key,
+            model_path,
+            model_path.suffix,
+        )
         return model

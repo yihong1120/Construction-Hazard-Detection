@@ -20,6 +20,8 @@ import numpy as np
 import speedtest  # type: ignore[import-untyped]
 import streamlink
 
+from src.settings.capture import CaptureSettings
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,14 +57,6 @@ def _redact_stream_url(value: str) -> str:
             parts.fragment,
         ),
     )
-
-
-def _nonnegative_float_env(name: str, default: float) -> float:
-    """Read a non-negative floating-point environment setting."""
-    try:
-        return max(0.0, float(os.getenv(name, str(default))))
-    except ValueError:
-        return default
 
 
 class InputData(TypedDict):
@@ -102,43 +96,19 @@ class StreamCapture:
         )
 
         self.cap: cv2.VideoCapture | None = None
+        self.source_fps: float | None = None
         self.capture_interval: float = capture_interval
         self.successfully_captured = False
-        self.reopen_delay = float(
-            os.getenv('STREAM_CAPTURE_REOPEN_DELAY_SECONDS', '5.0'),
+        self.settings = CaptureSettings()
+        self.reopen_delay = self.settings.reopen_delay_seconds
+        self.max_reopen_delay = self.settings.max_reopen_delay_seconds
+        self.freeze_reconnect_seconds = self.settings.freeze_reconnect_seconds
+        self.freeze_sample_seconds = self.settings.freeze_sample_seconds
+        self.freeze_frame_delta = self.settings.freeze_frame_delta
+        self.timestamp_reconnect_seconds = (
+            self.settings.timestamp_reconnect_seconds
         )
-        self.max_reopen_delay = float(
-            os.getenv(
-                'STREAM_CAPTURE_MAX_REOPEN_DELAY_SECONDS',
-                '60.0',
-            ),
-        )
-        self.freeze_reconnect_seconds = _nonnegative_float_env(
-            'STREAM_CAPTURE_FREEZE_RECONNECT_SECONDS',
-            0.0,
-        )
-        self.freeze_sample_seconds = max(
-            0.1,
-            _nonnegative_float_env(
-                'STREAM_CAPTURE_FREEZE_SAMPLE_SECONDS',
-                1.0,
-            ),
-        )
-        self.freeze_frame_delta = _nonnegative_float_env(
-            'STREAM_CAPTURE_FREEZE_FRAME_DELTA',
-            0.2,
-        )
-        self.timestamp_reconnect_seconds = _nonnegative_float_env(
-            'STREAM_CAPTURE_TIMESTAMP_RECONNECT_SECONDS',
-            30.0,
-        )
-        self.timestamp_sample_seconds = max(
-            0.1,
-            _nonnegative_float_env(
-                'STREAM_CAPTURE_TIMESTAMP_SAMPLE_SECONDS',
-                1.0,
-            ),
-        )
+        self.timestamp_sample_seconds = self.settings.timestamp_sample_seconds
         self.reconnect_event = asyncio.Event()
         self._reconnecting = False
         self._freeze_last_sample: np.ndarray | None = None
@@ -199,9 +169,23 @@ class StreamCapture:
                 self._create_capture,
                 stream_url,
             )
+        source_fps = await self._run_capture_operation(
+            self._read_source_fps,
+        )
+        if source_fps is not None:
+            self.source_fps = source_fps
 
-    @staticmethod
-    def _create_capture(stream_url: str) -> cv2.VideoCapture:
+    def _read_source_fps(self) -> float | None:
+        """Read the camera rate again after each connection is opened."""
+        if self.cap is None:
+            return None
+        try:
+            fps = float(self.cap.get(cv2.CAP_PROP_FPS))
+        except (AttributeError, TypeError, ValueError, cv2.error):
+            return None
+        return fps if np.isfinite(fps) and fps > 0 else None
+
+    def _create_capture(self, stream_url: str) -> cv2.VideoCapture:
         """Create a configured OpenCV capture object."""
         # OpenCV's FFmpeg open/read timeouts are open-only properties. Passing
         # them after VideoCapture() has connected leaves the backend's
@@ -211,23 +195,9 @@ class StreamCapture:
             cv2.CAP_FFMPEG,
             [
                 cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
-                int(
-                    float(
-                        os.getenv(
-                            'STREAM_CAPTURE_OPEN_TIMEOUT_MS',
-                            '5000',
-                        ),
-                    ),
-                ),
+                self.settings.open_timeout_ms,
                 cv2.CAP_PROP_READ_TIMEOUT_MSEC,
-                int(
-                    float(
-                        os.getenv(
-                            'STREAM_CAPTURE_READ_TIMEOUT_MS',
-                            '5000',
-                        ),
-                    ),
-                ),
+                self.settings.read_timeout_ms,
             ],
         )
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -454,7 +424,7 @@ class StreamCapture:
                 if elapsed_time >= self.capture_interval:
                     last_process_time = current_time
                     yield frame, current_time.timestamp()
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0)
         finally:
             await self.release_resources()
 
@@ -585,7 +555,7 @@ class StreamCapture:
                 if elapsed_time >= self.capture_interval:
                     last_process_time = current_time
                     yield frame, current_time.timestamp()
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0)
         finally:
             await self.release_resources()
 
