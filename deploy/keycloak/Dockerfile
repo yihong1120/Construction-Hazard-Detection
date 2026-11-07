@@ -14,6 +14,8 @@ COPY --from=hcaptcha-builder \
     /opt/keycloak/providers/hcaptcha-authenticator.jar
 COPY --chown=keycloak:keycloak deploy/keycloak/visionnaire-realm.template.json \
     /opt/keycloak/data/visionnaire-realm.template.json
+COPY --chown=keycloak:keycloak deploy/keycloak/session-policy.env \
+    /opt/keycloak/data/session-policy.env
 COPY --chown=keycloak:keycloak deploy/keycloak/start.sh \
     /opt/keycloak/bin/visionnaire-start.sh
 COPY --chown=keycloak:keycloak deploy/keycloak/themes/visionnaire \

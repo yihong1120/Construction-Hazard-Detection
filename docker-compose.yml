@@ -142,6 +142,9 @@ services:
       dockerfile: examples/YOLO_server_api/Dockerfile
     # Environment variables for connecting to Redis and PostgreSQL
     environment:
+      DETECT_MAX_DECODED_BYTES: ${DETECT_MAX_DECODED_BYTES:-268435456}
+      DETECT_MAX_UPLOAD_BYTES: ${DETECT_MAX_UPLOAD_BYTES:-20971520}
+      DETECT_MAX_IMAGE_PIXELS: ${DETECT_MAX_IMAGE_PIXELS:-67108864}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
@@ -249,6 +252,8 @@ services:
       dockerfile: examples/violation_records/Dockerfile
     # Environment variables for connecting to Redis and PostgreSQL
     environment:
+      VIOLATION_IMAGE_MAX_UPLOAD_BYTES: ${VIOLATION_IMAGE_MAX_UPLOAD_BYTES:-20971520}
+      VIOLATION_IMAGE_MAX_PIXELS: ${VIOLATION_IMAGE_MAX_PIXELS:-67108864}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
@@ -285,9 +290,9 @@ services:
       MEDIA_PUBLISH_CLEAN_STREAM: ${MEDIA_PUBLISH_CLEAN_STREAM:-true}
       MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM: ${MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM:-false}
       MEDIA_PUBLISH_CLEAN_ENCODER: ${MEDIA_PUBLISH_CLEAN_ENCODER:-h264_vaapi}
-      MEDIA_PUBLISH_CLEAN_FPS: ${MEDIA_PUBLISH_CLEAN_FPS:-15}
+      MEDIA_PUBLISH_CLEAN_FPS: ${MEDIA_PUBLISH_CLEAN_FPS:-auto}
       MEDIA_PUBLISH_ANNOTATED_STREAM: ${MEDIA_PUBLISH_ANNOTATED_STREAM:-true}
-      MEDIA_PUBLISH_SOURCE_FPS: ${MEDIA_PUBLISH_SOURCE_FPS:-15}
+      MEDIA_PUBLISH_SOURCE_FPS: ${MEDIA_PUBLISH_SOURCE_FPS:-auto}
       MEDIA_PUBLISH_RTP_PACKET_SIZE: ${MEDIA_PUBLISH_RTP_PACKET_SIZE:-1200}
       MEDIA_DEFAULT_OVERLAY_LANGUAGE: ${MEDIA_DEFAULT_OVERLAY_LANGUAGE:-zh-TW}
       MEDIA_OVERLAY_ALLOWED_LANGUAGES: ${MEDIA_OVERLAY_ALLOWED_LANGUAGES:-zh-TW,en,zh-CN,ja,vi,id,fr,th}
@@ -309,7 +314,7 @@ services:
       MEDIA_PUBLISH_NVENC_CQ: ${MEDIA_PUBLISH_NVENC_CQ:-30}
       MEDIA_PUBLISH_NVENC_MAXRATE: ${MEDIA_PUBLISH_NVENC_MAXRATE:-8M}
       MEDIA_PUBLISH_NVENC_BUFSIZE: ${MEDIA_PUBLISH_NVENC_BUFSIZE:-16M}
-      MEDIA_PUBLISH_FPS: ${MEDIA_PUBLISH_FPS:-15}
+      MEDIA_PUBLISH_FPS: ${MEDIA_PUBLISH_FPS:-auto}
       MEDIA_PUBLISH_CRF: ${MEDIA_PUBLISH_CRF:-28}
       MEDIA_PUBLISH_PRESET: ${MEDIA_PUBLISH_PRESET:-veryfast}
       YOLO_WORKER_RESULT_QUEUE_SIZE: ${YOLO_WORKER_RESULT_QUEUE_SIZE:-8}
@@ -317,7 +322,7 @@ services:
       YOLO_WORKER_RING_SLOT_CLEANUP_SECONDS: ${YOLO_WORKER_RING_SLOT_CLEANUP_SECONDS:-120}
       MEDIA_PREVIEW_WIDTH: ${MEDIA_PREVIEW_WIDTH:-640}
       MEDIA_PREVIEW_HEIGHT: ${MEDIA_PREVIEW_HEIGHT:-360}
-      MEDIA_PREVIEW_FPS: ${MEDIA_PREVIEW_FPS:-15}
+      MEDIA_PREVIEW_FPS: ${MEDIA_PREVIEW_FPS:-auto}
       MEDIA_PREVIEW_BITRATE: ${MEDIA_PREVIEW_BITRATE:-500k}
       MEDIA_PREVIEW_MAXRATE: ${MEDIA_PREVIEW_MAXRATE:-700k}
       MEDIA_PREVIEW_BUFSIZE: ${MEDIA_PREVIEW_BUFSIZE:-1400k}
@@ -330,6 +335,7 @@ services:
     # Mount the configuration directory for application access
     volumes:
       - ./config:/app/config
+      - violation-outbox:/app/outputs/event-outbox
       - ./models/pt:/app/models/pt
       - ./.env:/app/.env
     # Ensure the service starts only after Redis is healthy
@@ -354,3 +360,6 @@ services:
     # Attach the service to the custom network
     networks:
       - app_network
+
+volumes:
+  violation-outbox:

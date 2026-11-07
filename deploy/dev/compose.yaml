@@ -1,0 +1,30 @@
+name: construction-dev
+services:
+  postgres:
+    image: pgvector/pgvector@sha256:2fd905ba95f99a51be207d0ff0b8d5b8538cbce7e9083b3ccfa65b93bb28b938
+    restart: unless-stopped
+    env_file: ${HOME}/.config/construction-dev/postgres.env
+    ports: ["127.0.0.1:15433:5432"]
+    volumes: ["postgres-parity-data:/var/lib/postgresql"]
+    mem_limit: 768m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U construction_dev -d construction_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    restart: unless-stopped
+    env_file: ${HOME}/.config/construction-dev/redis.env
+    command: ["sh", "-c", "exec redis-server --appendonly yes --maxmemory 96mb --maxmemory-policy noeviction --requirepass \"$$REDIS_PASSWORD\""]
+    ports: ["127.0.0.1:16380:6379"]
+    volumes: ["redis-data:/data"]
+    mem_limit: 192m
+    cpus: 0.5
+volumes:
+  postgres-data:
+  postgres-parity-data:
+    name: construction-dev_postgres-parity-data
+    external: true
+  redis-data:

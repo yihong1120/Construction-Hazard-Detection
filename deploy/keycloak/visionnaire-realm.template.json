@@ -7,8 +7,8 @@
   "resetPasswordAllowed": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
-  "ssoSessionIdleTimeout": 28800,
-  "ssoSessionMaxLifespan": 36000,
+  "ssoSessionIdleTimeout": 604800,
+  "ssoSessionMaxLifespan": 7776000,
   "clientSessionIdleTimeout": 28800,
   "clientSessionMaxLifespan": 36000,
   "accessTokenLifespan": 300,
@@ -44,7 +44,10 @@
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "https://changdar-server.mooo.com/*"
+        "post.logout.redirect.uris": "https://changdar-server.mooo.com/*",
+        "client.session.idle.timeout": "604800",
+        "client.session.max.lifespan": "7776000",
+        "access.token.lifespan": "300"
       },
       "protocolMappers": [
         {
@@ -88,7 +91,10 @@
       "webOrigins": [],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "com.changdar.visionnaire:/oauthredirect"
+        "post.logout.redirect.uris": "com.changdar.visionnaire:/oauthredirect",
+        "client.session.idle.timeout": "604800",
+        "client.session.max.lifespan": "7776000",
+        "access.token.lifespan": "300"
       },
       "protocolMappers": [
         {
