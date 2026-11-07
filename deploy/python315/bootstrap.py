@@ -121,7 +121,10 @@ def native_bindings_wheel(cache: Path, wheels: Path, python: Path) -> None:
     run(python.parent / 'cmake', '--build', build, '--parallel', '2')
     asset = cache / TRT_ASSET_URL.rsplit('/', 1)[-1]
     if not asset.exists():
-        with urllib.request.urlopen(TRT_ASSET_URL, timeout=120) as response:
+        # Fixed HTTPS artifact URL; the pinned SHA256 is verified below.
+        with urllib.request.urlopen(  # nosec B310
+            TRT_ASSET_URL, timeout=120,
+        ) as response:
             asset.write_bytes(response.read())
     if hashlib.sha256(asset.read_bytes()).hexdigest() != TRT_ASSET_SHA256:
         raise RuntimeError('TensorRT Python asset checksum mismatch')

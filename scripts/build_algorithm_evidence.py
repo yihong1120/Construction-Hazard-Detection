@@ -8,11 +8,12 @@ import os
 import shutil
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from defusedxml import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))

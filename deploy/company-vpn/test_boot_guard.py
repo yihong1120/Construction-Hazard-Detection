@@ -79,6 +79,7 @@ class BootGuard(unittest.TestCase):
         for value in (
             '192.168.2.88',
             '100.93.178.78',
+            # nosec B104: rejected fixture, never bound to a socket.
             '0.0.0.0',
             '192.168.1.1',
             '192.168.1.255',

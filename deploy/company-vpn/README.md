@@ -23,7 +23,7 @@ sudo python3 "$HOME/company-vpn/deploy.py" verify
 sudo python3 "$HOME/company-vpn/deploy.py" credentials
 ```
 
-`credentials` 只供管理者在本機終端機讀取應急管理帳號，**請勿將密碼貼到聊天或問題回報中**。此帳號與員工未來的 Keycloak 登入分開。初始自動設定用的 PAT 保留於 root 專用 `/etc/company-vpn/bootstrap.json`，七天後到期；SSO 接通後應撤銷，不作為長期 API 金鑰。
+`credentials` 只顯示 root 專用復原憑證檔案的位置，不會輸出密碼。管理者需要時可在本機以 root 權限讀取，**請勿將內容貼到聊天、日誌或問題回報中**。此帳號與員工未來的 Keycloak 登入分開。初始自動設定用的 PAT 保留於 root 專用 `/etc/company-vpn/bootstrap.json`，七天後到期；SSO 接通後應撤銷，不作為長期 API 金鑰。
 
 後端設定與管理員資料在 root 專用 `/etc/company-vpn`，正式資料在 Docker volume `company-vpn_data`。備份時兩者需一併保留，尤其資料加密金鑰。日誌有大小上限，容器採用 `unless-stopped`，另有 `company-vpn.service` 等候網路啟動並在失敗時重試，避免開機時 LAN 位址尚未就緒造成 UDP 綁定失敗。驗證會檢查 Docker 與此服務的開機啟動設定。
 

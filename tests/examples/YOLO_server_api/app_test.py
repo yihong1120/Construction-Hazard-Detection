@@ -57,7 +57,7 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
                 [
                     'yolo-api',
                     '--host',
-                    '0.0.0.0',
+                    '127.0.0.2',
                     '--port',
                     '6000',
                     '--workers',
@@ -69,7 +69,7 @@ class TestApp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             run.call_args.kwargs,
             {
-                'host': '0.0.0.0',
+                'host': '127.0.0.2',
                 'port': 6000,
                 'workers': 1,
                 'ws_max_size': 1234,

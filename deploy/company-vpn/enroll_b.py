@@ -8,7 +8,6 @@ import json
 import os
 import platform
 import shutil
-import socket
 import subprocess
 import tarfile
 import time
@@ -253,8 +252,7 @@ def install(token):
             raise RuntimeError(
                 'VPN address range overlaps a local route or Docker network.',
             )
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.bind(('0.0.0.0', 51820))
+        ensure_client_port_available()
         d.run('systemctl', 'is-active', 'tailscaled')
         d.https_check(d.HOST)
         state = {
@@ -381,6 +379,11 @@ def install(token):
             break
         time.sleep(2)
     verify(token, state)
+
+
+def ensure_client_port_available():
+    if d.run('ss', '-H', '-lun', 'sport = :51820').strip():
+        raise RuntimeError('UDP port 51820 is already in use.')
 
 
 def main():

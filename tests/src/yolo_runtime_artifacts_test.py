@@ -40,7 +40,7 @@ def test_selects_verified_engine_and_detects_replacement(variant):
 @pytest.mark.parametrize(
     'field,value', [
         ('version', 'old-version'), ('source_sha256', 'b' * 64),
-        ('artifact', 'relative.engine'), ('artifact', '/tmp/model.pt'),
+        ('artifact', 'relative.engine'), ('artifact', '/models/model.pt'),
     ],
 )
 def test_rejects_wrong_source_or_artifact(variant, field, value):

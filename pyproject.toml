@@ -94,6 +94,7 @@ training = [
 ]
 dev = [
   "aiosqlite==0.22.1",
+  "defusedxml==0.7.1",
   "flake8==7.4.1",
   "pre-commit==4.7.0",
   "Pygments==2.21.0",
@@ -113,6 +114,7 @@ constraint-dependencies = [
   "fsspec>=2026.6.0",
   "msgpack>=1.2.3",
   "multidict>=6.9.1",
+  "pyasn1>=0.6.5",
   "setuptools>=84.1.0",
 ]
 # This project is deployed on Linux hosts with CUDA/TensorRT dependencies.

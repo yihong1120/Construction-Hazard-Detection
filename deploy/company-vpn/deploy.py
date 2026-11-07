@@ -657,6 +657,17 @@ def install():
     )
 
 
+def show_credentials_path():
+    credentials = ROOT / 'bootstrap.json'
+    if not credentials.is_file():
+        raise RuntimeError('Private recovery credentials are missing.')
+    print('Private recovery credentials file:', credentials)
+    print(
+        'Read this root-only file locally when needed; '
+        'do not copy its contents into logs or issue reports.',
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -681,15 +692,7 @@ def main():
     with (ROOT / 'deploy.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if action == 'credentials':
-            owner = json.loads((ROOT / 'bootstrap.json').read_text())
-            print('Recovery owner email:', owner['email'])
-            print('Recovery owner password:', owner['password'])
-            print(
-                (
-                    'Private credentials; do not paste them into '
-                    'chat or issue reports.'
-                ),
-            )
+            show_credentials_path()
         elif action == 'install':
             install()
         else:

@@ -280,7 +280,8 @@ WantedBy=multi-user.target
         run(['/usr/bin/systemctl', 'restart', 'phase5-bff-production.service'])
         for attempt in range(40):
             try:
-                with urllib.request.urlopen(
+                # Fixed loopback health probe, with no caller-supplied URL.
+                with urllib.request.urlopen(  # nosec B310
                     'http://127.0.0.1:8006/openapi.json', timeout=2,
                 ) as response:
                     paths = json.load(response)['paths']

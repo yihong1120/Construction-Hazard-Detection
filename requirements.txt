@@ -86,6 +86,8 @@ cuda-toolkit==13.0.3.0 ; platform_machine == 'x86_64' and sys_platform == 'linux
     # via torch
 cycler==0.12.1 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via matplotlib
+defusedxml==0.7.1 ; platform_machine == 'x86_64' and sys_platform == 'linux'
+    # via construction-hazard-detection
 distlib==0.4.4 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via virtualenv
 dnspython==2.9.0 ; platform_machine == 'x86_64' and sys_platform == 'linux'
@@ -391,7 +393,7 @@ protobuf==7.36.2 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     #   proto-plus
 psutil==7.2.2 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via ultralytics
-pyasn1==0.6.4 ; platform_machine == 'x86_64' and sys_platform == 'linux'
+pyasn1==0.6.5 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via pyasn1-modules
 pyasn1-modules==0.4.2 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via google-auth
