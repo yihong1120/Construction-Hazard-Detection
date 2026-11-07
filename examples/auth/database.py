@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -10,19 +9,11 @@ from sqlalchemy.orm import DeclarativeBase
 
 from examples.auth.config import Settings
 
-DB_POOL_SIZE = max(1, int(os.getenv('DB_POOL_SIZE', '2')))
-DB_MAX_OVERFLOW = max(0, int(os.getenv('DB_MAX_OVERFLOW', '1')))
-DB_POOL_TIMEOUT_SECONDS = max(
-    0.1,
-    float(os.getenv('DB_POOL_TIMEOUT_SECONDS', '10.0')),
-)
-DB_POOL_RECYCLE_SECONDS = max(
-    1,
-    int(os.getenv('DB_POOL_RECYCLE_SECONDS', '1800')),
-)
-
-# Instantiate the Settings object to retrieve environment-based configurations
 settings: Settings = Settings()
+DB_POOL_SIZE = settings.db_pool_size
+DB_MAX_OVERFLOW = settings.db_max_overflow
+DB_POOL_TIMEOUT_SECONDS = settings.db_pool_timeout_seconds
+DB_POOL_RECYCLE_SECONDS = settings.db_pool_recycle_seconds
 
 # Create an asynchronous SQLAlchemy engine
 # using the database URI from settings.

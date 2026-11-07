@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+from datetime import datetime
+from datetime import timezone
+
+
+def utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp for ORM-side defaults."""
+    return datetime.now(timezone.utc)
+
+
+TENANT_STATUS_ACTIVE = 'active'
+TENANT_STATUS_DISABLED = 'disabled'
+TENANT_STATUS_VALUES = (TENANT_STATUS_ACTIVE, TENANT_STATUS_DISABLED)
+DEPLOYMENT_STATUS_ACTIVE = 'active'
+DEPLOYMENT_STATUS_REVOKED = 'revoked'
+DEPLOYMENT_STATUS_VALUES = (
+    DEPLOYMENT_STATUS_ACTIVE,
+    DEPLOYMENT_STATUS_REVOKED,
+)
+USER_STATUS_ACTIVE = 'active'
+USER_STATUS_EMAIL_UNVERIFIED = 'email_unverified'
+USER_STATUS_PENDING_ADMIN_APPROVAL = 'pending_admin_approval'
+USER_STATUS_REJECTED = 'rejected'
+USER_STATUS_SUSPENDED = 'suspended'
+USER_STATUS_VALUES = (
+    USER_STATUS_ACTIVE,
+    USER_STATUS_EMAIL_UNVERIFIED,
+    USER_STATUS_PENDING_ADMIN_APPROVAL,
+    USER_STATUS_REJECTED,
+    USER_STATUS_SUSPENDED,
+)
+LEGAL_DOCUMENT_TYPE_TERMS = 'terms'
+LEGAL_DOCUMENT_TYPE_PRIVACY = 'privacy'
+LEGAL_DOCUMENT_TYPE_AI_TERMS = 'ai_terms'
+LEGAL_DOCUMENT_TYPES = (
+    LEGAL_DOCUMENT_TYPE_TERMS,
+    LEGAL_DOCUMENT_TYPE_PRIVACY,
+    LEGAL_DOCUMENT_TYPE_AI_TERMS,
+)

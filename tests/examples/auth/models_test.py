@@ -58,13 +58,11 @@ class TestUserModel(unittest.TestCase):
         self.assertIn('updated_at', user_dict)
 
     def test_feature_repr(self) -> None:
-        """Exercise this test."""
         feature = Feature(id=1, feature_name='test_feature')
         self.assertIn('Feature', repr(feature))
         self.assertIn('test_feature', repr(feature))
 
     def test_group_repr(self) -> None:
-        """Exercise this test."""
         group = Group(
             id=1,
             name='test_group',
