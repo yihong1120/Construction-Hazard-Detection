@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -13,6 +14,28 @@ from examples.auth.lifespan import global_lifespan
 class TestGlobalLifespan(unittest.IsolatedAsyncioTestCase):
     """Test suite for the global_lifespan async context manager, ensuring
     startup and shutdown logic is executed correctly."""
+
+    async def test_management_host_leaves_media_cleanup_to_media_host(self):
+        with (
+            patch.dict(
+                os.environ, {'SITE_MEDIA_CLEANUP_WORKER_ENABLED': 'false'},
+            ),
+            patch('examples.auth.lifespan.RedisClient') as redis_cls,
+            patch('examples.auth.lifespan.engine') as engine,
+            patch('examples.auth.lifespan.AsyncSessionLocal') as sessions,
+            patch(
+                'examples.auth.lifespan.drain_site_media_cleanup_jobs',
+                new_callable=AsyncMock,
+            ) as drain,
+        ):
+            redis_cls.return_value.connect = AsyncMock()
+            redis_cls.return_value.close = AsyncMock()
+            engine.dispose = AsyncMock()
+            async with global_lifespan(FastAPI()):
+                drain.assert_not_awaited()
+                sessions.assert_not_called()
+            redis_cls.return_value.close.assert_awaited_once()
+            engine.dispose.assert_awaited_once()
 
     @patch('examples.auth.lifespan.engine')
     @patch('examples.auth.lifespan.RedisClient')

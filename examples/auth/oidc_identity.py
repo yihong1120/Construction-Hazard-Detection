@@ -1,4 +1,3 @@
-"""Map verified external identities to local Visionnaire authorisation."""
 from __future__ import annotations
 
 from collections.abc import Mapping

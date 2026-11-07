@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from datetime import timezone
 
 from fastapi import HTTPException
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -229,33 +232,60 @@ async def list_stream_configs(
     return list(result.scalars().all())
 
 
+@asynccontextmanager
+async def stream_config_transaction(db: AsyncSession) -> AsyncIterator[None]:
+    try:
+        yield
+        await db.flush()
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(
+            409, 'Stream configuration update conflicted.',
+        ) from error
+    except Exception as error:
+        await db.rollback()
+        raise HTTPException(
+            500, 'Unable to update stream configurations.',
+        ) from error
+
+
+async def require_stream_capacity(
+    group_id: int,
+    additional: int,
+    db: AsyncSession,
+) -> None:
+    # Lock only the owning group row; ORM eager joins must not widen the lock.
+    limit = await db.scalar(
+        select(Group.max_allowed_streams)
+        .where(Group.id == group_id)
+        .with_for_update(),
+    )
+    if limit is None:
+        raise HTTPException(404, 'Group not found')
+    current = (
+        await db.scalar(
+            select(func.count())
+            .select_from(StreamConfig)
+            .where(StreamConfig.group_id == group_id),
+        )
+        or 0
+    )
+    if current + additional > limit:
+        raise HTTPException(403, 'Stream limit reached for group.')
+
+
 async def create_stream_config(
     payload: StreamConfigCreate,
     db: AsyncSession,
 ) -> StreamConfig:
-    """Create a new StreamConfig instance with provided data.
-
-    Args:
-        payload (StreamConfigCreate): A dictionary containing the data
-            for the new stream configuration.
-        db (AsyncSession): The asynchronous database session.
-
-    Returns:
-        StreamConfig: The newly created StreamConfig object.
-
-    Raises:
-        HTTPException: If a database error occurs during creation.
-    """
     cfg = StreamConfig(**payload.model_dump())
     db.add(cfg)
-
-    try:
-        await db.commit()
-        await db.refresh(cfg)
-        return cfg
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    await db.flush()
+    return cfg
 
 
 async def update_stream_config(
@@ -263,50 +293,15 @@ async def update_stream_config(
     updates: StreamConfigUpdate,
     db: AsyncSession,
 ) -> None:
-    """Update an existing StreamConfig object with new data.
-
-    Args:
-        cfg (StreamConfig): The existing StreamConfig instance to update.
-        updates (StreamConfigUpdate): A dictionary containing updated values.
-        db (AsyncSession): The asynchronous database session.
-
-    Raises:
-        HTTPException: If a database error occurs during updating.
-    """
-    # Apply updates to the configuration object
     for key, value in updates.model_dump(exclude_unset=True).items():
         setattr(cfg, key, value)
-
-    # Update the timestamp to the current time
     cfg.updated_at = datetime.now(timezone.utc)
-
-    try:
-        await db.commit()
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    await db.flush()
 
 
-async def delete_stream_config(
-    cfg: StreamConfig,
-    db: AsyncSession,
-) -> None:
-    """Delete an existing StreamConfig from the database.
-
-    Args:
-        cfg (StreamConfig): The StreamConfig instance to delete.
-        db (AsyncSession): The asynchronous database session.
-
-    Raises:
-        HTTPException: If a database error occurs during deletion.
-    """
+async def delete_stream_config(cfg: StreamConfig, db: AsyncSession) -> None:
     await db.delete(cfg)
-
-    try:
-        await db.commit()
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    await db.flush()
 
 
 async def get_group_stream_limit(

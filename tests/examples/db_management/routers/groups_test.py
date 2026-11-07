@@ -51,12 +51,7 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_list_groups: AsyncMock,
     ) -> None:
-        """Test endpoint list groups.
-
-        Args:
-            mock_is_super_admin: Value used by this callable.
-            mock_list_groups: Value used by this callable.
-        """
+        """Test endpoint list groups."""
         mock_list_groups.return_value = [self.example_group]
 
         result: list[Group] = await groups.endpoint_list_groups(
@@ -96,11 +91,7 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create_group: AsyncMock,
     ) -> None:
-        """Test endpoint create group.
-
-        Args:
-            mock_create_group: Value used by this callable.
-        """
+        """Test endpoint create group."""
         payload: GroupCreate = GroupCreate(
             name='New Group',
             uniform_number='87654321',
@@ -125,11 +116,7 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_update_group: AsyncMock,
     ) -> None:
-        """Test endpoint update group success.
-
-        Args:
-            mock_update_group: Value used by this callable.
-        """
+        """Test endpoint update group success."""
         payload: GroupUpdate = GroupUpdate(
             group_id=1,
             new_name='Updated Group',
@@ -187,11 +174,7 @@ class TestGroupRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_delete_group: AsyncMock,
     ) -> None:
-        """Test endpoint delete group success.
-
-        Args:
-            mock_delete_group: Value used by this callable.
-        """
+        """Test endpoint delete group success."""
         payload: GroupDelete = GroupDelete(group_id=1)
         execute_result: MagicMock = MagicMock()
         unique_result: MagicMock = MagicMock()

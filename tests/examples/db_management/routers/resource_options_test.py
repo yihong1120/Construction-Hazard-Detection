@@ -5,12 +5,14 @@ import json
 import os
 import tempfile
 import unittest
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import pytest
 from fastapi import HTTPException
 from fastapi import Response
 
@@ -23,8 +25,34 @@ from examples.db_management.routers import users
 from examples.db_management.services import invitation_policy
 from examples.db_management.services import role_policy
 from examples.db_management.services import site_access
+from examples.db_management.services import stream_management_services
 from examples.violation_records import record_policy as resources
+from examples.violation_records.evidence import ViolationEvidence
 from examples.YOLO_server_api import model_registry as registry
+
+
+def _setUp_rows(testcase, /):
+    data = json.loads((testcase.path / 'models.json').read_text())
+    return [
+        {
+            'model_key': m['id'],
+            'definition': m,
+            'is_default': m['id'] == data['default_id'],
+        }
+        for m in data['models']
+    ]
+
+
+def _decoded_catalog_image():
+    return SimpleNamespace(shape=(2, 2, 3))
+
+
+def _resource_routes_and_removed_gateway_get_me(testcase, /):
+    return testcase.me
+
+
+def _resource_routes_and_removed_gateway_make_asyncmock():
+    return AsyncMock()
 
 
 class ContractTests(unittest.IsolatedAsyncioTestCase):
@@ -58,27 +86,32 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         }
         self.write_registry()
 
-        def rows():
-            data = json.loads((self.path / 'models.json').read_text())
-            return [
-                {
-                    'model_key': m['id'],
-                    'definition': m,
-                    'is_default': m['id'] == data['default_id'],
-                }
-                for m in data['models']
-            ]
+        rows = partial(_setUp_rows, self)
 
         patcher = patch.object(
-            registry, '_read_catalog_rows', side_effect=rows,
+            registry,
+            '_read_catalog_rows',
+            side_effect=rows,
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+        async_patcher = patch.object(
+            registry,
+            '_read_catalog_rows_async',
+            side_effect=rows,
+        )
+        async_patcher.start()
+        self.addCleanup(async_patcher.stop)
         self.me = SimpleNamespace(
-            id=8, username='admin', role='admin', group_id=2, tenant_id='t1',
+            id=8,
+            username='admin',
+            role='admin',
+            group_id=2,
+            tenant_id='t1',
         )
         self.credentials = JwtAuthorizationCredentials(
-            subject={'role': 'admin', 'tenant_id': 't1'}, token='access',
+            subject={'role': 'admin', 'tenant_id': 't1'},
+            token='access',
         )
 
     def write_registry(self):
@@ -87,7 +120,10 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
     async def options(self, scope, target=None):
         if scope == 'stream_models':
             return await route.get_stream_models(
-                target, Response(), self.me, AsyncMock(),
+                target,
+                Response(),
+                self.me,
+                AsyncMock(),
             )
         return await invitations.get_invitation_expiry(
             MagicMock(),
@@ -97,7 +133,11 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_stream_catalog_scoped_and_revalidated(self):
-        with patch.object(route, 'require_site', AsyncMock()):
+        with patch.object(
+            stream_management_services,
+            'require_site',
+            AsyncMock(),
+        ):
             first = await self.options('stream_models', 123)
             self.assertEqual(first.default_id, 'ppe-stream-v1')
             self.assertEqual(first.options[0].id, 'ppe-stream-v1')
@@ -109,7 +149,12 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(first.revision, second.revision)
         with self.assertRaises(HTTPException) as error:
             registry.require_model(
-                'ppe-stream-v1', 'v1', 't1', 'admin', 'stream', 123,
+                'ppe-stream-v1',
+                'v1',
+                't1',
+                'admin',
+                'stream',
+                123,
             )
         self.assertEqual(error.exception.status_code, 409)
 
@@ -118,19 +163,31 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(version=version, tenant=tenant):
                 with self.assertRaises(HTTPException) as error:
                     registry.require_model(
-                        'ppe-stream-v1', version, tenant, 'admin', 'image',
+                        'ppe-stream-v1',
+                        version,
+                        tenant,
+                        'admin',
+                        'image',
                     )
                 self.assertEqual(error.exception.status_code, status)
         (self.path / 'ppe.pt').write_bytes(b'replaced')
         with self.assertRaises(HTTPException) as error:
             registry.require_model(
-                'ppe-stream-v1', 'v1', 't1', 'admin', 'image',
+                'ppe-stream-v1',
+                'v1',
+                't1',
+                'admin',
+                'image',
             )
         self.assertEqual(error.exception.status_code, 409)
 
     async def test_registry_outage_is_not_empty_success(self):
         (self.path / 'models.json').write_text('{broken')
-        with patch.object(route, 'require_site', AsyncMock()):
+        with patch.object(
+            stream_management_services,
+            'require_site',
+            AsyncMock(),
+        ):
             with self.assertRaises(HTTPException) as error:
                 await self.options('stream_models', 123)
         self.assertEqual(error.exception.status_code, 503)
@@ -149,10 +206,14 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_roles_cannot_be_forged_or_cross_tenant(self):
         target = SimpleNamespace(
-            username='member', role='user', group_id=2, tenant_id='t1',
+            username='member',
+            role='user',
+            group_id=2,
+            tenant_id='t1',
         )
         self.assertEqual(
-            role_policy.assignable_roles(self.me, target), ['user', 'guest'],
+            role_policy.assignable_roles(self.me, target),
+            ['user', 'guest'],
         )
         for role in ('admin', 'super_admin', 'invented'):
             with self.assertRaises(HTTPException):
@@ -169,7 +230,8 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         )
         record.review_status = 'resolved'
         self.assertEqual(
-            resources.review_actions(self.me, record), ['pending'],
+            resources.review_actions(self.me, record),
+            ['pending'],
         )
         self.me.role = 'user'
         self.assertEqual(resources.review_actions(self.me, record), [])
@@ -212,41 +274,70 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             await site_access.require_site(db, self.me, 123)
         self.assertEqual(error.exception.status_code, 404)
 
+    @pytest.mark.ml
     async def test_detection_catalog_and_pinned_inference(self):
         from io import BytesIO
         from fastapi import UploadFile
         from examples.YOLO_server_api import routers
         from examples.YOLO_server_api.schemas import DetectionRequest
 
-        response = routers.list_detection_models(Response(), self.credentials)
+        response = await routers.list_detection_models(
+            Response(),
+            self.credentials,
+        )
         self.assertEqual(response.models[0].classes[0].id, 7)
         self.assertEqual(response.models[0].classes[0].color, '#4CAF50')
         self.assertEqual(response.models[0].version, 'v1')
-        inference = AsyncMock(
+        from unittest.mock import Mock
+        from examples.YOLO_server_api import (
+            inference_runtime as runtime_module,
+        )
+
+        runtime = runtime_module.InferenceRuntime()
+        self.addAsyncCleanup(runtime.close)
+        inference = Mock(
             return_value=([[1, 2, 3, 4, 0.8, 7]], {'inference': 0, 'post': 0}),
         )
         loaded = object()
         with (
             patch.object(
-                routers.model_loader,
-                'get_registry_model',
+                runtime.models,
+                '_load_registry_model',
                 return_value=loaded,
             ) as loader,
-            patch.object(routers, 'run_detection_from_bytes', inference),
+            patch.object(
+                routers,
+                'get_inference_runtime',
+                return_value=runtime,
+            ),
+            patch.object(
+                runtime_module,
+                'run_detection',
+                inference,
+            ),
+            patch.object(
+                runtime_module,
+                'prepare_image',
+                return_value=SimpleNamespace(
+                    decoded_bytes=12,
+                    decode=_decoded_catalog_image,
+                ),
+            ),
         ):
             result = await routers.detect(
                 DetectionRequest(
                     model='ppe-stream-v1',
                     model_version='v1',
                     image=UploadFile(
-                        filename='image.jpg', file=BytesIO(b'image'),
+                        filename='image.jpg',
+                        file=BytesIO(b'image'),
                     ),
                 ),
                 self.credentials,
                 3,
             )
             self.assertEqual(result[0][-1], 7)
-            self.assertIs(inference.await_args.args[1], loaded)
+            self.assertIs(inference.call_args.args[1], loaded)
             loader.assert_called_once()
             with self.assertRaises(HTTPException) as error:
                 await routers.detect(
@@ -254,7 +345,8 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
                         model='ppe-stream-v1',
                         model_version='old',
                         image=UploadFile(
-                            filename='image.jpg', file=BytesIO(b'image'),
+                            filename='image.jpg',
+                            file=BytesIO(b'image'),
                         ),
                     ),
                     self.credentials,
@@ -275,13 +367,17 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         db = AsyncMock()
         with (
             patch.object(
-                streams, '_get_site_or_404', AsyncMock(return_value=site),
+                stream_management_services,
+                '_get_site_or_404',
+                AsyncMock(return_value=site),
             ),
             patch.object(
-                streams, 'require_site', AsyncMock(return_value=site),
+                stream_management_services,
+                'require_site',
+                AsyncMock(return_value=site),
             ),
             patch.object(
-                streams,
+                stream_management_services,
                 'get_group_stream_limit',
                 AsyncMock(return_value=(0, 10)),
             ),
@@ -356,14 +452,20 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         for router in (route.router, users.router, invitations.router):
             app.include_router(router)
         app.add_exception_handler(HTTPException, safe_http_exception)
-        app.dependency_overrides[route.get_current_user] = lambda: self.me
-        app.dependency_overrides[route.get_db] = lambda: AsyncMock()
+        app.dependency_overrides[route.get_current_user] = partial(
+            _resource_routes_and_removed_gateway_get_me,
+            self,
+        )
+        app.dependency_overrides[route.get_db] = (
+            _resource_routes_and_removed_gateway_make_asyncmock
+        )
         with TestClient(app) as client:
             result = client.get('/users/assignable-roles')
             self.assertEqual(result.status_code, 200)
             self.assertEqual(result.json()['schema_version'], 1)
             self.assertEqual(
-                result.headers['Cache-Control'], 'private, no-store',
+                result.headers['Cache-Control'],
+                'private, no-store',
             )
             for scope in (
                 'stream_models',
@@ -375,19 +477,26 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             ):
                 self.assertEqual(
                     client.get(
-                        '/client-options', params={'scope': scope},
+                        '/client-options',
+                        params={'scope': scope},
                     ).status_code,
                     404,
                 )
-            with patch.object(route, 'require_site', AsyncMock()):
+            with patch.object(
+                stream_management_services,
+                'require_site',
+                AsyncMock(),
+            ):
                 result = client.get('/sites/123/stream-models')
                 self.assertEqual(result.status_code, 200)
                 self.assertEqual(
-                    result.json()['options'][0]['id'], 'ppe-stream-v1',
+                    result.json()['options'][0]['id'],
+                    'ppe-stream-v1',
                 )
                 (self.path / 'models.json').write_text('{broken')
                 self.assertEqual(
-                    client.get('/sites/123/stream-models').status_code, 503,
+                    client.get('/sites/123/stream-models').status_code,
+                    503,
                 )
             with patch.object(
                 invitations,
@@ -432,38 +541,46 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
             ) as save,
         ):
             result = await service.upload_violation(
-                'site',
-                'camera',
-                None,
-                None,
-                '[[0,0,1,1,0.9,7,123]]',
-                None,
-                None,
-                UploadFile(file=BytesIO(b'image')),
+                ViolationEvidence(
+                    site='site',
+                    stream_name='camera',
+                    detection_time=None,
+                    warnings_json=None,
+                    detections_json='[[0,0,1,1,0.9,7,123]]',
+                    cone_polygon_json=None,
+                    pole_polygon_json=None,
+                    image_file=UploadFile(file=BytesIO(b'image')),
+                    model_id='ppe-stream-v1',
+                    model_version='v1',
+                ),
                 db,
                 credentials,
-                model_id='ppe-stream-v1',
-                model_version='v1',
             )
             self.assertEqual(result.violation_id, 9)
-            self.assertEqual(save.await_args.kwargs['model_version'], 'v1')
             self.assertEqual(
-                save.await_args.kwargs['model_classes'], self.model['classes'],
+                save.await_args.args[1].source.model_version,
+                'v1',
+            )
+            self.assertEqual(
+                save.await_args.args[1].source.model_classes,
+                self.model['classes'],
             )
             with self.assertRaises(HTTPException) as error:
                 await service.upload_violation(
-                    'site',
-                    'camera',
-                    None,
-                    None,
-                    '[[0,0,1,1,0.9,0,123]]',
-                    None,
-                    None,
-                    UploadFile(file=BytesIO(b'image')),
+                    ViolationEvidence(
+                        site='site',
+                        stream_name='camera',
+                        detection_time=None,
+                        warnings_json=None,
+                        detections_json='[[0,0,1,1,0.9,0,123]]',
+                        cone_polygon_json=None,
+                        pole_polygon_json=None,
+                        image_file=UploadFile(file=BytesIO(b'image')),
+                        model_id='ppe-stream-v1',
+                        model_version='v1',
+                    ),
                     db,
                     credentials,
-                    model_id='ppe-stream-v1',
-                    model_version='v1',
                 )
             self.assertEqual(error.exception.status_code, 422)
             self.assertEqual(save.await_count, 1)

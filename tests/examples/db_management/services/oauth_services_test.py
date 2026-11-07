@@ -15,14 +15,6 @@ from examples.db_management.services import oauth_services as svc
 
 
 def _claims(**values: object) -> ProviderClaims:
-    """Perform claims.
-
-    Args:
-        **values: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     return ProviderClaims.model_validate(
         {'sub': 'provider-user', **values},
     )
@@ -32,7 +24,6 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
     """Tests for Google/Apple provider account resolution."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.db: MagicMock = MagicMock()
         self.db.scalar = AsyncMock()
         self.db.get = AsyncMock()
@@ -57,12 +48,7 @@ class TestOAuthServices(unittest.IsolatedAsyncioTestCase):
         mock_verify_jwt: MagicMock,
         mock_exchange_code: AsyncMock,
     ) -> None:
-        """Test apple nonce mismatch is rejected.
-
-        Args:
-            mock_verify_jwt: Value used by this callable.
-            mock_exchange_code: Value used by this callable.
-        """
+        """Test apple nonce mismatch is rejected."""
         mock_verify_jwt.return_value = {
             'sub': 'apple-sub',
             'aud': 'com.changdar.visionnaire',
@@ -85,14 +71,6 @@ if __name__ == '__main__':
 
 
 def _settings(**values: object) -> SimpleNamespace:
-    """Perform settings.
-
-    Args:
-        **values: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     defaults: dict[str, object] = {
         'google_client_ids': '',
         'apple_client_ids': '',
@@ -280,7 +258,6 @@ class TestOAuthAsyncCoverage(unittest.IsolatedAsyncioTestCase):
     """Provide TestOAuthAsyncCoverage."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.db = MagicMock()
         self.db.scalar = AsyncMock()
         self.db.get = AsyncMock()

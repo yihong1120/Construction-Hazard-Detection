@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import unittest
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -45,6 +46,14 @@ _DEPLOYMENT_ID = UUID('22222222-2222-2222-2222-222222222222')
 _PATH = f"/deployment-registry/v1/deployments/{_DEPLOYMENT_ID}"
 
 
+# type: ignore[no-untyped-def]
+async def _setUp_override_get_db(
+    testcase: TestDeploymentRegistryRouter,
+    /,
+) -> Any:
+    yield testcase.db
+
+
 def _base64url_decode(value: str) -> bytes:
     """Decode the unpadded base64url representation used by the registry."""
     return base64.urlsafe_b64decode(value + '=' * (-len(value) % 4))
@@ -54,7 +63,6 @@ class TestDeploymentRegistryRouter(unittest.TestCase):
     """Verify the public route never becomes an authentication endpoint."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.app = FastAPI()
         self.app.include_router(registry.router)
         self.client = TestClient(self.app, base_url='https://api.example.com')
@@ -69,13 +77,7 @@ class TestDeploymentRegistryRouter(unittest.TestCase):
         self.db = MagicMock()
         self.db.scalar = AsyncMock(return_value=self.deployment)
 
-        async def override_get_db() -> Any:  # type: ignore[no-untyped-def]
-            """Perform override get db.
-
-            Returns:
-                The callable result.
-            """
-            yield self.db
+        override_get_db = partial(_setUp_override_get_db, self)
 
         self.app.dependency_overrides[get_db] = override_get_db
         self.private_key = Ed25519PrivateKey.generate()
@@ -93,7 +95,6 @@ class TestDeploymentRegistryRouter(unittest.TestCase):
         self.settings_patch.start()
 
     def tearDown(self) -> None:
-        """Perform tearDown."""
         self.settings_patch.stop()
         self.client.close()
 
@@ -173,7 +174,6 @@ class TestDeploymentRegistryService(unittest.TestCase):
     """Test signing invariants independently from HTTP plumbing."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.private_key = Ed25519PrivateKey.generate()
         self.private_pem = self.private_key.private_bytes(
             Encoding.PEM,

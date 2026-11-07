@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -12,12 +11,16 @@ from examples.auth import models
 from examples.auth.cache import rate_limiter_service
 from examples.auth.database import AsyncSessionLocal
 from examples.auth.database import engine
+from examples.auth.operation_database import close_operation_database
 from examples.auth.redis_pool import RedisClient
 from examples.db_management.services.site_media_cleanup import (
     drain_site_media_cleanup_jobs,
 )
+from examples.shared.image_work import close_image_work
 from src.http_client_pool import HttpClientPool
 from src.http_client_pool import set_application_http_clients
+from src.settings.connections import RedisSettings
+from src.settings.connections import StartupSettings
 
 logger = logging.getLogger(__name__)
 _site_media_cleanup_interval_seconds = 30
@@ -58,12 +61,8 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
             after performing startup tasks.
     """
     # Initialise Redis connection for auth cache scripts.
-    redis_host: str = os.getenv('REDIS_HOST', '127.0.0.1')
-    redis_port: str = os.getenv('REDIS_PORT', '6379')
-    redis_password: str = os.getenv('REDIS_PASSWORD', '')
-    redis_url: str = f"redis://:{redis_password}@{redis_host}:{redis_port}/0"
-
-    app.state.redis_client = RedisClient(redis_url)
+    startup = StartupSettings()
+    app.state.redis_client = RedisClient(RedisSettings().url)
     redis_conn = await app.state.redis_client.connect()
     app.state.http_clients = HttpClientPool()
     set_application_http_clients(app.state.http_clients)
@@ -78,27 +77,25 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Schema is owned by the versioned PostgreSQL migrations.  Local scratch
     # environments can opt into metadata creation explicitly; production
     # workers never issue startup DDL or race one another for schema locks.
-    if os.getenv('AUTO_CREATE_SCHEMA', '').strip().lower() in {
-        '1',
-        'true',
-        'yes',
-        'on',
-    }:
+    if startup.auto_create_schema:
         async with engine.begin() as conn:
             await conn.run_sync(models.Base.metadata.create_all)
 
     # A successful site deletion may leave an outbox row when the file system
     # was unavailable.  Retry a small bounded batch without delaying startup.
+    # A management host without the media files must leave these jobs for the
+    # workers on the media host; missing files must not be marked as cleaned.
     cleanup_worker_enabled = False
-    try:
-        async with AsyncSessionLocal() as db:
-            await drain_site_media_cleanup_jobs(db)
-        cleanup_worker_enabled = True
-    except Exception:
-        logger.warning(
-            'Deferred site media cleanup unavailable at startup',
-            exc_info=True,
-        )
+    if startup.site_media_cleanup_worker_enabled:
+        try:
+            async with AsyncSessionLocal() as db:
+                await drain_site_media_cleanup_jobs(db)
+            cleanup_worker_enabled = True
+        except Exception:
+            logger.warning(
+                'Deferred site media cleanup unavailable at startup',
+                exc_info=True,
+            )
 
     cleanup_stop_event = asyncio.Event()
     cleanup_task = (
@@ -111,6 +108,7 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
     yield  # Provide control back to the application
 
     # -- Shutdown logic --
+    await close_image_work()
     cleanup_stop_event.set()
     if cleanup_task is not None:
         await cleanup_task
@@ -118,4 +116,8 @@ async def global_lifespan(app: FastAPI) -> AsyncGenerator[None]:
     set_application_http_clients(None)
     await app.state.redis_client.close()
     # Close database engine if needed
+    from examples.YOLO_server_api.catalog_repository import synchronous_catalog
+
+    await asyncio.to_thread(synchronous_catalog.close)
+    await close_operation_database(engine)
     await engine.dispose()

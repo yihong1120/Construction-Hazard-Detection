@@ -48,12 +48,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_is_super_admin: MagicMock,
         mock_list_sites: MagicMock,
     ) -> None:
-        """Test endpoint list sites super admin.
-
-        Args:
-            mock_is_super_admin: Value used by this callable.
-            mock_list_sites: Value used by this callable.
-        """
+        """Test endpoint list sites super admin."""
         self.user.role = 'super_admin'
         mock_list_sites.return_value = []
         result = await endpoint_list_sites(self.db, self.user)
@@ -78,11 +73,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create_site: MagicMock,
     ) -> None:
-        """Test endpoint create site success.
-
-        Args:
-            mock_create_site: Value used by this callable.
-        """
+        """Test endpoint create site success."""
         site = MagicMock()
         site.id = 1
         site.name = 'New Site'
@@ -150,12 +141,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_update_site: MagicMock,
         mock_refresh_site_cache: AsyncMock,
     ) -> None:
-        """Test endpoint update site success.
-
-        Args:
-            mock_update_site: Value used by this callable.
-            mock_refresh_site_cache: Value used by this callable.
-        """
+        """Test endpoint update site success."""
         site = MagicMock()
         site.id = 1
         site.name = 'Site'
@@ -257,12 +243,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_add_user: MagicMock,
         mock_refresh_site_cache: AsyncMock,
     ) -> None:
-        """Test endpoint add user to site success.
-
-        Args:
-            mock_add_user: Value used by this callable.
-            mock_refresh_site_cache: Value used by this callable.
-        """
+        """Test endpoint add user to site success."""
         site = MagicMock()
         site.groups = [MagicMock(id=1)]
         user_to_add = MagicMock()
@@ -564,12 +545,7 @@ class TestSiteMgmtRouter(unittest.IsolatedAsyncioTestCase):
         mock_remove_user: MagicMock,
         mock_refresh_site_cache: AsyncMock,
     ) -> None:
-        """Test endpoint remove user from site success.
-
-        Args:
-            mock_remove_user: Value used by this callable.
-            mock_refresh_site_cache: Value used by this callable.
-        """
+        """Test endpoint remove user from site success."""
         site = MagicMock()
         site.id = 1
         site.groups = [MagicMock(id=1)]

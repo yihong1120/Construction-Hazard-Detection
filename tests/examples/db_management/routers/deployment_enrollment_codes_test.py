@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from datetime import timedelta
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -35,12 +36,26 @@ _CODE_ID = UUID('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
 _CODE_ID_TEXT = str(_CODE_ID)
 
 
-def _administrator() -> TenantDeploymentAdministrator:
-    """Perform administrator.
+# type: ignore[no-untyped-def]
+async def _setUp_override_get_db(
+    testcase: TestDeploymentEnrollmentCodeRouter,
+    /,
+) -> Any:
+    yield testcase.db
 
-    Returns:
-        The callable result.
-    """
+
+def _management_services_handle_storage_and_scalars():
+    return [
+        SimpleNamespace(
+            public_id=_CODE_ID,
+            expires_at=utc_now() + timedelta(minutes=5),
+            redeemed_at=None,
+            revoked_at=None,
+        ),
+    ]
+
+
+def _administrator() -> TenantDeploymentAdministrator:
     return TenantDeploymentAdministrator(
         user=cast(User, SimpleNamespace(id=7, username='tenant-admin')),
         tenant_id=_TENANT_ID,
@@ -52,19 +67,12 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
     """The management API must expose raw code material exactly once."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         self.app = FastAPI()
         self.app.include_router(router)
         self.client = TestClient(self.app)
         self.db = MagicMock()
 
-        async def override_get_db() -> Any:  # type: ignore[no-untyped-def]
-            """Perform override get db.
-
-            Returns:
-                The callable result.
-            """
-            yield self.db
+        override_get_db = partial(_setUp_override_get_db, self)
 
         self.app.dependency_overrides[get_db] = override_get_db
         self.app.dependency_overrides[
@@ -72,7 +80,6 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
         ] = _administrator
 
     def tearDown(self) -> None:
-        """Perform tearDown."""
         self.client.close()
 
     def test_create_returns_the_raw_code_once_and_rejects_scope_fields(
@@ -168,7 +175,8 @@ class TestDeploymentEnrollmentCodeRouter(unittest.TestCase):
                     {
                         'id': _CODE_ID_TEXT,
                         'expires_at': expires_at.isoformat().replace(
-                            '+00:00', 'Z',
+                            '+00:00',
+                            'Z',
                         ),
                         'status': 'active',
                     },
@@ -416,14 +424,7 @@ class TestDeploymentEnrollmentCodeServices(unittest.TestCase):
 
         db.execute = AsyncMock(
             return_value=SimpleNamespace(
-                scalars=lambda: [
-                    SimpleNamespace(
-                        public_id=_CODE_ID,
-                        expires_at=utc_now() + timedelta(minutes=5),
-                        redeemed_at=None,
-                        revoked_at=None,
-                    ),
-                ],
+                scalars=_management_services_handle_storage_and_scalars,
             ),
         )
         items = asyncio.run(

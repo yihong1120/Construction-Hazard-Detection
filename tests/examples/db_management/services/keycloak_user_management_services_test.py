@@ -1,15 +1,40 @@
 from __future__ import annotations
 
 import unittest
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 from fastapi import HTTPException
 
+from examples.auth import keycloak_admin as transport
 from examples.db_management.services import (
     keycloak_user_management_services as services,
 )
+from examples.db_management.services import (
+    native_social_links as social,
+)
+
+
+def _response_json(payload, /):
+    return payload
+
+
+async def _asyncSetUp_handle(httpx, testcase, /, request):
+    if request.url.path.endswith('/token'):
+        testcase.token_calls += 1
+        return httpx.Response(
+            testcase.token_status,
+            json={
+                'access_token': f'service-token-{testcase.token_calls}',
+                'expires_in': 300,
+            },
+        )
+    testcase.admin_calls += 1
+    if testcase.admin_calls <= testcase.reject_count:
+        return httpx.Response(401)
+    return httpx.Response(204)
 
 
 def _response(
@@ -22,87 +47,61 @@ def _response(
     return SimpleNamespace(
         status_code=status_code,
         headers=headers or {},
-        json=lambda: payload,
+        json=partial(_response_json, payload),
     )
 
 
 class TestKeycloakUserManagementServices(unittest.IsolatedAsyncioTestCase):
     """Exercise server-only Keycloak account lifecycle calls."""
 
-    async def test_provision_creates_identity_then_sets_password(self) -> None:
-        """A new account is not local-password backed."""
-        created = _response(
-            201,
-            headers={'Location': 'https://id.example/realms/r/users/sub-123'},
-        )
-        password_set = _response(204)
-        with patch.object(
-            services,
-            'keycloak_admin_request',
-            AsyncMock(side_effect=[created, password_set]),
-        ) as request:
-            subject = await services.provision_keycloak_user(
-                username='alice',
-                password='safe-password',
-                email='alice@example.com',
-                given_name='Alice',
-                family_name='Example',
-                force_password_change=True,
-            )
-
-        self.assertEqual(subject, 'sub-123')
-        self.assertEqual(request.await_count, 2)
-        self.assertEqual(
-            request.await_args_list[0].kwargs['json_body'],
-            {
-                'username': 'alice',
-                'email': 'alice@example.com',
-                'emailVerified': True,
-                'firstName': 'Alice',
-                'lastName': 'Example',
-                'enabled': True,
-            },
-        )
-        self.assertEqual(
-            request.await_args_list[1].kwargs['json_body'],
-            {
-                'type': 'password',
-                'value': 'safe-password',
-                'temporary': True,
-            },
-        )
-
-    async def test_provision_compensates_when_password_initialisation_fails(
+    async def test_remote_create_starts_disabled_without_local_credentials(
         self,
-    ) -> None:
-        """A failed password step deletes the otherwise unusable identity."""
-        created = _response(
-            201,
-            headers={'Location': 'https://id.example/users/sub-123'},
+    ):
+        account = services.KeycloakAccount(
+            'alice',
+            'test-password',
+            'alice@example.test',
+            'Alice',
+            'Test',
+            True,
         )
-        password_failed = _response(500)
-        deleted = _response(204)
         with patch.object(
             services,
             'keycloak_admin_request',
-            AsyncMock(side_effect=[created, password_failed, deleted]),
+            new=AsyncMock(
+                return_value=_response(
+                    201,
+                    headers={'Location': 'https://id.example/users/sub-123'},
+                ),
+            ),
+        ) as request:
+            subject = await services.create_keycloak_user(account)
+        self.assertEqual(subject, 'sub-123')
+        payload = request.await_args.kwargs['json_body']
+        self.assertFalse(payload['enabled'])
+        self.assertNotIn('password', payload)
+        self.assertNotIn('test-password', repr(account))
+
+    async def test_creation_retry_does_not_adopt_existing_remote_accounts(
+        self,
+    ):
+        account = services.KeycloakAccount(
+            'alice',
+            'test-password',
+            'alice@example.test',
+            'Alice',
+            'Test',
+            False,
+        )
+        with patch.object(
+            services,
+            'keycloak_admin_request',
+            new=AsyncMock(return_value=_response(409)),
         ) as request:
             with self.assertRaises(HTTPException) as error:
-                await services.provision_keycloak_user(
-                    username='alice',
-                    password='safe-password',
-                    email='alice@example.com',
-                    given_name='Alice',
-                    family_name='Example',
-                    force_password_change=False,
-                )
-
-        self.assertEqual(error.exception.status_code, 503)
-        self.assertEqual(request.await_count, 3)
-        self.assertEqual(
-            request.await_args_list[2].args,
-            ('DELETE', '/users/sub-123'),
-        )
+                await services.create_keycloak_user(account)
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(request.await_count, 1)
 
     async def test_find_requires_an_exact_canonical_username_match(
         self,
@@ -185,7 +184,8 @@ class TestKeycloakUserManagementServices(unittest.IsolatedAsyncioTestCase):
             await services.logout_keycloak_user('subject/unsafe')
 
         request.assert_awaited_once_with(
-            'POST', '/users/subject%2Funsafe/logout',
+            'POST',
+            '/users/subject%2Funsafe/logout',
         )
 
 
@@ -196,36 +196,32 @@ if __name__ == '__main__':
 class KeycloakTransportTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         import httpx
+
         self.httpx = httpx
         self.token_calls = 0
         self.admin_calls = 0
         self.reject_count = 0
         self.token_status = 200
 
-        async def handle(request):
-            if request.url.path.endswith('/token'):
-                self.token_calls += 1
-                return httpx.Response(
-                    self.token_status, json={
-                        'access_token': f'service-token-{self.token_calls}',
-                        'expires_in': 300,
-                    },
-                )
-            self.admin_calls += 1
-            if self.admin_calls <= self.reject_count:
-                return httpx.Response(401)
-            return httpx.Response(204)
+        handle = partial(_asyncSetUp_handle, httpx, self)
 
         self.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         self.settings = SimpleNamespace(
-            oidc_enabled=True, keycloak_realm='realm',
+            oidc_enabled=True,
+            keycloak_realm='realm',
             keycloak_user_linker_client_id='linker',
             keycloak_user_linker_client_secret='private-service-secret',
             resolved_keycloak_admin_base_url='https://id.example',
         )
-        self.settings_patch = patch.object(services, 'settings', self.settings)
+        self.settings_patch = patch.object(
+            transport.keycloak_admin,
+            'settings',
+            self.settings,
+        )
         self.pool_patch = patch.object(
-            services, 'get_application_http_client', AsyncMock(
+            transport,
+            'get_application_http_client',
+            AsyncMock(
                 return_value=self.client,
             ),
         )
@@ -242,11 +238,12 @@ class KeycloakTransportTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         import asyncio
 
+        operations = (
+            services.keycloak_admin_request,
+            social._keycloak_admin_request,
+        )
         responses = await asyncio.gather(
-            *(
-                services.keycloak_admin_request('GET', '/users')
-                for _ in range(8)
-            ),
+            *(operations[index % 2]('GET', '/users') for index in range(8)),
         )
         self.assertTrue(all(r.status_code == 204 for r in responses))
         self.assertEqual((self.token_calls, self.admin_calls), (1, 8))
@@ -287,11 +284,13 @@ class KeycloakTransportTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         with (
             patch.object(
-                services, 'get_application_http_client',
+                transport,
+                'get_application_http_client',
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                services.httpx, 'AsyncClient',
+                transport.httpx,
+                'AsyncClient',
                 return_value=self.client,
             ),
         ):

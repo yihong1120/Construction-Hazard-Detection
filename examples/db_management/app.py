@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
+import traceback
 from collections.abc import Awaitable
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import uvicorn
@@ -37,7 +40,12 @@ from examples.db_management.routers.streams import router as stream_cfg_router
 from examples.db_management.routers.users import (
     router as user_management_router,
 )
+from examples.db_management.routers.website_access import (
+    router as website_access_router,
+)
+from examples.db_management.services.account_lifecycle import AccountLifecycle
 from examples.deployment_registry.router import router as registry_router
+
 
 settings = Settings()
 
@@ -57,7 +65,13 @@ def _allowed_cors_origins() -> list[str]:
 
 
 # Initialise the FastAPI app with a custom lifespan handler
-app: FastAPI = FastAPI(lifespan=global_lifespan)
+@asynccontextmanager
+async def management_lifespan(app: FastAPI):
+    async with global_lifespan(app), AccountLifecycle().lifespan():
+        yield
+
+
+app: FastAPI = FastAPI(lifespan=management_lifespan)
 
 
 def _log_server_traceback(
@@ -65,8 +79,6 @@ def _log_server_traceback(
     exc: BaseException,
 ) -> None:
     """Record type and traceback without serialising exception arguments."""
-    import logging
-    import traceback
 
     # Some exceptions (notably SQL and provider errors) include submitted
     # values in ``str(exc)``.  Log stack locations and the exception class, but
@@ -101,6 +113,8 @@ async def safe_http_exception(
             'MODEL_REGISTRY_UNAVAILABLE',
             'INVITATION_POLICY_UNAVAILABLE',
             'HISTORICAL_MODEL_METADATA_UNAVAILABLE',
+            'account_deletion_pending',
+            'account_reconciliation_required',
         }
     )
     if exc.status_code < 500 or is_safe_registry_unavailable:
@@ -206,6 +220,7 @@ app.include_router(site_router)
 app.include_router(feature_router)
 app.include_router(group_router)
 app.include_router(stream_cfg_router)
+app.include_router(website_access_router)
 
 
 def main() -> None:

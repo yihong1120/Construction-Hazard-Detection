@@ -1,9 +1,3 @@
-"""Native Google/Apple assertion exchange endpoints.
-
-These endpoints are intentionally separate from the retired local social-login
-handlers.  Their successful sign-in response is a Keycloak authorization URL,
-not an application access token.
-"""
 from __future__ import annotations
 
 from fastapi import APIRouter
@@ -38,6 +32,9 @@ from examples.db_management.schemas.auth import NativeSocialLinkBeginRequest
 from examples.db_management.schemas.auth import NativeSocialLinkBeginResponse
 from examples.db_management.schemas.auth import NativeSocialLinkCompleteRequest
 from examples.db_management.schemas.auth import NativeSocialLinkResponse
+from examples.db_management.services.native_social_broker import (
+    redeem_keycloak_native_social_exchange,
+)
 from examples.db_management.services.native_social_exchange_services import (
     begin_native_social_exchange,
 )
@@ -52,9 +49,6 @@ from examples.db_management.services.native_social_exchange_services import (
 )
 from examples.db_management.services.native_social_exchange_services import (
     confirm_native_social_email_link,
-)
-from examples.db_management.services.native_social_exchange_services import (
-    redeem_keycloak_native_social_exchange,
 )
 
 router = APIRouter(prefix='/auth/native-social', tags=['native-social'])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import os
+import json
+from functools import partial
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -9,11 +10,15 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
+from examples.db_management.policy_settings import InvitationSettings
+
 
 class InvitationPolicy(BaseModel):
     model_config = ConfigDict(extra='forbid')
     max_minutes: int = Field(default=1440, ge=1, strict=True)
-    minutes: list[int] = Field(default_factory=lambda: [30, 60, 120, 1440])
+    minutes: list[int] = Field(
+        default_factory=partial(list, (30, 60, 120, 1440)),
+    )
     default_minutes: int | None = 30
 
     @model_validator(mode='after')
@@ -35,11 +40,10 @@ class InvitationPolicy(BaseModel):
 
 def invitation_policy(tenant_id: str) -> InvitationPolicy:
     """Optional tenant policy, with the existing 1440-minute server ceiling."""
-    path = os.getenv('INVITATION_POLICY_PATH')
+    path = InvitationSettings().policy_path
     if not path:
         return InvitationPolicy()
     try:
-        import json
 
         policies = json.loads(Path(path).read_text())
         return InvitationPolicy.model_validate(policies[tenant_id])

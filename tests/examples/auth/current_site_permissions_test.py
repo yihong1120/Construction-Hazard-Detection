@@ -1,7 +1,7 @@
-"""Exercise permission revocation across independent database sessions."""
 from __future__ import annotations
 
 import unittest
+from functools import partial
 from uuid import uuid4
 
 from sqlalchemy import delete
@@ -19,6 +19,32 @@ from examples.auth.user_service import get_effective_site_names
 from examples.auth.user_service import load_user_access_context
 
 
+def _asyncSetUp_append(
+    testcase,
+    /,
+    conn,
+    cursor,
+    sql,
+    parameters,
+    context,
+    many,
+):
+    return testcase.queries.append(sql)
+
+
+def _asyncSetUp_create_all(sync):
+    return User.metadata.create_all(
+        sync,
+        tables=[
+            User.__table__,
+            Site.__table__,
+            Group.__table__,
+            user_sites_table,
+            site_groups_table,
+        ],
+    )
+
+
 class CurrentSitePermissionsTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.engine = create_async_engine('sqlite+aiosqlite:///:memory:')
@@ -27,25 +53,17 @@ class CurrentSitePermissionsTest(unittest.IsolatedAsyncioTestCase):
         event.listen(
             self.engine.sync_engine,
             'before_cursor_execute',
-            lambda conn,
-            cursor,
-            sql,
-            parameters,
-            context,
-            many: self.queries.append(sql),
+            partial(_asyncSetUp_append, self),
         )
         async with self.engine.begin() as conn:
             await conn.run_sync(
-                lambda sync: User.metadata.create_all(
-                    sync, tables=[
-                        User.__table__, Site.__table__, Group.__table__,
-                        user_sites_table, site_groups_table,
-                    ],
-                ),
+                _asyncSetUp_create_all,
             )
             await conn.execute(
                 Group.__table__.insert().values(
-                    id=1, name='group', uniform_number='12345678',
+                    id=1,
+                    name='group',
+                    uniform_number='12345678',
                 ),
             )
             await conn.execute(
@@ -72,11 +90,12 @@ class CurrentSitePermissionsTest(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
 
     async def test_other_session_observes_membership_revocation_immediately(
-            self,
+        self,
     ) -> None:
         async with self.sessions() as worker_a:
             self.assertEqual(
-                await get_effective_site_names('alice', worker_a), ['site-a'],
+                await get_effective_site_names('alice', worker_a),
+                ['site-a'],
             )
         async with self.sessions() as administrator:
             await administrator.execute(
@@ -87,7 +106,8 @@ class CurrentSitePermissionsTest(unittest.IsolatedAsyncioTestCase):
             await administrator.commit()
         async with self.sessions() as worker_b:
             self.assertEqual(
-                await get_effective_site_names('alice', worker_b), [],
+                await get_effective_site_names('alice', worker_b),
+                [],
             )
 
     async def test_access_context_uses_two_queries_without_collection_joins(
@@ -107,11 +127,12 @@ class CurrentSitePermissionsTest(unittest.IsolatedAsyncioTestCase):
             await administrator.commit()
         async with self.sessions() as worker:
             self.assertEqual(
-                await get_effective_site_names('alice', worker), [],
+                await get_effective_site_names('alice', worker),
+                [],
             )
 
     async def test_long_lived_session_refreshes_cached_user_group(
-            self,
+        self,
     ) -> None:
         async with self.sessions() as worker:
             user, sites, _ = await load_user_access_context(worker, 'alice')

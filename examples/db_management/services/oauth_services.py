@@ -196,7 +196,7 @@ def _load_apple_private_key() -> str:
     if settings.apple_private_key:
         return settings.apple_private_key.replace('\\n', '\n')
     if settings.apple_private_key_path:
-        with open(settings.apple_private_key_path, encoding='utf-8') as file:
+        with open(settings.apple_private_key_path) as file:
             return file.read()
     raise HTTPException(
         status_code=500,

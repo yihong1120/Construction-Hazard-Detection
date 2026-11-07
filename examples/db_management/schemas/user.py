@@ -208,6 +208,7 @@ class UserManagementCapabilities(BaseModel):
     can_manage_groups: bool
     can_manage_group_features: bool
     can_assign_group_admins: bool
+    can_manage_website_access: bool = False
 
 
 class PendingUserReviewPage(BaseModel):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
@@ -11,6 +12,14 @@ from fastapi.testclient import TestClient
 from examples.db_management.deps import SUPER_ADMIN_NAME
 from examples.db_management.routers import users
 from examples.db_management.services.role_policy import validate_role
+
+
+def _protected_and_peer_accounts_return_callback(operator, /):
+    return operator
+
+
+def _protected_and_peer_accounts_return_callback2(db, /):
+    return db
 
 
 class AssignableRolesTest(IsolatedAsyncioTestCase):
@@ -35,8 +44,14 @@ class AssignableRolesTest(IsolatedAsyncioTestCase):
         )
         db = AsyncMock()
         db.get.return_value = target
-        app.dependency_overrides[users.get_current_user] = lambda: operator
-        app.dependency_overrides[users.get_db] = lambda: db
+        app.dependency_overrides[users.get_current_user] = partial(
+            _protected_and_peer_accounts_return_callback,
+            operator,
+        )
+        app.dependency_overrides[users.get_db] = partial(
+            _protected_and_peer_accounts_return_callback2,
+            db,
+        )
         with TestClient(app) as client:
             for name in (SUPER_ADMIN_NAME, 'peer-admin'):
                 target.username = name
@@ -91,8 +106,14 @@ class AssignableRolesTest(IsolatedAsyncioTestCase):
         )
         db = AsyncMock()
         db.get.return_value = target
-        app.dependency_overrides[users.get_current_user] = lambda: operator
-        app.dependency_overrides[users.get_db] = lambda: db
+        app.dependency_overrides[users.get_current_user] = partial(
+            _protected_and_peer_accounts_return_callback,
+            operator,
+        )
+        app.dependency_overrides[users.get_db] = partial(
+            _protected_and_peer_accounts_return_callback2,
+            db,
+        )
         with TestClient(app) as client:
             self.assertEqual(
                 client.get(

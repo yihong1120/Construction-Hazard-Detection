@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from operator import attrgetter
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -124,7 +125,7 @@ def pending_user_review_read(user: User) -> PendingUserReviewRead:
     # versions and choices currently shown in the review queue.
     latest_consent = max(
         user.consents,
-        key=lambda consent: (consent.accepted_at, consent.id),
+        key=attrgetter('accepted_at', 'id'),
         default=None,
     )
     providers = sorted(

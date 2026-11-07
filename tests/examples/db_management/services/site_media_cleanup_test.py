@@ -15,14 +15,6 @@ class TestSiteMediaCleanup(unittest.IsolatedAsyncioTestCase):
     """Verify durable media cleanup claims do not hold DB locks for I/O."""
 
     def _db_with_jobs(self, jobs: list[MagicMock]) -> MagicMock:
-        """Perform db with jobs.
-
-        Args:
-            jobs: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         db = MagicMock()
         db.scalars = AsyncMock(
             return_value=MagicMock(all=MagicMock(return_value=jobs)),
