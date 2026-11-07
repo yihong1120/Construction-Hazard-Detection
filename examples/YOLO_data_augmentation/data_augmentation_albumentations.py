@@ -116,14 +116,6 @@ class DataAugmentation:
 
     @staticmethod
     def _random_crop_size(image_shape: tuple[int, int]) -> tuple[int, int]:
-        """Perform random crop size.
-
-        Args:
-            image_shape: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         image_height, image_width = image_shape
         crop_height = min(random.randint(400, 800), image_height)
         crop_width = min(random.randint(400, 800), image_width)
@@ -203,15 +195,10 @@ class DataAugmentation:
 
     @staticmethod
     def _create_bbox_params() -> A.BboxParams:
-        """Perform create bbox params.
-
-        Returns:
-            The callable result.
-        """
         return A.BboxParams(
-            format='yolo',
+            coord_format='yolo',
             label_fields=['class_labels'],
-            clip=True,
+            clip_bboxes_on_input=True,
             filter_invalid_bboxes=True,
             min_visibility=DataAugmentation.min_bbox_visibility,
         )
@@ -222,16 +209,6 @@ class DataAugmentation:
         bboxes: list[list[float]],
         class_labels: list[int],
     ) -> tuple[list[list[float]], list[int]]:
-        """Perform normalize bboxes with albumentations.
-
-        Args:
-            image: Value used by this callable.
-            bboxes: Value used by this callable.
-            class_labels: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         transform = A.Compose(
             [A.NoOp(p=1)],
             bbox_params=self._create_bbox_params(),
@@ -248,15 +225,6 @@ class DataAugmentation:
         bbox_augmentations: Sequence[A.BasicTransform | A.BaseCompose],
         crop_bbox_augmentations: Sequence[A.BasicTransform | A.BaseCompose],
     ) -> list[A.BasicTransform | A.BaseCompose]:
-        """Perform choose bbox transforms.
-
-        Args:
-            bbox_augmentations: Value used by this callable.
-            crop_bbox_augmentations: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         if crop_bbox_augmentations and (
             not bbox_augmentations
             or random.random() < self.crop_transform_probability
@@ -277,15 +245,6 @@ class DataAugmentation:
         bbox: Sequence[float],
         grid: tuple[int, int],
     ) -> bool:
-        """Perform bbox stays in single grid cell.
-
-        Args:
-            bbox: Value used by this callable.
-            grid: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         x_center, y_center, width, height = bbox
         if width <= 0 or height <= 0:
             return False
@@ -310,15 +269,6 @@ class DataAugmentation:
         bboxes: Sequence[Sequence[float]],
         grid: tuple[int, int],
     ) -> bool:
-        """Perform can use random grid shuffle.
-
-        Args:
-            bboxes: Value used by this callable.
-            grid: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         return all(
             cls._bbox_stays_in_single_grid_cell(bbox, grid) for bbox in bboxes
         )
@@ -329,15 +279,6 @@ class DataAugmentation:
         bboxes: Sequence[Sequence[float]],
         candidate_grids: Sequence[tuple[int, int]],
     ) -> list[tuple[int, int]]:
-        """Perform safe random grid shuffle grids.
-
-        Args:
-            bboxes: Value used by this callable.
-            candidate_grids: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         return [
             grid
             for grid in candidate_grids
@@ -493,22 +434,33 @@ class DataAugmentation:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         return image
 
-    def random_transform(
+    def _crop_transforms(
         self,
-        has_bboxes: bool = True,
-        image_shape: tuple[int, int] = (640, 640),
-        bboxes: Sequence[Sequence[float]] | None = None,
-    ) -> A.Compose:
-        """Generate a random augmentation pipeline.
+        has_bboxes: bool,
+        image_shape: tuple[int, int],
+    ) -> list[A.BasicTransform | A.BaseCompose]:
+        crop_bbox_augmentations: list[A.BasicTransform | A.BaseCompose] = [
+            self.random_bbox_safe_crop_transform(image_shape),
+            self.random_resized_crop_transform(),
+        ]
+        if has_bboxes:
+            crop_bbox_augmentations.append(
+                self.at_least_one_bbox_crop_transform(image_shape),
+            )
+        return crop_bbox_augmentations
 
-        Args:
-            has_bboxes: Whether the image has object labels.
-            image_shape: Current image shape as (height, width).
-            bboxes: Current YOLO-format boxes used for grid-shuffle safety.
-
-        Returns:
-            A.Compose: The augmentation pipeline.
-        """
+    def _geometry_transforms(
+        self,
+        has_bboxes: bool,
+        image_shape: tuple[
+            int,
+            int,
+        ],
+        bboxes: Sequence[Sequence[float]] | None,
+    ) -> tuple[
+        list[A.BasicTransform | A.BaseCompose],
+        list[A.BasicTransform | A.BaseCompose],
+    ]:
         # Augmentations that affect bounding boxes
         bbox_augmentations: list[A.BasicTransform | A.BaseCompose] = [
             A.HorizontalFlip(p=1),
@@ -519,10 +471,10 @@ class DataAugmentation:
             self.pad_if_needed_transform(),
         ]
 
-        crop_bbox_augmentations: list[A.BasicTransform | A.BaseCompose] = [
-            self.random_bbox_safe_crop_transform(image_shape),
-            self.random_resized_crop_transform(),
-        ]
+        crop_bbox_augmentations = self._crop_transforms(
+            has_bboxes,
+            image_shape,
+        )
         safe_grid_shuffle_grids = (
             list(self.random_grid_shuffle_grids)
             if not has_bboxes
@@ -535,11 +487,6 @@ class DataAugmentation:
                 else []
             )
         )
-        if has_bboxes:
-            crop_bbox_augmentations.append(
-                self.at_least_one_bbox_crop_transform(image_shape),
-            )
-
         bbox_augmentations.extend(
             [
                 A.RandomRotate90(p=1),
@@ -570,7 +517,12 @@ class DataAugmentation:
                     fill=0,
                     p=1,
                 ),
-                A.ElasticTransform(alpha=1, sigma=50, p=1),
+                A.ElasticTransform(
+                    # The new API measures displacement relative to image size.
+                    # Keep the previous one-pixel displacement bound.
+                    displacement_range=(0, 1 / max(1, min(image_shape) - 1)),
+                    p=1,
+                ),
                 A.GridDistortion(p=1),
                 A.OpticalDistortion(
                     distort_range=(0.05, 0.1),
@@ -585,6 +537,10 @@ class DataAugmentation:
                     p=1,
                 ),
             )
+        return bbox_augmentations, crop_bbox_augmentations
+
+    @staticmethod
+    def _appearance_transforms() -> list[A.BasicTransform | A.BaseCompose]:
         # Augmentations that do not affect bounding boxes
         non_bbox_augmentations = [
             # Colour and brightness adjustments
@@ -698,6 +654,33 @@ class DataAugmentation:
             A.FancyPCA(alpha=0.1, p=1),
         ]
 
+        return non_bbox_augmentations
+
+    def random_transform(
+        self,
+        has_bboxes: bool = True,
+        image_shape: tuple[int, int] = (640, 640),
+        bboxes: Sequence[Sequence[float]] | None = None,
+    ) -> A.Compose:
+        """Generate a random augmentation pipeline.
+
+        Args:
+            has_bboxes: Whether the image has object labels.
+            image_shape: Current image shape as (height, width).
+            bboxes: Current YOLO-format boxes used for grid-shuffle safety.
+
+        Returns:
+            A.Compose: The augmentation pipeline.
+        """
+        bbox_augmentations, crop_bbox_augmentations = (
+            self._geometry_transforms(
+                has_bboxes,
+                image_shape,
+                bboxes,
+            )
+        )
+        non_bbox_augmentations = self._appearance_transforms()
+
         # Crop transforms use sizes based on the original image shape.
         # Keep them separate from other geometry transforms that may change
         # the image dimensions inside the same Compose.
@@ -740,7 +723,7 @@ class DataAugmentation:
         """
         # Apply the primary augmentation without MaskDropout first.
         aug_transform = self.random_transform(
-            has_bboxes=bool(bboxes),
+            has_bboxes=len(bboxes) > 0,
             image_shape=image.shape[:2],
             bboxes=bboxes,
         )
@@ -759,14 +742,14 @@ class DataAugmentation:
         transformed = aug_transform(**kwargs)
 
         # Apply MaskDropout probabilistically using the transformed image size.
-        if transformed['bboxes'] and random.random() < 0.6:
+        if len(transformed['bboxes']) > 0 and random.random() < 0.6:
             post_mask = self.generate_random_mask(
                 image_shape=transformed['image'].shape[:2],
             )
             post = A.Compose(
                 [
                     A.MaskDropout(
-                        max_objects=(1, 3),
+                        max_objects_range=(1, 3),
                         fill=0,
                         fill_mask=0,
                         p=1.0,
@@ -781,6 +764,9 @@ class DataAugmentation:
                 mask=post_mask,
             )
 
+        # AlbumentationsX returns arrays; keep the pipeline's list contract.
+        transformed['bboxes'] = [list(bbox) for bbox in transformed['bboxes']]
+        transformed['class_labels'] = list(transformed['class_labels'])
         return transformed
 
     def augment_image(self, image_path: Path | None) -> None:

@@ -4,13 +4,13 @@ import argparse
 import ast
 import inspect
 import random
+import re
 import shutil
 import sys
 import tempfile
 import textwrap
 from collections import defaultdict
-from collections.abc import Callable
-from importlib import import_module
+from functools import partialmethod
 from pathlib import Path
 from typing import Any
 from typing import cast
@@ -29,25 +29,24 @@ from ultralytics.engine.exporter import Exporter
 from ultralytics.utils import LOGGER
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.export import engine as engine_export
+lazy from modelopt.onnx.quantization import quantize as modelopt_quantize
+lazy from onnxruntime.quantization import CalibrationMethod
+lazy from onnxruntime.quantization import QuantFormat
+lazy from onnxruntime.quantization import quantize_static
+lazy from onnxruntime.quantization import QuantType
+lazy from onnxruntime.transformers.float16 import convert_float_to_float16
+lazy from onnxruntime.transformers.onnx_model import OnnxModel
+
+lazy from examples.YOLO_train.export_int8_engine import (
+    calibration_yaml as build_calibration_yaml,
+)
+lazy from examples.YOLO_train.export_int8_engine import (
+    data_yaml as build_data_yaml,
+)
 
 base_dir = Path(__file__).resolve().parent
 if not __package__:
-    sys.path.insert(0, str(base_dir))
-_export_int8_engine = import_module(
-    (
-        f"{__package__}.export_int8_engine"
-        if __package__
-        else 'export_int8_engine'
-    ),
-)
-build_calibration_yaml = cast(
-    Callable[[Path, Path], Path],
-    getattr(_export_int8_engine, 'calibration_yaml'),
-)
-build_data_yaml = cast(
-    Callable[[str], Path],
-    getattr(_export_int8_engine, 'data_yaml'),
-)
+    sys.path.insert(0, str(base_dir.parents[1]))
 
 default_pt_file = (base_dir / '../../models/pt/best_yolo26x.pt').resolve()
 default_trt_file = (
@@ -62,7 +61,7 @@ image_suffixes = frozenset(
 )
 detect_head_node_pattern = r'/model\.23/.*'
 node_exclusion_patterns: tuple[str, ...] = ()
-required_ultralytics_version = '8.4.115'
+required_ultralytics_version = '8.4.183'
 
 
 class ProgressReporter(Protocol):
@@ -79,12 +78,6 @@ class AllImagesCalibrationReader(CalibrationDataReader):
     """Provide AllImagesCalibrationReader."""
 
     def __init__(self, input_name: str, dataloader: Any) -> None:
-        """Perform init.
-
-        Args:
-            input_name: Value used by this callable.
-            dataloader: Value used by this callable.
-        """
         self.input_name = input_name
         self.dataloader = dataloader
         self.max_batches = len(dataloader)
@@ -94,15 +87,9 @@ class AllImagesCalibrationReader(CalibrationDataReader):
         self.rewind()
 
     def __len__(self) -> int:
-        """Perform len.
-
-        Returns:
-            The callable result.
-        """
         return self.max_batches
 
     def rewind(self) -> None:
-        """Perform rewind."""
         self._close_progress()
         if hasattr(self.dataloader, 'reset'):
             self.dataloader.reset()
@@ -111,31 +98,16 @@ class AllImagesCalibrationReader(CalibrationDataReader):
         self.seen_images = 0
 
     def _close_progress(self) -> None:
-        """Perform close progress."""
         if self.progress is not None:
             self.progress.close()
             self.progress = None
 
     def set_range(self, start_index: int, end_index: int) -> None:
-        """Perform set range.
-
-        Args:
-            start_index: Value used by this callable.
-            end_index: Value used by this callable.
-        """
         raise NotImplementedError(
             'Range slicing is not needed for this calibration reader.',
         )
 
     def _to_input(self, batch: Any) -> dict[str, npt.NDArray[np.float32]]:
-        """Perform to input.
-
-        Args:
-            batch: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
         images = batch['img'].to(torch.float32) / 255.0
         return {
             self.input_name: cast(
@@ -145,22 +117,12 @@ class AllImagesCalibrationReader(CalibrationDataReader):
         }
 
     def get_first(self) -> dict[str, npt.NDArray[np.float32]]:
-        """Perform get first.
-
-        Returns:
-            The callable result.
-        """
         self.rewind()
         first = self._to_input(next(self.iterator))
         self.rewind()
         return first
 
     def get_next(self) -> dict[str, npt.NDArray[np.float32]] | None:
-        """Perform get next.
-
-        Returns:
-            The callable result.
-        """
         if self.seen_batches >= self.max_batches:
             self._close_progress()
             return None
@@ -168,7 +130,7 @@ class AllImagesCalibrationReader(CalibrationDataReader):
         if self.progress is None:
             self.progress = tqdm(
                 total=self.total_images,
-                desc='ModelOpt calibration',
+                desc='INT8 calibration',
                 unit='img',
                 dynamic_ncols=True,
             )
@@ -364,19 +326,6 @@ def modelopt_quantize_onnx_all_images(
     dynamic: bool = False,
     prefix: str = '',
 ) -> str:
-    """Perform modelopt quantize onnx all images.
-
-    Args:
-        onnx_file: Value used by this callable.
-        quantize: Value used by this callable.
-        dataset: Value used by this callable.
-        shape: Value used by this callable.
-        dynamic: Value used by this callable.
-        prefix: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     if quantize != 8:
         if original_modelopt_quantize_onnx is None:
             raise RuntimeError(
@@ -398,7 +347,6 @@ def modelopt_quantize_onnx_all_images(
         )
 
     check_requirements('nvidia-modelopt[onnx]>=0.44')
-    from modelopt.onnx.quantization import quantize as modelopt_quantize
 
     input_name = (
         onnx.load(
@@ -441,8 +389,84 @@ def modelopt_quantize_onnx_all_images(
     return out_file
 
 
+def onnxruntime_quantize_onnx_all_images(
+    onnx_file: str,
+    quantize: int | str | None = None,
+    dataset: Any = None,
+    shape: tuple[int, int, int, int] = (1, 3, 640, 640),
+    dynamic: bool = False,
+    prefix: str = '',
+) -> str:
+    """Build TensorRT-compatible Q/DQ graphs without ModelOpt on Python 3.15.
+
+    Calibration uses every image and retains the configured node exclusions.
+    This is a separate quantization backend; generated engines need their own
+    accuracy evaluation before use in production.
+    """
+    if quantize == 16:
+
+        output = str(Path(onnx_file).with_suffix('.fp16.onnx'))
+        model = convert_float_to_float16(
+            onnx.load(onnx_file),
+            keep_io_types=True,
+        )
+        OnnxModel(model).topological_sort()
+        onnx.save(model, output)
+        return output
+    if quantize != 8:
+        raise ValueError('ONNX Runtime export supports INT8 or FP16.')
+    if dataset is None:
+        raise ValueError('INT8 quantization requires a calibration dataset.')
+
+    methods = {
+        'entropy': CalibrationMethod.Entropy,
+        'max': CalibrationMethod.MinMax,
+        'minmax': CalibrationMethod.MinMax,
+        'percentile': CalibrationMethod.Percentile,
+    }
+    if calibration_method not in methods:
+        raise ValueError(
+            f'Unsupported calibration method: {calibration_method}',
+        )
+    model = onnx.load(onnx_file, load_external_data=False)
+    excluded = [
+        node.name
+        for node in model.graph.node
+        if any(
+            re.search(pattern, node.name)
+            for pattern in node_exclusion_patterns
+        )
+    ]
+    reader = AllImagesCalibrationReader(model.graph.input[0].name, dataset)
+    output = str(Path(onnx_file).with_suffix('.int8.onnx'))
+    LOGGER.info(
+        f'{prefix} ONNX Runtime INT8 calibration ({calibration_method}) '
+        f'using {reader.total_images} images; {len(excluded)} nodes excluded',
+    )
+    quantize_static(
+        onnx_file,
+        output,
+        reader,
+        quant_format=QuantFormat.QDQ,
+        activation_type=QuantType.QInt8,
+        weight_type=QuantType.QInt8,
+        per_channel=True,
+        op_types_to_quantize=['Conv', 'MatMul', 'Gemm'],
+        nodes_to_exclude=excluded,
+        calibrate_method=methods[calibration_method],
+        extra_options={
+            'ActivationSymmetric': True,
+            'WeightSymmetric': True,
+            'DedicatedQDQPair': True,
+            # TensorRT does not accept ORT's INT32 bias DequantizeLinear.
+            'QuantizeBias': False,
+        },
+    )
+    return output
+
+
 if original_modelopt_quantize_onnx is not None:
-    engine_export.modelopt_quantize_onnx = modelopt_quantize_onnx_all_images
+    engine_export.modelopt_quantize_onnx = onnxruntime_quantize_onnx_all_images
 
 
 def _patched_onnx2engine_source(source: str) -> str:
@@ -467,11 +491,15 @@ def _dynamic_profile_source() -> str:
             '    if dynamic:',
             '        profile = builder.create_optimization_profile()',
             '        min_shape = (1, shape[1], 32, 32)  # minimum input shape',
-            '        max_shape = (*shape[:2], *(int(max(2, workspace or 2) * '
-            'd) for d in shape[2:]))  # max input shape',
+            '        max_shape = (*shape[:2], *(2 * d for d in shape[2:]))  '
+            '# max input shape, 2x imgsz',
             '        for inp in inputs:',
-            '            profile.set_shape(inp.name, min=min_shape, '
-            'opt=shape, max=max_shape)',
+            '            inp_min = tuple(d if d != -1 else lo '
+            'for d, lo in zip(inp.shape, min_shape))',
+            '            inp_max = tuple(d if d != -1 else hi '
+            'for d, hi in zip(inp.shape, max_shape))',
+            '            profile.set_shape(inp.name, min=inp_min, '
+            'opt=shape, max=inp_max)',
             '        config.add_optimization_profile(profile)',
             '',
         ],
@@ -492,8 +520,12 @@ def _batch_only_dynamic_profile_source() -> str:
             '            f"min={min_shape} opt={opt_shape} max={max_shape}"',
             '        )',
             '        for inp in inputs:',
-            '            profile.set_shape(inp.name, min=min_shape, '
-            'opt=opt_shape, max=max_shape)',
+            '            inp_min = tuple(d if d != -1 else lo '
+            'for d, lo in zip(inp.shape, min_shape))',
+            '            inp_max = tuple(d if d != -1 else hi '
+            'for d, hi in zip(inp.shape, max_shape))',
+            '            profile.set_shape(inp.name, min=inp_min, '
+            'opt=opt_shape, max=inp_max)',
             '        config.add_optimization_profile(profile)',
             '',
         ],
@@ -520,7 +552,8 @@ def _find_modelopt_quantize_gate(source: str) -> tuple[ast.If, ast.Assign]:
             continue
         for statement in node.body:
             if isinstance(
-                statement, ast.Assign,
+                statement,
+                ast.Assign,
             ) and _is_modelopt_quantize_assignment(statement):
                 return node, statement
     raise RuntimeError('Cannot patch Ultralytics ModelOpt INT8 gate.')
@@ -572,7 +605,7 @@ def _replace_modelopt_gate(
         ],
     )
     line_offsets = _line_offsets(lines)
-    gate_start = line_offsets[gate.lineno - 1] + gate.col_offset
+    gate_start = line_offsets[gate.lineno - 1]
     call_end = line_offsets[call_end_line - 1] + call_end_column
     return source[:gate_start] + explicit_qdq_gate + source[call_end:]
 
@@ -598,33 +631,11 @@ def patch_tensorrt_engine_exporter() -> None:
 
 
 def set_calibration_batch_size(calib_batch: int) -> None:
-    """Perform set calibration batch size.
 
-    Args:
-        calib_batch: Value used by this callable.
-    """
-
-    def get_int8_calibration_dataloader(self, prefix: str = '') -> Any:
-        """Perform get int8 calibration dataloader.
-
-        Args:
-            prefix: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        export_batch = int(self.args.batch)
-        self.args.batch = calib_batch
-        try:
-            LOGGER.info(
-                f"{prefix} using calibration batch={calib_batch} "
-                f"for engine batch profile={export_batch}",
-            )
-            return original_get_int8_calibration_dataloader(self, prefix)
-        finally:
-            self.args.batch = export_batch
-
-    Exporter.get_int8_calibration_dataloader = get_int8_calibration_dataloader
+    Exporter.get_int8_calibration_dataloader = partialmethod(
+        _calibration_dataloader,
+        calib_batch=calib_batch,
+    )
 
 
 def set_calibration_method(method: str) -> None:
@@ -640,11 +651,6 @@ def set_node_exclusions(patterns: list[str]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    """Perform parse args.
-
-    Returns:
-        The callable result.
-    """
     parser = argparse.ArgumentParser(
         description=(
             'Export an INT8 TensorRT engine with all calibration images.'
@@ -701,7 +707,7 @@ def parse_args() -> argparse.Namespace:
         '--calibration-method',
         choices=('entropy', 'max'),
         default='entropy',
-        help='ModelOpt INT8 calibration method. Default: entropy.',
+        help='INT8 calibration method. Default: entropy.',
     )
     parser.add_argument(
         '--exclude-node',
@@ -713,7 +719,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--exclude-detect-head',
         action='store_true',
-        help='Keep the YOLO26 Detect head at FP16 while quantizing the rest.',
+        help='Keep the YOLO26 Detect head at floating-point precision.',
     )
     parser.add_argument(
         '--workspace',
@@ -733,7 +739,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Perform main."""
     args = parse_args()
     pt_file = args.model.resolve()
     trt_file = args.output.resolve()
@@ -772,7 +777,7 @@ def main() -> None:
     print(f"Calibration batch: {args.calib_batch}")
     print(f"Calibration method: {args.calibration_method}")
     if node_exclusions:
-        print(f"FP16 ONNX node exclusions: {node_exclusions}")
+        print(f"High-precision ONNX node exclusions: {node_exclusions}")
     print(f"TensorRT workspace: {workspace} GB")
 
     set_calibration_batch_size(args.calib_batch)
@@ -810,6 +815,24 @@ def main() -> None:
         shutil.move(str(exported), trt_file)
 
     print(f"Exported: {trt_file}")
+
+
+def _calibration_dataloader(
+    self,
+    prefix: str = '',
+    *,
+    calib_batch: int,
+) -> Any:
+    export_batch = int(self.args.batch)
+    self.args.batch = calib_batch
+    try:
+        LOGGER.info(
+            f"{prefix} using calibration batch={calib_batch} "
+            f"for engine batch profile={export_batch}",
+        )
+        return original_get_int8_calibration_dataloader(self, prefix)
+    finally:
+        self.args.batch = export_batch
 
 
 if __name__ == '__main__':

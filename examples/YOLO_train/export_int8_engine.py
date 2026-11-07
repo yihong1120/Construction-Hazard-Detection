@@ -9,9 +9,16 @@ from pathlib import Path
 from typing import Protocol
 
 import yaml
-from ultralytics import YOLO
+lazy from ultralytics import YOLO
+lazy from ultralytics.utils.export import engine as engine_export
+
+lazy from examples.YOLO_train.export_int8_trt import (
+    onnxruntime_quantize_onnx_all_images,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
+if not __package__:
+    sys.path.insert(0, str(ROOT))
 
 
 class ExportArguments(Protocol):
@@ -39,15 +46,6 @@ class ExportArguments(Protocol):
 
 
 def checkpoint(name: str, model_dir: Path) -> Path:
-    """Perform checkpoint.
-
-    Args:
-        name: Value used by this callable.
-        model_dir: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     raw = Path(name).expanduser()
     raw_pt = raw if raw.suffix else raw.with_suffix('.pt')
     stem = raw.stem if raw.suffix else raw.name
@@ -66,14 +64,6 @@ def checkpoint(name: str, model_dir: Path) -> Path:
 
 
 def data_yaml(value: str) -> Path:
-    """Perform data yaml.
-
-    Args:
-        value: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     raw = Path(value).expanduser()
     paths = [raw] if raw.is_absolute() else [ROOT / raw, Path.cwd() / raw]
     for path in paths:
@@ -84,35 +74,17 @@ def data_yaml(value: str) -> Path:
 
 
 def yaml_entries(root: Path, value: object) -> list[Path]:
-    """Perform yaml entries.
-
-    Args:
-        root: Value used by this callable.
-        value: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     if isinstance(value, str):
         path = Path(value).expanduser()
         return [path if path.is_absolute() else root / path]
     return (
-        [p for item in value for p in yaml_entries(root, item)]
+        [*yaml_entries(root, item) for item in value]
         if isinstance(value, list)
         else []
     )
 
 
 def calibration_yaml(source: Path, tmp: Path) -> Path:
-    """Perform calibration yaml.
-
-    Args:
-        source: Value used by this callable.
-        tmp: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     data = yaml.safe_load(source.read_text(encoding='utf-8')) or {}
     if not isinstance(data, dict):
         raise ValueError(f"Calibration yaml must be a mapping: {source}")
@@ -149,15 +121,6 @@ def calibration_yaml(source: Path, tmp: Path) -> Path:
 
 
 def output_path(value: Path | None, output_dir: Path) -> Path | None:
-    """Perform output path.
-
-    Args:
-        value: Value used by this callable.
-        output_dir: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     if value is None:
         return None
     value = value.expanduser()
@@ -175,17 +138,7 @@ def export_engine(
     target: Path | None,
     args: ExportArguments,
 ) -> Path:
-    """Perform export engine.
-
-    Args:
-        model: Value used by this callable.
-        data: Value used by this callable.
-        target: Value used by this callable.
-        args: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
+    engine_export.modelopt_quantize_onnx = onnxruntime_quantize_onnx_all_images
     exported = Path(
         YOLO(str(model)).export(
             format='engine',
@@ -211,11 +164,6 @@ def export_engine(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Perform build parser.
-
-    Returns:
-        The callable result.
-    """
     parser = argparse.ArgumentParser(
         description='Export .pt checkpoints to INT8 TensorRT .engine files.',
     )
@@ -253,14 +201,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Perform main.
-
-    Args:
-        argv: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     args = build_parser().parse_args(argv)
     if args.output and len(args.models) != 1:
         build_parser().error('--output can only be used with one model')

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -9,12 +10,74 @@ import pytest
 from examples.YOLO_train import export_int8_engine
 
 
-def test_checkpoint_accepts_model_key(tmp_path: Path) -> None:
-    """Test checkpoint accepts model key.
+def _main_exports_every_requested_model_callback(data, /, _value):
+    return data
 
-    Args:
-        tmp_path: Value used by this callable.
-    """
+
+def _main_exports_every_requested_model_callback2(
+    calibration,
+    /,
+    _data,
+    _workdir,
+):
+    return calibration
+
+
+def _main_exports_every_requested_model_pop(
+    models,
+    /,
+    _name,
+    _model_dir,
+):
+    return models.pop(0)
+
+
+class _MainExportsEveryRequestedModelCallbacks:
+    exports: list[tuple[Path, Path, Path | None]]
+    model_dir: Any
+    output_dir: Any
+
+    def _call_export(
+        self,
+        model: Path,
+        exported_data: Path,
+        target: Path | None,
+        args: Any,
+    ) -> Path:
+        self.exports.append((model, exported_data, target))
+        assert args.model_dir == self.model_dir.resolve()
+        assert args.output_dir == self.output_dir.resolve()
+        return self.output_dir / f"{model.stem}.engine"
+
+
+class _ExportEnginePassesUltralyticsArgsFakeYOLO:
+    """Provide FakeYOLO."""
+
+    def __init__(self, model_path: str, *, _test_calls) -> None:
+        self._test_calls = _test_calls
+        self.model_path = Path(model_path)
+
+    def export(self, **kwargs: Any) -> str:
+        self._test_calls.append(kwargs)
+        exported = self.model_path.with_suffix('.engine')
+        exported.write_text('engine')
+        return str(exported)
+
+
+class _ExportEngineRespectsExistingOutputFakeYOLO:
+    """Provide FakeYOLO."""
+
+    def __init__(self, _model_path: str, *, _test_generated) -> None:
+        self._test_generated = _test_generated
+        pass
+
+    def export(self, **_kwargs: Any) -> str:
+        self._test_generated.write_text('new engine')
+        return str(self._test_generated)
+
+
+def test_checkpoint_accepts_model_key(tmp_path: Path) -> None:
+    """Test checkpoint accepts model key."""
     model_dir = tmp_path / 'models' / 'pt'
     ckpt = model_dir / 'best_yolo26n.pt'
     ckpt.parent.mkdir(parents=True)
@@ -42,12 +105,7 @@ def test_checkpoint_prefers_model_dir_for_bare_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test checkpoint prefers model dir for bare key.
-
-    Args:
-        tmp_path: Value used by this callable.
-        monkeypatch: Value used by this callable.
-    """
+    """Test checkpoint prefers model dir for bare key."""
     root = tmp_path / 'repo'
     model_dir = root / 'models' / 'pt'
     preferred = model_dir / 'best_yolo26n.pt'
@@ -72,12 +130,7 @@ def test_data_yaml_accepts_dataset_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test data yaml accepts dataset dir.
-
-    Args:
-        tmp_path: Value used by this callable.
-        monkeypatch: Value used by this callable.
-    """
+    """Test data yaml accepts dataset dir."""
     root = tmp_path / 'repo'
     dataset = root / 'examples' / 'YOLO_train' / 'cv_dataset'
     data_yaml = dataset / 'data.yaml'
@@ -94,11 +147,7 @@ def test_data_yaml_accepts_dataset_dir(
 
 
 def test_calibration_yaml_keeps_valid_split_yaml(tmp_path: Path) -> None:
-    """Test calibration yaml keeps valid split yaml.
-
-    Args:
-        tmp_path: Value used by this callable.
-    """
+    """Test calibration yaml keeps valid split yaml."""
     dataset = tmp_path / 'dataset'
     (dataset / 'train' / 'images').mkdir(parents=True)
     (dataset / 'val' / 'images').mkdir(parents=True)
@@ -119,11 +168,7 @@ def test_calibration_yaml_keeps_valid_split_yaml(tmp_path: Path) -> None:
 def test_calibration_yaml_maps_flat_images_to_train_and_val(
     tmp_path: Path,
 ) -> None:
-    """Test calibration yaml maps flat images to train and val.
-
-    Args:
-        tmp_path: Value used by this callable.
-    """
+    """Test calibration yaml maps flat images to train and val."""
     dataset = tmp_path / 'cv_dataset'
     images = dataset / 'images'
     images.mkdir(parents=True)
@@ -142,11 +187,7 @@ def test_calibration_yaml_maps_flat_images_to_train_and_val(
 
 
 def test_calibration_yaml_reports_missing_images(tmp_path: Path) -> None:
-    """Test calibration yaml reports missing images.
-
-    Args:
-        tmp_path: Value used by this callable.
-    """
+    """Test calibration yaml reports missing images."""
     dataset = tmp_path / 'cv_dataset'
     dataset.mkdir()
     data_yaml = dataset / 'data.yaml'
@@ -183,12 +224,7 @@ def test_output_path_resolves_bare_and_project_relative_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test output path resolves bare and project relative paths.
-
-    Args:
-        tmp_path: Value used by this callable.
-        monkeypatch: Value used by this callable.
-    """
+    """Test output path resolves bare and project relative paths."""
     root = tmp_path / 'repo'
     output_dir = root / 'models' / 'int8_engine'
     monkeypatch.setattr(export_int8_engine, 'ROOT', root)
@@ -211,12 +247,7 @@ def test_export_engine_passes_ultralytics_args(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test export engine passes ultralytics args.
-
-    Args:
-        tmp_path: Value used by this callable.
-        monkeypatch: Value used by this callable.
-    """
+    """Test export engine passes ultralytics args."""
     checkpoint = tmp_path / 'models' / 'pt' / 'best_yolo26n.pt'
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_text('model')
@@ -225,30 +256,10 @@ def test_export_engine_passes_ultralytics_args(
     output_dir = tmp_path / 'models' / 'int8_engine'
     calls: list[dict[str, Any]] = []
 
-    class FakeYOLO:
-        """Provide FakeYOLO."""
-
-        def __init__(self, model_path: str) -> None:
-            """Perform init.
-
-            Args:
-                model_path: Value used by this callable.
-            """
-            self.model_path = Path(model_path)
-
-        def export(self, **kwargs: Any) -> str:
-            """Perform export.
-
-            Args:
-                **kwargs: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            calls.append(kwargs)
-            exported = self.model_path.with_suffix('.engine')
-            exported.write_text('engine')
-            return str(exported)
+    FakeYOLO = partial(
+        _ExportEnginePassesUltralyticsArgsFakeYOLO,
+        _test_calls=calls,
+    )
 
     monkeypatch.setattr(export_int8_engine, 'YOLO', FakeYOLO)
     args = SimpleNamespace(
@@ -299,28 +310,10 @@ def test_export_engine_respects_existing_output_policy(
     target.parent.mkdir()
     target.write_text('old engine')
 
-    class FakeYOLO:
-        """Provide FakeYOLO."""
-
-        def __init__(self, _model_path: str) -> None:
-            """Perform init.
-
-            Args:
-                _model_path: Value used by this callable.
-            """
-            pass
-
-        def export(self, **_kwargs: Any) -> str:
-            """Perform export.
-
-            Args:
-                **_kwargs: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            generated.write_text('new engine')
-            return str(generated)
+    FakeYOLO = partial(
+        _ExportEngineRespectsExistingOutputFakeYOLO,
+        _test_generated=generated,
+    )
 
     monkeypatch.setattr(export_int8_engine, 'YOLO', FakeYOLO)
     args = SimpleNamespace(
@@ -355,48 +348,36 @@ def test_main_exports_every_requested_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The CLI resolves paths once and exports each supplied model key."""
-    model_dir = tmp_path / 'models'
-    output_dir = tmp_path / 'engines'
-    model_dir.mkdir()
-    output_dir.mkdir()
+    _callbacks = _MainExportsEveryRequestedModelCallbacks()
+    _callbacks.model_dir = tmp_path / 'models'
+    _callbacks.output_dir = tmp_path / 'engines'
+    _callbacks.model_dir.mkdir()
+    _callbacks.output_dir.mkdir()
     data = tmp_path / 'data.yaml'
     calibration = tmp_path / 'calibration.yaml'
-    models = [model_dir / 'first.pt', model_dir / 'second.pt']
-    exports: list[tuple[Path, Path, Path | None]] = []
+    models = [
+        _callbacks.model_dir / 'first.pt',
+        _callbacks.model_dir / 'second.pt',
+    ]
+    _callbacks.exports = []
 
-    monkeypatch.setattr(export_int8_engine, 'data_yaml', lambda _value: data)
+    monkeypatch.setattr(
+        export_int8_engine,
+        'data_yaml',
+        partial(_main_exports_every_requested_model_callback, data),
+    )
     monkeypatch.setattr(
         export_int8_engine,
         'calibration_yaml',
-        lambda _data, _workdir: calibration,
+        partial(_main_exports_every_requested_model_callback2, calibration),
     )
     monkeypatch.setattr(
         export_int8_engine,
         'checkpoint',
-        lambda _name, _model_dir: models.pop(0),
+        partial(_main_exports_every_requested_model_pop, models),
     )
 
-    def export(
-        model: Path,
-        exported_data: Path,
-        target: Path | None,
-        args: Any,
-    ) -> Path:
-        """Perform export.
-
-        Args:
-            model: Value used by this callable.
-            exported_data: Value used by this callable.
-            target: Value used by this callable.
-            args: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        exports.append((model, exported_data, target))
-        assert args.model_dir == model_dir.resolve()
-        assert args.output_dir == output_dir.resolve()
-        return output_dir / f"{model.stem}.engine"
+    export = _callbacks._call_export
 
     monkeypatch.setattr(export_int8_engine, 'export_engine', export)
 
@@ -404,9 +385,9 @@ def test_main_exports_every_requested_model(
         export_int8_engine.main(
             [
                 '--model-dir',
-                str(model_dir),
+                str(_callbacks.model_dir),
                 '--output-dir',
-                str(output_dir),
+                str(_callbacks.output_dir),
                 '--data',
                 'provided.yaml',
                 'first',
@@ -415,9 +396,9 @@ def test_main_exports_every_requested_model(
         )
         == 0
     )
-    assert exports == [
-        (model_dir / 'first.pt', calibration, None),
-        (model_dir / 'second.pt', calibration, None),
+    assert _callbacks.exports == [
+        (_callbacks.model_dir / 'first.pt', calibration, None),
+        (_callbacks.model_dir / 'second.pt', calibration, None),
     ]
 
 

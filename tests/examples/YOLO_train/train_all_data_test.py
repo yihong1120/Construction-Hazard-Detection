@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import partial
 from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -8,6 +9,15 @@ from unittest.mock import patch
 import pytest
 
 from examples.YOLO_train import train
+
+
+def _train_on_all_data_writes_train_model(
+    observed: list[str],
+    /,
+    data_config: str,
+    **_kwargs: object,
+) -> None:
+    observed.append(Path(data_config).read_text())
 
 
 def _handler() -> train.YOLOModelHandler:
@@ -51,14 +61,7 @@ def test_train_on_all_data_writes_filtered_temporary_config(
     handler = _handler()
     observed: list[str] = []
 
-    def train_model(data_config: str, **_kwargs: object) -> None:
-        """Perform train model.
-
-        Args:
-            data_config: Value used by this callable.
-            **_kwargs: Value used by this callable.
-        """
-        observed.append(Path(data_config).read_text())
+    train_model = partial(_train_on_all_data_writes_train_model, observed)
 
     with patch.object(handler, 'load_model') as load_model:
         with patch.object(
