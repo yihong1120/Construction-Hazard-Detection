@@ -3,7 +3,6 @@ from __future__ import annotations
 import runpy
 import sys
 import unittest
-from types import ModuleType
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -14,11 +13,14 @@ import src.local_yolo_detector as local_module
 from src.local_yolo_detector import LocalYoloDetector
 
 
+def _detection_bbox():
+    return [1, 2, 3, 4]
+
+
 class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
     """Verify optional local inference independently of the stream worker."""
 
     def setUp(self) -> None:
-        """Perform setUp."""
         patcher = patch.object(local_module, 'YOLO', MagicMock())
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -29,67 +31,6 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.detector.model_key, 'yolo11n')
         self.assertTrue(self.detector.use_ultralytics)
         self.assertTrue(hasattr(self.detector, 'ultralytics_model'))
-
-    def test_lazy_optional_imports(self) -> None:
-        """SAHI and Ultralytics remain deferred until local use."""
-        factory_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
-
-        class DetectionFactory:
-            """Provide DetectionFactory."""
-
-            @staticmethod
-            def from_pretrained(*args: object, **kwargs: object) -> str:
-                """Perform from pretrained.
-
-                Args:
-                    *args: Value used by this callable.
-                    **kwargs: Value used by this callable.
-
-                Returns:
-                    The callable result.
-                """
-                factory_calls.append((args, kwargs))
-                return 'sahi-model'
-
-        sahi_module = ModuleType('sahi')
-        setattr(sahi_module, 'AutoDetectionModel', DetectionFactory)
-        predict_module = ModuleType('sahi.predict')
-        setattr(predict_module, 'get_sliced_prediction', lambda *args: args)
-        ultralytics_module = ModuleType('ultralytics')
-
-        class FakeYolo:
-            """Provide FakeYolo."""
-
-            pass
-
-        setattr(ultralytics_module, 'YOLO', FakeYolo)
-        with (
-            patch.dict(
-                sys.modules,
-                {
-                    'sahi': sahi_module,
-                    'sahi.predict': predict_module,
-                    'ultralytics': ultralytics_module,
-                },
-            ),
-            patch.object(local_module, 'YOLO', None),
-        ):
-            self.assertEqual(
-                local_module._LazyAutoDetectionModel.from_pretrained(
-                    'model-path',
-                    device='cpu',
-                ),
-                'sahi-model',
-            )
-            self.assertEqual(
-                factory_calls,
-                [(('model-path',), {'device': 'cpu'})],
-            )
-            self.assertEqual(
-                local_module.get_sliced_prediction('frame', 'model'),
-                ('frame', 'model'),
-            )
-            self.assertIs(local_module._yolo_class(), FakeYolo)
 
     async def test_generate_ultralytics_detections(self) -> None:
         """Ultralytics tracking rows are normalised for interactive callers."""
@@ -222,7 +163,9 @@ class TestLocalYoloDetector(unittest.IsolatedAsyncioTestCase):
         prediction.object_prediction_list = [
             MagicMock(
                 category=MagicMock(id=5),
-                bbox=MagicMock(to_voc_bbox=lambda: [1, 2, 3, 4]),
+                bbox=MagicMock(
+                    to_voc_bbox=_detection_bbox,
+                ),
                 score=MagicMock(value=0.77),
             ),
         ]

@@ -3,10 +3,11 @@ from __future__ import annotations
 import datetime
 import hashlib
 import logging
-import os
 from pathlib import Path
 
 import requests
+
+from src.settings.connections import ModelFetchSettings
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +30,11 @@ class ModelFetcher:
                 when omitted.
             local_dir: Directory where model files are stored.
         """
-        self.api_url = (
-            api_url
-            or os.getenv('MODEL_FETCH_API_URL')
-            or 'http://your-server-address/get_new_model'
+        self.settings = ModelFetchSettings.from_overrides(
+            api_url=api_url,
+            bearer_token=bearer_token,
         )
+        self.api_url = self.settings.api_url
         self.models = models or [
             'yolo26n',
             'yolo26s',
@@ -42,17 +43,8 @@ class ModelFetcher:
             'yolo26x',
         ]
         self.local_dir = Path(local_dir)
-        self.bearer_token = (
-            bearer_token
-            or os.getenv(
-                'MODEL_FETCH_BEARER_TOKEN',
-            )
-            or ''
-        )
-        self.max_download_bytes = max(
-            1,
-            int(os.getenv('MODEL_FETCH_MAX_BYTES', str(6 * 1024**3))),
-        )
+        self.bearer_token = self.settings.bearer_token.get_secret_value()
+        self.max_download_bytes = self.settings.max_bytes
 
     def get_last_update_time(self, model: str) -> str:
         """Get the last update time of a local model file. If the file does not

@@ -17,6 +17,22 @@ from examples.YOLO_server_api.overlay_response import build_overlay_response
 from examples.YOLO_server_api.overlay_response import calculate_regions
 
 
+def _setUp_make_simplenamespace():
+    return SimpleNamespace(subject={'tenant_id': 't1', 'role': 'user'})
+
+
+def _setUp_callback():
+    return 99
+
+
+def _auth_denial_prevents_inference_deny():
+    raise HTTPException(401)
+
+
+def _rate_limit_prevents_inference_deny():
+    raise HTTPException(429)
+
+
 class OverlayV2Test(TestCase):
     def setUp(self):
         self.entry = SimpleNamespace(
@@ -28,16 +44,17 @@ class OverlayV2Test(TestCase):
             ],
         )
         self.image = cv2.imencode(
-            '.png', np.zeros((200, 400, 3), dtype=np.uint8),
+            '.png',
+            np.zeros((200, 400, 3), dtype=np.uint8),
         )[1].tobytes()
         self.rows = [[100, 50, 200, 150, 0.9, 42]]
         self.app = FastAPI()
         self.app.include_router(routers.detection_router)
-        self.app.dependency_overrides[routers.jwt_access] = lambda: (
-            SimpleNamespace(subject={'tenant_id': 't1', 'role': 'user'})
+        self.app.dependency_overrides[routers.jwt_access] = (
+            _setUp_make_simplenamespace
         )
-        self.app.dependency_overrides[routers.rate_limiter_service] = lambda: (
-            99
+        self.app.dependency_overrides[routers.rate_limiter_service] = (
+            _setUp_callback
         )
 
     def test_explicit_opt_out_keeps_cones_visible(self):
@@ -45,12 +62,17 @@ class OverlayV2Test(TestCase):
             'examples.YOLO_server_api.overlay_response.calculate_regions',
         ) as cluster:
             result = build_overlay_response(
-                self.rows, self.entry, self.image, False, 'objects',
+                self.rows,
+                self.entry,
+                (400, 200),
+                False,
+                'objects',
             )
         cluster.assert_not_called()
         box = result.overlay_objects[0]
         self.assertEqual(
-            box.bbox.model_dump(), {'x': 0.25, 'y': 0.25, 'w': 0.25, 'h': 0.5},
+            box.bbox.model_dump(),
+            {'x': 0.25, 'y': 0.25, 'w': 0.25, 'h': 0.5},
         )
         self.assertTrue(box.show_box)
         self.assertEqual(box.display_name, '交通錐')
@@ -69,24 +91,31 @@ class OverlayV2Test(TestCase):
             return_value=(rings, []),
         ):
             result = build_overlay_response(
-                self.rows, self.entry, self.image, True, 'regions',
+                self.rows,
+                self.entry,
+                (400, 200),
+                True,
+                'regions',
             )
         self.assertEqual(len(result.overlay_regions), 2)
         self.assertEqual(result.overlay_regions[1].id, 'cone_1')
         self.assertEqual(
-            result.region_status, {'cone': 'available', 'pole': 'empty'},
+            result.region_status,
+            {'cone': 'available', 'pole': 'empty'},
         )
         self.assertFalse(result.overlay_objects[0].show_box)
 
     def test_clustering_uses_codes_not_model_numeric_ids(self):
         # One pole produces its existing geometry buffer even with model ID 3.
         cones, poles = calculate_regions(
-            [[10, 10, 20, 40, 0.9, 3]], self.entry.classes,
+            [[10, 10, 20, 40, 0.9, 3]],
+            self.entry.classes,
         )
         self.assertEqual(cones, [])
         self.assertTrue(poles)
         cones, poles = calculate_regions(
-            [[10, 10, 20, 40, 0.9, 9]], self.entry.classes,
+            [[10, 10, 20, 40, 0.9, 9]],
+            self.entry.classes,
         )
         self.assertEqual((cones, poles), ([], []))
 
@@ -95,7 +124,7 @@ class OverlayV2Test(TestCase):
             patch.object(
                 routers,
                 '_run_detection_request',
-                AsyncMock(return_value=(self.rows, self.entry, self.image)),
+                AsyncMock(return_value=(self.rows, self.entry, (400, 200))),
             ) as run,
             TestClient(self.app) as client,
         ):
@@ -109,13 +138,16 @@ class OverlayV2Test(TestCase):
             )
             self.assertEqual(new.status_code, 200)
             self.assertEqual(
-                new.json()['region_status'], {
-                    'cone': 'empty', 'pole': 'empty',
+                new.json()['region_status'],
+                {
+                    'cone': 'empty',
+                    'pole': 'empty',
                 },
             )
             self.assertFalse(new.json()['overlay_objects'][0]['show_box'])
             self.assertEqual(
-                new.json()['overlay_coordinates']['bbox_format'], 'xywh',
+                new.json()['overlay_coordinates']['bbox_format'],
+                'xywh',
             )
             self.assertEqual(new.json()['model_version'], 'v1')
             self.assertEqual(run.await_args.args[0].model_version, 'v1')
@@ -148,13 +180,14 @@ class OverlayV2Test(TestCase):
             self.assertEqual(run.await_count, before)
 
     def test_auth_denial_prevents_inference(self):
-        def deny():
-            raise HTTPException(401)
+        deny = _auth_denial_prevents_inference_deny
 
         self.app.dependency_overrides[routers.jwt_access] = deny
         with (
             patch.object(
-                routers, '_run_detection_request', AsyncMock(),
+                routers,
+                '_run_detection_request',
+                AsyncMock(),
             ) as run,
             TestClient(self.app) as client,
         ):
@@ -167,13 +200,14 @@ class OverlayV2Test(TestCase):
         run.assert_not_awaited()
 
     def test_rate_limit_prevents_inference(self):
-        def deny():
-            raise HTTPException(429)
+        deny = _rate_limit_prevents_inference_deny
 
         self.app.dependency_overrides[routers.rate_limiter_service] = deny
         with (
             patch.object(
-                routers, '_run_detection_request', AsyncMock(),
+                routers,
+                '_run_detection_request',
+                AsyncMock(),
             ) as run,
             TestClient(self.app) as client,
         ):

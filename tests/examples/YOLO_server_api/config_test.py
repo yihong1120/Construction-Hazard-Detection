@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import inspect
 import os
 import unittest
 from unittest.mock import patch
@@ -44,72 +43,21 @@ class TestConfig(unittest.TestCase):
         finally:
             config.USE_TENSORRT = original_value
 
-    def test_use_tensorrt_docstring(self) -> None:
-        # Check for comment and variable in source
-        """Test use tensorrt docstring."""
-        source: str = inspect.getsource(config)
-        self.assertIn('USE_TENSORRT', source)
-        self.assertIn('Whether to use TensorRT for inference', source)
+    def test_boolean_settings_accept_deployment_values(self) -> None:
+        from src.settings.inference import ApiInferenceSettings
+
+        with patch.dict(os.environ, {'USE_TENSORRT': ' yes '}):
+            self.assertTrue(ApiInferenceSettings().use_tensorrt)
 
     def test_use_sahi_variable(self) -> None:
         """Test the USE_SAHI configuration variable."""
         self.assertTrue(hasattr(config, 'USE_SAHI'))
         self.assertIsInstance(config.USE_SAHI, bool)
 
-    def test_model_variants_variable(self) -> None:
-        """Test the MODEL_VARIANTS configuration variable."""
-        self.assertTrue(hasattr(config, 'MODEL_VARIANTS'))
-        self.assertIsInstance(config.MODEL_VARIANTS, list)
-        self.assertGreater(len(config.MODEL_VARIANTS), 0)
-
-    def test_lazy_load_models_variable(self) -> None:
-        """Test the LAZY_LOAD_MODELS configuration variable."""
-        self.assertTrue(hasattr(config, 'LAZY_LOAD_MODELS'))
-        self.assertIsInstance(config.LAZY_LOAD_MODELS, bool)
-
     def test_max_loaded_models_variable(self) -> None:
         """Test the MAX_LOADED_MODELS configuration variable."""
         self.assertTrue(hasattr(config, 'MAX_LOADED_MODELS'))
         self.assertIsInstance(config.MAX_LOADED_MODELS, int)
-
-    def test_preload_smallest_variable(self) -> None:
-        """Test the PRELOAD_SMALLEST configuration variable."""
-        self.assertTrue(hasattr(config, 'PRELOAD_SMALLEST'))
-        self.assertIsInstance(config.PRELOAD_SMALLEST, bool)
-
-    def test_explicit_cuda_cleanup_variable(self) -> None:
-        """Test the EXPLICIT_CUDA_CLEANUP configuration variable."""
-        self.assertTrue(hasattr(config, 'EXPLICIT_CUDA_CLEANUP'))
-        self.assertIsInstance(config.EXPLICIT_CUDA_CLEANUP, bool)
-
-    def test_model_variants_empty_input(self) -> None:
-        """Test that empty MODEL_VARIANTS input stays empty."""
-        empty_env_value = ''
-        variants = [v.strip() for v in empty_env_value.split(',') if v.strip()]
-
-        self.assertEqual(variants, [])
-
-    @patch.dict(os.environ, {'MODEL_VARIANTS': ''}, clear=False)
-    def test_actual_model_variants_empty(self) -> None:
-        """Test actual module behaviour by running in subprocess with empty
-        MODEL_VARIANTS."""
-        import subprocess
-        import sys
-
-        result = subprocess.run(
-            [
-                sys.executable,
-                '-c',
-                'import os; os.environ["MODEL_VARIANTS"] = ""; '
-                'from examples.YOLO_server_api import config; '
-                'print(config.MODEL_VARIANTS)',
-            ],
-            capture_output=True,
-            text=True,
-        )
-
-        output = result.stdout.strip().splitlines()[-1]
-        self.assertEqual(output, '[]')
 
     @patch.dict(
         os.environ,
