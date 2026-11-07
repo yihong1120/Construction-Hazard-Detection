@@ -155,7 +155,8 @@ jobs:
       with:
         python-version-file: ".python-version"
     - name: Cache locally built ONNX Runtime wheel
-      uses: actions/cache@v5
+      id: ort-wheel-cache
+      uses: actions/cache/restore@v5
       with:
         path: wheels/python315/onnxruntime-*.whl
         key: ort-${{ runner.os }}-${{ runner.arch }}-cp315-${{ hashFiles('.python-version', 'deploy/python315/bootstrap.py') }}
@@ -165,6 +166,12 @@ jobs:
         # Exercise every source module, but exclude the CUDA/TensorRT-only
         # deployment extra. Include model-development and notification tools.
         python deploy/python315/bootstrap.py --cpu-only --jobs 2
+    - name: Save the successfully built ONNX Runtime wheel
+      if: steps.ort-wheel-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: wheels/python315/onnxruntime-*.whl
+        key: ${{ steps.ort-wheel-cache.outputs.cache-primary-key }}
     - *postgres-client-tools
     - name: Test with pytest
       run: |

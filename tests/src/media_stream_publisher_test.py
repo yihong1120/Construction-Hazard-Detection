@@ -878,9 +878,10 @@ def test_start_falls_back_after_nvenc_is_marked_unavailable(
     fake_create_subprocess_exec = _callbacks._call_fake_create_subprocess_exec
 
     _callbacks.commands = []
+    monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
+    monkeypatch.setattr(publisher.shutil, 'which', _return_none)
     stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     stream._nvenc_unavailable = True
-    monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
     monkeypatch.setattr(
         publisher,
         '_select_encoder',
@@ -895,6 +896,7 @@ def test_start_falls_back_after_nvenc_is_marked_unavailable(
     asyncio.run(stream._start(320, 240))
     asyncio.run(stream.close())
 
+    assert _callbacks.commands[0][0] == '/custom/ffmpeg'
     assert 'libx264' in _callbacks.commands[0]
     assert stream._uses_nvenc is False
 
@@ -909,8 +911,9 @@ def test_start_releases_reserved_nvenc_when_process_creation_fails(
     )
 
     releases: list[bool] = []
-    stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
+    monkeypatch.setattr(publisher.shutil, 'which', _return_none)
+    stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     monkeypatch.setattr(
         publisher,
         '_select_encoder',
@@ -1066,6 +1069,8 @@ def test_vaapi_device_failure_selects_software_on_next_start(
     monkeypatch: Any,
 ) -> None:
     """A driver failure is remembered and does not loop on broken hardware."""
+    monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
+    monkeypatch.setattr(publisher.shutil, 'which', _return_none)
     stream = publisher.MediaStreamPublisher('rtsp://127.0.0.1:8554/out')
     stream._uses_vaapi = True
     process = SimpleNamespace(
@@ -1078,7 +1083,6 @@ def test_vaapi_device_failure_selects_software_on_next_start(
     )
     asyncio.run(stream._drain_stderr(process))
     assert stream._vaapi_unavailable
-    monkeypatch.setenv('MEDIA_FFMPEG_PATH', '/custom/ffmpeg')
     monkeypatch.setattr(
         publisher,
         '_select_encoder',
@@ -1090,6 +1094,7 @@ def test_vaapi_device_failure_selects_software_on_next_start(
 
     monkeypatch.setattr(publisher.asyncio, 'create_subprocess_exec', launch)
     asyncio.run(stream._start(640, 360))
+    assert commands[0][0] == '/custom/ffmpeg'
     assert 'libx264' in commands[0]
     assert 'h264_vaapi' not in commands[0]
 
