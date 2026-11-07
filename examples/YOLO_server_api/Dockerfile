@@ -32,4 +32,4 @@ COPY --chown=appuser:appuser src /app/src
 EXPOSE 6000
 
 # Start the YOLO server API
-CMD ["uvicorn", "examples.YOLO_server_api.app:app", "--host", "0.0.0.0", "--port", "6000"]
+CMD ["python", "-m", "examples.YOLO_server_api.app", "--host", "0.0.0.0", "--port", "6000", "--workers", "1"]
