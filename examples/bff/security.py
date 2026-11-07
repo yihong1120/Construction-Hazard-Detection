@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hmac
-import os
 from typing import Literal
 from typing import TypedDict
 
@@ -11,13 +10,12 @@ from fastapi import Response
 
 from examples.auth.config import Settings
 from examples.auth.session_store import AUTH_SESSION_TTL_SECONDS
+from examples.bff.settings import CookieSettings
 
 settings = Settings()
-SESSION_COOKIE = os.getenv('BFF_SESSION_COOKIE_NAME', '__Host-vn_session')
-SESSION_COOKIE_SECURE = os.getenv(
-    'BFF_SESSION_COOKIE_SECURE',
-    'true',
-).lower() in {'1', 'true', 'yes', 'on'}
+cookie_settings = CookieSettings()
+SESSION_COOKIE = cookie_settings.session_cookie_name
+SESSION_COOKIE_SECURE = cookie_settings.session_cookie_secure
 
 
 class _SessionCookieOptions(TypedDict):

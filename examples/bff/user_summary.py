@@ -1,4 +1,3 @@
-"""Load the public account profile shared by login and session renewal."""
 from __future__ import annotations
 
 from fastapi import HTTPException
