@@ -13,30 +13,31 @@ from examples.streaming_web import overlay_labels
 from examples.streaming_web import overlay_renderer as renderer
 from examples.streaming_web import overlay_text
 from examples.streaming_web.overlay_labels import normalise_label_language
+from examples.streaming_web.overlay_models import OverlaySnapshot
 from examples.streaming_web.overlay_renderer import (
     has_warning,
 )
 from examples.streaming_web.overlay_renderer import (
     normalise_overlay_mode,
 )
-from examples.streaming_web.overlay_renderer import (
-    render_overlay_array,
-)
-from tests.model_fixtures import CLASSES
+from examples.streaming_web.overlay_renderer import OverlayRenderer
+from src.settings.media import OverlaySettings
+from tests.model_fixtures_test import CLASSES
 
 
 class OverlayRendererTest(unittest.TestCase):
+    def setUp(self):
+        self.painter = OverlayRenderer()
+
     """Tests for OverlayRendererTest."""
 
     def test_normalise_overlay_mode(self) -> None:
-        """Exercise this test."""
         self.assertEqual(normalise_overlay_mode('backend'), 'backend')
         self.assertEqual(normalise_overlay_mode('true'), 'backend')
         self.assertEqual(normalise_overlay_mode('none'), 'none')
         self.assertEqual(normalise_overlay_mode(None), 'none')
 
     def test_normalise_label_language(self) -> None:
-        """Exercise this test."""
         self.assertEqual(normalise_label_language('zh_TW'), 'zh-TW')
         self.assertEqual(normalise_label_language('en-GB'), 'en')
         self.assertEqual(normalise_label_language('ja-JP'), 'ja')
@@ -46,7 +47,6 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertEqual(normalise_label_language('missing'), 'en')
 
     def test_has_warning(self) -> None:
-        """Exercise this test."""
         self.assertTrue(
             has_warning(
                 {'warning_no_hardhat': {'count': 2}},
@@ -73,48 +73,50 @@ class OverlayRendererTest(unittest.TestCase):
     def test_render_overlay_array_none_mode_and_empty_frame_return_original(
         self,
     ) -> None:
-        """Exercise this test."""
         frame = np.zeros((0, 0, 3), dtype=np.uint8)
 
         self.assertIs(
-            render_overlay_array(
-                frame,
-                detection_items=[],
-                warnings={},
-                cone_polygons=[],
-                pole_polygons=[],
-                overlay_mode='none',
-                class_metadata=CLASSES,
+            OverlayRenderer(OverlaySettings(mode='none')).render(
+                OverlaySnapshot(
+                    sequence=(0, 0),
+                    frame=frame,
+                    track_data=[],
+                    warnings={},
+                    cone_polys=[],
+                    pole_polys=[],
+                    class_metadata=CLASSES,
+                ),
             ),
             frame,
         )
         self.assertIs(
-            render_overlay_array(
-                frame,
-                detection_items=[],
-                warnings={},
-                cone_polygons=[],
-                pole_polygons=[],
-                overlay_mode='backend',
-                class_metadata=CLASSES,
+            OverlayRenderer(OverlaySettings(mode='backend')).render(
+                OverlaySnapshot(
+                    sequence=(0, 0),
+                    frame=frame,
+                    track_data=[],
+                    warnings={},
+                    cone_polys=[],
+                    pole_polys=[],
+                    class_metadata=CLASSES,
+                ),
             ),
             frame,
         )
 
     def test_render_overlay_array_draws_without_json_roundtrip(self) -> None:
-        """Exercise this test."""
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
-        rendered = render_overlay_array(
-            frame.copy(),
-            detection_items=[[40, 40, 180, 210, 0.93, 5, 12]],
-            warnings={
-                'warning_people_in_controlled_area': {'count': 1},
-            },
-            cone_polygons=[],
-            pole_polygons=[],
-            overlay_mode='backend',
+        rendered = OverlayRenderer(OverlaySettings(mode='backend')).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame.copy(),
+                track_data=[[40, 40, 180, 210, 0.93, 5, 12]],
+                warnings={'warning_people_in_controlled_area': {'count': 1}},
+                cone_polys=[],
+                pole_polys=[],
+                class_metadata=CLASSES,
+            ),
             label_language='zh-TW',
-            class_metadata=CLASSES,
         )
         self.assertEqual(rendered.shape[:2], (240, 320))
         self.assertFalse(np.array_equal(rendered, frame))
@@ -122,17 +124,17 @@ class OverlayRendererTest(unittest.TestCase):
     def test_render_overlay_array_accepts_strict_decoded_data(self) -> None:
         """The array renderer consumes the detector's decoded payload."""
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
-        rendered = render_overlay_array(
-            frame.copy(),
-            detection_items=[[40, 40, 180, 210, 0.93, 5, 12, 0]],
-            warnings={
-                'warning_people_in_controlled_area': {'count': 1},
-            },
-            cone_polygons=[],
-            pole_polygons=[],
-            overlay_mode='backend',
+        rendered = OverlayRenderer(OverlaySettings(mode='backend')).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame.copy(),
+                track_data=[[40, 40, 180, 210, 0.93, 5, 12, 0]],
+                warnings={'warning_people_in_controlled_area': {'count': 1}},
+                cone_polys=[],
+                pole_polys=[],
+                class_metadata=CLASSES,
+            ),
             label_language='zh-TW',
-            class_metadata=CLASSES,
         )
 
         self.assertEqual(rendered.shape[:2], (240, 320))
@@ -141,17 +143,18 @@ class OverlayRendererTest(unittest.TestCase):
     def test_render_overlay_array_draws_warning_panel_bottom_right(
         self,
     ) -> None:
-        """Exercise this test."""
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
-        rendered = render_overlay_array(
-            frame.copy(),
-            detection_items=[[40, 40, 180, 210, 0.93, 5, 12]],
-            warnings={'warning_close_to_vehicle': {'count': 2}},
-            cone_polygons=[],
-            pole_polygons=[],
-            overlay_mode='backend',
+        rendered = OverlayRenderer(OverlaySettings(mode='backend')).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame.copy(),
+                track_data=[[40, 40, 180, 210, 0.93, 5, 12]],
+                warnings={'warning_close_to_vehicle': {'count': 2}},
+                cone_polys=[],
+                pole_polys=[],
+                class_metadata=CLASSES,
+            ),
             label_language='en',
-            class_metadata=CLASSES,
         )
 
         bottom_right = rendered[170:238, 180:318]
@@ -161,21 +164,23 @@ class OverlayRendererTest(unittest.TestCase):
     def test_render_overlay_array_does_not_infer_proximity_person(
         self,
     ) -> None:
-        """Exercise this test."""
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
-        rendered = render_overlay_array(
-            frame.copy(),
-            detection_items=[
-                [100, 100, 105, 110, 0.95, 5, -1, 0],
-                [107, 105, 200, 200, 0.85, 10, 1, 1],
-            ],
-            warnings={'warning_close_to_vehicle': {'count': 1}},
-            cone_polygons=[],
-            pole_polygons=[],
-            overlay_mode='backend',
+        rendered = OverlayRenderer(
+            OverlaySettings(mode='backend', box_thickness=3),
+        ).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame.copy(),
+                track_data=[
+                    [100, 100, 105, 110, 0.95, 5, -1, 0],
+                    [107, 105, 200, 200, 0.85, 10, 1, 1],
+                ],
+                warnings={'warning_close_to_vehicle': {'count': 1}},
+                cone_polys=[],
+                pole_polys=[],
+                class_metadata=CLASSES,
+            ),
             label_language='en',
-            box_thickness=3,
-            class_metadata=CLASSES,
         )
 
         person_border_bgr = rendered[100, 100]
@@ -186,27 +191,29 @@ class OverlayRendererTest(unittest.TestCase):
     def test_render_overlay_array_uses_explicit_warning_person_bbox(
         self,
     ) -> None:
-        """Exercise this test."""
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
-        rendered = render_overlay_array(
-            frame.copy(),
-            detection_items=[
-                [40, 40, 80, 120, 0.95, 5, 42, 0],
-                [180, 40, 220, 140, 0.85, 10, 1, 1],
-            ],
-            warnings={
-                'warning_close_to_vehicle': {
-                    'count': 1,
-                    'person_bboxes': [[40, 40, 80, 120]],
-                    'person_track_ids': ['42'],
+        rendered = OverlayRenderer(
+            OverlaySettings(mode='backend', box_thickness=3),
+        ).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame.copy(),
+                track_data=[
+                    [40, 40, 80, 120, 0.95, 5, 42, 0],
+                    [180, 40, 220, 140, 0.85, 10, 1, 1],
+                ],
+                warnings={
+                    'warning_close_to_vehicle': {
+                        'count': 1,
+                        'person_bboxes': [[40, 40, 80, 120]],
+                        'person_track_ids': ['42'],
+                    },
                 },
-            },
-            cone_polygons=[],
-            pole_polygons=[],
-            overlay_mode='backend',
+                cone_polys=[],
+                pole_polys=[],
+                class_metadata=CLASSES,
+            ),
             label_language='en',
-            box_thickness=3,
-            class_metadata=CLASSES,
         )
 
         person_border_bgr = rendered[40, 40]
@@ -218,25 +225,25 @@ class OverlayRendererTest(unittest.TestCase):
     def test_render_overlay_array_draws_warning_person_bbox_directly(
         self,
     ) -> None:
-        """Exercise this test."""
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
-        rendered = render_overlay_array(
-            frame.copy(),
-            detection_items=[
-                [180, 40, 220, 140, 0.85, 10, 1, 1],
-            ],
-            warnings={
-                'warning_close_to_vehicle': {
-                    'count': 1,
-                    'person_bboxes': [[40, 40, 80, 120]],
+        rendered = OverlayRenderer(
+            OverlaySettings(mode='backend', box_thickness=3),
+        ).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame.copy(),
+                track_data=[[180, 40, 220, 140, 0.85, 10, 1, 1]],
+                warnings={
+                    'warning_close_to_vehicle': {
+                        'count': 1,
+                        'person_bboxes': [[40, 40, 80, 120]],
+                    },
                 },
-            },
-            cone_polygons=[],
-            pole_polygons=[],
-            overlay_mode='backend',
+                cone_polys=[],
+                pole_polys=[],
+                class_metadata=CLASSES,
+            ),
             label_language='en',
-            box_thickness=3,
-            class_metadata=CLASSES,
         )
 
         target_border_bgr = rendered[40, 40]
@@ -246,17 +253,18 @@ class OverlayRendererTest(unittest.TestCase):
     def test_render_overlay_array_infers_warning_panel_from_violation_box(
         self,
     ) -> None:
-        """Exercise this test."""
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
-        rendered = render_overlay_array(
-            frame.copy(),
-            detection_items=[[40, 40, 80, 180, 0.93, 4, -1, 0]],
-            warnings={},
-            cone_polygons=[],
-            pole_polygons=[],
-            overlay_mode='backend',
+        rendered = OverlayRenderer(OverlaySettings(mode='backend')).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame.copy(),
+                track_data=[[40, 40, 80, 180, 0.93, 4, -1, 0]],
+                warnings={},
+                cone_polys=[],
+                pole_polys=[],
+                class_metadata=CLASSES,
+            ),
             label_language='en',
-            class_metadata=CLASSES,
         )
 
         bottom_right = rendered[170:238, 180:318]
@@ -264,22 +272,24 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertFalse(np.array_equal(bottom_right, original_bottom_right))
 
     def test_render_overlay_array_draws_all_detection_items(self) -> None:
-        """Exercise this test."""
         frame = np.full((240, 320, 3), 245, dtype=np.uint8)
-        rendered = render_overlay_array(
-            frame.copy(),
-            detection_items=[
-                [10, 20, 50, 90, 0.93, 5, -1, 0],
-                [80, 20, 120, 90, 0.91, 5, -1, 0],
-                [150, 20, 190, 90, 0.89, 5, -1, 0],
-            ],
-            warnings={},
-            cone_polygons=[],
-            pole_polygons=[],
-            overlay_mode='backend',
+        rendered = OverlayRenderer(
+            OverlaySettings(mode='backend', box_thickness=3),
+        ).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame.copy(),
+                track_data=[
+                    [10, 20, 50, 90, 0.93, 5, -1, 0],
+                    [80, 20, 120, 90, 0.91, 5, -1, 0],
+                    [150, 20, 190, 90, 0.89, 5, -1, 0],
+                ],
+                warnings={},
+                cone_polys=[],
+                pole_polys=[],
+                class_metadata=CLASSES,
+            ),
             label_language='en',
-            box_thickness=3,
-            class_metadata=CLASSES,
         )
 
         self.assertFalse(np.array_equal(rendered[20, 10], frame[20, 10]))
@@ -292,15 +302,17 @@ class OverlayRendererTest(unittest.TestCase):
         """ROI polygon fill is pixel-equivalent to a full-frame blend."""
         frame = np.arange(120 * 160 * 3, dtype=np.uint8).reshape(120, 160, 3)
         polygon = [[10, 10], [40, 10], [40, 40], [10, 40]]
-        rendered = render_overlay_array(
-            frame.copy(),
-            detection_items=[],
-            warnings={},
-            cone_polygons=[cast(renderer.PolygonCoordinates, polygon)],
-            pole_polygons=[],
-            overlay_mode='backend',
+        rendered = OverlayRenderer(OverlaySettings(mode='backend')).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame.copy(),
+                track_data=[],
+                warnings={},
+                cone_polys=[cast(renderer.PolygonCoordinates, polygon)],
+                pole_polys=[],
+                class_metadata=CLASSES,
+            ),
             label_language='en',
-            class_metadata=CLASSES,
         )
 
         points = np.array(polygon, dtype=np.int32)
@@ -321,7 +333,6 @@ class OverlayRendererTest(unittest.TestCase):
     def test_detection_parser_skips_low_confidence_and_degenerate_boxes(
         self,
     ) -> None:
-        """Exercise this test."""
         parsed = tuple(
             renderer._iter_detections_from_data(
                 [
@@ -375,13 +386,12 @@ class OverlayRendererTest(unittest.TestCase):
         )
 
     def test_warning_summary_lines_limit_and_inferred_counts(self) -> None:
-        """Exercise this test."""
         detections = (
             renderer.DetectionOverlay('no_helmet', 0.9, (1, 1, 5, 5)),
             renderer.DetectionOverlay('no_helmet', 0.8, (6, 1, 9, 5)),
         )
 
-        lines = renderer._warning_summary_lines(
+        lines = self.painter._warning_summary_lines(
             {},
             'en',
             detections=detections,
@@ -393,7 +403,7 @@ class OverlayRendererTest(unittest.TestCase):
             'unknown_key x2',
         )
         self.assertEqual(
-            renderer._warning_summary_lines(
+            self.painter._warning_summary_lines(
                 {'warning_no_hardhat': {'count': 1}},
                 'en',
                 detections=detections,
@@ -401,12 +411,12 @@ class OverlayRendererTest(unittest.TestCase):
             ['No hardhat'],
         )
         with mock.patch.object(
-            renderer,
-            '_overlay_max_warning_summary_items',
+            self.painter.settings,
+            'max_warning_summary_items',
             1,
         ):
             self.assertEqual(
-                renderer._warning_summary_lines(
+                self.painter._warning_summary_lines(
                     {
                         'warning_no_hardhat': {'count': 0},
                         'warning_no_safety_vest': {'count': 2},
@@ -417,7 +427,7 @@ class OverlayRendererTest(unittest.TestCase):
                 ['No safety vest x2'],
             )
             self.assertEqual(
-                renderer._warning_summary_lines(
+                self.painter._warning_summary_lines(
                     {},
                     'en',
                     detections=(
@@ -437,17 +447,16 @@ class OverlayRendererTest(unittest.TestCase):
             )
 
     def test_draw_warning_summary_status_and_empty_roi(self) -> None:
-        """Exercise this test."""
         frame = np.zeros((1, 1, 3), dtype=np.uint8)
         with mock.patch.object(
-            renderer,
-            '_overlay_draw_warning_status',
+            self.painter.settings,
+            'draw_warning_status',
             True,
         ):
-            renderer._draw_warning_summary(frame, {}, 'en')
+            self.painter._draw_warning_summary(frame, {}, 'en')
 
         self.assertEqual(frame.shape, (1, 1, 3))
-        renderer._draw_warning_summary(
+        self.painter._draw_warning_summary(
             np.zeros((0, 0, 3), dtype=np.uint8),
             {
                 'warning_no_hardhat': {'count': 1},
@@ -456,7 +465,6 @@ class OverlayRendererTest(unittest.TestCase):
         )
 
     def test_label_and_colour_helpers_cover_branching(self) -> None:
-        """Exercise this test."""
         frame = np.full((80, 80, 3), 245, dtype=np.uint8)
         detection = renderer.DetectionOverlay(
             class_name='person',
@@ -473,32 +481,34 @@ class OverlayRendererTest(unittest.TestCase):
             2,
         )
 
-        self.assertFalse(renderer._should_draw_label(detection, 99_999))
+        self.assertFalse(self.painter._should_draw_label(detection, 99_999))
         with mock.patch.object(
-            renderer,
-            '_overlay_draw_labels',
+            self.painter.settings,
+            'draw_labels',
             False,
         ):
-            self.assertFalse(renderer._should_draw_label(detection, 0))
+            self.assertFalse(self.painter._should_draw_label(detection, 0))
         with mock.patch.object(
-            renderer,
-            '_overlay_label_warnings_only',
+            self.painter.settings,
+            'label_warnings_only',
             True,
         ):
-            self.assertFalse(renderer._should_draw_label(detection, 0))
+            self.assertFalse(self.painter._should_draw_label(detection, 0))
         self.assertEqual(
             overlay_labels._color_for_class(
                 'person',
-            ), (255, 152, 0),
+            ),
+            (255, 152, 0),
         )
         self.assertEqual(
-            len(overlay_labels._color_for_class('unknown-class')), 3,
+            len(overlay_labels._color_for_class('unknown-class')),
+            3,
         )
         self.assertTrue(overlay_labels._is_bright((255, 255, 255)))
 
     def test_polygon_helpers_normalise_detector_coordinates(self) -> None:
         """Polygon payloads use the detector's list-of-coordinate format."""
-        polygons = renderer._normalised_polygons_for_overlay(
+        polygons = self.painter.polygons(
             json.dumps(
                 [
                     [
@@ -518,7 +528,7 @@ class OverlayRendererTest(unittest.TestCase):
             np.array([[10, 5], [30, 5], [30, 15]], dtype=np.int32),
         )
         frame = np.zeros((20, 20, 3), dtype=np.uint8)
-        renderer._draw_polygons(
+        self.painter._draw_polygons(
             frame,
             (
                 (
@@ -543,7 +553,7 @@ class OverlayRendererTest(unittest.TestCase):
         """An empty polygon payload leaves the frame unchanged."""
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
 
-        renderer._draw_polygons(
+        self.painter._draw_polygons(
             frame,
             ((json.dumps([]), (255, 0, 0), (255, 0, 0), 0.4),),
         )
@@ -551,7 +561,6 @@ class OverlayRendererTest(unittest.TestCase):
         self.assertFalse(frame.any())
 
     def test_roi_blend_helpers_cover_noop_edges(self) -> None:
-        """Exercise this test."""
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
         points = np.array([[1, 1], [4, 1], [4, 4]], dtype=np.int32)
 
@@ -592,7 +601,6 @@ class OverlayRendererTest(unittest.TestCase):
     def test_pillow_text_helpers_cover_missing_font_and_clipped_area(
         self,
     ) -> None:
-        """Exercise this test."""
         frame = np.zeros((20, 20, 3), dtype=np.uint8)
         with mock.patch(
             'examples.streaming_web.overlay_text._load_overlay_font',

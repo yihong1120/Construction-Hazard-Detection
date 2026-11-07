@@ -15,6 +15,10 @@ from examples.db_management.schemas.auth import AccessTokenSubject
 from examples.streaming_web import stream_catalog_service
 
 
+def _empty_list():
+    return []
+
+
 def _credentials(username: str | None) -> JwtAuthorizationCredentials:
     """Build compact credentials for catalogue authorisation tests.
 
@@ -54,7 +58,7 @@ class TestStreamCatalogueCoverage(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Batch selection rejects absent identifiers and missing rows."""
         db = SimpleNamespace(
-            execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [])),
+            execute=AsyncMock(return_value=SimpleNamespace(all=_empty_list)),
         )
         self.assertEqual(
             await stream_catalog_service.resolve_configured_stream_names(

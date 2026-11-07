@@ -1,12 +1,7 @@
-"""Localised labels and semantic colours for live overlay presentation."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from examples.shared.class_colors import published_color
-
-if TYPE_CHECKING:
-    from examples.streaming_web.overlay_models import DetectionOverlay
+lazy from examples.streaming_web.overlay_models import DetectionOverlay
 
 WARNING_RGB: tuple[int, int, int] = (244, 67, 54)
 

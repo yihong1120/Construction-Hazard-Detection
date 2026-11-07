@@ -112,6 +112,22 @@ class StreamingPlaybackItem(BaseModel):
     profile: PlaybackProfile
     rendition: Literal['detail', 'preview']
     language: str | None
+    media_hls_url: str = ''
+    playback_url: str | None = None
+    hls_url: str | None = None
+    status: str | None = None
+    state: str | None = None
+    stream_id: str | None = None
+    overlay_ready: bool | None = None
+
+
+class PlaybackMediaSession(BaseModel):
+    model_config = ConfigDict(extra='ignore', strict=True)
+    id: str
+    scope: Literal['camera', 'batch']
+    site: str
+    cameras: list[str]
+    profile: PlaybackProfile
 
 
 class StreamingPlaybackBatchResponse(BaseModel):

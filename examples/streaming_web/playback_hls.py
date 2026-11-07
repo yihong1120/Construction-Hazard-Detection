@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import os
 import re
 import time
 from collections.abc import Mapping
+from functools import partial
 from typing import cast
 from urllib.parse import parse_qs
 from urllib.parse import parse_qsl
@@ -26,17 +26,15 @@ from examples.streaming_web.media_paths import build_media_path
 from examples.streaming_web.media_paths import build_preview_media_path
 from examples.streaming_web.media_paths import encode_media_segment
 from examples.streaming_web.media_paths import parse_annotated_media_path
+from src.settings.media import MediaGatewaySettings
 
-MEDIA_PUBLISHER_IDLE_GRACE_SECONDS = max(
-    30,
-    int(os.getenv('MEDIA_PUBLISHER_IDLE_GRACE_SECONDS', '180')),
+gateway_settings = MediaGatewaySettings()
+MEDIA_PUBLISHER_IDLE_GRACE_SECONDS = (
+    gateway_settings.publisher_idle_grace_seconds
 )
-MEDIA_INTERNAL_HLS_BASE_URL = os.getenv(
-    'MEDIA_INTERNAL_HLS_BASE_URL',
-    'http://127.0.0.1:8890',
-).rstrip('/')
-MEDIA_INTERNAL_HLS_TIMEOUT_SECONDS = float(
-    os.getenv('MEDIA_INTERNAL_HLS_TIMEOUT_SECONDS', '10'),
+MEDIA_INTERNAL_HLS_BASE_URL = gateway_settings.internal_hls_base_url
+MEDIA_INTERNAL_HLS_TIMEOUT_SECONDS = (
+    gateway_settings.internal_hls_timeout_seconds
 )
 
 
@@ -150,25 +148,21 @@ def rewrite_hls_playlist_media_urls(
     """Append opaque authorisation to all playlist URI values."""
     uri_attr = re.compile(r'URI="([^"]+)"')
 
-    def rewrite_uri_attr(match: re.Match[str]) -> str:
-        """Perform rewrite uri attr.
-
-        Args:
-            match: Value used by this callable.
-
-        Returns:
-            The callable result.
-        """
-        return (
-            f'URI="{rewrite_hls_uri(match.group(1), media_path, auth_query)}"'
-        )
-
     rewritten_lines: list[str] = []
     for line in playlist.splitlines():
         if not line:
             rewritten_lines.append(line)
         elif line.startswith('#'):
-            rewritten_lines.append(uri_attr.sub(rewrite_uri_attr, line))
+            rewritten_lines.append(
+                uri_attr.sub(
+                    partial(
+                        _rewrite_uri_attribute,
+                        media_path=media_path,
+                        auth_query=auth_query,
+                    ),
+                    line,
+                ),
+            )
         else:
             rewritten_lines.append(
                 rewrite_hls_uri(
@@ -205,7 +199,8 @@ async def fetch_internal_hls_playlist(
     """Fetch an HLS playlist and return its scoped MediaMTX session cookie."""
     playlist_path = f"{quote(media_path, safe='')}/index.m3u8"
     url = append_query(
-        f"{MEDIA_INTERNAL_HLS_BASE_URL}/{playlist_path}", media_query,
+        f"{MEDIA_INTERNAL_HLS_BASE_URL}/{playlist_path}",
+        media_query,
     )
     try:
         if http_client is not None:
@@ -284,3 +279,12 @@ def opaque_media_session_allows_path(
         parsed = parse_annotated_media_path(media_path)
         return parsed is not None and parsed[0] in base_paths
     return False
+
+
+def _rewrite_uri_attribute(
+    match: re.Match[str],
+    *,
+    media_path: str,
+    auth_query: str,
+) -> str:
+    return f'URI="{rewrite_hls_uri(match.group(1), media_path, auth_query)}"'

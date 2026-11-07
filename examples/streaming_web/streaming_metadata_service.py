@@ -7,9 +7,10 @@ from fastapi import WebSocket
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import examples.streaming_web.playback_config as playback_config
+import examples.streaming_web.playback_languages as playback_languages
 from examples.auth.config import Settings
 from examples.auth.jwt_config import JwtAuthorizationCredentials
-from examples.streaming_web import playback_service
 from examples.streaming_web.media_paths import build_annotated_media_path
 from examples.streaming_web.media_paths import build_media_hls_url
 from examples.streaming_web.media_paths import build_media_path
@@ -20,6 +21,7 @@ from examples.streaming_web.metadata_keys import (
     build_metadata_key_from_stream_id,
 )
 from examples.streaming_web.metadata_keys import get_metadata_site_generation
+from examples.streaming_web.overlay_admission import OverlayAdmission
 from examples.streaming_web.overlay_labels import normalise_label_language
 from examples.streaming_web.overlay_renderer import normalise_overlay_mode
 from examples.streaming_web.playback_hls import authorise_label_access
@@ -28,6 +30,12 @@ from examples.streaming_web.streaming_metadata_handlers import (
 )
 from examples.streaming_web.streaming_metadata_handlers import (
     metadata_stream_generator,
+)
+from examples.streaming_web.streaming_metadata_handlers import (
+    MetadataOverlayLease,
+)
+from examples.streaming_web.streaming_metadata_handlers import (
+    MetadataSubscription,
 )
 
 settings = Settings()
@@ -103,7 +111,7 @@ async def metadata_stream_response(
         overlay_language = normalise_label_language(language)
         if (
             overlay_language
-            not in playback_service._allowed_overlay_languages()
+            not in playback_languages._allowed_overlay_languages()
         ):
             raise HTTPException(status_code=422, detail='unsupported_language')
         stream_name = decode_media_segment(stream_id)
@@ -126,20 +134,24 @@ async def metadata_stream_response(
             'playback_url': overlay_hls_url,
             'media_hls_url': overlay_hls_url,
         }
+    admission = OverlayAdmission()
+    if overlay_demand_key:
+        admission.add_key(
+            overlay_demand_key,
+            playback_config.OVERLAY_DEMAND_TTL_SECONDS,
+        )
+        await admission.commit(rds)
     return StreamingResponse(
         metadata_stream_generator(
             request,
-            rds,
-            redis_key,
-            overlay_ready_key=overlay_ready_key,
-            overlay_ready_payload=overlay_ready_payload,
-            overlay_demand_key=overlay_demand_key,
-            overlay_demand_ttl_seconds=(
-                playback_service.OVERLAY_DEMAND_TTL_SECONDS
-            ),
-            overlay_demand_refresh_seconds=max(
-                1.0,
-                playback_service.OVERLAY_DEMAND_TTL_SECONDS / 2,
+            MetadataSubscription(
+                rds, redis_key,
+                MetadataOverlayLease(
+                    ready_key=overlay_ready_key,
+                    ready_payload=overlay_ready_payload,
+                    demand_key=overlay_demand_key,
+                    ttl_seconds=playback_config.OVERLAY_DEMAND_TTL_SECONDS,
+                ),
             ),
         ),
         media_type='text/event-stream',
