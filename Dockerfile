@@ -36,6 +36,7 @@ RUN groupadd -g 1001 appuser && useradd -u 1001 -g appuser -m appuser || true
 
 # Create the 'logs' directory and set ownership
 RUN mkdir -p /app/logs && chown appuser:appuser /app/logs
+RUN install -d -m 0700 -o appuser -g appuser /app/outputs/event-outbox
 
 # Switch to the non-root user
 USER appuser
