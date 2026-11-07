@@ -33,6 +33,11 @@ uvicorn examples.db_management.app:app \
 `streaming`、`streaming_web` 與 `violations`。例如，站點列表使用
 `GET /bff/db_management/list_sites`。
 
+`GET /bff/auth/session` 會驗證目前的 access token，並重新查詢本地身分、
+個人資料與功能權限。即使 session 建立於權限異動前，重新整理頁面後也會反映
+新增或撤銷的功能。登入當時的 Redis 快照不作為授權依據；查詢 session 摘要
+也不會覆寫其他請求正在更新的加密 token。
+
 違規列表與詳情回應中的 `image_url`、`thumbnail_url` 會由 BFF 改寫為
 `/bff/violations/...`，使證據圖片維持走同源、以 Cookie 驗證的路徑，而不會讓
 瀏覽器直接存取違規服務的內部根路由。
@@ -108,3 +113,8 @@ Native: DELETE /hazard/api/db_management/api/playback/sessions/{id}
 
 保留獨立 package 可維持清楚的安全邊界，同時不增加另一個 process、DB pool 與
 部署單元。
+
+OIDC token 交換只有在 HTTP 400／401／403 明確回覆 `invalid_grant` 時，才將
+該 grant 視為永久失效。限流保留 429；連線、伺服器、回應格式或 client 設定
+錯誤回傳 503。暫時失敗會保留 session，並轉送上游的 `Retry-After`；刷新回寫
+仍檢查鎖擁有者及 session revision。

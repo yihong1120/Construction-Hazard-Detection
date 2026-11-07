@@ -24,7 +24,9 @@ MCP_TRANSPORT=streamable-http uv run --no-sync python -m examples.mcp_server.mai
 
 HTTP defaults to `http://127.0.0.1:8092/mcp`; SSE is also supported at `/sse`.
 Configure `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_SSE_PATH` and `MCP_DEBUG` as needed.
-An invalid transport falls back to stdio and logs to stderr, keeping protocol stdout clean.
+Transport, port and boolean settings are validated before startup. An invalid
+transport fails configuration loading; use `MCP_TRANSPORT=stdio` explicitly for
+stdio clients. Protocol stdout remains reserved for MCP messages.
 
 Clients use the server's configured identity. Use stdio or loopback HTTP for trusted
 operators. The HTTP transport has no separate user login; remote access requires an

@@ -22,10 +22,10 @@
 
 <div align="center">
    <a href="https://www.python.org/downloads/">
-      <img src="https://img.shields.io/badge/python-3.14-blue?logo=python" alt="Python 3.14">
+      <img src="https://img.shields.io/badge/python-3.15-blue?logo=python" alt="Python 3.15">
    </a>
    <a href="https://github.com/ultralytics/ultralytics">
-      <img src="https://img.shields.io/badge/ultralytics-8.4.115-blue?logo=yolo" alt="Ultralytics 8.4.115">
+      <img src="https://img.shields.io/badge/ultralytics-8.4.183-blue?logo=yolo" alt="Ultralytics 8.4.183">
    </a>
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
@@ -139,11 +139,38 @@ Flutter 前端原始碼維護於獨立的
 
 ### 1. 準備 Python
 
-目前專案鎖定 Python `>=3.14,<3.15`。
+目前專案鎖定 Python `>=3.15,<3.16`，使用 PEP 810 原生延遲導入。
+共用 API runtime 可直接安裝：
 
 ```bash
-uv sync --locked --all-extras --no-extra yolo-gpu
+uv sync --locked
 ```
+
+Python 3.15 的完整訓練與 INT8 TensorRT 匯出，請在目標環境執行：
+
+```bash
+conda activate construction_env
+python deploy/python315/bootstrap.py
+```
+
+此流程使用 PyTorch 官方 CUDA 13.0 的 CPython 3.15 wheels，並從固定的上游
+revision 建置 ONNX Runtime 1.31.0 與 TensorRT 11.4.0.106 Python bindings。
+需要 Linux x86_64、標準 CPython 3.15（啟用 GIL）、`uv`、`git`、C++20 編譯器
+與 CUDA 開發標頭（預設 `/usr/local/cuda/include`，可用 `CUDA_HOME` 指定）。
+本地 wheel 存於 `wheels/python315/`，首次建置應預留數十 GB 空間；
+`--jobs 4` 可降低編譯記憶體需求，`--build-only` 只建置而不安裝。
+這些原生 wheel 是本地建置產物，尚非 Microsoft／NVIDIA 官方 Python 3.15 支援。
+在新主機應重新執行建置流程，不要只執行 `pip install -r requirements.txt`。
+
+不需要 TensorRT／CUDA 標頭的 CPU 校正、開發與測試環境，改執行
+`python deploy/python315/bootstrap.py --cpu-only`。bootstrap 會另外安裝固定版本的
+ONNX Runtime／TensorRT 原生建置產物；只使用套件庫的 `uv.lock` 與 `uv sync`
+不包含這些原生套件。CI 使用 CPU 流程，GPU Docker base 則在映像內建置 wheel。
+
+Python 3.15 的 `examples/YOLO_train/export_int8_trt.py` 與 `export_int8_engine.py` 使用 ONNX Runtime
+CPU 校正產生 INT8 Q/DQ 圖，再交由 TensorRT 建置及執行 GPU engine；
+支援校正圖片選取、全部圖片校正與節點排除。此路徑取代尚未支援 3.15 的 ModelOpt，
+部署前須以實際驗證集重新評估量化模型準確率。
 
 預設只安裝共用 API runtime 相依。Docker image 會各自安裝 `streaming`、
 `violation`、`notification` 或 `yolo` extra；只有 CUDA/TensorRT 主機才需要
@@ -152,7 +179,11 @@ uv sync --locked --all-extras --no-extra yolo-gpu
 
 多平台通知工具使用 `uv sync --extra social-notifications`；搭配 MCP 時使用
 `uv sync --extra mcp --extra social-notifications`。訓練、評估與資料增強使用
-`uv sync --extra training`，TensorRT 匯出再加入 `--extra yolo-gpu`。
+`uv sync --extra training` 安裝套件庫內的訓練相依；原生校正／匯出相依使用上述 bootstrap。
+
+選用的推論與通知相依，統一以模組頂層 `lazy import` 宣告。
+路由與資料模型註冊維持即時匯入，選用套件的錯誤則在首次使用處處理。
+部署腳本若必須先設定環境變數或模組搜尋路徑，仍保留該初始化順序。
 
 ### 2. 下載模型
 
@@ -392,6 +423,27 @@ python main.py --config config/configuration.json
 影像播放來自 MediaMTX HLS/WebRTC URL。警示 metadata 是小型狀態，通常只包含目前
 警示狀態；偵測框、多邊形與文字標籤會被畫進後端發布的 annotated video stream。
 
+預設擷取每個解碼影格，原始、標註與預覽串流都沿用攝影機 FPS，包含 29.97 等小數
+影格率。預覽只降低解析度與碼率；推論獨立取用最新影格，不以推論速度限制播放 FPS。
+重新連線會重新讀取來源 FPS，必要時重建發布器。
+
+`MEDIA_PUBLISH_SOURCE_FPS`、`MEDIA_PUBLISH_FPS`、`MEDIA_PREVIEW_FPS` 與
+`MEDIA_PUBLISH_CLEAN_FPS` 預設為 `auto`，空值亦代表自動；填入數字才啟用指定的
+擷取抽幀或輸出影格率。直接轉送來源時保留輸入時間戳。使用原始影格編碼的發布器在
+啟動畫面或來源無法提供有效 FPS 時，暫以 30 FPS 發布。
+
+同一路攝影機的發布器與來源轉送器共用啟動時載入的編碼設定，重新連線時仍保留這份
+設定。Worker 派工與結果佇列使用資料庫的 `stream_id`，共用 RTSP 網址的攝影機
+各自保有獨立識別。
+
+批次播放會先驗證整批 session，再以同一個 Redis 交易提交 session、需求租約及
+反向索引；既有 session 不存在或不屬於目前使用者時，整批維持原狀。
+
+模型發布統一使用 `python -m scripts.sync_huggingface_models`。流程會驗證新舊
+artifact、重啟受影響的 worker，並以新的 challenge 確認實際載入版本；失敗時還原
+並驗證前版。INT8 manifest 必須保留可用的前版 engine。詳見
+[`MODEL_CATALOG.md`](examples/YOLO_server_api/MODEL_CATALOG.md)。
+
 公開部署時，MediaMTX 建議放在 Nginx `auth_request` 後面，並由
 `examples.streaming_web` 驗證 JWT 與工地權限。
 
@@ -441,3 +493,13 @@ mypy pre-commit hook 檢查 production code：`main.py`、`src`、`examples` 與
 ## 授權
 
 本專案使用 [AGPL-3.0 Licence](LICENSE.md)。
+
+YOLO shard 異常重啟會建立新的 IPC generation，更換 request／result queues，
+並由設定協調流程重新綁定受影響的攝影機程序；正常 shard 保留既有資源。
+模型載入使用程序死亡時由作業系統釋放的檔案鎖，避免沿用已損壞的程序鎖。
+來源、發布及預覽 FPS 維持既有設定。
+
+環境設定已依領域集中為具型別模型，client 與 worker 在自己的生命週期持有已驗證
+設定；明確建構參數優先於環境變數，包含可覆寫 Redis 環境密碼的明確空字串。
+錯誤的數值、布林與 MCP transport 在載入時報錯。設定生命週期、憑證更新與
+驗證規則見[設定管理說明](src/settings/README.md)，串流 FPS 選擇規則維持不變。

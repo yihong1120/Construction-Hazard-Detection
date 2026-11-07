@@ -19,8 +19,16 @@ Git and Docker build contexts.
 
 ## Backend compatibility
 
+Flutter engineers should start with the
+[backend integration handoff](../docs/flutter-backend-handoff.md), which lists
+required migrations, Web/Native authentication, request examples, error handling
+and release acceptance checks for the current working tree.
+
 Build and deploy a Flutter revision that uses the current backend contract:
 
+- Flutter Web uses `/bff/detect/models` and `/bff/detect/v2/detect` for model
+  discovery and image inference. The BFF accepts `detect` and `detection` as
+  names for the same authenticated YOLO upstream.
 - Flutter Web sends playback control requests through the same-origin BFF at
   `/bff/db_management/api/playback/*`.
 - Native clients send playback control requests to

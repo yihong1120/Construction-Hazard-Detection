@@ -22,10 +22,10 @@
 
 <div align="center">
    <a href="https://www.python.org/downloads/">
-      <img src="https://img.shields.io/badge/python-3.14-blue?logo=python" alt="Python 3.14">
+      <img src="https://img.shields.io/badge/python-3.15-blue?logo=python" alt="Python 3.15">
    </a>
    <a href="https://github.com/ultralytics/ultralytics">
-      <img src="https://img.shields.io/badge/ultralytics-8.4.115-blue?logo=yolo" alt="Ultralytics 8.4.115">
+      <img src="https://img.shields.io/badge/ultralytics-8.4.183-blue?logo=yolo" alt="Ultralytics 8.4.183">
    </a>
    <a href="https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html">
       <img src="https://img.shields.io/badge/HDBSCAN-sklearn-orange?logo=scikit-learn" alt="HDBSCAN sklearn">
@@ -148,11 +148,41 @@ mode in `src/yolo_worker.py`.
 
 ### 1. Prepare Python
 
-The project currently targets Python `>=3.14,<3.15`.
+The project requires Python `>=3.15,<3.16` and uses PEP 810 explicit lazy imports.
+For the shared API runtime:
 
 ```bash
-uv sync --locked --all-extras --no-extra yolo-gpu
+uv sync --locked
 ```
+
+For complete training and INT8 TensorRT export on Python 3.15, run in the target environment:
+
+```bash
+conda activate construction_env
+python deploy/python315/bootstrap.py
+```
+
+This uses official PyTorch CUDA 13.0 CPython 3.15 wheels and builds ONNX Runtime
+1.31.0 and TensorRT 11.4.0.106 Python bindings from pinned upstream revisions.
+It requires Linux x86_64, standard CPython 3.15 with the GIL enabled, `uv`, `git`,
+a C++20 compiler and CUDA development headers (`/usr/local/cuda/include` by default;
+set `CUDA_HOME` to override). Local wheels are written to `wheels/python315/`.
+Allow tens of GB of disk space for the first build; use `--jobs 4` to reduce build
+memory usage or `--build-only` to skip installation. These are local native builds,
+not official Microsoft/NVIDIA Python 3.15 support. Run the bootstrap on a new host
+rather than only installing `requirements.txt`.
+
+For CPU calibration, development and tests without TensorRT or CUDA headers,
+run `python deploy/python315/bootstrap.py --cpu-only` instead. The bootstrap
+installs pinned ONNX Runtime/TensorRT builds separately from the registry-only
+`uv.lock`; `uv sync` alone does not install these native packages. CI uses this
+CPU path, and the GPU Docker base builds its native wheels inside the image.
+
+On Python 3.15, `examples/YOLO_train/export_int8_trt.py` and `export_int8_engine.py` use ONNX Runtime CPU
+calibration to produce an INT8 Q/DQ graph and TensorRT to build and execute the GPU
+engine. Image sampling, calibration over all images and node exclusions are retained.
+This replaces ModelOpt, which does not yet support Python 3.15. Evaluate quantized
+model accuracy on your validation dataset before deployment.
 
 The default dependency set contains only shared API runtime packages.  Docker
 images install their own `streaming`, `violation`, `notification`, or `yolo`
@@ -161,8 +191,13 @@ extra; use `--extra yolo-gpu` only on CUDA/TensorRT hosts.
 
 Use `uv sync --extra social-notifications` for multi-platform notifications,
 or `uv sync --extra mcp --extra social-notifications` with MCP. Install
-`uv sync --extra training` for training, evaluation and augmentation; add
-`--extra yolo-gpu` for TensorRT export.
+`uv sync --extra training` for the registry training dependencies; use the
+bootstrap above to include native calibration/export dependencies.
+
+Optional inference and notification dependencies are declared with `lazy import`
+at module scope. Keep eager imports for route/model registration and catch
+optional dependency errors at their first use. Deployment scripts that configure
+the environment or module search path before importing retain that ordering.
 
 ### 2. Download Models
 
@@ -492,3 +527,143 @@ Labels:
 ## Licence
 
 This project is licensed under the [AGPL-3.0 Licence](LICENSE.md).
+
+### Durable evidence delivery
+
+The dispatcher shares one worker token provider and pooled credential transport.
+Credential requests make one attempt; event delivery owns the retry/backoff budget.
+Its FIFO camera queue uses bounded workers, requeues busy cameras at the tail,
+and drains successful backlogs without waiting for the next directory scan.
+`VIOLATION_OUTBOX_CONCURRENCY` defaults to 4 and
+`VIOLATION_OUTBOX_EVENT_TIMEOUT_SECONDS` to 60 (maximum 100, below the 120-second
+claim lease). Cancellation releases in-flight claims before transports close.
+
+The camera process only writes versioned evidence metadata and image bytes to
+its local SQLite outbox. The supervisor owns one dispatcher for every persisted
+camera queue, so disabling a camera does not strand its pending events. The
+outbox also reads the previous unversioned payload format. Keep its persistent
+volume when deploying the updated worker.
+
+Evidence upload and notification delivery have separate completion stages. An
+uploaded ID is persisted and its image bytes are released before notification
+retries. No subscribers or sendable devices complete as `skipped`; temporary
+failures retry with backoff; permanent failures and exhausted retries remain
+quarantined with their failure reason. The queue's byte/event budgets include
+quarantined evidence, so capacity never silently grows or discards failed images.
+
+```bash
+python -m src.delivery_outbox_cli
+python -m src.delivery_outbox_cli --retry EVENT_ID
+```
+
+Set `VIOLATION_OUTBOX_MAX_ATTEMPTS` (default 20) and
+`VIOLATION_OUTBOX_POLL_SECONDS` (default 1) to tune recovery. Failed events require
+operator inspection and explicit retry after the underlying cause is fixed.
+Delivery leases prevent concurrent dispatchers from taking the same event.
+Provider push acknowledgements remain at least once across an uncertain network
+response; the event UUID and notification-centre recipient key prevent duplicate
+evidence and in-app records.
+
+Native social links stage and validate the local mirror in one transaction
+before calling Keycloak. An uncertain remote result or failed commit reports
+`account_reconciliation_required`; it never removes a shared provider identity
+as compensation. Repeating the normal link flow with fresh verified proof
+recognises the existing remote link and repairs the local mirror.
+
+Native social orchestration shares a `VerifiedSocialIdentity` across account
+lookup and linking; proof validation, one-use transaction storage and broker
+redemption have separate modules. FCM delivery captures registration revisions
+before sending. Its result updates require the same owner and registration;
+successful sends update diagnostics without activating a disabled device.
+
+Playback negotiation validates an entire batch before atomically committing its
+sessions, producer leases and reverse indexes. A missing or foreign existing
+session leaves the batch unchanged. Metadata subscriptions own their overlay
+lease, readiness and heartbeat state and close their shared fanout subscription
+when the viewer disconnects.
+
+
+Media publishing captures `MediaPublishSettings` for each stream. By default,
+capture keeps every decoded frame and detail, overlay and preview outputs follow
+the camera frame rate, including fractional rates such as 29.97 FPS. Reconnecting
+reads the camera rate again and replaces publishers if it changes. Inference
+consumes the latest frame independently, so slower inference does not set the
+video frame rate. Preview reduces resolution and bitrate without reducing FPS.
+
+`MEDIA_PUBLISH_SOURCE_FPS`, `MEDIA_PUBLISH_FPS`, `MEDIA_PREVIEW_FPS` and
+`MEDIA_PUBLISH_CLEAN_FPS` default to `auto` (an empty value also means auto).
+A numeric value explicitly enables capture sampling or output resampling;
+preview inherits an explicit detail rate unless separately configured.
+Direct source restreaming preserves input timestamps in auto mode. Raw-frame
+publishers temporarily use 30 FPS for startup slates or cameras that do not
+report a usable FPS. A renderer holds its settings and copies each shared source
+frame once per rendered language.
+All renditions and the source restreamer share the same captured encoder settings
+for a camera, including codec options, GOP, bitrate and device selection.
+
+Model publication uses `python -m scripts.sync_huggingface_models`; see
+[`MODEL_CATALOG.md`](examples/YOLO_server_api/MODEL_CATALOG.md) for automatic
+affected-worker restarts, loaded-version verification and restoration behavior.
+
+Evidence timestamps without an offset are interpreted as UTC consistently across
+HTTP, MCP, outbox serialization and request fingerprints. Explicit offsets are
+converted to UTC. Use offset-bearing timestamps when retrying historical events
+that previously relied on a server's local timezone.
+
+Live Metadata is a latest-snapshot channel; violation/notification delivery is
+handled separately. Redis reads merge a bounded batch (default 64 entries,
+`STREAMING_METADATA_READ_BATCH_SIZE`); a full batch resolves the newest entry in
+one extra bounded read to skip backlog. Normal batches require no extra read.
+This policy does not change source, publish or preview FPS.
+
+Tracked violation rows use one validation contract at HTTP and MCP upload
+boundaries: finite numeric values, positive box area, confidence in [0, 1], a
+nonnegative integer class ID, and an integer track ID >= -1 (-1 means unassigned).
+Coordinates may extend outside the frame for later clipping. Invalid uploads
+return 422 rather than being serialized as null values. Historical records remain
+accessible: invalid stored detection rows are omitted from rendering without
+rewriting the original evidence.
+
+BFF refreshes renew their ownership lease and save token pairs only when both
+the owner and session revision still match. Expired refreshers cannot overwrite
+newer tokens or revoke a newer session after a late authentication error. Browser
+cancellation drains an in-progress rotation and save before releasing ownership.
+A process crash or an exchange whose response is lost can still require sign-in.
+
+HLS-driven playback renewal reads, watches and updates at most
+`STREAM_PLAYBACK_REFRESH_BATCH_SIZE` live sessions per batch (default 256), while
+pruning a bounded batch of expired reverse-index entries. Renewed scores move to
+the end so later batches can reach other sessions. Throttling and index/session
+changes commit in the same Redis transaction.
+
+Forced BFF refresh waiters require both an advanced session revision and a
+different valid access token. A busy peer cannot send the rejected token back
+upstream merely because its expiry is still in the future. When a peer finishes
+before this request acquires the lock, its valid token is reused without another
+exchange.
+
+The evidence dispatcher supervises its scheduler and recreates delivery resources
+after failure, preserving disk queues and event leases. Recovery starts at
+`VIOLATION_OUTBOX_RECOVERY_SECONDS` (1), doubles up to
+`VIOLATION_OUTBOX_MAX_RECOVERY_SECONDS` (60), and resets after a successful poll.
+Its `health` snapshot exposes running state, cumulative failures, last error type
+and last successful poll. Shutdown interrupts recovery and drains active work.
+
+Notification claims track a conservative monotonic deadline from each confirmed
+acquisition or renewal. Redis operations take at most five seconds and owned
+operations cannot exceed the confirmed lease deadline. An unconfirmed lease stops
+new batches and drains cancellation; already accepted FCM requests still have
+at-least-once delivery semantics.
+
+A dead YOLO shard restarts with a new IPC generation: fresh request/result queues
+replace potentially poisoned multiprocessing locks, and affected camera
+processes are rebound through configuration reconciliation. Healthy shards keep
+their IPC. Model startup uses an OS-owned file lock released automatically when
+a loading process dies. Source, publish and preview FPS are unchanged.
+
+Environment configuration is grouped into typed domain settings; clients and
+workers retain a validated snapshot for their lifetime. Explicit constructor
+values override environment values, including an explicit empty Redis password.
+Malformed numeric, boolean and MCP transport settings fail at configuration
+loading. See [configuration ownership](src/settings/README.md) for lifecycle,
+credential rotation and validation rules. Stream FPS selection is unchanged.

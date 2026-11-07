@@ -30,6 +30,12 @@ The canonical service names are `chat`, `db_management`, `detection`, `fcm`,
 `files`, `streaming`, `streaming_web`, and `violations`. For example, sites are
 listed through `GET /bff/db_management/list_sites`.
 
+`GET /bff/auth/session` verifies the current access token and resolves the local
+identity, profile and feature grants again. Navigation therefore reflects grants
+and revocations on page refresh, including sessions created before a permission
+change. Login-time Redis metadata is not the authorization source. Session
+summary reads never rewrite encrypted tokens held by a concurrent refresh.
+
 For violation list and detail responses, the BFF rewrites `image_url` and
 `thumbnail_url` to `/bff/violations/...`. This keeps evidence requests on the
 same cookie-authenticated route instead of exposing the violation service's
@@ -79,3 +85,9 @@ Web clients keep renewal requests on the BFF path even if a Native-form
 
 Keeping BFF code in this package preserves a clear security boundary without
 adding another process, database pool or deployment unit.
+
+OIDC token exchange classifies only an explicit `invalid_grant` rejection with
+HTTP 400/401/403 as a permanent grant failure. Throttling remains HTTP 429;
+transport, server, malformed-response and client-configuration failures return
+503. Temporary failures preserve the session and propagate `Retry-After` when
+present. Token persistence still checks refresh ownership and session revision.

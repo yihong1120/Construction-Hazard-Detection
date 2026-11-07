@@ -135,7 +135,9 @@ player after a successful renewal.
 
 The older Web/Native public media-session APIs have been removed. Flutter no
 longer creates a Cookie or Bearer media session before playback. Wall scopes
-are limited to 24 unique cameras and never accept wildcards.
+accept at most 16 unique cameras in an explicit `cameras` list and never accept
+wildcards. Omitting the list selects site defaults subject to upstream quotas;
+the internal streaming-service limit does not increase the explicit-list limit.
 Only configurations with `recognition_enabled` enabled are returned to
 live-view clients.
 

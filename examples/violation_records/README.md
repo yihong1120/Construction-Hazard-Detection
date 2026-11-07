@@ -90,3 +90,25 @@ no longer exist.
   retention window.
 - If disk use approaches the host limit, reduce retention or export records
   before deleting them.
+
+Evidence reception counts bytes while streaming and verifies the image header,
+dimensions and decodability in a bounded native pool before publication.
+`VIOLATION_IMAGE_MAX_UPLOAD_BYTES` defaults to 20 MiB and
+`VIOLATION_IMAGE_MAX_PIXELS` to 67,108,864 pixels; size violations return 413,
+invalid image content returns 400 and invalid metadata returns 422. The pool has
+two workers and eight admitted jobs; exhaustion returns 503 `IMAGE_WORK_BUSY`.
+Warnings, detections and polygons are validated together and passed internally
+as one metadata object.
+
+PNG and JPEG are accepted, matching the protected original-media endpoint.
+Original image bytes are retained. New filenames use the verified format's
+extension; the recovery journal is updated before publishing a changed path.
+Existing evidence paths remain readable and no SQL migration is required.
+Historical detection IDs retain their original row positions when invalid rows
+are skipped, so existing feedback continues to address the same detection.
+
+Thumbnails use a temporary file and atomic replacement, share concurrent work
+for the same source, and use the full source filename as the cache key (for
+example `image.png.jpg`). Old cache files are unused and can be removed through
+normal cache maintenance. Evidence decoding and thumbnail generation share the
+bounded image pool, which is drained during application shutdown.

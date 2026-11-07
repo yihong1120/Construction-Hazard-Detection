@@ -24,6 +24,23 @@
 - `schemas/`：Pydantic request 與 response models。
 - `services/`：async SQLAlchemy service layer。
 
+Open WebUI 帳號橋接分成 `schemas/openwebui.py`（資料格式）、
+`openwebui_deps.py`（OIDC 身分與管理員驗證）、
+`services/openwebui_services.py`（跨應用帳號同步）及
+`routers/openwebui.py`（HTTP 路由）。一般使用者管理與 Open WebUI
+共用 `services/user_action_services.py` 的帳號異動流程，服務不直接呼叫 router。
+
+串流設定沿用 `schemas/stream_config.py` 的資料格式。
+`routers/streams.py` 負責 HTTP 路由與回應標頭；
+`services/stream_management_services.py` 負責工地／群組範圍、模型選項、
+配額檢查及批次更新交易；`services/stream_config_services.py` 保留資料存取
+與回應資料組裝。API 路徑及 request／response 格式保持不變。
+
+網站 IP 管理使用 `schemas/website_access.py` 定義資料格式，
+`website_access_models.py` 定義資料表，`services/website_access.py` 處理
+白名單變更、稽核查詢與 Nginx 套用狀態判讀；
+`routers/website_access.py` 處理 HTTP 路由、管理員驗證與來源 IP 擷取。
+
 ## 執行
 
 從 repo 根目錄：
@@ -161,7 +178,9 @@ media capability 的 TTL，`hls_url` 與 `items[*].preview_hls_url` 不會改變
 續租成功後不可重建播放器。
 
 舊的 Web/Native media-session 公開 API 已移除；Flutter 不需要先建立 Cookie
-或 Bearer media session。多鏡頭牆最多 24 個不重複鏡頭，不支援 wildcard。
+或 Bearer media session。公開播放 facade 的明確 `cameras` 清單最多 16 個
+不重複鏡頭，不支援 wildcard。省略清單時使用站點預設選擇，另受上游額度限制；
+內部 streaming service 的批次上限不會提高明確清單的 request 長度限制。
 即時影像只會回傳已開啟 `recognition_enabled` 的設定。
 
 ```dotenv
@@ -203,3 +222,10 @@ database stream_configs -> main.py -> src/stream_processor.py
 `/list_stream_configs`、`/auth/verify-email`、`/auth/resend-verification` 已移除。
 Email 驗證與郵件發送由 Keycloak realm 管理；啟用此流程前應設定 SMTP 與驗證政策。
 移除本機驗證不會自動啟用既有帳號。
+
+## 網站 IP 存取管理
+
+全站管理員可透過 `/admin/website-access` 管理主網站、AI、Wiki 各自的
+IPv4／IPv6 白名單、名稱、啟用狀態及變更紀錄。網站政策與工地資料分開。
+API、版本衝突、防止鎖定管理員，以及 Nginx 同步與部署步驟請見
+[網站存取管理](../../deploy/website_access/README.md)。

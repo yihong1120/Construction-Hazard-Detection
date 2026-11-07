@@ -60,7 +60,8 @@ To set up the development environment:
 2. **Install the locked development environment**:
 
    ```bash
-   uv sync --locked --all-extras --extra dev --no-extra yolo-gpu
+   # Activate a Python 3.15 environment first.
+   python deploy/python315/bootstrap.py --cpu-only
    ```
 
 3. **Install pre-commit hooks**:
@@ -76,7 +77,7 @@ To set up the development environment:
 5. **Run the tests**:
 
    ```bash
-   uv run pytest
+   python -m pytest tests/
    ```
 
 ## Submitting Changes
@@ -140,3 +141,29 @@ Thank you for considering contributing to Construction-Hazard-Detection! Your he
 For any questions or additional support, feel free to reach out to [contact email].
 
 Happy coding!
+
+Configuration belongs in typed domain models derived from `EnvironmentSettings`.
+Business modules must not add direct `os.getenv()` reads or generic environment
+wrappers. Resource owners load settings at construction or first use and retain
+them; preserve explicit parameter priority with `from_overrides()`. Tests set
+the environment before creating an owner. See
+[configuration ownership](../src/settings/README.md) and the architecture guard
+in `tests/src/configuration_contract_test.py`.
+
+Business workflows and resource cleanup belong on their existing owner or a
+small operation object. Redis transaction operations retain the validated
+request/session and stable identifiers across WATCH retries; create a fresh
+operation for each request. Dispatcher runs own their clients, queue membership
+and worker tasks together. Keep cancellation shielding and commit ownership
+at the same boundaries when extracting a closure.
+
+Repository Python, including tests, must not define functions, async functions
+or classes inside another function. Use named callables instead of lambdas,
+including default factories and decorator arguments. Prefer module-level
+helpers, owner methods, partial/partialmethod and standard-library callable
+adapters. Keep per-operation cancellation flags,
+semaphores and identifiers on explicit owners, and avoid long forwarded argument
+lists. The AST guard in tests/source_structure_test.py covers main.py, src/,
+examples/, scripts/, deployment tools and tests, including fixtures and test
+doubles. Test callbacks use module helpers or explicit per-test state owners;
+use partialmethod when a replacement must bind the patched class instance.

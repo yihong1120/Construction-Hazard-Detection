@@ -149,3 +149,11 @@ secret、firewall rules 與較窄的 relay port range 保護 coturn。
 ```bash
 pytest tests/examples/streaming_web -q
 ```
+
+Overlay 語言設定由 `OverlayLanguagePolicy` 共用：
+`MEDIA_OVERLAY_ALLOWED_LANGUAGES` 與 `MEDIA_DEFAULT_OVERLAY_LANGUAGE` 都會將
+`zh`、`zh_Hant`、`en-US` 等已知別名轉為標準代碼，並移除重複項目。
+空清單、未知語言與不在允許清單中的預設語言會被拒絕，避免 API 與 producer
+採用不同設定。串流服務啟動時驗證，producer 在每路串流的生命週期內保留
+同一份不可變政策；修改環境設定後須重啟相關服務與串流。
+此政策不更動來源、發布或預覽 FPS。
