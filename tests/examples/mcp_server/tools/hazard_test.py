@@ -23,7 +23,7 @@ class DetectViolationsListInputTests(unittest.IsolatedAsyncioTestCase):
         fake_poles: list[list[list[float]]] = [[[2.0, 2.0], [3.0, 3.0]]]
 
         with patch(
-            'src.danger_detector.DangerDetector',
+            'examples.mcp_server.tools.hazard.DangerDetector',
         ) as mock_dd:
             inst = mock_dd.return_value
             inst.detect_danger.return_value = (
@@ -64,7 +64,7 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
         expected: list[list[float]] = [[1.0, 2.0, 3.0, 4.0, 0.95, 5.0]]
 
         with patch(
-            'src.danger_detector.DangerDetector',
+            'examples.mcp_server.tools.hazard.DangerDetector',
         ) as mock_dd:
             inst = mock_dd.return_value
             inst.detect_danger.return_value = ({}, [], [])
@@ -89,7 +89,7 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
         expected: list[list[float]] = [[10.0, 20.0, 30.0, 40.0, 0.88, 7.0]]
 
         with patch(
-            'src.danger_detector.DangerDetector',
+            'examples.mcp_server.tools.hazard.DangerDetector',
         ) as mock_dd:
             inst = mock_dd.return_value
             inst.detect_danger.return_value = ({}, [], [])
@@ -102,7 +102,7 @@ class DetectViolationsDictInputTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """If underlying detector fails, the exception should propagate."""
         with patch(
-            'src.danger_detector.DangerDetector',
+            'examples.mcp_server.tools.hazard.DangerDetector',
         ) as mock_dd:
             inst = mock_dd.return_value
             inst.detect_danger.side_effect = RuntimeError('boom')
@@ -119,7 +119,7 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
     async def test_init_detector_default_items(self) -> None:
         """When no detection_items provided, defaults should be used."""
         with patch(
-            'src.danger_detector.DangerDetector',
+            'examples.mcp_server.tools.hazard.DangerDetector',
         ) as mock_dd:
             tool = HazardTools()
             await tool._init_detector(None)
@@ -143,7 +143,7 @@ class InitDetectorTests(unittest.IsolatedAsyncioTestCase):
         """Detector should be created with user-provided detection_items."""
         custom = {'detect_in_restricted_area': False, 'custom_flag': True}
         with patch(
-            'src.danger_detector.DangerDetector',
+            'examples.mcp_server.tools.hazard.DangerDetector',
         ) as mock_dd:
             tool = HazardTools()
             await tool._init_detector(custom)
@@ -177,7 +177,7 @@ def test_dictionary_aliases_and_tracked_rows():
 
 @pytest.mark.anyio
 async def test_changed_hazard_flags_rebuild_detector():
-    with patch('src.danger_detector.DangerDetector') as factory:
+    with patch('examples.mcp_server.tools.hazard.DangerDetector') as factory:
         factory.return_value.detect_danger.return_value = ({}, [], [])
         tool = HazardTools()
         await tool.detect_violations([], {'detect_in_restricted_area': True})

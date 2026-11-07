@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import sys
-from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 import pytest
+from mcp import Client
 from mcp import ClientSession
 from mcp import StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.shared.memory import create_connected_server_and_client_session
 
 from examples.mcp_server import main
 
@@ -35,20 +34,21 @@ from examples.mcp_server.main import run_server
 asyncio.run(run_server())
 """
     parameters = StdioServerParameters(
-        command=sys.executable, args=['-c', script],
+        command=sys.executable,
+        args=['-c', script],
         env={
-            'MCP_TRANSPORT': 'invalid-use-stdio',
+            'MCP_TRANSPORT': 'stdio',
             'PYTHON_DOTENV_DISABLED': '1',
         },
         cwd=Path(__file__).resolve().parents[3],
     )
     async with stdio_client(parameters) as (read, write):
         async with ClientSession(
-            read, write, read_timeout_seconds=timedelta(seconds=15),
+            read, write, read_timeout_seconds=15,
         ) as client:
             initialized = await client.initialize()
             assert (
-                initialized.serverInfo.name == 'construction-hazard-detection'
+                initialized.server_info.name == 'construction-hazard-detection'
             )
             listed = await client.list_tools()
             names = {tool.name for tool in listed.tools}
@@ -67,7 +67,7 @@ asyncio.run(run_server())
             } <= names
             assert 'streaming_start_detection' not in names
             upload_schema = next(
-                t.inputSchema
+                t.input_schema
                 for t in listed.tools
                 if t.name == 'record_send_violation'
             )
@@ -84,12 +84,12 @@ asyncio.run(run_server())
                 'utils_calculate_polygon_area',
                 {'polygon_points': [[0, 0], [2, 0], [0, 3]]},
             )
-            assert not result.isError
-            assert result.structuredContent['area'] == 3
+            assert not result.is_error
+            assert result.structured_content['area'] == 3
             rejected = await client.call_tool(
                 'record_send_violation', {'image_base64': 'bad'},
             )
-            assert rejected.isError
+            assert rejected.is_error
 
 
 @pytest.mark.anyio
@@ -102,7 +102,7 @@ async def test_protocol_uses_modern_upload_contract_and_fcm():
         patch.object(main, 'record_tools', records),
         patch.object(main, 'notify_tools', notify),
     ):
-        async with create_connected_server_and_client_session(
+        async with Client(
             main.mcp,
         ) as client:
             result = await client.call_tool(
@@ -117,10 +117,10 @@ async def test_protocol_uses_modern_upload_contract_and_fcm():
                     'model_version': 'v1',
                 },
             )
-            assert not result.isError
-            assert result.structuredContent['record_id'] == '42'
+            assert not result.is_error
+            assert result.structured_content['record_id'] == '42'
             assert (
-                records.send_violation.call_args.kwargs['model_version']
+                records.send_violation.call_args.args[0].model_version
                 == 'v1'
             )
             result = await client.call_tool(
@@ -131,6 +131,6 @@ async def test_protocol_uses_modern_upload_contract_and_fcm():
                     'warnings': {'no_helmet': {}},
                 },
             )
-            assert not result.isError and result.structuredContent['success']
+            assert not result.is_error and result.structured_content['success']
         records.close.assert_awaited_once()
         notify.close.assert_awaited_once()

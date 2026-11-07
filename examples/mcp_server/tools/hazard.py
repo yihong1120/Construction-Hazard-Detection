@@ -4,12 +4,10 @@ import asyncio
 import logging
 import math
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 from examples.mcp_server.schemas import DetectionLikeDict
 from examples.mcp_server.schemas import HazardResponse
-if TYPE_CHECKING:
-    from src.danger_detector import DangerDetector
+lazy from src.danger_detector import DangerDetector
 
 
 class HazardTools:
@@ -128,8 +126,6 @@ class HazardTools:
                 'detect_in_utility_pole_restricted_area': True,
                 'detect_machinery_close_to_pole': True,
             }
-
-        from src.danger_detector import DangerDetector
 
         self._detector = DangerDetector(detection_items)
         self.logger.info('Initialized danger detector')
