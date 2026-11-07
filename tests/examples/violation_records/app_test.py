@@ -15,6 +15,16 @@ from examples.violation_records.app import app
 from examples.violation_records.app import main
 
 
+def _setUpClass_override_jwt() -> JwtAuthorizationCredentials:
+    """Mock implementation of the jwt_access dependency for testing."""
+    return JwtAuthorizationCredentials(
+        subject=cast(
+            AccessTokenSubject,
+            {'username': 'test_user'},
+        ),
+    )
+
+
 class TestViolationRecordsApp(unittest.IsolatedAsyncioTestCase):
     """Collection of test cases for the violation_records FastAPI
     application."""
@@ -28,14 +38,7 @@ class TestViolationRecordsApp(unittest.IsolatedAsyncioTestCase):
         testing."""
         super().setUpClass()
 
-        def override_jwt() -> JwtAuthorizationCredentials:
-            """Mock implementation of the jwt_access dependency for testing."""
-            return JwtAuthorizationCredentials(
-                subject=cast(
-                    AccessTokenSubject,
-                    {'username': 'test_user'},
-                ),
-            )
+        override_jwt = _setUpClass_override_jwt
 
         # Override the jwt_access dependency with a mock implementation.
         app.dependency_overrides[jwt_access] = override_jwt

@@ -11,7 +11,6 @@ class SettingsStaticDirTest(unittest.TestCase):
     """Tests for SettingsStaticDirTest."""
 
     def test_static_dir_is_path_and_default(self) -> None:
-        """Exercise this test."""
         from examples.violation_records import settings
 
         # Should exist and be a Path
@@ -26,7 +25,6 @@ class SettingsStaticDirTest(unittest.TestCase):
         self,
     ) -> None:
         # Prepare a temporary directory to serve as STATIC_DIR
-        """Exercise this test."""
         from examples.violation_records import settings
 
         original_static = settings.STATIC_DIR

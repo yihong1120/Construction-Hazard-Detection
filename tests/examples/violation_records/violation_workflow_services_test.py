@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 from datetime import timezone
+from functools import partial
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
@@ -22,6 +23,42 @@ from examples.violation_records.schemas import ViolationFeedbackCreate
 from examples.violation_records.schemas import ViolationItem
 from examples.violation_records.schemas import ViolationListItem
 from examples.violation_records.schemas import ViolationReviewUpdate
+from examples.violation_records.violation_queries import ViolationFilters
+
+
+def _sites_and_filter_options_map_all():
+    return [(12, 'Camera A')]
+
+
+def _get_violations_builds_a_keyset_all(timestamp, /):
+    return [
+        (
+            5,
+            'Site A',
+            'Camera A',
+            timestamp,
+            '5.jpg',
+            None,
+            False,
+            None,
+            None,
+        ),
+        (
+            4,
+            'Site A',
+            'Camera A',
+            timestamp,
+            '4.jpg',
+            None,
+            False,
+            None,
+            None,
+        ),
+    ]
+
+
+def _submit_feedback_flags_the_violation_make_setattr(feedback):
+    return setattr(feedback, 'id', 21)
 
 
 def _credentials() -> JwtAuthorizationCredentials:
@@ -80,7 +117,7 @@ class TestViolationQueryService(unittest.IsolatedAsyncioTestCase):
         ]
         site = SimpleNamespace(id=1, name='Site A')
         user = SimpleNamespace(role='super_admin', group_id=None)
-        camera_result = SimpleNamespace(all=lambda: [(12, 'Camera A')])
+        camera_result = SimpleNamespace(all=_sites_and_filter_options_map_all)
         db = SimpleNamespace(
             scalar=AsyncMock(return_value=site),
             execute=AsyncMock(return_value=camera_result),
@@ -121,7 +158,7 @@ class TestViolationQueryService(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """The initial filter state exposes cameras from accessible sites."""
         user = SimpleNamespace(role='super_admin', group_id=None)
-        camera_result = SimpleNamespace(all=lambda: [(12, 'Camera A')])
+        camera_result = SimpleNamespace(all=_sites_and_filter_options_map_all)
         db = SimpleNamespace(
             scalar=AsyncMock(),
             execute=AsyncMock(return_value=camera_result),
@@ -162,47 +199,26 @@ class TestViolationQueryService(unittest.IsolatedAsyncioTestCase):
             thumbnail_url='https://api.example.test/thumbnail/4',
         )
         result = SimpleNamespace(
-            all=lambda: [
-                (
-                    5,
-                    'Site A',
-                    'Camera A',
-                    timestamp,
-                    '5.jpg',
-                    None,
-                    False,
-                    None,
-                    None,
-                ),
-                (
-                    4,
-                    'Site A',
-                    'Camera A',
-                    timestamp,
-                    '4.jpg',
-                    None,
-                    False,
-                    None,
-                    None,
-                ),
-            ],
+            all=partial(_get_violations_builds_a_keyset_all, timestamp),
         )
         db = SimpleNamespace(execute=AsyncMock(return_value=result))
 
         with (
             patch.object(
                 violation_query_service,
-                '_violation_site_names',
-                new=AsyncMock(return_value=['Site A']),
+                'load_violation_scope',
+                new=AsyncMock(
+                    return_value=SimpleNamespace(site_names=['Site A']),
+                ),
             ),
             patch.object(
                 violation_query_service,
-                '_build_violation_conditions',
+                'build_violation_conditions',
                 new=AsyncMock(return_value=[Violation.id == 5]),
             ),
             patch.object(
                 violation_query_service,
-                '_violation_to_list_item',
+                'violation_to_list_item',
                 side_effect=[first, second],
             ),
         ):
@@ -211,6 +227,7 @@ class TestViolationQueryService(unittest.IsolatedAsyncioTestCase):
                 cast(AsyncSession, db),
                 _credentials(),
                 limit=1,
+                filters=ViolationFilters(),
             )
 
         self.assertTrue(page.has_more)
@@ -224,7 +241,9 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         scope = patch.object(
-            violation_review_service, 'authorize_violation', AsyncMock(),
+            violation_review_service,
+            'authorize_violation',
+            AsyncMock(),
         )
         scope.start()
         self.addCleanup(scope.stop)
@@ -256,7 +275,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
             add=MagicMock(),
             commit=AsyncMock(),
             refresh=AsyncMock(
-                side_effect=lambda feedback: setattr(feedback, 'id', 21),
+                side_effect=_submit_feedback_flags_the_violation_make_setattr,
             ),
             rollback=AsyncMock(),
         )
@@ -317,7 +336,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 violation_review_service,
-                '_load_review_scope',
+                'load_review_scope',
                 new=AsyncMock(return_value=(reviewer, ['Site A'])),
             ),
             patch.object(
@@ -327,7 +346,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 violation_review_service,
-                '_violation_to_detail_item',
+                'violation_to_detail_item',
                 return_value=_detail_item(),
             ),
         ):
@@ -373,27 +392,27 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 violation_review_service,
-                '_load_review_scope',
+                'load_review_scope',
                 new=AsyncMock(return_value=(reviewer, ['Site A'])),
             ),
             patch.object(
                 violation_review_service,
-                '_load_review_audit_logs',
+                'load_review_audit_logs',
                 new=AsyncMock(return_value=[]),
             ) as load_audit,
             patch.object(
                 violation_review_service,
-                '_load_violation_feedbacks',
+                'load_violation_feedbacks',
                 new=AsyncMock(return_value=[]),
             ),
             patch.object(
                 violation_review_service,
-                '_violation_to_detail_item',
+                'violation_to_detail_item',
                 return_value=detail,
             ),
             patch.object(
                 violation_review_service,
-                '_overlay_objects_from_feedback',
+                'overlay_objects_from_feedback',
                 return_value=[],
             ),
             patch.object(
@@ -462,7 +481,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             violation_review_service,
-            '_load_review_scope',
+            'load_review_scope',
             new=AsyncMock(return_value=(reviewer, ['Site A'])),
         ):
             with self.assertRaises(HTTPException) as unflagged_error:
@@ -493,7 +512,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             violation_review_service,
-            '_load_review_scope',
+            'load_review_scope',
             new=AsyncMock(return_value=(reviewer, ['Site A'])),
         ):
             with self.assertRaises(HTTPException) as missing:
@@ -536,7 +555,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             violation_review_service,
-            '_load_review_scope',
+            'load_review_scope',
             new=AsyncMock(return_value=(reviewer, [])),
         ):
             no_pending = (
@@ -550,7 +569,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             violation_review_service,
-            '_load_review_scope',
+            'load_review_scope',
             new=AsyncMock(return_value=(reviewer, ['Site A'])),
         ):
             db.scalar = AsyncMock(side_effect=['Site A', None])
@@ -567,7 +586,7 @@ class TestViolationReviewService(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             violation_review_service,
-            '_load_review_scope',
+            'load_review_scope',
             new=AsyncMock(return_value=(reviewer, ['Site A'])),
         ):
             db.scalar = AsyncMock(return_value=None)

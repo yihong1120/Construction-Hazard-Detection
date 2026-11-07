@@ -4,9 +4,11 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from examples.auth.models import Site
+from examples.auth.models import User
 from examples.auth.models import Violation
 from examples.db_management.services.site_access import require_site
 from examples.YOLO_server_api.model_registry import ModelClass
+from examples.YOLO_server_api.model_registry import revision_for
 from examples.YOLO_server_api.model_registry import unavailable
 
 
@@ -24,9 +26,11 @@ async def require_violation(db, user, violation_id: int, *, lock=False):
 
 
 async def authorize_violation(db, user, violation):
-    site_id = await db.scalar(
-        select(Site.id).where(Site.name == violation.site),
-    )
+    site_id = getattr(violation, 'site_id', None)
+    if site_id is None:
+        site_id = await db.scalar(
+            select(Site.id).where(Site.name == violation.site),
+        )
     if site_id is None:
         raise HTTPException(403, detail='No access to violation site')
     await require_site(db, user, site_id)
@@ -61,10 +65,13 @@ def review_actions(user, violation) -> list[str]:
 
 
 async def record_options(
-    db, user, violation_id: int, kind: str, locale: str = 'zh-TW',
+    db,
+    user,
+    violation_id: int,
+    kind: str,
+    locale: str = 'zh-TW',
 ) -> dict:
     """Build record-owned options for the violation API routes."""
-    from examples.YOLO_server_api.model_registry import revision_for
 
     violation = await require_violation(db, user, violation_id)
     if kind == 'feedback':
@@ -110,9 +117,12 @@ async def record_options(
 
 
 async def authenticated_record_options(
-    db, credentials, violation_id, kind, locale,
+    db,
+    credentials,
+    violation_id,
+    kind,
+    locale,
 ):
-    from examples.auth.models import User
 
     user = await db.get(User, credentials.subject['user_id'])
     if user is None or user.status != 'active':

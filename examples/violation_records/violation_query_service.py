@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import cast as type_cast
 
 from fastapi import HTTPException
@@ -18,22 +17,22 @@ from examples.violation_records.schemas import SiteOut
 from examples.violation_records.schemas import ViolationFilterCamera
 from examples.violation_records.schemas import ViolationFilterOptions
 from examples.violation_records.schemas import ViolationList
-from examples.violation_records.schemas import ViolationReviewStatus
 from examples.violation_records.schemas import ViolationTypeOption
-from examples.violation_records.violation_services import (
-    _build_violation_conditions,
+from examples.violation_records.violation_projection import (
+    violation_list_columns,
 )
-from examples.violation_records.violation_services import (
-    _encode_violation_cursor,
+from examples.violation_records.violation_projection import ViolationListRow
+from examples.violation_records.violation_queries import (
+    build_violation_conditions,
 )
-from examples.violation_records.violation_services import (
-    _violation_list_columns,
+from examples.violation_records.violation_queries import (
+    encode_violation_cursor,
 )
-from examples.violation_records.violation_services import _violation_site_names
-from examples.violation_records.violation_services import (
-    _violation_to_list_item,
+from examples.violation_records.violation_queries import load_violation_scope
+from examples.violation_records.violation_queries import ViolationFilters
+from examples.violation_records.violation_responses import (
+    violation_to_list_item,
 )
-from examples.violation_records.violation_services import ViolationListRow
 from examples.violation_records.violation_types import (
     VIOLATION_TYPE_DEFINITIONS,
 )
@@ -83,7 +82,8 @@ async def get_violation_filter_options(
     if group_id is not None and user.role != 'super_admin':
         if group_id != user.group_id:
             raise HTTPException(
-                status_code=403, detail='No access to group_id',
+                status_code=403,
+                detail='No access to group_id',
             )
 
     visible_group_id = (
@@ -117,43 +117,21 @@ async def get_violations(
     request: Request,
     db: AsyncSession,
     credentials: JwtAuthorizationCredentials,
-    site_id: int | None = None,
-    stream_id: str | None = None,
-    violation_type: str | None = None,
-    keyword: str | None = None,
-    start_time: datetime | None = None,
-    end_time: datetime | None = None,
+    filters: ViolationFilters,
     limit: int = 20,
-    flagged: bool | None = None,
-    review_status: ViolationReviewStatus | None = None,
-    cursor: str | None = None,
 ) -> ViolationList:
     """Return one compact, keyset-paginated violation list page."""
     username = credentials.subject['username']
-    site_names = await _violation_site_names(
-        username,
-        flagged,
-        review_status,
-        db,
-    )
-    if not site_names:
+    scope = await load_violation_scope(username, filters, db)
+    if not scope.site_names:
         return ViolationList(items=[])
-    conditions = await _build_violation_conditions(
-        username,
-        site_names,
-        site_id,
-        stream_id,
-        violation_type,
-        keyword,
-        start_time,
-        end_time,
-        flagged,
-        review_status,
-        cursor,
+    conditions = await build_violation_conditions(
+        scope,
+        filters,
         db,
     )
     statement = (
-        select(*_violation_list_columns)
+        select(*violation_list_columns)
         .where(and_(*conditions))
         .order_by(Violation.detection_time.desc(), Violation.id.desc())
         .limit(limit + 1)
@@ -162,14 +140,12 @@ async def get_violations(
         type_cast(ViolationListRow, tuple(row))
         for row in (await db.execute(statement)).all()
     ]
-    items = [_violation_to_list_item(row, request) for row in rows[:limit]]
+    items = [violation_to_list_item(row, request) for row in rows[:limit]]
     has_more = len(rows) > limit
     return ViolationList(
         items=items,
         next_cursor=(
-            _encode_violation_cursor(items[-1])
-            if has_more and items
-            else None
+            encode_violation_cursor(items[-1]) if has_more and items else None
         ),
         has_more=has_more,
     )

@@ -7,14 +7,17 @@ from unittest.mock import patch
 import numpy as np
 
 from examples.streaming_web import overlay_renderer as renderer
+from examples.streaming_web.overlay_models import OverlaySnapshot
+from examples.streaming_web.overlay_renderer import OverlayRenderer
 from examples.violation_records.feedback_policy import validate_feedback_label
 from examples.violation_records.record_policy import historical_classes
 from examples.violation_records.schemas import FeedbackDetectionItem
 from examples.violation_records.schemas import ViolationFeedbackCreate
-from examples.violation_records.violation_services import (
-    _overlay_objects_from_feedback,
+from examples.violation_records.violation_responses import (
+    overlay_objects_from_feedback,
 )
-from tests.model_fixtures import CLASSES
+from src.settings.media import OverlaySettings
+from tests.model_fixtures_test import CLASSES
 
 
 class OverlayVisibilityTest(TestCase):
@@ -25,12 +28,17 @@ class OverlayVisibilityTest(TestCase):
         metadata = [c.model_dump() for c in historical_classes(record)]
         detections = [
             FeedbackDetectionItem(
-                id=f'det_{i}', label=code, bbox=[0, 0, 0.5, 0.5],
+                id=f'det_{i}',
+                label=code,
+                bbox=[0, 0, 0.5, 0.5],
             )
             for i, code in enumerate(('safety_cone', 'person', 'class-99'))
         ]
-        objects = _overlay_objects_from_feedback(
-            detections, [], None, metadata,
+        objects = overlay_objects_from_feedback(
+            detections,
+            [],
+            None,
+            metadata,
         )
         self.assertEqual(len(objects), 3)
         cone = objects[0]
@@ -64,24 +72,30 @@ class OverlayVisibilityTest(TestCase):
         ):
             frame = np.zeros((100, 100, 3), dtype=np.uint8)
             with patch.object(renderer, '_draw_label') as draw_label:
-                renderer.render_overlay_array(
-                    frame,
-                    [[10, 10, 40, 70, 0.9, 6, 1]],
-                    {},
-                    [],
-                    [],
-                    class_metadata=metadata,
+                frame = OverlayRenderer(OverlaySettings()).render(
+                    OverlaySnapshot(
+                        sequence=(0, 0),
+                        frame=frame,
+                        track_data=[[10, 10, 40, 70, 0.9, 6, 1]],
+                        warnings={},
+                        cone_polys=[],
+                        pole_polys=[],
+                        class_metadata=metadata,
+                    ),
                 )
             self.assertFalse(frame.any())
             draw_label.assert_not_called()
 
     def test_regions_still_render_without_individual_cone_boxes(self):
         frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        renderer.render_overlay_array(
-            frame,
-            [[10, 10, 40, 70, 0.9, 6, 1]],
-            {},
-            [[[10, 10], [80, 10], [80, 80], [10, 10]]],
-            [],
+        frame = OverlayRenderer(OverlaySettings()).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame,
+                track_data=[[10, 10, 40, 70, 0.9, 6, 1]],
+                warnings={},
+                cone_polys=[[[10, 10], [80, 10], [80, 80], [10, 10]]],
+                pole_polys=[],
+            ),
         )
         self.assertTrue(frame.any())

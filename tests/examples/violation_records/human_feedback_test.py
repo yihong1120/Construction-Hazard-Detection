@@ -14,6 +14,10 @@ from examples.violation_records import violation_review_service as service
 from examples.violation_records.schemas import ViolationFeedbackCreate
 
 
+async def _setUp_refresh(row):
+    row.id = 123
+
+
 class HumanFeedbackTest(IsolatedAsyncioTestCase):
     def setUp(self):
         self.record = SimpleNamespace(
@@ -35,8 +39,7 @@ class HumanFeedbackTest(IsolatedAsyncioTestCase):
             subject={'username': 'user', 'user_id': 8, 'tenant_id': 'tenant'},
         )
 
-        async def refresh(row):
-            row.id = 123
+        refresh = _setUp_refresh
 
         self.db = SimpleNamespace(
             scalar=AsyncMock(side_effect=[self.record, 8]),
@@ -74,7 +77,10 @@ class HumanFeedbackTest(IsolatedAsyncioTestCase):
             },
         )
         result = await service.submit_violation_feedback(
-            155176, payload, self.db, self.credentials,
+            155176,
+            payload,
+            self.db,
+            self.credentials,
         )
         row = self.db.add.call_args.args[0]
         self.assertIsNone(row.model_version)
@@ -97,7 +103,10 @@ class HumanFeedbackTest(IsolatedAsyncioTestCase):
         self.record.model_classes = []
         with self.assertRaises(HTTPException) as raised:
             await service.submit_violation_feedback(
-                155176, payload, self.db, self.credentials,
+                155176,
+                payload,
+                self.db,
+                self.credentials,
             )
         self.assertEqual(raised.exception.status_code, 422)
         self.db.add.assert_not_called()
@@ -112,7 +121,10 @@ class HumanFeedbackTest(IsolatedAsyncioTestCase):
         )
         with self.assertRaises(HTTPException) as raised:
             await service.submit_violation_feedback(
-                155176, payload, self.db, self.credentials,
+                155176,
+                payload,
+                self.db,
+                self.credentials,
             )
         self.assertEqual(raised.exception.status_code, 403)
         self.db.commit.assert_not_awaited()
@@ -124,7 +136,10 @@ class HumanFeedbackTest(IsolatedAsyncioTestCase):
             AsyncMock(return_value=self.record),
         ):
             before = await record_policy.record_options(
-                None, self.user, 155176, 'feedback',
+                None,
+                self.user,
+                155176,
+                'feedback',
             )
             # Current catalog changes must not be read for this record.
             from examples.shared import class_colors
@@ -136,12 +151,16 @@ class HumanFeedbackTest(IsolatedAsyncioTestCase):
                     '#FF9800',
                 )
                 after = await record_policy.record_options(
-                    None, self.user, 155176, 'feedback',
+                    None,
+                    self.user,
+                    155176,
+                    'feedback',
                 )
         self.assertEqual(before, after)
         self.assertTrue(before['options'])
         self.assertEqual(
-            len({v['id'] for v in before['options']}), len(before['options']),
+            len({v['id'] for v in before['options']}),
+            len(before['options']),
         )
 
     def test_missing_or_invalid_annotation_still_rejected(self):

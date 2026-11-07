@@ -159,7 +159,8 @@ class SearchUtils:
     def _tokenize_cached(self, user_input: str) -> tuple[str, ...]:
         """Keep literal Unicode words and canonical detector codes."""
         return tuple(
-            token for token in re.findall(r'\w+', user_input)
+            token
+            for token in re.findall(r'\w+', user_input)
             if token not in self.english_stop_words
             and token not in self.chinese_stop_words
         )
@@ -192,10 +193,15 @@ class SearchUtils:
                 )
         covered: set[int] = set()
         for start, end, values in sorted(
-            candidates, key=lambda item: (-(item[1] - item[0]), item[0]),
+            candidates,
+            key=_span_priority,
         ):
             positions = set(range(start, end))
             if positions.isdisjoint(covered):
                 results.update(values)
                 covered.update(positions)
         return tuple(sorted(results))
+
+
+def _span_priority(item: tuple[int, int, tuple[str, ...]]) -> tuple[int, int]:
+    return -(item[1] - item[0]), item[0]

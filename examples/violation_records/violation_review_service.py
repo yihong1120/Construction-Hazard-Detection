@@ -33,24 +33,21 @@ from examples.violation_records.schemas import ViolationReviewAuditItem
 from examples.violation_records.schemas import ViolationReviewStatus
 from examples.violation_records.schemas import ViolationReviewUpdate
 from examples.violation_records.settings import STATIC_DIR
-from examples.violation_records.violation_services import (
-    _feedback_detection_ids_from_json,
+from examples.violation_records.site_scope import violation_site_scope
+from examples.violation_records.violation_queries import load_review_audit_logs
+from examples.violation_records.violation_queries import load_review_scope
+from examples.violation_records.violation_queries import (
+    load_violation_feedbacks,
 )
-from examples.violation_records.violation_services import (
-    _feedback_to_response,
+from examples.violation_records.violation_responses import (
+    feedback_detection_ids_from_json,
 )
-from examples.violation_records.violation_services import (
-    _load_review_audit_logs,
+from examples.violation_records.violation_responses import feedback_to_response
+from examples.violation_records.violation_responses import (
+    overlay_objects_from_feedback,
 )
-from examples.violation_records.violation_services import _load_review_scope
-from examples.violation_records.violation_services import (
-    _load_violation_feedbacks,
-)
-from examples.violation_records.violation_services import (
-    _overlay_objects_from_feedback,
-)
-from examples.violation_records.violation_services import (
-    _violation_to_detail_item,
+from examples.violation_records.violation_responses import (
+    violation_to_detail_item,
 )
 
 
@@ -63,7 +60,7 @@ async def get_next_review_violation(
     current_id: int | None = None,
 ) -> ViolationItem | None:
     """Return the oldest reviewable flagged violation in the user's scope."""
-    _, site_names = await _load_review_scope(
+    _, site_names = await load_review_scope(
         credentials.subject['username'],
         db,
     )
@@ -71,7 +68,7 @@ async def get_next_review_violation(
         return None
 
     conditions = [
-        Violation.site.in_(site_names),
+        violation_site_scope(site_names),
         Violation.is_flagged.is_(True),
         Violation.review_status == review_status,
     ]
@@ -83,7 +80,7 @@ async def get_next_review_violation(
         )
         if site_name not in set(site_names):
             raise HTTPException(status_code=403, detail='No access to site_id')
-        conditions.append(Violation.site == site_name)
+        conditions.append(violation_site_scope([site_name]))
 
     violation = await db.scalar(
         select(Violation)
@@ -106,14 +103,14 @@ async def get_violation_review_audit_log(
     credentials: JwtAuthorizationCredentials,
 ) -> list[ViolationReviewAuditItem]:
     """Return the review audit timeline for an authorised flagged record."""
-    _, site_names = await _load_review_scope(
+    _, site_names = await load_review_scope(
         credentials.subject['username'],
         db,
     )
     record_id = await db.scalar(
         select(Violation.id).where(
             Violation.id == violation_id,
-            Violation.site.in_(site_names),
+            violation_site_scope(site_names),
             Violation.is_flagged.is_(True),
         ),
     )
@@ -122,7 +119,7 @@ async def get_violation_review_audit_log(
             status_code=403,
             detail='No access to this violation',
         )
-    return await _load_review_audit_logs(db, violation_id)
+    return await load_review_audit_logs(db, violation_id)
 
 
 async def _detail_response(
@@ -132,32 +129,36 @@ async def _detail_response(
     include_audit: bool,
 ) -> ViolationItem:
     """Build a detail response after the record has been authorised."""
-    feedbacks = await _load_violation_feedbacks(db, violation.id)
+    feedbacks = await load_violation_feedbacks(db, violation.id)
     feedback_note = next(
         (feedback.note for feedback in feedbacks if feedback.note),
         None,
     )
-    item = _violation_to_detail_item(violation, request, feedback_note)
+    item = violation_to_detail_item(violation, request, feedback_note)
     item.feedbacks = feedbacks
     image_size = await image_size_for_violation(
-        violation.image_path, STATIC_DIR,
+        violation.image_path,
+        STATIC_DIR,
     )
     if image_size:
         item.image_size = OverlayImageSize(
-            width=image_size[0], height=image_size[1],
+            width=image_size[0],
+            height=image_size[1],
         )
     regions, item.region_status = stored_regions(
-        violation, image_size, item.overlay_style,
+        violation,
+        image_size,
+        item.overlay_style,
     )
     item.overlay_regions = [OverlayRegion.model_validate(r) for r in regions]
-    item.overlay_objects = _overlay_objects_from_feedback(
+    item.overlay_objects = overlay_objects_from_feedback(
         item.detections,
         feedbacks,
         image_size,
         class_metadata=item.class_metadata,
     )
     if include_audit and violation.is_flagged:
-        item.review_audit_logs = await _load_review_audit_logs(
+        item.review_audit_logs = await load_review_audit_logs(
             db,
             violation.id,
         )
@@ -178,7 +179,7 @@ async def get_single_violation(
     violation = await db.scalar(
         select(Violation).where(
             Violation.id == violation_id,
-            Violation.site.in_(site_names),
+            violation_site_scope(site_names),
         ),
     )
     if violation is None:
@@ -207,7 +208,7 @@ async def submit_violation_feedback(
         .execution_options(populate_existing=True)
         .where(
             Violation.id == violation_id,
-            Violation.site.in_(site_names),
+            violation_site_scope(site_names),
         ),
     )
     if violation is None:
@@ -225,7 +226,7 @@ async def submit_violation_feedback(
     # Recheck the locked record snapshot on every submission.
     validate_feedback_label(payload, violation)
 
-    detection_ids = _feedback_detection_ids_from_json(
+    detection_ids = feedback_detection_ids_from_json(
         violation.detections_json,
     )
     if (
@@ -272,7 +273,7 @@ async def submit_violation_feedback(
             detail='Failed to create violation feedback',
         ) from exc
     await db.refresh(feedback)
-    return _feedback_to_response(feedback)
+    return feedback_to_response(feedback)
 
 
 async def review_violation(
@@ -283,7 +284,7 @@ async def review_violation(
     credentials: JwtAuthorizationCredentials,
 ) -> ViolationItem:
     """Record an administrator's review decision and immutable audit event."""
-    reviewer, site_names = await _load_review_scope(
+    reviewer, site_names = await load_review_scope(
         credentials.subject['username'],
         db,
     )
@@ -293,7 +294,7 @@ async def review_violation(
         .execution_options(populate_existing=True)
         .where(
             Violation.id == violation_id,
-            Violation.site.in_(site_names),
+            violation_site_scope(site_names),
         ),
     )
     if violation is None:
@@ -312,7 +313,8 @@ async def review_violation(
     await authorize_violation(db, reviewer, violation)
     if payload.review_status not in review_actions(reviewer, violation):
         raise HTTPException(
-            403, detail='Review transition is not currently allowed',
+            403,
+            detail='Review transition is not currently allowed',
         )
 
     reviewed_at = datetime.now(timezone.utc)
@@ -342,4 +344,4 @@ async def review_violation(
             detail='Failed to update violation review',
         ) from exc
     await db.refresh(violation)
-    return _violation_to_detail_item(violation, request)
+    return violation_to_detail_item(violation, request)

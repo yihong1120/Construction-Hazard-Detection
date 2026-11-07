@@ -1,4 +1,3 @@
-"""Validate human annotations against the original record snapshot."""
 from __future__ import annotations
 
 from fastapi import HTTPException

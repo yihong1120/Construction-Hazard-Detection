@@ -18,11 +18,11 @@ from sqlalchemy import Table
 
 from examples.auth.models import Violation
 from examples.violation_records.schemas import ViolationListItem
-from examples.violation_records.violation_services import (
-    _encode_violation_cursor,
+from examples.violation_records.violation_queries import (
+    encode_violation_cursor,
 )
-from examples.violation_records.violation_services import (
-    _violation_cursor_condition,
+from examples.violation_records.violation_queries import (
+    violation_cursor_condition,
 )
 
 
@@ -34,7 +34,8 @@ class TestViolationPagination(unittest.TestCase):
         engine = create_engine('sqlite://')
         metadata = MetaData()
         table = Table(
-            'violations', metadata,
+            'violations',
+            metadata,
             Column('id', Integer, primary_key=True),
             Column('detection_time', DateTime, nullable=False),
             Column('site', String, nullable=False),
@@ -52,10 +53,15 @@ class TestViolationPagination(unittest.TestCase):
         try:
             with engine.begin() as connection:
                 connection.execute(table.insert(), rows)
-                base = select(Violation.id, Violation.detection_time).where(
-                    Violation.site == 'visible',
-                ).order_by(
-                    Violation.detection_time.desc(), Violation.id.desc(),
+                base = (
+                    select(Violation.id, Violation.detection_time)
+                    .where(
+                        Violation.site == 'visible',
+                    )
+                    .order_by(
+                        Violation.detection_time.desc(),
+                        Violation.id.desc(),
+                    )
                 )
                 expected = list(connection.execute(base).all())
                 actual = []
@@ -64,7 +70,7 @@ class TestViolationPagination(unittest.TestCase):
                     statement = base.limit(3)
                     if cursor is not None:
                         statement = statement.where(
-                            _violation_cursor_condition(cursor),
+                            violation_cursor_condition(cursor),
                         )
                     page = list(connection.execute(statement).all())
                     if not page:
@@ -78,7 +84,7 @@ class TestViolationPagination(unittest.TestCase):
                         stream_name='camera',
                         thumbnail_url='https://example.test/thumbnail',
                     )
-                    cursor = _encode_violation_cursor(item)
+                    cursor = encode_violation_cursor(item)
                     # Verify equivalence to the previous predicate at every
                     # boundary, including ties and a deleted cursor row.
                     previous = or_(
@@ -92,7 +98,7 @@ class TestViolationPagination(unittest.TestCase):
                         connection.execute(base.where(previous)).all(),
                         connection.execute(
                             base.where(
-                                _violation_cursor_condition(cursor),
+                                violation_cursor_condition(cursor),
                             ),
                         ).all(),
                     )

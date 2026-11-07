@@ -1,9 +1,9 @@
-"""Build the single-trip analytics query and assemble its public response."""
 from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import datetime
 from datetime import timedelta
+from operator import attrgetter
 from typing import cast as type_cast
 from typing import Literal
 
@@ -13,6 +13,7 @@ from sqlalchemy import cast
 from sqlalchemy import func
 from sqlalchemy import Integer
 from sqlalchemy import literal
+from sqlalchemy import or_
 from sqlalchemy import select
 from sqlalchemy import String
 from sqlalchemy import union_all
@@ -55,6 +56,7 @@ def build_analytics_query(
     filtered = (
         select(
             Violation.site.label('site'),
+            Violation.site_id.label('site_id'),
             Violation.detection_time.label('detection_time'),
             Violation.violation_type_codes.label('violation_type_codes'),
         )
@@ -113,7 +115,18 @@ def build_analytics_query(
             func.count().label('count'),
             zero.label('today'),
         )
-        .select_from(filtered.join(Site, filtered.c.site == Site.name))
+        .select_from(
+            filtered.join(
+                Site,
+                or_(
+                    filtered.c.site_id == Site.id,
+                    and_(
+                        filtered.c.site_id.is_(None),
+                        filtered.c.site == Site.name,
+                    ),
+                ),
+            ),
+        )
         .group_by(Site.id, Site.name),
         select(
             literal('hour').label('kind'),
@@ -211,10 +224,10 @@ def analytics_response(
             summary=ViolationAnalyticsSummary(total=0, today=0),
         )
 
-    trend.sort(key=lambda item: item.bucket)
-    by_site.sort(key=lambda item: (-item.count, item.site_id))
-    by_hour.sort(key=lambda item: item.hour)
-    by_type.sort(key=lambda item: (-item.count, item.type))
+    trend.sort(key=attrgetter('bucket'))
+    by_site.sort(key=_site_order)
+    by_hour.sort(key=attrgetter('hour'))
+    by_type.sort(key=_type_order)
     top_site = (
         ViolationAnalyticsTopSite(**by_site[0].model_dump())
         if by_site
@@ -238,3 +251,11 @@ def analytics_response(
         by_site=by_site,
         by_hour=by_hour,
     )
+
+
+def _site_order(item: ViolationAnalyticsSiteItem) -> tuple[int, int]:
+    return -item.count, item.site_id
+
+
+def _type_order(item: ViolationAnalyticsTypeItem) -> tuple[int, str]:
+    return -item.count, item.type

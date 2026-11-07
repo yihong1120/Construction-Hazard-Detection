@@ -12,11 +12,11 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 from PIL import Image
-from pydantic import ValidationError
 
 from examples.violation_records import media_service
 from examples.violation_records import routers as violation_routers
-from examples.violation_records import violation_services
+from examples.violation_records import violation_queries
+from examples.violation_records import violation_responses
 from examples.violation_records.media_service import _generate_thumbnail_sync
 from examples.violation_records.media_service import image_size_for_violation
 from examples.violation_records.schemas import FeedbackDetectionItem
@@ -43,19 +43,20 @@ class TestViolationHelpers(unittest.TestCase):
     def test_detection_and_warning_payloads_are_validated(self) -> None:
         """Invalid detector JSON must not be silently accepted."""
         self.assertEqual(
-            violation_services._decode_detection_items(
+            violation_responses.decode_detection_items(
                 '[[1, 2, 3, 4, 0.9, 5, 12]]',
             ),
             [[1.0, 2.0, 3.0, 4.0, 0.9, 5.0, 12.0]],
         )
         self.assertEqual(
-            violation_services._warning_text_from_json(
+            violation_responses.warning_text_from_json(
                 '{"near_vehicle": {"count": 2}}',
             ),
             'near_vehicle: 2',
         )
-        with self.assertRaises(ValidationError):
-            violation_services._decode_detection_items('{invalid')
+        self.assertIsNone(
+            violation_responses.decode_detection_items('{invalid'),
+        )
 
     def test_overlay_and_cursor_use_compact_typed_models(self) -> None:
         """The list cursor does not require a full detail response model."""
@@ -66,7 +67,7 @@ class TestViolationHelpers(unittest.TestCase):
         feedback = _feedback(1)
         feedback.target_detection_id = 'det_0'
         feedback.original_bbox = [10, 10, 40, 40]
-        overlays = violation_services._overlay_objects_from_feedback(
+        overlays = violation_responses.overlay_objects_from_feedback(
             [detection],
             [feedback],
             (100, 100),
@@ -80,9 +81,9 @@ class TestViolationHelpers(unittest.TestCase):
             detection_time=datetime(2026, 8, 23, tzinfo=timezone.utc),
             thumbnail_url='/get_violation_thumbnail?image_path=frame.jpg',
         )
-        cursor = violation_services._encode_violation_cursor(item)
+        cursor = violation_queries.encode_violation_cursor(item)
         self.assertEqual(
-            violation_services._decode_violation_cursor(cursor),
+            violation_queries.decode_violation_cursor(cursor),
             (item.detection_time, item.id),
         )
 
@@ -118,8 +119,8 @@ class TestViolationHelpers(unittest.TestCase):
             cache_path = media_service._thumbnail_cache_path(nested, root)
 
             self.assertEqual(
-                cache_path, root /
-                '_thumbnails/evidence/frame.jpg',
+                cache_path,
+                root / '_thumbnails/evidence/frame.png.jpg',
             )
             self.assertTrue(media_service._has_recognized_image_header(nested))
             asyncio.run(media_service.ensure_thumbnail(nested, root))

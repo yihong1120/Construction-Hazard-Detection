@@ -22,6 +22,10 @@ from examples.violation_records.schemas import ViolationList
 from examples.violation_records.schemas import ViolationListItem
 
 
+def _setUp_make_simplenamespace():
+    return SimpleNamespace()
+
+
 def _credentials() -> JwtAuthorizationCredentials:
     """Return valid credentials for a router delegation test."""
     return JwtAuthorizationCredentials(
@@ -49,7 +53,7 @@ class TestViolationRoutes(unittest.TestCase):
         """
         app = FastAPI()
         app.include_router(router, prefix='/api')
-        app.dependency_overrides[get_db] = lambda: SimpleNamespace()
+        app.dependency_overrides[get_db] = _setUp_make_simplenamespace
         app.dependency_overrides[jwt_access] = _credentials
         self.client = TestClient(app)
         self.paths = {route.path for route in router.routes}
@@ -76,6 +80,7 @@ class TestViolationRoutes(unittest.TestCase):
                     stream_name='Camera A',
                     detection_time=timestamp,
                     thumbnail_url='/get_violation_thumbnail?image_path=a.jpg',
+                    warnings={'warning_no_hardhat': {'count': 2}},
                 ),
             ],
         )
@@ -88,6 +93,10 @@ class TestViolationRoutes(unittest.TestCase):
 
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json()['items'][0]['id'], 1)
+        self.assertEqual(
+            result.json()['items'][0]['warnings'],
+            {'warning_no_hardhat': {'count': 2}},
+        )
         self.assertNotIn('detections', result.json()['items'][0])
         get_violations.assert_awaited_once()
 

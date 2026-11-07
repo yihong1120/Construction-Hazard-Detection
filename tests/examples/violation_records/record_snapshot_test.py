@@ -10,16 +10,18 @@ from examples.violation_records.feedback_policy import validate_feedback_label
 from examples.violation_records.record_policy import historical_classes
 from examples.violation_records.schemas import FeedbackDetectionItem
 from examples.violation_records.schemas import ViolationFeedbackCreate
-from examples.violation_records.violation_services import (
-    _overlay_objects_from_feedback,
+from examples.violation_records.violation_responses import (
+    overlay_objects_from_feedback,
 )
-from tests.model_fixtures import CLASSES
+from tests.model_fixtures_test import CLASSES
 
 
 class RecordSnapshotTest(TestCase):
     def test_snapshot_name_color_and_feedback_use_record_metadata(self):
         record = SimpleNamespace(
-            model_classes=CLASSES, model_id='model', model_version='v1',
+            model_classes=CLASSES,
+            model_id='model',
+            model_version='v1',
         )
         metadata = [c.model_dump() for c in historical_classes(record)]
         self.assertEqual(len(metadata), len(CLASSES))
@@ -28,10 +30,12 @@ class RecordSnapshotTest(TestCase):
                 metadata[number]['color'],
                 '#%02X%02X%02X' % _color_for_class(metadata[number]['code']),
             )
-        items = _overlay_objects_from_feedback(
+        items = overlay_objects_from_feedback(
             [
                 FeedbackDetectionItem(
-                    id='det_0', label='person', bbox=[0, 0, 0.5, 0.5],
+                    id='det_0',
+                    label='person',
+                    bbox=[0, 0, 0.5, 0.5],
                 ),
             ],
             [],
@@ -39,7 +43,8 @@ class RecordSnapshotTest(TestCase):
             metadata,
         )
         self.assertEqual(
-            (items[0].display_name, items[0].color), ('人員', '#FF9800'),
+            (items[0].display_name, items[0].color),
+            ('人員', '#FF9800'),
         )
         validate_feedback_label(
             ViolationFeedbackCreate(
@@ -89,7 +94,9 @@ def test_missing_snapshot_never_uses_a_fixed_class_table():
         with TestCase().assertRaises(HTTPException):
             validate_feedback_label(
                 ViolationFeedbackCreate(
-                    type='false_negative', corrected_label='person',
+                    type='false_negative',
+                    corrected_label='person',
                     corrected_bbox=[0, 0, 10, 10],
-                ), record,
+                ),
+                record,
             )

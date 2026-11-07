@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
-from typing import Annotated
 from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import field_validator
 from pydantic import model_validator
-from pydantic import RootModel
 from pydantic import StrictInt
 
 from examples.shared import overlay_schemas
@@ -18,6 +16,8 @@ from examples.shared.overlay_schemas import NormalizedBBox  # noqa: F401
 from examples.shared.overlay_schemas import OverlayImageSize  # noqa: F401
 from examples.shared.overlay_schemas import OverlayPayload
 from examples.shared.overlay_schemas import OverlayRegion  # noqa: F401
+from src.detection_rows import TrackedDetectionRow
+from src.detection_rows import TrackedDetectionRows
 
 ViolationOverlayObject = overlay_schemas.ViolationOverlayObject
 
@@ -30,15 +30,8 @@ FeedbackType = Literal[
 ]
 FeedbackStatus = Literal['pending', 'reviewed', 'accepted', 'rejected']
 ViolationReviewStatus = Literal['pending', 'resolved', 'dismissed']
-ViolationDetectionRow = Annotated[list[float], Field(min_length=7)]
-
-
-class ViolationDetectionRows(RootModel[list[ViolationDetectionRow]]):
-    """Validate tracked YOLO rows stored with a violation record.
-
-    Attributes:
-        root: Detection rows with at least seven numeric values each.
-    """
+ViolationDetectionRow = TrackedDetectionRow
+ViolationDetectionRows = TrackedDetectionRows
 
 
 class ViolationWarning(BaseModel):
@@ -339,6 +332,7 @@ class ViolationListItem(BaseModel):
         stream_name: Camera that produced the evidence.
         detection_time: Timestamp of the detection.
         thumbnail_url: Protected thumbnail resource URL.
+        warnings: Active detector warning keys and counts for localisation.
         warning_text: Bounded active-warning summary.
         is_flagged: Whether feedback has flagged the record.
         review_status: Optional status for a flagged record.
@@ -353,6 +347,7 @@ class ViolationListItem(BaseModel):
     stream_name: str
     detection_time: datetime
     thumbnail_url: str
+    warnings: dict[str, ViolationWarning] = Field(default_factory=dict)
     warning_text: str | None = None
     is_flagged: bool = False
     review_status: ViolationReviewStatus | None = None

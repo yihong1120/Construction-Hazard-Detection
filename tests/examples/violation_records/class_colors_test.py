@@ -10,23 +10,31 @@ from unittest.mock import patch
 import numpy as np
 
 from examples.streaming_web import overlay_labels
-from examples.streaming_web.overlay_renderer import render_overlay_array
-from examples.violation_records import violation_services as services
+from examples.streaming_web.overlay_models import OverlaySnapshot
+from examples.streaming_web.overlay_renderer import OverlayRenderer
+from examples.violation_records import violation_responses as services
 from examples.violation_records.record_policy import historical_classes
 from examples.YOLO_server_api.model_registry import ModelClass
+from src.settings.media import OverlaySettings
 
 
 class ClassColorsTest(TestCase):
     def test_invalid_optional_colors_do_not_invalidate_classes(self):
         for color in (None, '', '#ABC', '#FFAB47BC', 'red', 123, '#12345Z'):
             item = ModelClass(
-                id=0, code='forklift', display_name='堆高機', color=color,
+                id=0,
+                code='forklift',
+                display_name='堆高機',
+                color=color,
             )
             self.assertEqual(item.color, '#AB47BC')
             self.assertEqual(item.code, 'forklift')
         self.assertEqual(
             ModelClass(
-                id=0, code='forklift', display_name='堆高機', color='#ab47bc',
+                id=0,
+                code='forklift',
+                display_name='堆高機',
+                color='#ab47bc',
             ).color,
             '#AB47BC',
         )
@@ -64,10 +72,12 @@ class ClassColorsTest(TestCase):
             reviewed_at=None,
         )
         with patch.object(
-            services, '_media_endpoint_url', return_value='media',
+            services,
+            'media_endpoint_url',
+            return_value='media',
         ):
-            detail = services._violation_to_detail_item(record, MagicMock())
-            listing = services._violation_to_list_item(
+            detail = services.violation_to_detail_item(record, MagicMock())
+            listing = services.violation_to_list_item(
                 (
                     4,
                     'Site',
@@ -93,51 +103,59 @@ class ClassColorsTest(TestCase):
 
         frame = np.zeros((160, 160, 3), dtype=np.uint8)
         with patch.object(renderer, '_draw_label') as label:
-            render_overlay_array(
-                frame,
-                [[20, 50, 120, 120, 0.9, 0, 1]],
-                {},
-                [],
-                [],
-                class_metadata=[
-                    {
-                        'id': 0,
-                        'code': 'forklift',
-                        'display_name': '堆高機',
-                        'color': '#AB47BC',
-                    },
-                ],
+            frame = OverlayRenderer(OverlaySettings()).render(
+                OverlaySnapshot(
+                    sequence=(0, 0),
+                    frame=frame,
+                    track_data=[[20, 50, 120, 120, 0.9, 0, 1]],
+                    warnings={},
+                    cone_polys=[],
+                    pole_polys=[],
+                    class_metadata=[
+                        {
+                            'id': 0,
+                            'code': 'forklift',
+                            'display_name': '堆高機',
+                            'color': '#AB47BC',
+                        },
+                    ],
+                ),
             )
         detection = label.call_args.args[1]
         self.assertEqual(detection.class_name, 'forklift')
         self.assertEqual(
             overlay_labels._format_label(
-                detection, 'zh-TW',
-            ), '堆高機',
+                detection,
+                'zh-TW',
+            ),
+            '堆高機',
         )
         self.assertEqual(tuple(frame[90, 20]), (188, 71, 171))
 
     def test_warning_overlay_preserves_class_color(self):
         frame = np.zeros((160, 160, 3), dtype=np.uint8)
-        render_overlay_array(
-            frame,
-            [[20, 50, 120, 120, 0.9, 5, 1]],
-            {
-                'warning_close_to_vehicle': {
-                    'count': 1,
-                    'person_bboxes': [[20, 50, 120, 120]],
+        frame = OverlayRenderer(OverlaySettings()).render(
+            OverlaySnapshot(
+                sequence=(0, 0),
+                frame=frame,
+                track_data=[[20, 50, 120, 120, 0.9, 5, 1]],
+                warnings={
+                    'warning_close_to_vehicle': {
+                        'count': 1,
+                        'person_bboxes': [[20, 50, 120, 120]],
+                    },
                 },
-            },
-            [],
-            [],
-            class_metadata=[
-                {
-                    'id': 5,
-                    'code': 'person',
-                    'display_name': '人員',
-                    'color': '#FF9800',
-                },
-            ],
+                cone_polys=[],
+                pole_polys=[],
+                class_metadata=[
+                    {
+                        'id': 5,
+                        'code': 'person',
+                        'display_name': '人員',
+                        'color': '#FF9800',
+                    },
+                ],
+            ),
         )
         self.assertEqual(tuple(frame[90, 20]), (0, 152, 255))
 
@@ -158,7 +176,7 @@ class ClassColorsTest(TestCase):
                 bbox=[0.5, 0.5, 1, 1],
             ),
         ]
-        objects = services._overlay_objects_from_feedback(
+        objects = services.overlay_objects_from_feedback(
             detections,
             [],
             None,
