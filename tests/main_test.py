@@ -3535,11 +3535,8 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
         mock_process_func.return_value = None
         cfg = self.dummy_cfg.copy()
-        try:
-            process_single_stream(cfg)
-            mock_process_func.assert_called_once_with(cfg)
-        except Exception:
-            pass
+        process_single_stream(cfg)
+        mock_process_func.assert_called_once_with(cfg)
 
     def test_module_level_imports(self) -> None:
         """Test module level code coverage."""
