@@ -1,8 +1,25 @@
-"""Present persisted cluster boundaries; never run clustering on reads."""
 from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
+
+
+def clip_pixel_bbox(
+    bbox: Sequence[float],
+    image_size: tuple[int, int],
+) -> tuple[float, float, float, float] | None:
+    if len(bbox) != 4 or not all(math.isfinite(value) for value in bbox):
+        return None
+    width, height = image_size
+    x1, y1, x2, y2 = bbox
+    if width <= 0 or height <= 0 or x2 <= x1 or y2 <= y1:
+        return None
+    left, right = max(0.0, min(width, x1)), max(0.0, min(width, x2))
+    top, bottom = max(0.0, min(height, y1)), max(0.0, min(height, y2))
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
 
 
 def decode_polygons(raw):
@@ -54,7 +71,7 @@ def stored_regions(violation, image_size, style):
     ):
         try:
             rings = decode_polygons(raw)
-        except ValueError, TypeError, OverflowError:
+        except (ValueError, TypeError, OverflowError):
             status[kind] = 'invalid'
             continue
         if rings is None:

@@ -12,7 +12,6 @@ class HttpClientPool:
     separate."""
 
     def __init__(self) -> None:
-        """Perform init."""
         self._clients: dict[str, httpx.AsyncClient] = {}
         self._lock = asyncio.Lock()
 

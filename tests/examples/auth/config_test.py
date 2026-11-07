@@ -4,7 +4,6 @@ import os
 import unittest
 from unittest import mock
 
-from examples.auth.config import _env_bool
 from examples.auth.config import Settings
 
 
@@ -57,18 +56,12 @@ class TestSettings(unittest.TestCase):
         # correctly loaded.
         self.assertFalse(settings.sqlalchemy_track_modifications)
 
-    def test_configuration_boolean_helper(
-        self,
-    ) -> None:
-        """Boolean settings retain their documented parsing behaviour."""
-        with mock.patch.dict(os.environ, {}, clear=False):
-            self.assertTrue(_env_bool('MISSING_BOOLEAN_SWITCH', True))
+    def test_boolean_setting_accepts_normalized_environment(self):
         with mock.patch.dict(
             os.environ,
-            {'CONFIG_TEST_BOOLEAN_SWITCH': ' Yes '},
-            clear=False,
+            {'LOCAL_DEVELOPMENT_AUTH_ENABLED': ' Yes '},
         ):
-            self.assertTrue(_env_bool('CONFIG_TEST_BOOLEAN_SWITCH'))
+            self.assertTrue(Settings().local_development_auth_enabled)
 
 
 if __name__ == '__main__':

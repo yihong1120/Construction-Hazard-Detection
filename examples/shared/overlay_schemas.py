@@ -1,4 +1,3 @@
-"""Shared overlay contract for detection and historical evidence."""
 from __future__ import annotations
 
 import math

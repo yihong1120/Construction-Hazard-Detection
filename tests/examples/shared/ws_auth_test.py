@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from functools import partial
 from types import SimpleNamespace
+from typing import Any
 from typing import TypedDict
 from unittest.mock import AsyncMock
 from unittest.mock import patch
@@ -11,6 +13,38 @@ from fastapi import HTTPException
 from examples.auth.jwt_config import JwtAuthorizationCredentials
 from examples.db_management.schemas.auth import AccessTokenSubject
 from examples.shared import ws_auth as wa
+
+
+def _init_make_ws(
+    headers: dict[str, str] | None = None,
+    query_params: dict[str, str] | None = None,
+) -> SimpleNamespace:
+    """Create a tiny WebSocket-like object for tests.
+
+    Args:
+        headers (dict[str, str] | None):
+            Optional mapping of header names to values.
+        query_params (dict[str, str] | None):
+            Optional mapping of query names to values.
+
+    Returns:
+        SimpleNamespace: A WebSocket-like object with `headers`,
+        `query_params`, an async `close` method, and a `closed` log.
+    """
+    ws = SimpleNamespace()
+    ws.headers = headers or {}
+    ws.query_params = query_params or {}
+    ws.closed = []
+
+    _close = partial(_init_close, ws)
+
+    ws.close = _close
+    return ws
+
+
+async def _init_close(ws: Any, /, code: int, reason: str) -> None:
+    """Simulate closing the WebSocket connection."""
+    ws.closed.append((code, reason))
 
 
 class AccessPayload(TypedDict):
@@ -26,18 +60,6 @@ def _access_payload(
     role: str = 'user',
     exp: int = 1_700_000_000,
 ) -> AccessPayload:
-    """Perform access payload.
-
-    Args:
-        username: Value used by this callable.
-        jti: Value used by this callable.
-        user_id: Value used by this callable.
-        role: Value used by this callable.
-        exp: Value used by this callable.
-
-    Returns:
-        The callable result.
-    """
     return {
         'subject': {
             'username': username,
@@ -59,33 +81,7 @@ class TestExtractionHelpers(unittest.TestCase):
         super().__init__(methodName)
         # Factory for creating a minimal WebSocket-like object.
 
-        def _make_ws(
-            headers: dict[str, str] | None = None,
-            query_params: dict[str, str] | None = None,
-        ) -> SimpleNamespace:
-            """Create a tiny WebSocket-like object for tests.
-
-            Args:
-                headers (dict[str, str] | None):
-                    Optional mapping of header names to values.
-                query_params (dict[str, str] | None):
-                    Optional mapping of query names to values.
-
-            Returns:
-                SimpleNamespace: A WebSocket-like object with `headers`,
-                `query_params`, an async `close` method, and a `closed` log.
-            """
-            ws = SimpleNamespace()
-            ws.headers = headers or {}
-            ws.query_params = query_params or {}
-            ws.closed = []
-
-            async def _close(code: int, reason: str) -> None:
-                """Simulate closing the WebSocket connection."""
-                ws.closed.append((code, reason))
-
-            ws.close = _close
-            return ws
+        _make_ws = _init_make_ws
 
         self.make_ws = _make_ws
 
@@ -142,8 +138,10 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
             query_params={},
             close=AsyncMock(),
             scope={
-                'type': 'websocket', 'scheme': scheme,
-                'path': '/ws/detect', 'query_string': b'',
+                'type': 'websocket',
+                'scheme': scheme,
+                'path': '/ws/detect',
+                'query_string': b'',
                 'headers': [(b'host', b'api.example.com')],
                 'server': ('api.example.com', 443),
                 'client': ('192.0.2.1', 1234),
@@ -158,15 +156,18 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
                 redis = object()
                 subject = _access_payload()['subject']
                 credentials = JwtAuthorizationCredentials(
-                    subject=subject, payload={'sub': 'provider-id', 'exp': 42},
+                    subject=subject,
+                    payload={'sub': 'provider-id', 'exp': 42},
                     is_oidc=is_oidc,
                 )
                 with patch.object(
-                    wa.jwt_access, 'authenticate_token',
+                    wa.jwt_access,
+                    'authenticate_token',
                     AsyncMock(return_value=credentials),
                 ) as verify:
                     username, jti, payload = await wa.authenticate_websocket(
-                        ws, redis,
+                        ws,
+                        redis,
                     )
                 assert verify.await_args is not None
                 request, token, passed_redis = verify.await_args.args
@@ -187,7 +188,9 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
         ws = self.make_ws()
         ws.headers = {}
         with patch.object(
-            wa.jwt_access, 'authenticate_token', AsyncMock(),
+            wa.jwt_access,
+            'authenticate_token',
+            AsyncMock(),
         ) as v:
             with self.assertRaises(SystemExit):
                 await wa.authenticate_websocket(ws, object())
@@ -200,12 +203,14 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
             with self.subTest(status=status):
                 ws = self.make_ws()
                 with patch.object(
-                    wa.jwt_access, 'authenticate_token',
+                    wa.jwt_access,
+                    'authenticate_token',
                     AsyncMock(side_effect=HTTPException(status, 'rejected')),
                 ):
                     with self.assertRaises(SystemExit):
                         await wa.authenticate_websocket(
-                            ws, object(),
+                            ws,
+                            object(),
                         )
                 self.assertEqual(
                     ws.close.await_args.kwargs['code'],
@@ -221,7 +226,8 @@ class TestAuthenticateWebsocket(unittest.IsolatedAsyncioTestCase):
             subject=_access_payload()['subject'],
         )
         with patch.object(
-            wa.jwt_access, 'authenticate_token',
+            wa.jwt_access,
+            'authenticate_token',
             AsyncMock(return_value=credentials),
         ) as verify:
             await wa.authenticate_websocket(ws, object())

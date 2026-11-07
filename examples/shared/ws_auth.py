@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Awaitable
 from collections.abc import Mapping
 from typing import NoReturn
@@ -13,6 +12,7 @@ from redis.asyncio import Redis
 from starlette.types import Scope
 
 from examples.auth.jwt_config import jwt_access
+from src.settings.inference import WebSocketSettings
 
 
 class WebSocketLike(Protocol):
@@ -35,9 +35,7 @@ class WebSocketLike(Protocol):
 
 
 # Shared defaults/configuration
-WS_MAX_SESSION_SECONDS: float = float(
-    os.getenv('WS_MAX_SESSION_SECONDS', '1800'),
-)
+WS_MAX_SESSION_SECONDS: float = WebSocketSettings().max_session_seconds
 logger = logging.getLogger(__name__)
 
 

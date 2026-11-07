@@ -1,51 +1,32 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Mapping
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
-from pydantic_settings import BaseSettings
 
-from examples.deployment_registry.schemas import MAX_REGISTRY_TTL_SECONDS
+from examples.auth.settings_fields import DatabaseSettings
+from examples.auth.settings_fields import DeploymentSettings
+from examples.auth.settings_fields import OidcSettings
+from examples.auth.settings_fields import SecuritySettings
+from examples.auth.settings_fields import SocialSettings
 
 # Load environment variables from .env file
 load_dotenv()
 
 
-def _join_env_values(*names: str) -> str:
-    """Return comma-separated non-empty environment values."""
-    return ','.join(
-        value for name in names if (value := os.getenv(name, '').strip())
-    )
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    """Parse common boolean environment variable values."""
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
-
-
-DEFAULT_GOOGLE_CLIENT_IDS = (
-    '860473757501-c1gtkrqr4lsa52vgoq7vclprm8atjvtv.apps.googleusercontent.com,'
-    '860473757501-s53qldp7i294qbg1ia8aq822oa0rudj2.apps.googleusercontent.com,'
-    '860473757501-088t4flpgv0kdds6pu4a5m1fntamf1ht.apps.googleusercontent.com'
-)
-
-DEFAULT_APPLE_BUNDLE_ID = 'com.changdar.visionnaire'
-DEFAULT_APPLE_SERVICE_ID = 'com.changdar.visionnaire.signin'
-DEFAULT_NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON = (
-    '{"visionnaire-mobile":['
-    '"com.changdar.visionnaire:/oauthredirect"]}'
-)
 _OIDC_CLIENT_ID_RE = re.compile(r'^[A-Za-z0-9._-]{1,128}$')
 
 
-class Settings(BaseSettings):
+class Settings(
+    OidcSettings,
+    SocialSettings,
+    SecuritySettings,
+    DeploymentSettings,
+    DatabaseSettings,
+):
     """Configuration settings for the application.
 
     Attributes:
@@ -56,227 +37,6 @@ class Settings(BaseSettings):
         sqlalchemy_track_modifications (bool): Indicates whether SQLAlchemy
             should track modifications. Defaults to False.
     """
-
-    # OIDC resource-server settings. They are deliberately generic so the
-    # application can use a standards-compliant provider, while the deployment
-    # guide supplies Keycloak values. Only provider-issued tokens are accepted.
-    oidc_enabled: bool = _env_bool('OIDC_ENABLED', False)
-    oidc_issuer_url: str = os.getenv('OIDC_ISSUER_URL', '').strip().rstrip('/')
-    oidc_jwks_url: str = os.getenv('OIDC_JWKS_URL', '').strip()
-    oidc_audience: str = os.getenv('OIDC_AUDIENCE', '').strip()
-    oidc_identity_provider: str = os.getenv(
-        'OIDC_IDENTITY_PROVIDER',
-        'keycloak',
-    ).strip()
-    oidc_jwt_algorithms: str = os.getenv(
-        'OIDC_JWT_ALGORITHMS',
-        'RS256',
-    ).strip()
-    oidc_jwks_cache_seconds: int = max(
-        60,
-        int(os.getenv('OIDC_JWKS_CACHE_SECONDS', '300')),
-    )
-    oidc_jwks_timeout_seconds: float = max(
-        1.0,
-        float(os.getenv('OIDC_JWKS_TIMEOUT_SECONDS', '5')),
-    )
-    # Browser BFF client settings. OIDC may be enabled for API bearer-token
-    # validation before the BFF itself is switched to the authorization-code
-    # flow, so these are validated only by ``oidc_web_client_configured``.
-    oidc_web_client_id: str = os.getenv('OIDC_WEB_CLIENT_ID', '').strip()
-    oidc_web_client_secret: str = os.getenv(
-        'OIDC_WEB_CLIENT_SECRET',
-        '',
-    ).strip()
-    oidc_web_authorization_endpoint: str = os.getenv(
-        'OIDC_WEB_AUTHORIZATION_ENDPOINT',
-        '',
-    ).strip()
-    oidc_web_token_endpoint: str = os.getenv(
-        'OIDC_WEB_TOKEN_ENDPOINT',
-        '',
-    ).strip()
-    oidc_web_redirect_uri: str = os.getenv(
-        'OIDC_WEB_REDIRECT_URI',
-        '',
-    ).strip()
-    oidc_web_end_session_endpoint: str = os.getenv(
-        'OIDC_WEB_END_SESSION_ENDPOINT',
-        '',
-    ).strip()
-    oidc_web_post_logout_redirect_uri: str = os.getenv(
-        'OIDC_WEB_POST_LOGOUT_REDIRECT_URI',
-        '',
-    ).strip()
-    oidc_account_url: str = os.getenv('OIDC_ACCOUNT_URL', '').strip()
-    # Native Google / Apple credentials are never exchanged through
-    # Keycloak's deprecated external token-exchange grant.  Instead the API
-    # validates the provider assertion, creates a one-use proof bound to
-    # PKCE, and Keycloak turns that proof into its ordinary authorisation
-    # code.  The values below are deliberately separate from browser broker
-    # credentials and never leave the server processes.
-    native_social_exchange_enabled: bool = _env_bool(
-        'NATIVE_SOCIAL_EXCHANGE_ENABLED',
-        False,
-    )
-    native_social_exchange_shared_secret: str = os.getenv(
-        'NATIVE_SOCIAL_EXCHANGE_SHARED_SECRET',
-        '',
-    ).strip()
-    native_social_allowed_clients_json: str = os.getenv(
-        'NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON',
-        DEFAULT_NATIVE_SOCIAL_ALLOWED_CLIENTS_JSON,
-    ).strip()
-    native_social_exchange_ttl_seconds: int = max(
-        30,
-        min(300, int(os.getenv('NATIVE_SOCIAL_EXCHANGE_TTL_SECONDS', '90'))),
-    )
-    native_social_link_ttl_seconds: int = max(
-        30,
-        min(300, int(os.getenv('NATIVE_SOCIAL_LINK_TTL_SECONDS', '120'))),
-    )
-    native_social_link_max_auth_age_seconds: int = max(
-        60,
-        min(
-            900,
-            int(os.getenv('NATIVE_SOCIAL_LINK_MAX_AUTH_AGE_SECONDS', '300')),
-        ),
-    )
-    keycloak_admin_base_url: str = os.getenv(
-        'KEYCLOAK_ADMIN_BASE_URL',
-        '',
-    ).strip().rstrip('/')
-    keycloak_realm: str = os.getenv('KEYCLOAK_REALM', 'visionnaire').strip()
-    keycloak_user_linker_client_id: str = os.getenv(
-        'KEYCLOAK_USER_LINKER_CLIENT_ID',
-        'visionnaire-user-linker',
-    ).strip()
-    keycloak_user_linker_client_secret: str = os.getenv(
-        'KEYCLOAK_USER_LINKER_CLIENT_SECRET',
-        '',
-    ).strip()
-    oidc_state_ttl_seconds: int = max(
-        60,
-        min(600, int(os.getenv('OIDC_STATE_TTL_SECONDS', '300'))),
-    )
-    fcm_token_encryption_key: str = os.getenv(
-        'FCM_TOKEN_ENCRYPTION_KEY',
-        '',
-    )
-    login_failure_window_seconds: int = int(
-        os.getenv('LOGIN_FAILURE_WINDOW_SECONDS', '1800'),
-    )
-    login_cooldown_threshold: int = int(
-        os.getenv('LOGIN_COOLDOWN_THRESHOLD', '5'),
-    )
-    login_cooldown_seconds: int = int(
-        os.getenv('LOGIN_COOLDOWN_SECONDS', '300'),
-    )
-    login_lock_threshold: int = int(
-        os.getenv('LOGIN_LOCK_THRESHOLD', '10'),
-    )
-    login_lock_seconds: int = int(
-        os.getenv('LOGIN_LOCK_SECONDS', '1800'),
-    )
-    google_client_ids: str = (
-        os.getenv('GOOGLE_CLIENT_IDS')
-        or _join_env_values(
-            'GOOGLE_WEB_CLIENT_ID',
-            'GOOGLE_IOS_CLIENT_ID',
-            'GOOGLE_ANDROID_CLIENT_ID',
-        )
-        or DEFAULT_GOOGLE_CLIENT_IDS
-    )
-    apple_client_ids: str = (
-        os.getenv('APPLE_CLIENT_IDS')
-        or _join_env_values('APPLE_BUNDLE_ID', 'APPLE_SERVICE_ID')
-        or f"{DEFAULT_APPLE_BUNDLE_ID},{DEFAULT_APPLE_SERVICE_ID}"
-    )
-    apple_team_id: str = os.getenv('APPLE_TEAM_ID', '5DU8R27949')
-    apple_key_id: str = os.getenv('APPLE_KEY_ID', 'NGC4QBS7ZY')
-    apple_private_key: str = os.getenv('APPLE_PRIVATE_KEY', '')
-    apple_private_key_path: str = os.getenv(
-        'APPLE_PRIVATE_KEY_PATH',
-        'config/secrets/apple/AuthKey_NGC4QBS7ZY.p8',
-    )
-    apple_service_id: str = os.getenv(
-        'APPLE_SERVICE_ID',
-        DEFAULT_APPLE_SERVICE_ID,
-    )
-    apple_bundle_id: str = os.getenv(
-        'APPLE_BUNDLE_ID',
-        DEFAULT_APPLE_BUNDLE_ID,
-    )
-    apple_redirect_uri: str = os.getenv(
-        'APPLE_REDIRECT_URI',
-        (
-            'https://changdar-server.mooo.com/'
-            'hazard/api/db_management/auth/apple/callback'
-        ),
-    )
-    cors_allowed_origins: str = os.getenv(
-        'CORS_ALLOWED_ORIGINS',
-        (
-            'https://changdar-server.mooo.com,'
-            'http://localhost:3000,http://127.0.0.1:3000,'
-            'http://localhost:5000,http://127.0.0.1:5000,'
-            'http://localhost:8080,http://127.0.0.1:8080'
-        ),
-    )
-    # The reverse proxy removes this prefix before forwarding to individual
-    # services.  It is still part of the public deployment contract and token
-    # issuer, so it must never be supplied by a client request.
-    deployment_api_base_path: str = os.getenv(
-        'DEPLOYMENT_API_BASE_PATH',
-        '/hazard/api',
-    )
-    # Explicit local-only development escape hatch.  The resolver requires a
-    # loopback peer and host, then maps it to this server-controlled ID; a
-    # request can never select a tenant/deployment itself.
-    local_development_auth_enabled: bool = _env_bool(
-        'LOCAL_DEVELOPMENT_AUTH_ENABLED',
-        False,
-    )
-    local_development_deployment_id: str = os.getenv(
-        'LOCAL_DEVELOPMENT_DEPLOYMENT_ID',
-        '',
-    )
-    # This value is injected by the backend secret store (or a KMS-backed
-    # deployment secret) at runtime.  It is intentionally empty by default:
-    # the public registry must fail closed rather than emit an unsigned config.
-    deployment_registry_ed25519_private_key: str = os.getenv(
-        'DEPLOYMENT_REGISTRY_ED25519_PRIVATE_KEY',
-        '',
-    )
-    deployment_registry_key_id: str = os.getenv(
-        'DEPLOYMENT_REGISTRY_KEY_ID',
-        'registry-ed25519-2026-01',
-    )
-    deployment_registry_ttl_seconds: int = int(
-        os.getenv(
-            'DEPLOYMENT_REGISTRY_TTL_SECONDS',
-            str(MAX_REGISTRY_TTL_SECONDS),
-        ),
-    )
-    # An independent secret used to make enrollment-code verifiers
-    # non-reversible even if the registry database is disclosed.  It is
-    # intentionally empty by default so enrollment fails closed until the
-    # deployment secret store supplies it.
-    deployment_enrollment_code_pepper: str = os.getenv(
-        'DEPLOYMENT_ENROLLMENT_CODE_PEPPER',
-        '',
-    )
-    deployment_enrollment_rate_limit_max: int = int(
-        os.getenv('DEPLOYMENT_ENROLLMENT_RATE_LIMIT_MAX', '5'),
-    )
-    deployment_enrollment_rate_limit_window_seconds: int = int(
-        os.getenv('DEPLOYMENT_ENROLLMENT_RATE_LIMIT_WINDOW_SECONDS', '300'),
-    )
-    sqlalchemy_database_uri: str = os.getenv(
-        'DATABASE_URL',
-        'postgresql+asyncpg://user:password@localhost/dbname',
-    )
-    sqlalchemy_track_modifications: bool = False
 
     def __init__(self) -> None:
         """Construct the Settings object."""
@@ -301,9 +61,7 @@ class Settings(BaseSettings):
                 raise RuntimeError(
                     'OIDC_IDENTITY_PROVIDER must be at most 20 characters',
                 )
-            if (
-                not self.oidc_account_url
-            ):
+            if not self.oidc_account_url:
                 raise RuntimeError(
                     'OIDC_ACCOUNT_URL is required when Keycloak manages '
                     'passwords',

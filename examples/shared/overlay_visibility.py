@@ -1,4 +1,3 @@
-"""Display policy; does not filter detections or grant feedback access."""
 from __future__ import annotations
 
 

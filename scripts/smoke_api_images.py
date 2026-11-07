@@ -1,4 +1,3 @@
-"""Boot API images with isolated databases and no application-source mounts."""
 from __future__ import annotations
 
 import argparse
@@ -28,7 +27,7 @@ def wait_ready(container: str, command: list[str], seconds: int = 60) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser()
     parser.add_argument('--management-image', required=True)
     parser.add_argument('--violation-image', required=True)
     parser.add_argument('--postgres-image', default='postgres:17.11-bookworm')
