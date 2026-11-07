@@ -1,6 +1,3 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
-
 name: Python checks
 
 on:
@@ -28,10 +25,9 @@ jobs:
           --management-image construction-smoke-management \
           --violation-image construction-smoke-violation
 
-  build:
-
+  quality:
     runs-on: ubuntu-latest
-    env:
+    env: &test-env
       BFF_TOKEN_ENCRYPTION_KEY: ci-test-encryption-secret-not-for-production
       DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/construction_hazard_detection_test
       OIDC_ENABLED: "true"
@@ -39,42 +35,140 @@ jobs:
       OIDC_JWKS_URL: https://oidc.example.test/realms/ci/protocol/openid-connect/certs
       OIDC_AUDIENCE: ci-test-api
       OIDC_ACCOUNT_URL: https://oidc.example.test/realms/ci/account
+      EVIDENCE_TEST_DATABASE_URL: postgresql://ci:ci@localhost:15432/chd_refactor_test
+      NOTIFICATION_REDIS_TEST_URL: redis://localhost:16379/0
 
     steps:
     - uses: actions/checkout@v7
-    - name: Set up Python 3.14
+      with:
+        fetch-depth: 0
+    - name: Set up Python 3.15
       uses: actions/setup-python@v7
       with:
-        python-version: "3.14"
+        python-version-file: ".python-version"
+    - name: Install uv
+      run: python -m pip install "uv==0.9.9"
+    - name: Verify lockfile
+      run: uv lock --check
+    - name: Lint with flake8
+      run: |
+        # Lint the full project, excluding local dependency and history trees.
+        lint_exclude='.venv,.history,build'
+        uvx --python 3.15 --from flake8==7.4.1 flake8 main.py src examples tests --extend-exclude="$lint_exclude" --count --select=E9,F --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        uvx --python 3.15 --from flake8==7.4.1 flake8 . --extend-exclude="$lint_exclude" --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: Type check application code
+      run: uvx --python 3.15 --from mypy==2.4.0 --with types-PyYAML mypy main.py examples src --ignore-missing-imports --follow-imports=silent
+
+    - name: Validate changed deployment tools
+      env:
+        DEPLOY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      run: >-
+        uvx --python 3.15 --from flake8==7.4.1 --with pydantic==2.14.1
+        python -m deploy.checks --base "$DEPLOY_BASE"
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Python 3.15
+      uses: actions/setup-python@v7
+      with:
+        python-version-file: ".python-version"
+    - name: Install uv
+      run: python -m pip install "uv==0.9.9"
+    - name: Audit dependency vulnerabilities
+      run: |
+        audit_requirements="$(mktemp)"
+        trap 'rm -f "$audit_requirements"' EXIT
+        # Read exact versions from the lockfile so direct wheel URLs are
+        # audited too. CUDA wheel local tags use the upstream release's advisories.
+        python - <<'PY_LOCK' > "$audit_requirements"
+        import tomllib
+        from pathlib import Path
+        lock = tomllib.loads(Path('uv.lock').read_text())
+        for package in lock['package']:
+            if package['source'].get('editable') == '.':
+                continue
+            version = package['version'].split('+', 1)[0]
+            print(f"{package['name']}=={version}")
+        PY_LOCK
+        uvx --python 3.15 --from pip-audit==2.10.1 pip-audit --disable-pip --no-deps \
+          --strict --progress-spinner off --requirement "$audit_requirements"
+
+  api-tests:
+    runs-on: ubuntu-latest
+    services: &integration-services
+      postgres:
+        image: &test-postgres-image postgres:17.11-bookworm
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: chd_refactor_test
+        ports: ['15432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ci -d chd_refactor_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7.4.10-alpine3.21
+        ports: ['16379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env: *test-env
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Python 3.15
+      uses: actions/setup-python@v7
+      with:
+        python-version-file: ".python-version"
+    - name: Install uv
+      run: python -m pip install "uv==0.9.9"
+    - name: Install API test dependencies
+      run: |
+        uv export --frozen --no-hashes --extra dev --extra notification --extra violation --extra streaming --output-file /tmp/api-requirements.txt
+        uv pip install --system --requirements /tmp/api-requirements.txt
+    - &postgres-client-tools
+      name: Prepare matching PostgreSQL backup tools
+      env:
+        POSTGRES_TOOLS_IMAGE: *test-postgres-image
+      run: |
+        echo "POSTGRES_TOOLS_IMAGE=$POSTGRES_TOOLS_IMAGE" >> "$GITHUB_ENV"
+        bash deploy/ci/postgres_tools.sh
+    - name: Test APIs and access boundaries
+      run: |
+        python -m pytest -n auto -m "not ml" \
+          tests/examples/auth tests/examples/bff tests/examples/db_management \
+          tests/examples/deployment_registry tests/examples/local_notification_server \
+          tests/examples/violation_records tests/src/settings_test.py tests/migrations tests/deploy \
+          tests/source_structure_test.py
+
+  native-tests:
+    runs-on: ubuntu-latest
+    services: *integration-services
+    env: *test-env
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Python 3.15
+      uses: actions/setup-python@v7
+      with:
+        python-version-file: ".python-version"
+    - name: Cache locally built ONNX Runtime wheel
+      uses: actions/cache@v5
+      with:
+        path: wheels/python315/onnxruntime-*.whl
+        key: ort-${{ runner.os }}-${{ runner.arch }}-cp315-${{ hashFiles('.python-version', 'deploy/python315/bootstrap.py') }}
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip "uv==0.9.9"
         # Exercise every source module, but exclude the CUDA/TensorRT-only
         # deployment extra. Include model-development and notification tools.
-        uv sync --frozen --all-extras --no-extra yolo-gpu
-    - name: Verify lockfile
-      run: uv lock --check
-    - name: Audit dependency vulnerabilities
-      run: |
-        audit_requirements="$(mktemp)"
-        trap 'rm -f "$audit_requirements"' EXIT
-        # Audit every locked extra, including GPU packages, without installing
-        # those packages or resolving a different set of dependency versions.
-        uv export --locked --all-extras --no-emit-project \
-          --output-file "$audit_requirements" > /dev/null
-        uvx --from pip-audit==2.10.1 pip-audit --disable-pip --require-hashes \
-          --strict --progress-spinner off --requirement "$audit_requirements"
-    - name: Lint with flake8
-      run: |
-        # Lint the full project, excluding local dependency and history trees.
-        lint_exclude='.venv,.history,build'
-        uv run flake8 . --extend-exclude="$lint_exclude" --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        uv run flake8 . --extend-exclude="$lint_exclude" --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        python deploy/python315/bootstrap.py --cpu-only --jobs 2
+    - *postgres-client-tools
     - name: Test with pytest
       run: |
         # Measure application code only (main, src, examples). Do not include tests in coverage sources
-        uv run pytest \
+        python -m pytest \
           --cov=main \
           --cov=src \
           --cov=examples \

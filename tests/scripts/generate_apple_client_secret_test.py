@@ -1,4 +1,3 @@
-"""Exercise credential generation through the real command-line entrypoint."""
 from __future__ import annotations
 
 import os

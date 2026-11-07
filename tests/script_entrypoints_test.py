@@ -6,11 +6,24 @@ import sys
 import unittest
 from contextlib import redirect_stderr
 from contextlib import redirect_stdout
+from functools import partial
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _async_entrypoints_delegate_to_asyncio_close_coroutine(
+    testcase: ScriptEntrypointTests,
+    /,
+    coroutine: object,
+) -> None:
+    close = getattr(coroutine, 'close', None)
+    if not callable(close):
+        testcase.fail('asyncio.run received a non-coroutine')
+        return
+    close()
 
 
 def _run_as_script(relative_path: str) -> dict[str, object]:
@@ -35,7 +48,10 @@ class ScriptEntrypointTests(unittest.TestCase):
             'examples/violation_records/app.py',
         )
 
-        with patch('uvicorn.run') as run_server:
+        with (
+            patch('uvicorn.run') as run_server,
+            patch.object(sys, 'argv', ['app.py']),
+        ):
             for script in scripts:
                 _run_as_script(script)
 
@@ -51,17 +67,10 @@ class ScriptEntrypointTests(unittest.TestCase):
             'src/local_yolo_detector.py',
         )
 
-        def close_coroutine(coroutine: object) -> None:
-            """Perform close coroutine.
-
-            Args:
-                coroutine: Value used by this callable.
-            """
-            close = getattr(coroutine, 'close', None)
-            if not callable(close):
-                self.fail('asyncio.run received a non-coroutine')
-                return
-            close()
+        close_coroutine = partial(
+            _async_entrypoints_delegate_to_asyncio_close_coroutine,
+            self,
+        )
 
         with patch('asyncio.run', side_effect=close_coroutine) as run_async:
             for script in scripts:
