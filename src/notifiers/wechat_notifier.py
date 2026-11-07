@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from io import BytesIO
 
 import httpx
 import numpy as np
 from PIL import Image
+
+from src.settings.notifications import WeChatSettings
 
 _WECHAT_API_ROOT = 'https://qyapi.weixin.qq.com/cgi-bin'
 _TOKEN_REFRESH_MARGIN_SECONDS = 60
@@ -23,17 +24,14 @@ class WeChatNotifier:
         *,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        """Perform init.
-
-        Args:
-            corp_id: Value used by this callable.
-            corp_secret: Value used by this callable.
-            agent_id: Value used by this callable.
-            client: Value used by this callable.
-        """
-        self.corp_id = corp_id or os.getenv('WECHAT_CORP_ID')
-        self.corp_secret = corp_secret or os.getenv('WECHAT_CORP_SECRET')
-        self.agent_id = agent_id or int(os.getenv('WECHAT_AGENT_ID') or 0)
+        self.settings = WeChatSettings.from_overrides(
+            corp_id=corp_id,
+            corp_secret=corp_secret,
+            agent_id=agent_id,
+        )
+        self.corp_id = self.settings.corp_id
+        self.corp_secret = self.settings.corp_secret.get_secret_value()
+        self.agent_id = self.settings.agent_id
         self._client = client
         self._owns_client = client is None
         self._access_token: str | None = None

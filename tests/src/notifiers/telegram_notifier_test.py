@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import os
 import unittest
 from datetime import datetime
 from io import BytesIO
-from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
@@ -21,11 +21,8 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
     telegram_notifier: TelegramNotifier
 
     @classmethod
-    @patch(
-        'src.notifiers.telegram_notifier.os.getenv',
-        return_value='test_bot_token',
-    )
-    def setUpClass(cls, mock_getenv: Any) -> None:
+    @patch.dict(os.environ, {'TELEGRAM_BOT_TOKEN': 'test_bot_token'})
+    def setUpClass(cls) -> None:
         """Set up the TelegramNotifier instance for tests."""
         cls.telegram_notifier = TelegramNotifier()
 
@@ -34,13 +31,9 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(self.telegram_notifier, TelegramNotifier)
 
     @patch('telegram.Bot.send_message', new_callable=AsyncMock)
-    @patch(
-        'src.notifiers.telegram_notifier.os.getenv',
-        return_value='test_bot_token',
-    )
+    @patch.dict(os.environ, {'TELEGRAM_BOT_TOKEN': 'test_bot_token'})
     async def test_send_notification_no_image(
         self,
-        mock_getenv: Any,
         mock_send_message: AsyncMock,
     ) -> None:
         """Test sending a notification without an image."""
@@ -63,13 +56,9 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch('telegram.Bot.send_photo', new_callable=AsyncMock)
-    @patch(
-        'src.notifiers.telegram_notifier.os.getenv',
-        return_value='test_bot_token',
-    )
+    @patch.dict(os.environ, {'TELEGRAM_BOT_TOKEN': 'test_bot_token'})
     async def test_send_notification_with_image(
         self,
-        mock_getenv: Any,
         mock_send_photo: AsyncMock,
     ) -> None:
         """Test sending a notification with an image."""
@@ -94,14 +83,13 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs['caption'], message)
         self.assertIsInstance(kwargs['photo'], BytesIO)
 
-    @patch('src.notifiers.telegram_notifier.os.getenv', return_value=None)
+    @patch.dict(os.environ, {'TELEGRAM_BOT_TOKEN': ''})
     async def test_send_notification_requires_bot_token(
         self,
-        mock_getenv: Any,
     ) -> None:
         """A missing configured token must fail before making an API call."""
         with self.assertRaisesRegex(ValueError, 'Telegram bot token'):
-            await self.telegram_notifier.send_notification(
+            await TelegramNotifier().send_notification(
                 'test_chat_id',
                 'Hello, Telegram!',
             )
@@ -110,16 +98,12 @@ class TestTelegramNotifier(unittest.IsolatedAsyncioTestCase):
         'src.notifiers.telegram_notifier.TelegramNotifier.send_notification',
         new_callable=AsyncMock,
     )
-    @patch('src.notifiers.telegram_notifier.os.getenv')
+    @patch.dict(os.environ, {'TELEGRAM_BOT_TOKEN': 'test_bot_token'})
     async def test_main(
         self,
-        mock_getenv: AsyncMock,
         mock_send_notification: AsyncMock,
     ) -> None:
         """Test the main function."""
-        mock_getenv.side_effect = lambda key: (
-            'test_bot_token' if key == 'TELEGRAM_BOT_TOKEN' else None
-        )
         chat = Chat(id=1, type='private')
         mock_send_notification.return_value = Message(
             message_id=1,

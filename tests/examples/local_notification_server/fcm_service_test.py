@@ -104,9 +104,13 @@ class TestFcmTokenHelpers(unittest.TestCase):
         )
 
 
+def _firebase_initialized():
+    return None
+
+
 @patch(
     'examples.local_notification_server.fcm_service.init_firebase_app',
-    lambda: None,
+    _firebase_initialized,
 )
 class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
     """Test suite for sending FCM notifications using the
@@ -141,11 +145,7 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
 
     @patch('firebase_admin.messaging.send_each')
     async def test_partial_fail(self, mock_send_each: MagicMock) -> None:
-        """Test partial fail.
-
-        Args:
-            mock_send_each: Value used by this callable.
-        """
+        """Test partial fail."""
         mock_response = MagicMock()
         mock_response.failure_count = 1
         mock_response.responses = [
@@ -173,11 +173,7 @@ class TestSendFCMNotificationService(unittest.IsolatedAsyncioTestCase):
 
     @patch('firebase_admin.messaging.send_each')
     async def test_exception(self, mock_send_each: MagicMock) -> None:
-        """Test exception.
-
-        Args:
-            mock_send_each: Value used by this callable.
-        """
+        """Test exception."""
         mock_send_each.side_effect = Exception('FCM send error')
 
         tokens = ['token']

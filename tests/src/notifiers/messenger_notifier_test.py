@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import json
 import unittest
+from functools import partial
 
 import httpx
 import numpy as np
 
 from src.notifiers.messenger_notifier import MessengerNotifier
+
+
+def _sends_text_and_image_handler(
+    requests: list[httpx.Request],
+    /,
+    request: httpx.Request,
+) -> httpx.Response:
+    requests.append(request)
+    return httpx.Response(200)
 
 
 class MessengerNotifierTests(unittest.IsolatedAsyncioTestCase):
@@ -16,24 +26,15 @@ class MessengerNotifierTests(unittest.IsolatedAsyncioTestCase):
         """Test sends text and image."""
         requests: list[httpx.Request] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            """Perform handler.
-
-            Args:
-                request: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            requests.append(request)
-            return httpx.Response(200)
+        handler = partial(_sends_text_and_image_handler, requests)
 
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
         ) as client:
             notifier = MessengerNotifier('token', client=client)
             self.assertEqual(
-                await notifier.send_notification('user', 'hello'), 200,
+                await notifier.send_notification('user', 'hello'),
+                200,
             )
             self.assertEqual(
                 await notifier.send_notification(

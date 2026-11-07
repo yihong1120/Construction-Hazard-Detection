@@ -32,19 +32,26 @@ class FcmSendResult:
         success_count: Number of successfully delivered messages.
         failure_count: Number of failed message deliveries.
         invalid_tokens: Device tokens that Firebase reported as unusable.
+        successful_tokens: Tokens explicitly acknowledged by Firebase.
+        skipped_count: Targets already completed for this event.
     """
 
     success_count: int
     failure_count: int
     invalid_tokens: tuple[str, ...] = ()
+    successful_tokens: tuple[str, ...] = ()
+    skipped_count: int = 0
 
     def __bool__(self) -> bool:
-        """Return whether every message in the batch was sent successfully.
+        """Return whether all targets were sent or already completed.
 
         Returns:
-            True when at least one message succeeded and none failed.
+            True when at least one target completed and none failed.
         """
-        return self.success_count > 0 and self.failure_count == 0
+        return (
+            self.success_count + self.skipped_count > 0
+            and self.failure_count == 0
+        )
 
 
 def init_firebase_app(cred_path: str, project_id: str) -> None:
@@ -141,8 +148,11 @@ async def send_fcm_notification_service(
             messages,
         )
         invalid_tokens: list[str] = []
+        successful_tokens: list[str] = []
         for idx, res in enumerate(response.responses):
-            if not res.success:
+            if res.success:
+                successful_tokens.append(messages[idx].token)
+            else:
                 token = messages[idx].token
                 logger.error(
                     'Failed to send message to token_hash=%s: %s',
@@ -155,6 +165,7 @@ async def send_fcm_notification_service(
             success_count=len(messages) - response.failure_count,
             failure_count=response.failure_count,
             invalid_tokens=tuple(invalid_tokens),
+            successful_tokens=tuple(successful_tokens),
         )
     except Exception as exc:
         logger.error('FCM sending failed: %s', exc)

@@ -162,6 +162,7 @@ class SiteNotifyRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     site: str
+    site_id: int | None = Field(default=None, gt=0)
     stream_name: str
     body: MutableWarnings = Field(min_length=1)
     image_path: str | None = None

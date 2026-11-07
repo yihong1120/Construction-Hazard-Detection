@@ -11,6 +11,9 @@ from fastapi import FastAPI
 
 from examples.auth.lifespan import global_lifespan
 from examples.local_notification_server.fcm_service import init_firebase_app
+from examples.local_notification_server.receipt_maintenance import (
+    ReceiptMaintenance,
+)
 from examples.local_notification_server.routers import (
     router as notification_router,
 )
@@ -37,7 +40,8 @@ async def notification_lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async with global_lifespan(app):
         init_firebase_app(cred_path=cred_path, project_id=project_id)
-        yield
+        async with ReceiptMaintenance().lifespan():
+            yield
 
 
 app: FastAPI = FastAPI(lifespan=notification_lifespan)

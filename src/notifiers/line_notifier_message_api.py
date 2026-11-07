@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import threading
 from datetime import datetime
 from datetime import timedelta
+from functools import partial
 from typing import TypedDict
 
 import aiohttp
@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 from src.notifiers.image_encoding import encode_png
 from src.notifiers.image_records import ImageRecordStore
+from src.settings.notifications import LineSettings
 
 
 class InputData(TypedDict):
@@ -56,8 +57,11 @@ class LineMessenger:
         """
         load_dotenv()
         self.logger = logging.getLogger(__name__)
-        self.channel_access_token: str | None = (
-            channel_access_token or os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+        self.settings = LineSettings.from_overrides(
+            channel_access_token=channel_access_token,
+        )
+        self.channel_access_token = (
+            self.settings.channel_access_token.get_secret_value()
         )
 
         if not self.channel_access_token:
@@ -68,9 +72,17 @@ class LineMessenger:
 
         # Configure Cloudinary
         cloudinary.config(
-            cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
-            api_key=os.getenv('CLOUDINARY_API_KEY'),
-            api_secret=os.getenv('CLOUDINARY_API_SECRET'),
+            cloud_name=self.settings.cloudinary_cloud_name,
+            api_key=(
+                self.settings.cloudinary_api_key.get_secret_value()
+                if self.settings.cloudinary_api_key is not None
+                else None
+            ),
+            api_secret=(
+                self.settings.cloudinary_api_secret.get_secret_value()
+                if self.settings.cloudinary_api_secret is not None
+                else None
+            ),
         )
 
         # Set image record file and check interval
@@ -219,7 +231,8 @@ class LineMessenger:
             loop = asyncio.get_event_loop()
             res = await loop.run_in_executor(
                 None,
-                lambda: cloudinary.uploader.upload(
+                partial(
+                    cloudinary.uploader.upload,
                     image_data,
                     resource_type='image',
                 ),

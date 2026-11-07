@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 import httpx
 from dotenv import load_dotenv
 
 from src.async_http_client import AsyncHttpClientOwner
 from src.auth_tokens import TokenManager
+from src.delivery_result import DeliveryOutcome
+from src.delivery_result import DeliveryResult
+from src.delivery_result import retryable_status
+from src.settings.connections import FcmTransportSettings
 from src.warning_types import Warnings
 
 # Load environment variables
@@ -33,6 +36,8 @@ class FCMSender(AsyncHttpClientOwner):
         api_url: str | None = None,
         max_retries: int = 3,
         timeout: int = 10,
+        *,
+        token_manager: TokenManager | None = None,
     ) -> None:
         """Initialise FCMSender and set API URL and configuration.
 
@@ -42,22 +47,24 @@ class FCMSender(AsyncHttpClientOwner):
             max_retries (int): Maximum number of retry attempts.
             timeout (int): Request timeout in seconds.
         """
-        # Read FCM API URL from environment variables if not provided
-        if api_url is None:
-            api_url = os.getenv('FCM_API_URL', 'http://127.0.0.1:8003')
+        self.settings = FcmTransportSettings.from_overrides(api_url=api_url)
+        self.api_url = self.settings.api_url
 
-        self.api_url = api_url
-        self.shared_token: dict[str, str | bool] = {
-            'access_token': '',
-        }
         self.max_retries = max_retries
         self.logger = logging.getLogger(__name__)
         super().__init__(timeout)
 
         # Create a TokenManager instance using the shared token state
-        self.token_manager = TokenManager(
-            shared_token=self.shared_token,
-        )
+        self.token_manager = token_manager or TokenManager()
+        self.shared_token = self.token_manager.shared_token
+        self._owns_token_manager = token_manager is None
+
+    async def close(self) -> None:
+        try:
+            await super().close()
+        finally:
+            if self._owns_token_manager:
+                await self.token_manager.close()
 
     async def send_fcm_message_to_site(
         self,
@@ -66,7 +73,9 @@ class FCMSender(AsyncHttpClientOwner):
         message: Warnings,
         image_path: str | None = None,
         violation_id: int | None = None,
-    ) -> bool:
+        *,
+        site_id: int | None = None,
+    ) -> DeliveryResult:
         """Send FCM push notification to a specific site and stream with
         optimized retry logic.
 
@@ -78,15 +87,17 @@ class FCMSender(AsyncHttpClientOwner):
                 Image URL to display in the notification.
             violation_id (Optional[int]): Violation record ID.
         Returns:
-            bool:
-                True if the API call and push notification succeed,
-                False otherwise.
+            A delivery outcome distinguishing completion, skipped recipients,
+            temporary transport failures, and permanent API rejections.
         """
         # Get valid token using TokenManager
         access_token = await self.token_manager.get_valid_token()
         if not access_token:
             self.logger.error('Failed to obtain valid access token')
-            return False
+            return DeliveryResult(
+                DeliveryOutcome.retryable,
+                'Notification transport failed',
+            )
 
         headers: dict[str, str] = {'Authorization': f"Bearer {access_token}"}
         payload: dict[str, object] = {
@@ -108,6 +119,8 @@ class FCMSender(AsyncHttpClientOwner):
                 'violation_id': violation_id,
             },
         }
+        if site_id is not None:
+            payload['site_id'] = site_id
         endpoint: str = f"{self.api_url}/send_fcm_notification"
 
         # Use shared client connection pool
@@ -131,8 +144,9 @@ class FCMSender(AsyncHttpClientOwner):
                         attempt + 1,
                     )
                     # Refresh token and update headers
-                    await self.token_manager.refresh_token()
+                    await self.token_manager.refresh_token(access_token)
                     new_token = await self.token_manager.get_valid_token()
+                    access_token = new_token
                     headers['Authorization'] = f"Bearer {new_token}"
 
                     next_delay = await self._next_retry_delay(
@@ -140,13 +154,16 @@ class FCMSender(AsyncHttpClientOwner):
                         backoff_delay,
                     )
                     if next_delay is None:
-                        return False
+                        return DeliveryResult(
+                            DeliveryOutcome.retryable,
+                            'Notification transport failed',
+                        )
                     backoff_delay = next_delay
                     continue
 
                 response.raise_for_status()
                 result: dict[str, object] = response.json()
-                return bool(result.get('success', False))
+                return DeliveryResult.from_response(result)
 
             except httpx.RequestError as exc:
                 self.logger.error(
@@ -157,17 +174,23 @@ class FCMSender(AsyncHttpClientOwner):
                     backoff_delay,
                 )
                 if next_delay is None:
-                    return False
+                    return DeliveryResult(
+                        DeliveryOutcome.retryable,
+                        'Notification transport failed',
+                    )
                 backoff_delay = next_delay
 
             except httpx.HTTPStatusError as exc:
-                if 400 <= exc.response.status_code < 500:
+                if not retryable_status(exc.response.status_code):
                     # Schema and authorisation rejections cannot succeed later.
                     self.logger.error(
                         'FCM API rejected the notification payload: %d',
                         exc.response.status_code,
                     )
-                    return False
+                    return DeliveryResult(
+                        DeliveryOutcome.permanent_failure,
+                        f'HTTP {exc.response.status_code}',
+                    )
                 self.logger.error(
                     'API responded with error status (attempt %d): %d',
                     attempt + 1,
@@ -178,10 +201,16 @@ class FCMSender(AsyncHttpClientOwner):
                     backoff_delay,
                 )
                 if next_delay is None:
-                    return False
+                    return DeliveryResult(
+                        DeliveryOutcome.retryable,
+                        'Notification transport failed',
+                    )
                 backoff_delay = next_delay
 
-        return False
+        return DeliveryResult(
+            DeliveryOutcome.retryable,
+            'Notification transport failed',
+        )
 
     async def _next_retry_delay(
         self,

@@ -6,6 +6,7 @@ import os
 import unittest
 from datetime import datetime
 from datetime import timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -17,6 +18,23 @@ from PIL import Image
 
 from src.notifiers.line_notifier_message_api import LineMessenger
 from src.notifiers.line_notifier_message_api import main
+
+
+def _load_image_records_exception_open_side_effect(
+    open_orig: Any,
+    /,
+    path: Any,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Support open_side_effect.
+
+    Args:
+        path: Test helper value.
+    """
+    if path == 'dummy.json':
+        raise Exception('load error')
+    return open_orig(path, *args, **kwargs)
 
 
 class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
@@ -370,15 +388,10 @@ class TestLineMessenger(unittest.IsolatedAsyncioTestCase):
         """Test load_image_records exception handling."""
         open_orig = open
 
-        def open_side_effect(path: Any, *args: Any, **kwargs: Any) -> Any:
-            """Support open_side_effect.
-
-            Args:
-                path: Test helper value.
-            """
-            if path == 'dummy.json':
-                raise Exception('load error')
-            return open_orig(path, *args, **kwargs)
+        open_side_effect = partial(
+            _load_image_records_exception_open_side_effect,
+            open_orig,
+        )
 
         with (
             patch('os.path.exists', return_value=True),

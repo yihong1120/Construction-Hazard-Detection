@@ -10,6 +10,8 @@ from unittest.mock import patch
 import httpx
 
 from src.auth_tokens import TokenManager
+from src.delivery_result import DeliveryOutcome
+from src.delivery_result import DeliveryResult
 from src.notifiers.fcm_notifier import FCMSender
 
 
@@ -104,11 +106,12 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_get_valid_token.return_value = ''
 
         # Attempt to send FCM message, expecting immediate failure
-        result: bool = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
             stream_name=self.stream_name,
             message=self.mock_message,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.retryable)
 
         self.assertFalse(
             result,
@@ -134,6 +137,7 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
                 stream_name=self.stream_name,
                 message=self.mock_message,
             )
+            self.assertEqual(result.outcome, DeliveryOutcome.retryable)
 
         self.assertFalse(result)
         get_client.assert_awaited_once()
@@ -169,11 +173,12 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post.return_value = mock_response
 
         # Attempt to send FCM message, expecting failure after all retries
-        result: bool = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
             stream_name=self.stream_name,
             message=self.mock_message,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.retryable)
 
         self.assertFalse(
             result,
@@ -214,13 +219,14 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         # Attempt to send FCM message,
         # expecting authentication to be triggered.
-        result: bool = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
             stream_name=self.stream_name,
             message=self.mock_message,
             image_path=self.image_path,
             violation_id=self.violation_id,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.completed)
         self.assertTrue(
             result,
             'Expected True when the request is successful.',
@@ -260,11 +266,13 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post.return_value = mock_response
 
         # Attempt to send FCM message, expecting success.
-        result: bool = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
+            site_id=7,
             stream_name=self.stream_name,
             message=self.mock_message,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.completed)
         self.assertTrue(
             result,
             'Expected True when the API indicates success.',
@@ -277,6 +285,7 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
             post_call.kwargs['json'],
             {
                 'site': self.site,
+                'site_id': 7,
                 'stream_name': self.stream_name,
                 'body': self.mock_message,
                 'image_path': None,
@@ -309,11 +318,12 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         )
         mock_post.return_value = response
 
-        result = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
             stream_name=self.stream_name,
             message=self.mock_message,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.permanent_failure)
 
         self.assertFalse(result)
         mock_post.assert_awaited_once()
@@ -346,11 +356,12 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         # Attempt to send FCM message,
         # expecting failure due to missing 'success' field.
-        result: bool = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
             stream_name=self.stream_name,
             message=self.mock_message,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.retryable)
         self.assertFalse(
             result,
             "Expected False when the response lacks {'success': True}.",
@@ -394,11 +405,12 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post.side_effect = [mock_response_1, mock_response_2]
 
         # Attempt to send FCM message, expecting retry and eventual success.
-        result: bool = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
             stream_name=self.stream_name,
             message=self.mock_message,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.completed)
         self.assertTrue(
             result,
             'Expected True after refresh and successful retry.',
@@ -444,11 +456,12 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         # Attempt to send FCM message, expecting repeated failures
         # and eventual False.
-        result: bool = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
             stream_name=self.stream_name,
             message=self.mock_message,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.retryable)
         self.assertFalse(
             result,
             'Expected False if all attempts result in 401.',
@@ -490,11 +503,12 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
         mock_post.side_effect = httpx.RequestError('Network error')
 
         # Attempt to send FCM message, expecting failure due to network error.
-        result: bool = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
             stream_name=self.stream_name,
             message=self.mock_message,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.retryable)
         self.assertFalse(
             result,
             'Expected False when a RequestError is raised by httpx.',
@@ -536,11 +550,12 @@ class TestFCMSender(unittest.IsolatedAsyncioTestCase):
 
         # Attempt to send FCM message, expecting failure
         # due to HTTPStatusError.
-        result: bool = await self.sender.send_fcm_message_to_site(
+        result: DeliveryResult = await self.sender.send_fcm_message_to_site(
             site=self.site,
             stream_name=self.stream_name,
             message=self.mock_message,
         )
+        self.assertEqual(result.outcome, DeliveryOutcome.permanent_failure)
         self.assertFalse(
             result,
             'Expected False for non-401 HTTPStatusError.',

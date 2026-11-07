@@ -2,10 +2,24 @@ from __future__ import annotations
 
 import json
 import unittest
+from functools import partial
 
 import httpx
 
 from src.notifiers.broadcast_notifier import BroadcastNotifier
+
+
+def _broadcast_message_success_handler(
+    requests: list[httpx.Request],
+    /,
+    request: httpx.Request,
+) -> httpx.Response:
+    requests.append(request)
+    return httpx.Response(204)
+
+
+def _broadcast_message_failure_or_network_Response(_request):
+    return httpx.Response(503)
 
 
 class BroadcastNotifierTests(unittest.IsolatedAsyncioTestCase):
@@ -15,17 +29,7 @@ class BroadcastNotifierTests(unittest.IsolatedAsyncioTestCase):
         """Test broadcast message success."""
         requests: list[httpx.Request] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            """Perform handler.
-
-            Args:
-                request: Value used by this callable.
-
-            Returns:
-                The callable result.
-            """
-            requests.append(request)
-            return httpx.Response(204)
+        handler = partial(_broadcast_message_success_handler, requests)
 
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
@@ -43,7 +47,7 @@ class BroadcastNotifierTests(unittest.IsolatedAsyncioTestCase):
 
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(
-                lambda _request: httpx.Response(503),
+                _broadcast_message_failure_or_network_Response,
             ),
         ) as client:
             notifier = BroadcastNotifier(

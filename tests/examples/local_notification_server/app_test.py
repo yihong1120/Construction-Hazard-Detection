@@ -4,6 +4,7 @@ import os
 import unittest
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from typing import ClassVar
@@ -15,6 +16,42 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from examples.local_notification_server.app import app
+
+
+def _lifespan_init_make_fake_begin(fake_begin, /):
+    return fake_begin()
+
+
+class _LifespanInitCallbacks:
+    flag: Any
+
+    async def _call_fake_begin(self) -> AsyncIterator[SimpleNamespace]:
+        """Support fake_begin."""
+        _callbacks = _LifespanInitFakeBeginCallbacks()
+        _callbacks.parent = self
+
+        run_sync = _callbacks._call_run_sync
+
+        # Yield a simple object exposing run_sync
+        yield SimpleNamespace(run_sync=run_sync)
+
+
+class _LifespanInitFakeBeginCallbacks:
+    parent: _LifespanInitCallbacks
+
+    async def _call_run_sync(
+        self,
+        fn: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Support run_sync.
+
+        Args:
+            fn: Test helper value.
+        """
+
+        self.parent.flag = True
 
 
 class TestLocalNotificationServer(unittest.TestCase):
@@ -45,26 +82,13 @@ class TestLocalNotificationServer(unittest.TestCase):
 
         Patch Firebase credential and init to avoid real file access.
         """
-        flag = False
+        _callbacks = _LifespanInitCallbacks()
+        _callbacks.flag = False
 
-        @asynccontextmanager
-        async def fake_begin() -> AsyncIterator[SimpleNamespace]:
-            """Support fake_begin."""
-
-            async def run_sync(fn: Any, *args: Any, **kwargs: Any) -> None:
-                """Support run_sync.
-
-                Args:
-                    fn: Test helper value.
-                """
-                nonlocal flag
-                flag = True
-
-            # Yield a simple object exposing run_sync
-            yield SimpleNamespace(run_sync=run_sync)
+        fake_begin = asynccontextmanager(_callbacks._call_fake_begin)
 
         fake_engine = MagicMock()
-        fake_engine.begin = lambda: fake_begin()
+        fake_engine.begin = partial(_lifespan_init_make_fake_begin, fake_begin)
         fake_engine.dispose = AsyncMock()  # Make dispose awaitable
 
         fernet_key = Fernet.generate_key().decode('utf-8')
@@ -100,7 +124,7 @@ class TestLocalNotificationServer(unittest.TestCase):
                                     pass
 
         self.assertTrue(
-            flag,
+            _callbacks.flag,
             'Database initialisation logic was not triggered.',
         )
         fake_engine.dispose.assert_awaited_once()

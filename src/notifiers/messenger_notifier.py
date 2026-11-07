@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import os
 from io import BytesIO
 
 import httpx
 import numpy as np
 from PIL import Image
+
+from src.settings.notifications import MessengerSettings
 
 _MESSENGER_MESSAGES_URL = 'https://graph.facebook.com/v11.0/me/messages'
 
@@ -19,14 +20,11 @@ class MessengerNotifier:
         *,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        """Perform init.
-
-        Args:
-            page_access_token: Value used by this callable.
-            client: Value used by this callable.
-        """
-        self.page_access_token = page_access_token or os.getenv(
-            'FACEBOOK_PAGE_ACCESS_TOKEN',
+        self.settings = MessengerSettings.from_overrides(
+            page_access_token=page_access_token,
+        )
+        self.page_access_token = (
+            self.settings.page_access_token.get_secret_value()
         )
         self._client = client
         self._owns_client = client is None

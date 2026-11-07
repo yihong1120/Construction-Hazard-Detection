@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import TypedDict
 
 import numpy as np
@@ -10,6 +9,7 @@ from telegram import Bot
 from telegram import Message
 
 from src.notifiers.image_encoding import encode_png
+from src.settings.notifications import TelegramSettings
 
 
 class InputData(TypedDict):
@@ -35,6 +35,7 @@ class TelegramNotifier:
     def __init__(self) -> None:
         """Load environment variables for Telegram credentials."""
         load_dotenv()
+        self.settings = TelegramSettings()
 
     async def send_notification(
         self,
@@ -58,7 +59,11 @@ class TelegramNotifier:
         Raises:
             ValueError: If 'TELEGRAM_BOT_TOKEN' is missing.
         """
-        bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
+        bot_token = (
+            bot_token
+            if bot_token is not None
+            else self.settings.telegram_bot_token.get_secret_value()
+        )
         if not bot_token:
             raise ValueError('Telegram bot token must be provided')
         bot = Bot(token=bot_token)

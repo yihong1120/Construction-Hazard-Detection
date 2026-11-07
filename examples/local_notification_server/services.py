@@ -1,23 +1,29 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Iterable
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
+from datetime import timedelta
 from datetime import timezone
 from typing import Any
 from typing import cast
 
 import redis.asyncio as redis
 from cryptography.fernet import InvalidToken
+from fastapi import HTTPException
 from redis.asyncio.client import Pipeline
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy import update
-from sqlalchemy.engine import CursorResult
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from examples.auth.config import Settings
 from examples.auth.models import FcmDeviceToken
+from examples.auth.redis_transactions import optimistic
 from examples.local_notification_server.fcm_token_crypto import (
     decrypt_token,
 )
@@ -26,6 +32,11 @@ from examples.local_notification_server.fcm_token_crypto import (
 )
 from examples.local_notification_server.fcm_token_crypto import encrypt_token
 from examples.local_notification_server.fcm_token_crypto import fcm_token_hash
+from examples.local_notification_server.fcm_token_keys import (
+    _token_cache_ready_key,
+)
+from examples.local_notification_server.fcm_token_keys import _token_index_key
+from examples.local_notification_server.fcm_token_keys import _token_meta_key
 from examples.local_notification_server.schemas import (
     DeviceRegistrationRequest,
 )
@@ -33,6 +44,17 @@ from examples.local_notification_server.schemas import (
 settings = Settings()
 logger = logging.getLogger(__name__)
 _token_cache_ttl_seconds = 86400 * 30
+
+_REMOVE_REGISTRATION_CACHE = """
+local revision = redis.call('HGET', KEYS[3], 'registration_revision')
+if revision and revision ~= ARGV[3] then return 0 end
+redis.call('DEL', KEYS[4])
+if not revision or ARGV[3] == '' then return 0 end
+redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('SREM', KEYS[2], ARGV[2])
+redis.call('DEL', KEYS[3])
+return 1
+"""
 
 
 def encrypt_fcm_token(device_token: str) -> str:
@@ -43,37 +65,6 @@ def encrypt_fcm_token(device_token: str) -> str:
 def decrypt_fcm_token(encrypted_token: str) -> str:
     """Decrypt an FCM token with the current application key."""
     return decrypt_token(encrypted_token, settings.fcm_token_encryption_key)
-
-
-def _token_index_key(user_id: int) -> str:
-    """Build the Redis set key for a user's token hashes.
-
-    Args:
-        user_id: Token owner identifier.
-
-    Returns:
-        Redis key indexing metadata hashes for the user's tokens.
-    """
-    return f"fcm_token_index:{user_id}"
-
-
-def _token_meta_key(user_id: int, token_hash: str) -> str:
-    """Build the Redis hash key for one token's non-sensitive metadata.
-
-    Args:
-        user_id: Token owner identifier.
-        token_hash: SHA-256 digest of the raw FCM token.
-
-    Returns:
-        Redis key containing metadata for the token registration.
-    """
-    return f"fcm_token_meta:{user_id}:{token_hash}"
-
-
-def _token_cache_ready_key(user_id: int) -> str:
-    """Build the marker that distinguishes a cold token cache from no
-    tokens."""
-    return f"fcm_tokens_ready:{user_id}"
 
 
 def _decode_redis_string(value: bytes) -> str:
@@ -121,6 +112,9 @@ def _queue_token_cache_write(
     meta_key = _token_meta_key(row.user_id, row.device_token_hash)
     mapping: dict[str, str] = {
         'token_hash': row.device_token_hash,
+        'registration_revision': row.last_seen_at.replace(
+            tzinfo=timezone.utc,
+        ).isoformat(),
         'device_lang': row.device_lang,
         'registered_at': _datetime_to_api(row.created_at),
         'last_seen_at': _datetime_to_api(row.last_seen_at),
@@ -145,11 +139,6 @@ def _queue_token_cache_write(
     )
     pipe.expire(meta_key, _token_cache_ttl_seconds)
     pipe.expire(_token_index_key(row.user_id), _token_cache_ttl_seconds)
-    pipe.set(
-        _token_cache_ready_key(row.user_id),
-        '1',
-        ex=_token_cache_ttl_seconds,
-    )
 
 
 async def record_fcm_token_registration(
@@ -169,35 +158,39 @@ async def record_fcm_token_registration(
     Returns:
         Non-sensitive registration timestamps and token hash metadata.
     """
-    now = datetime.now(timezone.utc).replace(microsecond=0)
     token_hash = fcm_token_hash(req.device_token)
-    row = cast(
-        FcmDeviceToken | None,
-        await db.scalar(
+    now = datetime.now(timezone.utc)
+    encrypted = encrypt_fcm_token(req.device_token)
+    inserted = await db.execute(
+        insert(FcmDeviceToken).values(
+            user_id=user_id, device_token_encrypted=encrypted,
+            device_token_hash=token_hash, platform=req.platform,
+            device_lang=req.device_lang, permission_status='unknown',
+            last_seen_at=now, created_at=now, updated_at=now,
+        ).on_conflict_do_nothing(
+            index_elements=['device_token_hash'],
+        ).returning(FcmDeviceToken),
+    )
+    row = inserted.scalar_one_or_none()
+    created = row is not None
+    if row is None:
+        row = await db.scalar(
             select(FcmDeviceToken).where(
                 FcmDeviceToken.device_token_hash == token_hash,
-            ),
-        ),
-    )
-    if row is None:
-        # A token hash is globally unique, preventing duplicate registrations.
-        row = FcmDeviceToken(
-            user_id=user_id,
-            device_token_encrypted=encrypt_fcm_token(req.device_token),
-            device_token_hash=token_hash,
-            platform=req.platform,
-            device_lang=req.device_lang,
-            permission_status='unknown',
-            last_seen_at=now,
-            created_at=now,
-            updated_at=now,
+            ).with_for_update().execution_options(populate_existing=True),
         )
-        db.add(row)
-        registered_at = now
-    else:
-        registered_at = row.created_at
+    if row is None:
+        raise HTTPException(503, 'device_registration_changed')
+    previous_owner = None if created else row.user_id
+    registered_at = row.created_at
+    if not created:
+        now = max(
+            datetime.now(timezone.utc),
+            row.last_seen_at.replace(tzinfo=timezone.utc)
+            + timedelta(microseconds=1),
+        )
         row.user_id = user_id
-        row.device_token_encrypted = encrypt_fcm_token(req.device_token)
+        row.device_token_encrypted = encrypted
         row.platform = req.platform
         row.device_lang = req.device_lang
         row.permission_status = 'unknown'
@@ -211,9 +204,22 @@ async def record_fcm_token_registration(
 
     await db.commit()
 
-    pipe = rds.pipeline()
-    _queue_token_cache_write(pipe, row, req.device_token)
-    await pipe.execute()
+    try:
+        pipe = rds.pipeline(transaction=True)
+        if previous_owner is not None and previous_owner != user_id:
+            pipe.hdel(f'fcm_tokens:{previous_owner}', req.device_token)
+            pipe.srem(_token_index_key(previous_owner), token_hash)
+            pipe.delete(
+                _token_meta_key(previous_owner, token_hash),
+                _token_cache_ready_key(previous_owner),
+            )
+        _queue_token_cache_write(pipe, row, req.device_token)
+        pipe.delete(_token_cache_ready_key(user_id))
+        await pipe.execute()
+    except Exception:
+        # Durable ownership is authoritative. The next send reconciles cache
+        # revisions against the database before using any cached device.
+        logger.warning('FCM cache update deferred for user_id=%s', user_id)
     return {
         'token_hash': token_hash,
         'registered_at': _datetime_to_api(registered_at),
@@ -240,26 +246,46 @@ async def delete_fcm_token_metadata(
     """
     token_hash = fcm_token_hash(device_token)
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    result = cast(
-        CursorResult[Any],
-        await db.execute(
-            update(FcmDeviceToken)
-            .where(
-                FcmDeviceToken.user_id == user_id,
-                FcmDeviceToken.device_token_hash == token_hash,
-            )
-            .values(
-                disabled_at=now,
-                last_failure_at=None,
-                failure_reason=None,
-                updated_at=now,
-            ),
-        ),
+    result = await db.execute(
+        update(FcmDeviceToken)
+        .where(
+            FcmDeviceToken.user_id == user_id,
+            FcmDeviceToken.device_token_hash == token_hash,
+            FcmDeviceToken.disabled_at.is_(None),
+        )
+        .values(
+            disabled_at=now,
+            last_failure_at=None,
+            failure_reason=None,
+            updated_at=now,
+        )
+        .returning(FcmDeviceToken.last_seen_at)
+        .execution_options(synchronize_session=False),
     )
+    revision = result.scalar_one_or_none()
     await db.commit()
-    await rds.delete(_token_meta_key(user_id, token_hash))
-    await rds.srem(_token_index_key(user_id), token_hash)
-    return cast(int, result.rowcount) > 0
+    try:
+        await rds.eval(
+            _REMOVE_REGISTRATION_CACHE,
+            4,
+            f'fcm_tokens:{user_id}',
+            _token_index_key(user_id),
+            _token_meta_key(user_id, token_hash),
+            _token_cache_ready_key(user_id),
+            device_token,
+            token_hash,
+            (
+                revision.replace(tzinfo=timezone.utc).isoformat()
+                if revision is not None
+                else ''
+            ),
+        )
+    except RedisError:
+        logger.warning(
+            'FCM unregister cache cleanup deferred user_id=%s',
+            user_id,
+        )
+    return revision is not None
 
 
 async def list_fcm_device_status(
@@ -288,6 +314,9 @@ async def list_fcm_device_status(
     return [
         {
             'token_hash': row.device_token_hash,
+            'registration_revision': row.last_seen_at.replace(
+                tzinfo=timezone.utc,
+            ).isoformat(),
             'platform': row.platform,
             'device_lang': row.device_lang,
             'permission_status': row.permission_status,
@@ -323,33 +352,109 @@ async def load_active_fcm_device_tokens(
     Returns:
         Raw tokens for immediate Firebase delivery only.
     """
-    result = await db.execute(
-        select(FcmDeviceToken)
-        .where(
-            FcmDeviceToken.user_id == user_id,
-            FcmDeviceToken.disabled_at.is_(None),
+    snapshot = await _decrypt_active_fcm_tokens([user_id], db)
+    return [token for _, token in snapshot.active]
+
+
+@dataclass(repr=False)
+class FcmTokenSnapshot:
+    active: list[tuple[FcmDeviceToken, str]]
+    disabled: list[tuple[int, str]]
+
+
+async def _decrypt_active_fcm_tokens(
+    user_ids: list[int], db: AsyncSession,
+) -> FcmTokenSnapshot:
+    disabled: list[tuple[int, str]] = []
+    for _ in range(5):
+        result = await db.execute(
+            select(FcmDeviceToken).where(
+                FcmDeviceToken.user_id.in_(user_ids),
+                FcmDeviceToken.disabled_at.is_(None),
+            ).order_by(
+                FcmDeviceToken.user_id, FcmDeviceToken.last_seen_at.desc(),
+            ).execution_options(populate_existing=True),
         )
-        .order_by(FcmDeviceToken.last_seen_at.desc()),
+        active: list[tuple[FcmDeviceToken, str]] = []
+        changed = False
+        failed = False
+        for row in result.scalars().all():
+            try:
+                active.append(
+                    (row, decrypt_fcm_token(row.device_token_encrypted)),
+                )
+            except InvalidToken:
+                failed = True
+                if await _disable_undecryptable_fcm_token(
+                    db, row, datetime.now(timezone.utc),
+                ):
+                    disabled.append((row.user_id, row.device_token_hash))
+                    logger.warning(
+                        'Disabled undecryptable FCM token: user_id=%s',
+                        row.user_id,
+                    )
+                else:
+                    changed = True
+        if failed:
+            await db.commit()
+        if not changed:
+            return FcmTokenSnapshot(active, disabled)
+    raise HTTPException(503, 'device_registration_changed')
+
+
+def _cache_revision(records: Iterable[tuple[str, datetime]]) -> str:
+    source = '\n'.join(
+        sorted(
+            f'{token_hash}:{updated.isoformat()}'
+            for token_hash, updated in records
+        ),
     )
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    tokens: list[str] = []
-    disabled_tokens = False
-    rows = cast(list[FcmDeviceToken], result.scalars().all())
-    for row in rows:
-        try:
-            tokens.append(decrypt_fcm_token(row.device_token_encrypted))
-        except InvalidToken:
-            # Ciphertext encrypted with a retired key cannot be recovered.
-            _disable_undecryptable_fcm_token(row, now)
-            disabled_tokens = True
-            logger.warning(
-                'Disabled undecryptable FCM token: user_id=%s token_hash=%s',
-                row.user_id,
-                row.device_token_hash,
+    return hashlib.sha256(source.encode()).hexdigest()
+
+
+@dataclass
+class _FcmTokenCacheRebuild:
+    user_ids: list[int]
+    db: AsyncSession
+
+    async def apply(self, pipe: Pipeline) -> int:
+        await pipe.watch(
+            *[_token_cache_ready_key(user) for user in self.user_ids],
+        )
+        previous = {
+            user: await pipe.smembers(_token_index_key(user))
+            for user in self.user_ids
+        }
+        snapshot = await _decrypt_active_fcm_tokens(self.user_ids, self.db)
+        decoded = snapshot.active
+        revisions: dict[int, list[tuple[str, datetime]]] = {
+            user: [] for user in self.user_ids
+        }
+        for row, _ in decoded:
+            revisions[row.user_id].append(
+                (row.device_token_hash, row.updated_at),
             )
-    if disabled_tokens:
-        await db.commit()
-    return tokens
+        pipe.multi()
+        for user_id in self.user_ids:
+            pipe.delete(f'fcm_tokens:{user_id}', _token_index_key(user_id))
+            for token_hash in previous[user_id]:
+                text = (
+                    token_hash.decode()
+                    if isinstance(token_hash, bytes)
+                    else str(token_hash)
+                )
+                pipe.delete(_token_meta_key(user_id, text))
+            pipe.set(
+                _token_cache_ready_key(user_id),
+                _cache_revision(revisions[user_id]),
+                ex=_token_cache_ttl_seconds,
+            )
+        for user, token_hash in snapshot.disabled:
+            pipe.delete(_token_meta_key(user, token_hash))
+        for row, token in decoded:
+            _queue_token_cache_write(pipe, row, token)
+        await pipe.execute()
+        return len(decoded)
 
 
 async def refresh_fcm_token_cache_for_users(
@@ -357,64 +462,10 @@ async def refresh_fcm_token_cache_for_users(
     db: AsyncSession,
     rds: redis.Redis,
 ) -> int:
-    """Rebuild the Redis sendable-token cache from the database source of
-    truth.
-
-    Args:
-        user_ids: Token owner identifiers whose cache entries are rebuilt.
-        db: Database session used to load active token records.
-        rds: Redis connection used to replace send-cache entries.
-
-    Returns:
-        Number of active token entries written to Redis.
-    """
-    unique_user_ids = list(dict.fromkeys(user_ids))
-    result = await db.execute(
-        select(FcmDeviceToken)
-        .where(
-            FcmDeviceToken.user_id.in_(unique_user_ids),
-            FcmDeviceToken.disabled_at.is_(None),
-        )
-        .order_by(FcmDeviceToken.user_id, FcmDeviceToken.last_seen_at.desc()),
-    )
-    pipe = rds.pipeline()
-    for user_id in unique_user_ids:
-        # Atomically replace the entire rebuildable cache for each recipient.
-        pipe.delete(f"fcm_tokens:{user_id}")
-        pipe.delete(_token_index_key(user_id))
-        # A ready marker also records a deliberate empty token set.  Without
-        # it, every notification would query the database again for users who
-        # have never registered a device.
-        pipe.set(
-            _token_cache_ready_key(user_id),
-            '1',
-            ex=_token_cache_ttl_seconds,
-        )
-
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    cached = 0
-    disabled_tokens = False
-    rows = cast(list[FcmDeviceToken], result.scalars().all())
-    for row in rows:
-        try:
-            token = decrypt_fcm_token(row.device_token_encrypted)
-        except InvalidToken:
-            # A retired key or corrupt ciphertext must not abort delivery.
-            _disable_undecryptable_fcm_token(row, now)
-            pipe.delete(_token_meta_key(row.user_id, row.device_token_hash))
-            disabled_tokens = True
-            logger.warning(
-                'Disabled undecryptable FCM token: user_id=%s token_hash=%s',
-                row.user_id,
-                row.device_token_hash,
-            )
-            continue
-        _queue_token_cache_write(pipe, row, token)
-        cached += 1
-    if disabled_tokens:
-        await db.commit()
-    await pipe.execute()
-    return cached
+    users = list(dict.fromkeys(user_ids))
+    if not users:
+        return 0
+    return await optimistic(rds, _FcmTokenCacheRebuild(users, db).apply)
 
 
 async def ensure_fcm_token_cache_for_users(
@@ -422,180 +473,31 @@ async def ensure_fcm_token_cache_for_users(
     db: AsyncSession,
     rds: redis.Redis,
 ) -> int:
-    """Hydrate only cold recipient token caches from the durable store.
-
-    Device registration and invalid-token handling keep active caches current.
-    This function is therefore a cache-through miss path, rather than the
-    former per-notification full rebuild.
-    """
-    unique_user_ids = list(dict.fromkeys(user_ids))
-    if not unique_user_ids:
+    """Validate durable ownership revisions before trusting cached devices."""
+    users = list(dict.fromkeys(user_ids))
+    if not users:
         return 0
-    ready_values = await rds.mget(
-        [_token_cache_ready_key(user_id) for user_id in unique_user_ids],
+    result = await db.execute(
+        select(
+            FcmDeviceToken.user_id,
+            FcmDeviceToken.device_token_hash,
+            FcmDeviceToken.updated_at,
+        ).where(
+            FcmDeviceToken.user_id.in_(users),
+            FcmDeviceToken.disabled_at.is_(None),
+        ),
     )
-    missing_ids = [
-        user_id
-        for user_id, ready in zip(unique_user_ids, ready_values)
-        if ready is None
+    records: dict[int, list[tuple[str, datetime]]] = {
+        user: [] for user in users
+    }
+    for user, token_hash, updated in result.all():
+        records[user].append((token_hash, updated))
+    ready = await rds.mget([_token_cache_ready_key(user) for user in users])
+    stale = [
+        user
+        for user, value in zip(users, ready, strict=True)
+        if value != _cache_revision(records[user]).encode()
     ]
-    if not missing_ids:
-        return 0
-    return await refresh_fcm_token_cache_for_users(missing_ids, db, rds)
-
-
-async def mark_fcm_tokens_success(
-    user_id: int,
-    device_tokens: Iterable[str],
-    rds: redis.Redis,
-    db: AsyncSession,
-) -> None:
-    """Mark successful test sends for token diagnostics.
-
-    Args:
-        user_id: Identifier of the token owner.
-        device_tokens: Tokens confirmed as successfully delivered.
-        rds: Redis connection used to update cached diagnostics.
-        db: Database session used to persist diagnostics.
-    """
-    now_dt = datetime.now(timezone.utc).replace(microsecond=0)
-    now = _datetime_to_api(now_dt)
-    token_hashes = [fcm_token_hash(token) for token in device_tokens]
-    await db.execute(
-        update(FcmDeviceToken)
-        .where(
-            FcmDeviceToken.user_id == user_id,
-            FcmDeviceToken.device_token_hash.in_(token_hashes),
-        )
-        .values(
-            last_success_at=now_dt,
-            last_failure_at=None,
-            failure_reason=None,
-            disabled_at=None,
-            updated_at=now_dt,
-        ),
+    return (
+        await refresh_fcm_token_cache_for_users(stale, db, rds) if stale else 0
     )
-    await db.commit()
-
-    pipe = rds.pipeline()
-    for token_hash in token_hashes:
-        pipe.hset(
-            _token_meta_key(user_id, token_hash),
-            mapping={
-                'last_success_at': now,
-                'last_failure_at': '',
-                'failure_reason': '',
-                'is_active': 'true',
-            },
-        )
-    await pipe.execute()
-
-
-async def mark_fcm_tokens_failure(
-    user_id: int,
-    device_tokens: Iterable[str],
-    rds: redis.Redis,
-    reason: str,
-    db: AsyncSession,
-) -> None:
-    """Mark failed sends for token diagnostics.
-
-    Args:
-        user_id: Identifier of the token owner.
-        device_tokens: Tokens for which delivery failed.
-        rds: Redis connection used to update cached diagnostics.
-        reason: Stable diagnostic code describing the failure.
-        db: Database session used to persist diagnostics.
-    """
-    now_dt = datetime.now(timezone.utc).replace(microsecond=0)
-    now = _datetime_to_api(now_dt)
-    token_hashes = [fcm_token_hash(token) for token in device_tokens]
-    await db.execute(
-        update(FcmDeviceToken)
-        .where(
-            FcmDeviceToken.user_id == user_id,
-            FcmDeviceToken.device_token_hash.in_(token_hashes),
-        )
-        .values(
-            last_failure_at=now_dt,
-            failure_reason=reason,
-            updated_at=now_dt,
-        ),
-    )
-    await db.commit()
-
-    pipe = rds.pipeline()
-    for token_hash in token_hashes:
-        pipe.hset(
-            _token_meta_key(user_id, token_hash),
-            mapping={
-                'last_failure_at': now,
-                'failure_reason': reason,
-            },
-        )
-    await pipe.execute()
-
-
-async def mark_invalid_fcm_tokens_for_users(
-    user_ids: list[int],
-    invalid_tokens: Iterable[str],
-    rds: redis.Redis,
-    db: AsyncSession,
-    reason: str = 'invalid_token',
-) -> None:
-    """Disable invalid tokens and retain their failure diagnostics.
-
-    Args:
-        user_ids: Candidate owners of the invalid tokens.
-        invalid_tokens: Tokens Firebase identified as unusable.
-        rds: Redis connection used to remove send-cache entries.
-        reason: Stable diagnostic code stored for disabled tokens.
-        db: Database session used to persist disabled state.
-    """
-    invalid_set = set(invalid_tokens)
-    now_dt = datetime.now(timezone.utc).replace(microsecond=0)
-    now = _datetime_to_api(now_dt)
-    invalid_hashes = [fcm_token_hash(token) for token in invalid_set]
-    await db.execute(
-        update(FcmDeviceToken)
-        .where(
-            FcmDeviceToken.user_id.in_(user_ids),
-            FcmDeviceToken.device_token_hash.in_(invalid_hashes),
-        )
-        .values(
-            disabled_at=now_dt,
-            last_failure_at=now_dt,
-            failure_reason=reason,
-            updated_at=now_dt,
-        ),
-    )
-    await db.commit()
-
-    for user_id in user_ids:
-        # Ownership is resolved from each user's cached token map before
-        # removal.
-        raw_map = cast(
-            Mapping[bytes, bytes],
-            await rds.hgetall(f"fcm_tokens:{user_id}"),
-        )
-        owned_invalid_tokens = [
-            token
-            for raw_token in raw_map
-            if (token := _decode_redis_string(raw_token)) in invalid_set
-        ]
-        if not owned_invalid_tokens:
-            continue
-        pipe = rds.pipeline()
-        for token in owned_invalid_tokens:
-            token_hash = fcm_token_hash(token)
-            pipe.hdel(f"fcm_tokens:{user_id}", token)
-            pipe.sadd(_token_index_key(user_id), token_hash)
-            pipe.hset(
-                _token_meta_key(user_id, token_hash),
-                mapping={
-                    'last_failure_at': now,
-                    'failure_reason': reason,
-                    'is_active': 'false',
-                },
-            )
-        await pipe.execute()

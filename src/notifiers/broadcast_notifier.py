@@ -14,12 +14,6 @@ class BroadcastNotifier:
         *,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        """Perform init.
-
-        Args:
-            broadcast_url: Value used by this callable.
-            client: Value used by this callable.
-        """
         self.broadcast_url = broadcast_url
         self._client = client
         self._owns_client = client is None

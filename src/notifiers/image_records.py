@@ -10,12 +10,6 @@ class ImageRecordStore:
     """Read and write image-upload timestamps without leaking I/O details."""
 
     def __init__(self, path: str, logger: logging.Logger) -> None:
-        """Perform init.
-
-        Args:
-            path: Value used by this callable.
-            logger: Value used by this callable.
-        """
         self.path = path
         self.logger = logger
 
@@ -23,7 +17,7 @@ class ImageRecordStore:
         """Return stored image records, falling back safely to an empty map."""
         try:
             if os.path.exists(self.path):
-                with open(self.path, encoding='utf-8') as file:
+                with open(self.path) as file:
                     records = json.load(file)
                     if isinstance(records, dict):
                         return records
