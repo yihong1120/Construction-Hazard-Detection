@@ -339,7 +339,7 @@ opencv-python==5.0.0.93 ; platform_machine == 'x86_64' and sys_platform == 'linu
     #   construction-hazard-detection
     #   sahi
     #   ultralytics
-opentelemetry-api==1.45.1 ; platform_machine == 'x86_64' and sys_platform == 'linux'
+opentelemetry-api==1.45.2 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via
     #   fastapi
     #   google-api-core
