@@ -88,14 +88,64 @@ FastAPI 服務組成。
   </div>
 </div>
 
-## 目前架構
+## main.py 影像處理工作流程
 
-<img width="100%" src="./assets/flowcharts/site_safety_monitor_zh.png" alt="工地危害偵測執行架構">
+`main.py` 讀取 PostgreSQL 或 JSON 設定，管理攝影機程序與共用 YOLO workers，
+並啟動 outbox dispatcher。下圖由左至右呈現這些程序如何將影像串流轉換成
+物件辨識結果、安全警示、違規證據與推播通知。
 
-圖中整理了直播資料流、11 個偵測類別、安全警示規則，以及影像與 metadata 輸出。
-Redis 不儲存直播影像 frame；直播影像由 MediaMTX 負責，Redis 只保存登入快取、
-FCM token 快取、即時警示 metadata、overlay demand key 與 overlay ready key 等小型
-協調狀態。
+```mermaid
+flowchart LR
+    MAIN["main.py<br/>載入設定與管理程序"]
+    CAPTURE["影像擷取<br/>RTSP／HTTP／本機影片"]
+    MAIN -. 啟動與管理 .-> CAPTURE
+
+    subgraph DETECTION["物件辨識與危害判斷"]
+        YOLO["YOLO workers<br/>GPU 物件辨識"]
+        RULES["危害判斷<br/>防護裝備、距離與管制區規則"]
+        YOLO -->|偵測結果| RULES
+    end
+    CAPTURE -->|最新影格| YOLO
+
+    subgraph LIVE["直播與即時警示"]
+        MEDIA["影像發布／MediaMTX<br/>原始與標註影像"]
+        REDIS[("Redis<br/>警示 metadata")]
+        VIEW["Web／Flutter App<br/>觀看直播與警示"]
+        MEDIA -->|HLS／WebRTC| VIEW
+        REDIS -->|Streaming Web API<br/>SSE／WebSocket| VIEW
+    end
+    CAPTURE -->|原始影像| MEDIA
+    RULES -->|標註影像| MEDIA
+    RULES -->|警示狀態| REDIS
+
+    subgraph EVIDENCE["違規儲存與通知"]
+        OUTBOX[("SQLite outbox<br/>證據排隊與投遞重試")]
+        STORE["違規紀錄 API<br/>PostgreSQL 紀錄＋圖片檔案"]
+        NOTIFY["FCM 通知<br/>推播至工地成員裝置"]
+        OUTBOX -->|Outbox dispatcher| STORE
+        STORE -->|上傳成功後| NOTIFY
+    end
+    RULES -->|符合條件的違規事件| OUTBOX
+
+    classDef control fill:#eef2ff,stroke:#6366f1,color:#182b45
+    classDef video fill:#eaf1ff,stroke:#2563eb,color:#182b45
+    classDef detection fill:#e4f4f3,stroke:#087f8c,color:#182b45
+    classDef storage fill:#fff2df,stroke:#b45309,color:#182b45
+    class MAIN control
+    class CAPTURE,MEDIA,VIEW video
+    class YOLO,RULES,REDIS detection
+    class OUTBOX,STORE,NOTIFY storage
+```
+
+- **影像串流：**擷取、推論與發布各自運作。原始影像可直接發布，標註影像則加入
+  偵測框、標籤與危害區域多邊形。發布器依觀看需求啟動，MediaMTX 負責分發影像。
+- **即時警示：**Redis 保存小型警示 metadata，由 Streaming Web 透過 SSE 或
+  WebSocket 傳送給觀看端。Redis 也保存登入／token 快取、觀看需求及 overlay
+  ready 狀態，不傳送直播影格。
+- **儲存與通知：**違規事件受工作時段與通知間隔限制。outbox dispatcher 先將
+  證據上傳至違規紀錄 API，取得違規 ID 後再呼叫 FCM 通知服務。PostgreSQL 保存
+  紀錄，圖片另外存成檔案。即時警示 metadata 也受工作時段限制；已啟用且未過期的
+  串流仍可持續擷取與播放影像。
 
 ## 目錄說明
 

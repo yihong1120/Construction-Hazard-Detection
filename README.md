@@ -91,15 +91,68 @@ Below are examples of real-time hazard detection by the system.
   </div>
 </div>
 
-## Runtime Architecture
+## main.py Processing Workflow
 
-<img width="100%" src="./assets/flowcharts/site_safety_monitor_en.png" alt="Construction hazard detection runtime architecture">
+`main.py` loads PostgreSQL or JSON configuration, supervises camera processes
+and shared YOLO workers, and starts the outbox dispatcher. The workflow below
+shows how those processes turn live video into detections, safety warnings,
+recorded evidence, and notifications, from left to right.
 
-The diagram summarises the live data path, the 11 configured detection classes,
-the safety-warning rules, and the video/metadata outputs. Redis is not used to
-store live video frames; MediaMTX owns live playback, while Redis keeps only
-small coordination state such as authentication cache, FCM token cache, compact
-warning metadata, overlay demand keys, and overlay ready keys.
+```mermaid
+flowchart LR
+    MAIN["main.py<br/>Configuration and process management"]
+    CAPTURE["Video capture<br/>RTSP / HTTP / local video"]
+    MAIN -. Start and supervise .-> CAPTURE
+
+    subgraph DETECTION["Detection and hazard analysis"]
+        YOLO["YOLO workers<br/>GPU object detection"]
+        RULES["Hazard analysis<br/>PPE, proximity and restricted areas"]
+        YOLO -->|Detection results| RULES
+    end
+    CAPTURE -->|Latest frames| YOLO
+
+    subgraph LIVE["Live video and warnings"]
+        MEDIA["Video publishing / MediaMTX<br/>Clean and annotated video"]
+        REDIS[("Redis<br/>Warning metadata")]
+        VIEW["Web / Flutter App<br/>Live video and warnings"]
+        MEDIA -->|HLS / WebRTC| VIEW
+        REDIS -->|Streaming Web API<br/>SSE / WebSocket| VIEW
+    end
+    CAPTURE -->|Clean video| MEDIA
+    RULES -->|Annotated video| MEDIA
+    RULES -->|Warning state| REDIS
+
+    subgraph EVIDENCE["Evidence storage and notifications"]
+        OUTBOX[("SQLite outbox<br/>Queued evidence and delivery retries")]
+        STORE["Violation Records API<br/>PostgreSQL records + image files"]
+        NOTIFY["FCM notifications<br/>Push to site members' devices"]
+        OUTBOX -->|Outbox dispatcher| STORE
+        STORE -->|Upload succeeds| NOTIFY
+    end
+    RULES -->|Eligible violation event| OUTBOX
+
+    classDef control fill:#eef2ff,stroke:#6366f1,color:#182b45
+    classDef video fill:#eaf1ff,stroke:#2563eb,color:#182b45
+    classDef detection fill:#e4f4f3,stroke:#087f8c,color:#182b45
+    classDef storage fill:#fff2df,stroke:#b45309,color:#182b45
+    class MAIN control
+    class CAPTURE,MEDIA,VIEW video
+    class YOLO,RULES,REDIS detection
+    class OUTBOX,STORE,NOTIFY storage
+```
+
+- **Video:** capture, inference, and publishing run independently. Clean video
+  bypasses inference; annotated video adds detection boxes, labels, and hazard
+  polygons. Publishers start on viewer demand, and MediaMTX distributes video.
+- **Warnings:** Redis carries compact warning metadata; Streaming Web sends it
+  to viewers over SSE or WebSocket. Redis also holds auth/token caches and
+  viewer-demand/overlay-ready keys; it does not carry live video frames.
+- **Evidence and notifications:** working hours and notification throttling gate
+  violation events. The outbox dispatcher uploads evidence to the Violation
+  Records API, then calls the FCM notification service after receiving a
+  violation ID. PostgreSQL stores records, while image files are stored
+  separately. Working hours also gate live warning metadata, while video
+  capture and playback remain available for enabled, unexpired streams.
 
 ## Repository Map
 
