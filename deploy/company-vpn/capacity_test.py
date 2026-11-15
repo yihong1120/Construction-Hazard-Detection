@@ -61,7 +61,7 @@ def iperf():
 
 
 def install_tools():
-    import deploy as d
+    import netbird_deploy as d
 
     addresses = json.loads(d.run('ip', '-j', '-4', 'address', 'show'))
     if not any(a['local'] == d.LAN for i in addresses for a in i['addr_info']):
@@ -294,7 +294,7 @@ def summarize_report(report):
 
 
 def report_latest():
-    import deploy as d
+    import netbird_deploy as d
     import enroll_b as e
 
     paths = [
@@ -324,7 +324,7 @@ def report_latest():
 
 
 def cleanup(state_path):
-    import deploy as d
+    import netbird_deploy as d
     from configure_sso import get_token
 
     state = json.loads(state_path.read_text())
@@ -350,7 +350,7 @@ def cleanup(state_path):
 
 
 def serve(args):
-    import deploy as d
+    import netbird_deploy as d
     import enroll_b as e
     import configure_exit as x
     from configure_sso import get_token
@@ -802,7 +802,7 @@ def main():
         cleanup(args.state)
     else:
         import fcntl
-        import deploy as d
+        import netbird_deploy as d
 
         with (d.ROOT / 'capacity-test.lock').open('w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

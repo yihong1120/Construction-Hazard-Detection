@@ -12,8 +12,7 @@ from pathlib import Path
 
 import configure_exit as x
 import configure_sso as s
-
-import deploy as d
+import netbird_deploy as d
 
 ROOT = Path(__file__).resolve().parent
 PENDING = d.ROOT / 'exit-oidc-transition.json'
@@ -210,7 +209,7 @@ def install_timer():
         'auto_exit.py',
         'configure_exit.py',
         'configure_sso.py',
-        'deploy.py',
+        'netbird_deploy.py',
         'enroll_b.py',
     ):
         source, target = ROOT / name, INSTALLED / name

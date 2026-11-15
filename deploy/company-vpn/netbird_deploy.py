@@ -1,4 +1,3 @@
-# Install the NetBird control plane on B. Employee SSO/routing is a later step.
 from __future__ import annotations
 
 import argparse
@@ -317,7 +316,7 @@ def nginx_site(tls):
         'return 301 https://$host$request_uri;' if tls else 'return 503;'
     )
     http = (
-        '# Managed by company-vpn/deploy.py; only this host is '
+        '# Managed by company-vpn/netbird_deploy.py; only this host is '
         'changed.\nserver {\n    listen 80;\n    listen [::]:80;\n    '
         'server_name '
         f'{HOST}'
@@ -524,7 +523,7 @@ def verify():
 def install_boot_unit():
     unit = Path('/etc/systemd/system/company-vpn.service')
     text = (
-        '# Managed by company-vpn/deploy.py\n[Unit]\n'
+        '# Managed by company-vpn/netbird_deploy.py\n[Unit]\n'
         'Description=Company NetBird control plane\n'
         'Wants=network-online.target\nAfter=network-online.target '
         'docker.service\nRequires=docker.service\n'
@@ -536,7 +535,7 @@ def install_boot_unit():
         'WantedBy=multi-user.target\n'
     )
     if unit.exists() and not unit.read_text().startswith(
-        '# Managed by company-vpn/deploy.py',
+        '# Managed by company-vpn/netbird_deploy.py',
     ):
         raise RuntimeError(
             'Refusing to replace an unmanaged company-vpn.service.',
@@ -651,7 +650,7 @@ def install():
     print(
         (
             'NetBird control plane installed. Administrator '
-            'credentials: sudo python3 ~/company-vpn/deploy.py '
+            'credentials: sudo python3 ~/company-vpn/netbird_deploy.py '
             'credentials'
         ),
     )

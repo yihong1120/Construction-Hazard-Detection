@@ -7,7 +7,7 @@
 ## 在 B 執行
 
 ```bash
-sudo python3 "$HOME/company-vpn/deploy.py" install
+sudo python3 "$HOME/company-vpn/netbird_deploy.py" install
 ```
 
 部署前會核對 B 的 LAN 位址 `192.168.1.86`、DNS、連接埠、既有 Docker／路由與三個正式網站。第一次執行會備份 `/etc/nginx` 到 `/etc/company-vpn/nginx-backup-*`，僅新增 `company-vpn.conf` 網站設定。設定變更經 `nginx -t` 檢查後才 reload；Nginx 設定失敗時還原本次變更。
@@ -19,8 +19,8 @@ sudo python3 "$HOME/company-vpn/deploy.py" install
 ## 管理與檢查
 
 ```bash
-sudo python3 "$HOME/company-vpn/deploy.py" verify
-sudo python3 "$HOME/company-vpn/deploy.py" credentials
+sudo python3 "$HOME/company-vpn/netbird_deploy.py" verify
+sudo python3 "$HOME/company-vpn/netbird_deploy.py" credentials
 ```
 
 `credentials` 只顯示 root 專用復原憑證檔案的位置，不會輸出密碼。管理者需要時可在本機以 root 權限讀取，**請勿將內容貼到聊天、日誌或問題回報中**。此帳號與員工未來的 Keycloak 登入分開。初始自動設定用的 PAT 保留於 root 專用 `/etc/company-vpn/bootstrap.json`，七天後到期；SSO 接通後應撤銷，不作為長期 API 金鑰。

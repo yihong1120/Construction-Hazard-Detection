@@ -11,8 +11,7 @@ from unittest.mock import patch
 
 import capacity_test as c
 import configure_sso as s
-
-import deploy as d
+import netbird_deploy as d
 
 
 def _wiki_login_redirect_does_not_curl(

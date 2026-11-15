@@ -9,8 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import enroll_b as e
-
-import deploy as d
+import netbird_deploy as d
 
 
 class CredentialOutputTest(unittest.TestCase):

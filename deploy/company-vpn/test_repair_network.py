@@ -3,9 +3,8 @@ from __future__ import annotations
 import copy
 import unittest
 
+import netbird_deploy as d
 import repair_network as r
-
-import deploy as d
 
 
 class NetworkRepair(unittest.TestCase):

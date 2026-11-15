@@ -9,8 +9,7 @@ import time
 
 import configure_sso as s
 import enroll_b as e
-
-import deploy as d
+import netbird_deploy as d
 
 STATE = d.ROOT / 'exit-node.json'
 PUBLIC_IP = '60.249.248.158'

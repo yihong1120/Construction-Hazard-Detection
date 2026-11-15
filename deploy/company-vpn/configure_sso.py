@@ -17,7 +17,7 @@ from urllib.parse import parse_qs
 from urllib.parse import urlencode
 from urllib.parse import urlsplit
 
-import deploy as d
+import netbird_deploy as d
 
 CLIENT = 'company-vpn'
 ISSUER = 'https://changdar-server.mooo.com/keycloak/realms/visionnaire'

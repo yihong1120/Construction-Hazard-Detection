@@ -14,9 +14,8 @@ import time
 import urllib.parse
 from pathlib import Path
 
+import netbird_deploy as d
 from configure_sso import get_token
-
-import deploy as d
 
 VERSION = '0.80.0'
 ARCHIVE = 'netbird_0.80.0_linux_amd64.tar.gz'

@@ -10,8 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import boot_guard as b
-
-import deploy as d
+import netbird_deploy as d
 
 
 def _healthy_check_never_restarts_or_command(
