@@ -11,7 +11,7 @@ AI 開發環境繼續使用 `https://ai-dev.changdar-server.mooo.com`。
 後端驗證 Keycloak issuer、dev audience `visionnaire-dev-api` 及當前 AI client 角色；
 登入 dev 本身不代表已取得 AI 權限。BFF 移除瀏覽器傳入的 company-ai 內部 bridge／身分標頭。
 
-兩邊私有設定由 `ai-gateway/deploy/dev/connect_bff.py` 配置；主網站 setup 保留固定的
+兩邊私有設定由 `ai-gateway/examples/deployment/dev/connect_bff.py` 配置；主網站 setup 保留固定的
 `BFF_AI_ACCESS_API_URL=http://127.0.0.1:18083`，啟動檢查拒絕使用正式 upstream。
 驗證可執行 `python -m deploy.dev.smoke_company_ai`，只建立並撤銷測試 enrollment，
 不領取模型 key、不呼叫模型、不變更預算或角色，完成後移除自己的暫時 SSO session。
