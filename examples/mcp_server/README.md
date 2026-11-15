@@ -32,6 +32,25 @@ Clients use the server's configured identity. Use stdio or loopback HTTP for tru
 operators. The HTTP transport has no separate user login; remote access requires an
 authenticated proxy and restricted network access.
 
+## AI Gateway boundary
+
+Agent orchestration, conversations, LLM routing and accounting belong to the sibling
+`ai-gateway` repository. Detection, hazard rules, violation data, notifications and this
+domain MCP server remain here. Gateway adapters call a service contract rather than
+importing this repository's Python modules or duplicating its database models.
+
+The multi-user gateway connects to the authenticated read-only MCP entry point
+owned by this repository: see [personal OIDC tools](agent_reads/README.md).
+Tool names, descriptions, JSON schemas, query projection and pagination stay here;
+the gateway discovers them through its generic MCP connector and explicit allowlist.
+The existing stdio/8092 entry point retains its configured worker identity and is
+not used as a fallback for personal queries.
+
+The personal entry point reuses the existing violation services and verifies each
+request's OIDC bearer, registered deployment, local account and current site grants.
+Existing HTTP read APIs remain unchanged. No login/session contract or identity
+table is migrated, and no source repository imports the other's Python modules.
+
 ## API configuration
 
 - `VIOLATION_RECORD_API_URL`: defaults to `http://127.0.0.1:8002`.

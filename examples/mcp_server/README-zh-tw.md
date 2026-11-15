@@ -33,6 +33,21 @@ stdio client 請明確設定 `MCP_TRANSPORT=stdio`，stdout 維持僅包含協�
 此入口提供配置於伺服器端的帳號能力，適合由可信任操作員透過 stdio 或本機 HTTP 使用。
 HTTP 入口沒有另設使用者登入；若需遠端存取，須先配置有身分驗證的代理並限制連線來源。
 
+## 與 AI Gateway 的責任邊界
+
+Agent 協調、對話、LLM 路由與用量歸屬由相鄰的 `ai-gateway` repo 維護。
+偵測、危害規則、違規資料、通知及此領域 MCP server 留在本 repo。
+Gateway 透過服務契約串接，不跨 repo 匯入 Python 模組或複製工安資料表模型。
+
+多人使用的 gateway 改由本 repo 的[個人 OIDC 唯讀 MCP 入口](agent_reads/README.md)串接。
+工具名稱、描述、JSON schema、查詢投影及分頁規則留在這裡；gateway 僅以通用 MCP
+connector 及明確允許清單動態探索。原 stdio／8092 入口仍使用已配置的 worker 身分，
+不作為個人查詢的備援。
+
+新入口直接沿用既有違規領域服務，每個 request 都驗證 OIDC Bearer、註冊 deployment、
+active 的本機帳號及當前工地權限。既有 HTTP 唯讀 API 不變；沒有遷移登入／session
+契約或身分資料表，兩個 repo 不互相匯入 Python 模組。
+
 ## API 與授權設定
 
 - `VIOLATION_RECORD_API_URL`：違規 API，預設 `http://127.0.0.1:8002`。
