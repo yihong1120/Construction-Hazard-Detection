@@ -78,20 +78,18 @@ def _request(
     )
 
 
-class _NativeSocialRedis(FakeRedis):
-    """Add the counter primitive used by the anonymous begin limiter."""
-
-    async def incr(self, key: str) -> int:
-        value = int(self.data.get(key, b'0')) + 1
-        self.data[key] = str(value).encode('ascii')
-        return value
-
-
 class NativeSocialExchangeServicesTest(unittest.IsolatedAsyncioTestCase):
     """Verify nonce, PKCE, one-use redemption, and account-link boundaries."""
 
     def setUp(self) -> None:
-        self.redis = _NativeSocialRedis()
+        self.redis = FakeRedis()
+        counter = patch(
+            'examples.db_management.services.native_social_state.'
+            'increment_window',
+            AsyncMock(return_value=(1, 300)),
+        )
+        counter.start()
+        self.addCleanup(counter.stop)
         self.db = MagicMock()
         self.db.scalar = AsyncMock()
         self.db.execute = AsyncMock()

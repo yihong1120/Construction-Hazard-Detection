@@ -12,6 +12,7 @@ from fastapi import Request
 from redis.asyncio import Redis
 
 from examples.auth.config import Settings
+from examples.auth.redis_counters import increment_window
 
 
 NativeSocialProvider = Literal['google', 'apple']
@@ -73,11 +74,10 @@ async def _enforce_begin_rate_limit(
 ) -> None:
     """Bound unauthenticated transaction allocation per trusted peer."""
     key = _rate_limit_key(request)
-    count = await redis.incr(key)
-    if count == 1:
-        await redis.expire(key, _BEGIN_RATE_LIMIT_WINDOW_SECONDS)
+    count, retry_after = await increment_window(
+        redis, key, _BEGIN_RATE_LIMIT_WINDOW_SECONDS,
+    )
     if count > _BEGIN_RATE_LIMIT_MAX:
-        retry_after = await redis.ttl(key)
         raise HTTPException(
             status_code=429,
             detail='native_social_exchange_rate_limited',

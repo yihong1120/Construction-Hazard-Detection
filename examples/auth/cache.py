@@ -11,6 +11,7 @@ from redis.exceptions import NoScriptError
 
 from examples.auth.jwt_config import jwt_access
 from examples.auth.jwt_config import JwtAuthorizationCredentials
+from examples.auth.redis_counters import FIXED_WINDOW_SCRIPT
 
 
 class RateLimiterService:
@@ -18,18 +19,7 @@ class RateLimiterService:
 
     # Lua script used to atomically perform INCR and TTL in one round-trip,
     # applying an expiry only when the key is first created or has no TTL.
-    _RATE_LIMIT_LUA: str = """
--- KEYS[1] = key, ARGV[1] = window_seconds
-local current = redis.call('INCR', KEYS[1])
-local ttl = redis.call('TTL', KEYS[1])
--- Apply expiry on first increment or when there is no TTL,
--- to keep a fixed window
-if ttl == -1 or ttl == -2 then
-    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
-    ttl = tonumber(ARGV[1])
-end
-return { current, ttl }
-"""
+    _RATE_LIMIT_LUA = FIXED_WINDOW_SCRIPT
 
     def __init__(
         self,

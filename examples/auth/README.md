@@ -31,3 +31,22 @@ rolling out this backend; new databases use the updated initialization SQL.
 
 Redis stores BFF sessions, media capabilities, revocation entries and rate
 limits. Token refresh runs against the configured identity provider.
+
+## Cross-repository authentication changes
+
+Coordinate authentication changes with `ai-gateway` and
+`visionnaire-flutter-dev`. This backend remains Keycloak/OIDC-only: the gateway's
+local password-recovery token table and identity migration do not apply here.
+The shared contract is behaviour, not a wholesale copy of the local issuer.
+
+Native social begin and API quotas share `redis_counters.py`: a single Lua
+operation increments the counter and repairs missing expiry without resetting
+the window. Authentication and retired-route regression tests must remain part
+of any coordinated update.
+
+
+The gateway now groups its account/session/provider core under `examples.identity`.
+This backend keeps `examples.auth` and Keycloak as its authority; the internal
+package move does not change login, refresh, cookie or deployment contracts.
+Shared counter behavior still matches the gateway's `examples.identity.redis_counters`;
+do not copy its local password issuer or recovery migrations into this backend.
