@@ -89,6 +89,19 @@ class TestOidcTokenVerifier(unittest.IsolatedAsyncioTestCase):
                 self._token(aud='open-webui'),
             )
 
+    async def test_company_mcp_resource_token_is_not_a_visionnaire_token(
+        self,
+    ) -> None:
+        """A valid company signature cannot cross the resource/API boundary."""
+        with self.assertRaises(InvalidTokenError):
+            await self.verifier.decode_access_token(
+                self._token(
+                    aud='https://ai.example.com/company-mcp',
+                    scope='company.resources',
+                    azp='changdar-codex-mcp',
+                ),
+            )
+
     async def test_rejects_a_token_with_an_untrusted_signature(self) -> None:
         """A matching issuer alone never authorises a forged token."""
         other_key = rsa.generate_private_key(

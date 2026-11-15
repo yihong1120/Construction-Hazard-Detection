@@ -207,3 +207,34 @@ hCaptcha token 只能由 Keycloak Provider 在伺服器端驗證，並會驗證 
 - API access token 的 `iss` 為上述 issuer，`aud` 包含 `visionnaire-api`。
 - 在 Keycloak Account Console 改密碼後，三個平台都以新密碼登入；Web Account Console 與 Visionnaire 在同一個 online SSO session 期間不應重複詢問帳密。
 - 舊 Visionnaire 密碼登入 API 與 `/bff/auth/login` 帳密 POST 已移除，不可再呼叫。
+
+## 2026-11-14：公司 NAS／EIP MCP 契約
+
+ai-gateway 新增受資源 audience 保護的 `/company-mcp`，僅供已核准 Codex／Claude 原生
+OAuth 用戶端。Keycloak 繼續作身份權威；本 repo 不新增本機密碼、token 表或 identity migration。
+現有公司模型 policy 新增可選 `mcp` 公開 metadata（固定 HTTPS URL、public client IDs、scope、
+callback ports），不含帳密或 token。既有 BFF 只轉送 policy；不代理 MCP 登入或替換 audience。
+
+MCP access token 的 audience 為資源 URL，不能拿來呼叫 Visionnaire API；Visionnaire token
+也不能當成 MCP token。模型裝置金鑰與兩者均分開。Flutter Web 不領取或保存這些憑證，
+只開啟可信公司安裝／綁定頁。NAS／EIP 綁定仍由 ai-gateway 本人 `/connections` 管理。
+新增的 EIP `save_credentials` 是可選欄位，供保存憑證而不啟用排程；舊 enable_auto 語意不變。
+
+已檢查 BFF 的不透明回應轉送與 private assertion header 移除邊界，不需新增代理路由。
+上游 NAS／EIP 登入失效是工具／綁定錯誤，不得冒充 Visionnaire refresh 401。
+原有 refresh／session 與 401／403／409／429／5xx 分類維持不變。
+
+### 2026-11-15：公司 MCP模組重構
+
+Gateway的公司資源入口移至獨立 `company_mcp/`，採官方 SDK的 `MCPServer`；
+WebUI由顯式 adapter組裝，沿用既有資源 audience、scope、OIDC sub及 live introspection。
+MCP與 Visionnaire API的 token仍互不通用；本次不變更 Keycloak登入／refresh、
+BFF轉送或原 API契約，不引入 gateway本機密碼 token或資料庫 migration。
+
+### 2026-11-15：獨立 MCP程序與內部authority
+
+Gateway MCP已拆成獨立程序，保留原 resource URL／scope／audience。新增的
+`/internal/company-mcp` 僅供同主機協定程序與資源authority使用，要求 workload key
+及經原 issuer／resource audience／client／scope驗證的本人 assertion；不能加入
+本後端／BFF公開轉送白名單。原生 token於該資源authority終止，不可作為 Visionnaire
+API token；既有 Keycloak登入、refresh與授權模式不變，不引入 gateway本機token表。
