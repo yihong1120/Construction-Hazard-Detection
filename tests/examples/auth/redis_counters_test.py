@@ -20,21 +20,23 @@ class AtomicCounterTest(RedisFixture, unittest.IsolatedAsyncioTestCase):
             {'type': 'http', 'client': ('192.0.2.1', 1), 'headers': []},
         )
 
+    async def _begin_rate_limit(self):
+        try:
+            await native_social_state._enforce_begin_rate_limit(
+                self.request, self.redis,
+            )
+            return True
+        except HTTPException as error:
+            self.assertEqual(error.status_code, 429)
+            self.assertGreater(int(error.headers['Retry-After']), 0)
+            return False
+
     async def test_native_begin_has_twenty_slots_under_concurrent_requests(
         self,
     ):
-        async def begin():
-            try:
-                await native_social_state._enforce_begin_rate_limit(
-                    self.request, self.redis,
-                )
-                return True
-            except HTTPException as error:
-                self.assertEqual(error.status_code, 429)
-                self.assertGreater(int(error.headers['Retry-After']), 0)
-                return False
-
-        results = await asyncio.gather(*(begin() for _ in range(50)))
+        results = await asyncio.gather(
+            *(self._begin_rate_limit() for _ in range(50)),
+        )
         self.assertEqual(sum(results), 20)
         key = native_social_state._rate_limit_key(self.request)
         self.assertGreater(await self.redis.ttl(key), 0)

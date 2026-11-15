@@ -10,6 +10,11 @@ from pathlib import Path
 from redis.asyncio import Redis
 
 
+def stop_redis_process(process):
+    process.terminate()
+    process.wait(timeout=5)
+
+
 class RedisFixture:
     async def start_redis(self):
         binary = shutil.which('redis-server')
@@ -38,11 +43,7 @@ class RedisFixture:
             stderr=subprocess.DEVNULL,
         )
 
-        def stop():
-            process.terminate()
-            process.wait(timeout=5)
-
-        self.addCleanup(stop)
+        self.addCleanup(stop_redis_process, process)
         redis = Redis(unix_socket_path=socket)
         self.addAsyncCleanup(redis.aclose)
         for _ in range(200):
