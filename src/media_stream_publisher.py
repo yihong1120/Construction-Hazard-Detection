@@ -15,6 +15,7 @@ import numpy as np
 from src.frame_pacer import FramePacer
 from src.media_encoding import EncoderOptions
 from src.nvenc_session import release_nvenc_session
+from src.nvenc_session import take_nvenc_reservation
 from src.nvenc_session import try_acquire_nvenc_session
 from src.settings.media import EncoderSettings
 
@@ -113,6 +114,7 @@ class MediaStreamPublisher:
         self._stream_size: tuple[int, int] | None = None
         self._started = False
         self._uses_nvenc = False
+        self._nvenc_reservation = None
         self._nvenc_unavailable = False
         self._uses_vaapi = False
         self._vaapi_unavailable = False
@@ -296,21 +298,27 @@ class MediaStreamPublisher:
             )
         else:
             self._uses_nvenc = encoder == 'h264_nvenc'
+            if self._uses_nvenc:
+                self._nvenc_reservation = take_nvenc_reservation()
 
-        command = self._build_ffmpeg_command(
-            ffmpeg_binary,
-            width,
-            height,
-            encoder=encoder,
-        )
         try:
+            command = self._build_ffmpeg_command(
+                ffmpeg_binary,
+                width,
+                height,
+                encoder=encoder,
+            )
             self._process = await asyncio.create_subprocess_exec(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
+                pass_fds=tuple(
+                    self._nvenc_reservation.filenos()
+                    if self._nvenc_reservation is not None else (),
+                ),
             )
-        except Exception:
+        except BaseException:
             self._release_nvenc_session()
             raise
         self._stderr_task = asyncio.create_task(
@@ -551,7 +559,11 @@ class MediaStreamPublisher:
     def _release_nvenc_session(self) -> None:
         """Return this publisher's NVENC reservation exactly once."""
         if self._uses_nvenc:
-            release_nvenc_session()
+            if self._nvenc_reservation is not None:
+                release_nvenc_session(self._nvenc_reservation)
+                self._nvenc_reservation = None
+            else:
+                release_nvenc_session()
             self._uses_nvenc = False
 
 

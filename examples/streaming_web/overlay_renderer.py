@@ -369,12 +369,46 @@ def _blend_polygon_fill_roi(
     local_points = points.copy()
     local_points[:, 0] -= x1
     local_points[:, 1] -= y1
+    from src.native_kernels import optional_kernel
+
+    blend = optional_kernel('blend_mask_lut', 'OVERLAY_API_VERSION')
+    if blend is not None and frame.flags.c_contiguous:
+        coordinates = tuple(map(tuple, local_points.reshape(-1, 2).tolist()))
+        if (y2 - y1) * (x2 - x1) <= 65536:
+            mask = _cached_polygon_mask(x2 - x1, y2 - y1, coordinates)
+        else:
+            mask = _polygon_mask(x2 - x1, y2 - y1, coordinates)
+        blend(frame, mask, _blend_lookup(fill_bgr, alpha), x1, y1)
+        return
     fill = np.empty_like(roi)
     fill[:, :] = fill_bgr
     mask = np.zeros(roi.shape[:2], dtype=np.uint8)
     cv2.fillPoly(mask, [local_points], 255)
     blended = cv2.addWeighted(fill, alpha, roi, 1 - alpha, 0)
     cv2.copyTo(blended, mask, roi)
+
+
+def _polygon_mask(width, height, coordinates):
+    mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.fillPoly(mask, [np.asarray(coordinates, dtype=np.int32)], 255)
+    mask.setflags(write=False)
+    return mask
+
+
+_cached_polygon_mask = lru_cache(maxsize=16)(_polygon_mask)
+
+
+@lru_cache(maxsize=128)
+def _blend_lookup(color, alpha):
+    original = np.repeat(
+        np.arange(256, dtype=np.uint8)[None, :, None], 3, axis=2,
+    )
+    fill = np.empty_like(original)
+    fill[:] = color
+    table = cv2.addWeighted(fill, alpha, original, 1 - alpha, 0)
+    table = table.reshape(256, 3)
+    table.setflags(write=False)
+    return table
 
 
 def _normalised_polygons_for_overlay(

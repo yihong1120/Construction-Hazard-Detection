@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 from pydantic import model_validator
 
@@ -8,6 +10,10 @@ from src.settings.base import EnvironmentSettings
 
 class CaptureSettings(EnvironmentSettings):
     model_config = {'env_prefix': 'STREAM_CAPTURE_'}
+    backend: Literal['opencv', 'rust_ffmpeg'] = 'opencv'
+    decoder: Literal['cpu', 'cuda'] = 'cpu'
+    ffmpeg_path: str = 'ffmpeg'
+    ffprobe_path: str = 'ffprobe'
     reopen_delay_seconds: float = Field(5, ge=0, allow_inf_nan=False)
     max_reopen_delay_seconds: float = Field(60, ge=0, allow_inf_nan=False)
     freeze_reconnect_seconds: float = Field(0, ge=0, allow_inf_nan=False)

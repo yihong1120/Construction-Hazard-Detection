@@ -19,6 +19,8 @@ def test_nvenc_session_budget_limits_concurrent_publishers(
         assert nvenc_session.try_acquire_nvenc_session() is True
         assert nvenc_session.try_acquire_nvenc_session() is False
     finally:
+        for reservation in list(nvenc_session._reservations):
+            nvenc_session.release_nvenc_session(reservation)
         nvenc_session._active_sessions = previous_sessions
 
 
@@ -34,6 +36,8 @@ def test_release_nvenc_session_never_makes_active_count_negative() -> None:
         nvenc_session.release_nvenc_session()
         assert nvenc_session._active_sessions == 0
     finally:
+        for reservation in list(nvenc_session._reservations):
+            nvenc_session.release_nvenc_session(reservation)
         nvenc_session._active_sessions = previous_sessions
 
 

@@ -78,3 +78,33 @@ class FramePacer:
             self.reported_at = now
             return True
         return False
+
+
+class CaptureCadence:
+    """Admit fresh input on a monotonic clock without accumulating jitter.
+
+    Small early arrivals keep their phase; a long source outage resets the
+    next deadline so reconnects cannot spend old slots in a catch-up burst.
+    """
+
+    def __init__(self) -> None:
+        self.interval: float | None = None
+        self.deadline: float | None = None
+
+    def admit(self, now: float, interval: float) -> bool:
+        if interval <= 0:
+            self.interval = interval
+            self.deadline = None
+            return True
+        if self.deadline is None or interval != self.interval:
+            self.interval = interval
+            self.deadline = now + interval
+            return True
+        tolerance = min(interval * 0.1, 0.005)
+        if now < self.deadline - tolerance:
+            return False
+        if now - self.deadline > interval:
+            self.deadline = now + interval
+        else:
+            self.deadline += interval
+        return True

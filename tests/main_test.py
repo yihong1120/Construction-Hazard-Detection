@@ -920,6 +920,11 @@ class TestMainApp(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Prepare test fixtures."""
+        backend_patch = patch(
+            'src.stream_processor.load_postprocess_backend', return_value=None,
+        )
+        backend_patch.start()
+        self.addCleanup(backend_patch.stop)
         self.app = MainApp(poll_interval=1)
 
         reap = _asyncSetUp_reap

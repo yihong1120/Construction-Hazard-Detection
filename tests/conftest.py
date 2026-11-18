@@ -9,3 +9,8 @@ def bff_encryption_secret(monkeypatch):
         'BFF_TOKEN_ENCRYPTION_KEY',
         'test-only-bff-encryption-secret',
     )
+
+
+@pytest.fixture(autouse=True)
+def isolated_gpu_budget(monkeypatch, tmp_path):
+    monkeypatch.setenv('GPU_RESOURCE_DIRECTORY', str(tmp_path / 'gpu-budget'))

@@ -266,6 +266,15 @@ def _blend_bgra_roi(
         x: Requested destination left coordinate.
         y: Requested destination top coordinate.
     """
+    from src.native_kernels import optional_kernel
+
+    blend = optional_kernel('blend_bgra', 'OVERLAY_API_VERSION')
+    if (
+        blend is not None and frame.flags.c_contiguous
+        and bgra.flags.c_contiguous
+    ):
+        blend(frame, bgra, x, y)
+        return
     frame_height, frame_width = frame.shape[:2]
     text_height, text_width = bgra.shape[:2]
     dst_x1 = max(0, x)

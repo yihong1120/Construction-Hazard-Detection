@@ -4,17 +4,17 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Self
 
-from shapely.geometry import LineString
-from shapely.geometry import Point
-from shapely.geometry import Polygon
-from sklearn.cluster import HDBSCAN
+lazy from shapely.geometry import LineString
+lazy from shapely.geometry import Point
+lazy from shapely.geometry import Polygon
+lazy from sklearn.cluster import HDBSCAN
 
-from src.geometry import build_utility_pole_union
-from src.geometry import calculate_people_in_controlled_area
-from src.geometry import count_people_in_polygon
-from src.geometry import detect_polygon_from_cones
-from src.geometry import normalise_bbox
-from src.geometry import polygons_to_coords
+from src.bounding_boxes import normalise_bbox
+lazy from src.geometry import build_utility_pole_union
+lazy from src.geometry import calculate_people_in_controlled_area
+lazy from src.geometry import count_people_in_polygon
+lazy from src.geometry import detect_polygon_from_cones
+lazy from src.geometry import polygons_to_coords
 
 _SPATIAL_MIN_CELL_SIZE = 64.0
 _SPATIAL_MAX_CELL_SIZE = 256.0
@@ -40,7 +40,10 @@ class DangerDetector:
                 checks. Missing or incomplete mappings enable the default
                 checks.
         """
-        self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
+        self._clusterer: HDBSCAN | None = None
+        self._area_cache: dict[int, tuple[tuple, object]] = {}
+        self.geometry_cache_hits = 0
+        self.geometry_cache_misses = 0
 
         required_keys = {
             'detect_no_safety_vest_or_helmet',
@@ -55,6 +58,19 @@ class DangerDetector:
             if detection_items and required_keys.issubset(detection_items)
             else {}
         )
+
+    @property
+    def clusterer(self) -> HDBSCAN:
+        """Create the clustering runtime when an area check needs it."""
+        if self._clusterer is None:
+            self._clusterer = HDBSCAN(
+                min_samples=3, min_cluster_size=2, copy=True,
+            )
+        return self._clusterer
+
+    @clusterer.setter
+    def clusterer(self, value: HDBSCAN) -> None:
+        self._clusterer = value
 
     def detect_danger(
         self,
@@ -85,6 +101,44 @@ class DangerDetector:
         ):
             self.check_cone_restricted_area(datas, warnings, cone_polygons_raw)
 
+        self._check_person_safety(datas, warnings)
+
+        # (E) detect_machinery_close_to_pole
+        if self.detection_items and self.detection_items.get(
+            'detect_machinery_close_to_pole',
+            False,
+        ):
+            self.check_machinery_near_utility_pole(
+                datas,
+                warnings,
+                circle_ratio=0.35,
+            )
+
+        # (F) detect_in_utility_pole_restricted_area:
+        # Check if personnel enter the controlled area
+        # formed by the utility pole
+        if self.detection_items and self.detection_items.get(
+            'detect_in_utility_pole_restricted_area',
+            False,
+        ):
+            self.check_pole_restricted_area(datas, warnings, pole_polygons_raw)
+
+        # 3. Convert polygon coordinates (for front-end visualization)
+        cone_polygons_coords = (
+            polygons_to_coords(cone_polygons_raw) if cone_polygons_raw else []
+        )
+        pole_polygons_coords = (
+            polygons_to_coords(pole_polygons_raw) if pole_polygons_raw else []
+        )
+
+        return warnings, cone_polygons_coords, pole_polygons_coords
+
+    def _check_person_safety(
+        self,
+        datas: list[list[float]],
+        warnings: dict[str, dict[str, object]],
+    ) -> None:
+        """Apply PPE and person-to-machinery/vehicle warning rules."""
         detect_safety = self._feature_enabled(
             'detect_no_safety_vest_or_helmet',
         )
@@ -117,32 +171,6 @@ class DangerDetector:
                 machinery_vehicles,
                 warnings,
             )
-
-        # (E) detect_machinery_close_to_pole
-        if self.detection_items and self.detection_items.get(
-            'detect_machinery_close_to_pole',
-            False,
-        ):
-            self.check_machinery_near_utility_pole(
-                datas,
-                warnings,
-                circle_ratio=0.35,
-            )
-
-        # (F) detect_in_utility_pole_restricted_area:
-        # Check if personnel enter the controlled area
-        # formed by the utility pole
-        if self.detection_items and self.detection_items.get(
-            'detect_in_utility_pole_restricted_area',
-            False,
-        ):
-            self.check_pole_restricted_area(datas, warnings, pole_polygons_raw)
-
-        # 3. Convert polygon coordinates (for front-end visualization)
-        cone_polygons_coords = polygons_to_coords(cone_polygons_raw)
-        pole_polygons_coords = polygons_to_coords(pole_polygons_raw)
-
-        return warnings, cone_polygons_coords, pole_polygons_coords
 
     def _feature_enabled(self, feature: str) -> bool:
         """Return whether a configured safety check should run."""
@@ -192,7 +220,11 @@ class DangerDetector:
             warnings: A dictionary to store warning messages.
             polygons: A list to store the detected polygon areas.
         """
-        new_polygons = detect_polygon_from_cones(datas, self.clusterer)
+        if sum(data[5] == 6 for data in datas) < 3:
+            return
+        new_polygons = self._cached_area(
+            datas, 6, detect_polygon_from_cones,
+        )
         polygons.extend(new_polygons)
 
         people_count = calculate_people_in_controlled_area(
@@ -218,7 +250,11 @@ class DangerDetector:
             warnings: A dictionary to store warning messages.
             pole_polygons: A list to store the detected polygon areas.
         """
-        pole_union_poly = build_utility_pole_union(datas, self.clusterer)
+        if not any(data[5] == 9 for data in datas):
+            return
+        pole_union_poly = self._cached_area(
+            datas, 9, build_utility_pole_union,
+        )
         if not pole_union_poly.is_empty:
             pole_polygons.append(pole_union_poly)
 
@@ -231,6 +267,38 @@ class DangerDetector:
                 warnings['warning_people_in_utility_pole_controlled_area'] = {
                     'count': count_in_pole_area,
                 }
+
+    def _cached_area(self, datas, class_id, builder):
+        """Cache geometry only; moving people are checked on every frame."""
+        from src import geometry
+
+        clusterer = self.clusterer
+        parameters = getattr(clusterer, 'get_params', None)
+        if type(clusterer) is not HDBSCAN or not callable(parameters):
+            return builder(datas, clusterer)
+        configuration = parameters(deep=False)
+        if any(
+            not isinstance(value, (str, int, float, bool, type(None)))
+            for value in configuration.values()
+        ):
+            # Custom metrics or mutable parameter objects need fresh results.
+            return builder(datas, clusterer)
+        key = (
+            tuple(tuple(row[:4]) for row in datas if row[5] == class_id),
+            clusterer, repr(configuration), builder,
+            geometry.CIRCLE_BUFFER_SEGMENTS,
+            geometry.TANGENT_BUFFER_WIDTH,
+            geometry.TANGENT_BUFFER_SEGMENTS,
+            geometry.UTILITY_POLE_RADIUS_FACTOR,
+        )
+        cached = self._area_cache.get(class_id)
+        if cached is not None and cached[0] == key:
+            self.geometry_cache_hits += 1
+            return cached[1]
+        result = builder(datas, clusterer)
+        self._area_cache[class_id] = (key, result)
+        self.geometry_cache_misses += 1
+        return result
 
     def check_safety_violations(
         self,

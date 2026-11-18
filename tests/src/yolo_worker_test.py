@@ -497,8 +497,8 @@ def test_timeout_request_keeps_ring_slot_until_worker_reads_request(
     request = yolo_worker._WorkerRequest.from_mapping(
         request_queue.requests[0],
     )
-    assert client._ring is not None
-    assert client._ring.name == request.shm_name
+    assert client._ring is None
+    assert client._retired_rings[0].name == request.shm_name
 
     worker = yolo_worker.YoloWorker(None)
     frames, valid_requests = worker._read_batch_frames([request])
@@ -1229,6 +1229,7 @@ def test_client_handles_close_write_and_retired_ring_paths(
     new_ring = MagicMock()
     new_ring.acquire_slot = AsyncMock(return_value=0)
     client._ring = old_ring
+    client._inflight_slots['old'] = (old_ring, 0)
     monkeypatch.setattr(
         yolo_worker._SharedFrameRing,
         'create',
@@ -1296,7 +1297,7 @@ def test_worker_configuration_and_queue_guard_paths(
 
 
 def test_timed_out_slot_is_released_after_cleanup_delay() -> None:
-    """Late worker cleanup returns a timed-out ring slot to its owner."""
+    """Late worker cleanup reclaims an abandoned retired ring slot."""
 
     run_case = _timed_out_slot_is_released_run_case
 

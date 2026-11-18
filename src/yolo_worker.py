@@ -15,6 +15,8 @@ from typing import cast
 import numpy as np
 lazy from ultralytics import YOLO
 
+from src.native_inference import create_rust_model
+from src.native_inference import RustYoloModel
 from src.settings.inference import WorkerSettings
 from src.settings.precision import _parse_worker_precision
 from src.ultralytics_args import parse_quantize_value
@@ -113,19 +115,22 @@ class YoloWorkerClient:
             'shape': contiguous.shape,
             'dtype': str(contiguous.dtype),
         }
-        request_submitted = False
-        request_timed_out = False
+        deferred_release = False
         try:
             await self._submit_request(request)
-            request_submitted = True
             return await self._wait_for_result(request_id)
-        except TimeoutError:
-            request_timed_out = request_submitted
-            if request_timed_out:
+        except BaseException as exc:
+            # Cancelling to_thread does not stop an in-progress queue.put.
+            # Retire the entire ring before releasing any uncertain slot so
+            # neither a late enqueue nor a slow worker can observe new pixels.
+            known_full = isinstance(exc.__cause__, queue.Full)
+            if request_id in self._inflight_slots and not known_full:
+                deferred_release = True
+                self._retire_ring(ring)
                 self._release_slot_later(request_id)
             raise
         finally:
-            if not request_timed_out:
+            if not deferred_release:
                 self._release_slot(request_id)
 
     async def close(self) -> None:
@@ -152,25 +157,46 @@ class YoloWorkerClient:
         shape = tuple(int(value) for value in contiguous.shape)
         dtype = np.dtype(contiguous.dtype)
         async with self._ring_lock:
-            if self._closed:
-                raise RuntimeError('YOLO worker client is closed')
-            if (
-                self._ring is None
-                or self._ring.shape != shape
-                or self._ring.dtype != dtype
-            ):
-                if self._ring is not None:
-                    self._retired_rings.append(self._ring)
-                self._ring = _SharedFrameRing.create(
-                    shape,
-                    dtype,
-                    self.ring_slots,
-                )
-            ring = self._ring
-            slot = await ring.acquire_slot(self.timeout_seconds)
-            ring.write(slot, contiguous)
-            self._inflight_slots[request_id] = (ring, slot)
+            while True:
+                if self._closed:
+                    raise RuntimeError('YOLO worker client is closed')
+                if (
+                    self._ring is None
+                    or self._ring.shape != shape
+                    or self._ring.dtype != dtype
+                ):
+                    if self._ring is not None:
+                        self._retire_ring(self._ring)
+                    self._ring = _SharedFrameRing.create(
+                        shape, dtype, self.ring_slots,
+                    )
+                ring = self._ring
+                slot = await ring.acquire_slot(self.timeout_seconds)
+                # A timeout/cancellation or close may retire this ring while
+                # acquisition yields to another coroutine.
+                if ring is not self._ring or self._closed:
+                    ring.release_slot(slot)
+                    continue
+                try:
+                    ring.write(slot, contiguous)
+                except BaseException:
+                    ring.release_slot(slot)
+                    raise
+                self._inflight_slots[request_id] = (ring, slot)
+                break
         return ring, slot, contiguous
+
+    def _retire_ring(self, ring: _SharedFrameRing) -> None:
+        """Permanently stop writes to a ring whose readers may still run."""
+        if ring is self._ring:
+            self._ring = None
+        if any(
+            candidate is ring for candidate, _ in self._inflight_slots.values()
+        ):
+            if not any(candidate is ring for candidate in self._retired_rings):
+                self._retired_rings.append(ring)
+        else:
+            ring.close()
 
     def _release_slot(self, request_id: str) -> None:
         """Release a result slot and reclaim retired rings when possible."""
@@ -190,7 +216,7 @@ class YoloWorkerClient:
         ring.close()
 
     def _release_slot_later(self, request_id: str) -> None:
-        """Free a timed-out slot after the worker's maximum grace period.
+        """Reclaim an abandoned slot on a permanently retired ring.
 
         Args:
             request_id: Timed-out request whose frame may still be in use.
@@ -247,7 +273,9 @@ class YoloWorkerClient:
             except queue.Empty as exc:
                 raise TimeoutError('YOLO worker request timed out') from exc
             if result.get('id') != request_id:
+                self._release_slot(str(result.get('id', '')))
                 continue
+            self._release_slot(request_id)
             if result.get('ok'):
                 self.last_model_metadata = result.get('model_metadata')
                 return result.get('detections', [])
@@ -294,7 +322,9 @@ class YoloWorker:
         self.result_queues = dict(result_queues or {})
         self.startup_lock = startup_lock
         self.logger = logging.getLogger(__name__)
-        self.model_cache: dict[str, YoloModelLike] = {}
+        self.model_cache: dict[str, YoloModelLike | RustYoloModel] = {}
+        self.native_borrowed_frames = 0
+        self.native_snapshot_bytes = 0
         self.precision_mode = _parse_worker_precision(
             self.settings.precision,
         )
@@ -334,6 +364,19 @@ class YoloWorker:
             self.model_dir,
             self.model_suffix,
         )
+        try:
+            self._run_loop()
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        """Release native contexts and caches when a worker stops."""
+        for model in self.model_cache.values():
+            if isinstance(model, RustYoloModel):
+                model.close()
+        self.model_cache.clear()
+
+    def _run_loop(self) -> None:
         while True:
             if self.request_queue is None:
                 raise RuntimeError(
@@ -438,51 +481,18 @@ class YoloWorker:
             if model_key not in self.model_cache and self.startup_lock:
                 with self.startup_lock:
                     model = self._get_model(model_key)
-                    results = model.predict(
-                        source=frames,
-                        verbose=False,
-                        device=self.device,
-                        imgsz=self.imgsz,
-                        batch=len(frames),
-                        **self.precision_args,
-                    )
+                    detections_batch = self._predict_batch(model, frames)
             else:
                 model = self._get_model(model_key)
-                results = model.predict(
-                    source=frames,
-                    verbose=False,
-                    device=self.device,
-                    imgsz=self.imgsz,
-                    batch=len(frames),
-                    **self.precision_args,
-                )
+                detections_batch = self._predict_batch(model, frames)
             self._record_batch_metrics(
                 model_key=model_key,
                 image_count=len(valid_requests),
                 predict_seconds=time.monotonic() - predict_started_at,
             )
-            for request, result in zip(valid_requests, results, strict=False):
-                yolo_result = cast(YoloResultLike, result)
-                box_data = yolo_result.boxes.data.cpu().numpy()
-                detections: list[Detection] = []
-                if box_data.size:
-                    box_data = (
-                        box_data.reshape(1, -1)
-                        if box_data.ndim == 1
-                        else box_data
-                    )
-                    score_index = -2 if box_data.shape[1] > 6 else 4
-                    label_index = -1 if box_data.shape[1] > 6 else 5
-                    detections = (
-                        box_data[
-                            :,
-                            [0, 1, 2, 3, score_index, label_index],
-                        ]
-                        .astype(float, copy=False)
-                        .tolist()
-                    )
-                    for detection in detections:
-                        detection[5] = int(detection[5])
+            for request, detections in zip(
+                valid_requests, detections_batch, strict=False,
+            ):
                 self._send_result(
                     request,
                     {
@@ -514,6 +524,36 @@ class YoloWorker:
                 )
         finally:
             self._close_shared_frames(frames)
+
+    def _predict_batch(
+        self, model: YoloModelLike | RustYoloModel, frames: list[FrameArray],
+    ) -> list[list[Detection]]:
+        if isinstance(model, RustYoloModel):
+            borrowed, copied = model.borrowed_frames, model.snapshot_bytes
+            try:
+                return model.predict_detections(frames)
+            finally:
+                self.native_borrowed_frames += model.borrowed_frames - borrowed
+                self.native_snapshot_bytes += model.snapshot_bytes - copied
+        results = model.predict(
+            source=frames, verbose=False, device=self.device,
+            imgsz=self.imgsz, batch=len(frames), **self.precision_args,
+        )
+        batch: list[list[Detection]] = []
+        for result in results:
+            data = cast(YoloResultLike, result).boxes.data.cpu().numpy()
+            detections: list[Detection] = []
+            if data.size:
+                data = data.reshape(1, -1) if data.ndim == 1 else data
+                score = -2 if data.shape[1] > 6 else 4
+                label = -1 if data.shape[1] > 6 else 5
+                detections = data[:, [0, 1, 2, 3, score, label]].astype(
+                    float, copy=False,
+                ).tolist()
+                for row in detections:
+                    row[5] = int(row[5])
+            batch.append(detections)
+        return batch
 
     def _record_batch_metrics(
         self,
@@ -659,7 +699,7 @@ class YoloWorker:
             frame.shared_memory_handle = None
             shm.close()
 
-    def _get_model(self, model_key: str) -> YoloModelLike:
+    def _get_model(self, model_key: str) -> YoloModelLike | RustYoloModel:
         """Return a cached YOLO model, loading it on first use.
 
         Args:
@@ -705,7 +745,12 @@ class YoloWorker:
                 model_path,
             )
 
-        model = cast(YoloModelLike, YOLO(str(model_path), task='detect'))
+        model = create_rust_model(
+            model_path, self.settings, device=self.device,
+            rect=bool(self.precision_args.get('rect', True)),
+        )
+        if model is None:
+            model = cast(YoloModelLike, YOLO(str(model_path), task='detect'))
         setattr(
             model,
             '_catalog_metadata',
@@ -726,6 +771,6 @@ class YoloWorker:
             '[YOLO-Worker] loaded %s artifact=%s backend=%s',
             model_key,
             model_path,
-            model_path.suffix,
+            'rust' if isinstance(model, RustYoloModel) else model_path.suffix,
         )
         return model

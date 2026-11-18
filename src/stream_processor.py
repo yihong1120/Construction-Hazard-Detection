@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Callable
+from functools import partial
 from typing import cast
 
 from dotenv import load_dotenv
@@ -13,10 +15,14 @@ from examples.streaming_web.metadata_keys import get_metadata_site_generation
 from src import stream_detection
 from src.async_tasks import run_coupled_tasks
 from src.danger_detector import DangerDetector
+from src.native_postprocess import load_postprocess_backend
+from src.native_postprocess import RustDangerDetector
+from src.native_postprocess import RustYoloDetector
 from src.redis_client import RedisManager
 from src.settings.inference import ModelCatalogSettings
 from src.settings.inference import WorkerSettings
 from src.settings.media import MediaPublishSettings
+from src.settings.postprocess import PostprocessSettings
 from src.stream_capture import StreamCapture
 from src.stream_identity import stream_identity
 from src.stream_media import StreamPublisherGroup
@@ -74,6 +80,17 @@ async def _run_single_stream(
         return
     if yolo_request_queue is None or yolo_result_queue is None:
         raise RuntimeError('Shared YOLO worker queues are required')
+    native_extension = load_postprocess_backend(PostprocessSettings().backend)
+    detector_factory: Callable[..., YoloDetector] = YoloDetector
+    if native_extension is not None:
+        detector_factory = partial(
+            RustYoloDetector, native_extension=native_extension,
+        )
+    logger.info(
+        '[%s:%s] Postprocessing backend: %s',
+        cfg['site'], cfg['stream_name'],
+        'rust' if native_extension is not None else 'python',
+    )
     media_settings = MediaPublishSettings()
     video_url = cfg['video_url']
     model_key = cfg['model_key']
@@ -81,7 +98,7 @@ async def _run_single_stream(
     stream_name = cfg['stream_name']
     media_path = build_media_path(site, stream_name)
     streaming_capture = StreamCapture(stream_url=video_url)
-    yolo_detector = YoloDetector(
+    yolo_detector = detector_factory(
         model_key=model_key,
         output_folder=site,
         worker_client=YoloWorkerClient(
@@ -123,7 +140,12 @@ async def _run_single_stream(
             cfg=cfg,
             capture=streaming_capture,
             detector=yolo_detector,
-            danger=DangerDetector(cfg['detection_items']),
+            danger=(
+                DangerDetector(cfg['detection_items'])
+                if native_extension is None else RustDangerDetector(
+                    cfg['detection_items'], native_extension=native_extension,
+                )
+            ),
             redis=redis_manager,
             delivery=delivery,
             metadata_key=metadata_key,

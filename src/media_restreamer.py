@@ -9,6 +9,7 @@ from typing import Protocol
 
 from src.media_encoding import EncoderOptions
 from src.nvenc_session import release_nvenc_session
+from src.nvenc_session import take_nvenc_reservation
 from src.nvenc_session import try_acquire_nvenc_session
 
 _restart_delay_seconds: Final[float] = 2.0
@@ -93,28 +94,34 @@ class MediaSourceRestreamer:
             ffmpeg_binary = self.commands.find_ffmpeg()
             encoder = self.commands.get_encoder()
             uses_nvenc = False
+            reservation = None
             if encoder in {'nvenc', 'h264_nvenc'}:
                 if try_acquire_nvenc_session():
                     encoder = 'h264_nvenc'
                     uses_nvenc = True
+                    reservation = take_nvenc_reservation()
                 else:
                     encoder = 'libx264'
                     logger.info(
                         f"[media:{self.publish_url}] NVENC session budget "
                         'reached; using libx264',
                     )
-            command = self.commands.build_command(
-                ffmpeg_binary,
-                self.source_url,
-                self.publish_url,
-                encoder,
-            )
             try:
+                command = self.commands.build_command(
+                    ffmpeg_binary,
+                    self.source_url,
+                    self.publish_url,
+                    encoder,
+                )
                 self._process = await asyncio.create_subprocess_exec(
                     *command,
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
+                    pass_fds=tuple(
+                        reservation.filenos()
+                        if reservation is not None else (),
+                    ),
                 )
 
                 process = self._process
@@ -122,7 +129,10 @@ class MediaSourceRestreamer:
                     await process.wait()
             finally:
                 if uses_nvenc:
-                    release_nvenc_session()
+                    if reservation is not None:
+                        release_nvenc_session(reservation)
+                    else:
+                        release_nvenc_session()
             if not self._closed:
                 await asyncio.sleep(_restart_delay_seconds)
 

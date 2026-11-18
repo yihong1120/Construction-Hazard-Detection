@@ -3,37 +3,24 @@ from __future__ import annotations
 import math
 from functools import partial
 
-import numpy as np
-from scipy.spatial import Delaunay
-from scipy.spatial import QhullError
-from shapely.geometry import LineString
-from shapely.geometry import MultiPoint
-from shapely.geometry import Point
-from shapely.geometry import Polygon
-from shapely.ops import unary_union
-from sklearn.cluster import HDBSCAN
+lazy import numpy as np
+lazy from scipy.spatial import Delaunay
+lazy from scipy.spatial import QhullError
+lazy from shapely.geometry import LineString
+lazy from shapely.geometry import MultiPoint
+lazy from shapely.geometry import Point
+lazy from shapely.geometry import Polygon
+lazy from shapely.ops import unary_union
+lazy from sklearn.cluster import HDBSCAN
+
+from src.bounding_boxes import normalise_bbox  # noqa: F401 (public re-export)
+from src.native_kernels import optional_kernel
 
 # ---- Geometry/tuning constants for utility pole area construction ----
 CIRCLE_BUFFER_SEGMENTS: int = 64
 TANGENT_BUFFER_WIDTH: float = 0.05
 TANGENT_BUFFER_SEGMENTS: int = 32
 UTILITY_POLE_RADIUS_FACTOR: float = 0.35
-
-
-def normalise_bbox(bbox: list[float]) -> list[float]:
-    """Normalises the bounding box coordinates.
-
-    Args:
-        bbox (List[float]): The bounding box coordinates.
-
-    Returns:
-        List[float]: Normalised coordinates.
-    """
-    left_x = min(bbox[0], bbox[2])
-    right_x = max(bbox[0], bbox[2])
-    top_y = min(bbox[1], bbox[3])
-    bottom_y = max(bbox[1], bbox[3])
-    return [left_x, top_y, right_x, bottom_y, *bbox[4:]]
 
 
 def detect_polygon_from_cones(
@@ -390,6 +377,17 @@ def build_mst_pairs(
         for left, right in candidate_pairs
     )
     unique_count = len(unique_poles)
+    select_edges = optional_kernel('mst_edges', 'GEOMETRY_API_VERSION')
+    if select_edges is not None:
+        native_edges = select_edges(
+            unique_count, [(left, right) for _, left, right in weighted_edges],
+        )
+        if len(native_edges) != unique_count - 1:
+            native_edges = _dense_prim_mst_pairs(unique_poles)
+        return duplicate_edges + [
+            (representative_indices[left], representative_indices[right])
+            for left, right in native_edges
+        ]
     parents = list(range(unique_count))
 
     edges: list[tuple[int, int]] = []

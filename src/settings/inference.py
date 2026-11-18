@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from typing import Annotated
+from typing import Literal
 
 from pydantic import AliasChoices
 from pydantic import Field
@@ -63,6 +65,12 @@ class WorkerSettings(EnvironmentSettings):
     ring_slots: int = Field(2, ge=1)
     ring_slot_cleanup_seconds: float = Field(120.0, ge=0)
     device: str = 'cuda:0'
+    backend: Literal['auto', 'python', 'rust'] = 'auto'
+    gpu_memory_reservation_mb: int = Field(0, ge=0)
+    gpu_admission_timeout_seconds: float = Field(30, gt=0, allow_inf_nan=False)
+    native_async: bool = False
+    native_micro_batch_size: int = Field(0, ge=0)
+    native_library_dirs: Annotated[tuple[str, ...], NoDecode] = ()
     precision: str | None = None
     model_dir: str = 'models/pt'
     model_suffix: str = '.pt'
@@ -73,6 +81,13 @@ class WorkerSettings(EnvironmentSettings):
     imgsz: int = Field(640, ge=1)
     metrics_interval_seconds: float = 0
     artifact_manifest: str | None = None
+
+    @field_validator('native_library_dirs', mode='before')
+    @classmethod
+    def library_directories(cls, value):
+        if isinstance(value, str):
+            return tuple(item for item in value.split(os.pathsep) if item)
+        return value
 
     @field_validator('metrics_interval_seconds', mode='before')
     @classmethod

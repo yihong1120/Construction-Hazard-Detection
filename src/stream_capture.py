@@ -20,7 +20,9 @@ import numpy as np
 import speedtest  # type: ignore[import-untyped]
 import streamlink
 
+from src.frame_pacer import CaptureCadence
 from src.settings.capture import CaptureSettings
+lazy from src.native_capture import RustCapture
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +97,7 @@ class StreamCapture:
             'rtsp_transport;tcp|stimeout;5000000|max_delay;5000000',
         )
 
-        self.cap: cv2.VideoCapture | None = None
+        self.cap: cv2.VideoCapture | RustCapture | None = None
         self.source_fps: float | None = None
         self.capture_interval: float = capture_interval
         self.successfully_captured = False
@@ -185,8 +187,12 @@ class StreamCapture:
             return None
         return fps if np.isfinite(fps) and fps > 0 else None
 
-    def _create_capture(self, stream_url: str) -> cv2.VideoCapture:
+    def _create_capture(
+        self, stream_url: str,
+    ) -> cv2.VideoCapture | RustCapture:
         """Create a configured OpenCV capture object."""
+        if self.settings.backend == 'rust_ffmpeg':
+            return RustCapture(stream_url, self.settings)
         # OpenCV's FFmpeg open/read timeouts are open-only properties. Passing
         # them after VideoCapture() has connected leaves the backend's
         # 30-second defaults active during a source outage.
@@ -348,9 +354,7 @@ class StreamCapture:
             Tuple[np.ndarray, float]: The captured frame and the timestamp.
         """
         await self.initialise_stream(self.stream_url)
-        last_process_time = datetime.datetime.now() - datetime.timedelta(
-            seconds=self.capture_interval,
-        )
+        cadence = CaptureCadence()
         fail_count = 0
         backoff_seconds = self.reopen_delay
 
@@ -418,11 +422,7 @@ class StreamCapture:
                 self._mark_connected()
 
                 current_time = datetime.datetime.now()
-                elapsed_time = (
-                    current_time - last_process_time
-                ).total_seconds()
-                if elapsed_time >= self.capture_interval:
-                    last_process_time = current_time
+                if cadence.admit(time.monotonic(), self.capture_interval):
                     yield frame, current_time.timestamp()
                 await asyncio.sleep(0)
         finally:
@@ -498,7 +498,7 @@ class StreamCapture:
             return
 
         await self.initialise_stream(stream_url)
-        last_process_time = datetime.datetime.now()
+        cadence = CaptureCadence()
         fail_count = 0
         backoff_seconds = self.reopen_delay
 
@@ -549,11 +549,7 @@ class StreamCapture:
                 self.successfully_captured = True
                 self._mark_connected()
                 current_time = datetime.datetime.now()
-                elapsed_time = (
-                    current_time - last_process_time
-                ).total_seconds()
-                if elapsed_time >= self.capture_interval:
-                    last_process_time = current_time
+                if cadence.admit(time.monotonic(), self.capture_interval):
                     yield frame, current_time.timestamp()
                 await asyncio.sleep(0)
         finally:
