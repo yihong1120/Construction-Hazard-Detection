@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import redis.asyncio as redis
 from pydantic import Field
 
@@ -56,13 +58,21 @@ def _build_metadata_record(
     Returns:
         Decoded frame metadata suitable for client delivery.
     """
-    return {
+    result: FrameOutData = {
         'id': message_id.decode('utf-8'),
         'key': _decode_stream_name(redis_key),
         'stream_id': _extract_stream_id(redis_key),
         'redis_key': redis_key,
         'has_warning': data[b'has_warning'] == b'1',
     }
+    if b'overlay' in data:
+        try:
+            overlay = json.loads(data[b'overlay'])
+        except (ValueError, UnicodeDecodeError):
+            overlay = None
+        if isinstance(overlay, dict):
+            result['overlay'] = overlay
+    return result
 
 
 async def fetch_latest_metadata_for_key(

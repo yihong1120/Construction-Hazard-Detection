@@ -18,6 +18,32 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         """Prepare test fixtures."""
         self.mock_rds = AsyncMock()
 
+    def test_rust_overlay_preserves_coordinates_and_owner(self) -> None:
+        import json
+        from examples.streaming_web.streaming_metadata_handlers import (
+            _build_metadata_payload,
+        )
+
+        snapshot = {
+            'owner': 'worker-a', 'generation': 3, 'sequence': 42,
+            'frame_width': 1920, 'frame_height': 1080, 'source_pts': 1.5,
+            'track_data': [[10, 20, 30, 40, .9, 2, 7, 0]],
+        }
+        record = service._build_metadata_record(
+            build_metadata_key('site', 'camera'), b'1-0',
+            {b'has_warning': b'1', b'overlay': json.dumps(snapshot).encode()},
+        )
+        payload = _build_metadata_payload(record)
+        self.assertTrue(payload['has_warning'])
+        self.assertEqual(payload['overlay'], snapshot)
+
+    def test_legacy_warning_payload_has_no_overlay(self) -> None:
+        record = service._build_metadata_record(
+            build_metadata_key('site', 'camera'), b'1-0',
+            {b'has_warning': b'0'},
+        )
+        self.assertNotIn('overlay', record)
+
     def test_build_metadata_key_uses_encoded_site_and_stream(self) -> None:
         key = build_metadata_key('site-a', 'cam-1')
 

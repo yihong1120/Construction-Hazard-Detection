@@ -26,6 +26,7 @@ class FrameOutData(TypedDict):
     id: str
     stream_id: str
     redis_key: str
+    overlay: NotRequired[dict[str, object]]
 
 
 PlaybackProfile: TypeAlias = Literal['clean', 'overlay']

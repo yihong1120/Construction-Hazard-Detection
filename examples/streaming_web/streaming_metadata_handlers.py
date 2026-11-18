@@ -65,9 +65,12 @@ def _build_metadata_payload(frame_data: FrameOutData) -> dict[str, object]:
     Returns:
         Minimal serialisable warning state without image data.
     """
-    return {
+    payload: dict[str, object] = {
         'has_warning': _metadata_has_warning(frame_data),
     }
+    if 'overlay' in frame_data:
+        payload['overlay'] = frame_data['overlay']
+    return payload
 
 
 def _encode_sse_event(
