@@ -20,6 +20,8 @@
 
 <br>
 
+[獨立 Rust 攝影機流程](native/pipeline/README.md)提供影像擷取、TensorRT 推論、危險區域分析、多語標註，以及 PostgreSQL 事件儲存與通知派送。指南包含建置、執行與驗證方式。
+
 <div align="center">
    <a href="https://www.python.org/downloads/">
       <img src="https://img.shields.io/badge/python-3.15-blue?logo=python" alt="Python 3.15">
@@ -184,6 +186,30 @@ Flutter 前端原始碼維護於獨立的
 
 獨立 YOLO server 仍可用於 API 測試或獨立部署，但目前多鏡頭高吞吐的建議路徑是
 `src/yolo_worker.py`。
+
+## Rust 後處理
+
+串流程序已支援 Rust／PyO3 後端，處理 centroid 追蹤、PPE 及人員與機具／車輛
+距離判斷。串流 Docker 映像內含 wheel；主機執行時可自行建置安裝。
+`POSTPROCESS_BACKEND` 可選 `auto`（預設）、`python` 或 `rust`，變更後重啟程序。
+建置方式、適用範圍與量測結果見 [Rust 後處理說明](native/postprocess/README.md)。
+
+共用 YOLO worker 也已接入 Rust TensorRT 後端，可直接沿用通過 catalog／SHA256
+驗證且版本相容的 INT8 engine。`YOLO_WORKER_BACKEND=auto|rust|python` 控制
+推論後端，保留既有多鏡頭 shared memory、批次與獨立回覆 queue。
+32 路模擬來源的整合測試、建置及版本條件見 [Rust GPU worker](native/inference/README.md)。
+
+Rust worker 可直接讀取持有 lease 的共享影格，省去完整影格的 bytes 快照；
+幾何分析套件也改為按需載入。詳見 [影格複製減量與量測](native/inference/README.md#共享影格快照減量)。
+
+後續加入推論 workspace 重用、安全區域快取、Rust MST 選邊與標註混色，
+並提供明確選用的 Rust／FFmpeg 擷取後端。詳見 [串流流程優化及驗證](native/postprocess/README.md)。
+
+GPU 管理新增跨程序 NVENC／推論／記憶體配額，以及可選的 pinned-memory
+非同步推論。1080p 實測 batch 1 約快 4%，batch 8 約慢 5%，因此非同步預設關閉。
+NVDEC → GPU 前處理／標註 → TensorRT／NVENC 已有獨立實驗路徑，但尚未通過
+既有色彩／偵測結果一致性門檻，未接入正式串流。
+詳見 [GPU 資源、非同步推論與影格實驗](native/inference/README.md#跨程序-gpu-資源與非同步推論)。
 
 ## 快速開始
 
@@ -542,7 +568,7 @@ mypy pre-commit hook 檢查 production code：`main.py`、`src`、`examples` 與
 
 ## 授權
 
-本專案使用 [AGPL-3.0 Licence](LICENSE.md)。
+本專案使用 [AGPL-3.0 Licence](LICENSE)。
 
 YOLO shard 異常重啟會建立新的 IPC generation，更換 request／result queues，
 並由設定協調流程重新綁定受影響的攝影機程序；正常 shard 保留既有資源。

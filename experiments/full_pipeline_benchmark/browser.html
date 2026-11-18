@@ -1,0 +1,63 @@
+<!doctype html><meta charset="utf-8"><title>Isolated camera benchmark</title>
+<style>
+body{margin:8px;background:#14181e;color:#e5ecf1;font:14px sans-serif}
+main{display:grid;grid-template-columns:1fr 1fr;gap:8px}h3{margin:4px}
+.surface{position:relative}video{display:block;width:100%;aspect-ratio:16/9}
+canvas{position:absolute;left:0;top:0;pointer-events:none}
+</style><main></main>
+<script>window.errors=[];window.addEventListener("error",e=>window.errors.push(e.message));</script>
+<script type="module">
+import {createOverlay,loadDictionary} from '/web/overlay.mjs';
+const settings=__SETTINGS__;
+const dictionary=await loadDictionary();
+const peers=[],sessions=[],videos=[],events=[],renderers=[];
+window.latest={};window.setLanguage=lang=>renderers.forEach(r=>r.setLanguage(lang));
+window.metadataBytes=0;window.metadataFrames=0;
+window.ready=false;window.failure=null;
+async function camera(id){
+  const section=document.createElement('section');
+  section.innerHTML='<h3></h3><div class="surface"><video autoplay muted playsinline></video><canvas></canvas></div>';
+  section.querySelector('h3').textContent=id;document.querySelector('main').append(section);
+  const video=section.querySelector('video'),canvas=section.querySelector('canvas');
+  videos.push(video);video.muted=true;
+  const pc=new RTCPeerConnection({iceServers:[]});peers.push(pc);
+  pc.ontrack=e=>{video.srcObject=e.streams[0]||new MediaStream([e.track]);};
+  pc.addTransceiver('video',{direction:'recvonly'});
+  await pc.setLocalDescription(await pc.createOffer());
+  if(pc.iceGatheringState!=='complete')await new Promise(resolve=>{
+    pc.addEventListener('icegatheringstatechange',()=>{if(pc.iceGatheringState==='complete')resolve();});
+  });
+  const response=await fetch('/whep/'+id,{method:'POST',headers:{'Content-Type':'application/sdp'},body:pc.localDescription.sdp});
+  if(!response.ok)throw Error('WHEP '+response.status+' '+await response.text());
+  sessions.push(response.headers.get('Location'));
+  await pc.setRemoteDescription({type:'answer',sdp:await response.text()});
+  if(settings.overlay){
+    const renderer=createOverlay(video,canvas,{language:'en',dictionary});
+    renderers.push(renderer);
+    const source=new EventSource('/metadata/'+id);events.push(source);
+    source.addEventListener('metadata',e=>{
+      window.metadataBytes+=new TextEncoder().encode(e.data).length;window.metadataFrames++;
+      const snapshot=JSON.parse(e.data).overlay;
+      const accepted=renderer.setSnapshot(snapshot);window.latest[id]={snapshot,accepted};
+    });
+  }
+  await new Promise(resolve=>{if(video.readyState>=2)resolve();else video.addEventListener('loadeddata',resolve,{once:true});});
+  await video.play();
+}
+window.sample=async()=>({
+  metadataBytes:window.metadataBytes,metadataFrames:window.metadataFrames,
+  errors:window.errors,latest:window.latest,visibility:document.visibilityState,
+  canvases:[...document.querySelectorAll("canvas")].map(c=>({width:c.width,height:c.height})),
+  videos:videos.map(v=>{const q=v.getVideoPlaybackQuality();return {frames:q.totalVideoFrames,dropped:q.droppedVideoFrames,width:v.videoWidth,height:v.videoHeight,paused:v.paused,ready:v.readyState};}),
+  rtc:await Promise.all(peers.map(async pc=>{
+    const result=[];(await pc.getStats()).forEach(s=>{if(s.type==='inbound-rtp'&&s.kind==='video')result.push({bytes:s.bytesReceived,frames:s.framesDecoded,dropped:s.framesDropped,decoder:s.decoderImplementation});});return result;
+  })),
+});
+window.proof=()=>[...document.querySelectorAll('canvas')].map(c=>{
+  const pixels=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+  let visible=0;for(let i=3;i<pixels.length;i+=4)if(pixels[i])visible++;
+  return visible;
+});
+window.stop=async()=>{events.forEach(e=>e.close());peers.forEach(p=>p.close());await Promise.all(sessions.filter(Boolean).map(url=>fetch(url,{method:'DELETE'})));};
+Promise.all(settings.ids.map(camera)).then(()=>{window.ready=true;}).catch(e=>{window.failure=String(e);});
+</script>

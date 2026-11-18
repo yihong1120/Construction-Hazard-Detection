@@ -11,6 +11,10 @@
 | Session 期限與加密 | `sessions.py` | 程序載入；cipher 初次使用 |
 | Worker 認證 | `worker_auth.py` | token provider 第一次認證，刷新沿用同一份設定 |
 | 擷取與推論 | `capture.py`、`inference.py` | 串流／detector 建立 |
+| Rust／Python GPU worker | `inference.py` 的 `backend`、`native_library_dirs` | worker 建立；模型驗證後選取後端 |
+| GPU 跨程序配額 | `gpu_resources.py`、`inference.py` | 共用目錄／實體 GPU namespace；NVENC 預設共用，推論與記憶體需明確啟用 |
+| Rust 後處理選擇 | `postprocess.py` | 每個攝影機程序啟動；變更後重啟 |
+| OpenCV／Rust 擷取 | `capture.py` 的 `backend`、`decoder`、工具路徑 | 攝影機啟動；Rust FFmpeg 後端需明確選用 |
 | 媒體、繪字與 NVENC | `media.py` | gateway／renderer 建立；NVENC 保留額度期間固定上限 |
 | 通知 provider | `notifications.py` | provider 建立 |
 | MCP | `examples/mcp_server/settings.py` | transport 啟動／tool 建立或第一次使用 |
@@ -18,6 +22,26 @@
 
 元件持有自己的設定，不把設定拆成多個參數沿呼叫鏈轉傳。純函式保留工作資料
 參數；已有的明確建構參數仍可使用，不必改成額外傳入整包設定。
+
+GPU 配額使用 Rust file-lock lease，沒有安裝 Rust wheel 時沿用相同協定的 Python
+實作。所有參與者必須共用 `GPU_RESOURCE_DIRECTORY`、`GPU_RESOURCE_DEVICE_ID`
+及上限；Compose 的攝影機程序／replica 共用 `gpu-resource-locks` volume。
+不同 Compose project 或主機程序須另外掛載同一目錄，使用相同 UID。
+不得在工作仍執行時刪除 lock 檔或重建目錄。配額變更若與使用中程序不一致會拒絕。
+
+`MEDIA_NVENC_MAX_SESSIONS` 現在是上述共用範圍的 session 上限；FFmpeg 子程序
+繼承 lease descriptor，因此控制程序退出後，仍存活的 encoder 繼續佔用名額。
+`GPU_RESOURCE_INFERENCE_SLOTS` 與 `GPU_RESOURCE_MEMORY_LIMIT_MB` 預設為 0。
+啟用時要求 `YOLO_WORKER_BACKEND=rust`，記憶體另需設定每個模型的
+`YOLO_WORKER_GPU_MEMORY_RESERVATION_MB`；每份保留向上取整至 64 MiB，
+總上限向下取整。這是宣告預算，沒有追蹤外部 CUDA 程序、NVDEC 或 GPU glyph
+快取，不保證不會 OOM。請保留足夠餘裕，API／Python backend 不在其管理範圍。
+
+`YOLO_WORKER_NATIVE_ASYNC=true` 才使用 pinned memory、stream/event 及兩個
+buffer。`YOLO_WORKER_NATIVE_MICRO_BATCH_SIZE=0` 沿用 engine 容量；較小值切分
+現有 worker batch，最多保留兩份未收取結果，shape 變更前先排空。
+單一 worker batch 若沒有切分，該次請求不會獲得兩個 batch 的重疊效益。
+設定及量測見 [Rust GPU worker](../../native/inference/README.md)。
 
 ## 優先順序與驗證
 

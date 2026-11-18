@@ -20,6 +20,8 @@
 
 <br>
 
+The optional [standalone Rust camera pipeline](native/pipeline/README.md) supports camera capture, TensorRT inference, hazard analysis, multilingual overlays, and PostgreSQL-backed event delivery. The guide covers building, running, and validating the pipeline.
+
 <div align="center">
    <a href="https://www.python.org/downloads/">
       <img src="https://img.shields.io/badge/python-3.15-blue?logo=python" alt="Python 3.15">
@@ -196,6 +198,35 @@ Use database mode unless you are testing a short-lived local JSON config.
 The standalone YOLO server remains available for API testing or separate
 deployment, but the recommended high-throughput local path is the YOLO worker
 mode in `src/yolo_worker.py`.
+
+## Rust Postprocessing
+
+The stream processor can use a Rust/PyO3 backend for centroid tracking and
+PPE/person-to-machine proximity checks. The stream Docker image includes it;
+host installations can build the optional wheel. Set `POSTPROCESS_BACKEND` to
+`auto` (default), `python`, or `rust`, then restart the stream processor.
+See [build instructions, scope and measured results](native/postprocess/README.md).
+
+The shared YOLO worker also supports a Rust TensorRT backend for verified,
+compatible INT8 engines. `YOLO_WORKER_BACKEND=auto|rust|python` selects inference
+while retaining camera shared memory, batching, and dedicated reply queues.
+See [Rust GPU worker setup and the 32-camera IPC test](native/inference/README.md).
+
+The Rust worker reads leased shared-memory frames without a full-frame bytes
+snapshot. Geometry libraries load when an area check needs them. See the
+[copy-reduction measurements and loading behavior](native/inference/README.md#共享影格快照減量).
+
+The next increment adds reusable inference workspaces, cached safety-area
+geometry, native MST selection and overlay blending, plus an opt-in Rust/FFmpeg
+capture backend. See [pipeline changes and validation](native/postprocess/README.md).
+
+GPU admission now shares NVENC sessions and optional inference/memory budgets
+between participating processes. An optional two-slot pinned-memory pipeline
+measured about 4% faster at batch 1 and 5% slower at batch 8 on 1080p frames;
+asynchronous execution stays off by default. A separate device-media experiment
+connects NVDEC, GPU preprocessing/overlay, TensorRT and NVENC, but has not passed
+the legacy color/detection parity gate and is not enabled in production streams.
+See [GPU resource management and device-media validation](native/inference/README.md#跨程序-gpu-資源與非同步推論).
 
 ## Quick Start
 
@@ -579,7 +610,7 @@ Labels:
 
 ## Licence
 
-This project is licensed under the [AGPL-3.0 Licence](LICENSE.md).
+This project is licensed under the [AGPL-3.0 Licence](LICENSE).
 
 ### Durable evidence delivery
 
