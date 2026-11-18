@@ -320,6 +320,7 @@ services:
       YOLO_WORKER_RESULT_QUEUE_SIZE: ${YOLO_WORKER_RESULT_QUEUE_SIZE:-8}
       YOLO_WORKER_RING_SLOTS: ${YOLO_WORKER_RING_SLOTS:-2}
       YOLO_WORKER_RING_SLOT_CLEANUP_SECONDS: ${YOLO_WORKER_RING_SLOT_CLEANUP_SECONDS:-120}
+      GPU_RESOURCE_DIRECTORY: /app/outputs/gpu-resources
       MEDIA_PREVIEW_WIDTH: ${MEDIA_PREVIEW_WIDTH:-640}
       MEDIA_PREVIEW_HEIGHT: ${MEDIA_PREVIEW_HEIGHT:-360}
       MEDIA_PREVIEW_FPS: ${MEDIA_PREVIEW_FPS:-auto}
@@ -336,6 +337,7 @@ services:
     volumes:
       - ./config:/app/config
       - violation-outbox:/app/outputs/event-outbox
+      - gpu-resource-locks:/app/outputs/gpu-resources
       - ./models/pt:/app/models/pt
       - ./.env:/app/.env
     # Ensure the service starts only after Redis is healthy
@@ -363,3 +365,4 @@ services:
 
 volumes:
   violation-outbox:
+  gpu-resource-locks:
