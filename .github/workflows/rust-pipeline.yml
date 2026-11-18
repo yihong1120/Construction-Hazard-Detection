@@ -1,0 +1,112 @@
+name: Standalone Rust pipeline
+on:
+  push:
+    paths: ['native/**', 'tests/videos/**', '.github/workflows/rust-pipeline.yml']
+  pull_request:
+    paths: ['native/**', 'tests/videos/**', '.github/workflows/rust-pipeline.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  standalone:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.11-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
+        env:
+          POSTGRES_USER: fixture
+          POSTGRES_PASSWORD: fixture
+          POSTGRES_DB: chd_rust_pipeline_test
+        ports: ['25433:5432']
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U fixture -d chd_rust_pipeline_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis:7.4.10-alpine3.21@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+        ports: ['26380:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.93.1
+      CHD_RUST_TEST_DATABASE_URL: postgresql://fixture:fixture@127.0.0.1:25433/chd_rust_pipeline_test
+      CHD_RUST_TEST_REDIS_URL: redis://127.0.0.1:26380/0
+      CHD_RUST_TEST_MEDIA_API_URL: http://127.0.0.1:29997
+      CHD_RUST_TEST_RTSP_URL: rtsp://127.0.0.1:28554/fixture
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Install Rust and media tools
+      run: |
+        rustup toolchain install 1.93.1 --profile minimal --component rustfmt
+        sudo apt-get update
+        sudo apt-get install -y curl ffmpeg jq ripgrep \
+          fonts-dejavu-core fonts-noto-core fonts-noto-cjk \
+          libavformat-dev libavcodec-dev libavutil-dev libswscale-dev pkg-config
+    - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: rust-pipeline-crates-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/pipeline/Cargo.lock') }}
+    - name: Format, unit and 32-camera file integration tests
+      run: |
+        node --test native/pipeline/web/overlay.test.mjs
+        for crate in pipeline media inference postprocess; do
+          cargo fmt --manifest-path "native/$crate/Cargo.toml" -- --check
+        done
+        cargo test --locked --manifest-path native/pipeline/Cargo.toml
+        cargo test --locked --manifest-path native/pipeline/Cargo.toml -p construction-media --lib
+        cargo build --locked --manifest-path native/pipeline/Cargo.toml
+        dependencies="$(cargo tree --locked --manifest-path native/pipeline/Cargo.toml)"
+        if rg pyo3 <<< "$dependencies"; then
+          echo 'Standalone binary unexpectedly depends on PyO3'; exit 1
+        fi
+        libraries="$(ldd native/pipeline/target/debug/construction-pipeline)"
+        if rg 'libpython|not found' <<< "$libraries"; then
+          echo 'Standalone binary links CPython or has unresolved shared libraries'; exit 1
+        fi
+    - name: PostgreSQL, Redis and 32 RTSP session integration tests
+      run: |
+        publisher=
+        publisher_log="$RUNNER_TEMP/ffmpeg-fixture.log"
+        : > "$publisher_log"
+        cleanup() {
+          if (( $? != 0 )); then
+            docker logs --tail 60 rust-rtsp || true
+            tail -n 60 "$publisher_log"
+          fi
+          if [[ -n "$publisher" ]]; then
+            kill "$publisher" 2>/dev/null || true
+            wait "$publisher" 2>/dev/null || true
+          fi
+          docker stop rust-rtsp >/dev/null 2>&1 || true
+        }
+        trap cleanup EXIT
+        docker run -d --rm --name rust-rtsp \
+          -v "$PWD/native/pipeline/tests/fixtures/mediamtx.yml:/mediamtx.yml:ro" \
+          -p 127.0.0.1:28554:8554 -p 127.0.0.1:29997:9997 \
+          bluenviron/mediamtx@sha256:f8628851106cc053f9175b248050bb5f362a6e65abd72297c167a1cb5a9a3be2
+        if ! curl -fs --max-time 2 --retry 20 --retry-all-errors --retry-delay 1 \
+          --retry-max-time 25 "$CHD_RUST_TEST_MEDIA_API_URL/v3/paths/list" >/dev/null; then
+          echo 'MediaMTX test API did not become ready'; exit 1
+        fi
+
+        ffmpeg -nostdin -loglevel error -re -stream_loop -1 -i tests/videos/test.mp4 \
+          -an -c:v libx264 -threads 1 -preset ultrafast -r 15 -g 15 -keyint_min 15 \
+          -sc_threshold 0 -bf 0 -f rtsp -rtsp_transport tcp "$CHD_RUST_TEST_RTSP_URL" \
+          >"$publisher_log" 2>&1 &
+        publisher=$!
+        deadline=$((SECONDS + 20))
+        until curl -fs --max-time 2 "$CHD_RUST_TEST_MEDIA_API_URL/v3/paths/get/fixture" | jq -e '.ready == true' >/dev/null; do
+          if ! kill -0 "$publisher" 2>/dev/null || (( SECONDS >= deadline )); then
+            echo 'RTSP test fixture did not become ready'; exit 1
+          fi
+          sleep 1
+        done
+        cargo test --locked --manifest-path native/pipeline/Cargo.toml --test services -- --ignored --test-threads=1

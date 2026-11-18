@@ -1,0 +1,12 @@
+logLevel: warn
+api: true
+apiAddress: :9997
+authInternalUsers:
+- user: any
+  ips: []
+  permissions:
+  - action: publish
+  - action: read
+  - action: api
+paths:
+  all_others: {}

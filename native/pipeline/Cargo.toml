@@ -1,0 +1,56 @@
+[package]
+name = "construction-pipeline"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "AGPL-3.0-only"
+publish = false
+
+[features]
+default = []
+tensorrt = ["construction-inference/tensorrt", "construction-media/cuda"]
+
+[dependencies]
+retina = "=0.4.21"
+futures-util = "0.3"
+percent-encoding = "2"
+url = "2"
+rayon = "1.12"
+construction-inference = { path = "../inference", default-features = false }
+construction-media = { path = "../media" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+geo = "=0.33.1"
+hdbscan-rs = "=0.6.1"
+ndarray = "0.16"
+delaunator = "1"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+imageproc = { version = "0.25", default-features = false }
+ab_glyph = "0.2"
+cosmic-text = "0.14"
+# Only used for read-only import of the previous Rust outbox.
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
+redis = { version = "=0.32.7", features = ["tokio-comp", "connection-manager"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "json"] }
+libc = "=0.2.191"
+
+[dev-dependencies]
+tempfile = "3"
+axum = { version = "0.8", features = ["multipart"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

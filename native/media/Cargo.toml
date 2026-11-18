@@ -1,0 +1,19 @@
+[package]
+name = "construction-media"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "AGPL-3.0-only"
+publish = false
+
+[features]
+default = []
+cuda = []
+
+[dependencies]
+anyhow = "1"
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[build-dependencies]
+cc = "1"
+pkg-config = "0.3"
