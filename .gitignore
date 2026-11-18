@@ -36,6 +36,12 @@ coverage.xml
 logs/
 **/logs/
 /dump.rdb
+outbox.sqlite3
+outbox.sqlite3-*
+.outbox-index.db
+.outbox-index.db-*
+detections-*.jsonl
+detections-*.jsonl.1
 static/
 tmp/
 css-data/
@@ -91,10 +97,28 @@ scripts/upgrade_system_cudnn.sh
 /docs/repository-optimization.md
 /docs/postgresql-query-optimization.md
 /docs/local/
+/docs/production-release-20261117-rust.md
+/docs/production-release-20261118-rust-pg.md
 *.local.md
+
+# Local Rust experiments and generated benchmark outputs.
+/native/pipeline/*_REPORT.md
+/native/pipeline/*_results.json
+/native/inference/*_results.json
+/native/inference/*_validation.json
+/native/inference/validation.json
+/native/postprocess/*_results.json
+/native/postprocess/*_validation.json
+/experiments/*/comparison.png
+/experiments/*/comparison.svg
+/experiments/*/results.json
+/experiments/rust_benchmark/REPORT.md
+/experiments/rust_trt_benchmark/REPORT.md
+/experiments/full_pipeline_benchmark/*_report.py
 
 # Build artifacts
 build/
+/native/*/target/
 frontend/web/
 frontend/web_bak/
 *.egg-info/

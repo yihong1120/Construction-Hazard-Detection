@@ -44,6 +44,20 @@ examples/YOLO_data_augmentation/visualised_image.jpg
 
 # Other generated build output
 build/
+**/target/
+native/postprocess/dist/
+native/inference/dist/
+native/pipeline/*_REPORT.md
+native/pipeline/*_results.json
+native/inference/*_results.json
+native/inference/*_validation.json
+native/inference/validation.json
+native/postprocess/*_results.json
+native/postprocess/*_validation.json
+docs/production-release-20261117-rust.md
+docs/production-release-20261118-rust-pg.md
+experiments/
+outputs/
 wheels/python315/
 frontend/web/
 examples/streaming_web/frontend/node_modules/
