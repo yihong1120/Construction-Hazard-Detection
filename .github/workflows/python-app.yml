@@ -35,6 +35,7 @@ jobs:
       OIDC_JWKS_URL: https://oidc.example.test/realms/ci/protocol/openid-connect/certs
       OIDC_AUDIENCE: ci-test-api
       OIDC_ACCOUNT_URL: https://oidc.example.test/realms/ci/account
+      YOLO_WORKER_BACKEND: python
       EVIDENCE_TEST_DATABASE_URL: postgresql://ci:ci@localhost:15432/chd_refactor_test
       NOTIFICATION_REDIS_TEST_URL: redis://localhost:16379/0
 
@@ -173,6 +174,30 @@ jobs:
         path: wheels/python315/onnxruntime-*.whl
         key: ${{ steps.ort-wheel-cache.outputs.cache-primary-key }}
     - *postgres-client-tools
+    - name: Build and test Rust postprocessing
+      env:
+        RUSTUP_TOOLCHAIN: 1.93.1
+      run: |
+        rustup toolchain install 1.93.1 --profile minimal --component rustfmt
+        export PYO3_PYTHON="$(command -v python)"
+        cargo fmt --manifest-path native/postprocess/Cargo.toml -- --check
+        cargo test --locked --features extension-module --lib --manifest-path native/postprocess/Cargo.toml
+        uvx --python 3.15 --from maturin==1.16.0 maturin build --release --locked \
+          --manifest-path native/postprocess/Cargo.toml --out /tmp/postprocess-wheels
+        uv pip install --system /tmp/postprocess-wheels/*.whl
+        cargo fmt --manifest-path native/inference/Cargo.toml -- --check
+        cargo test --locked --features extension-module --lib --manifest-path native/inference/Cargo.toml
+        uvx --python 3.15 --from maturin==1.16.0 maturin build --release --locked \
+          --manifest-path native/inference/Cargo.toml --out /tmp/inference-wheels
+        uv pip install --system /tmp/inference-wheels/*.whl
+    - name: Compare standalone Rust rules and tracking with Python
+      env:
+        RUSTUP_TOOLCHAIN: 1.93.1
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev libswscale-dev pkg-config
+        cargo build --locked --manifest-path native/pipeline/Cargo.toml
+        python scripts/validate_rust_pipeline.py --binary native/pipeline/target/debug/construction-pipeline
     - name: Test with pytest
       run: |
         # Measure application code only (main, src, examples). Do not include tests in coverage sources
