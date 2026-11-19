@@ -15,6 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 ORT_COMMIT = '402979ac1bef89dcd55add41eaa7277c407599eb'
+ORT_MIRROR = 'https://github.com/intel/onnxruntime.git'
 TRT_COMMIT = '16ed0636df41e4a27d46f82d9028fc50fadc7200'
 PYBIND_COMMIT = '97bf890db679505a14dfe547a5e77bb2bd05dc90'
 TRT_VERSION = '11.4.0.106'
@@ -36,18 +37,45 @@ def run(*args: str | Path, cwd: Path = REPO) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
-def checkout(url: str, destination: Path, commit: str) -> None:
+def checkout(
+    url: str,
+    destination: Path,
+    commit: str,
+    *,
+    mirror: str | None = None,
+) -> None:
     """Retain existing sources only when they match the pinned revision."""
     if not destination.exists():
         run('git', 'init', destination)
         run('git', 'remote', 'add', 'origin', url, cwd=destination)
-        run('git', 'fetch', '--depth', '1', 'origin', commit, cwd=destination)
-        run('git', 'checkout', '--detach', commit, cwd=destination)
-    revision = subprocess.check_output(
-        ['git', 'rev-parse', 'HEAD'],
+    # A failed fetch may leave an initialised repository with no HEAD in the
+    # BuildKit cache. Fetch again when the checkout is still incomplete.
+    head = subprocess.run(
+        ['git', 'rev-parse', '--verify', '--quiet', 'HEAD'],
         cwd=destination,
         text=True,
-    ).strip()
+        stdout=subprocess.PIPE,
+    )
+    revision = head.stdout.strip()
+    if head.returncode == 1:
+        fetch = (
+            'env', 'GIT_TERMINAL_PROMPT=0', 'git', '-c',
+            'fetch.fsckObjects=true', 'fetch', '--depth', '1',
+        )
+        try:
+            run(*fetch, 'origin', commit, cwd=destination)
+        except subprocess.CalledProcessError:
+            if mirror is None:
+                raise
+            run(*fetch, mirror, commit, cwd=destination)
+        run('git', 'checkout', '--detach', commit, cwd=destination)
+        revision = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=destination,
+            text=True,
+        ).strip()
+    else:
+        head.check_returncode()
     if revision != commit:
         raise RuntimeError(
             f'Unexpected source revision in {destination}: {revision}',
@@ -181,6 +209,7 @@ def onnxruntime_wheel(
         'https://github.com/microsoft/onnxruntime.git',
         source,
         ORT_COMMIT,
+        mirror=ORT_MIRROR,
     )
     run(
         'git',
