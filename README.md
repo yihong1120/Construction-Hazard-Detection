@@ -1,4 +1,4 @@
-🇬🇧 [English](./README.md) | 🇹🇼 [繁體中文](./README-zh-tw.md)
+🇬🇧 [English (UK)](./README.md) | 🇹🇼 [繁體中文（台灣）](./README-zh-tw.md)
 
 # Construction Hazard Detection
 
@@ -179,9 +179,8 @@ and HTTP broadcast. Model-development tools remain in this repository with optio
 
 The Flutter source is maintained separately in
 [visionnaire-flutter](https://github.com/yihong1120/visionnaire-flutter).
-`frontend/web/` in this repository is an ignored, generated deployment
-artifact, not editable frontend source. See [frontend/README.md](frontend/README.md)
-for the release and backend-contract boundary.
+`frontend/web/` is an ignored directory for generated deployment artefacts.
+See [frontend/README.md](frontend/README.md) for the release and backend contract.
 
 ## Recommended Runtime
 
@@ -214,7 +213,7 @@ See [Rust GPU worker setup and the 32-camera IPC test](native/inference/README.m
 
 The Rust worker reads leased shared-memory frames without a full-frame bytes
 snapshot. Geometry libraries load when an area check needs them. See the
-[copy-reduction measurements and loading behavior](native/inference/README.md#共享影格快照減量).
+[copy-reduction measurements and loading behaviour](native/inference/README.md#共享影格快照減量).
 
 The next increment adds reusable inference workspaces, cached safety-area
 geometry, native MST selection and overlay blending, plus an opt-in Rust/FFmpeg
@@ -224,8 +223,8 @@ GPU admission now shares NVENC sessions and optional inference/memory budgets
 between participating processes. An optional two-slot pinned-memory pipeline
 measured about 4% faster at batch 1 and 5% slower at batch 8 on 1080p frames;
 asynchronous execution stays off by default. A separate device-media experiment
-connects NVDEC, GPU preprocessing/overlay, TensorRT and NVENC, but has not passed
-the legacy color/detection parity gate and is not enabled in production streams.
+connects NVDEC, GPU preprocessing and overlays, TensorRT and NVENC. It remains
+opt-in pending colour and detection parity with the existing pipeline.
 See [GPU resource management and device-media validation](native/inference/README.md#跨程序-gpu-資源與非同步推論).
 
 ## Quick Start
@@ -265,7 +264,7 @@ CPU path, and the GPU Docker base builds its native wheels inside the image.
 On Python 3.15, `examples/YOLO_train/export_int8_trt.py` and `export_int8_engine.py` use ONNX Runtime CPU
 calibration to produce an INT8 Q/DQ graph and TensorRT to build and execute the GPU
 engine. Image sampling, calibration over all images and node exclusions are retained.
-This replaces ModelOpt, which does not yet support Python 3.15. Evaluate quantized
+This replaces ModelOpt, which does not yet support Python 3.15. Evaluate quantised
 model accuracy on your validation dataset before deployment.
 
 The default dependency set contains only shared API runtime packages.  Docker
@@ -461,11 +460,10 @@ sudo usermod -aG render "$USER"
 # Sign out and back in before starting main.py.
 ```
 
-With the configured on-demand publishers, clean detail video uses FFmpeg
-stream copy and consumes no encoder session. Only active preview and annotated
-paths use `h264_vaapi` on the Intel iGPU; MediaMTX then remuxes and distributes
-that one encoded stream to all viewers. This avoids the RTX 4090 GeForce NVENC
-eight-session policy without moving overlay drawing into the browser.
+The example configuration uses the Intel iGPU to encode on-demand clean detail,
+annotated and preview streams with `h264_vaapi`. Set
+`MEDIA_PUBLISH_CLEAN_SOURCE_RESTREAM=true` to use FFmpeg stream copy for clean
+detail. MediaMTX remuxes and distributes each published stream to its viewers.
 
 Use the Compose service name when `main.py` runs inside Docker:
 
@@ -557,6 +555,46 @@ Video playback comes from MediaMTX HLS/WebRTC URLs. Warning metadata is compact
 and usually contains only current warning state. Detection boxes, polygons, and
 labels are rendered into backend-published annotated video streams.
 
+Media publishing captures `MediaPublishSettings` for each stream. By default,
+capture keeps every decoded frame and detail, overlay and preview outputs follow
+the camera frame rate, including fractional rates such as 29.97 FPS. Reconnecting
+reads the camera rate again and replaces publishers if it changes. Inference
+consumes the latest frame independently, so slower inference does not set the
+video frame rate. Preview reduces resolution and bitrate without reducing FPS.
+
+`MEDIA_PUBLISH_SOURCE_FPS`, `MEDIA_PUBLISH_FPS`, `MEDIA_PREVIEW_FPS` and
+`MEDIA_PUBLISH_CLEAN_FPS` default to `auto` (an empty value also means auto).
+A numeric value explicitly enables capture sampling or output resampling;
+preview inherits an explicit detail rate unless separately configured.
+Direct source restreaming preserves input timestamps in auto mode. Raw-frame
+publishers temporarily use 30 FPS for startup slates or cameras that do not
+report a usable FPS. A renderer holds its settings and copies each shared source
+frame once per rendered language.
+All renditions and the source restreamer share the same captured encoder settings
+for a camera, including codec options, GOP, bitrate and device selection.
+
+Playback negotiation validates an entire batch before atomically committing its
+sessions, producer leases and reverse indexes. A missing or foreign existing
+session leaves the batch unchanged. Metadata subscriptions own their overlay
+lease, readiness and heartbeat state and close their shared fanout subscription
+when the viewer disconnects.
+
+HLS-driven playback renewal reads, watches and updates at most
+`STREAM_PLAYBACK_REFRESH_BATCH_SIZE` live sessions per batch (default 256), while
+pruning a bounded batch of expired reverse-index entries. Renewed scores move to
+the end so later batches can reach other sessions. Throttling and index/session
+changes commit in the same Redis transaction.
+
+Live Metadata is a latest-snapshot channel; violation/notification delivery is
+handled separately. Redis reads merge a bounded batch (default 64 entries,
+`STREAMING_METADATA_READ_BATCH_SIZE`); a full batch resolves the newest entry in
+one extra bounded read to skip backlog. Normal batches require no extra read.
+This policy does not change source, publish or preview FPS.
+
+Model publication uses `python -m scripts.sync_huggingface_models`; see
+[`MODEL_CATALOG.md`](examples/YOLO_server_api/MODEL_CATALOG.md) for automatic
+affected-worker restarts, loaded-version verification and restoration behaviour.
+
 For public deployments, put MediaMTX behind Nginx `auth_request` and let
 `examples.streaming_web` validate JWT and site access.
 
@@ -585,7 +623,7 @@ The mypy pre-commit hook checks production code (`main.py`, `src`, `examples`,
 and `scripts`). Tests are still validated by `pytest` and `flake8`; many test
 files intentionally use dynamic mocks and invalid payloads.
 
-## Dataset And Models
+## Dataset and Models
 
 The project uses the Construction Hazard Detection model repository:
 
@@ -608,11 +646,12 @@ Labels:
 10 Vehicle
 ```
 
-## Licence
+## Runtime Behaviour
 
-This project is licensed under the [AGPL-3.0 Licence](LICENSE).
+### Durable Evidence Delivery
 
-### Durable evidence delivery
+The Python pipeline uses the SQLite outbox described here. For the standalone
+Rust pipeline, see [PostgreSQL outbox configuration](native/pipeline/POSTGRES_OUTBOX.md).
 
 The dispatcher shares one worker token provider and pooled credential transport.
 Credential requests make one attempt; event delivery owns the retry/backoff budget.
@@ -648,6 +687,28 @@ Provider push acknowledgements remain at least once across an uncertain network
 response; the event UUID and notification-centre recipient key prevent duplicate
 evidence and in-app records.
 
+The evidence dispatcher supervises its scheduler and recreates delivery resources
+after failure, preserving disk queues and event leases. Recovery starts at
+`VIOLATION_OUTBOX_RECOVERY_SECONDS` (1), doubles up to
+`VIOLATION_OUTBOX_MAX_RECOVERY_SECONDS` (60), and resets after a successful poll.
+Its `health` snapshot exposes running state, cumulative failures, last error type
+and last successful poll. Shutdown interrupts recovery and drains active work.
+
+Evidence timestamps without an offset are interpreted as UTC consistently across
+HTTP, MCP, outbox serialisation and request fingerprints. Explicit offsets are
+converted to UTC. Use offset-bearing timestamps when retrying historical events
+that previously relied on a server's local timezone.
+
+Tracked violation rows use one validation contract at HTTP and MCP upload
+boundaries: finite numeric values, positive box area, confidence in [0, 1], a
+nonnegative integer class ID, and an integer track ID >= -1 (-1 means unassigned).
+Coordinates may extend outside the frame for later clipping. Invalid uploads
+return 422 rather than being serialised as null values. Historical records remain
+accessible: invalid stored detection rows are omitted from rendering without
+rewriting the original evidence.
+
+### Authentication and Notifications
+
 Native social links stage and validate the local mirror in one transaction
 before calling Keycloak. An uncertain remote result or failed commit reports
 `account_reconciliation_required`; it never removes a shared provider identity
@@ -660,65 +721,11 @@ redemption have separate modules. FCM delivery captures registration revisions
 before sending. Its result updates require the same owner and registration;
 successful sends update diagnostics without activating a disabled device.
 
-Playback negotiation validates an entire batch before atomically committing its
-sessions, producer leases and reverse indexes. A missing or foreign existing
-session leaves the batch unchanged. Metadata subscriptions own their overlay
-lease, readiness and heartbeat state and close their shared fanout subscription
-when the viewer disconnects.
-
-
-Media publishing captures `MediaPublishSettings` for each stream. By default,
-capture keeps every decoded frame and detail, overlay and preview outputs follow
-the camera frame rate, including fractional rates such as 29.97 FPS. Reconnecting
-reads the camera rate again and replaces publishers if it changes. Inference
-consumes the latest frame independently, so slower inference does not set the
-video frame rate. Preview reduces resolution and bitrate without reducing FPS.
-
-`MEDIA_PUBLISH_SOURCE_FPS`, `MEDIA_PUBLISH_FPS`, `MEDIA_PREVIEW_FPS` and
-`MEDIA_PUBLISH_CLEAN_FPS` default to `auto` (an empty value also means auto).
-A numeric value explicitly enables capture sampling or output resampling;
-preview inherits an explicit detail rate unless separately configured.
-Direct source restreaming preserves input timestamps in auto mode. Raw-frame
-publishers temporarily use 30 FPS for startup slates or cameras that do not
-report a usable FPS. A renderer holds its settings and copies each shared source
-frame once per rendered language.
-All renditions and the source restreamer share the same captured encoder settings
-for a camera, including codec options, GOP, bitrate and device selection.
-
-Model publication uses `python -m scripts.sync_huggingface_models`; see
-[`MODEL_CATALOG.md`](examples/YOLO_server_api/MODEL_CATALOG.md) for automatic
-affected-worker restarts, loaded-version verification and restoration behavior.
-
-Evidence timestamps without an offset are interpreted as UTC consistently across
-HTTP, MCP, outbox serialization and request fingerprints. Explicit offsets are
-converted to UTC. Use offset-bearing timestamps when retrying historical events
-that previously relied on a server's local timezone.
-
-Live Metadata is a latest-snapshot channel; violation/notification delivery is
-handled separately. Redis reads merge a bounded batch (default 64 entries,
-`STREAMING_METADATA_READ_BATCH_SIZE`); a full batch resolves the newest entry in
-one extra bounded read to skip backlog. Normal batches require no extra read.
-This policy does not change source, publish or preview FPS.
-
-Tracked violation rows use one validation contract at HTTP and MCP upload
-boundaries: finite numeric values, positive box area, confidence in [0, 1], a
-nonnegative integer class ID, and an integer track ID >= -1 (-1 means unassigned).
-Coordinates may extend outside the frame for later clipping. Invalid uploads
-return 422 rather than being serialized as null values. Historical records remain
-accessible: invalid stored detection rows are omitted from rendering without
-rewriting the original evidence.
-
 BFF refreshes renew their ownership lease and save token pairs only when both
 the owner and session revision still match. Expired refreshers cannot overwrite
 newer tokens or revoke a newer session after a late authentication error. Browser
 cancellation drains an in-progress rotation and save before releasing ownership.
 A process crash or an exchange whose response is lost can still require sign-in.
-
-HLS-driven playback renewal reads, watches and updates at most
-`STREAM_PLAYBACK_REFRESH_BATCH_SIZE` live sessions per batch (default 256), while
-pruning a bounded batch of expired reverse-index entries. Renewed scores move to
-the end so later batches can reach other sessions. Throttling and index/session
-changes commit in the same Redis transaction.
 
 Forced BFF refresh waiters require both an advanced session revision and a
 different valid access token. A busy peer cannot send the rejected token back
@@ -726,18 +733,13 @@ upstream merely because its expiry is still in the future. When a peer finishes
 before this request acquires the lock, its valid token is reused without another
 exchange.
 
-The evidence dispatcher supervises its scheduler and recreates delivery resources
-after failure, preserving disk queues and event leases. Recovery starts at
-`VIOLATION_OUTBOX_RECOVERY_SECONDS` (1), doubles up to
-`VIOLATION_OUTBOX_MAX_RECOVERY_SECONDS` (60), and resets after a successful poll.
-Its `health` snapshot exposes running state, cumulative failures, last error type
-and last successful poll. Shutdown interrupts recovery and drains active work.
-
 Notification claims track a conservative monotonic deadline from each confirmed
 acquisition or renewal. Redis operations take at most five seconds and owned
 operations cannot exceed the confirmed lease deadline. An unconfirmed lease stops
 new batches and drains cancellation; already accepted FCM requests still have
 at-least-once delivery semantics.
+
+### Workers and Settings
 
 A dead YOLO shard restarts with a new IPC generation: fresh request/result queues
 replace potentially poisoned multiprocessing locks, and affected camera
@@ -751,3 +753,7 @@ values override environment values, including an explicit empty Redis password.
 Malformed numeric, boolean and MCP transport settings fail at configuration
 loading. See [configuration ownership](src/settings/README.md) for lifecycle,
 credential rotation and validation rules. Stream FPS selection is unchanged.
+
+## Licence
+
+This project is licensed under the [AGPL-3.0 Licence](LICENSE).
