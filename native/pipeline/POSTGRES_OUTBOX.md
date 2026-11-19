@@ -82,7 +82,7 @@ pipeline=native/pipeline/target/release/construction-pipeline
 
 `outbox` 初始化資料表並列出目前各派送狀態的事件數量。`run` 在 `delivery.enabled` 為 `true` 時一併啟動 HTTP 派送。獨立處理既有佇列可用 `dispatch --config /path/to/rust.json`，並沿用同一資料庫及 namespace。上傳及通知服務可使用請求的 `Idempotency-Key` 對重送請求去重。
 
-[獨立流程的測試設定](README.md#驗證) 提供可重跑的本機 PostgreSQL 容器。設定 `CHD_RUST_TEST_DATABASE_URL` 後，可單獨執行儲存與遷移測試。
+[獨立流程的測試設定](README-zh-tw.md#驗證) 提供可重跑的本機 PostgreSQL 容器。設定 `CHD_RUST_TEST_DATABASE_URL` 後，可單獨執行儲存與遷移測試。
 
 ```bash
 cargo test --locked --manifest-path native/pipeline/Cargo.toml --test postgres_outbox
