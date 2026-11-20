@@ -8,9 +8,9 @@ use sqlx::{
 };
 use std::{
     collections::HashMap,
-    process::Stdio,
     time::{Duration, Instant},
 };
+use tokio_util::sync::CancellationToken;
 
 pub struct Catalog {
     pool: PgPool,
@@ -277,37 +277,21 @@ impl Catalog {
     }
 }
 pub async fn probe(source: &str) -> Result<(u32, u32)> {
-    let mut command = tokio::process::Command::new("ffprobe");
-    command
-        .kill_on_drop(true)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null());
-    if source.starts_with("rtsp://") || source.starts_with("rtsps://") {
-        command.args(["-rtsp_transport", "tcp", "-timeout", "5000000"]);
+    probe_with_timeout(source, Duration::from_secs(8)).await
+}
+
+async fn probe_with_timeout(source: &str, timeout: Duration) -> Result<(u32, u32)> {
+    let stop = CancellationToken::new();
+    // Dropping a blocking task handle detaches it. Interrupt its I/O on drop.
+    let _cancel_on_drop = stop.clone().drop_guard();
+    let source = source.to_owned();
+    let worker = tokio::task::spawn_blocking(move || {
+        construction_media::probe_video_dimensions(&source, stop, timeout)
+    });
+    match tokio::time::timeout(timeout, worker).await {
+        Ok(Ok(Ok(dimensions))) => Ok(dimensions),
+        _ => anyhow::bail!("Source probe failed"),
     }
-    command.args([
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_entries",
-        "stream=width,height",
-        "-of",
-        "json",
-        "-i",
-        source,
-    ]);
-    let result = tokio::time::timeout(Duration::from_secs(8), command.output()).await??;
-    ensure!(result.status.success(), "Source probe failed");
-    let data: Value = serde_json::from_slice(&result.stdout)?;
-    let width = data["streams"][0]["width"]
-        .as_u64()
-        .context("Missing video width")? as u32;
-    let height = data["streams"][0]["height"]
-        .as_u64()
-        .context("Missing video height")? as u32;
-    ensure!(width > 0 && height > 0, "Invalid source dimensions");
-    Ok((width, height))
 }
 
 fn catalog_output(media: &crate::config::MediaDefaults, site: &str, name: &str) -> Output {
@@ -337,4 +321,73 @@ fn catalog_output(media: &crate::config::MediaDefaults, site: &str, name: &str) 
                 fps: shape.fps,
             }),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn catalog_preview_publishes_server_annotations_by_language() {
+    let media: crate::config::MediaDefaults = serde_json::from_value(serde_json::json!({
+        "publish_base": "rtsp://localhost:8554/",
+        "languages": ["zh-TW", "en"],
+        "on_demand": true,
+        "preview": { "width": 640, "height": 360, "fps": 15 }
+    }))
+    .unwrap();
+    let output = catalog_output(&media, "site", "cam");
+    assert!(!output.client_overlay);
+    assert!(output.on_demand);
+    assert_eq!(
+        output.annotated.as_deref(),
+        Some("rtsp://localhost:8554/hazard_c2l0ZQ_Y2Ft_annotated_{language_b64}")
+    );
+    let preview = output.preview.unwrap();
+    assert_eq!(
+        preview.clean.as_deref(),
+        Some("rtsp://localhost:8554/hazard_c2l0ZQ_Y2Ft_preview")
+    );
+    assert_eq!(
+        preview.annotated.as_deref(),
+        Some("rtsp://localhost:8554/hazard_c2l0ZQ_Y2Ft_preview_annotated_{language_b64}")
+    );
+    assert_eq!((preview.width, preview.height, preview.fps), (640, 360, 15));
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn probes_file_dimensions_and_releases_stalled_rtsp_connections() {
+    use tokio::{io::AsyncReadExt, net::TcpListener, time::timeout};
+
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/videos/test.mp4");
+    assert_eq!(probe(fixture).await.unwrap(), (640, 352));
+
+    let wait = Duration::from_secs(3);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let source = format!("rtsp://{}/test", listener.local_addr().unwrap());
+    let stalled = source.clone();
+    let attempt =
+        tokio::spawn(async move { probe_with_timeout(&stalled, Duration::from_secs(1)).await });
+    let (mut peer, _) = timeout(wait, listener.accept()).await.unwrap().unwrap();
+    let error = timeout(wait, attempt).await.unwrap().unwrap().unwrap_err();
+    assert_eq!(error.to_string(), "Source probe failed");
+    timeout(wait, peer.read_to_end(&mut Vec::new()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let attempt = tokio::spawn(async move { probe(&source).await });
+    let (mut peer, _) = timeout(wait, listener.accept()).await.unwrap().unwrap();
+    let mut request = [0; 1024];
+    assert!(
+        timeout(wait, peer.read(&mut request))
+            .await
+            .unwrap()
+            .unwrap()
+            > 0
+    );
+    attempt.abort();
+    assert!(attempt.await.unwrap_err().is_cancelled());
+    timeout(wait, peer.read_to_end(&mut Vec::new()))
+        .await
+        .unwrap()
+        .unwrap();
 }

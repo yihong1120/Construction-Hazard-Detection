@@ -73,7 +73,8 @@ def main() -> None:
         [
             'uvx', '--from', 'maturin==1.16.0', 'maturin', 'build',
             '--release', '--locked', '--auditwheel', 'skip',
-            '--manifest-path', str(ROOT / 'native/inference/Cargo.toml'),
+            '--manifest-path',
+            str(ROOT / 'bindings/python/inference/Cargo.toml'),
             '--features', 'gpu-media' if args.gpu_media else 'tensorrt',
             '--interpreter', sys.executable,
             '--out', str(args.output),

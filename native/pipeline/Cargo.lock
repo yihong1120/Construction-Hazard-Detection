@@ -467,16 +467,15 @@ dependencies = [
  "clap",
  "construction-inference",
  "construction-media",
+ "construction-postprocess-core",
+ "construction-stream-contract",
  "cosmic-text",
- "delaunator",
  "futures-util",
  "geo",
- "hdbscan-rs",
  "hex",
  "image",
  "imageproc",
  "libc",
- "ndarray",
  "percent-encoding",
  "rayon",
  "redis",
@@ -494,6 +493,25 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "construction-postprocess-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "delaunator",
+ "geo",
+ "hdbscan-rs",
+ "ndarray",
+]
+
+[[package]]
+name = "construction-stream-contract"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde_json",
 ]
 
 [[package]]

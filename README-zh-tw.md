@@ -192,7 +192,7 @@ Flutter 前端原始碼維護於獨立的
 串流程序支援 Rust／PyO3 後端，用於中心點追蹤、防護裝備判斷，以及人員與機具或車輛
 的距離判斷。串流 Docker 映像內含 wheel。在主機執行時可自行建置安裝。
 `POSTPROCESS_BACKEND` 可選 `auto`（預設）、`python` 或 `rust`，變更後重啟程序。
-建置方式、適用範圍與量測結果見 [Rust 後處理說明](native/postprocess/README.md)。
+建置方式、適用範圍與量測結果見 [Rust 後處理說明](bindings/python/postprocess/README.md)。
 
 共用 YOLO 工作者也支援 Rust TensorRT 後端，可沿用通過模型目錄與 SHA256
 驗證且版本相容的 INT8 引擎。`YOLO_WORKER_BACKEND=auto|rust|python` 控制
@@ -203,7 +203,7 @@ Rust 工作者可直接讀取持有租約的共享影格，省去整張影格的
 也按需載入。詳見 [影格複製減量與量測](native/inference/README.md#共享影格快照減量)。
 
 後續加入推論工作區重用、安全區域快取、Rust 最小生成樹（MST）選邊與標註混色，
-並提供明確選用的 Rust／FFmpeg 擷取後端。詳見 [串流流程優化及驗證](native/postprocess/README.md)。
+並提供明確選用的 Rust／FFmpeg 擷取後端。詳見 [串流流程優化及驗證](bindings/python/postprocess/README.md)。
 
 GPU 管理支援跨程序 NVENC、推論與記憶體配額，以及可選用的固定記憶體
 非同步推論。1080p 實測批次大小為 1 時約快 4%，批次大小為 8 時約慢 5%，因此非同步預設關閉。

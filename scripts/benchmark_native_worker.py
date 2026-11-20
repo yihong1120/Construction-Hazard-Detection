@@ -250,6 +250,7 @@ def main():
         ROOT / 'src/native_inference.py',
         ROOT / 'src/yolo_worker.py',
         *sorted((ROOT / 'native/inference/src').glob('*.rs')),
+        *sorted((ROOT / 'bindings/python/inference/src').glob('*.rs')),
         ROOT / 'native/inference/bridge.cpp',
         ROOT / 'native/inference/preprocess.cu',
     ]

@@ -5,6 +5,7 @@ use crate::{
     locale::{Status, canonical},
 };
 use anyhow::{Result, ensure};
+use construction_stream_contract::overlay_palette;
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 use image::{GrayImage, Luma, Rgb};
 use imageproc::{
@@ -15,6 +16,9 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     sync::{Arc, Mutex, OnceLock},
 };
+mod yuv;
+pub use yuv::Annotation;
+use yuv::Draw;
 const MIN_CONFIDENCE: f64 = 0.25;
 const MAX_LABELS: usize = 40;
 const MAX_WARNING_ROWS: usize = 5;
@@ -91,12 +95,9 @@ impl<'a> Class<'a> {
         if warning {
             return WARNING_COLOR;
         }
-        static COLORS: OnceLock<serde_json::Value> = OnceLock::new();
-        let palette = COLORS.get_or_init(|| {
-            serde_json::from_str(include_str!("../assets/colors.json")).expect("compiled palette")
-        });
-        palette[self.code]
-            .as_str()
+        overlay_palette()
+            .get(self.code)
+            .and_then(serde_json::Value::as_str)
             .and_then(parse_bgr)
             .or_else(|| parse_bgr(&crate::schema::color(self.code)))
             .unwrap_or(Rgb([255; 3]))
@@ -173,14 +174,22 @@ impl Text {
         language: &str,
     ) -> Result<SharedFrame> {
         let language = canonical(language).unwrap_or(language);
-        let mut pixels = pool.take();
-        pixels.fill(20);
-        let mut picture = Picture::new(width, height, pixels);
+        let mut picture = Picture::new(width, height, pool.take());
+        if frame.host.is_some() {
+            picture.annotation = Some(Annotation::new(width, height));
+            picture.fill(
+                picture.clip(0, 0, width as i32 - 1, height as i32 - 1),
+                Rgb([20; 3]),
+            );
+        } else {
+            picture.pixels.fill(20);
+        }
         picture.status(self, language, Status::Offline.text(language), 8)?;
         Ok(Arc::new(Frame {
             pixels: picture.pixels,
             device: None,
-            host: None,
+            host: frame.host.clone(),
+            annotation: picture.annotation,
             width,
             height,
             sequence: frame.sequence,
@@ -364,21 +373,17 @@ impl Preview {
 
     pub(crate) fn scale(&mut self, frame: &Frame) -> Result<SharedFrame> {
         let mut pixels = self.pool.take();
-        if let Some(host) = &frame.host {
-            self.scaler
-                .from_host(host, pixels.padded_mut(), self.shape)?;
-        } else {
-            self.scaler.from_bgr(
-                frame.bgr_padded()?,
-                (frame.width, frame.height),
-                pixels.padded_mut(),
-                self.shape,
-            )?;
-        }
+        self.scaler.from_bgr(
+            frame.bgr_padded()?,
+            (frame.width, frame.height),
+            pixels.padded_mut(),
+            self.shape,
+        )?;
         Ok(Arc::new(Frame {
             pixels,
             device: None,
             host: None,
+            annotation: None,
             width: self.shape.0,
             height: self.shape.1,
             sequence: frame.sequence,
@@ -441,6 +446,7 @@ impl Bounds {
 
 struct Picture {
     pixels: crate::frame::Buffer,
+    annotation: Option<Annotation>,
     width: u32,
     height: u32,
 }
@@ -448,6 +454,7 @@ impl Picture {
     fn new(width: u32, height: u32, pixels: crate::frame::Buffer) -> Self {
         Self {
             pixels,
+            annotation: None,
             width,
             height,
         }
@@ -465,6 +472,10 @@ impl Picture {
     }
 
     fn fill(&mut self, area: Bounds, color: Rgb<u8>) {
+        if let Some(annotation) = &mut self.annotation {
+            annotation.commands.push(Draw::Fill(area, color, 255));
+            return;
+        }
         for y in area.top..=area.bottom {
             for pixel in self
                 .row_mut(y as usize, area.left as usize, area.right as usize + 1)
@@ -502,12 +513,26 @@ impl Picture {
         }
     }
 
-    fn draw_glyph(&mut self, glyph: &Glyph, x: i32, y: i32, area: Bounds) {
+    fn draw_glyph(&mut self, glyph: &Arc<Glyph>, x: i32, y: i32, area: Bounds) {
         let start_x = x.max(area.left);
         let end_x = (x + glyph.width as i32).min(area.right + 1);
         let start_y = y.max(area.top);
         let end_y = (y + glyph.height as i32).min(area.bottom + 1);
         if start_x >= end_x {
+            return;
+        }
+        if let Some(annotation) = &mut self.annotation {
+            annotation.commands.push(Draw::Glyph(
+                glyph.clone(),
+                x,
+                y,
+                Bounds {
+                    left: start_x,
+                    top: start_y,
+                    right: end_x - 1,
+                    bottom: end_y - 1,
+                },
+            ));
             return;
         }
         for py in start_y..end_y {
@@ -532,7 +557,7 @@ impl Picture {
         }
     }
 
-    fn badge(&mut self, glyph: &Glyph, bounds: Bounds, color: Rgb<u8>) {
+    fn badge(&mut self, glyph: &Arc<Glyph>, bounds: Bounds, color: Rgb<u8>) {
         let width = glyph.width as i32 + 12;
         let height = glyph.height as i32 + 6;
         let left = bounds.left.min((self.width as i32 - 1 - width).max(0));
@@ -568,9 +593,17 @@ impl Picture {
         let left = (self.width as i32 - width - 12).max(0);
         let top = (self.height as i32 - height - 12).max(0);
         let panel = self.clip(left, top, left + width, top + height);
-        for y in panel.top..=panel.bottom {
-            for channel in self.row_mut(y as usize, panel.left as usize, panel.right as usize + 1) {
-                *channel = ((u16::from(*channel) * 22 + 36 * 78 + 50) / 100) as u8;
+        if let Some(annotation) = &mut self.annotation {
+            annotation
+                .commands
+                .push(Draw::Fill(panel, Rgb([36; 3]), 199));
+        } else {
+            for y in panel.top..=panel.bottom {
+                for channel in
+                    self.row_mut(y as usize, panel.left as usize, panel.right as usize + 1)
+                {
+                    *channel = ((u16::from(*channel) * 22 + 36 * 78 + 50) / 100) as u8;
+                }
             }
         }
         self.outline(panel, WARNING_BORDER);
@@ -606,16 +639,20 @@ struct ZoneLayer {
     extent: (u32, u32),
     rasterized: Vec<Vec<Point<i32>>>,
     offset: (u32, u32),
-    mask: GrayImage,
+    mask: Arc<GrayImage>,
 }
 impl ZoneLayer {
     fn update(&mut self, polygons: &Polygons, extent: (u32, u32), scale: (f64, f64)) {
-        if self.key == *polygons && self.scale == scale && self.extent == extent {
+        let same_extent = self.extent == extent;
+        let same_scale = self.scale == scale;
+        if same_scale && same_extent && Arc::ptr_eq(&self.key, polygons) {
             return;
         }
-        self.key.clone_from(polygons);
+        let previous = std::mem::replace(&mut self.key, Arc::clone(polygons));
+        if same_scale && same_extent && previous == *polygons {
+            return;
+        }
         self.scale = scale;
-        let same_extent = self.extent == extent;
         self.extent = extent;
         let mut points: Vec<Vec<_>> = polygons
             .iter()
@@ -650,7 +687,7 @@ impl ZoneLayer {
         }
         self.rasterized.clone_from(&points);
         if points.is_empty() {
-            self.mask = GrayImage::new(0, 0);
+            self.mask = Arc::default();
             return;
         }
         let all_points = || points.iter().flatten();
@@ -662,20 +699,25 @@ impl ZoneLayer {
             (all_points().map(|p| p.y).max().unwrap_or_default() + 2).min(extent.1 as i32 - 1);
         self.offset = (left as u32, top as u32);
         let size = ((right - left + 1) as u32, (bottom - top + 1) as u32);
-        if self.mask.dimensions() == size {
-            self.mask.fill(0);
+        if let Some(mask) = Arc::get_mut(&mut self.mask) {
+            if mask.dimensions() == size {
+                mask.fill(0);
+            } else {
+                let mut pixels = std::mem::take(mask).into_raw();
+                pixels.clear();
+                pixels.resize(size.0 as usize * size.1 as usize, 0);
+                *mask = GrayImage::from_raw(size.0, size.1, pixels).expect("validated mask size");
+            }
         } else {
-            let mut pixels = std::mem::take(&mut self.mask).into_raw();
-            pixels.clear();
-            pixels.resize(size.0 as usize * size.1 as usize, 0);
-            self.mask = GrayImage::from_raw(size.0, size.1, pixels).expect("validated mask size");
+            self.mask = Arc::new(GrayImage::new(size.0, size.1));
         }
+        let mask = Arc::get_mut(&mut self.mask).expect("unique raster mask");
         for polygon in &mut points {
             for point in polygon.iter_mut() {
                 point.x -= left;
                 point.y -= top;
             }
-            draw_polygon_mut(&mut self.mask, polygon, Luma([1]));
+            draw_polygon_mut(mask, polygon, Luma([1]));
         }
         for polygon in &points {
             for (start, end) in polygon.iter().zip(polygon.iter().cycle().skip(1)) {
@@ -696,7 +738,7 @@ impl ZoneLayer {
                     (1, 1),
                 ] {
                     draw_line_segment_mut(
-                        &mut self.mask,
+                        mask,
                         ((start.x + dx) as f32, (start.y + dy) as f32),
                         ((end.x + dx) as f32, (end.y + dy) as f32),
                         Luma([2]),
@@ -710,6 +752,12 @@ impl ZoneLayer {
         let width = self.mask.width() as usize;
         let (left, top) = (self.offset.0 as usize, self.offset.1 as usize);
         if width == 0 {
+            return;
+        }
+        if let Some(annotation) = &mut picture.annotation {
+            annotation
+                .commands
+                .push(Draw::Zone(self.mask.clone(), self.offset, fill, stroke));
             return;
         }
         for (y, mask) in self.mask.as_raw().chunks_exact(width).enumerate() {
@@ -818,6 +866,8 @@ fn warning_lines<'a>(
 
 pub struct Renderer {
     pool: Pool,
+    annotation_pool: Pool,
+    extent: (u32, u32),
     text: Arc<Text>,
     cones: ZoneLayer,
     poles: ZoneLayer,
@@ -826,6 +876,8 @@ impl Renderer {
     pub fn new(width: u32, height: u32, text: Arc<Text>) -> Self {
         Self {
             pool: Pool::new(width as usize * height as usize * 3, 4),
+            annotation_pool: Pool::new(0, 4),
+            extent: (width, height),
             text,
             cones: ZoneLayer::default(),
             poles: ZoneLayer::default(),
@@ -876,16 +928,25 @@ impl Renderer {
         status: Option<&str>,
     ) -> Result<Option<SharedFrame>> {
         let language = canonical(language).unwrap_or(language);
-        let extent = (frame.width, frame.height);
+        let extent = self.extent;
         let scale = (
-            f64::from(frame.width) / f64::from(source.0),
-            f64::from(frame.height) / f64::from(source.1),
+            f64::from(extent.0) / f64::from(source.0),
+            f64::from(extent.1) / f64::from(source.1),
         );
-        let Some(mut pixels) = self.pool.try_take() else {
+        let pool = if frame.host.is_some() {
+            &self.annotation_pool
+        } else {
+            &self.pool
+        };
+        let Some(pixels) = pool.try_take() else {
             return Ok(None);
         };
-        pixels.copy_from_slice(frame.bgr()?);
-        let mut picture = Picture::new(frame.width, frame.height, pixels);
+        let mut picture = Picture::new(extent.0, extent.1, pixels);
+        if frame.host.is_some() {
+            picture.annotation = Some(Annotation::new(extent.0, extent.1));
+        } else {
+            picture.pixels.copy_from_slice(frame.bgr()?);
+        }
         self.cones.update(&hazard.cone_polys, extent, scale);
         self.cones
             .draw(&mut picture, Rgb([129, 64, 255]), Rgb([99, 30, 233]));
@@ -939,19 +1000,15 @@ impl Renderer {
         let lines = warning_lines(&hazard.warnings, &inferred, language);
         picture.warning_panel(&self.text, language, &lines)?;
         if let Some(status) = status {
-            picture.status(
-                &self.text,
-                language,
-                status,
-                (frame.height as i32 - 30).max(0),
-            )?;
+            picture.status(&self.text, language, status, (extent.1 as i32 - 30).max(0))?;
         }
         Ok(Some(Arc::new(Frame {
             pixels: picture.pixels,
             device: None,
-            host: None,
-            width: frame.width,
-            height: frame.height,
+            host: frame.host.clone(),
+            annotation: picture.annotation,
+            width: extent.0,
+            height: extent.1,
             sequence: frame.sequence,
             generation: frame.generation,
             timestamp_ms: frame.timestamp_ms,
@@ -962,6 +1019,9 @@ impl Renderer {
     }
 }
 pub fn jpeg(frame: &SharedFrame) -> Result<Vec<u8>> {
+    if let Some(host) = &frame.host {
+        return host.jpeg(frame.width, frame.height);
+    }
     let pixels = frame.bgr()?;
     let mut rgb = Vec::with_capacity(pixels.len());
     for pixel in pixels.chunks_exact(3) {
@@ -1007,6 +1067,7 @@ mod tests {
             pixels,
             device: None,
             host: None,
+            annotation: None,
             width: 640,
             height: 360,
             sequence: 1,
@@ -1108,8 +1169,8 @@ mod tests {
     fn overlay_uses_python_zone_box_badge_and_warning_colors() {
         let hazard = HazardResult {
             warnings: BTreeMap::from([("warning_close_to_machinery".into(), json!({"count": 2}))]),
-            cone_polys: vec![vec![[220., 60.], [300., 60.], [300., 180.], [220., 180.]]],
-            pole_polys: vec![vec![[0.6, 0.2], [0.7, 0.2], [0.7, 0.5], [0.6, 0.5]]],
+            cone_polys: Arc::from([vec![[220., 60.], [300., 60.], [300., 180.], [220., 180.]]]),
+            pole_polys: Arc::from([vec![[0.6, 0.2], [0.7, 0.2], [0.7, 0.5], [0.6, 0.5]]]),
         };
         let tracks = [
             [40., 40., 180., 190., 0.25, 5., 19., 0.],

@@ -1,4 +1,4 @@
-//! CPU YUV ownership and fused input parity, not a throughput benchmark.
+//! CPU YUV ownership and per-image input parity against the regular CPU path.
 use anyhow::{Result, ensure};
 use construction_inference::{
     core::{Image, layout},
@@ -8,7 +8,7 @@ use construction_media::{Decoder, GpuMetrics};
 use sha2::{Digest, Sha256};
 use std::{
     sync::{Arc, atomic::Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 fn main() -> Result<()> {
@@ -32,31 +32,62 @@ fn main() -> Result<()> {
     for i in 0..count {
         ensure!(decoder.next_frame()?.is_some(), "Short source");
         let host = decoder.retain_host(w, h)?;
-        decoder.bgr(w, h, &mut reference)?;
-        let supported = resize::letterbox(
-            &Image {
-                h: h as usize,
-                w: w as usize,
-                data: &reference[..reference.len() - 64],
-            },
-            &l,
-            &mut expected,
-        );
+        actual.fill(23);
+        let fused_start = Instant::now();
         let fused = host.letterbox(&mut actual, l.h, l.w, l.rh, l.rw, l.top, l.left);
-        ensure!(fused == supported, "Geometry eligibility differs");
-        if fused {
+        let fused_ms = fused_start.elapsed().as_secs_f64() * 1000.0;
+        let materialized_before = stats.host_materialized.load(Ordering::Relaxed);
+        let reference_start = Instant::now();
+        let bgr = host.bgr_padded()?;
+        let image = Image {
+            h: h as usize,
+            w: w as usize,
+            data: &bgr[..bgr.len() - 64],
+        };
+        let supported = resize::letterbox(&image, &l, &mut expected);
+        #[cfg(feature = "tensorrt")]
+        let supported = if !supported {
+            construction_inference::engine::NativeEngine::fill_letterbox(
+                &image,
+                &l,
+                &mut expected,
+            )?;
+            true
+        } else {
+            supported
+        };
+        let reference_ms = reference_start.elapsed().as_secs_f64() * 1000.0;
+        if fused && supported {
             ensure!(expected == actual, "Model input differs on frame {i}");
+        } else if !fused {
+            ensure!(
+                actual.iter().all(|byte| *byte == 23),
+                "Ineligible sampling modified the output"
+            );
         }
         ensure!(
-            host.bgr_padded()?[..reference.len() - 64] == reference[..reference.len() - 64],
+            stats.host_materialized.load(Ordering::Relaxed) == materialized_before + 1,
+            "Fused sampling must leave full BGR unmaterialized"
+        );
+        decoder.bgr(w, h, &mut reference)?;
+        ensure!(
+            bgr[..reference.len() - 64] == reference[..reference.len() - 64],
             "Full BGR differs"
         );
-        rows.push(serde_json::json!({"frame":i,"fused":fused,"sha256":hex::encode(Sha256::digest(&actual))}));
+        rows.push(serde_json::json!({
+            "frame": i,
+            "fused": fused,
+            "parity_checked": fused && supported,
+            "lookup_bytes": host.lookup_bytes(),
+            "fused_ms": fused_ms,
+            "reference_ms": reference_ms,
+            "sha256": fused.then(|| hex::encode(Sha256::digest(&actual))),
+        }));
         if retained.is_none() {
             retained = Some((
                 decoder.retain_host(w, h)?,
                 reference.clone(),
-                if supported {
+                if fused && supported {
                     Some(expected.clone())
                 } else {
                     None
@@ -66,10 +97,6 @@ fn main() -> Result<()> {
     }
     drop(decoder);
     let (owner, first, model) = retained.unwrap();
-    ensure!(
-        owner.bgr_padded()? == first,
-        "Decoder Drop invalidated retained frame"
-    );
     if let Some(model) = model {
         let mut fresh = vec![0; model.len()];
         ensure!(owner.letterbox(&mut fresh, l.h, l.w, l.rh, l.rw, l.top, l.left));
@@ -78,6 +105,10 @@ fn main() -> Result<()> {
             "Decoder Drop invalidated retained YUV planes"
         );
     }
+    ensure!(
+        owner.bgr_padded()? == first,
+        "Decoder Drop invalidated retained frame"
+    );
     println!(
         "{}",
         serde_json::json!({"frames":rows,"host_retained":stats.host_retained.load(Ordering::Relaxed),"host_sampled":stats.host_sampled.load(Ordering::Relaxed)})

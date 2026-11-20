@@ -1,11 +1,25 @@
 //! These tests require an isolated database, never the application's database.
+use axum::{
+    Json, Router, body::Bytes, extract::State, http::HeaderMap, response::IntoResponse,
+    routing::post,
+};
 use construction_pipeline::{
+    config::Delivery,
+    delivery::dispatch,
     hazard::Warnings,
     outbox::{Event, Outbox},
 };
 use serde_json::json;
 use sqlx::PgPool;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering::Relaxed},
+    },
+    time::Duration,
+};
+use tokio_util::sync::CancellationToken;
 fn event(id: &str) -> Event {
     Event {
         event_id: id.into(),
@@ -17,8 +31,8 @@ fn event(id: &str) -> Event {
         model_version: "v1".into(),
         warnings: Warnings::new(),
         detections: vec![],
-        cone_polygon: vec![],
-        pole_polygon: vec![],
+        cone_polygon: Default::default(),
+        pole_polygon: Default::default(),
     }
 }
 fn url() -> String {
@@ -54,6 +68,130 @@ async fn restart_preserves_receipts_and_rejects_stale_delivery_leases() {
     assert!(store.retry(&first, 123, false, "stale").await.is_err());
     store.complete(&recovered).await.unwrap();
     assert_eq!(store.counts().await.unwrap()["done"], 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stalled_notifications_leave_evidence_capacity_and_honour_retry_after() {
+    struct Endpoints {
+        uploads: AtomicUsize,
+        notifications: AtomicUsize,
+        release: tokio::sync::Semaphore,
+    }
+    async fn upload(State(state): State<Arc<Endpoints>>, _image: Bytes) -> impl IntoResponse {
+        let id = state.uploads.fetch_add(1, Relaxed) + 1;
+        Json(json!({"violation_id": id}))
+    }
+    async fn notify(State(state): State<Arc<Endpoints>>) -> impl IntoResponse {
+        let attempt = state.notifications.fetch_add(1, Relaxed);
+        let mut headers = HeaderMap::new();
+        let reply = match attempt {
+            0 | 1 => {
+                state.release.acquire().await.unwrap().forget();
+                if attempt == 0 {
+                    headers.insert("Retry-After", "120".parse().unwrap());
+                    json!({"outcome": "retryable"})
+                } else {
+                    json!({"outcome": "retryable", "retry_after_seconds": 180})
+                }
+            }
+            _ => json!({"outcome": "completed"}),
+        };
+        (headers, Json(reply))
+    }
+
+    let (store, scope) = fixture(1024 * 1024).await;
+    for id in 0..8 {
+        store
+            .put(&event(&id.to_string()), &[23; 32768])
+            .await
+            .unwrap();
+    }
+    let state = Arc::new(Endpoints {
+        uploads: AtomicUsize::new(0),
+        notifications: AtomicUsize::new(0),
+        release: tokio::sync::Semaphore::new(0),
+    });
+    let app = Router::new()
+        .route("/upload", post(upload))
+        .route("/notify", post(notify))
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let stop = CancellationToken::new();
+    let worker = tokio::spawn(dispatch(
+        store.clone(),
+        Delivery {
+            upload_url: Some(format!("http://{addr}/upload")),
+            notification_url: Some(format!("http://{addr}/notify")),
+            ..Delivery::default()
+        },
+        stop.clone(),
+    ));
+    let pool = PgPool::connect(&url()).await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let receipts: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM rust_pipeline.outbox_events
+                WHERE namespace=$1 AND violation_id IS NOT NULL AND octet_length(image)=32768",
+            )
+            .bind(&scope)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if receipts == 8 && state.notifications.load(Relaxed) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("Every JPEG should be uploaded while the two notification requests are stalled");
+    assert_eq!(state.notifications.load(Relaxed), 2);
+    let released_at = chrono::Utc::now().timestamp();
+    state.release.add_permits(2);
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while store.counts().await.unwrap()["done"] != 6 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let retry_at: Vec<i64> = sqlx::query_scalar(
+        "SELECT next_at FROM rust_pipeline.outbox_events
+        WHERE namespace=$1 AND state='pending' ORDER BY next_at",
+    )
+    .bind(&scope)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(retry_at.len(), 2);
+    for (at, delay) in retry_at.into_iter().zip([120, 180]) {
+        assert!(at >= released_at + delay);
+        assert!(at <= chrono::Utc::now().timestamp() + delay);
+    }
+    // Make the two persisted retries due in the fixture without sleeping for minutes.
+    sqlx::query(
+        "UPDATE rust_pipeline.outbox_events SET next_at=0 WHERE namespace=$1 AND state='pending'",
+    )
+    .bind(&scope)
+    .execute(&pool)
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while store.counts().await.unwrap()["done"] != 8 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    stop.cancel();
+    worker.await.unwrap().unwrap();
+    assert_eq!(state.uploads.load(Relaxed), 8);
+    assert_eq!(state.notifications.load(Relaxed), 10);
+    server.abort();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_workers_claim_each_event_once() {

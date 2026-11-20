@@ -7,10 +7,11 @@ ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH="/usr/local/cargo/bin:${PATH}"
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
-COPY native/postprocess /build/native/postprocess
+COPY native/postprocess-core /build/native/postprocess-core
+COPY bindings/python/postprocess /build/bindings/python/postprocess
 RUN pip install --no-cache-dir maturin==1.16.0 \
     && maturin build --release --locked \
-        --manifest-path /build/native/postprocess/Cargo.toml --out /wheels
+        --manifest-path /build/bindings/python/postprocess/Cargo.toml --out /wheels
 
 # Build against the same pinned TensorRT SDK as base-gpu, without a GPU.
 FROM python:3.15-slim-bookworm AS rust-inference-wheel
@@ -34,6 +35,7 @@ RUN apt-get update \
 WORKDIR /build
 ARG NATIVE_GPU_MEDIA=0
 COPY native/inference /build/native/inference
+COPY bindings/python/inference /build/bindings/python/inference
 COPY deploy/python315/bootstrap.py /build/deploy/python315/bootstrap.py
 COPY scripts/build_native_inference.py /build/scripts/build_native_inference.py
 RUN if [ "$NATIVE_GPU_MEDIA" = "1" ]; then \

@@ -57,7 +57,7 @@ jobs:
     - name: Format, unit and 32-camera file integration tests
       run: |
         node --test native/pipeline/web/overlay.test.mjs
-        for crate in pipeline media inference postprocess; do
+        for crate in pipeline media inference postprocess-core stream-contract; do
           cargo fmt --manifest-path "native/$crate/Cargo.toml" -- --check
         done
         cargo test --locked --manifest-path native/pipeline/Cargo.toml

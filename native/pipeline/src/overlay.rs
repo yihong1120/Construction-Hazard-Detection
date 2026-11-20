@@ -1,4 +1,4 @@
-//! Annotation has its own frame clock. Metadata never pins a full source frame.
+//! Live annotations follow the latest source frame and inference snapshot.
 use crate::{
     capture::{ConversionCadence, Latest},
     config::Model,
@@ -17,7 +17,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
 pub struct Snapshot {
     pub sequence: u64,
@@ -37,6 +37,14 @@ pub struct Actor {
     pub updates: watch::Sender<Option<Arc<Snapshot>>>,
     pub task: tokio::task::JoinHandle<Result<()>>,
     pub stats: Arc<Stats>,
+    changed: Arc<Notify>,
+}
+impl Actor {
+    pub async fn finish(self) -> Result<()> {
+        drop(self.updates);
+        self.changed.notify_waiters();
+        self.task.await?
+    }
 }
 #[derive(Clone)]
 pub struct Target {
@@ -48,16 +56,18 @@ pub struct Target {
 
 pub fn spawn(
     model: Model,
-    source: watch::Receiver<Latest>,
+    mut source: watch::Receiver<Latest>,
     targets: Vec<Target>,
     text: Arc<Text>,
     cpu: Cpu,
+    changed: Arc<Notify>,
     max_age_ms: u64,
     stop: CancellationToken,
 ) -> Actor {
     let (updates, mut receiver) = watch::channel::<Option<Arc<Snapshot>>>(None);
     let stats = Arc::new(Stats::default());
     let counters = stats.clone();
+    let demand = changed.clone();
     let task = tokio::spawn(async move {
         let mut renderers = HashMap::<(String, (u32, u32)), Renderer>::new();
         let mut previews = HashMap::<(u32, u32), Preview>::new();
@@ -81,19 +91,55 @@ pub fn spawn(
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut previous = vec![None; targets.len()];
         let model = Arc::new(model);
+        let mut refresh = false;
         loop {
-            tokio::select! {_ = stop.cancelled()=>break,_ = interval.tick()=>()}
-            let finishing = receiver.has_changed().is_err();
+            // Arm the waiter before reading the gates so activation cannot be lost.
+            let demand_changed = demand.notified();
             if targets.iter().all(|target| !target.sender.active()) {
                 renderers.clear();
                 previews.clear();
                 previous.fill(None);
-                if finishing {
+                if receiver.has_changed().is_err() {
                     break;
+                }
+                tokio::select! {
+                    _ = stop.cancelled() => break,
+                    _ = demand_changed => {
+                        // The last image can already be marked as seen while
+                        // the camera is stalled. Reoffer it to the new viewer.
+                        refresh = true;
+                        interval.reset_immediately();
+                    }
                 }
                 continue;
             }
-            let latest = source.borrow().clone();
+            let retained = source
+                .borrow()
+                .frame
+                .as_ref()
+                .is_some_and(|frame| frame.host.is_some());
+            if !std::mem::take(&mut refresh) && receiver.has_changed().is_ok() {
+                if retained {
+                    // The YUV publisher owns the output clock and rasterises
+                    // only the frame it encodes. A second 20 FPS clock here
+                    // would compound sampling losses when the phases differ.
+                    let source_open = source.has_changed().is_ok();
+                    tokio::select! {
+                        _ = stop.cancelled() => break,
+                        _ = demand_changed => (),
+                        _ = source.changed(), if source_open => (),
+                        _ = receiver.changed() => (),
+                    }
+                } else {
+                    tokio::select! {
+                        _ = stop.cancelled() => break,
+                        _ = demand_changed => continue,
+                        _ = interval.tick() => (),
+                    }
+                }
+            }
+            let finishing = receiver.has_changed().is_err();
+            let latest = source.borrow_and_update().clone();
             let Some(frame) = latest.frame else {
                 if finishing {
                     break;
@@ -134,7 +180,8 @@ pub fn spawn(
                         *previous = None;
                         return false;
                     }
-                    *previous != Some(key) && (clean || finishing || cadence.admit(now))
+                    *previous != Some(key)
+                        && (frame.host.is_some() || clean || finishing || cadence.admit(now))
                 })
                 .collect();
             if !due.iter().any(|&due| due) {
@@ -174,8 +221,10 @@ pub fn spawn(
                             });
                         let original = (frame.width, frame.height);
                         let dimensions = |size: Option<(u32, u32)>| {
-                            size.filter(|&(w, h)| w <= original.0 && h <= original.1)
-                                .unwrap_or(original)
+                            size.filter(|&(w, h)| {
+                                frame.host.is_some() || (w <= original.0 && h <= original.1)
+                            })
+                            .unwrap_or(original)
                         };
                         current.retain(|(language, shape), _| {
                             renditions.iter().zip(&active).any(|((lang, size), on)| {
@@ -203,7 +252,7 @@ pub fn spawn(
                                 if let Some(image) = rendered.get(&key) {
                                     return Ok(Some(Arc::clone(image)));
                                 }
-                                let prepared = if shape == original {
+                                let prepared = if shape == original || frame.host.is_some() {
                                     &frame
                                 } else {
                                     if let std::collections::hash_map::Entry::Vacant(entry) =
@@ -265,6 +314,7 @@ pub fn spawn(
         updates,
         task,
         stats,
+        changed,
     }
 }
 
@@ -280,17 +330,23 @@ mod tests {
         let (tx, feed) = watch::channel(Latest::default());
         let (target, mut output) = watch::channel(None);
         let stop = CancellationToken::new();
+        let changed = Arc::new(Notify::new());
+        let gate = crate::demand::Gate::observed(false, changed.clone());
         let actor = spawn(
             model,
             feed,
             vec![Target {
                 language: "en".into(),
-                sender: publish::Sender::Latest(target),
+                sender: publish::Sender::Gated(
+                    gate.clone(),
+                    Box::new(publish::Sender::Latest(target)),
+                ),
                 fps: 15,
                 size: None,
             }],
             text,
             Cpu::new(1).unwrap(),
+            changed,
             1000,
             stop.clone(),
         );
@@ -302,6 +358,7 @@ mod tests {
                     pixels,
                     device: None,
                     host: None,
+                    annotation: None,
                     width: 640,
                     height: 352,
                     sequence,
@@ -315,6 +372,14 @@ mod tests {
                 terminal: false,
             })
             .unwrap();
+            if sequence == 1 {
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(75), output.changed())
+                        .await
+                        .is_err()
+                );
+                gate.set(true);
+            }
             if generation == 2 {
                 actor
                     .updates
@@ -340,10 +405,13 @@ mod tests {
             .unwrap();
             assert_eq!(actual.pixels[(300 * 640 + 300) * 3], value);
         }
-        stop.cancel();
-        drop(actor.updates);
-        actor.task.await.unwrap().unwrap();
-        assert!(actor.stats.pending.load(Ordering::Relaxed) >= 2);
+        gate.set(false);
+        let stats = actor.stats.clone();
+        tokio::time::timeout(Duration::from_secs(3), actor.finish())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(stats.pending.load(Ordering::Relaxed) >= 2);
     }
     #[tokio::test]
     async fn clean_preview_skips_composition_and_scaled_boxes_follow_source_coordinates() {
@@ -367,6 +435,7 @@ mod tests {
             }],
             Text::new(&Default::default()).unwrap(),
             Cpu::new(1).unwrap(),
+            Arc::default(),
             1000,
             stop.clone(),
         );
@@ -388,6 +457,7 @@ mod tests {
                 pixels,
                 device: None,
                 host: None,
+                annotation: None,
                 width: 640,
                 height: 352,
                 sequence,
@@ -440,5 +510,99 @@ mod tests {
         stop.cancel();
         actor.task.await.unwrap().unwrap();
         assert_eq!(actor.stats.passthrough.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn retained_yuv_delivers_new_frames_without_a_second_encoder_clock() {
+        let model = serde_json::from_value(serde_json::json!({
+            "key": "fixture", "artifact": "fixture", "sha256": "0".repeat(64), "version": "fixture",
+        }))
+        .unwrap();
+        let stop = CancellationToken::new();
+        let mut decoder = construction_media::Decoder::open(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/videos/test.mp4"),
+            stop.clone(),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let (source, feed) = watch::channel(Latest::default());
+        let (sender, mut output) = watch::channel(None);
+        let changed = Arc::new(Notify::new());
+        let gate = crate::demand::Gate::observed(true, changed.clone());
+        let actor = spawn(
+            model,
+            feed,
+            vec![Target {
+                language: "en".into(),
+                sender: publish::Sender::Gated(
+                    gate.clone(),
+                    Box::new(publish::Sender::Latest(sender)),
+                ),
+                fps: 1,
+                size: Some((320, 176)),
+            }],
+            Text::new(&Default::default()).unwrap(),
+            Cpu::new(1).unwrap(),
+            changed,
+            5000,
+            stop.clone(),
+        );
+        actor
+            .updates
+            .send(Some(Arc::new(Snapshot {
+                sequence: 1,
+                generation: 1,
+                captured: Instant::now(),
+                tracks: Arc::new(vec![[30., 40., 120., 170., 0.95, 2., 1., 0.]]),
+                hazard: Arc::new(HazardResult::default()),
+            })))
+            .unwrap();
+        let pool = Pool::new(0, 2);
+        for (sequence, timeout) in [(1, Duration::from_secs(3)), (2, Duration::from_millis(700))] {
+            assert!(decoder.next_frame().unwrap().is_some());
+            source
+                .send(Latest {
+                    generation: 1,
+                    terminal: false,
+                    frame: Some(Arc::new(Frame {
+                        pixels: pool.take(),
+                        host: Some(decoder.retain_host(640, 352).unwrap()),
+                        device: None,
+                        annotation: None,
+                        width: 640,
+                        height: 352,
+                        sequence,
+                        generation: 1,
+                        captured: Instant::now(),
+                        timestamp_ms: 0,
+                        source_pts: None,
+                        source_lag_ms: 0.0,
+                    })),
+                })
+                .unwrap();
+            tokio::time::timeout(timeout, output.changed())
+                .await
+                .unwrap()
+                .unwrap();
+            let output = output.borrow_and_update();
+            let frame = output.as_ref().unwrap();
+            assert_eq!(frame.sequence, sequence);
+            assert!(frame.host.is_some() && frame.annotation.is_some());
+            assert_eq!((frame.width, frame.height), (320, 176));
+        }
+        gate.set(false);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), output.changed())
+                .await
+                .is_err()
+        );
+        gate.set(true);
+        tokio::time::timeout(Duration::from_secs(3), output.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(output.borrow_and_update().as_ref().unwrap().sequence, 2);
+        stop.cancel();
+        actor.finish().await.unwrap();
     }
 }

@@ -18,8 +18,10 @@ url = "2"
 rayon = "1.12"
 construction-inference = { path = "../inference", default-features = false }
 construction-media = { path = "../media" }
+construction-stream-contract = { path = "../stream-contract" }
+construction-postprocess-core = { path = "../postprocess-core", features = ["geometry"] }
 anyhow = "1"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -32,9 +34,6 @@ uuid = { version = "1", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 geo = "=0.33.1"
-hdbscan-rs = "=0.6.1"
-ndarray = "0.16"
-delaunator = "1"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 imageproc = { version = "0.25", default-features = false }

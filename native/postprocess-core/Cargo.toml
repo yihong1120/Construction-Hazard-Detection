@@ -1,0 +1,17 @@
+[package]
+name = "construction-postprocess-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-only"
+publish = false
+
+[features]
+geometry = ["dep:anyhow", "dep:delaunator", "dep:geo", "dep:hdbscan-rs", "dep:ndarray"]
+
+[dependencies]
+anyhow = { version = "1", optional = true }
+delaunator = { version = "1", optional = true }
+geo = { version = "=0.33.1", optional = true }
+hdbscan-rs = { version = "=0.6.1", optional = true }
+ndarray = { version = "0.16", optional = true }

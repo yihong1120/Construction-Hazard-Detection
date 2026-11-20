@@ -25,10 +25,10 @@ VIDEO = Path(__file__).resolve().parents[1] / 'videos/test.mp4'
 @pytest.fixture
 def native():
     if not AVAILABLE:
-        pytest.skip('Requires the native/postprocess wheel')
+        pytest.skip('Requires the bindings/python/postprocess wheel')
     import construction_postprocess
     if getattr(construction_postprocess, 'CAPTURE_API_VERSION', None) != 1:
-        pytest.skip('Requires the updated native/postprocess wheel')
+        pytest.skip('Requires the updated bindings/python/postprocess wheel')
     return construction_postprocess
 
 

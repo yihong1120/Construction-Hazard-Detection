@@ -1,7 +1,7 @@
-use crate::core::{Error, Image};
-use crate::engine::{self, BufferImage, NativeEngine};
+use native_inference::core::{Error, Image};
+use native_inference::engine::{self, BufferImage, NativeEngine};
 #[cfg(feature = "tensorrt")]
-use crate::gpu;
+mod gpu;
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -144,7 +144,7 @@ impl TensorRTEngine {
         py: Python<'_>,
         frames: Vec<Py<gpu::GpuFrame>>,
     ) -> PyResult<u64> {
-        let owners: Vec<_> = frames.iter().map(|f| f.get().core.clone()).collect();
+        let owners: Vec<_> = frames.iter().map(|f| f.get().frame.clone()).collect();
         py.detach(|| {
             self.lock()?
                 .as_mut()
@@ -159,7 +159,7 @@ impl TensorRTEngine {
         py: Python<'_>,
         frames: Vec<Py<gpu::GpuFrame>>,
     ) -> PyResult<Py<PyList>> {
-        let owners: Vec<_> = frames.iter().map(|f| f.get().core.clone()).collect();
+        let owners: Vec<_> = frames.iter().map(|f| f.get().frame.clone()).collect();
         let rows = py.detach(|| {
             let mut guard = self.lock()?;
             let engine = guard

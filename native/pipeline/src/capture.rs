@@ -331,13 +331,7 @@ pub fn spawn(
                         let frame = decoder.retain_host(spec.width, spec.height)?;
                         if remote
                             && decoded.pts.is_none()
-                            && liveness.sample_due(Instant::now())
-                            && liveness.frozen(
-                                &frame.bgr_padded()?
-                                    [..spec.width as usize * spec.height as usize * 3],
-                                Instant::now(),
-                                &settings,
-                            )
+                            && liveness.frozen_host(&frame, Instant::now(), &settings)?
                         {
                             reconnect_reason = "frozen_frame";
                             break;
@@ -370,6 +364,7 @@ pub fn spawn(
                     pixels: pixels.expect("admitted buffer"),
                     device,
                     host,
+                    annotation: None,
                     width: spec.width,
                     height: spec.height,
                     sequence,
@@ -503,21 +498,40 @@ impl Liveness {
         if !self.sample_due(now) {
             return false;
         }
+        let sample = pixels.iter().step_by((pixels.len() / 4096).max(1)).copied();
+        self.frozen_sample(sample, now, settings)
+    }
+    fn frozen_host(
+        &mut self,
+        frame: &construction_media::HostFrame,
+        now: Instant,
+        settings: &CaptureSettings,
+    ) -> Result<bool> {
+        if !self.sample_due(now) {
+            return Ok(false);
+        }
+        let mut data = [0; 4096];
+        let sample = frame.freeze_sample(&mut data)?;
+        Ok(self.frozen_sample(sample.iter().copied(), now, settings))
+    }
+    fn frozen_sample(
+        &mut self,
+        sample: impl Iterator<Item = u8> + Clone,
+        now: Instant,
+        settings: &CaptureSettings,
+    ) -> bool {
         self.sampled = now;
-        let sample: Vec<_> = pixels
-            .iter()
-            .step_by((pixels.len() / 4096).max(1))
-            .copied()
-            .collect();
+        let previous_len = self.sample.len();
         let delta: u64 = sample
-            .iter()
+            .clone()
             .zip(&self.sample)
             .map(|(a, b)| a.abs_diff(*b) as u64)
             .sum();
-        if sample.len() != self.sample.len() || delta as f64 > sample.len() as f64 * 0.2 {
+        self.sample.clear();
+        self.sample.extend(sample);
+        if self.sample.len() != previous_len || delta as f64 > self.sample.len() as f64 * 0.2 {
             self.changed = now
         }
-        self.sample = sample;
         now.duration_since(self.changed) >= Duration::from_secs(settings.freeze_seconds)
     }
 }
@@ -538,6 +552,29 @@ mod tests {
             assert!(liveness.sample_due(tick));
             assert!(!liveness.stalled_pts(None, tick, &settings));
             assert_eq!(liveness.frozen(&[17; 64], tick, &settings), second == 4);
+        }
+    }
+    #[test]
+    fn chroma_motion_restarts_the_no_pts_freeze_timer() {
+        let mut liveness = Liveness::new();
+        let start = liveness.sampled;
+        let settings = CaptureSettings {
+            freeze_seconds: 3,
+            ..Default::default()
+        };
+        let original = [100; 64];
+        let mut changed = original;
+        changed[56..].fill(105);
+        for second in 1..=6 {
+            let sample = if second < 3 { original } else { changed };
+            assert_eq!(
+                liveness.frozen_sample(
+                    sample.into_iter(),
+                    start + Duration::from_secs(second),
+                    &settings
+                ),
+                second == 6
+            );
         }
     }
     #[test]

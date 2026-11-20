@@ -8,6 +8,103 @@ use sqlx::{Connection, Executor};
 use std::{path::Path, time::Duration};
 use tokio_util::sync::CancellationToken;
 
+#[tokio::test]
+#[ignore = "Requires isolated CHD_RUST_TEST_REDIS_URL"]
+async fn shared_demand_keeps_camera_owners_and_reload_independent() {
+    use construction_pipeline::demand::{Demand, Gate};
+    use redis::AsyncCommands;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    let url_env = "CHD_RUST_TEST_REDIS_URL";
+    let url = std::env::var(url_env).unwrap();
+    let host = reqwest::Url::parse(&url).unwrap();
+    assert!(matches!(host.host_str(), Some("127.0.0.1" | "localhost")));
+    let mut redis = redis::Client::open(url)
+        .unwrap()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let prefix = format!("demand-test:{}:", uuid::Uuid::new_v4());
+    let config = serde_json::from_value(json!({"url_env":url_env,"prefix":prefix})).unwrap();
+    let stop = CancellationToken::new();
+    let (demand, worker) = Demand::spawn(config, stop.clone());
+    let mut cameras = Vec::new();
+    for id in 0..32 {
+        let gate = Gate::new(false);
+        let ready = Arc::new(AtomicBool::new(false));
+        let registration = demand.register(
+            vec![(format!("demand:{id}"), gate.clone())],
+            vec![(format!("ready:{id}"), ready.clone())],
+        );
+        cameras.push((registration, gate, ready));
+    }
+    let demand_a = format!("{prefix}demand:31");
+    let demand_b = format!("{prefix}demand:30");
+    let ready_a = format!("{prefix}ready:31");
+    let ready_b = format!("{prefix}ready:30");
+    let _: () = redis.set_ex(&demand_a, "1", 12).await.unwrap();
+    let _: () = redis.set_ex(&demand_b, "1", 12).await.unwrap();
+    let (a, old_gate, a_flag) = cameras.pop().unwrap();
+    let (_, b_gate, b_flag) = cameras.last().unwrap();
+    a_flag.store(true, Ordering::Release);
+    b_flag.store(true, Ordering::Release);
+    let (a_owner, b_owner) = tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            let first = redis.get::<_, Option<String>>(&ready_a).await.unwrap();
+            let second = redis.get::<_, Option<String>>(&ready_b).await.unwrap();
+            if let (Some(first), Some(second)) = (first, second) {
+                break (first, second);
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_ne!(a_owner, b_owner);
+    assert!(old_gate.active() && b_gate.active());
+    assert!(cameras[..30].iter().all(|(_, gate, _)| !gate.active()));
+
+    drop(a);
+    assert!(!old_gate.active());
+    let new_gate = Gate::new(false);
+    let _replacement = demand.register(
+        vec![("demand:31".into(), new_gate.clone())],
+        vec![("ready:31".into(), Arc::new(AtomicBool::new(true)))],
+    );
+    let replacement_owner = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let current = redis.get::<_, Option<String>>(&ready_a).await.unwrap();
+            if let Some(owner) = current
+                && owner != a_owner
+            {
+                break owner;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_ne!(replacement_owner, b_owner);
+    assert!(new_gate.active() && b_gate.active() && !old_gate.active());
+
+    let _: () = redis.del(&demand_b).await.unwrap();
+    b_flag.store(false, Ordering::Release);
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while b_gate.active() || redis.exists::<_, bool>(&ready_b).await.unwrap() {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(new_gate.active());
+    stop.cancel();
+    worker.await.unwrap();
+    assert!(!new_gate.active());
+}
+
 fn fixture(root: &Path) -> Config {
     support::check_postgres_if_configured();
     let video = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -153,11 +250,14 @@ async fn redis_generation_and_owner_fences_preserve_new_owner() {
     let spec = &cfg.streams[0];
     let mut model = cfg.models[0].clone();
     model.catalog_revision = Some("revision".into());
+    model
+        .labels
+        .insert(12, [("en".into(), "fixture".into())].into());
     let mut first = Sink::new(cfg.redis.as_ref().unwrap(), spec).await.unwrap();
+    let cone = vec![[4., 4.], [6., 4.], [6., 6.], [4., 4.]];
     let warning = HazardResult {
-        warnings: Default::default(),
-        cone_polys: vec![],
-        pole_polys: vec![],
+        cone_polys: vec![cone.clone()].into(),
+        ..HazardResult::default()
     };
     let now = chrono::Utc::now().timestamp_millis();
     assert!(
@@ -190,10 +290,12 @@ async fn redis_generation_and_owner_fences_preserve_new_owner() {
         .query_async(&mut connection)
         .await
         .unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(&latest).unwrap()["sequence"],
-        2
-    );
+    let latest: Value = serde_json::from_str(&latest).unwrap();
+    assert_eq!(latest["sequence"], 2);
+    assert_eq!(latest["labels"]["12"]["en"], "fixture");
+    assert_eq!(latest["cone_polys"], json!([cone]));
+    assert_eq!(latest["pole_polys"], json!([]));
+    assert_eq!(latest.get("source_pts"), Some(&Value::Null));
     let _: () = redis::cmd("SET")
         .arg(format!("{prefix}stream_metadata_generation:Zml4dHVyZQ=="))
         .arg(1)
@@ -790,7 +892,7 @@ async fn preview_language_demand_starts_only_requested_variant() {
                 "-timeout",
                 "5000000",
                 "-show_entries",
-                "stream=width,height",
+                "stream=codec_name,width,height",
                 "-of",
                 "json",
                 "-i",
@@ -801,6 +903,7 @@ async fn preview_language_demand_starts_only_requested_variant() {
             .unwrap();
         assert!(output.status.success(), "Cannot decode {language} preview");
         let dims: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(dims["streams"][0]["codec_name"], "h264");
         assert_eq!(dims["streams"][0]["width"], 320);
         assert_eq!(dims["streams"][0]["height"], 176);
         let _: () = db.expire(&demand, 1).await.unwrap();
@@ -821,6 +924,8 @@ async fn preview_language_demand_starts_only_requested_variant() {
     assert!(report.cameras[0].processed > 10);
     assert!(report.cameras[0].encoded > 0);
     assert!(report.cameras[0].rendered > 0);
+    assert!(report.cameras[0].encoder_annotated_host_frames > 0);
+    assert_eq!(report.cameras[0].host_materialized, 0);
     let keys: Vec<String> = db.keys(format!("{prefix}*")).await.unwrap();
     if !keys.is_empty() {
         let _: () = db.del(keys).await.unwrap();
@@ -864,6 +969,7 @@ async fn scaled_preview_keeps_publishing_offline_then_accepts_a_fresh_frame() {
             pixels: pool.take(),
             device: None,
             host: None,
+            annotation: None,
             width: 1920,
             height: 1080,
             sequence,

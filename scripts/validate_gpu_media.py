@@ -130,6 +130,7 @@ def validate(args):
                 ROOT / 'native/inference/gpu_encoder.inc',
                 ROOT / 'native/inference/preprocess.cu',
                 ROOT / 'native/inference/src/gpu.rs',
+                ROOT / 'bindings/python/inference/src/gpu.rs',
             ]
         },
     }

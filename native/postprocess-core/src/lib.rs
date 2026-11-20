@@ -1,6 +1,9 @@
 //! Python-independent algorithms; field ordering and thresholds match the runtime.
 use std::collections::{HashMap, HashSet};
 
+#[cfg(feature = "geometry")]
+pub mod geometry;
+
 pub type Detection = [f64; 6];
 
 pub struct Tracked {

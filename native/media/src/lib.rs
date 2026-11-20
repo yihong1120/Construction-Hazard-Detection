@@ -15,6 +15,13 @@ use tokio_util::sync::CancellationToken;
 unsafe extern "C" {
     fn cm_init() -> c_int;
     fn cm_error() -> *const c_char;
+    fn cm_probe_video_dimensions(
+        source: *const c_char,
+        interrupt: extern "C" fn(*mut c_void) -> c_int,
+        opaque: *mut c_void,
+        width: *mut c_int,
+        height: *mut c_int,
+    ) -> c_int;
     fn cm_decoder_open(
         source: *const c_char,
         gpu: c_int,
@@ -52,12 +59,22 @@ unsafe extern "C" {
     fn cm_frame_bgr(pointer: *mut c_void, target: *mut u8, length: usize) -> c_int;
     fn cm_lut_create(gpu: i32, space: i32, range: i32, address: *mut usize) -> *mut c_void;
     fn cm_lut_free(pointer: *mut c_void);
+    fn cm_host_freeze_sample(host: *const c_void, sample: *mut u8, capacity: usize) -> c_int;
+    fn cm_host_jpeg(
+        host: *const c_void,
+        width: c_int,
+        height: c_int,
+        data: *mut *const u8,
+        length: *mut usize,
+    ) -> *mut c_void;
+    fn cm_jpeg_free(packet: *mut c_void);
     fn cm_encoder_open(
         target: *const c_char,
         width: c_int,
         height: c_int,
         fps: c_int,
         gpu: c_int,
+        initial_host: *const c_void,
         interrupt: extern "C" fn(*mut c_void) -> c_int,
         opaque: *mut c_void,
     ) -> *mut c_void;
@@ -71,15 +88,18 @@ unsafe extern "C" {
         width: c_int,
         height: c_int,
     ) -> c_int;
+    fn cm_encoder_write_host(pointer: *mut c_void, host: *const c_void) -> c_int;
     fn cm_encoder_finish(pointer: *mut c_void) -> c_int;
     fn cm_encoder_free(pointer: *mut c_void);
 }
 mod host;
 mod remux;
 mod scale;
+mod yuv;
 pub use host::HostFrame;
 pub use remux::{EncodedPacket, Remuxer};
 pub use scale::BgrScaler;
+pub use yuv::{Yuv420Mut, YuvPlaneMut};
 
 static DECODERS: AtomicUsize = AtomicUsize::new(0);
 static ENCODERS: AtomicUsize = AtomicUsize::new(0);
@@ -168,12 +188,40 @@ extern "C" fn interrupted(opaque: *mut c_void) -> c_int {
             || state.born.elapsed().as_millis() >= state.deadline.load(Ordering::Relaxed) as u128,
     )
 }
+
+/// Read the first video stream's coded dimensions. This call blocks on input I/O.
+pub fn probe_video_dimensions(
+    source: &str,
+    stop: CancellationToken,
+    timeout: Duration,
+) -> Result<(u32, u32)> {
+    ensure!(!stop.is_cancelled(), "Source probe cancelled");
+    initialize()?;
+    let source = CString::new(source)?;
+    let mut interrupt = Interrupt::new(stop, timeout);
+    let (mut width, mut height) = (0, 0);
+    // SAFETY: all pointers remain valid until the input and callback are released.
+    let status = unsafe {
+        cm_probe_video_dimensions(
+            source.as_ptr(),
+            interrupted,
+            interrupt.pointer(),
+            &mut width,
+            &mut height,
+        )
+    };
+    if status < 0 {
+        return Err(error());
+    }
+    Ok((width as u32, height as u32))
+}
+
 pub struct Decoder {
     pointer: NonNull<c_void>,
     interrupt: Box<Interrupt>,
     metrics: Arc<GpuMetrics>,
     profile: Option<Arc<ColorTable>>,
-    host_profile: Option<Arc<host::HostTable>>,
+    host_profile: Option<Arc<host::HostProfile>>,
     tap: Option<Box<remux::PacketTap>>,
 }
 #[repr(C)]
@@ -488,6 +536,44 @@ impl Drop for Decoder {
         DECODERS.fetch_sub(1, Ordering::Relaxed);
     }
 }
+impl HostFrame {
+    /// Sample decoded luma and chroma directly for timestamp-free liveness checks.
+    pub fn freeze_sample<'a>(&self, sample: &'a mut [u8]) -> Result<&'a [u8]> {
+        let count =
+            unsafe { cm_host_freeze_sample(self.as_ptr(), sample.as_mut_ptr(), sample.len()) };
+        if count < 0 {
+            return Err(error());
+        }
+        Ok(&sample[..count as usize])
+    }
+
+    /// Encode evidence at the configured frame dimensions from decoded planes.
+    pub fn jpeg(&self, width: u32, height: u32) -> Result<Vec<u8>> {
+        ensure!(
+            (1..=16384).contains(&width)
+                && (1..=16384).contains(&height)
+                && u64::from(width) * u64::from(height) <= 64 * 1024 * 1024,
+            "Invalid JPEG dimensions"
+        );
+        let mut data = std::ptr::null();
+        let mut length = 0;
+        let packet = NonNull::new(unsafe {
+            cm_host_jpeg(
+                self.as_ptr(),
+                width as i32,
+                height as i32,
+                &mut data,
+                &mut length,
+            )
+        })
+        .ok_or_else(error)?;
+        // SAFETY: the native packet owns the encoded bytes until released below.
+        let bytes = unsafe { std::slice::from_raw_parts(data, length) }.to_vec();
+        unsafe { cm_jpeg_free(packet.as_ptr()) };
+        Ok(bytes)
+    }
+}
+
 pub struct Encoder {
     pointer: NonNull<c_void>,
     interrupt: Box<Interrupt>,
@@ -496,6 +582,17 @@ pub struct Encoder {
 unsafe impl Send for Encoder {}
 impl Encoder {
     pub fn open(target: &str, width: u32, height: u32, fps: u32, gpu: Option<i32>) -> Result<Self> {
+        Self::open_with_host(target, width, height, fps, gpu, None)
+    }
+    /// Select the stream's colour matrix from the first retained decoded frame.
+    pub fn open_with_host(
+        target: &str,
+        width: u32,
+        height: u32,
+        fps: u32,
+        gpu: Option<i32>,
+        initial_host: Option<&HostFrame>,
+    ) -> Result<Self> {
         initialize()?;
         ensure!(
             width > 0
@@ -518,6 +615,7 @@ impl Encoder {
                 height as i32,
                 fps as i32,
                 gpu.unwrap_or(-1),
+                initial_host.map_or(std::ptr::null(), HostFrame::as_ptr),
                 interrupted,
                 interrupt.pointer(),
             )
@@ -573,6 +671,14 @@ impl Encoder {
             )
         } < 0
         {
+            return Err(error());
+        }
+        Ok(())
+    }
+    /// Scale retained decoder planes into the encoder frame without materialising BGR.
+    pub fn write_host(&mut self, host: &HostFrame) -> Result<()> {
+        self.interrupt.reset();
+        if unsafe { cm_encoder_write_host(self.pointer.as_ptr(), host.as_ptr()) } < 0 {
             return Err(error());
         }
         Ok(())

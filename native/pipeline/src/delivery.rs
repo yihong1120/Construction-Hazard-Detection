@@ -1,17 +1,21 @@
 use crate::{
     config::Delivery,
-    outbox::{Outbox, Pending},
+    outbox::{ClaimStage, Outbox, Pending},
 };
 use anyhow::{Context, Result, ensure};
 use reqwest::{Client, Response, StatusCode, multipart};
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::{
+    sync::{Mutex, Notify},
+    task::JoinSet,
+    time::{Instant, timeout_at},
 };
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+
+// Allow the notification API's 85 s dispatch deadline and OAuth while staying
+// within the outbox's 120 s lease. Evidence keeps its independent 15 s timeout.
+const NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(100);
 
 struct Token {
     value: String,
@@ -35,17 +39,16 @@ impl Transport {
             token: Arc::new(Mutex::new(None)),
         })
     }
-    async fn token(&self, force: bool) -> Result<Option<String>> {
+    async fn token(&self, rejected: Option<&str>) -> Result<Option<String>> {
         let Some(url) = &self.settings.token_url else {
             return Ok(None);
         };
         let mut token = self.token.lock().await;
-        if !force {
-            if let Some(token) = token.as_ref() {
-                if token.expires > Instant::now() {
-                    return Ok(Some(token.value.clone()));
-                }
-            }
+        if let Some(token) = token.as_ref()
+            && token.expires > Instant::now()
+            && rejected != Some(token.value.as_str())
+        {
+            return Ok(Some(token.value.clone()));
         }
         let id = std::env::var(
             self.settings
@@ -87,8 +90,8 @@ impl Transport {
         Ok(Some(value))
     }
     async fn upload(&self, pending: &Pending) -> Result<Response> {
+        let mut token = self.token(None).await?;
         for attempt in 0..2 {
-            let token = self.token(attempt > 0).await?;
             let e = &pending.metadata;
             let fields = HashMap::from([
                 ("event_id", e.event_id.clone()),
@@ -122,27 +125,33 @@ impl Transport {
                 )
                 .header("Idempotency-Key", &e.event_id)
                 .multipart(form);
-            if let Some(token) = token {
+            if let Some(token) = &token {
                 request = request.bearer_auth(token)
             }
             let response = request.send().await?;
-            if response.status() != StatusCode::UNAUTHORIZED || attempt == 1 {
+            if response.status() != StatusCode::UNAUTHORIZED || attempt == 1 || token.is_none() {
                 return Ok(response);
             }
+            token = self.token(token.as_deref()).await?;
         }
         unreachable!()
     }
     async fn notify(&self, pending: &Pending, violation_id: &str) -> Result<Response> {
+        let id = violation_id
+            .parse::<i64>()
+            .ok()
+            .filter(|&id| id > 0)
+            .context("Stored violation_id must be a positive integer")?;
+        let e = &pending.metadata;
+        let body = json!({"site":e.site,"site_id":e.site_id,"stream_name":e.stream_name,
+            "body":e.warnings,"image_path":null,"violation_id":id,"type":"violation",
+            "title":"Safety violation alert","deep_link":format!("/violations?violation_id={id}"),
+            "metadata":{"site":e.site,"stream_name":e.stream_name,"violation_id":id}});
+        let deadline = Instant::now() + NOTIFICATION_TIMEOUT;
+        let mut token = timeout_at(deadline, self.token(None)).await??;
         for attempt in 0..2 {
-            let token = self.token(attempt > 0).await?;
-            let e = &pending.metadata;
-            let id = violation_id
-                .parse::<i64>()
-                .context("Invalid violation identifier")?;
-            let body = json!({"site":e.site,"site_id":e.site_id,"stream_name":e.stream_name,
-                "body":e.warnings,"image_path":null,"violation_id":id,"type":"violation",
-                "title":"Safety violation alert","deep_link":format!("/violations?violation_id={id}"),
-                "metadata":{"site":e.site,"stream_name":e.stream_name,"violation_id":id}});
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            ensure!(!remaining.is_zero(), "Notification deadline expired");
             let mut request = self
                 .client
                 .post(
@@ -151,143 +160,249 @@ impl Transport {
                         .as_ref()
                         .context("Missing notification endpoint")?,
                 )
+                .timeout(remaining)
                 .header("Idempotency-Key", &e.event_id)
                 .json(&body);
-            if let Some(token) = token {
+            if let Some(token) = &token {
                 request = request.bearer_auth(token)
             }
             let response = request.send().await?;
-            if response.status() != StatusCode::UNAUTHORIZED || attempt == 1 {
+            if response.status() != StatusCode::UNAUTHORIZED || attempt == 1 || token.is_none() {
                 return Ok(response);
             }
+            token = timeout_at(deadline, self.token(token.as_deref())).await??;
         }
         unreachable!()
     }
-    pub async fn deliver(&self, store: &Outbox, pending: &mut Pending) -> Result<()> {
-        let status = if pending.violation_id.is_none() {
-            match self.upload(pending).await {
-                Ok(response) if response.status().is_success() => {
-                    let body: Value = response.json().await?;
-                    let id = body["violation_id"]
-                        .as_i64()
-                        .map(|id| id.to_string())
-                        .or_else(|| body["violation_id"].as_str().map(str::to_owned))
-                        .context("Upload receipt missing")?;
-                    id.parse::<i64>()?;
-                    store.uploaded(pending, &id).await?;
-                    pending.violation_id = Some(id);
-                    None
-                }
-                Ok(response) => Some(response.status()),
-                Err(_) => Some(StatusCode::SERVICE_UNAVAILABLE),
+    async fn upload_receipt(&self, store: &Outbox, pending: &Pending) -> Result<Option<String>> {
+        let (status, delay) = match self.upload(pending).await {
+            Ok(response) if response.status().is_success() => {
+                let body: Value = response.json().await?;
+                let id = body["violation_id"]
+                    .as_i64()
+                    .filter(|&id| id > 0)
+                    .context("Upload receipt requires a positive integer violation_id")?;
+                return Ok(Some(id.to_string()));
             }
-        } else {
-            None
+            Ok(response) => (response.status(), retry_after(&response)),
+            Err(_) => (StatusCode::SERVICE_UNAVAILABLE, 0),
         };
-        if let Some(status) = status {
-            return store
-                .retry(
-                    pending,
-                    chrono::Utc::now().timestamp(),
-                    permanent(status),
-                    "Evidence endpoint rejected or unavailable",
-                )
-                .await;
+        store
+            .retry_with_delay(
+                pending,
+                chrono::Utc::now().timestamp(),
+                permanent(status),
+                "Evidence endpoint rejected or unavailable",
+                delay,
+            )
+            .await?;
+        Ok(None)
+    }
+    async fn finish_notification(&self, store: &Outbox, pending: &Pending) -> Result<()> {
+        let receipt = pending
+            .violation_id
+            .as_deref()
+            .context("Missing upload receipt")?;
+        let (failed, reason, delay) = match self.notify(pending, receipt).await {
+            Ok(response) if response.status().is_success() => {
+                let delay = retry_after(&response);
+                let body: Value = response.json().await?;
+                let outcome = body["outcome"]
+                    .as_str()
+                    .context("Notification response requires an outcome")?;
+                match outcome {
+                    "completed" | "skipped" => return store.complete(pending).await,
+                    "retryable" => (
+                        false,
+                        "Notification not completed",
+                        delay.max(body["retry_after_seconds"].as_i64().unwrap_or_default()),
+                    ),
+                    "permanent_failure" => (true, "Notification permanently rejected", 0),
+                    _ => anyhow::bail!("Unknown notification outcome"),
+                }
+            }
+            Ok(response) => (
+                permanent(response.status()),
+                "Notification endpoint rejected",
+                retry_after(&response),
+            ),
+            Err(_) => (false, "Notification transport unavailable", 0),
+        };
+        store
+            .retry_with_delay(
+                pending,
+                chrono::Utc::now().timestamp(),
+                failed,
+                reason,
+                delay.clamp(0, 86400),
+            )
+            .await
+    }
+    pub async fn deliver(&self, store: &Outbox, pending: &mut Pending) -> Result<()> {
+        if pending.violation_id.is_none() {
+            let Some(id) = self.upload_receipt(store, pending).await? else {
+                return Ok(());
+            };
+            store.uploaded(pending, &id).await?;
+            pending.violation_id = Some(id);
         }
         if self.settings.notification_url.is_some() {
-            match self
-                .notify(
-                    pending,
-                    pending.violation_id.as_deref().expect("uploaded receipt"),
-                )
-                .await
-            {
-                Ok(response) if response.status().is_success() => {
-                    let body: Value = response.json().await?;
-                    let outcome = body["outcome"].as_str().unwrap_or(
-                        if body["success"].as_bool().unwrap_or(false) {
-                            "completed"
-                        } else {
-                            "retryable"
-                        },
-                    );
-                    match outcome {
-                        "completed" | "skipped" => (),
-                        "retryable" => {
-                            return store
-                                .retry(
-                                    &pending,
-                                    chrono::Utc::now().timestamp(),
-                                    false,
-                                    "Notification not completed",
-                                )
-                                .await;
-                        }
-                        "permanent_failure" => {
-                            return store
-                                .retry(
-                                    &pending,
-                                    chrono::Utc::now().timestamp(),
-                                    true,
-                                    "Notification permanently rejected",
-                                )
-                                .await;
-                        }
-                        _ => anyhow::bail!("Unknown notification outcome"),
-                    }
-                }
-                Ok(response) => {
-                    return store
-                        .retry(
-                            pending,
-                            chrono::Utc::now().timestamp(),
-                            permanent(response.status()),
-                            "Notification endpoint rejected",
-                        )
-                        .await;
-                }
-                Err(_) => {
-                    return store
-                        .retry(
-                            pending,
-                            chrono::Utc::now().timestamp(),
-                            false,
-                            "Notification transport unavailable",
-                        )
-                        .await;
-                }
-            }
+            self.finish_notification(store, pending).await
+        } else {
+            store.complete(pending).await
         }
-        store.complete(pending).await
     }
+}
+fn retry_after(response: &Response) -> i64 {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value.parse::<i64>().ok().or_else(|| {
+                chrono::DateTime::parse_from_rfc2822(value)
+                    .ok()
+                    .map(|date| {
+                        date.timestamp()
+                            .saturating_sub(chrono::Utc::now().timestamp())
+                    })
+            })
+        })
+        .unwrap_or_default()
+        .clamp(0, 86400)
 }
 fn permanent(status: StatusCode) -> bool {
     status.is_client_error() && !matches!(status.as_u16(), 401 | 408 | 425 | 429)
 }
 pub async fn dispatch(store: Outbox, settings: Delivery, stop: CancellationToken) -> Result<()> {
+    settings.validate_workers()?;
+    let evidence_workers = settings.evidence_workers;
+    let notification_workers = settings.notification_workers;
+    let send_notifications = settings.notification_url.is_some();
     let transport = Transport::new(settings)?;
-    loop {
-        if stop.is_cancelled() {
-            break;
+    let handoff = Arc::new(Notify::new());
+    if send_notifications {
+        tokio::join!(
+            dispatch_stage(
+                &store,
+                &transport,
+                ClaimStage::Evidence,
+                evidence_workers,
+                &handoff,
+                &stop
+            ),
+            dispatch_stage(
+                &store,
+                &transport,
+                ClaimStage::Notification,
+                notification_workers,
+                &handoff,
+                &stop
+            ),
+        );
+    } else {
+        dispatch_stage(
+            &store,
+            &transport,
+            ClaimStage::Any,
+            evidence_workers,
+            &handoff,
+            &stop,
+        )
+        .await;
+    }
+    Ok(())
+}
+
+async fn dispatch_stage(
+    store: &Outbox,
+    transport: &Transport,
+    stage: ClaimStage,
+    workers: usize,
+    handoff: &Arc<Notify>,
+    stop: &CancellationToken,
+) {
+    let mut tasks = JoinSet::new();
+    let notification_stage = matches!(stage, ClaimStage::Notification);
+    while !stop.is_cancelled() {
+        while let Some(result) = tasks.try_join_next() {
+            log_task_failure(result, stage);
         }
-        let pending = match store.claim(chrono::Utc::now().timestamp()).await {
-            Ok(pending) => pending,
+        if tasks.len() == workers {
+            tokio::select! {
+                _ = stop.cancelled() => break,
+                Some(result) = tasks.join_next() => log_task_failure(result, stage),
+            }
+            continue;
+        }
+        let wait = match store
+            .claim_stage(chrono::Utc::now().timestamp(), stage)
+            .await
+        {
+            Ok(Some(pending)) => {
+                let (store, transport, handoff) =
+                    (store.clone(), transport.clone(), handoff.clone());
+                tasks.spawn(deliver_claim(store, transport, stage, pending, handoff));
+                continue;
+            }
+            Ok(None) => Duration::from_millis(100),
             Err(error) => {
-                tracing::warn!(%error,"PostgreSQL outbox unavailable; dispatcher will retry");
-                tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(1))=>()}
+                tracing::warn!(%error, ?stage, "PostgreSQL outbox unavailable; dispatcher will retry");
+                tokio::select! {
+                    _ = stop.cancelled() => break,
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => (),
+                }
                 continue;
             }
         };
-        if let Some(mut pending) = pending {
-            if transport.deliver(&store, &mut pending).await.is_err() {
-                if let Err(error) = store.recover_error(&pending).await {
-                    tracing::warn!(%error,"Outbox lease recovery failed; the persisted lease remains recoverable");
-                }
-                tracing::warn!(event=%pending.metadata.event_id,"Delivery failed; persisted for retry");
-            }
-        } else {
-            tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(100))=>()}
+        tokio::select! {
+            _ = stop.cancelled() => break,
+            _ = handoff.notified(), if notification_stage => (),
+            _ = tokio::time::sleep(wait) => (),
         }
     }
+    while let Some(result) = tasks.join_next().await {
+        log_task_failure(result, stage);
+    }
+}
+
+async fn deliver_claim(
+    store: Outbox,
+    transport: Transport,
+    stage: ClaimStage,
+    mut pending: Pending,
+    handoff: Arc<Notify>,
+) {
+    let result = match stage {
+        ClaimStage::Any => transport.deliver(&store, &mut pending).await,
+        ClaimStage::Evidence => handoff_evidence(&store, &transport, &pending, &handoff).await,
+        ClaimStage::Notification => transport.finish_notification(&store, &pending).await,
+    };
+    if result.is_err() {
+        if let Err(error) = store.recover_error(&pending).await {
+            tracing::warn!(%error, "Outbox lease recovery failed; the persisted lease remains recoverable");
+        }
+        tracing::warn!(event=%pending.metadata.event_id, ?stage, "Delivery failed; persisted for retry");
+    }
+}
+
+async fn handoff_evidence(
+    store: &Outbox,
+    transport: &Transport,
+    pending: &Pending,
+    handoff: &Notify,
+) -> Result<()> {
+    if let Some(id) = transport.upload_receipt(store, pending).await? {
+        store
+            .schedule_notification(pending, &id, chrono::Utc::now().timestamp())
+            .await?;
+        handoff.notify_one();
+    }
     Ok(())
+}
+
+fn log_task_failure(result: Result<(), tokio::task::JoinError>, stage: ClaimStage) {
+    if let Err(error) = result {
+        tracing::warn!(%error, ?stage, "Outbox delivery task failed; the persisted lease remains recoverable");
+    }
 }

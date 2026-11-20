@@ -13,8 +13,7 @@ mod locale;
 pub mod metadata;
 pub mod outbox;
 pub mod overlay;
-#[path = "../../postprocess/src/core.rs"]
-pub mod postprocess;
+pub use construction_postprocess_core as postprocess;
 pub mod publish;
 pub mod render;
 pub mod rtsp;

@@ -46,7 +46,8 @@ def load_postprocess_backend(
             return None
         raise RuntimeError(
             'Rust postprocessing is unavailable; install the '
-            'native/postprocess wheel or select POSTPROCESS_BACKEND=python',
+            'bindings/python/postprocess wheel '
+            'or select POSTPROCESS_BACKEND=python',
         ) from error
     if getattr(extension, 'ABI_VERSION', None) != 1:
         raise RuntimeError('Unsupported construction_postprocess ABI version')

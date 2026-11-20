@@ -106,6 +106,7 @@ impl Encoder {
         height: u32,
         fps: u32,
         nvenc: bool,
+        initial_host: Option<&construction_media::HostFrame>,
     ) -> Result<Self> {
         if !target.starts_with("rtsp://") && !target.starts_with("rtsps://") {
             if let Some(parent) = std::path::Path::new(target).parent() {
@@ -123,12 +124,13 @@ impl Encoder {
             None
         };
         if let Some(lease) = lease {
-            match construction_media::Encoder::open(
+            match construction_media::Encoder::open_with_host(
                 target,
                 width,
                 height,
                 fps,
                 Some(config.gpu.device),
+                initial_host,
             ) {
                 Ok(native) => {
                     return Ok(Self {
@@ -143,7 +145,14 @@ impl Encoder {
             }
         }
         Ok(Self {
-            native: construction_media::Encoder::open(target, width, height, fps, None)?,
+            native: construction_media::Encoder::open_with_host(
+                target,
+                width,
+                height,
+                fps,
+                None,
+                initial_host,
+            )?,
             _lease: None,
         })
     }
@@ -156,6 +165,8 @@ pub struct Stats {
     pub offline: AtomicU64,
     pub encode_ns: AtomicU64,
     pub conversion_reused: AtomicU64,
+    pub host_frames: AtomicU64,
+    pub annotated_host_frames: AtomicU64,
 }
 pub struct Publisher {
     pub stats: Arc<Stats>,
@@ -281,6 +292,7 @@ pub(crate) fn spawn_gated_localized(
                 }
                 let _clear = Clear(counters.ready.clone());
                 let pool = crate::frame::Pool::new(width as usize * height as usize * 3, 1);
+                let annotation_pool = crate::frame::Pool::new(0, 1);
                 let mut offline = None;
                 let mut encoder: Option<Encoder> = None;
                 let live = target.starts_with("rtsp://") || target.starts_with("rtsps://");
@@ -335,7 +347,12 @@ pub(crate) fn spawn_gated_localized(
                         !config.lossless && frame.captured.elapsed() > Duration::from_secs(5);
                     let frame = if is_offline {
                         if offline.is_none() {
-                            offline = Some(text.offline(&frame, &pool, width, height, language)?);
+                            let pool = if frame.host.is_some() {
+                                &annotation_pool
+                            } else {
+                                &pool
+                            };
+                            offline = Some(text.offline(&frame, pool, width, height, language)?);
                         }
                         offline.as_ref().unwrap().clone()
                     } else {
@@ -355,11 +372,18 @@ pub(crate) fn spawn_gated_localized(
                                 height,
                                 fps,
                                 prefer_nvenc,
+                                frame.host.as_deref(),
                             )?);
                         }
                         let native = &mut encoder.as_mut().expect("encoder").native;
                         let result = if reuse {
                             native.repeat_frame()
+                        } else if let Some(host) = frame.host.as_deref() {
+                            if let Some(annotation) = &frame.annotation {
+                                native.write_host_with(host, |yuv| annotation.paint(yuv))
+                            } else {
+                                native.write_host(host)
+                            }
                         } else {
                             native.write_scaled(frame.bgr_padded()?, frame.width, frame.height)
                         };
@@ -383,9 +407,19 @@ pub(crate) fn spawn_gated_localized(
                     }
                     if reuse {
                         counters.conversion_reused.fetch_add(1, Ordering::Relaxed);
-                    } else if !config.lossless {
-                        // A weak reference prevents address reuse without pinning the pixel buffer.
-                        converted = Arc::downgrade(&frame);
+                    } else {
+                        if frame.host.is_some() {
+                            counters.host_frames.fetch_add(1, Ordering::Relaxed);
+                        }
+                        if frame.annotation.is_some() {
+                            counters
+                                .annotated_host_frames
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        if !config.lossless {
+                            // Compare the identity without pinning the pixel buffer.
+                            converted = Arc::downgrade(&frame);
+                        }
                     }
                     retry_delay = Duration::from_millis(250);
                     counters.ready.store(

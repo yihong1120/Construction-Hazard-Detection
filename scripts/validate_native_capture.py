@@ -80,17 +80,16 @@ def main():
     parser.add_argument('--engine', type=Path)
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--image', default='bluenviron/mediamtx:latest')
+    logs = ROOT / 'outputs/native_capture_validation'
     parser.add_argument(
         '--output',
         type=Path,
-        default=ROOT /
-        'native/postprocess/capture_validation.json',
+        default=logs / 'capture_validation.json',
     )
     args = parser.parse_args()
     name = 'chd-native-capture-' + uuid4().hex[:8]
     captures, publisher, process, queues = [], None, None, []
     requests, replies, status = None, {}, None
-    logs = ROOT / 'outputs/native_capture_validation'
     logs.mkdir(exist_ok=True, parents=True)
     log = (logs / 'publisher.log').open('w')
     started = time.monotonic()

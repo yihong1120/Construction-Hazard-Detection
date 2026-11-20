@@ -80,7 +80,9 @@ class BackendSelectionTest(unittest.TestCase):
                 load_postprocess_backend('auto')
 
 
-@unittest.skipUnless(AVAILABLE, 'Requires the native/postprocess wheel')
+@unittest.skipUnless(
+    AVAILABLE, 'Requires the bindings/python/postprocess wheel',
+)
 class NativePostprocessTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.extension = importlib.import_module('construction_postprocess')

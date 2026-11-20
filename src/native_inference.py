@@ -48,7 +48,7 @@ def load_inference_extension(settings: WorkerSettings) -> Any | None:
         if settings.backend == 'auto':
             return None
         raise RuntimeError(
-            'Rust inference requires the native/inference GPU wheel; '
+            'Rust inference requires the bindings/python/inference GPU wheel; '
             'install it or select YOLO_WORKER_BACKEND=python',
         )
     if settings.native_library_dirs:

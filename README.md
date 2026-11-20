@@ -204,7 +204,7 @@ The stream processor can use a Rust/PyO3 backend for centroid tracking and
 PPE/person-to-machine proximity checks. The stream Docker image includes it;
 host installations can build the optional wheel. Set `POSTPROCESS_BACKEND` to
 `auto` (default), `python`, or `rust`, then restart the stream processor.
-See [build instructions, scope and measured results](native/postprocess/README.md).
+See [build instructions, scope and measured results](bindings/python/postprocess/README.md).
 
 The shared YOLO worker also supports a Rust TensorRT backend for verified,
 compatible INT8 engines. `YOLO_WORKER_BACKEND=auto|rust|python` selects inference
@@ -217,7 +217,7 @@ snapshot. Geometry libraries load when an area check needs them. See the
 
 The next increment adds reusable inference workspaces, cached safety-area
 geometry, native MST selection and overlay blending, plus an opt-in Rust/FFmpeg
-capture backend. See [pipeline changes and validation](native/postprocess/README.md).
+capture backend. See [pipeline changes and validation](bindings/python/postprocess/README.md).
 
 GPU admission now shares NVENC sessions and optional inference/memory budgets
 between participating processes. An optional two-slot pinned-memory pipeline

@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
+construction-postprocess-core = { path = "../../../native/postprocess-core" }
 pyo3 = { version = "=0.30.1", features = ["abi3-py311"] }
 libc = "=0.2.191"
 

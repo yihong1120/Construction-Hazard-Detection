@@ -1,12 +1,35 @@
 use crate::{
     config::{Model, Redis, Stream},
-    hazard::{HazardResult, Track},
+    hazard::{HazardResult, Polygons, Track, Warnings},
 };
 use anyhow::Result;
-use base64::{Engine, engine::general_purpose::URL_SAFE};
+use construction_stream_contract::{encode_stream_id, generation_key, metadata_key_from_stream_id};
 use redis::aio::ConnectionManager;
-use serde_json::json;
-use std::time::Duration;
+use serde::Serialize;
+use serde_json::{Value, json};
+use std::{collections::BTreeMap, time::Duration};
+
+#[derive(Serialize)]
+struct Payload<'a> {
+    stream_id: &'a str,
+    site_id: i64,
+    sequence: u64,
+    generation: u64,
+    owner: &'a str,
+    timestamp: f64,
+    source_pts: Option<f64>,
+    frame_width: u32,
+    frame_height: u32,
+    labels: &'a BTreeMap<u32, BTreeMap<String, String>>,
+    track_data: &'a [Track],
+    warnings: &'a Warnings,
+    cone_polys: &'a Polygons,
+    pole_polys: &'a Polygons,
+    model_id: &'a str,
+    model_version: &'a str,
+    catalog_revision: &'a Option<String>,
+    class_metadata: &'a [Value],
+}
 
 pub struct Sink {
     connection: ConnectionManager,
@@ -26,22 +49,18 @@ impl Sink {
         let client = redis::Client::open(url)?;
         let mut connection =
             tokio::time::timeout(Duration::from_secs(5), ConnectionManager::new(client)).await??;
-        let site = URL_SAFE.encode(&spec.site);
-        let name = URL_SAFE.encode(&spec.name);
-        let generation_key = format!("{}stream_metadata_generation:{site}", config.prefix);
+        let generation_key = generation_key(&config.prefix, &spec.site);
         let generation: Option<i64> = redis::cmd("GET")
             .arg(&generation_key)
             .query_async(&mut connection)
             .await?;
         let generation = generation.unwrap_or(0);
-        let warning = if generation > 0 {
-            format!(
-                "{}stream_metadata:{site}:g{generation}|{name}",
-                config.prefix
-            )
-        } else {
-            format!("{}stream_metadata:{site}|{name}", config.prefix)
-        };
+        let warning = metadata_key_from_stream_id(
+            &config.prefix,
+            &spec.site,
+            &encode_stream_id(&spec.name),
+            generation,
+        );
         Ok(Self {
             connection,
             generation_key,
@@ -85,11 +104,26 @@ impl Sink {
     ) -> Result<bool> {
         let warn =
             working && !hazard.warnings.is_empty() && timestamp / 1000 - self.last_warning >= 30;
-        let payload = serde_json::to_string(
-            &json!({"stream_id":spec.id,"site_id":spec.site_id,"sequence":sequence,"generation":generation,
-            "owner":self.token,"timestamp":timestamp as f64/1000.,"source_pts":source_pts,"frame_width":spec.width,"frame_height":spec.height,"labels":model.labels,"track_data":tracks,"warnings":hazard.warnings,"cone_polys":hazard.cone_polys,"pole_polys":hazard.pole_polys,
-            "model_id":model.key,"model_version":model.version,"catalog_revision":model.catalog_revision,"class_metadata":model.class_metadata}),
-        )?;
+        let payload = serde_json::to_string(&Payload {
+            stream_id: &spec.id,
+            site_id: spec.site_id,
+            sequence,
+            generation,
+            owner: &self.token,
+            timestamp: timestamp as f64 / 1000.,
+            source_pts,
+            frame_width: spec.width,
+            frame_height: spec.height,
+            labels: &model.labels,
+            track_data: tracks,
+            warnings: &hazard.warnings,
+            cone_polys: &hazard.cone_polys,
+            pole_polys: &hazard.pole_polys,
+            model_id: &model.key,
+            model_version: &model.version,
+            catalog_revision: &model.catalog_revision,
+            class_metadata: &model.class_metadata,
+        })?;
         let status = if model.catalog_revision.is_some()
             && timestamp / 1000 - self.last_status >= 10
         {

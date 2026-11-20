@@ -1,19 +1,22 @@
 //! Published-model JSON normalization and Python-compatible revision hashing.
 use anyhow::{Context, Result, ensure};
+use construction_stream_contract::overlay_palette;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::io::{self, Write};
 
 pub fn color(code: &str) -> String {
-    let colors: Value =
-        serde_json::from_str(include_str!("../assets/colors.json")).expect("compiled palette");
-    colors[code].as_str().map(str::to_owned).unwrap_or_else(|| {
-        format!(
-            "#{}",
-            &hex::encode(Sha256::digest(code.as_bytes()))[..6].to_uppercase()
-        )
-    })
+    overlay_palette()
+        .get(code)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "#{}",
+                &hex::encode(Sha256::digest(code.as_bytes()))[..6].to_uppercase()
+            )
+        })
 }
 pub fn normalize(mut value: Value) -> Result<Value> {
     let object = value

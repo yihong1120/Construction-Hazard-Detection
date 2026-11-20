@@ -36,6 +36,59 @@ int cm_init(void) {
     return fail("FFmpeg headers/runtime mismatch", AVERROR(EINVAL));
   return avformat_network_init();
 }
+
+static int rtsp_source(const char *source) {
+  return !strncmp(source, "rtsp://", 7) || !strncmp(source, "rtsps://", 8);
+}
+
+static int open_media_input(AVFormatContext **input, const char *source,
+                            AVDictionary **options) {
+  if (rtsp_source(source)) {
+    av_dict_set(options, "rtsp_transport", "tcp", 0);
+    av_dict_set(options, "timeout", "5000000", 0);
+  }
+  int result = avformat_open_input(input, source, NULL, options);
+  av_dict_free(options);
+  return result;
+}
+
+static const AVCodecParameters *first_video(const AVFormatContext *input) {
+  for (unsigned int i = 0; i < input->nb_streams; i++) {
+    const AVCodecParameters *parameters = input->streams[i]->codecpar;
+    if (parameters->codec_type == AVMEDIA_TYPE_VIDEO)
+      return parameters;
+  }
+  return NULL;
+}
+
+int cm_probe_video_dimensions(const char *source, int (*interrupt)(void *),
+                              void *opaque, int *width, int *height) {
+  AVFormatContext *input = avformat_alloc_context();
+  if (!input)
+    return fail("source probe", AVERROR(ENOMEM));
+  input->interrupt_callback = (AVIOInterruptCB){interrupt, opaque};
+  AVDictionary *options = NULL;
+  int result = open_media_input(&input, source, &options);
+  if (result < 0)
+    goto close;
+  const AVCodecParameters *video = first_video(input);
+  if (!video || video->width <= 0 || video->height <= 0) {
+    result = avformat_find_stream_info(input, NULL);
+    if (result < 0)
+      goto close;
+    video = first_video(input);
+  }
+  if (video && video->width > 0 && video->height > 0) {
+    *width = video->width;
+    *height = video->height;
+  } else {
+    result = AVERROR_INVALIDDATA;
+  }
+close:
+  avformat_close_input(&input);
+  return result < 0 ? fail("source probe", result) : 0;
+}
+
 typedef struct {
   AVFormatContext *input;
   AVCodecContext *codec;
@@ -132,14 +185,11 @@ void *cm_decoder_open(const char *source, int gpu, int (*interrupt)(void *),
   d->input->interrupt_callback = (AVIOInterruptCB){interrupt, opaque};
   d->input->probesize = 1048576;
   d->input->max_analyze_duration = 1000000;
-  if (!strncmp(source, "rtsp://", 7) || !strncmp(source, "rtsps://", 8)) {
-    av_dict_set(&options, "rtsp_transport", "tcp", 0);
-    av_dict_set(&options, "timeout", "5000000", 0);
+  if (rtsp_source(source)) {
     av_dict_set(&options, "reorder_queue_size", "0", 0);
     av_dict_set(&options, "allowed_media_types", "video", 0);
   }
-  result = avformat_open_input(&d->input, source, NULL, &options);
-  av_dict_free(&options);
+  result = open_media_input(&d->input, source, &options);
   if (result < 0)
     goto failed;
   result = avformat_find_stream_info(d->input, NULL);
@@ -196,7 +246,6 @@ void *cm_decoder_open(const char *source, int gpu, int (*interrupt)(void *),
   return d;
 failed:
   fail("decoder open", result);
-  av_dict_free(&options);
   cm_decoder_free(d);
   return NULL;
 }
@@ -403,8 +452,20 @@ int cm_decoder_bgr(void *pointer, uint8_t *target, size_t length, int width,
 typedef struct { AVFrame *frame; } HostFrame;
 typedef struct {
   uintptr_t y, u, v;
-  int width, height, yp, up, vp, colorspace, range, planar420;
+  int width, height, yp, up, vp, colorspace, range, band_format;
 } YuvInfo;
+enum HostBandFormat { HOST_BANDS_UNSUPPORTED, HOST_BANDS_420, HOST_BANDS_422_OR_444 };
+static enum HostBandFormat host_band_format(enum AVPixelFormat format) {
+  switch (format) {
+  case AV_PIX_FMT_YUV420P: case AV_PIX_FMT_YUVJ420P:
+    return HOST_BANDS_420;
+  case AV_PIX_FMT_YUV422P: case AV_PIX_FMT_YUVJ422P:
+  case AV_PIX_FMT_YUV444P: case AV_PIX_FMT_YUVJ444P:
+    return HOST_BANDS_422_OR_444;
+  default:
+    return HOST_BANDS_UNSUPPORTED;
+  }
+}
 void cm_host_free(void *pointer) {
   HostFrame *f = pointer;
   if (f) { av_frame_free(&f->frame); free(f); }
@@ -421,13 +482,76 @@ void *cm_decoder_retain_host(void *pointer, YuvInfo *info) {
   *info = (YuvInfo){(uintptr_t)f->data[0],(uintptr_t)f->data[1],(uintptr_t)f->data[2],
     f->width,f->height,f->linesize[0],f->linesize[1],f->linesize[2],f->colorspace,
     f->color_range,
-    f->format == AV_PIX_FMT_YUV420P || f->format == AV_PIX_FMT_YUVJ420P};
+    host_band_format(f->format)};
   return owner;
 }
 int cm_host_bgr(void *pointer,uint8_t *target,size_t length,int width,int height) {
   HostFrame *f=pointer; struct SwsContext *scale=NULL;
   int result=frame_bgr(f->frame,&scale,target,length,width,height);
   sws_freeContext(scale); return result;
+}
+
+typedef struct {
+  struct SwsContext *scale;
+  int width, rows, format;
+  enum AVColorSpace space;
+  enum AVColorRange range;
+} HostBandScaler;
+
+void cm_host_band_free(void *pointer) {
+  HostBandScaler *band = pointer;
+  if (band) {
+    sws_freeContext(band->scale);
+    free(band);
+  }
+}
+
+int cm_host_bgr_band(const void *pointer, void **scaler, int row, int rows,
+                     uint8_t *target, size_t length) {
+  const HostFrame *owner = pointer;
+  const AVFrame *frame = owner->frame;
+  int width = frame->width;
+  if (host_band_format(frame->format) == HOST_BANDS_UNSUPPORTED ||
+      width <= 0 || width > INT_MAX / 3 || row < 0 || row % 2 != 0 ||
+      rows <= 0 || rows % 2 != 0 || row > frame->height - rows ||
+      length < (size_t)width * rows * 3 + 64)
+    return fail("Host BGR scanline band", AVERROR(EINVAL));
+  HostBandScaler *band = *scaler;
+  if (!band) {
+    band = calloc(1, sizeof(*band));
+    if (!band) return fail("Host BGR scanline scaler", AVERROR(ENOMEM));
+    *scaler = band;
+  }
+  if (!band->scale || band->width != width || band->rows != rows || band->format != frame->format ||
+      band->space != frame->colorspace || band->range != frame->color_range) {
+    band->scale = sws_getCachedContext(band->scale, width, rows, frame->format,
+        width, rows, AV_PIX_FMT_BGR24, SWS_BILINEAR, NULL, NULL, NULL);
+    if (!band->scale) return fail("Host BGR scanline context", AVERROR(ENOMEM));
+    int result = sws_setColorspaceDetails(band->scale,
+        coefficients(frame->colorspace), frame->color_range == AVCOL_RANGE_JPEG,
+        sws_getCoefficients(SWS_CS_DEFAULT), 1, 0, 1 << 16, 1 << 16);
+    if (result < 0) {
+      sws_freeContext(band->scale);
+      band->scale = NULL;
+      return fail("Host BGR scanline colour matrix", result);
+    }
+    band->width = width;
+    band->rows = rows;
+    band->format = frame->format;
+    band->space = frame->colorspace;
+    band->range = frame->color_range;
+  }
+  // Start at the same chroma boundary as full-frame conversion.
+  int chroma_row = row >> av_pix_fmt_desc_get(frame->format)->log2_chroma_h;
+  const uint8_t *source[4] = {
+    frame->data[0] + (size_t)row * frame->linesize[0],
+    frame->data[1] + (size_t)chroma_row * frame->linesize[1],
+    frame->data[2] + (size_t)chroma_row * frame->linesize[2], NULL
+  };
+  uint8_t *output[4] = {target, NULL, NULL, NULL};
+  const int strides[4] = {width * 3, 0, 0, 0};
+  int result = sws_scale(band->scale, source, frame->linesize, 0, rows, output, strides);
+  return result == rows ? 0 : fail("Host BGR scanline conversion", AVERROR(EINVAL));
 }
 
 int cm_cpu_lut_fill(uint8_t *lookup, size_t length, int colorspace, int range) {
@@ -470,6 +594,166 @@ int cm_cpu_lut_fill(uint8_t *lookup, size_t length, int colorspace, int range) {
 done:
   sws_freeContext(scale); av_free(source); av_free(output);
   return result < 0 ? fail("YUV420P colour-table calibration", result) : 0;
+}
+
+int cm_host_freeze_sample(const void *host, uint8_t *sample, size_t capacity) {
+  const AVFrame *frame = ((const HostFrame *)host)->frame;
+  const AVPixFmtDescriptor *format = av_pix_fmt_desc_get(frame->format);
+  if (!format || !format->nb_components || frame->width < 1 || frame->height < 1 ||
+      capacity > INT_MAX || capacity < 8)
+    return fail("Freeze sample shape", AVERROR(EINVAL));
+
+  const int components = FFMIN(format->nb_components, 3);
+  const int rgb = format->flags & AV_PIX_FMT_FLAG_RGB;
+  const uint8_t *planes[4] = {frame->data[0], frame->data[1], frame->data[2], frame->data[3]};
+  size_t total = 0;
+  for (int component = 0; component < components; ++component) {
+    // Sample the luma plane densely and retain chroma samples so an
+    // isoluminant colour change also resets the freeze timer.
+    const int chroma = !rgb && component != 0;
+    const int width = AV_CEIL_RSHIFT(frame->width, chroma ? format->log2_chroma_w : 0);
+    const int height = AV_CEIL_RSHIFT(frame->height, chroma ? format->log2_chroma_h : 0);
+    const uint64_t pixels = (uint64_t)width * height;
+    const unsigned depth = format->comp[component].depth;
+    const size_t budget = components == 1 ? capacity :
+        rgb ? capacity / components :
+        (component == 0 ? capacity - 2 * (capacity / 8) : capacity / 8);
+    const size_t count = FFMIN(pixels, budget);
+    for (size_t i = 0; i < count; ++i) {
+      const uint64_t index = i * pixels / count;
+      uint32_t value = 0;
+      av_read_image_line2(&value, planes, frame->linesize,
+                          format, index % width, index / width, component, 1, 0, 4);
+      sample[total++] = depth >= 8 ? value >> (depth - 8) :
+          value * 255 / ((1u << depth) - 1);
+    }
+  }
+  return (int)total;
+}
+
+static int jpeg_scale(AVFrame *dst, const AVFrame *src, const int *matrix,
+                      int full_range) {
+  struct SwsContext *scale = sws_getContext(src->width, src->height, src->format,
+      dst->width, dst->height, dst->format, SWS_BILINEAR, NULL, NULL, NULL);
+  if (!scale) return AVERROR(ENOMEM);
+  int result = sws_setColorspaceDetails(scale, matrix,
+      src->color_range == AVCOL_RANGE_JPEG, matrix, full_range, 0, 1 << 16, 1 << 16);
+  if (result >= 0 && sws_scale(scale, (const uint8_t *const *)src->data, src->linesize,
+           0, src->height, dst->data, dst->linesize) != dst->height)
+    result = AVERROR(EINVAL);
+  sws_freeContext(scale);
+  return result;
+}
+
+static int jpeg_colour(AVFrame *target, const AVFrame *source) {
+  const int *jpeg_matrix = sws_getCoefficients(SWS_CS_ITU601);
+  const int *source_matrix = coefficients(source->colorspace);
+  const AVPixFmtDescriptor *format = av_pix_fmt_desc_get(source->format);
+  if (format && (format->flags & AV_PIX_FMT_FLAG_RGB))
+    source_matrix = jpeg_matrix;
+  if (!memcmp(source_matrix, jpeg_matrix, 4 * sizeof(int)))
+    return jpeg_scale(target, source, jpeg_matrix, 1);
+
+  // Changing the matrix via swscale uses packed RGB internally. Bound that
+  // workspace to a stripe and keep any intermediate resize in planar YUV.
+  AVFrame *resized = NULL;
+  struct SwsContext *scale = NULL;
+  int result = AVERROR(ENOMEM);
+  if (source->width != target->width || source->height != target->height ||
+      (source->format != AV_PIX_FMT_YUV420P && source->format != AV_PIX_FMT_YUVJ420P)) {
+    resized = av_frame_alloc();
+    if (!resized) goto done;
+    resized->width = target->width;
+    resized->height = target->height;
+    resized->format = AV_PIX_FMT_YUV420P;
+    resized->color_range = source->color_range;
+    result = av_frame_get_buffer(resized, 32);
+    if (result < 0) goto done;
+    result = jpeg_scale(resized, source, source_matrix,
+                        resized->color_range == AVCOL_RANGE_JPEG);
+    if (result < 0) goto done;
+    source = resized;
+  }
+  for (int row = 0; row < target->height; row += 32) {
+    const int rows = FFMIN(32, target->height - row);
+    scale = sws_getCachedContext(scale, source->width, rows, source->format,
+        target->width, rows, target->format, SWS_BILINEAR, NULL, NULL, NULL);
+    if (!scale) { result = AVERROR(ENOMEM); goto done; }
+    result = sws_setColorspaceDetails(scale, source_matrix,
+        source->color_range == AVCOL_RANGE_JPEG, jpeg_matrix, 1, 0, 1 << 16, 1 << 16);
+    if (result < 0) goto done;
+    const uint8_t *src[4] = {
+      source->data[0] + (ptrdiff_t)row * source->linesize[0],
+      source->data[1] + (ptrdiff_t)(row / 2) * source->linesize[1],
+      source->data[2] + (ptrdiff_t)(row / 2) * source->linesize[2], NULL
+    };
+    uint8_t *dst[4] = {
+      target->data[0] + (ptrdiff_t)row * target->linesize[0],
+      target->data[1] + (ptrdiff_t)(row / 2) * target->linesize[1],
+      target->data[2] + (ptrdiff_t)(row / 2) * target->linesize[2], NULL
+    };
+    if (sws_scale(scale, src, source->linesize, 0, rows, dst, target->linesize) != rows) {
+      result = AVERROR(EINVAL);
+      goto done;
+    }
+  }
+done:
+  sws_freeContext(scale);
+  av_frame_free(&resized);
+  return result;
+}
+
+void *cm_host_jpeg(const void *host, int width, int height,
+                   const uint8_t **data, size_t *length) {
+  const AVFrame *source = ((const HostFrame *)host)->frame;
+  const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_MJPEG);
+  if (!codec) { fail("JPEG codec", AVERROR_ENCODER_NOT_FOUND); return NULL; }
+  AVCodecContext *encoder = avcodec_alloc_context3(codec);
+  AVFrame *frame = av_frame_alloc();
+  AVPacket *packet = av_packet_alloc();
+  const char *stage = "JPEG allocation";
+  int result = AVERROR(ENOMEM);
+  if (!encoder || !frame || !packet) goto done;
+  encoder->width = frame->width = width;
+  encoder->height = frame->height = height;
+  // The JPEG pixel format sets full range before swscale initializes its
+  // fast same-size converter.
+  encoder->pix_fmt = frame->format = AV_PIX_FMT_YUVJ420P;
+  encoder->color_range = frame->color_range = AVCOL_RANGE_JPEG;
+  encoder->colorspace = frame->colorspace = AVCOL_SPC_SMPTE170M;
+  encoder->time_base = (AVRational){1, 25};
+  encoder->thread_count = 1;
+  encoder->flags |= AV_CODEC_FLAG_QSCALE;
+  encoder->global_quality = frame->quality = 2 * FF_QP2LAMBDA;
+  frame->pts = 0;
+  stage = "JPEG open";
+  result = avcodec_open2(encoder, codec, NULL);
+  if (result < 0) goto done;
+  stage = "JPEG frame allocation";
+  result = av_frame_get_buffer(frame, 32);
+  if (result < 0) goto done;
+  stage = "JPEG colour conversion";
+  result = jpeg_colour(frame, source);
+  if (result < 0) goto done;
+  stage = "JPEG encode";
+  result = avcodec_send_frame(encoder, frame);
+  if (result >= 0) result = avcodec_receive_packet(encoder, packet);
+done:
+  av_frame_free(&frame);
+  avcodec_free_context(&encoder);
+  if (result < 0) {
+    fail(stage, result);
+    av_packet_free(&packet);
+    return NULL;
+  }
+  *data = packet->data;
+  *length = packet->size;
+  return packet;
+}
+
+void cm_jpeg_free(void *pointer) {
+  AVPacket *packet = pointer;
+  av_packet_free(&packet);
 }
 
 typedef struct {
@@ -657,8 +941,24 @@ void cm_encoder_free(void *pointer) {
   }
   free(e);
 }
+static enum AVColorSpace encoder_matrix(enum AVColorSpace space) {
+  switch (space) {
+  case AVCOL_SPC_BT709:
+  case AVCOL_SPC_FCC:
+  case AVCOL_SPC_SMPTE240M:
+  case AVCOL_SPC_BT2020_NCL:
+  case AVCOL_SPC_BT470BG:
+  case AVCOL_SPC_SMPTE170M:
+    return space;
+  case AVCOL_SPC_BT2020_CL:
+    return AVCOL_SPC_BT2020_NCL;
+  default:
+    return AVCOL_SPC_SMPTE170M;
+  }
+}
 void *cm_encoder_open(const char *target, int width, int height, int fps,
-                      int gpu, int (*interrupt)(void *), void *opaque) {
+                      int gpu, const void *initial_host,
+                      int (*interrupt)(void *), void *opaque) {
   Encoder *e = calloc(1, sizeof(*e));
   if (!e) {
     fail("encoder allocation", AVERROR(ENOMEM));
@@ -700,6 +1000,14 @@ void *cm_encoder_open(const char *target, int width, int height, int fps,
   e->codec->max_b_frames = 0;
   e->codec->thread_count = 1;
   e->codec->color_range = AVCOL_RANGE_MPEG;
+  if (initial_host) {
+    const AVFrame *source = ((const HostFrame *)initial_host)->frame;
+    // Set the matrix before writing the stream header. BGR slates and later
+    // decoded frames are converted to the same limited-range profile.
+    e->codec->colorspace = encoder_matrix(source->colorspace);
+    e->codec->color_primaries = source->color_primaries;
+    e->codec->color_trc = source->color_trc;
+  }
   if (e->output->oformat->flags & AVFMT_GLOBALHEADER)
     e->codec->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
   av_dict_set(&options, "preset", gpu >= 0 ? "p1" : "ultrafast", 0);
@@ -723,16 +1031,13 @@ void *cm_encoder_open(const char *target, int width, int height, int fps,
   e->frame->width = width;
   e->frame->height = height;
   e->frame->format = e->codec->pix_fmt;
-  e->frame->color_range = AVCOL_RANGE_MPEG;
+  e->frame->colorspace = e->codec->colorspace;
+  e->frame->color_range = e->codec->color_range;
+  e->frame->color_primaries = e->codec->color_primaries;
+  e->frame->color_trc = e->codec->color_trc;
   result = av_frame_get_buffer(e->frame, 32);
   if (result < 0)
     goto failed;
-  e->scale = sws_getContext(width, height, AV_PIX_FMT_BGR24, width, height,
-                            AV_PIX_FMT_YUV420P, SWS_BILINEAR, NULL, NULL, NULL);
-  if (!e->scale) {
-    result = AVERROR(ENOMEM);
-    goto failed;
-  }
   if (!(e->output->oformat->flags & AVFMT_NOFILE)) {
     result = avio_open2(&e->output->pb, target, AVIO_FLAG_WRITE,
                         &e->output->interrupt_callback, NULL);
@@ -791,27 +1096,64 @@ int cm_encoder_repeat_frame(void *pointer) {
   e->frame_cached = result == 0;
   return result;
 }
-int cm_encoder_write_scaled(void *pointer, const uint8_t *pixels, size_t length, int width, int height) {
-  Encoder *e = pointer;
-  if (width <= 0 || height <= 0 || (uint64_t)width * height > 64 * 1024 * 1024 ||
-      length != (size_t)width * height * 3 + 64)
-    return fail("encoder image shape", AVERROR(EINVAL));
+static int scale_encoder_planes(Encoder *e, const uint8_t *const source[4],
+                                const int stride[4], int width, int height,
+                                enum AVPixelFormat format,
+                                enum AVColorSpace space, int full_range) {
   e->frame_cached = 0;
-  e->scale = sws_getCachedContext(e->scale, width, height, AV_PIX_FMT_BGR24,
+  e->scale = sws_getCachedContext(e->scale, width, height, format,
       e->width, e->height, e->codec->pix_fmt, SWS_BILINEAR, NULL, NULL, NULL);
   if (!e->scale) return fail("encoder scaler", AVERROR(ENOMEM));
-  int result = av_frame_make_writable(e->frame);
+  int result = sws_setColorspaceDetails(e->scale, coefficients(space), full_range,
+      coefficients(e->codec->colorspace), 0, 0, 1 << 16, 1 << 16);
+  if (result < 0) return fail("encoder colour matrix", result);
+  result = av_frame_make_writable(e->frame);
   if (result < 0)
     return fail("encoder buffer", result);
-  const uint8_t *source[4] = {pixels, NULL, NULL, NULL};
-  int stride[4] = {width * 3, 0, 0, 0};
   result = sws_scale(e->scale, source, stride, 0, height, e->frame->data,
                      e->frame->linesize);
   if (result != e->height)
     return fail("encoder colour conversion", AVERROR(EINVAL));
-  result = submit_encoder_frame(e);
+  return 0;
+}
+int cm_encoder_submit(Encoder *e) {
+  int result = submit_encoder_frame(e);
   e->frame_cached = result == 0;
   return result;
+}
+int cm_encoder_write_scaled(void *pointer, const uint8_t *pixels, size_t length, int width, int height) {
+  if (width <= 0 || height <= 0 || (uint64_t)width * height > 64 * 1024 * 1024 ||
+      length != (size_t)width * height * 3 + 64)
+    return fail("encoder image shape", AVERROR(EINVAL));
+  const uint8_t *source[4] = {pixels, NULL, NULL, NULL};
+  const int stride[4] = {width * 3, 0, 0, 0};
+  int result = scale_encoder_planes(pointer, source, stride, width, height,
+                                    AV_PIX_FMT_BGR24, AVCOL_SPC_UNSPECIFIED, 1);
+  return result < 0 ? result : cm_encoder_submit(pointer);
+}
+typedef struct {
+  uintptr_t y, u, v;
+  int width, height, yp, up, vp, colorspace;
+} EncoderPlaneInfo;
+int cm_encoder_prepare_host(void *pointer, const void *host, EncoderPlaneInfo *target) {
+  Encoder *e = pointer;
+  const AVFrame *frame = ((const HostFrame *)host)->frame;
+  // Resize retained decoded planes into the reusable encoder frame.
+  int result = scale_encoder_planes(e, (const uint8_t *const *)frame->data,
+      frame->linesize, frame->width, frame->height, frame->format,
+      frame->colorspace, frame->color_range == AVCOL_RANGE_JPEG);
+  if (result >= 0 && target) {
+    const AVFrame *output = e->frame;
+    *target = (EncoderPlaneInfo){(uintptr_t)output->data[0], (uintptr_t)output->data[1],
+      (uintptr_t)output->data[2], output->width, output->height,
+      output->linesize[0], output->linesize[1], output->linesize[2],
+      output->colorspace};
+  }
+  return result;
+}
+int cm_encoder_write_host(void *pointer, const void *host) {
+  int result = cm_encoder_prepare_host(pointer, host, NULL);
+  return result < 0 ? result : cm_encoder_submit(pointer);
 }
 uint64_t cm_encoder_packets_written(void *pointer) {
   return ((Encoder*)pointer)->written_packets;

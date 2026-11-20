@@ -1,0 +1,24 @@
+[package]
+name = "construction-inference-python"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+name = "construction_inference"
+crate-type = ["cdylib"]
+
+[features]
+extension-module = ["pyo3/extension-module"]
+tensorrt = ["native-inference/tensorrt"]
+gpu-media = ["tensorrt", "native-inference/gpu-media"]
+
+[dependencies]
+native-inference = { package = "construction-inference", path = "../../../native/inference", default-features = false }
+pyo3 = { version = "=0.30.1", features = ["abi3-py311"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

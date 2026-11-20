@@ -180,15 +180,15 @@ jobs:
       run: |
         rustup toolchain install 1.93.1 --profile minimal --component rustfmt
         export PYO3_PYTHON="$(command -v python)"
-        cargo fmt --manifest-path native/postprocess/Cargo.toml -- --check
-        cargo test --locked --features extension-module --lib --manifest-path native/postprocess/Cargo.toml
+        cargo fmt --manifest-path bindings/python/postprocess/Cargo.toml -- --check
+        cargo test --locked --features extension-module --lib --manifest-path bindings/python/postprocess/Cargo.toml
         uvx --python 3.15 --from maturin==1.16.0 maturin build --release --locked \
-          --manifest-path native/postprocess/Cargo.toml --out /tmp/postprocess-wheels
+          --manifest-path bindings/python/postprocess/Cargo.toml --out /tmp/postprocess-wheels
         uv pip install --system /tmp/postprocess-wheels/*.whl
-        cargo fmt --manifest-path native/inference/Cargo.toml -- --check
-        cargo test --locked --features extension-module --lib --manifest-path native/inference/Cargo.toml
+        cargo fmt --manifest-path bindings/python/inference/Cargo.toml -- --check
+        cargo test --locked --features extension-module --lib --manifest-path bindings/python/inference/Cargo.toml
         uvx --python 3.15 --from maturin==1.16.0 maturin build --release --locked \
-          --manifest-path native/inference/Cargo.toml --out /tmp/inference-wheels
+          --manifest-path bindings/python/inference/Cargo.toml --out /tmp/inference-wheels
         uv pip install --system /tmp/inference-wheels/*.whl
     - name: Compare standalone Rust rules and tracking with Python
       env:

@@ -6,9 +6,14 @@ version = 4
 name = "construction-postprocess"
 version = "0.1.0"
 dependencies = [
+ "construction-postprocess-core",
  "libc",
  "pyo3",
 ]
+
+[[package]]
+name = "construction-postprocess-core"
+version = "0.1.0"
 
 [[package]]
 name = "heck"

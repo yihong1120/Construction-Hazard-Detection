@@ -30,11 +30,19 @@ pub struct CameraReport {
     pub capture_convert_ms: f64,
     pub analysis_queue_ms: f64,
     pub analysis_cpu_ms: f64,
+    #[serde(default)]
+    pub geometry_cache_hits: u64,
+    #[serde(default)]
+    pub geometry_cache_misses: u64,
     pub encoded_unique: u64,
     pub encoded_repeated: u64,
     pub encoded_offline: u64,
     #[serde(default)]
     pub encoder_conversion_reused: u64,
+    #[serde(default)]
+    pub encoder_host_frames: u64,
+    #[serde(default)]
+    pub encoder_annotated_host_frames: u64,
     pub encode_ms: f64,
     pub converted: u64,
     pub capture_dropped: u64,
@@ -188,6 +196,7 @@ async fn camera(
     text: Arc<Text>,
     store: Outbox,
     cpu: crate::executor::Cpu,
+    demand: Option<crate::demand::Demand>,
     stop: CancellationToken,
 ) -> Result<CameraReport> {
     let _cancel_children = stop.clone().drop_guard();
@@ -213,7 +222,7 @@ async fn camera(
     let mut ready = vec![];
     let clean_gate = crate::demand::Gate::new(!spec.output.on_demand);
     let relay_stop = stop.child_token();
-    let demand_stop = stop.child_token();
+    let overlay_changed = Arc::new(tokio::sync::Notify::new());
     let base_path = spec
         .output
         .clean
@@ -238,7 +247,10 @@ async fn camera(
             let language = crate::config::output_language(language, spec.output.on_demand);
             if let Some(target) = &spec.output.annotated {
                 let live = target.starts_with("rtsp://") || target.starts_with("rtsps://");
-                let gate = crate::demand::Gate::new(!spec.output.on_demand || !live);
+                let gate = crate::demand::Gate::observed(
+                    !spec.output.on_demand || !live,
+                    overlay_changed.clone(),
+                );
                 if spec.output.on_demand && live {
                     use base64::Engine;
                     leases.push((
@@ -360,7 +372,10 @@ async fn camera(
                 for language in &spec.languages {
                     use base64::Engine;
                     let language = crate::config::output_language(language, spec.output.on_demand);
-                    let gate = crate::demand::Gate::new(!spec.output.on_demand || !live);
+                    let gate = crate::demand::Gate::observed(
+                        !spec.output.on_demand || !live,
+                        overlay_changed.clone(),
+                    );
                     if spec.output.on_demand && live {
                         leases.push((
                             format!(
@@ -406,15 +421,15 @@ async fn camera(
         1 => clean_senders.pop(),
         _ => Some(publish::Sender::Group(clean_senders)),
     };
-    let demand_task = if leases.is_empty() {
+    let demand_registration = if leases.is_empty() {
         None
     } else {
-        Some(crate::demand::spawn(
-            config.redis.as_ref().unwrap().clone(),
-            leases,
-            ready,
-            demand_stop.clone(),
-        ))
+        Some(
+            demand
+                .as_ref()
+                .context("On-demand output requires Redis")?
+                .register(leases, ready),
+        )
     };
     let publisher_stats = publishers
         .iter()
@@ -442,6 +457,7 @@ async fn camera(
             targets.clone(),
             text.clone(),
             cpu.clone(),
+            overlay_changed.clone(),
             config.overlay_max_age_ms,
             stop.clone(),
         ))
@@ -452,9 +468,15 @@ async fn camera(
         targets
             .iter()
             .map(|target| {
+                let original = (spec.width, spec.height);
+                let (width, height) = if config.capture.host_yuv {
+                    target.size.unwrap_or(original)
+                } else {
+                    original
+                };
                 (
                     target.language.clone(),
-                    Renderer::new(spec.width, spec.height, text.clone()),
+                    Renderer::new(width, height, text.clone()),
                 )
             })
             .collect::<Vec<_>>()
@@ -523,7 +545,12 @@ async fn camera(
             seen = frame.sequence;
             if frame.generation != generation {
                 generation = frame.generation;
-                analysis = Some((Tracker::new(spec.tracker), HazardEngine::default()));
+                if let Some((_, previous)) =
+                    analysis.replace((Tracker::new(spec.tracker), HazardEngine::default()))
+                {
+                    report.geometry_cache_hits += previous.cache_hits;
+                    report.geometry_cache_misses += previous.cache_misses;
+                }
             }
 
             let mut state = analysis.take().expect("analysis owner");
@@ -687,6 +714,10 @@ async fn camera(
         Ok(())
     }
     .await;
+    if let Some((_, engine)) = analysis {
+        report.geometry_cache_hits += engine.cache_hits;
+        report.geometry_cache_misses += engine.cache_misses;
+    }
     if result.is_err() {
         stop.cancel();
     }
@@ -702,10 +733,7 @@ async fn camera(
         }
     }
     relay_stop.cancel();
-    demand_stop.cancel();
-    if let Some(task) = demand_task {
-        let _ = task.await;
-    }
+    drop(demand_registration);
     if let Some(relay) = relay {
         let _ = relay.task.await;
     }
@@ -718,22 +746,17 @@ async fn camera(
     report.capture_reconnects = capture_stats.reconnects.load(Ordering::Relaxed);
     report.capture_pool_peak = capture_stats.pool_peak.load(Ordering::Relaxed);
     if let Some(actor) = actor {
-        drop(actor.updates);
-        if let Err(error) = actor
-            .task
-            .await
-            .map_err(anyhow::Error::from)
-            .and_then(|value| value)
-        {
+        let stats = actor.stats.clone();
+        if let Err(error) = actor.finish().await {
             stop.cancel();
             if result.is_ok() {
                 result = Err(error);
             }
         }
-        report.rendered = actor.stats.rendered.load(Ordering::Relaxed);
-        report.render_skipped = actor.stats.skipped.load(Ordering::Relaxed);
-        report.render_pending = actor.stats.pending.load(Ordering::Relaxed);
-        report.render_passthrough = actor.stats.passthrough.load(Ordering::Relaxed);
+        report.rendered = stats.rendered.load(Ordering::Relaxed);
+        report.render_skipped = stats.skipped.load(Ordering::Relaxed);
+        report.render_pending = stats.pending.load(Ordering::Relaxed);
+        report.render_passthrough = stats.passthrough.load(Ordering::Relaxed);
     }
     drop(targets);
     drop(lossless_renderers);
@@ -750,6 +773,8 @@ async fn camera(
         report.encoded_repeated += stats.repeats.load(Ordering::Relaxed);
         report.encoded_offline += stats.offline.load(Ordering::Relaxed);
         report.encoder_conversion_reused += stats.conversion_reused.load(Ordering::Relaxed);
+        report.encoder_host_frames += stats.host_frames.load(Ordering::Relaxed);
+        report.encoder_annotated_host_frames += stats.annotated_host_frames.load(Ordering::Relaxed);
         report.encode_ms += stats.encode_ns.load(Ordering::Relaxed) as f64 / 1e6;
     }
     if let Some(stats) = relay_stats {
@@ -900,6 +925,13 @@ pub async fn run(mut config: Config, stop: CancellationToken) -> Result<Report> 
     };
     let text = Text::new(&config.fonts)?;
     let mut workers = Some(Workers::new(&config)?);
+    let demand_stop = stop.child_token();
+    let _cancel_demand = demand_stop.clone().drop_guard();
+    let (demand, demand_task) = config
+        .redis
+        .clone()
+        .map(|redis| crate::demand::Demand::spawn(redis, demand_stop.clone()))
+        .unzip();
     let mut active = HashMap::<String, (Vec<u8>, CancellationToken)>::new();
     let mut completed = HashSet::new();
     let mut tasks = tokio::task::JoinSet::new();
@@ -946,6 +978,7 @@ pub async fn run(mut config: Config, stop: CancellationToken) -> Result<Report> 
                     text.clone(),
                     store.clone(),
                     cpu.clone(),
+                    demand.clone(),
                     token.clone(),
                 ));
                 active.insert(id.clone(), (fingerprint, token));
@@ -1026,6 +1059,12 @@ pub async fn run(mut config: Config, stop: CancellationToken) -> Result<Report> 
         }
     }
     active.clear();
+    demand_stop.cancel();
+    if let Some(task) = demand_task {
+        if let Err(error) = task.await {
+            fatal.get_or_insert(error.into());
+        }
+    }
     if let Some(workers) = workers.take() {
         workers.close();
     }

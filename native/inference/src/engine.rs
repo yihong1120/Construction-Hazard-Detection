@@ -147,7 +147,7 @@ pub(crate) mod ffi {
     }
 }
 
-// Raw buffer views are deliberately !Send: they cannot cross py.detach.
+// Raw buffer views are deliberately !Send: they must stay with their owner.
 pub struct BufferImage {
     pub h: usize,
     pub w: usize,
@@ -155,7 +155,7 @@ pub struct BufferImage {
     pub pointer: *const u8,
 }
 
-// Only Rust-owned pixels and dimensions may cross the GIL boundary.
+// Prepared batches own their pixels and dimensions for worker handoff.
 pub struct PreparedBatch {
     pixels: Vec<u8>,
     shapes: Vec<(usize, usize)>,
@@ -660,21 +660,18 @@ impl NativeEngine {
         }
     }
 
-    #[cfg(all(feature = "tensorrt", feature = "python"))]
-    pub(crate) fn submit_device(
-        &mut self,
-        images: &[std::sync::Arc<crate::gpu::FrameCore>],
-    ) -> Result<u64, Error> {
+    #[cfg(feature = "tensorrt")]
+    pub fn submit_device(&mut self, images: &[crate::gpu::GpuFrame]) -> Result<u64, Error> {
         if images.is_empty() || images.len() > self.max_batch {
             return Err(Error::Invalid("Invalid device batch capacity".into()));
         }
         let rect = self.rect
             && images
                 .iter()
-                .all(|f| (f.h, f.w) == (images[0].h, images[0].w));
+                .all(|f| (f.height(), f.width()) == (images[0].height(), images[0].width()));
         let layouts: Vec<_> = images
             .iter()
-            .map(|f| layout(f.h, f.w, self.size, self.stride, rect))
+            .map(|f| layout(f.height(), f.width(), self.size, self.stride, rect))
             .collect();
         let first = &layouts[0];
         let dims: Vec<i32> = layouts
@@ -685,7 +682,7 @@ impl NativeEngine {
         // stable order, including when separate engines share input images.
         let unique: std::collections::BTreeMap<_, _> = images
             .iter()
-            .map(|f| (std::sync::Arc::as_ptr(f) as usize, f))
+            .map(|f| (std::sync::Arc::as_ptr(&f.core) as usize, &f.core))
             .collect();
         let guards: std::collections::BTreeMap<_, _> = unique
             .iter()
@@ -699,7 +696,7 @@ impl NativeEngine {
         let pointers: Vec<_> = images
             .iter()
             .map(|f| {
-                guards[&(std::sync::Arc::as_ptr(f) as usize)]
+                guards[&(std::sync::Arc::as_ptr(&f.core) as usize)]
                     .as_ref()
                     .map(|h| h.0.as_ptr())
                     .ok_or_else(|| Error::Runtime("GPU image is closed".into()))
@@ -722,7 +719,7 @@ impl NativeEngine {
         self.pending.insert(
             ticket,
             PendingBatch {
-                shapes: images.iter().map(|f| (f.h, f.w)).collect(),
+                shapes: images.iter().map(|f| (f.height(), f.width())).collect(),
                 h: first.h,
                 w: first.w,
                 rows: rows as usize,

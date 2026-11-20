@@ -90,6 +90,7 @@ pub struct Frame {
     pub pixels: Buffer,
     pub device: Option<Arc<construction_media::Nv12Frame>>,
     pub host: Option<Arc<construction_media::HostFrame>>,
+    pub annotation: Option<crate::render::Annotation>,
     pub width: u32,
     pub height: u32,
     pub sequence: u64,
@@ -101,6 +102,10 @@ pub struct Frame {
 }
 impl Frame {
     pub fn bgr_padded(&self) -> anyhow::Result<&[u8]> {
+        anyhow::ensure!(
+            self.annotation.is_none(),
+            "YUV annotation is applied by the encoder"
+        );
         if let Some(host) = &self.host {
             return host.bgr_padded();
         }

@@ -1,10 +1,9 @@
 //! Safe Python bindings; numeric work runs detached from the interpreter.
 mod capture;
-mod core;
 mod kernels;
 mod resources;
 
-use core::{Detection, SafetyRow, Tracker, Warnings};
+use construction_postprocess_core::{Detection, SafetyRow, Tracker, Warnings, safety};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -142,7 +141,7 @@ fn safety_warnings(
         return Ok(PyDict::new(py).unbind());
     }
     let rows = read_rows(datas, detect_proximity)?;
-    let warnings = py.detach(|| core::safety(&rows, detect_safety, detect_proximity));
+    let warnings = py.detach(|| safety(&rows, detect_safety, detect_proximity));
     encode_warnings(py, &rows, warnings)
 }
 

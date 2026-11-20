@@ -142,8 +142,9 @@ def source_hashes() -> dict[str, str]:
     root = Path(__file__).resolve().parents[1]
     paths = (
         'src/yolo_detector.py', 'src/danger_detector.py',
-        'src/native_postprocess.py', 'native/postprocess/src/core.rs',
-        'native/postprocess/src/lib.rs', 'native/postprocess/Cargo.lock',
+        'src/native_postprocess.py', 'native/postprocess-core/src/lib.rs',
+        'bindings/python/postprocess/src/lib.rs',
+        'bindings/python/postprocess/Cargo.lock',
         'scripts/benchmark_postprocess.py',
     )
     return {

@@ -1,20 +1,27 @@
 //! Existing playback leases control outputs, never inference or event storage.
+use std::collections::HashMap;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::Duration;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
 pub struct Gate {
     state: AtomicU64,
-    pub changed: Arc<tokio::sync::Notify>,
+    pub changed: Arc<Notify>,
     filter: Option<Box<dyn Fn() -> bool + Send + Sync>>,
 }
 impl Gate {
     pub fn new(active: bool) -> Arc<Self> {
+        Self::observed(active, Arc::default())
+    }
+    pub fn observed(active: bool, changed: Arc<Notify>) -> Arc<Self> {
         Arc::new(Self {
             state: AtomicU64::new(u64::from(active)),
-            changed: Arc::default(),
+            changed,
             filter: None,
         })
     }
@@ -46,86 +53,201 @@ impl Gate {
         }
     }
 }
-pub fn spawn(
-    config: crate::config::Redis,
-    keys: Vec<(String, Arc<Gate>)>,
-    ready: Vec<(String, Arc<AtomicBool>)>,
-    stop: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
+
+struct Ready {
+    key: String,
+    flag: Arc<AtomicBool>,
+    previously_ready: AtomicBool,
+}
+
+struct Camera {
+    owner: String,
+    gates: Vec<(String, Arc<Gate>)>,
+    ready: Vec<Ready>,
+}
+
+#[derive(Default)]
+struct Registry {
+    cameras: Mutex<HashMap<Uuid, Arc<Camera>>>,
+    changed: Notify,
+}
+
+#[derive(Clone)]
+pub struct Demand {
+    prefix: Arc<str>,
+    registry: Arc<Registry>,
+}
+
+pub struct Registration {
+    registry: Arc<Registry>,
+    id: Uuid,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        let mut cameras = self.registry.cameras.lock().unwrap();
+        if let Some(camera) = cameras.remove(&self.id) {
+            for (_, gate) in &camera.gates {
+                gate.set(false);
+            }
+        }
+    }
+}
+
+impl Demand {
+    pub fn spawn(
+        config: crate::config::Redis,
+        stop: CancellationToken,
+    ) -> (Self, tokio::task::JoinHandle<()>) {
+        let demand = Self {
+            prefix: config.prefix.into(),
+            registry: Arc::default(),
+        };
+        let task = tokio::spawn(demand.clone().poll(config.url_env, stop));
+        (demand, task)
+    }
+
+    pub fn register(
+        &self,
+        gates: Vec<(String, Arc<Gate>)>,
+        ready: Vec<(String, Arc<AtomicBool>)>,
+    ) -> Registration {
+        let id = Uuid::new_v4();
+        let qualify = |key| format!("{}{key}", self.prefix);
+        let camera = Camera {
+            owner: id.to_string(),
+            gates: gates
+                .into_iter()
+                .map(|(key, gate)| (qualify(key), gate))
+                .collect(),
+            ready: ready
+                .into_iter()
+                .map(|(key, flag)| Ready {
+                    key: qualify(key),
+                    flag,
+                    previously_ready: AtomicBool::new(false),
+                })
+                .collect(),
+        };
+        self.registry
+            .cameras
+            .lock()
+            .unwrap()
+            .insert(id, Arc::new(camera));
+        self.registry.changed.notify_one();
+        Registration {
+            registry: self.registry.clone(),
+            id,
+        }
+    }
+
+    fn close_gates(&self) {
+        for camera in self.registry.cameras.lock().unwrap().values() {
+            for (_, gate) in &camera.gates {
+                gate.set(false);
+            }
+        }
+    }
+
+    async fn poll(self, url_env: String, stop: CancellationToken) {
         let mut connection = None;
-        let token = uuid::Uuid::new_v4().to_string();
-        let demand_keys: Vec<_> = keys
-            .iter()
-            .map(|(key, _)| format!("{}{key}", config.prefix))
-            .collect();
-        let ready_keys: Vec<_> = ready
-            .iter()
-            .map(|(key, _)| format!("{}{key}", config.prefix))
-            .collect();
         let script = redis::Script::new(
             "for i,key in ipairs(KEYS) do
-                local old=redis.call('GET',key)
-                if ARGV[i+1]=='1' then
-                    if not old or old==ARGV[1] then redis.call('SET',key,ARGV[1],'EX',3) end
-                elseif old==ARGV[1] then
+                local owner=ARGV[2*i-1]
+                local old=redis.pcall('GET',key)
+                if ARGV[2*i]=='1' then
+                    if not old or old==owner then redis.call('SET',key,owner,'EX',3) end
+                elseif old==owner then
                     redis.call('DEL',key)
                 end
             end
             return 1",
         );
-        let mut previously_ready = vec![false; ready.len()];
         let mut tick = tokio::time::interval(Duration::from_millis(250));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            tokio::select! {_=stop.cancelled()=>break,_=tick.tick()=>()}
+            if self.registry.cameras.lock().unwrap().is_empty() {
+                // Release the Redis connection while there are no on-demand cameras.
+                connection = None;
+                tokio::select! {
+                    _ = stop.cancelled() => break,
+                    _ = self.registry.changed.notified() => tick.reset_immediately(),
+                }
+            }
+            tokio::select! {
+                _ = stop.cancelled() => break,
+                _ = tick.tick() => (),
+            }
+            let cameras: Vec<_> = self
+                .registry
+                .cameras
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(&id, camera)| (id, camera.clone()))
+                .collect();
+            if cameras.is_empty() {
+                continue;
+            }
             let operation = async {
                 if connection.is_none() {
-                    let client = redis::Client::open(std::env::var(&config.url_env)?)?;
+                    let client = redis::Client::open(std::env::var(&url_env)?)?;
                     connection = Some(client.get_multiplexed_async_connection().await?);
                 }
                 let connection = connection.as_mut().expect("Redis connection");
-                let values: Vec<Option<String>> = redis::cmd("MGET")
-                    .arg(&demand_keys)
-                    .query_async(connection)
-                    .await?;
-                for ((_, gate), value) in keys.iter().zip(values) {
-                    gate.set(value.is_some());
+                let mut query = redis::cmd("MGET");
+                for (_, camera) in &cameras {
+                    for (key, _) in &camera.gates {
+                        query.arg(key);
+                    }
                 }
+                let values: Vec<redis::Value> = query.query_async(connection).await?;
 
                 let mut invocation = script.prepare_invoke();
-                invocation.arg(&token);
                 let mut changed = false;
-                for ((key, (_, flag)), previous) in
-                    ready_keys.iter().zip(&ready).zip(&mut previously_ready)
                 {
-                    let active = flag.load(Ordering::Acquire);
-                    if active || *previous {
-                        invocation.key(key).arg(u8::from(active));
-                        changed = true;
+                    // Apply a reply only to owners still registered. The same lock
+                    // fences gate closure while a camera is removed or reloaded.
+                    let registered = self.registry.cameras.lock().unwrap();
+                    let mut values = values.into_iter();
+                    for (id, camera) in &cameras {
+                        let active = values.by_ref().take(camera.gates.len());
+                        if !registered.contains_key(id) {
+                            active.for_each(drop);
+                            continue;
+                        }
+                        for ((_, gate), value) in camera.gates.iter().zip(active) {
+                            gate.set(!matches!(value, redis::Value::Nil));
+                        }
+                        for ready in &camera.ready {
+                            let active = ready.flag.load(Ordering::Acquire);
+                            let previous = ready.previously_ready.swap(active, Ordering::Relaxed);
+                            if active || previous {
+                                invocation
+                                    .key(&ready.key)
+                                    .arg(&camera.owner)
+                                    .arg(u8::from(active));
+                                changed = true;
+                            }
+                        }
                     }
-                    // If the command fails, any old marker still expires after three seconds.
-                    *previous = active;
                 }
                 if changed {
                     invocation.invoke_async::<i32>(connection).await?;
                 }
                 anyhow::Ok(())
             };
-            if !matches!(
-                tokio::time::timeout(Duration::from_secs(1), operation).await,
-                Ok(Ok(()))
-            ) {
+            let result = tokio::select! {
+                _ = stop.cancelled() => break,
+                result = tokio::time::timeout(Duration::from_secs(1), operation) => result,
+            };
+            if !matches!(result, Ok(Ok(()))) {
                 connection = None;
-                for (_, gate) in &keys {
-                    gate.set(false);
-                }
+                self.close_gates();
             }
         }
-        for (_, gate) in keys {
-            gate.set(false);
-        }
-    })
+        self.close_gates();
+    }
 }
 #[cfg(test)]
 mod tests {

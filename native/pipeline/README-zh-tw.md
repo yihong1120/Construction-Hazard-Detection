@@ -8,22 +8,24 @@
 flowchart LR
     C[JSON / PostgreSQL 設定] --> S[Rust 監督與 generation 管理]
     S --> V[程序內 libav 解碼<br/>每來源單一 owner]
-    V --> B[有硬上限的 BGR pool<br/>過載先略過色彩轉換]
+    V --> B[有硬上限的影格池<br/>保留 YUV 或重用 BGR 緩衝區]
     B --> L[Latest mailbox]
     L --> I[每模型共享 worker<br/>取得 GPU 配額後才選最新影格]
-    I --> P[共用有界前處理 pool<br/>OpenCV INTER_LINEAR 與 buffer 重用]
+    I --> P[共用前處理池<br/>YUV 融合或 OpenCV INTER_LINEAR]
     P --> G[TensorRT / CUDA<br/>同步或兩槽非同步]
     G --> T[有界 CPU executor<br/>追蹤與危險分析]
     T --> M[純 metadata snapshot<br/>含 generation / 時效]
-    L --> R[獨立播放時脈<br/>Rust 多語標註]
+    L --> R[最新影格<br/>Rust 多語標註]
     M --> R
     R --> E[程序內 libav 編碼 / mux<br/>NVENC 或 libx264]
-    L --> E
+    L -->|"未標註輸出可直接縮放 YUV"| E
     E --> O[RTSP / MP4]
     T --> D[Redis 警報與模型狀態]
     T --> J[Rust JPEG 原圖證據]
     J --> Q[PostgreSQL 持久化 outbox]
-    Q --> U[OAuth / 證據上傳 / 通知重試]
+    Q --> U[證據上傳工作者及併發上限]
+    U -->|儲存上傳回執| Q
+    Q -->|已有回執的事件| N[獨立通知工作者與重試]
 ```
 
 ## 從原始碼建置
@@ -121,10 +123,13 @@ Rust 以已載入且啟用、未過期的鏡頭數除以 `cameras_per_worker`，
 - 工作時段採用每路的 `work_start_hour` 和 `work_end_hour`，依影格當地時間判定。時段包含開始小時，於結束小時截止，`0` 至 `24` 代表全天。JSON 的 `streams[].timezone` 預設為 `Asia/Taipei`，PostgreSQL catalog 的鏡頭也使用台北時間。工作時段外只有人員進入交通錐或電線桿管制區會產生證據和通知。即時辨識與標註全天運作。
 - Redis 警報使用既有 warning stream 格式；另提供 Rust latest metadata。站點 generation 與攝影機 owner token 阻擋過期寫入，模型狀態可回應 publication challenge。
 - 原始 JPEG 與事件在 PostgreSQL 同一交易提交，再由 HTTP dispatcher 派送。上傳 receipt 先持久化才通知；通知重試／程序重新啟動不需再次上傳已成功的證據。
-- Outbox 預設限制尚保留的 JPEG＋metadata 總量 512 MiB、最多嘗試 20 次；永久錯誤進入失敗佇列。這是 payload 額度，PostgreSQL 的表、索引與 WAL 仍有額外空間需求。服務端需支援 `Idempotency-Key` 才能消除「遠端成功、本機尚未記錄」的重送窗口。
+- Outbox 預設限制尚保留的 JPEG 與 metadata 總量為 512 MiB，每個派送階段最多嘗試 20 次。永久錯誤進入失敗佇列。這是 payload 額度，PostgreSQL 的表、索引與 WAL 仍需額外空間。服務端需支援 `Idempotency-Key`，避免遠端操作成功而本機尚未記錄時造成重複操作。
 - `record_detections` 預設關閉；啟用後每鏡頭診斷 JSONL 每 10 MiB 輪替，保留目前與上一份。SIGINT／SIGTERM 會停止擷取、join 原生 media owner、完成 encoder trailer、關閉模型並寫出統計。
 
 `delivery` 使用現有 `/upload` multipart、通知 JSON 與 OAuth client-credentials 協定，憑證僅由設定指定的環境變數讀取。
+
+`delivery.evidence_workers` 與 `delivery.notification_workers` 各預設同時處理兩個請求。推播延遲時，證據仍可持續上傳。通知重試只取用已儲存的回執及 metadata，無須從 PostgreSQL 讀取 JPEG。端點提供重試間隔時，派送程式至少等待該時間，最長以一天計。
+
 預錄偵測結果必須明確啟用 `experimental_replay`；重播派送限 loopback，Redis 必須使用隔離 prefix，避免測試資料流入正式服務。
 重排失敗事件可使用 `outbox --config ... --requeue-failed`。
 
@@ -132,7 +137,7 @@ Rust 以已載入且啟用、未過期的鏡頭數除以 `cameras_per_worker`，
 
 - `capture.buffer_frames` 是每來源 BGR buffer 的硬上限（即時預設 6），不是快取數；滿載時繼續解碼／排空來源但不做 BGR 轉換。離線 lossless 模式等待空間，保留全部影格。buffer 尾端保留 codec SIMD 需要的 64 bytes padding，最後一個 `Arc` 釋放才回收。
 - 推論請求只排入攝影機 mailbox，不把排隊當下的舊影格固定在佇列中。取得 GPU admission 後，worker 才取最新影格，並將實際影格與結果一起交還追蹤；每鏡頭最多一個待完成請求。
-- 即時標註有獨立 `fps` 時脈，會用最新影格配上最新分析；metadata 不持有大影像。超過 `overlay_max_age_ms`（預設 1000）或 generation 不符時顯示 `Analysis pending`，不繼續畫舊框。這表示標註影格不保證是當次推論輸入；lossless 模式則逐格精確對應。
+- 即時標註會用最新影格配上最新分析。保留 YUV 的影格到達時準備標註，編碼器依各輸出的 FPS 取用最新畫面。中繼資料只持有追蹤和幾何資訊。分析結果超過 `overlay_max_age_ms`（預設 1000）或 generation 不符時顯示 `Analysis pending`。Lossless 模式的影格與分析逐格對應。
 - `capture.max_lag_ms` 預設 2000：相對第一個解碼 PTS 的落後量持續增加時重連，避免解碼追不上卻一直累積舊資料；不是攝影機到瀏覽器延遲量測。PTS 明顯倒退也會切換 generation。`read_timeout_ms` 限制可中斷的原生 I/O。
 - `summary.json` 增加 `converted`、`capture_dropped`、`capture_reconnects`、`capture_pool_peak`、`rendered`、`render_skipped`、`render_pending`。trace 增加實際 `source_pts`、`source_lag_ms` 與 `batch_size`，能區分推論跳格、轉換 admission 及標註降載。
 
@@ -192,15 +197,19 @@ letterbox padding、BGR 通道與 OpenCV INTER_LINEAR 的輸出逐 byte 相同�
 
 ## CPU YUV 與按需輸出
 
-`capture.host_yuv: true` 讓 CPU 解碼影格保留為引用計數的 YUV；受支援的比例直接產生模型大小輸入，其他情況使用按需 BGR 回退。
-完整 BGR 只在後端燒錄、事件 JPEG 或回退前處理需要時建立，同一影格共用快取。
-目前精確融合支援 8-bit planar 420、BT.601／709、原生尺寸與奇數整倍縮小；一般比例仍保留原前處理。
+`capture.host_yuv: true` 讓 CPU 解碼保留引用計數的 YUV 影格。即時串流、縮圖與錄影直接縮放到編碼器的 limited-range YUV420P。
+後端將框線、遮罩及字形交給編碼器，依輸出色彩矩陣與 4:2:0 色度覆蓋率繪製。告警 JPEG 由保留影格編碼，凍結檢查直接取樣解碼平面。
+`summary.json` 的 `encoder_host_frames` 記錄 YUV 影格提交次數，`encoder_annotated_host_frames` 記錄其中有 YUV 標註的影格，重複提交由其他計數器記錄。
 
-各 stream 的 `output` 新增三個預設關閉的選項：
+精確前處理支援與設定解析度相符、寬高皆為偶數的 8-bit planar 4:2:0、4:2:2 和 4:4:4。
+校準查表可供原生尺寸和奇數整倍縮小直接取樣。其他受支援尺寸重用掃描列緩衝區，產生與 OpenCV 一致的 letterbox 像素，包含 720p 縮至 640 × 360 的兩倍縮小。不支援的格式仍走全幅 BGR 參考路徑。
+
+後端播放可用兩個預設關閉的 `output` 選項。
 
 - `clean_passthrough`：由同一輸入連線轉送壓縮封包，不增加攝影機讀取連線。限 live RTSP／libav ingress，來源大小與 FPS 不符時自動回編碼。
-- `client_overlay`：停用 live RTSP 的後端燒錄，透過既有 metadata API 提供框、多邊形與標籤；檔案燒錄錄影仍執行。
-- `on_demand`：使用既有 Redis detail／語系觀看租約啟停 live 輸出。需要 Redis，推論與事件處理不隨觀看需求停止。
+- `on_demand`：使用既有 Redis detail／語系觀看租約啟停 live 輸出。同一 pipeline 程序每 250 ms 集中查詢已註冊鏡頭的租約，所有標註輸出都無訂閱時停止標註排程。推論與事件處理持續執行。
+
+瀏覽器基準測試的獨立 JSON 鏡頭可設定 `output.client_overlay`，用以測試中繼資料繪製。
 
 這條 CPU 路徑採逐張回退：混合批次中，不支援融合的影格才建立 BGR。
 色彩查表逐一驗證全部 256³ 組合後，可由 48 MiB 縮成每個 profile 16.125 MiB；
@@ -223,30 +232,36 @@ letterbox padding、BGR 通道與 OpenCV INTER_LINEAR 的輸出逐 byte 相同�
 Redis 慢速時合併視覺狀態，警報 JPEG／事件仍經原有持久化 outbox，停止時完成最後一格發送與 owner 清理。
 `summary.json` 提供 `metadata_offered`／`metadata_sent`／`metadata_superseded`／`metadata_errors`。
 
+交通錐中心與電線桿警戒圓的幾何輸入相同時，分析會重用多邊形。標註、metadata 與事件證據共用座標。`summary.json` 的 `geometry_cache_hits` 與 `geometry_cache_misses` 分別記錄啟用的幾何檢查命中與未命中的次數。
+
 live 輸出等到觀看需求與首格資料齊備才建立 native owner；租約失效時結束執行緒與 muxer，續租後等 keyframe 重建。
 字型系統延後到首次後端繪字才初始化，`fonts_initialized` 回報程序共用的字型狀態。
-只使用瀏覽器標註且沒有離線占位畫面／檔案燒錄需求時，不初始化字型。
 
 `host_yuv` 與 `nvdec_device` 為互斥擷取模式。
 
-瀏覽器整合可使用 [overlay.mjs](web/overlay.mjs)：
+PostgreSQL 目錄管理的鏡頭由後端依語系產生標註預覽與原尺寸串流。CPU 解碼時設定 `capture.host_yuv: true`，即可直接在編碼器的 YUV 平面繪圖。設定預覽解析度並搭配 Redis 啟用 `database.media.on_demand`，讓後端只為有觀看需求的串流與語系編碼。
 
-```javascript
-import {createOverlay, loadDictionary} from './web/overlay.mjs';
-const renderer = createOverlay(video, canvas, {
-  language: 'zh-TW', dictionary: await loadDictionary(),
-});
-// 沿用產品既有、已授權的 metadata 連線與播放 session 續租。
-metadata.addEventListener('metadata', event => {
-  renderer.setSnapshot(JSON.parse(event.data).overlay);
-});
-// 語系切換不用再啟動另一份伺服器 encoder。
-renderer.setLanguage('en');
+Flutter 透過播放 API 選擇 `overlay` 與觀看語言。Rust 播放牆可包含最多 32 台鏡頭，Flutter 直接播放回傳的 HLS 並續租。
+
+### 20 FPS 後端標註預覽
+
+將下列片段合併到已設定 Redis 觀看租約的 PostgreSQL 鏡頭設定。這組設定使用 CPU YUV 擷取，將 640 × 360 預覽編碼設為 21 FPS，為每秒 20 張新影格的目標留一格餘裕。
+
+```json
+{
+  "cpu_workers": 16,
+  "metadata_async": true,
+  "capture": { "host_yuv": true, "max_convert_fps": 0 },
+  "database": {
+    "media": {
+      "on_demand": true,
+      "preview": { "width": 640, "height": 360, "fps": 21 }
+    }
+  }
+}
 ```
 
-video 與 canvas 放在同一個 `position: relative` 容器；canvas 設 `position: absolute; left: 0; top: 0; pointer-events: none`。
-同時提供 `assets/labels.json`，或將產品標籤字典傳入。模組不負責登入、建立播放 session 或 WebRTC signaling。
-沒有 source PTS 對映時使用有時效的 latest-state 疊圖；精準錄影維持後端燒錄。
+目標是每秒 20 張新影格時，可先用能穩定提供 24、25 或 30 FPS 的來源，留一些餘裕應付來源抖動。獨立鏡頭設定可使用 `streams[].output.preview.fps`。只開預覽時，用 `encoded_unique` 除以該鏡頭運作秒數計算有效 FPS，搭配 `encoded_repeated`、`capture_rate_dropped` 與 `render_skipped` 分辨來源、擷取限速或標註排程的影響。
 
 ## Rust 原生 RTSP 設定
 

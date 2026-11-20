@@ -32,6 +32,12 @@ pub struct Pending {
     pub attempts: u32,
     claim_token: String,
 }
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ClaimStage {
+    Any,
+    Evidence,
+    Notification,
+}
 #[derive(Clone)]
 pub struct Outbox {
     pub(crate) pool: PgPool,
@@ -147,20 +153,33 @@ impl Outbox {
         Ok(true)
     }
     pub async fn claim(&self, now: i64) -> Result<Option<Pending>> {
+        self.claim_stage(now, ClaimStage::Any).await
+    }
+    pub(crate) async fn claim_stage(&self, now: i64, stage: ClaimStage) -> Result<Option<Pending>> {
         let token = uuid::Uuid::new_v4().to_string();
+        let has_receipt = match stage {
+            ClaimStage::Any => None,
+            ClaimStage::Evidence => Some(false),
+            ClaimStage::Notification => Some(true),
+        };
         let row = sqlx::query(
             "WITH due AS (
             SELECT event_id FROM rust_pipeline.outbox_events WHERE namespace=$1
             AND ((state='pending' AND next_at<=$2) OR (state='inflight' AND lease_until<=$2))
-            ORDER BY created_at,event_id LIMIT 1 FOR UPDATE SKIP LOCKED)
+            AND ($5::bool IS NULL OR (violation_id IS NOT NULL)=$5)
+            ORDER BY CASE WHEN $5::bool IS NULL THEN created_at ELSE
+                GREATEST(created_at, CASE WHEN state='inflight' THEN lease_until ELSE next_at END)
+                END,created_at,event_id LIMIT 1 FOR UPDATE SKIP LOCKED)
             UPDATE rust_pipeline.outbox_events e SET state='inflight',lease_until=$3,claim_token=$4
             FROM due WHERE e.namespace=$1 AND e.event_id=due.event_id
-            RETURNING e.metadata,e.image,e.violation_id,e.attempts",
+            RETURNING e.metadata,CASE WHEN e.violation_id IS NOT NULL AND $5::bool IS TRUE
+                THEN ''::bytea ELSE e.image END AS image,e.violation_id,e.attempts",
         )
         .bind(&self.namespace)
         .bind(now)
         .bind(now.checked_add(120).context("Lease timestamp overflow")?)
         .bind(&token)
+        .bind(has_receipt)
         .fetch_optional(&self.pool)
         .await?;
         row.map(|row| -> Result<Pending> {
@@ -188,6 +207,28 @@ impl Outbox {
             .bind(&pending.metadata.event_id)
             .bind(&pending.claim_token)
             .bind(violation_id)
+            .execute(&self.pool)
+            .await?
+            .rows_affected(),
+        )
+    }
+    pub(crate) async fn schedule_notification(
+        &self,
+        pending: &Pending,
+        violation_id: &str,
+        now: i64,
+    ) -> Result<()> {
+        Self::owned(
+            sqlx::query(
+                "UPDATE rust_pipeline.outbox_events SET violation_id=$4,state='pending',
+                 next_at=$5,attempts=0,claim_token=NULL,lease_until=0,last_error=NULL
+                 WHERE namespace=$1 AND event_id=$2 AND claim_token=$3 AND state='inflight'",
+            )
+            .bind(&self.namespace)
+            .bind(&pending.metadata.event_id)
+            .bind(&pending.claim_token)
+            .bind(violation_id)
+            .bind(now)
             .execute(&self.pool)
             .await?
             .rows_affected(),
@@ -230,10 +271,21 @@ impl Outbox {
         permanent: bool,
         reason: &str,
     ) -> Result<()> {
+        self.retry_with_delay(pending, now, permanent, reason, 0)
+            .await
+    }
+    pub(crate) async fn retry_with_delay(
+        &self,
+        pending: &Pending,
+        now: i64,
+        permanent: bool,
+        reason: &str,
+        retry_after: i64,
+    ) -> Result<()> {
         let attempts = pending.attempts.saturating_add(1);
         let failed = permanent || attempts >= self.max_attempts;
         let next = now
-            .checked_add(1i64 << attempts.min(10))
+            .checked_add((1i64 << attempts.min(10)).max(retry_after))
             .context("Retry timestamp overflow")?;
         Self::owned(sqlx::query("UPDATE rust_pipeline.outbox_events SET state=$4,attempts=$5,next_at=$6,
             lease_until=0,claim_token=NULL,last_error=$7 WHERE namespace=$1 AND event_id=$2 AND claim_token=$3 AND state='inflight'")

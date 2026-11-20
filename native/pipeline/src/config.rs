@@ -442,6 +442,8 @@ pub struct Delivery {
     pub client_secret_env: Option<String>,
     pub outbox_limit_bytes: u64,
     pub max_attempts: u32,
+    pub evidence_workers: usize,
+    pub notification_workers: usize,
 }
 impl Default for Delivery {
     fn default() -> Self {
@@ -454,7 +456,19 @@ impl Default for Delivery {
             client_secret_env: None,
             outbox_limit_bytes: default_limit(),
             max_attempts: 20,
+            evidence_workers: 2,
+            notification_workers: 2,
         }
+    }
+}
+impl Delivery {
+    pub(crate) fn validate_workers(&self) -> Result<()> {
+        ensure!(
+            (1..=32).contains(&self.evidence_workers)
+                && (1..=32).contains(&self.notification_workers),
+            "Delivery worker counts must be between 1 and 32"
+        );
+        Ok(())
     }
 }
 
@@ -747,6 +761,7 @@ impl Config {
             }
         }
         if self.delivery.enabled {
+            self.delivery.validate_workers()?;
             let url = self
                 .delivery
                 .upload_url

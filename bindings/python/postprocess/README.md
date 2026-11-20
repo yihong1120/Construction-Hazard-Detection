@@ -3,11 +3,12 @@
 這個 PyO3 擴充已接入 `main.py` 的攝影機處理流程，處理 centroid 追蹤、PPE
 計數及人員與機具／車輛的距離判斷。數值運算期間釋放 GIL，直接交換 Python
 list／dict，不使用逐格 JSON 或子程序 IPC。每個攝影機各自持有追蹤狀態。
+追蹤與危害判定的 Rust 核心和獨立攝影機流程共用。 [共用 crate](../../../native/postprocess-core/Cargo.toml)
 
 交通錐與電線桿多邊形保留既有幾何演算法，加入區域快取與 Rust MST 選邊；
 文字與多邊形混色也有 Rust kernel。串流編碼、儲存及通知沿用既有實作。
 幾何分析套件按需載入；
-YOLO／TensorRT 推論可獨立選用 [Rust GPU worker](../inference/README.md)。
+YOLO／TensorRT 推論可獨立選用 [Rust GPU worker](../../../native/inference/README.md)。
 這不是整個服務的 Rust 重寫；Hungarian tracker 使用原本的 Python detector。
 Rust detector 的追蹤狀態由擴充持有，不同步至 Python 的 `remote_tracks`／
 `next_remote_id` 內部欄位。
@@ -18,8 +19,8 @@ Rust detector 的追蹤狀態由擴充持有，不同步至 Python 的 `remote_t
 
 ```bash
 uvx --python 3.15 --from maturin==1.16.0 maturin build --release --locked \
-  --manifest-path native/postprocess/Cargo.toml --out native/postprocess/dist
-uv pip install --python /path/to/python3.15 --reinstall native/postprocess/dist/*.whl
+  --manifest-path bindings/python/postprocess/Cargo.toml --out bindings/python/postprocess/dist
+uv pip install --python /path/to/python3.15 --reinstall bindings/python/postprocess/dist/*.whl
 ```
 
 `POSTPROCESS_BACKEND` 在攝影機程序啟動時驗證，變更後需要重啟：
@@ -46,7 +47,8 @@ docker build --target rust-postprocess-wheel -t chd-native-wheel .
 ```bash
 export PYO3_PYTHON=/path/to/python3.15
 cargo test --locked --features extension-module --lib \
-  --manifest-path native/postprocess/Cargo.toml
+  --manifest-path bindings/python/postprocess/Cargo.toml
+cargo test --locked --manifest-path native/postprocess-core/Cargo.toml
 PYTHON_DOTENV_DISABLED=1 python -m pytest tests/src/native_postprocess_test.py \
   tests/src/danger_detector_test.py tests/src/yolo_detector_test.py tests/main_test.py
 ```
@@ -64,7 +66,7 @@ PYTHON_DOTENV_DISABLED=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   --output outputs/native_postprocess_results.json
 ```
 
-輸入產生方式見 [實驗說明](../../experiments/rust_benchmark/README.md)。計時包含
+輸入產生方式見 [實驗說明](../../../experiments/rust_benchmark/README.md)。計時包含
 追蹤、Python bbox 正規化、PPE／距離規則、PyO3 資料轉換和警報建構；每段計時
 外重建 tracker，輪流先執行 Python／Rust，先比對所有輸出。輸入讀檔、初始化、
 模型推論、幾何多邊形、影像 I/O、繪圖、編碼、儲存與通知未計入。

@@ -15,7 +15,9 @@ class RustCapture:
     def __init__(self, url: str, settings: CaptureSettings) -> None:
         extension = cast(Any, load_postprocess_backend('rust'))
         if getattr(extension, 'CAPTURE_API_VERSION', None) != 1:
-            raise RuntimeError('Rebuild native/postprocess for Rust capture')
+            raise RuntimeError(
+                'Rebuild bindings/python/postprocess for Rust capture',
+            )
         self.timeout = settings.read_timeout_ms / 1000
         self.capture = extension.LatestCapture(
             url, ffmpeg=settings.ffmpeg_path, ffprobe=settings.ffprobe_path,

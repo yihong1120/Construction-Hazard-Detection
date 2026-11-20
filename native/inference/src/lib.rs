@@ -1,10 +1,6 @@
-//! TensorRT engine with optional Python bindings.
+//! TensorRT inference and CUDA frame management.
 pub mod core;
 pub mod engine;
-#[cfg(all(feature = "tensorrt", feature = "python"))]
-mod gpu;
-#[cfg(feature = "python")]
-mod python;
+#[cfg(feature = "tensorrt")]
+pub mod gpu;
 pub mod resize;
-#[cfg(feature = "python")]
-pub(crate) use python::python_error;

@@ -8,22 +8,24 @@
 flowchart LR
     C["JSON / PostgreSQL configuration"] --> S["Rust supervisor and generation tracking"]
     S --> V["In-process libav decoding<br/>One owner per source"]
-    V --> B["Bounded BGR pool<br/>Skip colour conversion under load"]
+    V --> B["Bounded frame pool<br/>Retained YUV or pooled BGR"]
     B --> L["Latest-frame mailbox"]
     L --> I["Shared worker per model<br/>Select the latest frame after GPU admission"]
-    I --> P["Shared bounded preprocessing pool<br/>OpenCV INTER_LINEAR and buffer reuse"]
+    I --> P["Shared preprocessing pool<br/>Fused YUV or OpenCV INTER_LINEAR"]
     P --> G["TensorRT / CUDA<br/>Synchronous or two-slot asynchronous inference"]
     G --> T["Bounded CPU executor<br/>Tracking and hazard analysis"]
     T --> M["Metadata snapshot<br/>Generation and freshness"]
-    L --> R["Independent output clock<br/>Multilingual Rust overlays"]
+    L --> R["Latest frame<br/>Multilingual Rust overlays"]
     M --> R
     R --> E["In-process libav encoding and muxing<br/>NVENC or libx264"]
-    L --> E
+    L -->|"Clean output with direct YUV scaling"| E
     E --> O["RTSP / MP4"]
     T --> D["Redis alerts and model status"]
     T --> J["Rust JPEG evidence from the source frame"]
     J --> Q["Persistent PostgreSQL outbox"]
-    Q --> U["OAuth, evidence upload and notification retries"]
+    Q --> U["Bounded evidence upload workers"]
+    U -->|"Save upload receipt"| Q
+    Q -->|"Events with receipts"| N["Independent notification workers and retries"]
 ```
 
 ## Build from source
@@ -121,10 +123,12 @@ The shared pool handles tracking, zone analysis, overlays and evidence JPEGs. Th
 - Each stream uses `work_start_hour` and `work_end_hour` in the frame's local time. The start hour is inclusive and the end hour is exclusive. A range of `0` to `24` covers the whole day. The JSON setting `streams[].timezone` defaults to `Asia/Taipei`, which also applies to cameras from the PostgreSQL catalogue. Outside working hours, evidence and notifications are generated only when a person enters a controlled area around traffic cones or utility poles. Live detection and overlays continue throughout the day.
 - Redis alerts use the existing warning stream format. Rust also publishes the latest metadata. The site generation and camera owner token block stale writes, and model status can respond to a publication challenge.
 - The source JPEG and event are committed in the same PostgreSQL transaction before the HTTP dispatcher sends them. The upload receipt is saved before notification, so a notification retry or process restart can reuse the completed upload.
-- The default outbox limits are 512 MiB of retained JPEGs and metadata and 20 delivery attempts. Permanent errors go to the failed queue. The limit covers payloads. PostgreSQL tables, indexes and WAL require additional space. The endpoint needs to support `Idempotency-Key` to prevent a duplicate if a request succeeds remotely before the local result is recorded.
+- The default outbox limits are 512 MiB of retained JPEGs and metadata and 20 attempts per delivery stage. Permanent errors go to the failed queue. The limit covers payloads. PostgreSQL tables, indexes and WAL require additional space. The endpoint needs to support `Idempotency-Key` to prevent a duplicate if a request succeeds remotely before the local result is recorded.
 - `record_detections` is off by default. When enabled, each camera's diagnostic JSONL file rotates at 10 MiB and keeps the current and previous files. SIGINT and SIGTERM stop capture, join native media owner threads, finish encoder trailers, close models and write the summary.
 
 `delivery` uses the existing `/upload` multipart, notification JSON and OAuth client credentials protocols. Credentials are read only from the environment variables referenced by the configuration.
+
+`delivery.evidence_workers` and `delivery.notification_workers` each default to two concurrent requests. A slow push delivery leaves both evidence upload slots available. Notification retries use the stored receipt and metadata without loading the JPEG from PostgreSQL. When the endpoint supplies a retry delay, the dispatcher waits for at least that delay, bounded to one day.
 
 Set `experimental_replay` explicitly to use recorded detections. Replay delivery is limited to loopback, and Redis requires an isolated prefix to keep test data out of live services.
 
@@ -134,7 +138,7 @@ Use `outbox --config ... --requeue-failed` to requeue failed events.
 
 - `capture.buffer_frames` is the hard limit on BGR buffers per source, with a live default of six. When the pool is full, live capture keeps decoding and draining the source while skipping BGR conversion. Offline lossless mode waits for space and preserves every frame. Each buffer has 64 bytes of padding for codec SIMD operations and is reclaimed when its last `Arc` is dropped.
 - The inference request queues the camera mailbox. The worker takes its latest frame after GPU admission and passes the actual inference frame with the result to tracking. Each camera can have one outstanding request.
-- Live overlays have an independent `fps` clock and pair the latest frame with the latest analysis. The metadata holds no full-size images. If the analysis exceeds `overlay_max_age_ms` (default 1000) or belongs to a different generation, the renderer displays `Analysis pending` in place of stale annotations. Live overlays can therefore use a different frame from the inference input. Lossless mode matches them frame by frame.
+- Live overlays pair the latest frame with the latest analysis. Retained YUV frames trigger annotation preparation on arrival, and each encoder paces its output at its configured FPS. The metadata holds no full-size images. If the analysis exceeds `overlay_max_age_ms` (default 1000) or belongs to a different generation, the renderer displays `Analysis pending`. Lossless mode matches frames and analysis frame by frame.
 - `capture.max_lag_ms` defaults to 2000. Capture reconnects if the lag relative to the first decoded PTS grows beyond the threshold, which prevents a growing backlog of old frames. A significant PTS jump backwards also advances the generation. `read_timeout_ms` bounds interruptible native I/O.
 - `summary.json` includes `converted`, `capture_dropped`, `capture_reconnects`, `capture_pool_peak`, `rendered`, `render_skipped` and `render_pending`. The trace includes the actual `source_pts`, `source_lag_ms` and `batch_size` values. Use these fields to distinguish inference frame skipping, conversion admission and overlay load shedding.
 
@@ -179,13 +183,16 @@ The cap applies to conversion per stream and also limits the rate at which clean
 
 ## CPU YUV and on-demand output
 
-With `capture.host_yuv: true`, CPU decoding keeps frames in reference-counted YUV storage. Supported scales produce model-sized input directly, and other scales materialise BGR on demand. Full-size BGR is created for server-side frame annotation, evidence JPEGs or fallback preprocessing when needed, and all readers of that frame share the cache. Exact fused preprocessing currently supports 8-bit planar 4:2:0, BT.601 or BT.709, and same-size images or downscaling by an odd integer factor. Other scales use existing preprocessing.
+With `capture.host_yuv: true`, CPU decoding keeps frames in reference-counted YUV storage. The encoder scales clean and annotated outputs into its own limited-range YUV420P planes. For annotated outputs the renderer sends geometry, masks and glyphs to the encoder, which paints them after scaling using the output colour matrix and 4:2:0 chroma coverage. This applies to live previews and annotated files. Evidence JPEGs encode the retained frame and source freeze checks sample the decoded planes. In `summary.json`, `encoder_host_frames` counts submissions from retained frames and `encoder_annotated_host_frames` counts the subset with YUV annotation, excluding repeats.
 
-Each stream has three optional `output` settings, all disabled by default.
+For matching native dimensions and even frame sizes, exact preprocessing supports 8-bit planar 4:2:0, 4:2:2 and 4:4:4. When available, calibrated lookup tables sample same-size images and odd-integer reductions directly. Other supported sizes use reusable scanline buffers to produce the same letterbox pixels as OpenCV, including a 2× reduction from 720p to 640 × 360. Unsupported layouts use the full-size BGR reference path.
+
+Server-side playback supports two optional `output` settings, both disabled by default.
 
 - `clean_passthrough` forwards compressed packets from the existing input connection. It is limited to live RTSP with libav ingest, and switches to encoding if the source dimensions or FPS differ from the configured output.
-- `client_overlay` supplies boxes, polygons and labels over the existing metadata API and lets the client draw live RTSP overlays. Annotated file recordings still render on the server.
-- `on_demand` starts and stops live output based on existing Redis detail and language viewing leases. It requires Redis. Inference and event processing continue independently of viewing demand.
+- `on_demand` starts and stops live output based on existing Redis detail and language viewing leases. One poller per pipeline process reads the registered cameras' leases together every 250 milliseconds. Server-side annotation sleeps when all its outputs are inactive. Inference and event processing continue independently of viewing demand.
+
+Standalone JSON fixtures can use `output.client_overlay` to exercise the metadata renderer in the browser benchmark.
 
 The CPU path falls back per image. In a mixed batch, BGR is created only for frames that cannot use fused preprocessing. After verification over all 256³ colour combinations, the lookup table can be reduced from 48 MiB to 16.125 MiB per profile. The full table remains in use when calibration cannot separate it into smaller components. Construction still temporarily needs the full table, so start-up peak memory is not reduced by the full difference. Fused sampling fills only the letterbox borders and writes the image area directly.
 
@@ -203,26 +210,35 @@ Two further options are disabled by default and can be benchmarked independently
 
 `metadata_async` uses a latest-only mailbox that holds one snapshot of tracking and geometry data per camera, without images. When Redis slows down, visual state updates are coalesced. Evidence JPEGs and events still use the persistent outbox. Shutdown sends the last snapshot and cleans up its owner. `summary.json` includes `metadata_offered`, `metadata_sent`, `metadata_superseded` and `metadata_errors`.
 
-Live output creates its native owner when viewing demand and the first frame are both present. An expired lease closes the thread and muxer. Playback after renewal waits for a keyframe before reinitialising. The shared font system initialises on the first server-side text render, and `fonts_initialized` reports its process-wide status. Browser-only annotation needs no server font initialisation unless an offline placeholder or annotated file is required.
+The hazard engine reuses polygons while cone centres and the pole circles used for geometry are identical. The resulting coordinates are shared with annotation, metadata and evidence. `geometry_cache_hits` and `geometry_cache_misses` count each enabled geometry check in `summary.json`.
+
+Live output creates its native owner when viewing demand and the first frame are both present. An expired lease closes the thread and muxer. Playback after renewal waits for a keyframe before reinitialising. The shared font system initialises on the first server-side text render, and `fonts_initialized` reports its process-wide status.
 
 Choose either `host_yuv` or `nvdec_device` as the capture mode.
 
-For browser integration, use the overlay module. [overlay.mjs](web/overlay.mjs)
+PostgreSQL-managed cameras publish server-annotated preview and detail streams by language. Set `capture.host_yuv: true` with CPU decoding to draw directly into the encoder's YUV planes. Configure the preview resolution and use `database.media.on_demand` with Redis to open encoders only for requested streams and languages.
 
-```javascript
-import {createOverlay, loadDictionary} from './web/overlay.mjs';
-const renderer = createOverlay(video, canvas, {
-  language: 'zh-TW', dictionary: await loadDictionary(),
-});
-// Reuse the authorised metadata connection and renew the playback session lease.
-metadata.addEventListener('metadata', event => {
-  renderer.setSnapshot(JSON.parse(event.data).overlay);
-});
-// Switch languages in the browser without starting another server encoder.
-renderer.setLanguage('en');
+Flutter requests the `overlay` profile and the selected language through the playback API. A Rust playback wall supports up to 32 cameras. Flutter plays each returned HLS URL and renews the wall lease.
+
+### 20 FPS annotated previews
+
+Merge this fragment into a PostgreSQL camera configuration that already uses Redis viewing leases. It selects CPU YUV capture and 640 × 360 previews encoded at 21 FPS, with one frame per second of headroom for a target of 20 distinct frames.
+
+```json
+{
+  "cpu_workers": 16,
+  "metadata_async": true,
+  "capture": { "host_yuv": true, "max_convert_fps": 0 },
+  "database": {
+    "media": {
+      "on_demand": true,
+      "preview": { "width": 640, "height": 360, "fps": 21 }
+    }
+  }
+}
 ```
 
-Put the video and canvas in the same `position: relative` container. Set the canvas CSS to `position: absolute; left: 0; top: 0; pointer-events: none`. Serve `assets/labels.json` with the module or pass in your own label dictionary. The application handles sign-in, playback session creation and WebRTC signalling. When source PTS cannot be mapped, the overlay uses the latest state within its freshness limit. Use server-side frame annotation for recordings that require frame-accurate overlays.
+For 20 distinct preview frames per second, start with cameras that deliver a stable 24, 25 or 30 FPS. This gives the preview encoder margin for ordinary source jitter. Standalone stream configurations set the same target in `streams[].output.preview.fps`. On a run with only the preview active, divide `encoded_unique` by the camera's elapsed seconds to measure distinct FPS. Compare `encoded_repeated`, `capture_rate_dropped` and `render_skipped` to check whether the source, capture limit or annotation queue reduced it.
 
 ## Native Rust RTSP configuration
 

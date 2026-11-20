@@ -119,6 +119,8 @@ scripts/upgrade_system_cudnn.sh
 # Build artifacts
 build/
 /native/*/target/
+/bindings/python/*/target/
+/bindings/python/*/dist/
 frontend/web/
 frontend/web_bak/
 *.egg-info/

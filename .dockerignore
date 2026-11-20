@@ -47,6 +47,7 @@ build/
 **/target/
 native/postprocess/dist/
 native/inference/dist/
+bindings/python/*/dist/
 native/pipeline/*_REPORT.md
 native/pipeline/*_results.json
 native/inference/*_results.json

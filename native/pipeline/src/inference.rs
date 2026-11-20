@@ -622,6 +622,7 @@ mod tests {
             pixels: pool.take(),
             device: None,
             host: None,
+            annotation: None,
             width: 2,
             height: 2,
             sequence,

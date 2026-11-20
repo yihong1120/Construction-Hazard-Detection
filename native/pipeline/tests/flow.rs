@@ -433,8 +433,8 @@ async fn notification_retry_preserves_upload_receipt_across_dispatchers() {
         model_version: "v1".into(),
         warnings: Default::default(),
         detections: vec![],
-        cone_polygon: vec![],
-        pole_polygon: vec![],
+        cone_polygon: Default::default(),
+        pole_polygon: Default::default(),
     };
     let mut image = vec![];
     image::codecs::jpeg::JpegEncoder::new(&mut image)
@@ -625,6 +625,7 @@ async fn inactive_lossless_live_output_joins_when_its_sender_closes() {
 async fn full_and_preview_outputs_keep_frames_and_language_paths() {
     let root = tempfile::tempdir().unwrap();
     let mut cfg = config(root.path(), 1);
+    cfg.capture.host_yuv = true;
     let stream = &mut cfg.streams[0];
     stream.languages = vec!["en".into(), "zh-TW".into()];
     stream.output.annotated = Some(
@@ -644,6 +645,8 @@ async fn full_and_preview_outputs_keep_frames_and_language_paths() {
     cfg.validate().unwrap();
     let report = runtime::run(cfg, CancellationToken::new()).await.unwrap();
     assert_eq!(report.cameras[0].encoded, 24);
+    assert_eq!(report.cameras[0].encoder_annotated_host_frames, 16);
+    assert_eq!(report.cameras[0].host_materialized, 0);
     for (name, width, height) in [
         ("clean-0.mp4", 640, 352),
         ("overlay_ZW4.mp4", 640, 352),
@@ -674,6 +677,32 @@ async fn full_and_preview_outputs_keep_frames_and_language_paths() {
         assert_eq!(data["streams"][0]["height"], height, "{name}");
         assert_eq!(data["streams"][0]["nb_read_frames"], "4", "{name}");
     }
+    let read_frame = |name| {
+        let output = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-threads", "1", "-i"])
+            .arg(root.path().join(name))
+            .args([
+                "-frames:v",
+                "1",
+                "-pix_fmt",
+                "yuv420p",
+                "-threads",
+                "1",
+                "-f",
+                "rawvideo",
+                "pipe:1",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        output.stdout
+    };
+    let preview = read_frame("preview.mp4");
+    let english = read_frame("preview_ZW4.mp4");
+    let taiwanese = read_frame("preview_emgtVFc.mp4");
+    assert_eq!(preview.len(), 320 * 176 * 3 / 2);
+    assert_ne!(preview, english);
+    assert_ne!(english, taiwanese);
 }
 
 #[test]

@@ -63,7 +63,7 @@ Python，`rust` 則拒絕；不會自動匯出或重新量化。
 docker build --target rust-inference-wheel -t chd-native-inference-wheel .
 ```
 
-獨立 Rust 程式可用 `default-features = false` 引用此 crate 的 `core` 與 `engine`，並按需啟用 `tensorrt`，不載入 PyO3／CPython。預設 `python` feature 保留既有 wheel 介面；完整攝影機入口見 [native/pipeline](../pipeline/README.md)。
+獨立 Rust 程式直接引用此 crate 的 `core` 與 `engine`，並按需啟用 `tensorrt`。既有 Python wheel 由 `bindings/python/inference` 建置，繼續提供 `construction_inference` 模組。完整攝影機入口見 [native/pipeline](../pipeline/README.md)。
 
 主機建置 Python wheel 需要 Rust 1.93.1、Python 3.15、C++17 compiler、matching TensorRT
 headers／libraries、完整 CUDA toolkit headers、CUDA runtime／driver／NVRTC，
@@ -79,9 +79,9 @@ export LD_LIBRARY_PATH="$TRT_LIB:$CUDA_LIB:$OPENCV_ROOT/usr/lib/x86_64-linux-gnu
 
 uvx --python 3.15 --from maturin==1.16.0 maturin build \
   --release --locked --auditwheel skip --features tensorrt \
-  --manifest-path native/inference/Cargo.toml --out native/inference/dist
+  --manifest-path bindings/python/inference/Cargo.toml --out outputs/inference-wheels
 uv pip install --python /path/to/python3.15 --reinstall \
-  native/inference/dist/*.whl
+  outputs/inference-wheels/*.whl
 ```
 
 `--auditwheel skip` 保留系統共享函式庫依賴，避免把主機 NVIDIA driver 打包到
@@ -126,8 +126,10 @@ engine mutex 保證同一 context 的呼叫不重疊。worker 停止或 run loop
 
 ```bash
 export PYO3_PYTHON=/path/to/python3.15
-cargo test --locked --features extension-module --lib \
+cargo test --locked --lib \
   --manifest-path native/inference/Cargo.toml
+cargo test --locked --features extension-module --lib \
+  --manifest-path bindings/python/inference/Cargo.toml
 PYTHON_DOTENV_DISABLED=1 YOLO_WORKER_BACKEND=python python -m pytest \
   tests/src/native_inference_test.py tests/src/yolo_worker_test.py
 
@@ -236,7 +238,7 @@ NumPy 記憶體；多個呼叫交錯時可配置獨立 workspace，context 仍�
 
 1080p YOLO26n、固定 640 方形輸入的 7 輪對照，batch 1 約由 1.8662 降至
 1.7955 ms／張，batch 8 約由 1.0315 降至 0.9321 ms／張。重跑指令見
-[後處理與共用影格量測](../postprocess/README.md)。
+[後處理與共用影格量測](../../bindings/python/postprocess/README.md)。
 
 另以獨立 CUDA bilinear kernel 比較 CPU resize／padding 後上傳，與原圖先上傳
 再由 GPU resize。兩者皆重用 buffer、包含 pageable H2D、輸出留在 GPU，
