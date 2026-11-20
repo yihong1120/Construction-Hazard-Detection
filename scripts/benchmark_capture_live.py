@@ -8,6 +8,7 @@ import json
 import statistics
 import sys
 import time
+from functools import partial
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -24,19 +25,26 @@ def load(path):
     return module.StreamCapture
 
 
-async def trial(factory, args):
-    capture = factory(args.source, capture_interval=1 / 30)
-    count = 0
-    original = capture._run_capture_operation
+class CaptureReadCounter:
+    def __init__(self, operation):
+        self.operation = operation
+        self.count = 0
 
-    async def operation(call, *values):
-        nonlocal count
-        result = await original(call, *values)
+    async def run(self, call, *values):
+        result = await self.operation(call, *values)
         if getattr(call, '__name__', '') == 'read' and result[0]:
-            count += 1
+            self.count += 1
         return result
 
-    capture._run_capture_operation = operation
+
+def single_thread_capture(factory, source, api, params):
+    return factory(source, api, [*params, cv2.CAP_PROP_N_THREADS, 1])
+
+
+async def trial(factory, args):
+    capture = factory(args.source, capture_interval=1 / 30)
+    reads = CaptureReadCounter(capture._run_capture_operation)
+    capture._run_capture_operation = reads.run
     capture.freeze_reconnect_seconds = 0
     capture.timestamp_reconnect_seconds = 0
     generator = capture.execute_capture()
@@ -50,7 +58,7 @@ async def trial(factory, args):
                 if started is None:
                     started = now
                 if now - started < args.warmup:
-                    before = count
+                    before = reads.count
                     continue
                 measured.append(now)
                 if measured[-1] - measured[0] >= args.seconds:
@@ -61,8 +69,8 @@ async def trial(factory, args):
     return {
         'admitted_fps': (len(measured) - 1) / duration,
         'admitted_frames': len(measured),
-        'successful_reads_including_warmup': count,
-        'read_since_last_warmup_frame': count - before,
+        'successful_reads_including_warmup': reads.count,
+        'read_since_last_warmup_frame': reads.count - before,
         'window_seconds': duration,
     }
 
@@ -78,10 +86,7 @@ def main():
     args = parser.parse_args()
     assert urlsplit(args.source).hostname == '127.0.0.1'
     cv2.setNumThreads(1)
-    original = cv2.VideoCapture
-    cv2.VideoCapture = lambda src, api, params: original(
-        src, api, [*params, cv2.CAP_PROP_N_THREADS, 1],
-    )
+    cv2.VideoCapture = partial(single_thread_capture, cv2.VideoCapture)
     factories = {'before': load(args.legacy_source), 'after': StreamCapture}
     rows = []
     for index in range(args.rounds):
