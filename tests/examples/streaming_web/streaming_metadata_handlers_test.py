@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from examples.streaming_web.metadata_fanout import _StreamSubscribers
 from examples.streaming_web.metadata_fanout import MetadataFanout
+from examples.streaming_web.metadata_wire import MetadataFrame
 from examples.streaming_web.schemas import FrameOutData
 from examples.streaming_web.streaming_metadata_handlers import (
     metadata_push_loop,
@@ -117,8 +118,10 @@ class MetadataFanoutTests(unittest.IsolatedAsyncioTestCase):
         second_item = await second.get()
         assert not isinstance(first_item, Exception)
         assert not isinstance(second_item, Exception)
-        self.assertEqual(first_item['id'], '1-0')
-        self.assertEqual(second_item['id'], '1-0')
+        self.assertIs(first_item, second_item)
+        self.assertEqual(first_item.record['id'], '1-0')
+        self.assertIs(first_item.sse, second_item.sse)
+        self.assertIs(first_item.websocket, second_item.websocket)
         self.assertGreaterEqual(_callbacks.calls, 1)
         await first.close()
         await second.close()
@@ -139,17 +142,17 @@ class MetadataFanoutTests(unittest.IsolatedAsyncioTestCase):
         await subscription.close()
         await subscription.close()
 
-        queue: asyncio.Queue[FrameOutData | Exception] = asyncio.Queue(
+        queue: asyncio.Queue[MetadataFrame | Exception] = asyncio.Queue(
             maxsize=1,
         )
         queue.put_nowait(
-            {
+            MetadataFrame({
                 'id': 'old',
                 'has_warning': False,
                 'key': 'camera',
                 'stream_id': 'camera',
                 'redis_key': 'metadata-key',
-            },
+            }),
         )
         state = _StreamSubscribers(
             rds=MagicMock(),
@@ -167,7 +170,7 @@ class MetadataFanoutTests(unittest.IsolatedAsyncioTestCase):
         """
         _callbacks = _ReaderRetriesEmptyAndFailedRedisReadsCallbacks()
         fanout = MetadataFanout()
-        queue: asyncio.Queue[FrameOutData | Exception] = asyncio.Queue()
+        queue: asyncio.Queue[MetadataFrame | Exception] = asyncio.Queue()
         _callbacks.state = _StreamSubscribers(
             rds=MagicMock(),
             queues={queue},
@@ -194,7 +197,7 @@ class MetadataFanoutTests(unittest.IsolatedAsyncioTestCase):
         No unused Redis reader remains after the final subscriber exits.
         """
         fanout = MetadataFanout()
-        queue: asyncio.Queue[FrameOutData | Exception] = asyncio.Queue()
+        queue: asyncio.Queue[MetadataFrame | Exception] = asyncio.Queue()
         started = asyncio.Event()
         release = asyncio.Event()
 
@@ -223,11 +226,19 @@ class MetadataFanoutTests(unittest.IsolatedAsyncioTestCase):
 class MetadataHandlerTests(unittest.IsolatedAsyncioTestCase):
     """Provide MetadataHandlerTests."""
 
+    frame = MetadataFrame({
+        'id': '1-0',
+        'has_warning': True,
+        'key': 'camera',
+        'stream_id': 'camera',
+        'redis_key': 'metadata-key',
+    })
+
     async def test_sse_reads_from_subscription_and_closes_it(self) -> None:
         """Test sse reads from subscription and closes it."""
         subscription = MagicMock()
         subscription.get = AsyncMock(
-            return_value={'id': '1-0', 'has_warning': True},
+            return_value=self.frame,
         )
         subscription.close = AsyncMock()
         request = MagicMock()
@@ -260,7 +271,7 @@ class MetadataHandlerTests(unittest.IsolatedAsyncioTestCase):
         """Test websocket push sends subscription frame."""
         subscription = MagicMock()
         subscription.get = AsyncMock(
-            return_value={'id': '1-0', 'has_warning': True},
+            return_value=self.frame,
         )
         subscription.close = AsyncMock()
         websocket = MagicMock()

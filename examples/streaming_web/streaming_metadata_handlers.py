@@ -23,7 +23,6 @@ from examples.shared.ws_helpers import log_every_n
 from examples.shared.ws_helpers import start_session_timer
 from examples.shared.ws_utils import _is_websocket_connected
 from examples.shared.ws_utils import _safe_websocket_receive_text
-from examples.shared.ws_utils import _safe_websocket_send_json
 from examples.shared.ws_utils import _safe_websocket_send_text
 from examples.streaming_web.metadata_fanout import metadata_fanout
 from examples.streaming_web.metadata_keys import build_metadata_key
@@ -31,9 +30,12 @@ from examples.streaming_web.metadata_keys import (
     build_metadata_key_from_stream_id,
 )
 from examples.streaming_web.metadata_keys import get_metadata_site_generation
+from examples.streaming_web.metadata_wire import (
+    encode_sse_event as _encode_sse_event,
+)
+from examples.streaming_web.metadata_wire import MetadataFrame
 from examples.streaming_web.overlay_admission import OverlayAdmission
 from examples.streaming_web.redis_service import fetch_latest_metadata_for_key
-from examples.streaming_web.schemas import FrameOutData
 
 _json_compact_separators: Final[tuple[str, str]] = (',', ':')
 _metadata_client_tick_seconds: Final[float] = 1.0
@@ -42,59 +44,6 @@ _metadata_redis_error_interval_seconds: Final[float] = 15.0
 
 
 logger = logging.getLogger(__name__)
-
-
-def _metadata_has_warning(frame_data: FrameOutData) -> bool:
-    """Read the compact warning state from viewer metadata.
-
-    Args:
-        frame_data: Decoded Redis metadata record.
-
-    Returns:
-        Whether the source frame contains a safety warning.
-    """
-    return frame_data['has_warning']
-
-
-def _build_metadata_payload(frame_data: FrameOutData) -> dict[str, object]:
-    """Build the payload for clients that render video natively.
-
-    Args:
-        frame_data: Decoded Redis metadata record.
-
-    Returns:
-        Minimal serialisable warning state without image data.
-    """
-    payload: dict[str, object] = {
-        'has_warning': _metadata_has_warning(frame_data),
-    }
-    if 'overlay' in frame_data:
-        payload['overlay'] = frame_data['overlay']
-    return payload
-
-
-def _encode_sse_event(
-    payload: Mapping[str, object],
-    event_type: str = 'metadata',
-) -> bytes:
-    """Encode one Server-Sent Events message.
-
-    Args:
-        payload: Serialisable event payload.
-        event_type: SSE event name sent to the client.
-
-    Returns:
-        UTF-8 SSE wire message including the required blank terminator.
-    """
-    event_id = str(payload.get('id') or '')
-    lines = []
-    if event_id:
-        lines.append(f"id: {event_id}")
-    lines.append(f"event: {event_type}")
-    lines.append(
-        'data: ' + json.dumps(payload, separators=_json_compact_separators),
-    )
-    return ('\n'.join(lines) + '\n\n').encode('utf-8')
 
 
 async def _refresh_overlay_demand(
@@ -383,7 +332,7 @@ def _metadata_read_error_event(
 
 
 def _metadata_frame_event(
-    frame_data: FrameOutData | None,
+    frame: MetadataFrame | None,
     redis_key: str,
     last_id: str,
     now: float,
@@ -392,7 +341,7 @@ def _metadata_frame_event(
     """Encode one metadata update or idle heartbeat for SSE clients.
 
     Args:
-        frame_data: Optional next Redis metadata record.
+        frame: Optional shared metadata frame.
         redis_key: Metadata key used for diagnostic output.
         last_id: Previously delivered Redis Stream identifier.
         now: Current monotonic timestamp.
@@ -402,17 +351,15 @@ def _metadata_frame_event(
         Updated message identifier, heartbeat timestamp, and optional SSE
             event.
     """
-    if frame_data:
-        last_id = str(frame_data['id'])
-        payload = _build_metadata_payload(frame_data)
-        payload['id'] = last_id
+    if frame is not None:
+        last_id = str(frame.record['id'])
         logger.debug(
             '[SSE-Metadata] send key=%s id=%s has_warning=%s',
             redis_key,
             last_id,
-            payload['has_warning'],
+            frame.record['has_warning'],
         )
-        return last_id, now, _encode_sse_event(payload)
+        return last_id, now, frame.sse
     last_heartbeat, heartbeat = _heartbeat_event(now, last_heartbeat)
     return last_id, last_heartbeat, heartbeat
 
@@ -488,7 +435,7 @@ async def metadata_push_loop(
                 continue
 
             if frame_data:
-                last_id = str(frame_data['id'])
+                last_id = str(frame_data.record['id'])
                 if not await _send_metadata_websocket_frame(
                     websocket,
                     frame_data,
@@ -576,7 +523,7 @@ async def _handle_metadata_receive_task(
 
 async def _send_metadata_websocket_frame(
     websocket: WebSocket,
-    frame_data: FrameOutData,
+    frame: MetadataFrame,
     redis_key: str,
     last_id: str,
     client_tag: str,
@@ -585,7 +532,7 @@ async def _send_metadata_websocket_frame(
 
     Args:
         websocket: Accepted client WebSocket.
-        frame_data: Decoded metadata record to serialise.
+        frame: Shared metadata frame.
         redis_key: Source metadata key for diagnostics.
         last_id: Redis Stream identifier for diagnostics.
         client_tag: Diagnostic label for safe sending.
@@ -593,10 +540,9 @@ async def _send_metadata_websocket_frame(
     Returns:
         Whether the JSON frame was sent successfully.
     """
-    payload = _build_metadata_payload(frame_data)
-    if not await _safe_websocket_send_json(
+    if not await _safe_websocket_send_text(
         websocket,
-        payload,
+        frame.websocket,
         client_tag.removeprefix('[WebSocket-Metadata] '),
     ):
         return False
@@ -604,7 +550,7 @@ async def _send_metadata_websocket_frame(
         '[WebSocket-Metadata] send key=%s id=%s has_warning=%s',
         redis_key,
         last_id,
-        payload['has_warning'],
+        frame.record['has_warning'],
     )
     return True
 

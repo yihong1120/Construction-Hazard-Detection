@@ -16,7 +16,7 @@ from fastapi import WebSocketDisconnect
 
 from examples.auth.config import Settings
 from examples.streaming_web import streaming_metadata_handlers as handlers
-from examples.streaming_web.schemas import FrameOutData
+from examples.streaming_web.metadata_wire import MetadataFrame
 from examples.streaming_web.streaming_metadata_handlers import (
     MetadataOverlayLease,
 )
@@ -44,7 +44,7 @@ async def _sse_turns_returned_reader_exceptions_return_reader_error(
     /,
     awaitable: Coroutine[object, object, object],
     timeout: float,
-) -> FrameOutData | Exception:
+) -> Exception:
     """Close the unused subscription awaitable and return an error.
 
     Args:
@@ -63,9 +63,9 @@ async def _sse_turns_returned_reader_exceptions_return_reader_error(
 
 
 async def _websocket_push_ignores_reader_errors_get_frame(
-    frames: list[FrameOutData | Exception],
+    frames: list[MetadataFrame | Exception],
     /,
-) -> FrameOutData | Exception:
+) -> MetadataFrame | Exception:
     """Return the next value published by the fan-out subscription.
 
     Returns:
@@ -89,12 +89,12 @@ async def _websocket_push_ignores_reader_errors_wait_for_message(
 
 
 async def _websocket_push_handles_completed_messages_wait_for_result(
-    outcomes: list[FrameOutData | Exception],
+    outcomes: list[MetadataFrame | Exception],
     testcase: TestMetadataTransportFlows,
     /,
     awaitable: Coroutine[object, object, object],
     timeout: float,
-) -> FrameOutData:
+) -> MetadataFrame:
     """Close the mocked awaitable and return the queued result.
 
     Args:
@@ -119,7 +119,7 @@ async def _websocket_push_handles_completed_messages_wait_for_result(
 
 
 async def _websocket_push_handles_completed_messages_active_after_task_runs(
-    outcomes: list[FrameOutData | Exception],
+    outcomes: list[MetadataFrame | Exception],
     /,
     *_args: object,
 ) -> bool:
@@ -144,19 +144,19 @@ async def _websocket_push_stops_when_client_active_after_receive(
     return True
 
 
-def _frame() -> FrameOutData:
+def _frame() -> MetadataFrame:
     """Build one valid metadata record for transport helper tests.
 
     Returns:
-        Compact metadata payload emitted by the Redis reader.
+        Shared metadata frame emitted by fan-out.
     """
-    return {
+    return MetadataFrame({
         'id': '17-0',
         'has_warning': True,
         'key': 'Camera A',
         'stream_id': '12',
         'redis_key': 'metadata:site-a:camera-a',
-    }
+    })
 
 
 class TestMetadataSseHelpers(unittest.IsolatedAsyncioTestCase):
@@ -318,7 +318,7 @@ class TestMetadataWebSocketHelpers(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 handlers,
-                '_safe_websocket_send_json',
+                '_safe_websocket_send_text',
                 new=AsyncMock(side_effect=[False, True]),
             ),
             patch.object(
@@ -549,7 +549,7 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
         """
         subscription = MagicMock()
         subscription.close = AsyncMock()
-        frames: list[FrameOutData | Exception] = [
+        frames: list[MetadataFrame | Exception] = [
             RuntimeError('offline'),
             _frame(),
         ]
@@ -611,7 +611,7 @@ class TestMetadataTransportFlows(unittest.IsolatedAsyncioTestCase):
         subscription = MagicMock()
         subscription.close = AsyncMock()
         subscription.get = AsyncMock()
-        outcomes: list[FrameOutData | Exception] = [
+        outcomes: list[MetadataFrame | Exception] = [
             asyncio.TimeoutError(),
             _frame(),
         ]

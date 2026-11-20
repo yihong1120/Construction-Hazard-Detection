@@ -25,11 +25,9 @@ def main():
     from examples.streaming_web.media_paths import build_clean_demand_key
     from examples.streaming_web.media_paths import build_overlay_demand_key
     from examples.streaming_web.metadata_keys import build_metadata_key
+    from examples.streaming_web.metadata_wire import build_metadata_payload
     from examples.streaming_web.redis_service import (
         fetch_latest_metadata_for_key,
-    )
-    from examples.streaming_web.streaming_metadata_handlers import (
-        _build_metadata_payload,
     )
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -121,7 +119,7 @@ def main():
                 item = await fetch_latest_metadata_for_key(db, key, last)
                 if item is not None:
                     last = item['id']
-                    payload = json.dumps(_build_metadata_payload(item))
+                    payload = json.dumps(build_metadata_payload(item))
                     yield 'event: metadata\ndata: ' + payload + '\n\n'
         return StreamingResponse(generate(), media_type='text/event-stream')
 

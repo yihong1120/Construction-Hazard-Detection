@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import AsyncMock
 
 from examples.streaming_web import metadata_keys
 from examples.streaming_web import redis_service as service
 from examples.streaming_web.metadata_keys import build_metadata_key
+from examples.streaming_web.metadata_wire import build_metadata_payload
+from examples.streaming_web.metadata_wire import MetadataFrame
 from examples.streaming_web.redis_service import (
     fetch_latest_metadata_for_key,
 )
@@ -19,11 +22,6 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
         self.mock_rds = AsyncMock()
 
     def test_rust_overlay_preserves_coordinates_and_owner(self) -> None:
-        import json
-        from examples.streaming_web.streaming_metadata_handlers import (
-            _build_metadata_payload,
-        )
-
         snapshot = {
             'owner': 'worker-a', 'generation': 3, 'sequence': 42,
             'frame_width': 1920, 'frame_height': 1080, 'source_pts': 1.5,
@@ -33,9 +31,29 @@ class TestRedisService(unittest.IsolatedAsyncioTestCase):
             build_metadata_key('site', 'camera'), b'1-0',
             {b'has_warning': b'1', b'overlay': json.dumps(snapshot).encode()},
         )
-        payload = _build_metadata_payload(record)
+        payload = build_metadata_payload(record)
         self.assertTrue(payload['has_warning'])
         self.assertEqual(payload['overlay'], snapshot)
+
+    def test_metadata_wire_preserves_unicode_and_protocol_ids(self) -> None:
+        record = service._build_metadata_record(
+            build_metadata_key('site', 'camera'), b'3-2',
+            {
+                b'has_warning': b'0',
+                b'overlay': json.dumps({'label': '安全'}).encode(),
+            },
+        )
+        frame = MetadataFrame(record)
+
+        self.assertEqual(
+            frame.sse,
+            b'id: 3-2\nevent: metadata\n'
+            b'data: {"has_warning":false,"overlay":{"label":"\\u5b89\\u5168"},'
+            b'"id":"3-2"}\n\n',
+        )
+        self.assertEqual(
+            frame.websocket, '{"has_warning":false,"overlay":{"label":"安全"}}',
+        )
 
     def test_legacy_warning_payload_has_no_overlay(self) -> None:
         record = service._build_metadata_record(

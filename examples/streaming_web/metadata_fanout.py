@@ -10,6 +10,7 @@ import redis.asyncio as redis
 from pydantic import Field
 from redis.exceptions import TimeoutError as RedisReadTimeout
 
+from examples.streaming_web.metadata_wire import MetadataFrame
 from examples.streaming_web.redis_service import fetch_latest_metadata_for_key
 from examples.streaming_web.schemas import FrameOutData
 from src.async_tasks import finish_on_cancel
@@ -31,7 +32,7 @@ class _StreamSubscribers:
     """State shared by all local subscribers to one Redis Stream key."""
 
     rds: redis.Redis
-    queues: set[asyncio.Queue[FrameOutData | Exception]]
+    queues: set[asyncio.Queue[MetadataFrame | Exception]]
     fetcher: Callable[
         [redis.Redis, str, str],
         Awaitable[FrameOutData | None],
@@ -46,14 +47,14 @@ class MetadataSubscription:
         self,
         fanout: MetadataFanout,
         redis_key: str,
-        queue: asyncio.Queue[FrameOutData | Exception],
+        queue: asyncio.Queue[MetadataFrame | Exception],
     ) -> None:
         self._fanout = fanout
         self._redis_key = redis_key
         self.queue = queue
         self._close_task: asyncio.Task | None = None
 
-    async def get(self) -> FrameOutData | Exception:
+    async def get(self) -> MetadataFrame | Exception:
         """Wait for the newest metadata event or reader error."""
         return await self.queue.get()
 
@@ -86,7 +87,7 @@ class MetadataFanout:
         ] = fetch_latest_metadata_for_key,
     ) -> MetadataSubscription:
         """Subscribe a browser connection using a bounded latest-only queue."""
-        queue: asyncio.Queue[FrameOutData | Exception] = asyncio.Queue(
+        queue: asyncio.Queue[MetadataFrame | Exception] = asyncio.Queue(
             maxsize=_subscriber_queue_size,
         )
         async with self._lock:
@@ -108,7 +109,7 @@ class MetadataFanout:
     async def unsubscribe(
         self,
         redis_key: str,
-        queue: asyncio.Queue[FrameOutData | Exception],
+        queue: asyncio.Queue[MetadataFrame | Exception],
     ) -> None:
         """Cancel and drain the reader when its last subscriber leaves."""
 
@@ -178,7 +179,7 @@ class MetadataFanout:
                     await _sleep(_idle_retry_delay_seconds)
                     continue
                 last_id = str(frame_data['id'])
-                await self._publish(state, frame_data)
+                await self._publish(state, MetadataFrame(frame_data))
                 # A well-behaved Redis XREAD blocks on the next pass.  Yield
                 # once regardless so a misconfigured client cannot monopolise
                 # the event loop by returning frames immediately.
@@ -192,7 +193,7 @@ class MetadataFanout:
     @staticmethod
     async def _publish(
         state: _StreamSubscribers,
-        item: FrameOutData | Exception,
+        item: MetadataFrame | Exception,
     ) -> None:
         """Offer one item to every client without a slow client growing RAM."""
         for queue in tuple(state.queues):

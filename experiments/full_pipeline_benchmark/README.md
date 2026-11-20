@@ -21,7 +21,7 @@ uv pip install psutil nvidia-ml-py matplotlib
 ```
 
 - Python TensorRT bindings 的建置與 SDK 要求見 [專案安裝說明](../../README.md#1-prepare-python)。bindings 和 Rust binary 各自使用的 TensorRT 版本均須能載入同一個 engine。
-- `hybrid` 需在上述 Python 環境建置並安裝 [Rust 推論 wheel](../../native/inference/README.md#tensorrt-版本與建置) 與 [Rust 後處理 wheel](../../native/postprocess/README.md#建置與切換)。推論指南也說明 `LD_LIBRARY_PATH` 和 `YOLO_WORKER_NATIVE_LIBRARY_DIRS` 的設定。
+- `hybrid` 需在上述 Python 環境建置並安裝 [Rust 推論 wheel](../../native/inference/README.md#tensorrt-版本與建置) 與 [Rust 後處理 wheel](../../bindings/python/postprocess/README.md#建置與切換)。推論指南也說明 `LD_LIBRARY_PATH` 和 `YOLO_WORKER_NATIVE_LIBRARY_DIRS` 的設定。
 - 獨立 binary 依 [TensorRT 建置方式](../../native/pipeline/README-zh-tw.md#啟用-tensorrt-推論) 啟用 `tensorrt` feature。
 - 將相符的 YOLO26n checkpoint 放在 `models/pt/best_yolo26n.pt`，另備已匯出的 INT8 `.engine`。測試會核對 checkpoint 和 engine 的 SHA-256。engine 預設從 `models/int8_engine/best_yolo26n.engine` 讀取，也可用 `--engine` 指定路徑。這兩個模型檔需另外準備。
 

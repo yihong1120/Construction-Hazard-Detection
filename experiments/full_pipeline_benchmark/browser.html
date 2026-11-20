@@ -7,7 +7,7 @@ canvas{position:absolute;left:0;top:0;pointer-events:none}
 </style><main></main>
 <script>window.errors=[];window.addEventListener("error",e=>window.errors.push(e.message));</script>
 <script type="module">
-import {createOverlay,loadDictionary} from '/web/overlay.mjs';
+import {createOverlay,loadDictionary,subscribeOverlay} from '/web/overlay.mjs';
 const settings=__SETTINGS__;
 const dictionary=await loadDictionary();
 const peers=[],sessions=[],videos=[],events=[],renderers=[];
@@ -34,12 +34,10 @@ async function camera(id){
   if(settings.overlay){
     const renderer=createOverlay(video,canvas,{language:'en',dictionary});
     renderers.push(renderer);
-    const source=new EventSource('/metadata/'+id);events.push(source);
-    source.addEventListener('metadata',e=>{
+    events.push(subscribeOverlay(renderer,'/metadata/'+id,(e,snapshot,accepted)=>{
       window.metadataBytes+=new TextEncoder().encode(e.data).length;window.metadataFrames++;
-      const snapshot=JSON.parse(e.data).overlay;
-      const accepted=renderer.setSnapshot(snapshot);window.latest[id]={snapshot,accepted};
-    });
+      window.latest[id]={snapshot,accepted};
+    }));
   }
   await new Promise(resolve=>{if(video.readyState>=2)resolve();else video.addEventListener('loadeddata',resolve,{once:true});});
   await video.play();
@@ -58,6 +56,6 @@ window.proof=()=>[...document.querySelectorAll('canvas')].map(c=>{
   let visible=0;for(let i=3;i<pixels.length;i+=4)if(pixels[i])visible++;
   return visible;
 });
-window.stop=async()=>{events.forEach(e=>e.close());peers.forEach(p=>p.close());await Promise.all(sessions.filter(Boolean).map(url=>fetch(url,{method:'DELETE'})));};
+window.stop=async()=>{events.forEach(close=>close());renderers.forEach(r=>r.destroy());peers.forEach(p=>p.close());await Promise.all(sessions.filter(Boolean).map(url=>fetch(url,{method:'DELETE'})));};
 Promise.all(settings.ids.map(camera)).then(()=>{window.ready=true;}).catch(e=>{window.failure=String(e);});
 </script>
