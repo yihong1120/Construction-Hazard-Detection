@@ -150,7 +150,18 @@ async fn store(db: PgPool, settings: Settings, input: AcceptedUpload) -> Result<
         .map(|event| event.hyphenated().to_string());
     let warnings = evidence.warnings.clone().map(normalise_warnings);
     let image_sha: [u8; 32] = Sha256::digest(&input.image).into();
-    let digest = fingerprint::calculate(evidence, warnings.as_ref(), image_sha)?;
+    let digest = fingerprint::calculate(
+        evidence,
+        evidence.detection_time,
+        warnings.as_ref(),
+        image_sha,
+    )?;
+    let previous_digest = || {
+        evidence
+            .prior_local_detection_time
+            .map(|time| fingerprint::calculate(evidence, Some(time), warnings.as_ref(), image_sha))
+            .transpose()
+    };
     if let Some(event) = &event {
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 4104))")
             .bind(event)
@@ -158,10 +169,18 @@ async fn store(db: PgPool, settings: Settings, input: AcceptedUpload) -> Result<
             .await
             .map_err(database_error)?;
         if let Some(record) = existing_event(&mut tx, event).await? {
-            let verified = verify_repeat(&settings.media, record, evidence, &digest).await?;
-            if verified.backfill {
+            let prior_digest = previous_digest()?;
+            let verified = verify_repeat(
+                &settings.media,
+                record,
+                evidence,
+                &digest,
+                prior_digest.as_deref(),
+            )
+            .await?;
+            if let Some(backfill) = verified.backfill {
                 sqlx::query("UPDATE violations SET event_fingerprint = $1 WHERE id = $2 AND event_fingerprint IS NULL")
-                    .bind(&digest).bind(verified.id).execute(&mut *tx).await.map_err(database_error)?;
+                    .bind(backfill).bind(verified.id).execute(&mut *tx).await.map_err(database_error)?;
             }
             tx.commit().await.map_err(database_error)?;
             return Ok(verified.id);
@@ -212,9 +231,16 @@ async fn store(db: PgPool, settings: Settings, input: AcceptedUpload) -> Result<
     let record = existing_event(&mut tx, event.as_deref().ok_or_else(storage_error)?)
         .await?
         .ok_or_else(storage_error)?;
-    Ok(verify_repeat(&settings.media, record, evidence, &digest)
-        .await?
-        .id)
+    let prior_digest = previous_digest()?;
+    Ok(verify_repeat(
+        &settings.media,
+        record,
+        evidence,
+        &digest,
+        prior_digest.as_deref(),
+    )
+    .await?
+    .id)
 }
 
 fn render(value: Option<&impl serde::Serialize>) -> Result<Option<String>, ApiError> {
@@ -242,7 +268,7 @@ fn stored_json<T: DeserializeOwned>(raw: &Value) -> Result<Option<T>, ApiError> 
 
 struct VerifiedRepeat {
     id: i32,
-    backfill: bool,
+    backfill: Option<String>,
 }
 
 async fn verify_repeat(
@@ -250,6 +276,7 @@ async fn verify_repeat(
     record: Value,
     evidence: &Evidence,
     digest: &str,
+    prior_digest: Option<&str>,
 ) -> Result<VerifiedRepeat, ApiError> {
     if record["site_id"].as_i64() != Some(evidence.site_id)
         || record["stream_name"] != evidence.stream_name
@@ -261,11 +288,8 @@ async fn verify_repeat(
         .and_then(|id| i32::try_from(id).ok())
         .ok_or_else(storage_error)?;
     if let Some(stored) = record["event_fingerprint"].as_str() {
-        return if stored == digest {
-            Ok(VerifiedRepeat {
-                id,
-                backfill: false,
-            })
+        return if stored == digest || prior_digest == Some(stored) {
+            Ok(VerifiedRepeat { id, backfill: None })
         } else {
             Err(conflict())
         };
@@ -284,6 +308,7 @@ async fn verify_repeat(
                     .map_err(|_| conflict())
             })
             .transpose()?,
+        prior_local_detection_time: None,
         model_id: text("model_id")?.to_owned(),
         model_version: text("model_version")?.to_owned(),
         warnings: stored_json(&record["warnings_json"])?,
@@ -304,10 +329,19 @@ async fn verify_repeat(
         .await
         .map_err(|_| storage_error())?
         .map_err(|_| conflict())?;
-    if fingerprint::calculate(&stored_evidence, stored_warnings.as_ref(), existing_sha)? != digest {
+    let stored_digest = fingerprint::calculate(
+        &stored_evidence,
+        stored_evidence.detection_time,
+        stored_warnings.as_ref(),
+        existing_sha,
+    )?;
+    if stored_digest != digest && prior_digest != Some(stored_digest.as_str()) {
         return Err(conflict());
     }
-    Ok(VerifiedRepeat { id, backfill: true })
+    Ok(VerifiedRepeat {
+        id,
+        backfill: Some(stored_digest),
+    })
 }
 
 #[derive(Deserialize)]
@@ -392,4 +426,71 @@ fn storage_error() -> ApiError {
         StatusCode::SERVICE_UNAVAILABLE,
         "Evidence storage unavailable",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn retries_accept_an_exact_prior_local_fingerprint() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = b"historical evidence";
+        std::fs::write(dir.path().join("evidence.jpg"), image).unwrap();
+        let media = Arc::new(Store::new(dir.path().canonicalize().unwrap()));
+        let evidence = Evidence {
+            event_id: Some(Uuid::from_u128(1)),
+            site_id: 42,
+            site: "Site".into(),
+            stream_name: "Camera".into(),
+            detection_time: Some("2026-11-19T09:30:22.554Z".parse().unwrap()),
+            prior_local_detection_time: Some("2026-11-19T01:30:22.554Z".parse().unwrap()),
+            model_id: "model".into(),
+            model_version: "version".into(),
+            warnings: None,
+            detections: None,
+            cone_polygon: None,
+            pole_polygon: None,
+        };
+        let image_sha = Sha256::digest(image).into();
+        let digest =
+            fingerprint::calculate(&evidence, evidence.detection_time, None, image_sha).unwrap();
+        let prior = fingerprint::calculate(
+            &evidence,
+            evidence.prior_local_detection_time,
+            None,
+            image_sha,
+        )
+        .unwrap();
+        let mut row = json!({
+            "id": 10,
+            "site_id": evidence.site_id,
+            "stream_name": evidence.stream_name,
+            "event_fingerprint": prior,
+            "image_path": "evidence.jpg",
+            "model_id": evidence.model_id,
+            "model_version": evidence.model_version,
+            "detection_time": evidence.prior_local_detection_time,
+        });
+        let verified = verify_repeat(&media, row.clone(), &evidence, &digest, Some(&prior))
+            .await
+            .unwrap();
+        assert_eq!(verified.id, 10);
+        assert!(verified.backfill.is_none());
+        assert!(
+            verify_repeat(&media, row.clone(), &evidence, &digest, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            verify_repeat(&media, row.clone(), &evidence, &digest, Some("different"))
+                .await
+                .is_err()
+        );
+        row["event_fingerprint"] = Value::Null;
+        let verified = verify_repeat(&media, row, &evidence, &digest, Some(&prior))
+            .await
+            .unwrap();
+        assert_eq!(verified.backfill, Some(prior));
+    }
 }

@@ -376,6 +376,15 @@ fn nonzero_ring(ring: &Vec<[f64; 2]>) -> bool {
     area.is_finite() && area.abs() >= 1e-9
 }
 
+fn utc_timestamp(value: &Value) -> Result<Option<DateTime<Utc>>, ApiError> {
+    serde_json::from_value(value.clone()).map_err(|_| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Invalid violation record timestamp",
+        )
+    })
+}
+
 pub(super) fn base_detail(record: Value) -> Result<Value, ApiError> {
     build_detail(&record, None, None, None)
 }
@@ -438,17 +447,18 @@ fn build_detail(
     };
     Ok(json!({
         "id": record["id"], "site_name": record["site"], "stream_name": record["stream_name"],
-        "detection_time": record["detection_time"], "created_at": record["created_at"],
+        "detection_time": utc_timestamp(&record["detection_time"])?,
+        "created_at": utc_timestamp(&record["created_at"])?,
         "image_path": path, "image_url": media_url(path, "get_violation_image"),
         "thumbnail_url": media_url(path, "get_violation_thumbnail"),
         "detection_items": record["detections_json"], "warnings": record["warnings_json"],
         "warning_text": warning_text, "cone_polygons": record["cone_polygon_json"],
         "pole_polygons": record["pole_polygon_json"], "detections": detections,
         "is_flagged": record["is_flagged"], "flag_reason": record["flag_reason"],
-        "flagged_by": record["flagged_by"], "flagged_at": record["flagged_at"],
+        "flagged_by": record["flagged_by"], "flagged_at": utc_timestamp(&record["flagged_at"])?,
         "review_status": if record["is_flagged"] == true { &record["review_status"] } else { &Value::Null },
         "review_note": record["review_note"], "reviewed_by": record["reviewed_by"],
-        "reviewed_at": record["reviewed_at"], "feedback_note": note, "feedbacks": feedback,
+        "reviewed_at": utc_timestamp(&record["reviewed_at"])?, "feedback_note": note, "feedbacks": feedback,
         "review_audit_logs": audit, "model_id": record["model_id"], "model_version": record["model_version"],
         "model_classes": record["model_classes"], "class_metadata": classes, "overlay_style": style(&classes),
         "overlay_schema_version": 1, "image_size": size.map(|(w, h)| json!({"width": w, "height": h})),
@@ -461,6 +471,41 @@ fn build_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_and_detail_use_the_same_utc_format_for_detection_times() {
+        let timestamp = "2026-11-19T09:30:22.554Z".parse().unwrap();
+        let list = list_item((
+            1,
+            "Site".into(),
+            "Camera".into(),
+            timestamp,
+            "evidence.jpg".into(),
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+        ))
+        .unwrap();
+        for detection_time in [
+            "2026-11-19T09:30:22.554+00:00",
+            "2026-11-19T17:30:22.554+08:00",
+        ] {
+            let detail = base_detail(json!({
+                "image_path": "evidence.jpg",
+                "detection_time": detection_time,
+                "created_at": "2026-11-19T17:30:23+08:00",
+            }))
+            .unwrap();
+            assert_eq!(detail["detection_time"], list["detection_time"]);
+            assert_eq!(detail["detection_time"], "2026-11-19T09:30:22.554Z");
+            assert_eq!(detail["created_at"], "2026-11-19T09:30:23Z");
+            assert!(detail["flagged_at"].is_null());
+            assert!(detail["reviewed_at"].is_null());
+        }
+    }
 
     #[test]
     fn historical_boxes_keep_indices_after_invalid_rows() {

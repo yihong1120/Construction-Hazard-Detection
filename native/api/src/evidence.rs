@@ -68,6 +68,8 @@ pub(crate) struct Evidence {
     pub(crate) site: String,
     pub(crate) stream_name: String,
     pub(crate) detection_time: Option<DateTime<Utc>>,
+    #[serde(skip)]
+    pub(crate) prior_local_detection_time: Option<DateTime<Utc>>,
     pub(crate) model_id: String,
     pub(crate) model_version: String,
     pub(crate) warnings: Option<HashMap<String, Value>>,
@@ -401,29 +403,51 @@ fn optional_text<'a>(
     field_text(fields, key).map(Some)
 }
 
-fn upload_time(time: &str, mode: UploadMode) -> Result<DateTime<Utc>, ApiError> {
+#[derive(Clone, Copy)]
+struct UploadTime {
+    instant: DateTime<Utc>,
+    prior_local: Option<DateTime<Utc>>,
+}
+
+fn upload_time(time: &str, mode: UploadMode) -> Result<UploadTime, ApiError> {
     if mode == UploadMode::Preview {
         return DateTime::parse_from_rfc3339(time)
-            .map(|timestamp| timestamp.to_utc())
+            .map(|timestamp| UploadTime {
+                instant: timestamp.to_utc(),
+                prior_local: None,
+            })
             .map_err(|_| invalid_metadata());
     }
     let time = time.replacen(' ', "T", 1);
-    let timestamp = if let Ok(timestamp) = DateTime::parse_from_rfc3339(&time) {
-        timestamp.to_utc()
-    } else {
-        time.parse::<NaiveDateTime>()
-            .or_else(|_| NaiveDateTime::parse_from_str(&time, "%Y-%m-%dT%H:%M"))
-            .map_err(|_| invalid_metadata())?
-            .and_local_timezone(Local)
-            .earliest()
-            .ok_or_else(invalid_metadata)?
-            .to_utc()
-    };
     // The deployed Python datetime contract and PostgreSQL both use microseconds.
-    let micros = timestamp.timestamp_subsec_micros();
-    timestamp
-        .with_nanosecond(micros * 1000)
-        .ok_or_else(invalid_metadata)
+    if let Ok(timestamp) = DateTime::parse_from_rfc3339(&time) {
+        let instant = timestamp
+            .to_utc()
+            .with_nanosecond(timestamp.timestamp_subsec_micros() * 1000)
+            .ok_or_else(invalid_metadata)?;
+        return Ok(UploadTime {
+            instant,
+            prior_local: None,
+        });
+    }
+    let naive = time
+        .parse::<NaiveDateTime>()
+        .or_else(|_| NaiveDateTime::parse_from_str(&time, "%Y-%m-%dT%H:%M"))
+        .map_err(|_| invalid_metadata())?;
+    let naive = naive
+        .with_nanosecond(naive.and_utc().timestamp_subsec_micros() * 1000)
+        .ok_or_else(invalid_metadata)?;
+    let instant = naive.and_utc();
+    // Verify retries against events written with the former server-local clock.
+    let prior_local = naive
+        .and_local_timezone(Local)
+        .earliest()
+        .map(|time| time.to_utc())
+        .filter(|time| *time != instant);
+    Ok(UploadTime {
+        instant,
+        prior_local,
+    })
 }
 
 fn parse_metadata(
@@ -463,6 +487,9 @@ fn parse_metadata(
     }) {
         return Err(invalid_metadata());
     }
+    let detection_time = optional_text(fields, "detection_time", mode)?
+        .map(|value| upload_time(value, mode))
+        .transpose()?;
     Ok(Evidence {
         event_id: optional_text(fields, "event_id", mode)?
             .map(|value| Uuid::parse_str(value).map_err(|_| invalid_metadata()))
@@ -470,9 +497,8 @@ fn parse_metadata(
         site_id,
         site,
         stream_name: bounded_text(fields, "stream_name", 80)?,
-        detection_time: optional_text(fields, "detection_time", mode)?
-            .map(|value| upload_time(value, mode))
-            .transpose()?,
+        detection_time: detection_time.map(|time| time.instant),
+        prior_local_detection_time: detection_time.and_then(|time| time.prior_local),
         model_id: bounded_text(fields, "model_id", 120)?,
         model_version: bounded_text(fields, "model_version", 120)?,
         warnings,
@@ -825,13 +851,32 @@ mod tests {
         assert_eq!(evidence.detections.unwrap()[0].len(), 7);
         assert_eq!(
             evidence.detection_time.unwrap(),
-            "2026-11-19T00:00:00"
-                .parse::<NaiveDateTime>()
-                .unwrap()
-                .and_local_timezone(Local)
+            DateTime::parse_from_rfc3339("2026-11-19T00:00:00Z")
                 .unwrap()
                 .to_utc()
         );
+    }
+
+    #[test]
+    fn legacy_naive_and_explicit_evidence_times_share_one_utc_instant() {
+        let expected = DateTime::parse_from_rfc3339("2026-11-19T09:30:22.554Z")
+            .unwrap()
+            .to_utc();
+        let naive = upload_time("2026-11-19T09:30:22.554", UploadMode::Production).unwrap();
+        let explicit =
+            upload_time("2026-11-19T17:30:22.554+08:00", UploadMode::Production).unwrap();
+        assert_eq!(naive.instant, expected);
+        assert_eq!(explicit.instant, expected);
+        assert_eq!(
+            naive.prior_local,
+            expected
+                .naive_utc()
+                .and_local_timezone(Local)
+                .earliest()
+                .map(|time| time.to_utc())
+                .filter(|time| *time != expected)
+        );
+        assert!(explicit.prior_local.is_none());
     }
 
     #[test]

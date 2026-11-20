@@ -1,7 +1,7 @@
 //! Byte-for-byte compatibility with the Python evidence fingerprint.
 use std::io::{self, Write};
 
-use chrono::SecondsFormat;
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -11,10 +11,11 @@ use crate::ApiError;
 
 pub(super) fn calculate(
     evidence: &Evidence,
+    detection_time: Option<DateTime<Utc>>,
     warnings: Option<&WarningMap>,
     image_sha: [u8; 32],
 ) -> Result<String, ApiError> {
-    let stamp = evidence.detection_time.map(|time| {
+    let stamp = detection_time.map(|time| {
         let precision = if time.timestamp_subsec_micros() == 0 {
             SecondsFormat::Secs
         } else {
