@@ -1,9 +1,9 @@
-name: Standalone Rust pipeline
+name: Standalone Rust runtime
 on:
   push:
-    paths: ['native/**', 'tests/videos/**', '.github/workflows/rust-pipeline.yml']
+    paths: ['native/**', 'deploy/rust-runtime/**', 'tests/videos/**', '.github/workflows/rust-pipeline.yml']
   pull_request:
-    paths: ['native/**', 'tests/videos/**', '.github/workflows/rust-pipeline.yml']
+    paths: ['native/**', 'deploy/rust-runtime/**', 'tests/videos/**', '.github/workflows/rust-pipeline.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -45,7 +45,7 @@ jobs:
       run: |
         rustup toolchain install 1.93.1 --profile minimal --component rustfmt
         sudo apt-get update
-        sudo apt-get install -y curl ffmpeg jq ripgrep \
+        sudo apt-get install -y curl ffmpeg jq ripgrep redis-server \
           fonts-dejavu-core fonts-noto-core fonts-noto-cjk \
           libavformat-dev libavcodec-dev libavutil-dev libswscale-dev pkg-config
     - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -53,24 +53,30 @@ jobs:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
-        key: rust-pipeline-crates-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/pipeline/Cargo.lock') }}
+        key: rust-runtime-crates-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/pipeline/Cargo.lock', 'native/api/Cargo.lock') }}
     - name: Format, unit and 32-camera file integration tests
       run: |
         node --test native/pipeline/web/overlay.test.mjs
-        for crate in pipeline media inference postprocess-core stream-contract; do
+        for crate in api pipeline media inference postprocess-core stream-contract; do
           cargo fmt --manifest-path "native/$crate/Cargo.toml" -- --check
         done
+        cargo test --locked --manifest-path native/api/Cargo.toml
+        cargo test --locked --manifest-path native/api/Cargo.toml streaming::media_auth::tests:: -- --ignored
         cargo test --locked --manifest-path native/pipeline/Cargo.toml
         cargo test --locked --manifest-path native/pipeline/Cargo.toml -p construction-media --lib
-        cargo build --locked --manifest-path native/pipeline/Cargo.toml
-        dependencies="$(cargo tree --locked --manifest-path native/pipeline/Cargo.toml)"
-        if rg pyo3 <<< "$dependencies"; then
-          echo 'Standalone binary unexpectedly depends on PyO3'; exit 1
-        fi
-        libraries="$(ldd native/pipeline/target/debug/construction-pipeline)"
-        if rg 'libpython|not found' <<< "$libraries"; then
-          echo 'Standalone binary links CPython or has unresolved shared libraries'; exit 1
-        fi
+        cargo test --locked --manifest-path native/pipeline/Cargo.toml -p construction-postprocess-core -p construction-stream-contract
+        for crate in pipeline api; do
+          manifest="native/$crate/Cargo.toml"
+          cargo build --locked --manifest-path "$manifest"
+          dependencies="$(cargo tree --locked --manifest-path "$manifest")"
+          if rg pyo3 <<< "$dependencies"; then
+            echo "construction-$crate unexpectedly depends on PyO3"; exit 1
+          fi
+          libraries="$(ldd "native/$crate/target/debug/construction-$crate")"
+          if rg 'libpython|not found' <<< "$libraries"; then
+            echo "construction-$crate links CPython or has unresolved libraries"; exit 1
+          fi
+        done
     - name: PostgreSQL, Redis and 32 RTSP session integration tests
       run: |
         publisher=

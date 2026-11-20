@@ -34,6 +34,9 @@ Build and deploy a Flutter revision that uses the current backend contract:
 - Native clients send playback control requests to
   `/hazard/api/db_management/api/playback/*` after verifying their signed
   deployment profile.
+- For live annotations, request the `overlay` profile and the selected language.
+  The backend draws the boxes, zones and text into the video. Flutter plays the
+  returned HLS URL.
 - A Registry client validates HTTPS, redirect handling, JSON size and the
   Ed25519 signature. It must not reject an otherwise valid response solely
   because an intermediary omits `Cache-Control: no-store`.

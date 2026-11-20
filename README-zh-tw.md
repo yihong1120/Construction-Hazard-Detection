@@ -24,6 +24,8 @@
 危害分析與多語標註，並透過 PostgreSQL 持久化佇列保存與派送事件。指南包含
 `construction-pipeline` 的建置、執行與驗證步驟。
 
+[獨立 Rust 發行預覽版](deploy/rust-runtime/README-zh-tw.md)提供攝影機流程與 Rust HTTP API 的建置、服務單元及隔離驗證方式。
+
 <div align="center">
    <a href="https://www.python.org/downloads/">
       <img src="https://img.shields.io/badge/python-3.15-blue?logo=python" alt="Python 3.15">
@@ -153,7 +155,9 @@ flowchart LR
 
 - `main.py` 管理串流設定與工作者程序。
 - `src/` 包含正式執行用的核心模組。
-- `native/pipeline/` 提供獨立的 Rust 攝影機執行程式。
+- `native/pipeline/` 和 `native/api/` 提供獨立的 Rust 攝影機及 API 執行程式。
+- `native/inference/`、`native/postprocess-core/` 和 `native/stream-contract/` 包含共用的推論、危害分析及中繼資料程式碼。
+- `bindings/python/` 提供既有 Python 應用程式使用的相容 wheel。
 - `examples/bff/` 管理網頁工作階段、CSRF 防護與播放權限，並提供 API 閘道。
 - `examples/db_management/` 提供使用者、群組、工地及串流設定 API。
 - `examples/local_notification_server/` 提供 FCM 權杖與工地通知 API。

@@ -1,0 +1,18 @@
+{
+  "listen": "127.0.0.1:18800",
+  "oidc": {
+    "issuer": "https://identity.example.invalid/realms/preview",
+    "jwks_url": "https://identity.example.invalid/realms/preview/protocol/openid-connect/certs",
+    "audiences": ["preview-api"]
+  },
+  "grants": [
+    {
+      "subject": "REPLACE_WITH_SIGNED_SUB",
+      "client_id": "REPLACE_WITH_SIGNED_AZP",
+      "permissions": ["evidence_read", "evidence_write"],
+      "sites": [{"id": 1, "name": "demo"}]
+    }
+  ],
+  "media_auth": false,
+  "metadata_prefix": "preview:"
+}

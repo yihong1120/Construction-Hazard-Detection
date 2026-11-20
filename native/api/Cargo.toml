@@ -1,0 +1,46 @@
+[package]
+name = "construction-api"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "AGPL-3.0-only"
+publish = false
+default-run = "construction-api"
+
+[features]
+default = []
+tensorrt = ["dep:construction-inference", "construction-inference/tensorrt", "dep:construction-postprocess-core"]
+
+[dependencies]
+anyhow = "1"
+aws-lc-rs = "1"
+axum = { version = "0.8", features = ["multipart", "ws"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+construction-inference = { path = "../inference", default-features = false, optional = true }
+construction-postprocess-core = { path = "../postprocess-core", features = ["geometry"], optional = true }
+construction-stream-contract = { path = "../stream-contract" }
+fernet = { version = "0.2.2", default-features = false, features = ["rustcrypto"] }
+futures-util = "0.3"
+hmac = "0.12"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ipnet = "2"
+jsonwebtoken = { version = "12", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+percent-encoding = "2"
+redis = { version = "=0.32.7", features = ["tokio-comp", "connection-manager", "script"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "uuid"] }
+tempfile = "3"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-normalization = "0.1"
+url = "2"
+uuid = { version = "1", features = ["serde", "v4"] }

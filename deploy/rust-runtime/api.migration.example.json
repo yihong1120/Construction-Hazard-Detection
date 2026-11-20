@@ -1,0 +1,58 @@
+{
+  "listen": "127.0.0.1:18800",
+  "oidc": {
+    "issuer": "https://identity.example.invalid/realms/isolated",
+    "jwks_url": "https://identity.example.invalid/realms/isolated/protocol/openid-connect/certs",
+    "audiences": ["isolated-api"]
+  },
+  "grants": [
+    {
+      "subject": "REPLACE_WITH_REVIEWER_SUB",
+      "client_id": "isolated-web",
+      "permissions": ["account_read", "account_manage", "stream_read", "notification_read", "violation_read", "violation_review", "violation_feedback"],
+      "sites": [{"id": 1, "name": "demo"}]
+    },
+    {
+      "subject": "REPLACE_WITH_LINKED_CAMERA_WORKER_SUB",
+      "client_id": "isolated-camera-worker",
+      "permissions": ["evidence_write", "notification_dispatch"],
+      "sites": [{"id": 1, "name": "demo"}]
+    }
+  ],
+  "deployment_scope": {
+    "tenant_id": "00000000-0000-4000-8000-000000000010",
+    "deployment_id": "00000000-0000-4000-8000-000000000011"
+  },
+  "account_management": true,
+  "media_auth": true,
+  "metadata_prefix": "preview:",
+  "playback": {
+    "internal_hls_base_url": "http://127.0.0.1:8888",
+    "demand_prefix": "preview:"
+  },
+  "violation_history": {
+    "tenant_id": "00000000-0000-4000-8000-000000000010",
+    "media_root": "/var/lib/chd-rust-fixture/evidence",
+    "write_uploads": false
+  },
+  "notifications": {
+    "token_key_env": "FCM_TOKEN_ENCRYPTION_KEY"
+  },
+  "bff": {
+    "public_api_base_url": "https://preview.example.invalid/hazard/api",
+    "authorization_endpoint": "https://identity.example.invalid/realms/isolated/protocol/openid-connect/auth",
+    "token_endpoint": "https://identity.example.invalid/realms/isolated/protocol/openid-connect/token",
+    "end_session_endpoint": "https://identity.example.invalid/realms/isolated/protocol/openid-connect/logout",
+    "account_url": "https://identity.example.invalid/realms/isolated/account/",
+    "post_logout_redirect_uri": "https://preview.example.invalid/",
+    "client_id": "isolated-web",
+    "client_secret_env": "RUST_BFF_CLIENT_SECRET",
+    "session_key_env": "RUST_BFF_SESSION_KEY",
+    "upstreams": {
+      "db_management": "http://127.0.0.1:18800",
+      "streaming_web": "http://127.0.0.1:18800",
+      "violations": "http://127.0.0.1:18800",
+      "fcm": "http://127.0.0.1:18800"
+    }
+  }
+}

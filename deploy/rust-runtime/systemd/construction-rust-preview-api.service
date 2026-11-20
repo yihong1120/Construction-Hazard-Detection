@@ -1,0 +1,20 @@
+[Unit]
+Description=Construction Rust API preview
+After=network.target
+
+[Service]
+Type=exec
+User=chd-rust-preview-api
+Group=chd-rust-preview-api
+EnvironmentFile=/etc/construction-rust-preview/api.env
+ExecStart=/opt/construction-rust-preview/current/bin/construction-api --config /etc/construction-rust-preview/api.json
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

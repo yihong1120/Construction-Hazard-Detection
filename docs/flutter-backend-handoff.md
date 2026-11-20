@@ -252,12 +252,13 @@ v2 回應示例（節錄；正式回應另含樣式與顯示控制欄位）：
 {"site": "Example Site", "cameras": ["Cam 1", "Cam 2"], "profile": "overlay", "language": "zh-TW", "transport": "hls"}
 ```
 
-公開 management facade 的明確 `cameras` 清單最多 **16 個不重複鏡頭**，
-不能傳 wildcard。省略 `cameras` 使用站點預設選擇，數量另受上游額度與權限限制；
-UI 依回傳的 `items`、`max_streams` 顯示。不要把內部 streaming 服務的較大限制
-當成明確清單可超過 16 個的依據，也不要把 site、camera 字串欄位擅自改成數字 ID。
+Rust management facade 每個多鏡頭牆最多 **32 個不重複鏡頭**，涵蓋明確的 `cameras`
+清單與站點選擇。使用 Python management facade 時，明確清單最多 16 個，站點選擇最多
+24 個。省略 `cameras` 可使用站點預設選擇。傳入工地與鏡頭的名稱字串，UI 依回傳的
+`items`、`max_streams` 顯示。
 
-`profile=overlay` 使用後端繪製的辨識畫面，`clean` 關閉畫面 Overlay。
+`profile=overlay` 由後端將辨識框、警戒區和選定語言的文字繪入 HLS 影片，Flutter 直接播放該影片。
+`profile=clean` 提供原始畫面的播放選項。
 detail／preview 由入口決定，前端不傳自訂 FPS；來源 FPS 維持原設定。
 語言選項依 streaming 的 `GET /overlay-languages` 載入，不自行假設所有語言皆已啟用。
 

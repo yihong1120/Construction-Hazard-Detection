@@ -91,3 +91,19 @@ Keycloak，因此啟用 main 限制時須確認所有需要登入的人員及後
 需要緊急解除限制時，在 B 的終端機先停止 `website-access-agent.service`，
 再將 `/etc/nginx/conf.d/website-access.conf` 的三個 geo 改為 `default 1;` 且移除
 其 CIDR 行，執行 `nginx -t` 與 reload。接著修正資料庫政策後再啟動同步程序。
+
+## Rust 管理 API 與同步程序
+
+啟用 Rust API 的 `account_management` 後，管理路徑、政策版本、稽核紀錄和
+`/gateway` 狀態格式沿用同一套資料。由本機 Nginx 提供管理 API 時，在 Nginx
+轉送路徑以 `$remote_addr` 覆寫 `X-Real-IP`，並在 Rust API 環境設定
+`RUST_API_WEBSITE_ACCESS_TRUST_PROXY=true`。直接連線的開發環境預設使用 TCP
+對端 IP。
+
+Rust 發行包提供 `construction-website-access`，保留現有同步程序設定檔的
+`hosts`、`reader`、`output`、`last_good`、`status` 欄位。將 `reader` 設為由
+應用程式帳號執行 `construction-website-access snapshot`，並提供
+`RUST_API_DATABASE_URL`、實際使用的 `RUST_API_DATABASE_SCHEMA` 和網站主機設定。
+以 `construction-website-access render --config <設定檔> --snapshot <快照>` 檢查
+產出的 geo 設定，再由同步服務執行 `construction-website-access sync --config <設定檔>`。
+同步程序以既有 `last_good` 檔案為基準，通過 Nginx 語法檢查和 reload 後寫入套用版本。
