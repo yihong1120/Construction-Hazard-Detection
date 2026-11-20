@@ -263,7 +263,7 @@ class User(Base):
         nullable=False,
     )
     status: Mapped[str] = mapped_column(
-        String(20),
+        String(32),
         default=USER_STATUS_ACTIVE,
         nullable=False,
     )

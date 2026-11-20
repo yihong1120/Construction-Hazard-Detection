@@ -31,7 +31,7 @@ class MigrationRunnerTest(EvidenceMigrationDatabase):
                 is_default boolean NOT NULL DEFAULT false
             );
             CREATE TABLE users(
-                id integer PRIMARY KEY, status text, role text,
+                id integer PRIMARY KEY, status varchar(20), role text,
                 group_id integer
             );
             CREATE TABLE site_notification_preferences(
@@ -47,7 +47,7 @@ class MigrationRunnerTest(EvidenceMigrationDatabase):
 
     async def test_plan_has_no_mutations_and_apply_is_repeatable(self) -> None:
         plan = await self.runner().plan()
-        self.assertEqual(len(plan), 10)
+        self.assertEqual(len(plan), 11)
         self.assertTrue(all(not step['applied'] for step in plan))
         self.assertIsNone(
             await self.db.fetchval("SELECT to_regclass('schema_migrations')"),
@@ -57,7 +57,17 @@ class MigrationRunnerTest(EvidenceMigrationDatabase):
         self.assertEqual(await self.runner().apply(), applied)
         self.assertEqual(
             await self.db.fetchval('SELECT count(*) FROM schema_migrations'),
-            10,
+            len(plan),
+        )
+        await self.db.execute(
+            "INSERT INTO users(id, status, role) VALUES(1, 'active', 'user')",
+        )
+        self.assertEqual(
+            await self.db.fetchval(
+                'UPDATE users SET status=$1 WHERE id=1 RETURNING status',
+                'pending_admin_approval',
+            ),
+            'pending_admin_approval',
         )
 
     async def test_wrong_database_is_rejected_before_ddl(self) -> None:

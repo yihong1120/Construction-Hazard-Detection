@@ -261,3 +261,11 @@ Independent `CLEANUP_INTERVAL_SECONDS` defaults to 60 and
 synchronization isolates per-operation failures and reschedules timed-out work.
 Shutdown cancels both maintenance tasks and drains transaction cleanup before
 releasing pools. These scheduling changes require no additional SQL migration.
+
+### Signup approval status length (20261120_01)
+
+Apply `20261120_01_signup_status_length.sql` through the migration runner to
+allow the existing `pending_admin_approval` state. The migration widens
+`users.status` to `varchar(32)` and rebuilds its notification invalidation
+trigger in one transaction. Existing status values and their check constraints
+remain valid. Fresh installations use the widened column.

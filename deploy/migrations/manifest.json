@@ -39,5 +39,9 @@
   {
     "file": "20261103_02_sync_progress_retention.sql",
     "verify": "SELECT to_regclass('account_deletion_receipts') IS NOT NULL AND (SELECT count(*) FROM pg_attribute WHERE attrelid='account_operations'::regclass AND attname IN ('sync_parts','completed_at') AND NOT attisdropped)=2 AND EXISTS(SELECT 1 FROM pg_index WHERE indexrelid='account_operation_due'::regclass AND indisvalid AND indpred IS NOT NULL) AND to_regclass('account_operation_completed') IS NOT NULL"
+  },
+  {
+    "file": "20261120_01_signup_status_length.sql",
+    "verify": "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='users'::regclass AND attname='status' AND NOT attisdropped AND atttypid='varchar'::regtype AND (atttypmod=-1 OR atttypmod>=36)) AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='users'::regclass AND tgname='notification_recipients_changed' AND tgenabled='O')"
   }
 ]
