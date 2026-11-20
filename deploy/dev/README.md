@@ -74,9 +74,19 @@ FCM 外部推播停用；dev 沒有正式攝影機與文件資料。文件轉檔
 
 ```bash
 cd "$HOME/Documents/Construction-Hazard-Detection"
-"$HOME/.conda/envs/construction_env/bin/python" deploy/dev/setup.py
+uv_envs="$HOME/.local/share/workstation-uv/envs"
+uv python install 3.15.0
+UV_PROJECT_ENVIRONMENT="$uv_envs/construction" uv sync --locked --no-dev \
+    --no-install-project --link-mode hardlink \
+    --extra notification --extra streaming --extra violation
+UV_PROJECT_ENVIRONMENT="$uv_envs/construction-detection" uv sync --locked \
+    --no-dev --no-install-project --link-mode hardlink --extra yolo --extra yolo-gpu
+"$uv_envs/construction/bin/python" deploy/dev/setup.py
 python3 deploy/dev/build_frontend.py
 ```
+
+文件 API 使用由 DocFormify 部署程序以 `uv` 建立的
+`~/.local/share/workstation-uv/envs/docx2forms`。執行 `setup.py` 前先備妥此環境。
 
 `setup.py` 使用既有私有 Keycloak bootstrap 設定建立它自己管理的 dev client，
 並保留既有 dev 密碼與資料。沒有提供刪除或重建 volume 的步驟。

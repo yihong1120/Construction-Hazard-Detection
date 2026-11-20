@@ -129,7 +129,11 @@ def main():
         )
     if not catalog or sum(r['is_default'] for r in catalog) != 1:
         raise RuntimeError('An image catalog with one default is required.')
-    from deploy.dev.setup import PYTHON, private, unit, nginx_configuration
+    from deploy.dev.setup import nginx_configuration
+    from deploy.dev.setup import private
+    from deploy.dev.setup import PYTHON
+    from deploy.dev.setup import SERVICE_PYTHONS
+    from deploy.dev.setup import unit
 
     backup = STATE / 'detection-deploy' / str(time.time_ns())
     backup.mkdir(parents=True, mode=0o700)
@@ -151,7 +155,7 @@ def main():
         'detection',
         (
             'Type=simple\nExecStart='
-            f"{PYTHON}"
+            f"{SERVICE_PYTHONS['detection']}"
             ' '
             f"{ROOT}"
             '/deploy/dev/run.py detection\nRestart=on-failu'

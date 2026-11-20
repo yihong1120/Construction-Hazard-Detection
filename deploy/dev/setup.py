@@ -20,8 +20,12 @@ from deploy.dev.identity import (  # noqa: E402
 from deploy.dev.run import CONFIG, STATE, PORTS, validate  # noqa: E402
 from src.settings.sessions import SESSION_POLICY  # noqa: E402
 
-PYTHON = Path.home() / '.conda/envs/construction_env/bin/python'
-DOC_PYTHON = Path.home() / '.conda/envs/docx2forms_env/bin/python'
+UV_ENVS = Path.home() / '.local/share/workstation-uv/envs'
+PYTHON = UV_ENVS / 'construction/bin/python'
+SERVICE_PYTHONS = {
+    'detection': UV_ENVS / 'construction-detection/bin/python',
+    'files': UV_ENVS / 'docx2forms/bin/python',
+}
 FRONTEND = ROOT / 'frontend/web'
 
 
@@ -311,7 +315,7 @@ def main():
         + '\nTimeoutStartSec=180\nRestart=on-failure\nRestartSec=5',
     )
     for name in [*PORTS, 'unavailable']:
-        runtime = DOC_PYTHON if name == 'files' else PYTHON
+        runtime = SERVICE_PYTHONS.get(name, PYTHON)
         limits = (
             'MemoryMax=4G\nCPUQuota=200%'
             if name == 'detection'
