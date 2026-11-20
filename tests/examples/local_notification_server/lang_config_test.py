@@ -128,6 +128,19 @@ class TestLangConfig(unittest.TestCase):
         # Expect: "Warning: 5 people have entered the controlled area!"
         self.assertIn('5 people have entered the controlled area!', result[0])
 
+    def test_french_warnings_use_singular_and_plural(self) -> None:
+        result = Translator.translate_from_dict(
+            {
+                'warning_no_safety_vest': {'count': 1},
+                'warning_no_hardhat': {'count': 2},
+            },
+            'fr-FR',
+        )
+        self.assertIn(
+            '1 personne ne porte pas de gilet de sécurité', result[0],
+        )
+        self.assertIn('2 personnes ne portent pas de casque', result[1])
+
     def test_missing_placeholder(self) -> None:
         """Test that missing placeholders in the dictionary are handled
         gracefully."""

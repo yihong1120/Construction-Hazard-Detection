@@ -98,7 +98,16 @@ impl Event {
         let lines: Vec<_> = self
             .body
             .iter()
-            .map(|(key, warning)| translations[key].replace("{count}", &warning.count.to_string()))
+            .map(|(key, warning)| {
+                let template = if warning.count == 1 {
+                    translations
+                        .get(&format!("{key}_one"))
+                        .unwrap_or(&translations[key])
+                } else {
+                    &translations[key]
+                };
+                template.replace("{count}", &warning.count.to_string())
+            })
             .collect();
         (
             &translations["warning_notification"],
@@ -700,5 +709,23 @@ mod tests {
             assert!(text.contains('7') && !text.contains("{count}"));
         }
         assert!(req.text("zh-TW").1.contains("未佩戴安全帽"));
+    }
+
+    #[test]
+    fn french_notifications_use_singular_and_plural_for_each_warning() {
+        let req: Event = serde_json::from_value(json!({
+            "site":"demo", "site_id":4, "stream_name":"camera", "type":"violation",
+            "body":{
+                "warning_no_safety_vest":{"count":1},
+                "warning_no_hardhat":{"count":2}
+            }, "violation_id":42,
+            "title":"Safety violation alert", "deep_link":"/violations?violation_id=42",
+            "metadata": {}
+        }))
+        .unwrap();
+        req.validate().unwrap();
+        let (_, text) = req.text("fr-FR");
+        assert!(text.contains("1 personne ne porte pas de gilet de sécurité"));
+        assert!(text.contains("2 personnes ne portent pas de casque"));
     }
 }
