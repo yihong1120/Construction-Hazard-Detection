@@ -14,6 +14,37 @@ scripts. The existing A-built engines require compute capability 8.9; B has
 and builds new batch-1, square-640 profiles directly on B with its TensorRT.
 Original engines are retained. No calibration package or dataset is needed.
 
+## Optional profiles for the Rust pipeline
+
+The default build keeps batch 1, the established artifact paths and the
+`engines.json` consumed by `manage.py`. For an isolated RTX 3050 candidate,
+pass `--max-batch` between 1 and 4 to `build.py`. The input dimensions stay at
+640 × 640. The profile accepts all batch sizes from 1 through the maximum. The
+optimisation point defaults to 2 for larger profiles and can be selected with
+`--opt-batch`.
+
+For example, in a staged bundle with pinned inputs and the GPU runtime
+environment, validate the proposed profile before building it.
+
+```bash
+python build.py --check --max-batch 4 --opt-batch 2
+python build.py --max-batch 4 --opt-batch 2
+```
+
+This produces the engines, profile-specific receipts and manifest in
+`candidates/batch-1-2-4/`. The build checks the serialized TensorRT profile and
+runs representative inputs at sizes 1, 2, 3 and 4 before publishing the
+candidate manifest. The legacy manager continues to use the batch-1 manifest.
+An isolated Rust pipeline can select the candidate manifest and test it with
+`batch_size` set to 4 before choosing a deployment configuration.
+
+Use `--max-batch 2 --model yolo26m` to build only that pinned model. Overlay
+the resulting entry on a copy of the active manifest to test a mixed profile.
+Keep the active entries for the other models and verify the artifact
+checksums in the mixed manifest before selecting it.
+
+## Batch-1 deployment
+
 On B:
 
 ```bash

@@ -5,6 +5,7 @@ import json
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -140,7 +141,7 @@ def test_profile_accepts_successful_none_return(builder_script, setter_result):
     add = partial(_profile_accepts_successful_none_return_add, added)
 
     config = SimpleNamespace(add_optimization_profile=add)
-    assert builder_script.add_batch_one_profile(builder, network, config) == 0
+    assert builder_script.add_batch_profile(builder, network, config) == 0
     assert profile.shapes['images'] == [(1, 3, 640, 640)] * 3
     assert added == [profile]
 
@@ -164,7 +165,7 @@ def test_profile_rejects_unusable_configuration(builder_script, failure):
         ),
     )
     with pytest.raises(RuntimeError, match='batch-1 profile'):
-        builder_script.add_batch_one_profile(builder, network, config)
+        builder_script.add_batch_profile(builder, network, config)
 
 
 def test_metadata_does_not_override_runtime_device(builder_script):
@@ -174,7 +175,7 @@ def test_metadata_does_not_override_runtime_device(builder_script):
         'batch': 16,
         'args': {'quantize': 8, 'batch': 16},
     }
-    metadata = builder_script.batch_one_metadata(original)
+    metadata = builder_script.engine_metadata(original)
     assert 'device' not in metadata
     assert metadata['batch'] == 1
     assert metadata['args']['batch'] == 1
@@ -222,6 +223,167 @@ def test_does_not_repair_unverified_candidate(builder_script, tmp_path):
             {'sha256': 'a' * 64},
         )
     assert path.read_bytes() == b'changed'
+
+
+def test_batched_profile_has_separate_paths_and_static_image_shape(
+    builder_script, monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(builder_script, 'ROOT', tmp_path)
+    monkeypatch.setattr(builder_script, 'BASE', tmp_path / 'service')
+    check, default, model = builder_script.build_options([])
+    assert check is False and model is None
+    assert default.shapes == ((1, 3, 640, 640),) * 3
+    assert builder_script.output_locations(default) == (
+        tmp_path / 'service/source-models/int8_engine/rtx3050', tmp_path,
+    )
+    check, candidate, model = builder_script.build_options(
+        ['--check', '--max-batch', '4', '--model', 'yolo26m'],
+    )
+    assert check is True
+    assert model == 'yolo26m'
+    profile = _ProfileAcceptsSuccessfulNoneReturnProfile(
+        _test_setter_result=None,
+    )
+    builder = SimpleNamespace(
+        create_optimization_profile=Mock(return_value=profile),
+    )
+    network = SimpleNamespace(
+        num_inputs=1,
+        get_input=_profile_accepts_successful_none_return_make_simplenamespace,
+    )
+    config = SimpleNamespace(add_optimization_profile=Mock(return_value=0))
+    assert builder_script.add_batch_profile(
+        builder, network, config, candidate,
+    ) == 0
+    assert profile.shapes['images'] == [
+        (1, 3, 640, 640), (2, 3, 640, 640), (4, 3, 640, 640),
+    ]
+    path = tmp_path / 'candidates/batch-1-2-4'
+    assert builder_script.output_locations(candidate) == (path, path)
+    assert builder_script.engine_metadata(
+        {'batch': 1}, candidate,
+    )['batch'] == 4
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    'options', [
+        ['--max-batch', '0'], [
+            '--max-batch',
+            '5',
+        ],
+        ['--max-batch', '2', '--opt-batch', '3'],
+        ['--model', 'yolo26m'],
+    ],
+)
+def test_invalid_profile_is_rejected_before_build(builder_script, options):
+    with pytest.raises(SystemExit) as error:
+        builder_script.build_options(options)
+    assert error.value.code == 2
+
+
+def test_batch_profiles_do_not_reuse_another_profiles_receipt(
+    builder_script, tmp_path,
+):
+    engine = tmp_path / 'engine.engine'
+    engine.write_bytes(b'fixture engine')
+    path = tmp_path / 'receipt.json'
+    pin = {'onnx_sha256': 'pinned-source'}
+    receipt = {
+        'inputs': pin, 'tensorrt': '11.4', 'compute_capability': [
+            8, 6,
+        ], 'sha256': builder_script.digest(engine),
+    }
+    default = builder_script.BatchProfile()
+    batch_four = builder_script.BatchProfile(2, 4)
+    path.write_text(json.dumps(receipt))
+    assert builder_script.cached_receipt(
+        path, engine, pin, '11.4', [8, 6], default,
+    ) == receipt
+    assert builder_script.cached_receipt(
+        path, engine, pin, '11.4', [8, 6], batch_four,
+    ) is None
+    receipt['optimization_profile'] = batch_four.identity
+    path.write_text(json.dumps(receipt))
+    assert builder_script.cached_receipt(
+        path, engine, pin, '11.4', [8, 6], default,
+    ) is None
+    assert builder_script.cached_receipt(
+        path, engine, pin, '11.4', [8, 6], batch_four,
+    ) == receipt
+    assert builder_script.cached_receipt(
+        path, engine, pin, '11.4', [8, 6], builder_script.BatchProfile(4, 4),
+    ) is None
+    engine.write_bytes(b'changed engine')
+    assert builder_script.cached_receipt(
+        path, engine, pin, '11.4', [8, 6], batch_four,
+    ) is None
+
+
+def test_plan_profile_is_checked_even_if_its_header_matches(
+    builder_script, tmp_path,
+):
+    engine_file = tmp_path / 'engine.engine'
+    header = json.dumps({'batch': 4, 'args': {'dynamic': True}}).encode()
+    plan = b'static batch-1 fixture'
+    engine_file.write_bytes(len(header).to_bytes(4, 'little') + header + plan)
+    requested = builder_script.BatchProfile(2, 4)
+    engine = SimpleNamespace(
+        num_optimization_profiles=1,
+        num_io_tensors=1,
+        get_tensor_name=Mock(return_value='images'),
+        get_tensor_mode=Mock(return_value='INPUT'),
+        get_tensor_profile_shape=Mock(
+            return_value=builder_script.BatchProfile().shapes,
+        ),
+    )
+    runtime = SimpleNamespace(
+        deserialize_cuda_engine=Mock(return_value=engine),
+    )
+    trt = SimpleNamespace(
+        Runtime=Mock(return_value=runtime),
+        TensorIOMode=SimpleNamespace(INPUT='INPUT'),
+    )
+    with pytest.raises(RuntimeError, match='batch-1-2-4'):
+        builder_script.validate_engine_profile(
+            engine_file, trt, object(), requested,
+        )
+    runtime.deserialize_cuda_engine.assert_called_once_with(plan)
+    engine.get_tensor_profile_shape.return_value = requested.shapes
+    builder_script.validate_engine_profile(
+        engine_file, trt, object(), requested,
+    )
+
+
+def test_smoke_checks_all_partial_batches(builder_script):
+    numpy = pytest.importorskip('numpy')
+    sample = numpy.zeros((640, 640, 3), dtype=numpy.uint8)
+    result = SimpleNamespace(boxes=SimpleNamespace(data=Mock()))
+    result.boxes.data.cpu.return_value.numpy.return_value = numpy.zeros((1, 6))
+    model = Mock()
+    model.predict.side_effect = [
+        [result], [
+            result,
+        ] * 2, [result] * 3, [result] * 4,
+    ]
+    torch = SimpleNamespace(cuda=SimpleNamespace(synchronize=Mock()))
+    profile = builder_script.BatchProfile(2, 4)
+    smoke = builder_script.verify_inference(
+        model, [sample], {0}, profile, torch, numpy,
+    )
+    assert smoke['smoke_passed'] is True
+    assert smoke['sample_detections'] == [1]
+    assert [
+        call.kwargs['batch']
+        for call in model.predict.call_args_list
+    ] == [1, 2, 3, 4]
+    assert smoke['smoke_batches']['4']['detections'] == [1, 1, 1, 1]
+
+    model.predict.side_effect = [[result], [result]]
+    with pytest.raises(RuntimeError, match='one response per image'):
+        builder_script.verify_inference(
+            model, [sample], {0}, profile, torch, numpy,
+        )
 
 
 @pytest.fixture
